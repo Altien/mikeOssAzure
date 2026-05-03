@@ -28,6 +28,14 @@ function getSecret(): string {
         );
     }
 
+    // Upstream divergence (sync-log: eb44140). Upstream's eb44140 closed
+    // the equivalent fallback unconditionally: it throws even in
+    // non-production rather than returning a hardcoded string. Dev retains
+    // the local-dev fallback below for `npm run dev` convenience. A
+    // follow-up could remove this fallback and require operators to set
+    // DOWNLOAD_SIGNING_SECRET even locally — the trade-off is between
+    // local-dev ergonomics and never letting a misconfigured deploy
+    // accidentally fall through to a forgeable hardcoded secret.
     return "dev-secret-change-me-please-change-me";
 }
 
