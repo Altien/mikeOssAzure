@@ -2,7 +2,7 @@
 // Callers always speak OpenAI-style tools + { role, content } messages; each
 // provider translates internally.
 
-export type Provider = "claude" | "gemini";
+export type Provider = "claude" | "gemini" | "openai" | "azureOpenai";
 
 export type OpenAIToolSchema = {
     type: "function";
@@ -39,6 +39,19 @@ export type StreamCallbacks = {
 export type UserApiKeys = {
     claude?: string | null;
     gemini?: string | null;
+    openai?: string | null;
+    azureOpenai?: AzureOpenaiSettings | null;
+};
+
+// Azure OpenAI needs more than a single key — endpoint + (key or MI) +
+// deployment + apiVersion. `apiKey` is optional because the deployed
+// backend can fall back to its Managed Identity if it has been granted
+// access to the customer's AOAI resource.
+export type AzureOpenaiSettings = {
+    endpoint: string;
+    apiKey?: string | null;
+    deployment: string;
+    apiVersion?: string | null;
 };
 
 export type StreamChatParams = {

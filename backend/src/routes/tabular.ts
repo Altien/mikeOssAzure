@@ -267,9 +267,9 @@ tabularRouter.post("/prompt", requireAuth, async (req, res) => {
         `format handling is applied separately and must not be duplicated inside the prompt text.`;
 
     try {
-        const { title_model, api_keys } = await getUserModelSettings(userId);
+        const { fast_model, api_keys } = await getUserModelSettings(userId);
         const raw = await completeText({
-            model: title_model,
+            model: fast_model,
             systemPrompt:
                 'You write high-quality column prompts for legal tabular review workflows. Return only valid JSON with a single field: {"prompt": string}. The prompt you write must focus solely on what to extract — never on how to format the response.',
             user: userMessage,
@@ -1262,9 +1262,9 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
 
         // Generate title on first exchange
         if (chatId && isFirstExchange && !chatTitle && lastUser.content) {
-            const { title_model } = await getUserModelSettings(userId, db);
+            const { fast_model } = await getUserModelSettings(userId, db);
             const title = await generateChatTitle(
-                title_model,
+                fast_model,
                 lastUser.content,
                 {
                     reviewTitle: clientReviewTitle ?? review.title ?? null,
