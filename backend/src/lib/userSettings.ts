@@ -60,3 +60,67 @@ export async function getUserApiKeys(
         gemini: data?.gemini_api_key ?? null,
     };
 }
+
+export async function upsertUserProfile(
+    userId: string,
+    email?: string | null,
+    displayName?: string | null,
+    db?: ReturnType<typeof createServerSupabase>,
+): Promise<void> {
+    const client = db ?? createServerSupabase();
+    const lowercaseEmail = email?.trim().toLowerCase() || null;
+    const seedDisplayName = displayName?.trim() || null;
+
+    // Two-phase to keep IdP-provided display names from clobbering whatever
+    // a user has typed into their Account page:
+    //   1. SELECT the existing row (if any) — we need to know whether
+    //      display_name is currently null, which is the back-fill condition.
+    //   2a. New user → INSERT with email + display_name from the IdP.
+    //   2b. Returning user → UPDATE email always (IdP is source of truth);
+    //       only update display_name when the existing value is null.
+    const { data: existing, error: selectError } = await client
+        .from("user_profiles")
+        .select("email, display_name")
+        .eq("user_id", userId)
+        .maybeSingle();
+    if (selectError) {
+        throw new Error(`Failed to read user profile: ${selectError.message}`);
+    }
+
+    if (!existing) {
+        const { error: insertError } = await client
+            .from("user_profiles")
+            .insert({
+                user_id: userId,
+                email: lowercaseEmail,
+                display_name: seedDisplayName,
+            });
+        if (insertError) {
+            throw new Error(
+                `Failed to create user profile: ${insertError.message}`,
+            );
+        }
+        return;
+    }
+
+    const updates: Record<string, string | null> = {};
+    if ((existing.email as string | null) !== lowercaseEmail) {
+        updates.email = lowercaseEmail;
+    }
+    if (
+        seedDisplayName &&
+        ((existing.display_name as string | null) ?? "").trim() === ""
+    ) {
+        updates.display_name = seedDisplayName;
+    }
+
+    if (Object.keys(updates).length === 0) return;
+
+    const { error: updateError } = await client
+        .from("user_profiles")
+        .update(updates)
+        .eq("user_id", userId);
+    if (updateError) {
+        throw new Error(`Failed to update user profile: ${updateError.message}`);
+    }
+}

@@ -1,5 +1,8 @@
 import { Request, Response, NextFunction } from "express";
 import { validateSupabaseToken } from "../lib/auth/providers/supabase.js";
+import { validateEntraToken } from "../lib/auth/providers/entra.js";
+import { tenantAccess } from "./tenantAccess.js";
+import { upsertUserProfile } from "../lib/userSettings.js";
 
 export async function requireAuth(
   req: Request,
@@ -18,6 +21,8 @@ export async function requireAuth(
   let result;
   if (provider === "supabase") {
     result = await validateSupabaseToken(token);
+  } else if (provider === "entra") {
+    result = await validateEntraToken(token);
   } else {
     res
       .status(500)
@@ -34,5 +39,21 @@ export async function requireAuth(
   res.locals.userEmail = result.principal.email;
   res.locals.token = token;
   res.locals.principal = result.principal;
-  next();
+
+  try {
+    await upsertUserProfile(
+      result.principal.userId,
+      result.principal.email,
+      result.principal.displayName,
+    );
+  } catch (error) {
+    const detail =
+      error instanceof Error
+        ? error.message
+        : "Unable to initialize user profile";
+    res.status(500).json({ detail });
+    return;
+  }
+
+  await tenantAccess(req, res, next);
 }
