@@ -1,0 +1,46 @@
+# Keep `az acr build` upload small. Without this file the entire repo
+# (including backend/node_modules and frontend/node_modules, which are
+# easily 1+ GB) gets tarred up and shipped to ACR's build agent.
+#
+# The Dockerfile runs `npm ci` itself in each builder stage, so node_modules
+# from the host is never wanted. Same for build outputs — they get rebuilt
+# inside the image.
+
+# Dependencies
+**/node_modules
+
+# Build outputs
+backend/dist
+frontend/.next
+frontend/out
+frontend/tsconfig.tsbuildinfo
+
+# Local-only state
+**/.env
+**/.env.*
+!**/.env.example
+# Whitelist the production env file so the frontend build picks up the
+# right NEXT_PUBLIC_ values (auth provider, Entra IDs, redirect URI).
+# These are public-by-design — they get inlined into the static JS
+# bundle that ships to browsers. Server-side secrets stay in backend
+# env / Key Vault and never reach the bundle.
+!frontend/.env.production
+**/*.log
+
+# Git / dev tooling — never used at build time
+.git
+.gitignore
+.github
+.vscode
+.idea
+
+# Docs and tests don't need to ship
+docs
+**/*.md
+!frontend/README.md
+**/*.test.ts
+**/*.test.tsx
+**/__tests__
+
+# Old workflow artifacts
+backend/claude-raw-stream.log
