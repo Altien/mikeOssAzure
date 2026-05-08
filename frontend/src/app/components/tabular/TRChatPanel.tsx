@@ -35,6 +35,7 @@ import { useUserProfile } from "@/contexts/UserProfileContext";
 import {
     getModelProvider,
     isModelAvailable,
+    type ApiKeyAvailability,
     type ModelProvider,
 } from "@/app/lib/modelAvailability";
 
@@ -447,13 +448,15 @@ function TRChatInput({
     model,
     onModelChange,
     apiKeys,
+    extraModels,
 }: {
     isLoading: boolean;
     onSubmit: (value: string) => void;
     onCancel: () => void;
     model: string;
     onModelChange: (id: string) => void;
-    apiKeys: { claudeApiKey: string | null; geminiApiKey: string | null };
+    apiKeys: ApiKeyAvailability;
+    extraModels: { id: string; label: string; group: "Azure OpenAI" }[];
 }) {
     const [value, setValue] = useState("");
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -496,6 +499,7 @@ function TRChatInput({
                         value={model}
                         onChange={onModelChange}
                         apiKeys={apiKeys}
+                        extraModels={extraModels}
                     />
                     <button
                         type="button"
@@ -606,11 +610,19 @@ export function TRChatPanel({
     initialChatId,
     onChatIdChange,
 }: Props) {
-    const { profile, updateModelPreference } = useUserProfile();
-    const apiKeys = {
+    const { profile, updateModelPreference, aoaiDeployments } =
+        useUserProfile();
+    const apiKeys: ApiKeyAvailability = {
         claudeApiKey: profile?.claudeApiKey ?? null,
         geminiApiKey: profile?.geminiApiKey ?? null,
+        openaiApiKey: profile?.openaiApiKey ?? null,
+        globalApiKeys: profile?.globalApiKeys,
     };
+    const extraModels = aoaiDeployments.map((d) => ({
+        id: `aoai:${d.name}`,
+        label: d.model ? `${d.name} (${d.model})` : d.name,
+        group: "Azure OpenAI" as const,
+    }));
     const currentModel = profile?.tabularModel ?? "gemini-3-flash-preview";
     const [apiKeyModalProvider, setApiKeyModalProvider] =
         useState<ModelProvider | null>(null);
@@ -957,8 +969,8 @@ export function TRChatPanel({
 
     async function handleSubmit(trimmed: string) {
         if (!trimmed || isLoading) return;
-        if (!isModelAvailable(currentModel, apiKeys)) {
-            setApiKeyModalProvider(getModelProvider(currentModel));
+        if (!isModelAvailable(currentModel, apiKeys, extraModels)) {
+            setApiKeyModalProvider(getModelProvider(currentModel, extraModels));
             return;
         }
 
@@ -1458,6 +1470,7 @@ export function TRChatPanel({
                     updateModelPreference("tabularModel", id)
                 }
                 apiKeys={apiKeys}
+                extraModels={extraModels}
             />
 
             <ApiKeyMissingModal

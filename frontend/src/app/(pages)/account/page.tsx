@@ -8,9 +8,12 @@ import { LogOut, Check } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useUserProfile } from "@/contexts/UserProfileContext";
 import { deleteAccount } from "@/app/lib/mikeApi";
+import { useConfig } from "@/contexts/ConfigContext";
 
 export default function AccountPage() {
     const router = useRouter();
+    const config = useConfig();
+    const isEntraAuth = config.authProvider === "entra";
     const { user, signOut } = useAuth();
     const { profile, updateDisplayName, updateOrganisation } = useUserProfile();
     const [displayName, setDisplayName] = useState("");
@@ -192,49 +195,58 @@ export default function AccountPage() {
                 </Button>
             </div>
 
-            {/* Danger Zone */}
-            <div className="py-6">
-                <h2 className="text-2xl font-medium font-serif mb-1 text-red-600">
-                    Danger Zone
-                </h2>
-                <p className="text-sm text-gray-500 mb-4">
-                    Permanently delete your account and all associated data.
-                    This action cannot be undone.
-                </p>
-                {deleteConfirm ? (
-                    <div className="rounded-lg border border-red-200 bg-red-50 p-4 space-y-3 max-w-sm">
-                        <p className="text-sm font-medium text-red-700">
-                            Are you sure? This will permanently delete your
-                            account.
-                        </p>
-                        <div className="flex gap-2">
-                            <Button
-                                variant="outline"
-                                onClick={() => setDeleteConfirm(false)}
-                                disabled={isDeleting}
-                                className="text-sm"
-                            >
-                                Cancel
-                            </Button>
-                            <Button
-                                onClick={handleDeleteAccount}
-                                disabled={isDeleting}
-                                className="text-sm bg-red-600 hover:bg-red-700 text-white"
-                            >
-                                {isDeleting ? "Deleting…" : "Delete Account"}
-                            </Button>
+            {/* Account closure
+                Hidden in entra mode: the user's identity is owned by the
+                customer's tenant in Microsoft Entra, not by this app, so
+                self-service deletion is misleading — group membership would
+                let the user sign back in immediately.  Account closure and
+                data erasure go through a tenant-admin support ticket
+                instead.  Self-service deletion stays available in supabase
+                and local modes where the app does own the identity. */}
+            {!isEntraAuth && (
+                <div className="py-6">
+                    <h2 className="text-2xl font-medium font-serif mb-1 text-red-600">
+                        Danger Zone
+                    </h2>
+                    <p className="text-sm text-gray-500 mb-4">
+                        Permanently delete your account and all associated data.
+                        This action cannot be undone.
+                    </p>
+                    {deleteConfirm ? (
+                        <div className="rounded-lg border border-red-200 bg-red-50 p-4 space-y-3 max-w-sm">
+                            <p className="text-sm font-medium text-red-700">
+                                Are you sure? This will permanently delete your
+                                account.
+                            </p>
+                            <div className="flex gap-2">
+                                <Button
+                                    variant="outline"
+                                    onClick={() => setDeleteConfirm(false)}
+                                    disabled={isDeleting}
+                                    className="text-sm"
+                                >
+                                    Cancel
+                                </Button>
+                                <Button
+                                    onClick={handleDeleteAccount}
+                                    disabled={isDeleting}
+                                    className="text-sm bg-red-600 hover:bg-red-700 text-white"
+                                >
+                                    {isDeleting ? "Deleting…" : "Delete Account"}
+                                </Button>
+                            </div>
                         </div>
-                    </div>
-                ) : (
-                    <Button
-                        variant="outline"
-                        onClick={() => setDeleteConfirm(true)}
-                        className="w-full sm:w-auto border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
-                    >
-                        Delete Account
-                    </Button>
-                )}
-            </div>
+                    ) : (
+                        <Button
+                            variant="outline"
+                            onClick={() => setDeleteConfirm(true)}
+                            className="w-full sm:w-auto border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                        >
+                            Delete Account
+                        </Button>
+                    )}
+                </div>
+            )}
         </div>
     );
 }

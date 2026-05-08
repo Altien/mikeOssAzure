@@ -10,12 +10,15 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { isModelAvailable } from "@/app/lib/modelAvailability";
+import {
+    isModelAvailable,
+    type ApiKeyAvailability,
+} from "@/app/lib/modelAvailability";
 
 export interface ModelOption {
     id: string;
     label: string;
-    group: "Anthropic" | "Google";
+    group: "Anthropic" | "Google" | "OpenAI" | "Azure OpenAI";
 }
 
 export const MODELS: ModelOption[] = [
@@ -23,29 +26,55 @@ export const MODELS: ModelOption[] = [
     { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", group: "Anthropic" },
     { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro", group: "Google" },
     { id: "gemini-3-flash-preview", label: "Gemini 3 Flash", group: "Google" },
+    { id: "gpt-5", label: "GPT-5", group: "OpenAI" },
+    { id: "gpt-5-mini", label: "GPT-5 Mini", group: "OpenAI" },
+    // Azure OpenAI entries are appended dynamically at render time from
+    // deployment discovery — see UserProfileContext.aoaiDeployments.
 ];
 
 export const DEFAULT_MODEL_ID = "gemini-3-flash-preview";
 
-export const ALLOWED_MODEL_IDS = new Set(MODELS.map((m) => m.id));
+const STATIC_ALLOWED_MODEL_IDS = new Set(MODELS.map((m) => m.id));
 
-const GROUP_ORDER: ModelOption["group"][] = ["Anthropic", "Google"];
+// Validates a model id from user input or storage. Static models live
+// in the set above; AOAI deployments are accepted by prefix because
+// the deployment names are user-defined and only known at runtime.
+export function isAllowedModelId(id: string): boolean {
+    return STATIC_ALLOWED_MODEL_IDS.has(id) || id.startsWith("aoai:");
+}
+
+// Backwards-compat alias for the few callers that previously did
+// `ALLOWED_MODEL_IDS.has(id)`. New code should use `isAllowedModelId`.
+export const ALLOWED_MODEL_IDS = {
+    has: (id: string) => isAllowedModelId(id),
+};
+
+const GROUP_ORDER: ModelOption["group"][] = [
+    "Anthropic",
+    "Google",
+    "OpenAI",
+    "Azure OpenAI",
+];
 
 interface Props {
     value: string;
     onChange: (id: string) => void;
-    apiKeys?: {
-        claudeApiKey: string | null;
-        geminiApiKey: string | null;
-    };
+    apiKeys?: ApiKeyAvailability;
+    // Extra entries to merge into the static MODELS list. Today this
+    // carries Azure OpenAI deployments discovered against a configured
+    // endpoint; the same hook can be used for any other dynamically-
+    // sourced provider in future. Entries here are always considered
+    // available (they wouldn't have come back from discovery otherwise).
+    extraModels?: ModelOption[];
 }
 
-export function ModelToggle({ value, onChange, apiKeys }: Props) {
+export function ModelToggle({ value, onChange, apiKeys, extraModels }: Props) {
     const [isOpen, setIsOpen] = useState(false);
-    const selected = MODELS.find((m) => m.id === value);
+    const allModels = extraModels ? [...MODELS, ...extraModels] : MODELS;
+    const selected = allModels.find((m) => m.id === value);
     const selectedLabel = selected?.label ?? "Model";
     const selectedAvailable = apiKeys
-        ? isModelAvailable(value, apiKeys)
+        ? isModelAvailable(value, apiKeys, extraModels)
         : true;
 
     return (
@@ -71,7 +100,7 @@ export function ModelToggle({ value, onChange, apiKeys }: Props) {
             </DropdownMenuTrigger>
             <DropdownMenuContent className="w-56 z-50" side="top" align="start">
                 {GROUP_ORDER.map((group, gi) => {
-                    const items = MODELS.filter((m) => m.group === group);
+                    const items = allModels.filter((m) => m.group === group);
                     if (items.length === 0) return null;
                     return (
                         <div key={group}>
@@ -81,7 +110,7 @@ export function ModelToggle({ value, onChange, apiKeys }: Props) {
                             </DropdownMenuLabel>
                             {items.map((m) => {
                                 const available = apiKeys
-                                    ? isModelAvailable(m.id, apiKeys)
+                                    ? isModelAvailable(m.id, apiKeys, extraModels)
                                     : true;
                                 return (
                                     <DropdownMenuItem

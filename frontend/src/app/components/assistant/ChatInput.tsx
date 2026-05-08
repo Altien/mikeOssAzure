@@ -66,11 +66,18 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         title: string;
     } | null>(null);
     const [model, setModel] = useSelectedModel();
-    const { profile } = useUserProfile();
+    const { profile, aoaiDeployments } = useUserProfile();
     const apiKeys = {
         claudeApiKey: profile?.claudeApiKey ?? null,
         geminiApiKey: profile?.geminiApiKey ?? null,
+        openaiApiKey: profile?.openaiApiKey ?? null,
+        globalApiKeys: profile?.globalApiKeys,
     };
+    const extraModels = aoaiDeployments.map((d) => ({
+        id: `aoai:${d.name}`,
+        label: d.model ? `${d.name} (${d.model})` : d.name,
+        group: "Azure OpenAI" as const,
+    }));
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const [docSelectorOpen, setDocSelectorOpen] = useState(false);
     const [workflowModalOpen, setWorkflowModalOpen] = useState(false);
@@ -116,8 +123,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     const handleSubmit = () => {
         const query = value.trim();
         if (!query || isLoading) return;
-        if (!isModelAvailable(model, apiKeys)) {
-            setApiKeyModalProvider(getModelProvider(model));
+        if (!isModelAvailable(model, apiKeys, extraModels)) {
+            setApiKeyModalProvider(getModelProvider(model, extraModels));
             return;
         }
         setValue("");
@@ -278,6 +285,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                 value={model}
                                 onChange={setModel}
                                 apiKeys={apiKeys}
+                                extraModels={extraModels}
                             />
                             <button
                                 type="button"

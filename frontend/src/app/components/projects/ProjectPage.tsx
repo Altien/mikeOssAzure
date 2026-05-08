@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
     Upload,
     Plus,
@@ -63,10 +63,6 @@ import { UploadNewVersionModal } from "@/app/components/shared/UploadNewVersionM
 import { DocViewModal } from "@/app/components/shared/DocViewModal";
 import { AddNewTRModal } from "@/app/components/tabular/AddNewTRModal";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
-
-interface Props {
-    projectId: string;
-}
 
 type Tab = "documents" | "assistant" | "reviews";
 
@@ -271,7 +267,23 @@ function DocVersionHistory({
     );
 }
 
-export function ProjectPage({ projectId }: Props) {
+export function ProjectPage() {
+    // Read id from the actual URL at runtime. Two pieces of magic at
+    // play under output: "export":
+    //   1. generateStaticParams returns [{ id: "_" }] so Next.js has
+    //      one prebuilt shell. useParams() / server-baked params would
+    //      report "_" forever, because the matched static route is
+    //      always the placeholder.
+    //   2. The backend's findShell substitutes "_" for unknown URL
+    //      segments and serves the same shell for /projects/<uuid>.
+    // usePathname() is the only client hook that reflects the live URL
+    // bar (it reads from window.location after hydration). We parse
+    // the id out of the path ourselves.
+    const pathname = usePathname() ?? "";
+    const match = pathname.match(/^\/projects\/([^/?#]+)/);
+    const rawId = match?.[1] ?? "";
+    const projectId =
+        rawId && rawId !== "_" ? decodeURIComponent(rawId) : "";
     const [project, setProject] = useState<MikeProject | null>(null);
     const [folders, setFolders] = useState<MikeFolder[]>([]);
     const [chats, setChats] = useState<MikeChat[]>([]);
@@ -470,6 +482,10 @@ export function ProjectPage({ projectId }: Props) {
     }
 
     useEffect(() => {
+        // Skip the initial pre-hydration tick where projectId hasn't
+        // resolved from usePathname() yet — fetching with "" would
+        // 400 the API and throw away the next render's real fetch.
+        if (!projectId) return;
         Promise.all([
             getProject(projectId),
             listProjectChats(projectId).catch(() => [] as MikeChat[]),

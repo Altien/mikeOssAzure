@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Plus, Loader2, Play, ChevronDown, MessageSquare, Download, Users } from "lucide-react";
 import { HeaderSearchBtn } from "../shared/HeaderSearchBtn";
 
@@ -42,12 +42,29 @@ import { TRChatPanel } from "./TRChatPanel";
 import { exportTabularReviewToExcel } from "./exportToExcel";
 import { useSidebar } from "@/app/contexts/SidebarContext";
 
-interface Props {
-    reviewId: string;
-    projectId?: string;
-}
-
-export function TRView({ reviewId, projectId }: Props) {
+export function TRView() {
+    // Read both ids from the live URL — useParams() reports the
+    // prerender's "_" placeholders under output: "export". Two URL
+    // shapes to handle: /tabular-reviews/<reviewId> (no project) and
+    // /projects/<projectId>/tabular-reviews/<reviewId> (nested under
+    // a project). See ProjectPage.tsx for the full diagnosis.
+    const pathname = usePathname() ?? "";
+    const nested = pathname.match(
+        /^\/projects\/([^/?#]+)\/tabular-reviews\/([^/?#]+)/,
+    );
+    const standalone = pathname.match(
+        /^\/tabular-reviews\/([^/?#]+)/,
+    );
+    const rawProjectId = nested?.[1] ?? "";
+    const rawReviewId = nested?.[2] ?? standalone?.[1] ?? "";
+    const projectId: string | undefined =
+        rawProjectId && rawProjectId !== "_"
+            ? decodeURIComponent(rawProjectId)
+            : undefined;
+    const reviewId =
+        rawReviewId && rawReviewId !== "_"
+            ? decodeURIComponent(rawReviewId)
+            : "";
     const { setSidebarOpen } = useSidebar();
     const [review, setReview] = useState<TabularReview | null>(null);
     const [project, setProject] = useState<MikeProject | null>(null);
@@ -86,11 +103,18 @@ export function TRView({ reviewId, projectId }: Props) {
     const actionsRef = useRef<HTMLDivElement>(null);
     const tableRef = useRef<TRTableHandle>(null);
     const router = useRouter();
-    const { profile } = useUserProfile();
+    const { profile, aoaiDeployments } = useUserProfile();
     const apiKeys = {
         claudeApiKey: profile?.claudeApiKey ?? null,
         geminiApiKey: profile?.geminiApiKey ?? null,
+        openaiApiKey: profile?.openaiApiKey ?? null,
+        globalApiKeys: profile?.globalApiKeys,
     };
+    const extraModels = aoaiDeployments.map((d) => ({
+        id: `aoai:${d.name}`,
+        label: d.model ? `${d.name} (${d.model})` : d.name,
+        group: "Azure OpenAI" as const,
+    }));
     const tabularModel = profile?.tabularModel ?? "gemini-3-flash-preview";
 
     useEffect(() => {
@@ -120,6 +144,7 @@ export function TRView({ reviewId, projectId }: Props) {
     }, [actionsOpen]);
 
     useEffect(() => {
+        if (!reviewId) return; // pre-hydration tick — usePathname not resolved
         const fetches: Promise<unknown>[] = [
             getTabularReview(reviewId).then(({ review, cells, documents }) => {
                 setReview(review);
@@ -243,8 +268,8 @@ export function TRView({ reviewId, projectId }: Props) {
         // If columns changed since last save, update the review first
         if (columns.length === 0) return;
 
-        if (!isModelAvailable(tabularModel, apiKeys)) {
-            setApiKeyModalProvider(getModelProvider(tabularModel));
+        if (!isModelAvailable(tabularModel, apiKeys, extraModels)) {
+            setApiKeyModalProvider(getModelProvider(tabularModel, extraModels));
             return;
         }
 
