@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { validateSupabaseToken } from "../lib/auth/providers/supabase.js";
+import { validateLocalToken } from "../lib/auth/providers/local.js";
 import { validateEntraToken } from "../lib/auth/providers/entra.js";
 import { tenantAccess } from "./tenantAccess.js";
 import { upsertUserProfile } from "../lib/userSettings.js";
@@ -21,6 +22,8 @@ export async function requireAuth(
   let result;
   if (provider === "supabase") {
     result = await validateSupabaseToken(token);
+  } else if (provider === "local") {
+    result = await validateLocalToken(token);
   } else if (provider === "entra") {
     result = await validateEntraToken(token);
   } else {
