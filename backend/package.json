@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "migrate": "node dist/scripts/runMigrations.js",
+    "migrate:dev": "tsx src/scripts/runMigrations.ts",
+    "migrate:legacy": "node-pg-migrate up --migrations-dir migrations --migration-file-language sql",
+    "migrate:down": "node-pg-migrate down --migrations-dir migrations --migration-file-language sql"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
@@ -17,6 +21,7 @@
     "@azure/storage-blob": "^12.26.0",
     "@google/genai": "^1.50.1",
     "@supabase/supabase-js": "^2.49.4",
+    "@types/pg": "^8.20.0",
     "cors": "^2.8.5",
     "docx": "^9.5.0",
     "dotenv": "^17.4.1",
@@ -27,7 +32,9 @@
     "libreoffice-convert": "^1.6.0",
     "mammoth": "^1.9.0",
     "multer": "^1.4.5-lts.2",
+    "node-pg-migrate": "^7.9.1",
     "pdfjs-dist": "^4.10.38",
+    "pg": "^8.20.0",
     "resend": "^4.5.1"
   },
   "devDependencies": {
