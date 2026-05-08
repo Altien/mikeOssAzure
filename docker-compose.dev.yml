@@ -1,0 +1,80 @@
+# Local development stack — Postgres + PostgREST + Azurite, no
+# reverse proxy.  Backend hits PostgREST directly on
+# http://localhost:4000; the supabase-js client's hard-coded
+# /rest/v1 prefix is stripped by a fetch wrapper in
+# backend/src/lib/supabase.ts (the same wrapper used in entra
+# mode for the deployed PostgREST).
+#
+# Services:
+#   postgres   — Postgres 16
+#   postgrest  — PostgREST v12.2.3 (matches the mirrored ACR image)
+#   azurite    — Microsoft's Azure Storage emulator (Blob on :10000)
+#
+# Quick start:
+#   export JWT_SECRET="$(openssl rand -base64 48)"
+#   docker compose -f docker-compose.dev.yml up -d
+#   cd backend && DATABASE_URL=postgres://mikeadmin:devpassword@localhost:5432/mike npm run migrate
+
+name: mike-local-stack
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: mike-postgres
+    environment:
+      POSTGRES_USER: mikeadmin
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: mike
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/local-stack/00-init-roles.sql:/docker-entrypoint-initdb.d/00-init-roles.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mikeadmin -d mike"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  postgrest:
+    image: postgrest/postgrest:v12.2.3
+    container_name: mike-postgrest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:devpassword@postgres:5432/mike
+      PGRST_DB_SCHEMA: public
+      # Anon role for unauthenticated requests.  Default service_role
+      # mirrors the Azure entra-mode Bicep: when the backend runs in
+      # AUTH_PROVIDER=entra it sends no auth header to PostgREST, so the
+      # anon role is what every request runs under.  In AUTH_PROVIDER=local
+      # mode the backend mints a service_role JWT, which PostgREST honours
+      # over the anon default — so this value is unused on that path.
+      # Override to web_anon if you specifically want to exercise
+      # SELECT-only behaviour for an anonymous browser request.
+      PGRST_DB_ANON_ROLE: ${PGRST_DB_ANON_ROLE:-service_role}
+      PGRST_SERVER_PORT: "3000"
+      PGRST_JWT_SECRET: ${JWT_SECRET:-local-dev-secret-change-me-please-32chars-min}
+    ports:
+      - "4000:3000"
+
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    container_name: mike-azurite
+    command: >
+      azurite
+      --blobHost 0.0.0.0
+      --queueHost 0.0.0.0
+      --tableHost 0.0.0.0
+      --skipApiVersionCheck
+    ports:
+      - "10000:10000"  # Blob
+      - "10001:10001"  # Queue
+      - "10002:10002"  # Table
+    volumes:
+      - azurite:/data
+
+volumes:
+  pgdata:
+  azurite:
