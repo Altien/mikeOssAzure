@@ -287,6 +287,12 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
     if (!canTitle)
         return void res.status(404).json({ detail: "Chat not found" });
 
+    // Title generation is cosmetic — the chat itself is already saved
+    // and usable.  If the LLM call fails (no provider configured, AOAI
+    // deployment unreachable, etc.) we fall back to the first ~60
+    // chars of the message instead of failing the request.  Errors are
+    // logged so a misconfiguration is still visible in the backend.
+    let title = message.slice(0, 60);
     try {
         const { fast_model, api_keys } = await getUserModelSettings(
             userId,
@@ -298,19 +304,27 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
             maxTokens: 64,
             apiKeys: api_keys,
         });
-        const title = titleText.trim() || message.slice(0, 60);
-
-        await db
-            .from("chats")
-            .update({ title })
-            .eq("id", chatId)
-            .eq("user_id", userId);
-
-        res.json({ title });
+        const generated = titleText.trim();
+        if (generated) title = generated;
     } catch (err) {
-        console.error("[generate-title]", err);
-        res.status(500).json({ detail: "Failed to generate title" });
+        console.error("[generate-title] LLM call failed, using message-prefix fallback", err);
     }
+
+    const { error: updateError } = await db
+        .from("chats")
+        .update({ title })
+        .eq("id", chatId)
+        .eq("user_id", userId);
+    if (updateError) {
+        console.error("[generate-title] failed to persist title", {
+            chatId,
+            userId,
+            error: updateError.message,
+        });
+        return void res.status(500).json({ detail: "Failed to save title" });
+    }
+
+    res.json({ title });
 });
 
 // POST /chat — streaming

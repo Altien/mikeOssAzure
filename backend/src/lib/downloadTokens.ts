@@ -10,11 +10,25 @@ import crypto from "crypto";
  */
 
 function getSecret(): string {
-    return (
-        process.env.DOWNLOAD_SIGNING_SECRET ??
-        process.env.SUPABASE_SECRET_KEY ??
-        "dev-secret"
-    );
+    const explicit = process.env.DOWNLOAD_SIGNING_SECRET;
+    if (explicit && explicit.length >= 16) return explicit;
+
+    // Legacy fallback: in supabase mode the service-role JWT was already a
+    // strong secret shared only with the backend, so reuse it. In entra/local
+    // modes SUPABASE_SECRET_KEY may be unset or a low-entropy local-dev value,
+    // so we only honour it when long enough to be cryptographically useful.
+    const legacy = process.env.SUPABASE_SECRET_KEY;
+    if (legacy && legacy.length >= 32) return legacy;
+
+    if (process.env.NODE_ENV === "production") {
+        throw new Error(
+            "DOWNLOAD_SIGNING_SECRET must be set in production (>= 16 chars). " +
+                "Without it the backend would mint download tokens with a weak " +
+                "hardcoded secret that anyone could forge.",
+        );
+    }
+
+    return "dev-secret-change-me-please-change-me";
 }
 
 function b64urlEncode(buf: Buffer): string {
