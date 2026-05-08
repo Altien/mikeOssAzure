@@ -5,6 +5,8 @@ import {
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl as awsGetSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { BlobServiceClient, ContainerClient } from "@azure/storage-blob";
+import { DefaultAzureCredential } from "@azure/identity";
 
 // ─── Provider interface ────────────────────────────────────────────────────────
 //
@@ -109,9 +111,87 @@ class R2Provider implements StorageProvider {
   }
 }
 
+// ─── Azure Blob Storage provider ──────────────────────────────────────────────
+//
+// Auth priority:
+//   1. AZURE_STORAGE_CONNECTION_STRING — connection string (local dev / Azurite)
+//   2. AZURE_STORAGE_ACCOUNT_NAME      — account name + DefaultAzureCredential
+//                                        (Managed Identity in Container Apps)
+//
+// Container name defaults to "documents"; override with AZURE_STORAGE_CONTAINER_NAME.
+//
+// signedUrl() returns null because Azure deployments use the backend download
+// proxy (GET /download/:token) rather than direct storage URLs. The /url route
+// falls back to buildDownloadUrl() when this returns null.
+
+class AzureBlobProvider implements StorageProvider {
+  private readonly container: ContainerClient;
+
+  constructor() {
+    const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
+    const accountName = process.env.AZURE_STORAGE_ACCOUNT_NAME;
+    const containerName =
+      process.env.AZURE_STORAGE_CONTAINER_NAME ?? "documents";
+
+    let serviceClient: BlobServiceClient;
+    if (connectionString) {
+      serviceClient = BlobServiceClient.fromConnectionString(connectionString);
+    } else if (accountName) {
+      serviceClient = new BlobServiceClient(
+        `https://${accountName}.blob.core.windows.net`,
+        new DefaultAzureCredential(),
+      );
+    } else {
+      throw new Error(
+        "Azure Blob Storage requires AZURE_STORAGE_CONNECTION_STRING or AZURE_STORAGE_ACCOUNT_NAME",
+      );
+    }
+
+    this.container = serviceClient.getContainerClient(containerName);
+  }
+
+  async upload(
+    key: string,
+    content: ArrayBuffer,
+    contentType: string,
+  ): Promise<void> {
+    const blob = this.container.getBlockBlobClient(key);
+    await blob.uploadData(Buffer.from(content), {
+      blobHTTPHeaders: { blobContentType: contentType },
+    });
+  }
+
+  async download(key: string): Promise<ArrayBuffer | null> {
+    try {
+      const buffer = await this.container.getBlobClient(key).downloadToBuffer();
+      return buffer.buffer as ArrayBuffer;
+    } catch {
+      return null;
+    }
+  }
+
+  async remove(key: string): Promise<void> {
+    await this.container.getBlobClient(key).deleteIfExists();
+  }
+
+  async signedUrl(
+    _key: string,
+    _expiresIn: number,
+    _downloadFilename?: string,
+  ): Promise<string | null> {
+    return null;
+  }
+}
+
 // ─── Factory ──────────────────────────────────────────────────────────────────
 
 function createProvider(): StorageProvider {
+  if (
+    process.env.AZURE_STORAGE_ACCOUNT_NAME ||
+    process.env.AZURE_STORAGE_CONNECTION_STRING
+  ) {
+    return new AzureBlobProvider();
+  }
   if (
     process.env.R2_ENDPOINT_URL &&
     process.env.R2_ACCESS_KEY_ID &&
@@ -120,7 +200,8 @@ function createProvider(): StorageProvider {
     return new R2Provider();
   }
   throw new Error(
-    "No storage provider configured. Set R2_ENDPOINT_URL + R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY (Cloudflare R2).",
+    "No storage provider configured. Set AZURE_STORAGE_ACCOUNT_NAME (Azure) " +
+      "or R2_ENDPOINT_URL + R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY (Cloudflare R2).",
   );
 }
 

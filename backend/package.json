@@ -14,6 +14,7 @@
     "@aws-sdk/s3-request-presigner": "^3.787.0",
     "@azure/identity": "^4.5.0",
     "@azure/keyvault-secrets": "^4.11.2",
+    "@azure/storage-blob": "^12.26.0",
     "@google/genai": "^1.50.1",
     "@supabase/supabase-js": "^2.49.4",
     "cors": "^2.8.5",
