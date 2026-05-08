@@ -1,7 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
-import { createClient } from "@supabase/supabase-js";
 import {
   attachActiveVersionPaths,
   attachLatestVersionNumbers,
@@ -27,18 +26,47 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
     .order("created_at", { ascending: false });
   if (ownError) return void res.status(500).json({ detail: ownError.message });
 
-  const { data: sharedProjects, error: sharedError } = userEmail
-    ? await db
+  // shared_with is a JSONB array column.  supabase-js's `.contains([…])`
+  // with a JS array sends Postgres array-literal syntax (`cs.{x,y}`) —
+  // Postgres rejects that as "invalid input syntax for type json" on a
+  // JSONB column.  Passing a JSON-formatted string makes supabase-js
+  // forward `cs.<string>` verbatim, which PostgREST interprets as JSON
+  // containment (`@>`).  Same fix is in tabular.ts /:reviewId chats.
+  //
+  // Wrapped in try/catch + console.error rather than a bare `if (error)
+  // return 500`: the previous shape of this code surfaced raw Postgres
+  // error messages to the client and left no fingerprint in the backend
+  // logs, so failures like the one above were invisible until the user
+  // happened to look at a network response body.  Now any failure mode
+  // (PG syntax, network, transient) gets logged with context, and the
+  // route degrades to "no shared projects" rather than failing the
+  // whole request — the user's own projects still come through.
+  let sharedProjects: Array<Record<string, unknown>> = [];
+  if (userEmail) {
+    try {
+      const { data, error } = await db
         .from("projects")
         .select("*")
-        .contains("shared_with", [userEmail])
+        .contains("shared_with", JSON.stringify([userEmail]))
         .neq("user_id", userId)
-        .order("created_at", { ascending: false })
-    : { data: [], error: null };
-  if (sharedError)
-    return void res.status(500).json({ detail: sharedError.message });
+        .order("created_at", { ascending: false });
+      if (error) {
+        console.error("[projects] shared_with query failed", {
+          userId,
+          userEmail,
+          message: error.message,
+          code: error.code,
+          details: error.details,
+        });
+      } else {
+        sharedProjects = (data ?? []) as Array<Record<string, unknown>>;
+      }
+    } catch (err) {
+      console.error("[projects] shared_with query threw", { userId, userEmail, err });
+    }
+  }
 
-  const projects = [...(ownProjects ?? []), ...(sharedProjects ?? [])].sort(
+  const projects = [...(ownProjects ?? []), ...sharedProjects].sort(
     (a, b) =>
       new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
   );
@@ -74,6 +102,7 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
 // POST /projects
 projectsRouter.post("/", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string;
   const { name, cm_number, shared_with } = req.body as {
     name: string;
     cm_number?: string;
@@ -83,17 +112,35 @@ projectsRouter.post("/", requireAuth, async (req, res) => {
     return void res.status(400).json({ detail: "name is required" });
 
   const db = createServerSupabase();
+  const insertPayload = {
+    user_id: userId,
+    name: name.trim(),
+    cm_number: cm_number ?? null,
+    shared_with: shared_with ?? [],
+  };
+  console.log("[projects.POST] inserting", {
+    auth: { userId, userEmail },
+    insertPayload,
+  });
   const { data, error } = await db
     .from("projects")
-    .insert({
-      user_id: userId,
-      name: name.trim(),
-      cm_number: cm_number ?? null,
-      shared_with: shared_with ?? [],
-    })
+    .insert(insertPayload)
     .select("*")
     .single();
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) {
+    console.error("[projects.POST] insert failed", {
+      userId,
+      message: error.message,
+      code: error.code,
+      details: error.details,
+    });
+    return void res.status(500).json({ detail: error.message });
+  }
+  console.log("[projects.POST] inserted", {
+    id: data?.id,
+    user_id: data?.user_id,
+    shared_with: data?.shared_with,
+  });
   res.status(201).json({ ...data, documents: [] });
 });
 
@@ -109,16 +156,41 @@ projectsRouter.get("/:projectId", requireAuth, async (req, res) => {
     .select("*")
     .eq("id", projectId)
     .single();
-  if (error || !project)
+  if (error || !project) {
+    console.warn("[projects.GET/:id] not-found-by-id", {
+      auth: { userId, userEmail },
+      projectId,
+      hasProject: !!project,
+      error: error
+        ? { message: error.message, code: error.code, details: error.details }
+        : null,
+    });
     return void res.status(404).json({ detail: "Project not found" });
+  }
 
-  const canAccess =
-    project.user_id === userId ||
-    (userEmail &&
-      Array.isArray(project.shared_with) &&
-      project.shared_with.includes(userEmail));
-  if (!canAccess)
+  const ownerMatch = project.user_id === userId;
+  const sharedWithList = Array.isArray(project.shared_with)
+    ? (project.shared_with as unknown[]).filter(
+        (e): e is string => typeof e === "string",
+      )
+    : [];
+  const sharedMatch =
+    !!userEmail && sharedWithList.includes(userEmail);
+  const canAccess = ownerMatch || sharedMatch;
+  if (!canAccess) {
+    console.warn("[projects.GET/:id] access-denied", {
+      auth: { userId, userEmail },
+      projectId,
+      project: {
+        id: project.id,
+        user_id: project.user_id,
+        shared_with: sharedWithList,
+      },
+      ownerMatch,
+      sharedMatch,
+    });
     return void res.status(404).json({ detail: "Project not found" });
+  }
 
   const [{ data: docs }, { data: folderData }] = await Promise.all([
     db.from("documents").select("*").eq("project_id", projectId).order("created_at", { ascending: true }),
@@ -166,62 +238,51 @@ projectsRouter.get("/:projectId/people", requireAuth, async (req, res) => {
   if (!isOwner && !isShared)
     return void res.status(404).json({ detail: "Project not found" });
 
-  // Pull every auth user (matching the lookup endpoint's pattern). For
-  // larger deployments this should page or be replaced with a bulk-by-id
-  // RPC, but it keeps things simple while user counts are modest.
-  const { data: usersData } = await db.auth.admin.listUsers({ perPage: 1000 });
-  const allUsers = usersData?.users ?? [];
-  const userByEmail = new Map<string, { id: string; email: string }>();
-  const userById = new Map<string, { id: string; email: string }>();
-  for (const u of allUsers) {
-    if (!u.email) continue;
-    const lower = u.email.toLowerCase();
-    userByEmail.set(lower, { id: u.id, email: u.email });
-    userById.set(u.id, { id: u.id, email: u.email });
+  // Resolve user_id ↔ email ↔ display_name from user_profiles.  The
+  // previous implementation walked auth.admin.listUsers, which only exists
+  // in supabase mode and 500'd in entra/local mode.  user_profiles.email
+  // is populated by the auth middleware on every authenticated request.
+  // Members who have not yet logged in on this deployment will be missing
+  // from user_profiles — they still appear in the response by email, just
+  // without a display_name (matching the prior fallback behaviour).
+  const lookupEmails = [
+    ...new Set(sharedWith.filter((e) => e.length > 0)),
+  ];
+  const ownerProfilePromise = db
+    .from("user_profiles")
+    .select("user_id, email, display_name, organisation")
+    .eq("user_id", project.user_id as string)
+    .maybeSingle();
+  const memberProfilesPromise =
+    lookupEmails.length > 0
+      ? db
+          .from("user_profiles")
+          .select("user_id, email, display_name")
+          .in("email", lookupEmails)
+      : Promise.resolve({ data: [] as { user_id: string; email: string | null; display_name: string | null }[] });
+
+  const [{ data: ownerProfile }, { data: memberProfiles }] = await Promise.all([
+    ownerProfilePromise,
+    memberProfilesPromise,
+  ]);
+
+  const memberByEmail = new Map<string, { display_name: string | null }>();
+  for (const p of memberProfiles ?? []) {
+    if (!p.email) continue;
+    memberByEmail.set(p.email.toLowerCase(), {
+      display_name: (p.display_name as string | null) ?? null,
+    });
   }
 
-  const memberUserIds: string[] = [];
-  for (const email of sharedWith) {
-    const u = userByEmail.get(email);
-    if (u) memberUserIds.push(u.id);
-  }
-
-  const profileIds = [
-    project.user_id as string,
-    ...memberUserIds,
-  ].filter((x, i, arr) => arr.indexOf(x) === i);
-
-  const profileByUserId = new Map<
-    string,
-    { display_name: string | null; organisation: string | null }
-  >();
-  if (profileIds.length > 0) {
-    const { data: profiles } = await db
-      .from("user_profiles")
-      .select("user_id, display_name, organisation")
-      .in("user_id", profileIds);
-    for (const p of profiles ?? []) {
-      profileByUserId.set(p.user_id as string, {
-        display_name: (p.display_name as string | null) ?? null,
-        organisation: (p.organisation as string | null) ?? null,
-      });
-    }
-  }
-
-  const ownerInfo = userById.get(project.user_id as string);
   const owner = {
     user_id: project.user_id,
-    email: ownerInfo?.email ?? null,
-    display_name:
-      profileByUserId.get(project.user_id as string)?.display_name ?? null,
+    email: (ownerProfile?.email as string | null) ?? null,
+    display_name: (ownerProfile?.display_name as string | null) ?? null,
   };
-  const members = sharedWith.map((email) => {
-    const u = userByEmail.get(email);
-    const display_name = u
-      ? profileByUserId.get(u.id)?.display_name ?? null
-      : null;
-    return { email, display_name };
-  });
+  const members = sharedWith.map((email) => ({
+    email,
+    display_name: memberByEmail.get(email)?.display_name ?? null,
+  }));
 
   res.json({ owner, members });
 });

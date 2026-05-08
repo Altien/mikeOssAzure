@@ -363,57 +363,50 @@ tabularRouter.get("/:reviewId/people", requireAuth, async (req, res) => {
             : []
     ).map((e) => (e ?? "").toLowerCase());
 
-    // Same pattern as /projects/:id/people: walk auth.users to map emails
-    // to user_ids, then pull display_names from user_profiles by user_id.
-    const { data: usersData } = await db.auth.admin.listUsers({
-        perPage: 1000,
-    });
-    const allUsers = usersData?.users ?? [];
-    const userByEmail = new Map<string, { id: string; email: string }>();
-    const userById = new Map<string, { id: string; email: string }>();
-    for (const u of allUsers) {
-        if (!u.email) continue;
-        const lower = u.email.toLowerCase();
-        userByEmail.set(lower, { id: u.id, email: u.email });
-        userById.set(u.id, { id: u.id, email: u.email });
+    // Same pattern as /projects/:id/people: resolve email ↔ user_id ↔
+    // display_name through user_profiles.  Replaces the old
+    // auth.admin.listUsers walk which only worked in supabase mode and
+    // crashed in entra/local mode.
+    const lookupEmails = [
+        ...new Set(sharedWith.filter((e) => e.length > 0)),
+    ];
+    const ownerProfilePromise = db
+        .from("user_profiles")
+        .select("user_id, email, display_name")
+        .eq("user_id", review.user_id as string)
+        .maybeSingle();
+    const memberProfilesPromise =
+        lookupEmails.length > 0
+            ? db
+                  .from("user_profiles")
+                  .select("user_id, email, display_name")
+                  .in("email", lookupEmails)
+            : Promise.resolve({ data: [] as { user_id: string; email: string | null; display_name: string | null }[] });
+
+    const [{ data: ownerProfile }, { data: memberProfiles }] = await Promise.all([
+        ownerProfilePromise,
+        memberProfilesPromise,
+    ]);
+
+    const memberByEmail = new Map<string, string | null>();
+    for (const p of memberProfiles ?? []) {
+        if (!p.email) continue;
+        memberByEmail.set(
+            p.email.toLowerCase(),
+            (p.display_name as string | null) ?? null,
+        );
     }
 
-    const memberUserIds: string[] = [];
-    for (const email of sharedWith) {
-        const u = userByEmail.get(email);
-        if (u) memberUserIds.push(u.id);
-    }
-
-    const profileIds = [review.user_id as string, ...memberUserIds].filter(
-        (x, i, arr) => arr.indexOf(x) === i,
-    );
-
-    const profileByUserId = new Map<string, string | null>();
-    if (profileIds.length > 0) {
-        const { data: profiles } = await db
-            .from("user_profiles")
-            .select("user_id, display_name")
-            .in("user_id", profileIds);
-        for (const p of profiles ?? []) {
-            profileByUserId.set(
-                p.user_id as string,
-                (p.display_name as string | null) ?? null,
-            );
-        }
-    }
-
-    const ownerInfo = userById.get(review.user_id as string);
     res.json({
         owner: {
             user_id: review.user_id,
-            email: ownerInfo?.email ?? null,
-            display_name: profileByUserId.get(review.user_id as string) ?? null,
+            email: (ownerProfile?.email as string | null) ?? null,
+            display_name: (ownerProfile?.display_name as string | null) ?? null,
         },
-        members: sharedWith.map((email) => {
-            const u = userByEmail.get(email);
-            const display_name = u ? (profileByUserId.get(u.id) ?? null) : null;
-            return { email, display_name };
-        }),
+        members: sharedWith.map((email) => ({
+            email,
+            display_name: memberByEmail.get(email) ?? null,
+        })),
     });
 });
 

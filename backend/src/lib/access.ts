@@ -129,18 +129,59 @@ export async function listAccessibleProjectIds(
     userEmail: string | null | undefined,
     db: Db,
 ): Promise<string[]> {
-    const [{ data: own }, { data: shared }] = await Promise.all([
+    // shared_with is JSONB — pass a JSON-stringified array so supabase-js
+    // emits `cs.<jsonarray>` instead of `cs.{pgarray}`.  See projects.ts
+    // for the long-form rationale.
+    //
+    // Errors are logged + swallowed: a failed shared-projects query
+    // shouldn't cause the calling route to claim the user has no
+    // accessible projects at all (their owned ones are still legit).
+    // The owned-projects query is essential, so its error is
+    // propagated up.
+    const [ownResult, sharedResult] = await Promise.all([
         db.from("projects").select("id").eq("user_id", userId),
         userEmail
-            ? db
-                  .from("projects")
-                  .select("id")
-                  .contains("shared_with", [userEmail])
-                  .neq("user_id", userId)
+            ? (async () => {
+                  try {
+                      const result = await db
+                          .from("projects")
+                          .select("id")
+                          .contains("shared_with", JSON.stringify([userEmail]))
+                          .neq("user_id", userId);
+                      if (result.error) {
+                          console.error("[access] shared_with query failed", {
+                              userId,
+                              userEmail,
+                              message: result.error.message,
+                              code: result.error.code,
+                              details: result.error.details,
+                          });
+                          return { data: [] as { id: string }[] };
+                      }
+                      return result;
+                  } catch (err) {
+                      console.error("[access] shared_with query threw", {
+                          userId,
+                          userEmail,
+                          err,
+                      });
+                      return { data: [] as { id: string }[] };
+                  }
+              })()
             : Promise.resolve({ data: [] as { id: string }[] }),
     ]);
+
+    if (ownResult.error) {
+        console.error("[access] owned projects query failed", {
+            userId,
+            message: ownResult.error.message,
+            code: ownResult.error.code,
+        });
+        throw new Error(`listAccessibleProjectIds: ${ownResult.error.message}`);
+    }
+
     const ids = new Set<string>();
-    for (const p of (own ?? []) as { id: string }[]) ids.add(p.id);
-    for (const p of (shared ?? []) as { id: string }[]) ids.add(p.id);
+    for (const p of (ownResult.data ?? []) as { id: string }[]) ids.add(p.id);
+    for (const p of (sharedResult.data ?? []) as { id: string }[]) ids.add(p.id);
     return [...ids];
 }
