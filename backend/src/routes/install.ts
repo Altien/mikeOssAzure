@@ -616,11 +616,10 @@ ${inputs}
   </div>
 </form>
 <div class="restart-warn">
-  Saving writes the value to <code>kv-mike-dev</code>.  If this secret
+  Saving writes the value to your configured Key Vault.  If this secret
   is also wired as a Container App secret-ref env var, the running
   backend continues to serve the previously-cached value until the
-  next revision restart.  See issue 023's "Secret-ref restart caveat"
-  for the transitional plan.
+  next revision restart.
 </div>
 ${alsoAsScript}
 `,
