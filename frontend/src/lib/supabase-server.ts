@@ -3,10 +3,21 @@ import { createClient } from "@supabase/supabase-js";
 /**
  * Server-side Supabase client using the service role key.
  * Bypasses RLS — only use in API routes after verifying the user.
+ *
+ * Lazy: constructs on each call so a non-supabase deployment that
+ * never invokes this function does not need NEXT_PUBLIC_SUPABASE_URL
+ * or SUPABASE_SECRET_KEY set at build time.
  */
 export function createServerSupabase() {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
     const key = process.env.SUPABASE_SECRET_KEY || "";
+    if (!url || !key) {
+        throw new Error(
+            "createServerSupabase requires NEXT_PUBLIC_SUPABASE_URL and " +
+                "SUPABASE_SECRET_KEY — supabase mode is required to use " +
+                "this client.",
+        );
+    }
     return createClient(url, key, { auth: { persistSession: false } });
 }
 

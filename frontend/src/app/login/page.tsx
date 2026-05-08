@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { getSupabaseClient } from "@/lib/supabase";
+import { useConfig } from "@/contexts/ConfigContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Link from "next/link";
@@ -10,7 +11,10 @@ import { SiteLogo } from "@/components/site-logo";
 import { useAuth } from "@/contexts/AuthContext";
 export default function LoginPage() {
     const router = useRouter();
-    const { isAuthenticated, authLoading } = useAuth();
+    const config = useConfig();
+    const isEntraAuth = config.authProvider === "entra";
+    const isLocalAuth = config.authProvider === "local";
+    const { isAuthenticated, authLoading, signInLocal } = useAuth();
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [loading, setLoading] = useState(false);
@@ -22,12 +26,41 @@ export default function LoginPage() {
         }
     }, [authLoading, isAuthenticated, router]);
 
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const oauthError = params.get("error");
+        if (oauthError) {
+            setError(oauthError);
+            return;
+        }
+        // Session-expired arrives via `?reason=session-expired` from the
+        // 401 interceptor in mikeApi.ts / lib/auth-token.ts.  Show a
+        // friendly nudge rather than the raw query value.
+        const reason = params.get("reason");
+        if (reason === "session-expired") {
+            setError("Your session has expired. Please sign in again.");
+        }
+    }, []);
+
+    const handleMicrosoftLogin = async () => {
+        const apiBase = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") + "/api";
+        const returnUrl = encodeURIComponent(window.location.origin + "/assistant");
+        window.location.href = `${apiBase}/auth/select-provider?returnUrl=${returnUrl}&selectAccount=true`;
+    };
+
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
         setError(null);
 
         try {
+            if (isLocalAuth) {
+                await signInLocal(email);
+                router.push("/assistant");
+                return;
+            }
+
+            const supabase = getSupabaseClient();
             const { data, error } = await supabase.auth.signInWithPassword({
                 email,
                 password,
@@ -67,6 +100,22 @@ export default function LoginPage() {
                             </Link>
                         </div>
                     </div>
+                    {isEntraAuth ? (
+                        <div className="space-y-4">
+                            {error && (
+                                <div className="text-red-600 text-sm bg-red-50 p-3 rounded">
+                                    {error}
+                                </div>
+                            )}
+                            <Button
+                                type="button"
+                                onClick={handleMicrosoftLogin}
+                                className="w-full mt-5 bg-black hover:bg-gray-900 text-white"
+                            >
+                                Sign in with Microsoft
+                            </Button>
+                        </div>
+                    ) : (
                     <form onSubmit={handleLogin} className="space-y-4">
                         <div>
                             <label
@@ -99,7 +148,8 @@ export default function LoginPage() {
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
                                 placeholder="Enter your password"
-                                required
+                                required={!isLocalAuth}
+                                disabled={isLocalAuth}
                                 className="w-full"
                             />
                         </div>
@@ -115,9 +165,10 @@ export default function LoginPage() {
                             disabled={loading}
                             className="w-full mt-5 bg-black hover:bg-gray-900 text-white"
                         >
-                            {loading ? "Logging in..." : "Log in"}
+                            {loading ? "Logging in..." : isLocalAuth ? "Continue locally" : "Log in"}
                         </Button>
                     </form>
+                    )}
                 </div>
             </div>
         </div>

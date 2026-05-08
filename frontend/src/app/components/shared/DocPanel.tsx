@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, Loader2 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { getBrowserAccessToken, bounceIfUnauthorized } from "@/lib/auth-token";
 import { applyOptimisticResolution } from "../assistant/EditCard";
 import { DocView } from "./DocView";
 import { DocxView } from "./DocxView";
@@ -355,13 +355,10 @@ function EditResolveButtons({
                 );
             }
             try {
-                const {
-                    data: { session },
-                } = await supabase.auth.getSession();
-                const token = session?.access_token;
+                const token = await getBrowserAccessToken();
                 const apiBase =
-                    process.env.NEXT_PUBLIC_API_BASE_URL ??
-                    "http://localhost:3001";
+                    (process.env.NEXT_PUBLIC_API_BASE_URL ??
+                        "http://localhost:3001") + "/api";
                 const resp = await fetch(
                     `${apiBase}/single-documents/${edit.document_id}/edits/${edit.edit_id}/${verb}`,
                     {
@@ -371,6 +368,7 @@ function EditResolveButtons({
                             : undefined,
                     },
                 );
+                bounceIfUnauthorized(resp);
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const data = (await resp.json()) as {
                     ok: boolean;
@@ -457,12 +455,9 @@ function DownloadButton({
         if (busy || isReloading) return;
         setBusy(true);
         try {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-            const token = session?.access_token;
+            const token = await getBrowserAccessToken();
             const apiBase =
-                process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+                (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") + "/api";
             const qs = versionId
                 ? `?version_id=${encodeURIComponent(versionId)}`
                 : "";
@@ -472,6 +467,7 @@ function DownloadButton({
                     headers: token ? { Authorization: `Bearer ${token}` } : {},
                 },
             );
+            bounceIfUnauthorized(resp);
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const blob = await resp.blob();
             const blobUrl = URL.createObjectURL(blob);

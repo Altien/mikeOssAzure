@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { getBrowserAccessToken, bounceIfUnauthorized } from "@/lib/auth-token";
 import type { MikeEditAnnotation } from "../shared/types";
 
 function normalizeText(s: string) {
@@ -240,12 +240,9 @@ export function EditCard({
             console.error("[EditCard] optimistic update threw", e);
         }
         try {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-            const token = session?.access_token;
+            const token = await getBrowserAccessToken();
             const apiBase =
-                process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+                (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") + "/api";
             const resp = await fetch(
                 `${apiBase}/single-documents/${annotation.document_id}/edits/${annotation.edit_id}/${verb}`,
                 {
@@ -255,6 +252,7 @@ export function EditCard({
                         : undefined,
                 },
             );
+            bounceIfUnauthorized(resp);
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = (await resp.json()) as {
                 ok: boolean;

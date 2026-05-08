@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { getBrowserAccessToken, bounceIfUnauthorized } from "@/lib/auth-token";
 
 /**
  * /display returns either PDF bytes (when the active version has a PDF
@@ -37,15 +37,12 @@ export function useFetchSingleDoc(
 
         (async () => {
             try {
-                const {
-                    data: { session },
-                } = await supabase.auth.getSession();
-                const token = session?.access_token;
+                const token = await getBrowserAccessToken();
                 if (cancelled) return;
 
                 const apiBase =
-                    process.env.NEXT_PUBLIC_API_BASE_URL ??
-                    "http://localhost:3001";
+                    (process.env.NEXT_PUBLIC_API_BASE_URL ??
+                        "http://localhost:3001") + "/api";
                 const qs = versionId
                     ? `?version_id=${encodeURIComponent(versionId)}`
                     : "";
@@ -57,6 +54,7 @@ export function useFetchSingleDoc(
                             : {},
                     },
                 );
+                bounceIfUnauthorized(response);
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 if (cancelled) return;
 

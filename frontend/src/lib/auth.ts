@@ -25,11 +25,14 @@ export async function getUserFromRequest(request: NextRequest): Promise<{
     }
 
     // Validate with Supabase
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY;
+    if (!supabaseUrl || !supabaseKey) {
+      console.warn('[Auth] Supabase env vars not set — non-supabase deployment.');
+      return null;
+    }
     const { createClient } = await import('@supabase/supabase-js');
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY!
-    );
+    const supabase = createClient(supabaseUrl, supabaseKey);
 
     const { data: { user }, error } = await supabase.auth.getUser(token);
 

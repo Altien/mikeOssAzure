@@ -1,9 +1,9 @@
 /**
  * Mike API client — all requests to the Node.js backend.
- * Attaches the Supabase auth token for user authentication.
+ * Attaches the active browser auth token for user authentication.
  */
 
-import { supabase } from "@/lib/supabase";
+import { getBrowserAccessToken, bounceIfUnauthorized } from "@/lib/auth-token";
 import type {
     AssistantEvent,
     MikeChat,
@@ -35,15 +35,16 @@ interface ServerChatDetailOut {
 }
 
 const API_BASE =
-    process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+    (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") + "/api";
 
 async function getAuthHeader(): Promise<Record<string, string>> {
-    const {
-        data: { session },
-    } = await supabase.auth.getSession();
-    if (!session?.access_token) return {};
-    return { Authorization: `Bearer ${session.access_token}` };
+    const token = await getBrowserAccessToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
 }
+
+// 401 handling is centralised in @/lib/auth-token's bounceIfUnauthorized.
+// Use that helper at every direct-fetch call site so a stale or expired
+// token can't leave the user trapped in a half-authenticated state.
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
     const authHeaders = await getAuthHeader();
@@ -57,6 +58,8 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
             ...(initHeaders as Record<string, string> | undefined),
         },
     });
+
+    bounceIfUnauthorized(response);
 
     if (!response.ok) {
         const detail = await response.text();
@@ -256,6 +259,7 @@ export async function uploadDocumentVersion(
             body: form,
         },
     );
+    bounceIfUnauthorized(response);
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<MikeDocumentVersion>;
 }
@@ -290,6 +294,7 @@ export async function uploadProjectDocument(
             body: form,
         },
     );
+    bounceIfUnauthorized(response);
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<MikeDocument>;
 }
@@ -305,6 +310,7 @@ export async function uploadStandaloneDocument(
         headers: { ...authHeaders },
         body: form,
     });
+    bounceIfUnauthorized(response);
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<MikeDocument>;
 }
@@ -340,6 +346,7 @@ export async function downloadDocumentsZip(
         },
         body: JSON.stringify({ document_ids: documentIds }),
     });
+    bounceIfUnauthorized(response);
     if (!response.ok) {
         const detail = await response.text();
         throw new Error(detail || `API error: ${response.status}`);
@@ -434,7 +441,7 @@ export async function streamChat(payload: {
 }): Promise<Response> {
     const { signal, ...body } = payload;
     const authHeaders = await getAuthHeader();
-    return fetch(`${API_BASE}/chat`, {
+    const response = await fetch(`${API_BASE}/chat`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -444,6 +451,8 @@ export async function streamChat(payload: {
         body: JSON.stringify(body),
         signal,
     });
+    bounceIfUnauthorized(response);
+    return response;
 }
 
 type StreamChatMessage = {
@@ -464,7 +473,7 @@ export async function streamProjectChat(payload: {
 }): Promise<Response> {
     const { projectId, signal, ...body } = payload;
     const authHeaders = await getAuthHeader();
-    return fetch(`${API_BASE}/projects/${projectId}/chat`, {
+    const response = await fetch(`${API_BASE}/projects/${projectId}/chat`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -474,6 +483,8 @@ export async function streamProjectChat(payload: {
         body: JSON.stringify(body),
         signal,
     });
+    bounceIfUnauthorized(response);
+    return response;
 }
 
 // ---------------------------------------------------------------------------
@@ -580,10 +591,12 @@ export async function streamTabularGeneration(
     reviewId: string,
 ): Promise<Response> {
     const authHeaders = await getAuthHeader();
-    return fetch(`${API_BASE}/tabular-review/${reviewId}/generate`, {
+    const response = await fetch(`${API_BASE}/tabular-review/${reviewId}/generate`, {
         method: "POST",
         headers: { ...authHeaders },
     });
+    bounceIfUnauthorized(response);
+    return response;
 }
 
 export async function streamTabularChat(
@@ -594,7 +607,7 @@ export async function streamTabularChat(
     context?: { reviewTitle?: string | null; projectName?: string | null },
 ): Promise<Response> {
     const authHeaders = await getAuthHeader();
-    return fetch(`${API_BASE}/tabular-review/${reviewId}/chat`, {
+    const response = await fetch(`${API_BASE}/tabular-review/${reviewId}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders },
         body: JSON.stringify({
@@ -605,6 +618,8 @@ export async function streamTabularChat(
         }),
         signal: signal ?? undefined,
     });
+    bounceIfUnauthorized(response);
+    return response;
 }
 
 export interface TRCitationAnnotation {
