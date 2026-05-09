@@ -5,11 +5,14 @@
 //                     key the frontend uses, then fetches /diag/data and
 //                     renders the result. Returns a "please sign in" page
 //                     when no token is stored.
-//   GET /diag/data  — JSON. Uses requireValidJwt (NOT requireAuth) so it
-//                     bypasses the tenantAccess gate; the whole point of
-//                     /diag is to help an operator who is signed in but
-//                     blocked by GROUP_NOT_WHITELISTED (or by some other
-//                     misconfiguration) to figure out what is wrong.
+//   GET /diag/data  — JSON. NO auth gate at all. If an Authorization
+//                     header is present we try to validate the token and
+//                     fold the principal + groups into the response;
+//                     otherwise we return env-var status only. The route
+//                     intentionally has no requireAuth / tenantAccess
+//                     middleware because /diag is most useful BEFORE
+//                     Entra is wired up, when the operator has nothing
+//                     to sign in with yet.
 //
 // The page reflects back:
 //  1. Env-var status — every env var the deploy needs, grouped by category,
@@ -27,7 +30,9 @@
 
 import { Router, Request, Response } from "express";
 import type { AuthPrincipal } from "../lib/auth/types.js";
-import { requireValidJwt } from "../middleware/auth.js";
+import { validateEntraToken } from "../lib/auth/providers/entra.js";
+import { validateLocalToken } from "../lib/auth/providers/local.js";
+import { validateSupabaseToken } from "../lib/auth/providers/supabase.js";
 
 export const diagRouter = Router();
 
@@ -75,7 +80,6 @@ interface EnvVarStatus extends EnvVarDef {
 
 interface DiagData {
   provider: string;
-  principal: AuthPrincipal;
   envVars: EnvVarStatus[];
   // Roll-up for the "at least one LLM key" group: true if any of
   // ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, AZURE_OPENAI_API_KEY
@@ -83,21 +87,28 @@ interface DiagData {
   anyLlmKeySet: boolean;
   envAdminOids: string[];
   envMemberOids: string[];
+
+  // Token-related fields. signedIn=false means the request had no valid
+  // JWT and only the env-var checklist + env-var-derived rows are
+  // populated. The page MUST still render usefully in this state since
+  // /diag is most useful BEFORE Entra is wired up, when the operator
+  // has nothing to sign in with yet.
+  signedIn: boolean;
+  authError?: string;
+  principal?: AuthPrincipal;
   // For each OID in ENTRA_ADMIN_GROUP_IDS / ENTRA_MEMBER_GROUP_IDS, whether
-  // the user's JWT groups claim contains it.
-  adminMatches: Array<{ oid: string; matched: boolean }>;
-  memberMatches: Array<{ oid: string; matched: boolean }>;
-  // Same direction the other way: for each OID in the JWT, whether it is
-  // listed in either env var. Useful when the operator wants to know which
-  // of the user's groups is currently mapped.
-  jwtGroupRoles: Array<{ oid: string; role: "admin" | "member" | null }>;
-  // Group claim overage: when the user is in too many groups, Entra
-  // truncates the groups claim to a Graph pointer. Surfaced here so the
-  // operator knows the diag page can not see the full list.
-  groupOverage: boolean;
+  // the user's JWT groups claim contains it. Populated only when signedIn.
+  adminMatches?: Array<{ oid: string; matched: boolean }>;
+  memberMatches?: Array<{ oid: string; matched: boolean }>;
+  // For each OID in the JWT, whether it is listed in either env var.
+  // Populated only when signedIn.
+  jwtGroupRoles?: Array<{ oid: string; role: "admin" | "member" | null }>;
+  // Group claim overage. Populated only when signedIn.
+  groupOverage?: boolean;
   // Useful for the suggested-fix prose: did the existing role resolution
-  // produce any roles, or is the JWT failing to map.
-  resolvedRoles: string[];
+  // produce any roles, or is the JWT failing to map. Populated only when
+  // signedIn.
+  resolvedRoles?: string[];
 }
 
 // Comprehensive list of env vars the deploy reads, in render order.
@@ -184,7 +195,10 @@ function buildEnvVarChecklist(provider: string): EnvVarStatus[] {
   return ENV_VAR_DEFS.map((def) => evaluateEnvVar(def, provider));
 }
 
-function buildDiagData(principal: AuthPrincipal): DiagData {
+function buildDiagData(
+  principal: AuthPrincipal | undefined,
+  authError: string | undefined,
+): DiagData {
   const provider = process.env.AUTH_PROVIDER ?? "supabase";
   const envVars = buildEnvVarChecklist(provider);
   const anyLlmKeySet = envVars
@@ -192,6 +206,19 @@ function buildDiagData(principal: AuthPrincipal): DiagData {
     .some((e) => e.isSet);
   const envAdminOids = parseCsv(process.env.ENTRA_ADMIN_GROUP_IDS);
   const envMemberOids = parseCsv(process.env.ENTRA_MEMBER_GROUP_IDS);
+
+  const base: DiagData = {
+    provider,
+    envVars,
+    anyLlmKeySet,
+    envAdminOids,
+    envMemberOids,
+    signedIn: false,
+    authError,
+  };
+
+  if (!principal) return base;
+
   const jwtGroupSet = new Set(principal.groups);
 
   const adminMatches = envAdminOids.map((oid) => ({
@@ -225,12 +252,9 @@ function buildDiagData(principal: AuthPrincipal): DiagData {
     provider === "entra" && principal.groups.length === 0;
 
   return {
-    provider,
+    ...base,
+    signedIn: true,
     principal,
-    envVars,
-    anyLlmKeySet,
-    envAdminOids,
-    envMemberOids,
     adminMatches,
     memberMatches,
     jwtGroupRoles,
@@ -239,13 +263,32 @@ function buildDiagData(principal: AuthPrincipal): DiagData {
   };
 }
 
-diagRouter.get("/data", requireValidJwt, (_req: Request, res: Response) => {
-  const principal = res.locals.principal as AuthPrincipal | undefined;
-  if (!principal) {
-    res.status(500).json({ detail: "Principal missing after auth" });
-    return;
-  }
-  res.json(buildDiagData(principal));
+// Try to validate the bearer token if present. Returns the principal on
+// success, an error message on failure, or { principal: undefined,
+// error: undefined } when no Authorization header was sent. Does NOT
+// write any HTTP response; the caller decides how to surface the result.
+async function tryLoadPrincipal(
+  req: Request,
+): Promise<{ principal?: AuthPrincipal; error?: string }> {
+  const auth = req.headers.authorization ?? "";
+  if (!auth.startsWith("Bearer ")) return {};
+  const token = auth.slice(7).trim();
+  if (!token) return {};
+
+  const provider = process.env.AUTH_PROVIDER ?? "supabase";
+  let result;
+  if (provider === "supabase") result = await validateSupabaseToken(token);
+  else if (provider === "local") result = await validateLocalToken(token);
+  else if (provider === "entra") result = await validateEntraToken(token);
+  else return { error: `Provider '${provider}' not supported` };
+
+  if (!result.ok) return { error: result.detail };
+  return { principal: result.principal };
+}
+
+diagRouter.get("/data", async (req: Request, res: Response) => {
+  const { principal, error } = await tryLoadPrincipal(req);
+  res.json(buildDiagData(principal, error));
 });
 
 function renderShell(): string {
@@ -341,10 +384,21 @@ function renderShell(): string {
     );
   }
 
-  function noTokenView() {
+  function notSignedInBanner() {
     return (
-      '<div class="err">No access token found in browser storage. Sign in to Mike first, then revisit this page.</div>' +
-      '<a class="btn" href="/">Go to sign-in</a>'
+      '<div class="card amber" style="padding:0.7rem 0.95rem; margin-bottom:1rem; font-size:0.88rem;">' +
+      '<strong>You are not signed in.</strong> The env-var checklist below shows the deploy configuration regardless. ' +
+      'To also see your JWT principal, group memberships, and role mapping, sign in (locally if AUTH_PROVIDER=local, ' +
+      'or via Microsoft once Entra is wired up) and reload this page.' +
+      '</div>'
+    );
+  }
+
+  function authErrorBanner(error) {
+    return (
+      '<div class="card red" style="padding:0.7rem 0.95rem; margin-bottom:1rem; font-size:0.88rem;">' +
+      '<strong>Token rejected:</strong> ' + escapeHtml(error) + '. Sign in again, or check that the AUTH_PROVIDER value matches the kind of token you are presenting.' +
+      '</div>'
     );
   }
 
@@ -548,25 +602,29 @@ function renderShell(): string {
 
   function render(d) {
     const root = document.getElementById("root");
-    root.innerHTML =
-      '<div class="lead">This page reads your JWT and the backend\\'s env vars and reflects the values back. Use it to confirm the deploy is wired up correctly, without having to dig through the Container App env-var table. Secrets are masked; non-secrets are shown in full so you can spot a typo.</div>' +
-      envVarChecklistCard(d) +
-      jwtGroupsCard(d) +
-      envVarsCard(d) +
-      suggestedFix(d) +
-      principalCard(d) +
-      debugCard(d);
+    let html = '<div class="lead">This page reads the backend\\'s env vars (and your JWT, if you are signed in) and reflects the values back. Use it to confirm the deploy is wired up correctly without digging through the Container App env-var table. Secrets are masked; non-secrets are shown in full so you can spot a typo.</div>';
+    if (d.authError) {
+      html += authErrorBanner(d.authError);
+    } else if (!d.signedIn) {
+      html += notSignedInBanner();
+    }
+    html += envVarChecklistCard(d);
+    if (d.signedIn) {
+      html += jwtGroupsCard(d) + envVarsCard(d) + suggestedFix(d) + principalCard(d);
+    }
+    html += debugCard(d);
+    root.innerHTML = html;
   }
 
   async function main() {
+    // Token is optional. If present, /diag/data validates it and includes
+    // principal + groups data. If absent, /diag/data returns env-var data
+    // only and the page renders a "not signed in" banner.
     const token = readToken();
-    if (!token) {
-      document.getElementById("root").innerHTML = noTokenView();
-      return;
-    }
+    const headers = token ? { Authorization: "Bearer " + token } : {};
     try {
       const response = await fetch("/diag/data", {
-        headers: { Authorization: "Bearer " + token },
+        headers: headers,
         credentials: "omit",
       });
       if (!response.ok) {

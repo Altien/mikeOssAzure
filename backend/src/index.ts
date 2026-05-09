@@ -108,10 +108,12 @@ app.use("/api/llm", llmRouter);
 app.use("/api/admin/diagnostics", diagnosticsRouter);
 app.use("/install", installRouter);
 app.use("/config", configRouter);
-// /diag - operator auth diagnostic (group-OID checker). Mounted at the top
-// level so it sits outside the SPA fallback further down. The /diag/data
-// JSON endpoint inside this router uses requireValidJwt (NOT requireAuth)
-// so a user blocked by GROUP_NOT_WHITELISTED can still load it.
+// /diag - operator config + auth diagnostic. Mounted at the top level so
+// it sits outside the SPA fallback further down. /diag itself is a
+// server-rendered HTML shell with no auth requirement; /diag/data is a
+// JSON endpoint that optionally folds in the JWT principal if one is
+// presented but works without auth too. The page is most useful BEFORE
+// Entra is wired up, so it must NOT require sign-in.
 app.use("/diag", diagRouter);
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
