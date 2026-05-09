@@ -1,4 +1,4 @@
-// /diag — operator diagnostic for Entra group setup.
+// /diag — operator diagnostic for Mike deployment configuration.
 //
 // Two endpoints:
 //   GET /diag       — HTML shell; reads the JWT from the same localStorage
@@ -8,13 +8,22 @@
 //   GET /diag/data  — JSON. Uses requireValidJwt (NOT requireAuth) so it
 //                     bypasses the tenantAccess gate; the whole point of
 //                     /diag is to help an operator who is signed in but
-//                     blocked by GROUP_NOT_WHITELISTED to figure out which
-//                     group OID to put in the env vars.
+//                     blocked by GROUP_NOT_WHITELISTED (or by some other
+//                     misconfiguration) to figure out what is wrong.
 //
-// The page never reveals tenant data; it only reflects back what the JWT
-// already contains plus the values of two env vars
-// (ENTRA_ADMIN_GROUP_IDS, ENTRA_MEMBER_GROUP_IDS) that an operator with
-// access to the Container App config can already see in the portal.
+// The page reflects back:
+//  1. Env-var status — every env var the deploy needs, grouped by category,
+//     with green tick / red cross / grey for required-but-missing /
+//     optional-and-missing. Non-secret values are shown inline so an
+//     operator can spot a typo (https// vs https://). Secrets only show
+//     "set" or "not set".
+//  2. Group OIDs from the JWT, with portal deep links and match status
+//     against ENTRA_ADMIN_GROUP_IDS / ENTRA_MEMBER_GROUP_IDS.
+//  3. The principal as the backend extracted it.
+//  4. Raw JSON for reference.
+//
+// The page never reveals tenant data the operator does not already have
+// access to via the portal Container App env-var table.
 
 import { Router, Request, Response } from "express";
 import type { AuthPrincipal } from "../lib/auth/types.js";
@@ -38,9 +47,40 @@ function parseCsv(value: string | undefined): string[] {
     .filter(Boolean);
 }
 
+interface EnvVarDef {
+  name: string;
+  description: string;
+  category: string;
+  // "always": required in any deploy.
+  // "entra": required only when AUTH_PROVIDER=entra.
+  // "llm": part of the "at least one LLM key" group; individually optional
+  //        but the page renders a roll-up at the top of the LLM section.
+  // "optional": informational; never required.
+  required: "always" | "entra" | "llm" | "optional";
+  isSecret: boolean;
+}
+
+interface EnvVarStatus extends EnvVarDef {
+  isSet: boolean;
+  // What to show in the Value column. For non-secret env vars: the actual
+  // value. For secrets: a partial reveal (first 6 + last 4 chars) when
+  // long enough to be safe, "(set)" for short secrets, "(not set)" when
+  // the env var is unset.
+  display: string;
+  // Status badge: "ok" (set + everything fine), "missing" (required but
+  // not set), "optional" (not set + not required), "info" (set, but with
+  // an inline note like "this is a fallback default").
+  status: "ok" | "missing" | "optional";
+}
+
 interface DiagData {
   provider: string;
   principal: AuthPrincipal;
+  envVars: EnvVarStatus[];
+  // Roll-up for the "at least one LLM key" group: true if any of
+  // ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, AZURE_OPENAI_API_KEY
+  // is set.
+  anyLlmKeySet: boolean;
   envAdminOids: string[];
   envMemberOids: string[];
   // For each OID in ENTRA_ADMIN_GROUP_IDS / ENTRA_MEMBER_GROUP_IDS, whether
@@ -60,8 +100,96 @@ interface DiagData {
   resolvedRoles: string[];
 }
 
+// Comprehensive list of env vars the deploy reads, in render order.
+// Categories drive section grouping in the rendered page.
+const ENV_VAR_DEFS: EnvVarDef[] = [
+  // Auth core
+  { name: "AUTH_PROVIDER", description: "Which auth provider validates JWTs (local | entra | supabase).", category: "Auth core", required: "always", isSecret: false },
+  { name: "JWT_SECRET", description: "HMAC secret used by local-mode JWTs and to sign internal service-role JWTs for PostgREST.", category: "Auth core", required: "always", isSecret: true },
+  { name: "SUPABASE_SECRET_KEY", description: "Same value as JWT_SECRET; the upstream code reads it under this name as well.", category: "Auth core", required: "always", isSecret: true },
+  { name: "AUTH_STATE_SECRET", description: "HMAC secret used to sign /install session cookies. Required for /install/auth to work.", category: "Auth core", required: "always", isSecret: true },
+
+  // Entra
+  { name: "ENTRA_TENANT_ID", description: "Your Microsoft Entra directory tenant ID (UUID).", category: "Entra", required: "entra", isSecret: false },
+  { name: "ENTRA_BACKEND_CLIENT_ID", description: "Client ID of the Backend API app registration.", category: "Entra", required: "entra", isSecret: false },
+  { name: "ENTRA_BACKEND_SCOPE", description: "Full scope string the web client requests, of the form api://CLIENT_ID/access_as_user.", category: "Entra", required: "entra", isSecret: false },
+  { name: "ENTRA_CLIENT_ID", description: "Client ID of the Web Login app registration.", category: "Entra", required: "entra", isSecret: false },
+  { name: "ENTRA_CLIENT_SECRET", description: "Client secret on the Web Login app registration.", category: "Entra", required: "entra", isSecret: true },
+  { name: "ENTRA_REDIRECT_URI", description: "OpenID redirect URI; must match the Web Login app reg exactly. Path is /api/auth/openid-callback/microsoft.", category: "Entra", required: "entra", isSecret: false },
+  { name: "TENANT_ONBOARDING_MODE", description: "auto = first sign-in inserts a tenants row automatically; manual = denies until row exists.", category: "Entra", required: "entra", isSecret: false },
+  { name: "ENTRA_ADMIN_GROUP_IDS", description: "Comma-separated Entra group OIDs whose members get the TenantAdmin role.", category: "Entra", required: "entra", isSecret: false },
+  { name: "ENTRA_MEMBER_GROUP_IDS", description: "Comma-separated Entra group OIDs whose members get the Member role.", category: "Entra", required: "optional", isSecret: false },
+
+  // Database
+  { name: "DATABASE_URL", description: "Postgres connection string used by the schema-migration job. The Container App backend itself does not read this; the migration job does.", category: "Database", required: "optional", isSecret: true },
+  { name: "PG_URI", description: "Same Postgres connection string, exposed to the postgrest sidecar via PGRST_DB_URI on the sidecar container.", category: "Database", required: "always", isSecret: true },
+  { name: "SUPABASE_URL", description: "URL the backend uses to reach PostgREST. For the sidecar pattern this is http://localhost:3000.", category: "Database", required: "always", isSecret: false },
+
+  // Storage
+  { name: "AZURE_STORAGE_CONNECTION_STRING", description: "Azure Storage Account connection string, used to read/write blobs.", category: "Storage", required: "always", isSecret: true },
+  { name: "AZURE_STORAGE_CONTAINER_NAME", description: "Name of the blob container holding documents.", category: "Storage", required: "always", isSecret: false },
+
+  // Networking
+  { name: "FRONTEND_URL", description: "Public URL of the application. Used for CORS allowlist and login redirects.", category: "Networking", required: "always", isSecret: false },
+  { name: "BACKEND_PUBLIC_URL", description: "Public URL of the backend API. In a single-bundle deploy this is the same as FRONTEND_URL.", category: "Networking", required: "always", isSecret: false },
+  { name: "NODE_ENV", description: "production | development. Affects cookie flags and a few defensive checks.", category: "Networking", required: "always", isSecret: false },
+  { name: "PORT", description: "Port the Express backend listens on inside the container. Must match the Dockerfile EXPOSE and Container App ingress target port.", category: "Networking", required: "always", isSecret: false },
+
+  // LLM keys (any one required)
+  { name: "ANTHROPIC_API_KEY", description: "Anthropic API key. Either this or one of the other LLM keys is required.", category: "LLM", required: "llm", isSecret: true },
+  { name: "OPENAI_API_KEY", description: "OpenAI API key.", category: "LLM", required: "llm", isSecret: true },
+  { name: "GEMINI_API_KEY", description: "Google Gemini API key.", category: "LLM", required: "llm", isSecret: true },
+  { name: "AZURE_OPENAI_API_KEY", description: "Azure OpenAI / Foundry API key.", category: "LLM", required: "llm", isSecret: true },
+
+  // Azure OpenAI extras (optional)
+  { name: "AZURE_OPENAI_ENDPOINT", description: "Azure OpenAI resource endpoint (https://<name>.openai.azure.com).", category: "LLM", required: "optional", isSecret: false },
+  { name: "AZURE_OPENAI_DEPLOYMENT", description: "Default model deployment name.", category: "LLM", required: "optional", isSecret: false },
+  { name: "AZURE_OPENAI_API_VERSION", description: "API version pinned for AOAI calls.", category: "LLM", required: "optional", isSecret: false },
+
+  // Operator
+  { name: "DOWNLOAD_SIGNING_SECRET", description: "HMAC key used to sign short-lived document download URLs.", category: "Operator", required: "always", isSecret: true },
+  { name: "INSTALL_BOOTSTRAP_TOKEN", description: "One-time admin token for the /install configurator. Retired once an Entra admin signs in.", category: "Operator", required: "always", isSecret: true },
+
+  // Optional / production hardening
+  { name: "KEY_VAULT_NAME", description: "Name of the Key Vault used for KV-backed config. Required when /install needs to write config; not used in env-var-only minimal deploys.", category: "Optional", required: "optional", isSecret: false },
+  { name: "AZURE_CLIENT_ID", description: "Client ID of the user-assigned Managed Identity attached to the Container App. Required for KV reads via MI.", category: "Optional", required: "optional", isSecret: false },
+];
+
+function maskSecret(value: string, isSet: boolean): string {
+  if (!isSet) return "(not set)";
+  if (value.length < 14) return "(set)";
+  return value.slice(0, 6) + "..." + value.slice(-4);
+}
+
+function evaluateEnvVar(def: EnvVarDef, provider: string): EnvVarStatus {
+  const raw = process.env[def.name];
+  const isSet = raw !== undefined && raw !== "";
+  let display: string;
+  if (def.isSecret) {
+    display = maskSecret(raw ?? "", isSet);
+  } else {
+    display = isSet ? (raw as string) : "(not set)";
+  }
+
+  let status: EnvVarStatus["status"];
+  if (def.required === "always" && !isSet) status = "missing";
+  else if (def.required === "entra" && provider === "entra" && !isSet) status = "missing";
+  else if (!isSet) status = "optional";
+  else status = "ok";
+
+  return { ...def, isSet, display, status };
+}
+
+function buildEnvVarChecklist(provider: string): EnvVarStatus[] {
+  return ENV_VAR_DEFS.map((def) => evaluateEnvVar(def, provider));
+}
+
 function buildDiagData(principal: AuthPrincipal): DiagData {
   const provider = process.env.AUTH_PROVIDER ?? "supabase";
+  const envVars = buildEnvVarChecklist(provider);
+  const anyLlmKeySet = envVars
+    .filter((e) => e.required === "llm")
+    .some((e) => e.isSet);
   const envAdminOids = parseCsv(process.env.ENTRA_ADMIN_GROUP_IDS);
   const envMemberOids = parseCsv(process.env.ENTRA_MEMBER_GROUP_IDS);
   const jwtGroupSet = new Set(principal.groups);
@@ -99,6 +227,8 @@ function buildDiagData(principal: AuthPrincipal): DiagData {
   return {
     provider,
     principal,
+    envVars,
+    anyLlmKeySet,
     envAdminOids,
     envMemberOids,
     adminMatches,
@@ -373,14 +503,58 @@ function renderShell(): string {
     );
   }
 
+  function envVarChecklistCard(d) {
+    function badge(status) {
+      if (status === "ok") return '<span class="badge match">set</span>';
+      if (status === "missing") return '<span class="badge miss">MISSING</span>';
+      return '<span class="badge unmapped">not set</span>';
+    }
+    function rowsForCategory(envVars, category) {
+      const rows = envVars.filter(function (v) { return v.category === category; });
+      if (rows.length === 0) return "";
+      let body = '<h3 style="font-size:0.78rem; text-transform:uppercase; letter-spacing:0.05em; color:#57606a; margin:1rem 0 0.4rem;">' + escapeHtml(category) + "</h3>";
+      body += '<div class="card" style="padding:0;"><table>';
+      body += '<thead><tr><th style="width:200px">Env var</th><th style="width:90px">Status</th><th>Value</th></tr></thead><tbody>';
+      for (const row of rows) {
+        const valueCell = row.status === "missing"
+          ? '<span style="color:#cf222e; font-style:italic;">' + escapeHtml(row.display) + "</span>"
+          : '<span style="font-family:ui-monospace,monospace; font-size:0.8rem; word-break:break-all;">' + escapeHtml(row.display) + "</span>";
+        body += "<tr>"
+          + '<td><div style="font-family:ui-monospace,monospace; font-size:0.82rem; font-weight:600;">' + escapeHtml(row.name) + "</div>"
+          + '<div style="font-size:0.74rem; color:#656d76; margin-top:0.15rem; font-weight:400;">' + escapeHtml(row.description) + "</div></td>"
+          + "<td>" + badge(row.status) + "</td>"
+          + "<td>" + valueCell + "</td>"
+          + "</tr>";
+      }
+      body += "</tbody></table></div>";
+      return body;
+    }
+
+    const llmRollup = d.anyLlmKeySet
+      ? '<div class="card green" style="padding:0.6rem 0.85rem; margin:0.4rem 0 0.6rem; font-size:0.85rem;">At least one LLM key is set, so model calls will succeed.</div>'
+      : '<div class="card red" style="padding:0.6rem 0.85rem; margin:0.4rem 0 0.6rem; font-size:0.85rem;">No LLM key is set. The application will fail any model call until at least one of ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY / AZURE_OPENAI_API_KEY is configured.</div>';
+
+    const categories = ["Auth core", "Entra", "Database", "Storage", "Networking", "LLM", "Operator", "Optional"];
+    let html = '<h2>Env var checklist</h2>';
+    for (const cat of categories) {
+      // Hide the Entra section entirely if AUTH_PROVIDER is not entra; keeps
+      // the page short for local-mode operators.
+      if (cat === "Entra" && d.provider !== "entra") continue;
+      if (cat === "LLM") html += llmRollup;
+      html += rowsForCategory(d.envVars, cat);
+    }
+    return html;
+  }
+
   function render(d) {
     const root = document.getElementById("root");
     root.innerHTML =
-      '<div class="lead">This page reads your JWT and reflects the values back so you can confirm group OIDs without decoding the token by hand. Group display names are NOT resolved here; click "Open in Entra" next to any OID to see the group name in the Azure portal.</div>' +
-      principalCard(d) +
+      '<div class="lead">This page reads your JWT and the backend\\'s env vars and reflects the values back. Use it to confirm the deploy is wired up correctly, without having to dig through the Container App env-var table. Secrets are masked; non-secrets are shown in full so you can spot a typo.</div>' +
+      envVarChecklistCard(d) +
       jwtGroupsCard(d) +
       envVarsCard(d) +
       suggestedFix(d) +
+      principalCard(d) +
       debugCard(d);
   }
 
