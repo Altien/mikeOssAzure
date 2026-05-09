@@ -17,6 +17,7 @@ import { llmRouter } from "./routes/llm";
 import { diagnosticsRouter } from "./routes/diagnostics";
 import { installRouter } from "./routes/install";
 import { configRouter } from "./routes/config";
+import { diagRouter } from "./routes/diag";
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
@@ -107,6 +108,11 @@ app.use("/api/llm", llmRouter);
 app.use("/api/admin/diagnostics", diagnosticsRouter);
 app.use("/install", installRouter);
 app.use("/config", configRouter);
+// /diag - operator auth diagnostic (group-OID checker). Mounted at the top
+// level so it sits outside the SPA fallback further down. The /diag/data
+// JSON endpoint inside this router uses requireValidJwt (NOT requireAuth)
+// so a user blocked by GROUP_NOT_WHITELISTED can still load it.
+app.use("/diag", diagRouter);
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 

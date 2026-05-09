@@ -5,15 +5,15 @@ import { validateEntraToken } from "../lib/auth/providers/entra.js";
 import { tenantAccess } from "./tenantAccess.js";
 import { upsertUserProfile } from "../lib/userSettings.js";
 
-export async function requireAuth(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-): Promise<void> {
+// Validate the bearer token, populate res.locals.{userId,userEmail,token,principal}
+// and ensure the user profile row exists. Returns a boolean: true on success
+// (caller should continue), false on failure (caller must NOT continue; this
+// function has already written the error response).
+async function loadPrincipal(req: Request, res: Response): Promise<boolean> {
   const auth = req.headers.authorization ?? "";
   if (!auth.startsWith("Bearer ")) {
     res.status(401).json({ detail: "Missing or invalid Authorization header" });
-    return;
+    return false;
   }
   const token = auth.slice(7).trim();
 
@@ -30,12 +30,12 @@ export async function requireAuth(
     res
       .status(500)
       .json({ detail: `Auth provider '${provider}' is not yet implemented` });
-    return;
+    return false;
   }
 
   if (!result.ok) {
     res.status(result.status).json({ detail: result.detail });
-    return;
+    return false;
   }
 
   res.locals.userId = result.principal.userId;
@@ -55,8 +55,31 @@ export async function requireAuth(
         ? error.message
         : "Unable to initialize user profile";
     res.status(500).json({ detail });
-    return;
+    return false;
   }
 
+  return true;
+}
+
+export async function requireAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  if (!(await loadPrincipal(req, res))) return;
   await tenantAccess(req, res, next);
+}
+
+// Same as requireAuth but skips tenantAccess. Used by /diag, the operator
+// diagnostic page, so a user who is signed in but not yet whitelisted by
+// ENTRA_*_GROUP_IDS can still see the page and find the right OID to put
+// in the env var. The diag page must not expose any tenant data; it only
+// reflects the JWT and env-var values back to the operator.
+export async function requireValidJwt(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  if (!(await loadPrincipal(req, res))) return;
+  next();
 }
