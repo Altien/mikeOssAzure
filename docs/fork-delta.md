@@ -68,7 +68,7 @@ more extensible for any deployment.
 | File | Nature of change |
 |---|---|
 | `backend/src/routes/auth.ts` | Local login endpoint plus MatterAI-style Entra provider selection and OpenID callback for local validation. |
-| `backend/src/routes/install.ts` | `/install` configurator HTML routes + write handlers. The route degrades gracefully when operator scripts (which ship in the deploy package, not the application image) are absent. |
+| `backend/src/routes/install.ts` | `/install` configurator HTML routes + write handlers. The route degrades gracefully when no operator scripts are bundled with the image (see `scripts/install/README.md`). |
 | `backend/src/routes/diagnostics.ts` | `/admin/diagnostics` health-check page. |
 | `backend/src/routes/llm.ts` | `/llm/azure-openai/deployments` route used by the model picker. |
 | `backend/src/routes/{chat,projects,tabular,user,workflows,documents}.ts` | JSONB containment fixes; replaced `db.auth.admin.listUsers` with `user_profiles` lookup; profile-shape updates for AOAI / fast model. |
@@ -95,11 +95,3 @@ more extensible for any deployment.
 | `docker-compose.dev.yml` | Local Postgres + PostgREST + Azurite. |
 | `Dockerfile`, `.dockerignore` | The bundled-frontend multi-stage build. |
 
----
-
-## What is NOT in this fork
-
-Deployment infrastructure (Bicep, deploy automation, marketplace
-packaging, operator-side install scripts) is intentionally not part of
-this repository. See `docs/azure-prereqs.md` for the list of resources
-an operator needs to provision before running this code, in prose form.

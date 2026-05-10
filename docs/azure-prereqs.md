@@ -6,10 +6,6 @@ application: 5 Azure resources, 1 Container App, no Bicep, no
 Key Vault, no VNet, no Managed Identity. Run schema migrations
 from your laptop.
 
-If you want one-click deployment, Altien publishes an Azure
-Marketplace package that automates everything below plus the
-production hardening (private endpoints, Managed Identity, Key
-Vault, Application Insights). See [link to marketplace listing].
 For local development on your laptop without any Azure resources,
 see [`runbook-local-stack.md`](./runbook-local-stack.md).
 
@@ -409,9 +405,9 @@ echo "Bootstrap token: $BOOTSTRAP_TOKEN"
    choose a default model), use the inline form.
 5. Some items need work outside the deployment (creating Entra
    apps, provisioning Azure OpenAI). The configurator tells you
-   what's needed; the operator scripts that automate this are
-   part of the Altien marketplace package and are not bundled in
-   this fork.
+   what's needed; operator-side automation scripts are not
+   bundled with this fork — see `scripts/install/README.md` for
+   the format if you want to ship your own.
 
 > **Note on minimal mode.** Because this deployment doesn't use
 > Key Vault, `/install` cannot persist most config items —
@@ -765,13 +761,6 @@ For a branded URL and HTTP-layer attack mitigation:
 - Container App custom domain bound to your DNS.
 - Optionally Azure Front Door or Application Gateway with a WAF
   policy in front.
-
-### Want all of this in one shot?
-
-Altien's Azure Marketplace package automates every item on this
-list (plus install configurator, operator scripts, observability
-dashboards, CI/CD pipelines). See [link to marketplace listing]
-for the one-click path.
 
 ---
 

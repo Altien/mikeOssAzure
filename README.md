@@ -54,10 +54,9 @@ npm run dev --prefix frontend    # :3000
 ## Running on Azure
 
 See [`docs/azure-prereqs.md`](docs/azure-prereqs.md) for the list of
-Azure resources you need to provision before deploying this code. This
-fork **does not ship Bicep templates or one-click deployment** —
-provisioning is the operator's responsibility. Altien offers a managed
-Marketplace deployment that handles provisioning end to end.
+Azure resources you need to provision before deploying this code.
+This fork does not ship infrastructure-as-code — provisioning is the
+operator's responsibility.
 
 ## Required services (any deployment)
 

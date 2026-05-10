@@ -1298,16 +1298,17 @@ installRouter.get("/scripts/:name", (req: Request, res: Response) => {
         return void res.status(400).json({ detail: "Invalid script name." });
     }
     // Operator scripts (Entra app registration, AOAI provisioning, role
-    // assignments) are not bundled with the application image — they ship in
-    // the separate deploy / marketplace package.  When this deployment was
-    // built without that bundle, the scripts/install directory is absent and
-    // the install configurator's "Download script" buttons should degrade
+    // assignments) are not bundled with the application image by default —
+    // operators drop their own .ps1 scripts into scripts/install/ at image
+    // build time if they want them served here.  When the directory is
+    // absent, the install configurator's "Download script" buttons degrade
     // cleanly rather than throw.
     if (!fs.existsSync(SCRIPTS_DIR)) {
         return void res.status(404).json({
             detail:
                 "Operator scripts are not bundled with this deployment. " +
-                "They ship separately with the deploy / marketplace package.",
+                "Add .ps1 files to scripts/install/ at image build time " +
+                "to expose them via this route.",
         });
     }
     const target = path.join(SCRIPTS_DIR, name);

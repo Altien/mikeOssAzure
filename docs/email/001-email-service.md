@@ -43,7 +43,7 @@ Low. Share notifications are user-triggered, not bulk. A realistic upper bound a
 |---|---|---|
 | **A. Azure Communication Services Email** *(chosen)* | Native Azure service — same resource group, billing, audit trail. Custom domain sending with ACS-managed SPF/DKIM. No external SaaS dependency for a fully Azure deployment. $0.00025/email, no monthly base. | Newer service; smaller ecosystem than Resend or SendGrid. Connection-string auth (Managed Identity covers the ACS resource control plane but not the email sending plane — this is a platform constraint, not a design choice). Requires domain verification DNS setup. |
 | **B. Resend** | Already familiar from prior config. Excellent DX, React Email support, sandbox testing without domain setup. Free tier (3,000/mo) covers expected volume. | Third-party SaaS dependency. External API call from the VNet needs NAT Gateway egress. Another API key in Key Vault. |
-| **C. SendGrid (Azure Marketplace)** | Mature, widely trusted, deep deliverability tooling, Azure-integrated billing. | Over-engineered for low-volume transactional use. Free tier capped at 100/day. More complex setup than ACS with no deliverability advantage at this scale. |
+| **C. SendGrid** | Mature, widely trusted, deep deliverability tooling. | Over-engineered for low-volume transactional use. Free tier capped at 100/day. More complex setup than ACS with no deliverability advantage at this scale. |
 
 ### Q5 — Build now or defer?
 

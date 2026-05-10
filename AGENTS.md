@@ -10,43 +10,6 @@ This project is based on an upstream open-source repository. Prefer the smallest
 - When removing Supabase, AWS, or other upstream dependencies, do it incrementally and preserve upstream-shaped interfaces where practical.
 - Document intentional divergence from upstream so future merges can evaluate conflicts quickly.
 
-## AGPL Publication Awareness
-
-This repository (Repo 1) is the internal source of truth. Two
-publication targets receive squashed deliveries from it:
-
-- **Repo 2** — public AGPL fork. Receives Tier B: application code,
-  Azure adapters, Entra integration, Azure OpenAI, install
-  configurator UI, schema migrations, local-dev stack, sanitized
-  application-layer docs.
-- **Repo 3** — private deploy / marketplace repo. Receives Tier C:
-  **deployment infrastructure only**. Bicep, deploy/install
-  PowerShell, CI plumbing, deployment-specific docs. **Zero
-  application code** — no `backend/`, no `frontend/`, no
-  `Dockerfile`, no `package.json`, no `.ts` / `.tsx` / `.sql` files.
-
-See `docs/migration/` for the full classification and runbook.
-
-Rules when introducing new code:
-
-- **Declare the tier of any new file in the PR description.**
-  "Tier A: ...", "Tier B: ...", "Tier C: ...". Reviewers gate on
-  this; if it's not declared, ask. Update
-  `docs/migration/01-classification.md` if the new file is
-  non-obvious.
-- **Tier A/B code must not import from Tier C files.** Tier C code
-  is allowed to depend on Tier B at runtime (the deploy scripts run
-  against a Tier B image) but never at source level — Tier C does
-  not contain Tier B source.
-- **Repo 2 and Repo 3 share zero source.** The image is the only
-  artefact crossing between them. If a feature seems to need both
-  application code and deploy code, that's two changes in two
-  tiers, both landing in this Repo 1 working copy and shipping
-  separately on the next release window.
-- If you find yourself reaching across a tier boundary, **raise it**
-  rather than papering over it. The boundary is what makes the
-  marketplace IP defensible.
-
 ## Environment Variables and Secrets
 
 ### `.env` files must never contain real secrets in committed form
@@ -120,6 +83,6 @@ Before committing changes that touch `.env*` files or env-var lookups:
    `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`. Anything else means
    someone tried to reintroduce build-time baking — push back to runtime
    config in `ConfigContext`.
-3. The sanitization regex from `docs/migration/05-config-extraction.md` —
-   must produce zero matches inside any tracked `.env*.example` or any
-   committed source file.
+3. No tenant-specific identifiers (Entra GUIDs, deployment FQDNs,
+   resource names) should appear in any tracked `.env*.example` or any
+   committed source file. Use placeholders.

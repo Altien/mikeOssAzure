@@ -274,14 +274,14 @@ Environment files are read at process startup. Restart both apps after editing e
 Backend:
 
 ```powershell
-cd C:\Data\Projects\MikeAzureDev\backend
+cd backend
 npm run dev
 ```
 
 Frontend:
 
 ```powershell
-cd C:\Data\Projects\MikeAzureDev\frontend
+cd frontend
 npm run dev
 ```
 

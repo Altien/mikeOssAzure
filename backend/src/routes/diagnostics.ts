@@ -15,8 +15,8 @@
 //
 // Auth: gated by passing ?token=<install-bootstrap-token> matching
 // the KV secret of the same name. If that secret doesn't exist in KV,
-// the page is accessible without a token (dev convenience). Marketplace
-// deploys should always have the bootstrap token set.
+// the page is accessible without a token (dev convenience). Production
+// deployments should always have the bootstrap token set.
 
 import { Router, type Request, type Response } from "express";
 import { createServerSupabase } from "../lib/supabase";

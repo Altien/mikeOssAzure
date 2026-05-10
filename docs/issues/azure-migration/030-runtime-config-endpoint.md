@@ -32,11 +32,10 @@ Today this forces us to commit `frontend/.env.production` with
 concrete tenant GUIDs (`NEXT_PUBLIC_ENTRA_TENANT_ID=…`,
 `NEXT_PUBLIC_ENTRA_CLIENT_ID=…`, `NEXT_PUBLIC_REDIRECT_URI=…`) so the
 Docker build picks them up. The image that comes out is bound to one
-specific Azure tenant. Marketplace customers would each need their
-own image rebuild.
+specific Azure tenant. Every customer would need their own image
+rebuild.
 
-Tracing the existing reads (see `docs/migration/05-config-extraction.md`
-for the full audit):
+Tracing the existing reads:
 
 - `NEXT_PUBLIC_AUTH_PROVIDER` — selects the login-UI branch
   (`supabase` / `local` / `entra`). Deployment-mode choice, not

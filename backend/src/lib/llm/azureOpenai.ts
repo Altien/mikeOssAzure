@@ -13,8 +13,8 @@ import type {
 //
 // Currently keyed on the user's `azureOpenai` settings or the backend's
 // AZURE_OPENAI_* env vars as a global fallback. Managed-identity auth
-// (preferred for the marketplace deployment story) is a separate ticket
-// that needs `@azure/identity` + a `getBearerTokenProvider` flow.
+// is a separate ticket that needs `@azure/identity` + a
+// `getBearerTokenProvider` flow.
 
 const DEFAULT_API_VERSION = "2024-10-21";
 

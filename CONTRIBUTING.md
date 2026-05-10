@@ -101,8 +101,9 @@ failure mode before opening a PR.
 To keep MikeOssAzure focused, the following kinds of contributions
 will be sent back without detailed review:
 
-- Bicep templates, deploy automation, or marketplace packaging — those
-  belong in the separate deploy repository, not here.
+- Bicep templates, ARM templates, deploy automation, or other
+  infrastructure-as-code — those are out of scope for this repository.
+  Application-layer changes only.
 - Re-introducing hosted-only dependencies that the local-first work
   was specifically designed to remove.
 - Anything that bakes a `NEXT_PUBLIC_*` tenant identifier back into

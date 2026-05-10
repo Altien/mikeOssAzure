@@ -14,8 +14,8 @@ no `.env*` file in the tree contains values specific to a deployment
 or a tenant.
 
 This is the final step that lets the same Docker image run against
-any Azure tenant — the one prerequisite that makes the Tier B AGPL
-publication a runnable artefact instead of a per-customer template.
+any Azure tenant — without it the bundle is per-customer rather than
+a generic runnable artefact.
 
 ## Context
 
@@ -95,11 +95,10 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
 # NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=your-anon-key
 ```
 
-### Build pipeline (Tier C — internal repo only)
+### Build pipeline
 
-The internal `deploy.ps1` and `.github/workflows/deploy.yml` (when
-restored) need to set `NEXT_PUBLIC_API_BASE_URL` for the Docker
-build. Two options:
+The build pipeline needs to set `NEXT_PUBLIC_API_BASE_URL` for the
+Docker build. Two options:
 
 #### Option 1: Docker build arg (recommended)
 
@@ -173,8 +172,6 @@ is the example file's documentation update above.
 - Splitting the frontend and backend into separate Container Apps
   (would change `NEXT_PUBLIC_API_BASE_URL` from "empty" to "absolute
   URL" but is independent of this issue's plumbing).
-- Marketplace packaging. The marketplace listing's Bicep will set the
-  build arg for whatever shape the customer's deployment takes.
 
 ## Related
 

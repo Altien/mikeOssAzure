@@ -77,9 +77,9 @@ The static build can be served from any of:
 |---|---|---|
 | **Bundle into the backend Container App** | Same FQDN as the API. One deploy unit. No new Azure resources. Cheapest. Mirrors the MatterAI shape (single zip, single host). | Frontend deploys are coupled to backend deploys. Requires Express `static` middleware + SPA fallback. |
 | **Separate frontend Container App** | Consistent with the existing `backend` / `postgrest` pattern in Bicep. Independent deploy lifecycle. Runs e.g. nginx on the static `out/`. | Adds a Container App resource. CORS to wire up between the two FQDNs. |
-| **Azure Static Web Apps (free SKU)** | Global CDN, free SSL, auto-CI from GitHub. Standard Marketplace answer. | Adds a new platform service to operate (separate from Container Apps). Requires its own GitHub Actions integration. |
+| **Azure Static Web Apps (free SKU)** | Global CDN, free SSL, auto-CI from GitHub. | Adds a new platform service to operate (separate from Container Apps). Requires its own GitHub Actions integration. |
 | **Storage Static Website** | Pennies. | No CDN by default, no custom domain SSL without extra wiring. |
-| **Cloudflare Workers via OpenNext** | Already configured (`open-next.config.ts`). Global edge. | Not Azure — fails the Marketplace "all-Azure" story. |
+| **Cloudflare Workers via OpenNext** | Already configured (`open-next.config.ts`). Global edge. | Not Azure — fails the all-Azure story. |
 
 The choice depends on whether we want a single Container App
 deployment now (simpler, mirrors MatterAI) or to keep frontend / backend
@@ -116,6 +116,4 @@ this decision and lands first.
 
 ## Followups (out of scope here)
 
-- Marketplace listing in `016-marketplace-listing.md` will reference
-  whichever hosting choice we land on.
 - Custom domain + SSL once we have a stable URL.

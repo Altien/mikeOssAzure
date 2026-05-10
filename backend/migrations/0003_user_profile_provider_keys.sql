@@ -2,10 +2,9 @@
 -- OpenAI (single key) and Azure OpenAI (endpoint + key + api version +
 -- deployment name).
 --
--- Why: alongside the existing Anthropic and Gemini keys, the app needs to
--- support customers who already have an OpenAI account or — more
--- importantly for the Azure marketplace listing — an Azure OpenAI
--- deployment in their own subscription.
+-- Why: alongside the existing Anthropic and Gemini keys, the app needs
+-- to support customers who already have an OpenAI account or an Azure
+-- OpenAI deployment in their own subscription.
 --
 -- Azure OpenAI is shaped differently from a single-key provider: the SDK
 -- needs the resource endpoint URL, the API version pin, and the

@@ -15,11 +15,11 @@ However:
 - The route is registered unconditionally in `backend/src/index.ts`.
 - Auth is via `?token=<DIAGNOSTICS_TOKEN env var>`. If `DIAGNOSTICS_TOKEN` is unset, the page is fully open — convenient for the dev environment, dangerous for any other.
 - The page reveals: full PostgREST URL, schema cache state, a list of recent migration columns, and demonstrates that INSERT/DELETE roundtrip succeeds against `user_profiles` with no auth. That is a useful information surface for an attacker who reaches the backend.
-- Marketplace customers will deploy this code path. They cannot all be trusted to set `DIAGNOSTICS_TOKEN` themselves.
+- Production deployments will run this code path. Operators cannot all be trusted to set `DIAGNOSTICS_TOKEN` themselves.
 
 ## What to decide
 
-Pick one of these options before Marketplace:
+Pick one of these options before any production rollout:
 
 ### Option A — Always-required token
 
@@ -43,7 +43,7 @@ Recommendation: **Option A**, on the grounds that the page genuinely helps when 
 ## Acceptance criteria
 
 - [ ] The diagnostics page is not reachable without explicit auth in any environment.
-- [ ] Default behavior on a fresh Marketplace install is "page does not respond" until the operator explicitly enables it.
+- [ ] Default behavior on a fresh deployment is "page does not respond" until the operator explicitly enables it.
 - [ ] If the page is kept, install configurator (issue 023) covers token provisioning.
 - [ ] If the page is removed, `backend/src/index.ts` and `backend/src/routes/diagnostics.ts` are cleaned up.
 
