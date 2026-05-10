@@ -120,6 +120,47 @@ export async function ensureReviewAccess(
 }
 
 /**
+ * Filter a list of document IDs down to those the caller is actually
+ * authorised to read — owners pass, plus any document whose `project_id`
+ * the caller has access to (own project or `shared_with` member).
+ *
+ * The tabular-review routes accept user-supplied `document_ids` from
+ * request bodies; without this filter an attacker who has any review of
+ * their own can plant arbitrary doc UUIDs and have the server fetch + run
+ * an LLM extraction over their bytes (CWE-639).
+ */
+export async function filterAccessibleDocumentIds(
+    documentIds: string[],
+    userId: string,
+    userEmail: string | null | undefined,
+    db: Db,
+): Promise<string[]> {
+    if (documentIds.length === 0) return [];
+    const { data: docs } = await db
+        .from("documents")
+        .select("id, user_id, project_id")
+        .in("id", documentIds);
+    const rows = (docs ?? []) as {
+        id: string;
+        user_id: string;
+        project_id: string | null;
+    }[];
+    if (rows.length === 0) return [];
+    const accessibleProjectIds = new Set(
+        await listAccessibleProjectIds(userId, userEmail, db),
+    );
+    const out: string[] = [];
+    for (const d of rows) {
+        if (d.user_id === userId) {
+            out.push(d.id);
+        } else if (d.project_id && accessibleProjectIds.has(d.project_id)) {
+            out.push(d.id);
+        }
+    }
+    return out;
+}
+
+/**
  * Returns the set of project IDs the user can access — own projects plus
  * any project where their email is in `shared_with`. Used to scope chat
  * lists and similar collection queries.
