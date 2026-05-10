@@ -269,9 +269,13 @@ cd path/to/cloned/mike/backend
 # First time: install the deps
 npm install
 
-# Run migrations
-DATABASE_URL="postgres://mikeadmin:$PG_PASSWORD@$PG_FQDN:5432/postgres" \
-  npm run migrate
+# Run migrations.  Two details that matter against an Azure Postgres
+# Flexible Server: (a) `?sslmode=require` because Azure rejects non-SSL
+# connections by default; (b) `npm run migrate:dev` rather than `npm run
+# migrate` because the latter requires a prior `npm run build` of the
+# backend, while migrate:dev runs the TypeScript directly via tsx.
+DATABASE_URL="postgres://mikeadmin:$PG_PASSWORD@$PG_FQDN:5432/postgres?sslmode=require" \
+  npm run migrate:dev
 ```
 
 You should see one log line per migration applied. The migrations
@@ -297,13 +301,17 @@ talks to PostgREST at `http://localhost:3000` instead of needing
 a separate ingress.
 
 ```sh
-# Generate two HMAC secrets the application needs
+# Generate four HMAC secrets the application needs.  AUTH_STATE_SECRET
+# is required even in local-auth mode because /install signs its
+# session cookies with it.
 export JWT_SECRET=$(openssl rand -base64 48)
 export DOWNLOAD_SECRET=$(openssl rand -base64 32)
+export AUTH_STATE_SECRET=$(openssl rand -base64 32)
 export BOOTSTRAP_TOKEN=$(uuidgen 2>/dev/null || python -c 'import uuid; print(uuid.uuid4())')
 
-# Postgres connection string
-export PG_URI="postgres://mikeadmin:$PG_PASSWORD@$PG_FQDN:5432/postgres"
+# Postgres connection string.  sslmode=require because Azure Postgres
+# Flexible Server rejects non-SSL connections by default.
+export PG_URI="postgres://mikeadmin:$PG_PASSWORD@$PG_FQDN:5432/postgres?sslmode=require"
 
 az containerapp create \
   --name backend --resource-group "$RG" --environment "$CAE" \
@@ -319,6 +327,7 @@ az containerapp create \
     "jwt-secret=$JWT_SECRET" \
     "storage-conn=$STORAGE_CONN" \
     "download-secret=$DOWNLOAD_SECRET" \
+    "auth-state-secret=$AUTH_STATE_SECRET" \
     "bootstrap-token=$BOOTSTRAP_TOKEN" \
     "anthropic-key=<your-anthropic-key>" \
     "openai-key=<your-openai-key>" \
@@ -333,6 +342,7 @@ az containerapp create \
     "AZURE_STORAGE_CONNECTION_STRING=secretref:storage-conn" \
     "AZURE_STORAGE_CONTAINER_NAME=documents" \
     "DOWNLOAD_SIGNING_SECRET=secretref:download-secret" \
+    "AUTH_STATE_SECRET=secretref:auth-state-secret" \
     "INSTALL_BOOTSTRAP_TOKEN=secretref:bootstrap-token" \
     "ANTHROPIC_API_KEY=secretref:anthropic-key" \
     "OPENAI_API_KEY=secretref:openai-key" \
