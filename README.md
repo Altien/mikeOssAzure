@@ -84,6 +84,42 @@ AGPL-3.0-only. See `LICENSE`.
 
 ## Acknowledgements
 
-All architectural credit for the application itself belongs upstream;
-this fork is purely the Azure adaptation and developer-experience
-additions.
+This repository is an AGPL-3.0 fork of the upstream Mike repository at
+[`willchen96/mike`](https://github.com/willchen96/mike) (`main`
+branch). All architectural credit for the application itself belongs
+upstream; this fork is purely the Azure adaptation and developer-
+experience additions.
+
+### Upstream baseline
+
+This fork branches from upstream commit
+[`b780a4b`](https://github.com/willchen96/mike/commit/b780a4b).
+Every file diverged from that baseline is listed in
+[`docs/fork-delta.md`](docs/fork-delta.md).
+
+### Merged from upstream
+
+Upstream commits and pull requests merged into this fork after the
+initial baseline. Each entry links directly to the upstream source —
+or, where the integration was non-trivial, to an internal note that
+in turn contains the direct upstream links.
+
+_None yet._
+
+When the first upstream merge lands, add an entry of the form:
+
+> - Upstream PR [`#NNN`](https://github.com/willchen96/mike/pull/NNN) — short description.
+>   Landed in this fork as
+>   [`<our-sha>`](https://github.com/Altien/mikeOssAzure/commit/&lt;our-sha&gt;).
+>   For ripped-out / re-shaped extractions where naming individual
+>   source commits is impractical, link a
+>   `docs/extractions/<name>.md` note that lists the upstream URLs.
+
+### Merged from other branches or forks
+
+When functionality is pulled in from one of our other branches or any
+third-party fork, an entry goes here with a direct GitHub link to the
+source commit / PR (or to a `docs/extractions/<name>.md` note for
+multi-commit extractions).
+
+_None yet._
