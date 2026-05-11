@@ -269,16 +269,22 @@ async function runDiagnostics(): Promise<TestResult[]> {
         });
     }
 
-    // ── G. Schema cache: do the migration-0003/0004 columns exist?
+    // ── G. Schema cache: do the migration-0006 columns exist?
+    //
+    // Updated from migrations 0003/0004 columns (which the
+    // ba6f771 sync is in the process of retiring — see
+    // UPSTREAM_SYNC_LOG.md and 0007_drop_legacy_provider_keys.sql,
+    // pending). The user_api_keys table is what newly-deployed
+    // schemas must have to function.
     try {
         const r = await rawFetch(
-            `${baseUrl}/user_profiles?select=fast_model,openai_api_key,azure_openai_endpoint&limit=0`,
+            `${baseUrl}/user_api_keys?select=provider,encrypted_key&limit=0`,
             { headers: { Accept: "application/json" } },
         );
         tests.push({
             id: "G",
-            title: "Schema cache: migration-0003/0004 columns visible",
-            description: "Asks PostgREST for columns added by recent migrations. If schema cache is stale, returns 4xx with 'column not found'.",
+            title: "Schema cache: migration-0006 user_api_keys columns visible",
+            description: "Asks PostgREST for columns on user_api_keys. If schema cache is stale, returns 4xx with 'relation/column not found'.",
             expected: "200 OK with body []",
             status: r.httpStatus === 200 ? "pass" : "fail",
             ...r,
