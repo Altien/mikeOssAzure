@@ -11,8 +11,8 @@
 // surrounding sequence and `notes/upstream-sync/mikeOssOrig-ba6f771.md`
 // in MikeMigrate for full migration narrative.
 
-import { createServerSupabase } from "../lib/supabase.js";
-import { setUserApiKey } from "../lib/userApiKeys.js";
+import { createServerSupabase } from "../lib/supabase";
+import { setUserApiKey } from "../lib/userApiKeys";
 
 type LegacyRow = {
     user_id: string;
