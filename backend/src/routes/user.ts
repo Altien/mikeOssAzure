@@ -1,6 +1,12 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
+import {
+    getUserApiKeys,
+    setUserApiKey,
+    deleteUserApiKey,
+} from "../lib/userApiKeys";
+import type { AzureOpenaiSettings } from "../lib/llm";
 
 export const userRouter = Router();
 
@@ -19,14 +25,20 @@ userRouter.get("/profile", requireAuth, async (_req, res) => {
   const userId = res.locals.userId as string;
   const db = createServerSupabase();
 
-  const { data, error } = await db
-    .from("user_profiles")
-    .select(
-      "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, claude_api_key, gemini_api_key, openai_api_key, azure_openai_endpoint, azure_openai_api_key, azure_openai_api_version, azure_openai_deployment",
-    )
-    .eq("user_id", userId)
-    .single();
+  // Profile fields live on `user_profiles`; provider keys moved to the
+  // encrypted `user_api_keys` table in 0006. Fetched in parallel.
+  const [profileResult, apiKeys] = await Promise.all([
+    db
+      .from("user_profiles")
+      .select(
+        "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model, fast_model",
+      )
+      .eq("user_id", userId)
+      .single(),
+    getUserApiKeys(userId, db),
+  ]);
 
+  const { data, error } = profileResult;
   if (error) return void res.status(500).json({ detail: error.message });
 
   let messageCreditsUsed = data.message_credits_used ?? 0;
@@ -56,13 +68,26 @@ userRouter.get("/profile", requireAuth, async (_req, res) => {
     tier: data.tier,
     tabular_model: data.tabular_model,
     fast_model: data.fast_model,
-    claude_api_key: data.claude_api_key,
-    gemini_api_key: data.gemini_api_key,
-    openai_api_key: data.openai_api_key,
-    azure_openai_endpoint: data.azure_openai_endpoint,
-    azure_openai_api_key: data.azure_openai_api_key,
-    azure_openai_api_version: data.azure_openai_api_version,
-    azure_openai_deployment: data.azure_openai_deployment,
+    // Backwards-compat: keep returning the plaintext provider keys so
+    // the frontend's existing Account → Models form keeps working
+    // through the migration. The frontend should switch to consuming
+    // the *_configured booleans below and stop displaying the
+    // plaintext values — at which point the plaintext fields can be
+    // removed from this response in a follow-up commit. Tracked in
+    // UPSTREAM_SYNC_LOG.md (ba6f771 entry).
+    claude_api_key: apiKeys.claude,
+    gemini_api_key: apiKeys.gemini,
+    openai_api_key: apiKeys.openai,
+    azure_openai_endpoint: apiKeys.azureOpenai?.endpoint ?? null,
+    azure_openai_api_key: apiKeys.azureOpenai?.apiKey ?? null,
+    azure_openai_api_version: apiKeys.azureOpenai?.apiVersion ?? null,
+    azure_openai_deployment: apiKeys.azureOpenai?.deployment ?? null,
+    // Forward-compat: per-provider configured booleans the frontend
+    // should prefer once the plaintext fields above are dropped.
+    claude_configured: !!apiKeys.claude,
+    gemini_configured: !!apiKeys.gemini,
+    openai_configured: !!apiKeys.openai,
+    azure_openai_configured: !!apiKeys.azureOpenai,
     // Tells the frontend "the server has a shared key for this provider".
     // Lets the model dropdown show models as available even when the user
     // hasn't pasted a personal key. Actual key values never leave the
@@ -82,46 +107,185 @@ userRouter.get("/profile", requireAuth, async (_req, res) => {
 
 userRouter.patch("/profile", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
-  const allowedFields = [
+  const db = createServerSupabase();
+
+  // Profile fields stay on `user_profiles`.
+  const profileFields = [
     "display_name",
     "organisation",
     "tabular_model",
     "fast_model",
-    "claude_api_key",
-    "gemini_api_key",
-    "openai_api_key",
+  ] as const;
+  const profileUpdates: Record<string, string | null> = {};
+  for (const field of profileFields) {
+    if (field in req.body) {
+      const value = req.body[field];
+      profileUpdates[field] = typeof value === "string" ? value : value ?? null;
+    }
+  }
+
+  // Provider key fields route through `userApiKeys` (encrypted at
+  // rest). The request body shape is unchanged for backwards-compat;
+  // we translate to setUserApiKey / deleteUserApiKey calls.
+  const flatProviderFields: ReadonlyArray<{
+    field: "claude_api_key" | "gemini_api_key" | "openai_api_key";
+    provider: "claude" | "gemini" | "openai";
+  }> = [
+    { field: "claude_api_key", provider: "claude" },
+    { field: "gemini_api_key", provider: "gemini" },
+    { field: "openai_api_key", provider: "openai" },
+  ];
+  const aoaiFields = [
     "azure_openai_endpoint",
     "azure_openai_api_key",
     "azure_openai_api_version",
     "azure_openai_deployment",
   ] as const;
 
-  const updates: Record<string, string | null> = {};
-  for (const field of allowedFields) {
+  const flatKeyChanges = new Map<
+    "claude" | "gemini" | "openai",
+    string | null
+  >();
+  for (const { field, provider } of flatProviderFields) {
     if (field in req.body) {
       const value = req.body[field];
-      updates[field] = typeof value === "string" ? value : value ?? null;
+      const normalised =
+        typeof value === "string" && value.trim() !== "" ? value : null;
+      flatKeyChanges.set(provider, normalised);
+    }
+  }
+  const aoaiTouched = aoaiFields.some((f) => f in req.body);
+
+  if (
+    Object.keys(profileUpdates).length === 0 &&
+    flatKeyChanges.size === 0 &&
+    !aoaiTouched
+  ) {
+    return void res
+      .status(400)
+      .json({ detail: "No updatable profile fields provided" });
+  }
+
+  // 1. Profile updates
+  if (Object.keys(profileUpdates).length > 0) {
+    profileUpdates.updated_at = new Date().toISOString();
+    const { error } = await db
+      .from("user_profiles")
+      .update(profileUpdates)
+      .eq("user_id", userId);
+    if (error) return void res.status(500).json({ detail: error.message });
+  }
+
+  // 2. Flat provider keys (claude, gemini, openai)
+  try {
+    for (const [provider, value] of flatKeyChanges) {
+      if (value === null) {
+        await deleteUserApiKey(userId, provider, db);
+      } else {
+        await setUserApiKey(userId, provider, value, db);
+      }
+    }
+  } catch (err) {
+    return void res
+      .status(500)
+      .json({ detail: err instanceof Error ? err.message : String(err) });
+  }
+
+  // 3. Azure OpenAI compound shape — merge changes against existing
+  //    configuration so a partial PATCH (e.g., updating only the
+  //    deployment) doesn't blow away the other three fields.
+  if (aoaiTouched) {
+    const current = await getUserApiKeys(userId, db);
+    const merged: AzureOpenaiSettings = {
+      endpoint:
+        "azure_openai_endpoint" in req.body
+          ? typeof req.body.azure_openai_endpoint === "string"
+            ? req.body.azure_openai_endpoint
+            : ""
+          : current.azureOpenai?.endpoint ?? "",
+      apiKey:
+        "azure_openai_api_key" in req.body
+          ? typeof req.body.azure_openai_api_key === "string" &&
+            req.body.azure_openai_api_key.trim() !== ""
+            ? req.body.azure_openai_api_key
+            : null
+          : current.azureOpenai?.apiKey ?? null,
+      apiVersion:
+        "azure_openai_api_version" in req.body
+          ? typeof req.body.azure_openai_api_version === "string" &&
+            req.body.azure_openai_api_version.trim() !== ""
+            ? req.body.azure_openai_api_version
+            : null
+          : current.azureOpenai?.apiVersion ?? null,
+      deployment:
+        "azure_openai_deployment" in req.body
+          ? typeof req.body.azure_openai_deployment === "string"
+            ? req.body.azure_openai_deployment
+            : ""
+          : current.azureOpenai?.deployment ?? "",
+    };
+
+    if (!merged.endpoint && !merged.deployment) {
+      // Both required fields cleared — treat as explicit delete.
+      try {
+        await deleteUserApiKey(userId, "azure_openai", db);
+      } catch (err) {
+        return void res.status(500).json({
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
+    } else if (merged.endpoint && merged.deployment) {
+      try {
+        await setUserApiKey(userId, "azure_openai", merged, db);
+      } catch (err) {
+        return void res.status(500).json({
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
+    } else {
+      return void res.status(400).json({
+        detail:
+          "Azure OpenAI requires both endpoint and deployment to be set " +
+          "(or both cleared at the same time).",
+      });
     }
   }
 
-  if (Object.keys(updates).length === 0) {
-    return void res.status(400).json({ detail: "No updatable profile fields provided" });
-  }
+  // Re-fetch to return the canonical post-update view (same shape as GET).
+  const [profileResult, apiKeys] = await Promise.all([
+    db
+      .from("user_profiles")
+      .select(
+        "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model, fast_model",
+      )
+      .eq("user_id", userId)
+      .single(),
+    getUserApiKeys(userId, db),
+  ]);
+  if (profileResult.error)
+    return void res.status(500).json({ detail: profileResult.error.message });
+  const p = profileResult.data;
 
-  updates.updated_at = new Date().toISOString();
-
-  const db = createServerSupabase();
-  const { data, error } = await db
-    .from("user_profiles")
-    .update(updates)
-    .eq("user_id", userId)
-    .select(
-      "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, claude_api_key, gemini_api_key, openai_api_key, azure_openai_endpoint, azure_openai_api_key, azure_openai_api_version, azure_openai_deployment",
-    )
-    .single();
-
-  if (error) return void res.status(500).json({ detail: error.message });
-  res.json(data);
+  res.json({
+    display_name: p.display_name,
+    organisation: p.organisation,
+    message_credits_used: p.message_credits_used,
+    credits_reset_date: p.credits_reset_date,
+    tier: p.tier,
+    tabular_model: p.tabular_model,
+    fast_model: p.fast_model,
+    claude_api_key: apiKeys.claude,
+    gemini_api_key: apiKeys.gemini,
+    openai_api_key: apiKeys.openai,
+    azure_openai_endpoint: apiKeys.azureOpenai?.endpoint ?? null,
+    azure_openai_api_key: apiKeys.azureOpenai?.apiKey ?? null,
+    azure_openai_api_version: apiKeys.azureOpenai?.apiVersion ?? null,
+    azure_openai_deployment: apiKeys.azureOpenai?.deployment ?? null,
+    claude_configured: !!apiKeys.claude,
+    gemini_configured: !!apiKeys.gemini,
+    openai_configured: !!apiKeys.openai,
+    azure_openai_configured: !!apiKeys.azureOpenai,
+  });
 });
 
 userRouter.post("/profile/credits/increment", requireAuth, async (_req, res) => {

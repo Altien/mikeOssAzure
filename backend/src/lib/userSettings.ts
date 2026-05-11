@@ -4,8 +4,8 @@ import {
     DEFAULT_TITLE_MODEL,
     DEFAULT_TABULAR_MODEL,
     type UserApiKeys,
-    type AzureOpenaiSettings,
 } from "./llm";
+import { getUserApiKeys as readEncryptedApiKeys } from "./userApiKeys";
 
 export type UserModelSettings = {
     fast_model: string;
@@ -42,50 +42,28 @@ function resolveFastModel(
     return DEFAULT_TITLE_MODEL;
 }
 
-function buildAzureOpenaiSettings(row: {
-    azure_openai_endpoint?: string | null;
-    azure_openai_api_key?: string | null;
-    azure_openai_api_version?: string | null;
-    azure_openai_deployment?: string | null;
-} | null): AzureOpenaiSettings | null {
-    if (!row) return null;
-    const endpoint = row.azure_openai_endpoint?.trim();
-    const deployment = row.azure_openai_deployment?.trim();
-    // Endpoint + deployment are the minimum for the adapter to attempt a
-    // call. apiKey is left optional here — the adapter throws a clear
-    // error if it's missing (until MI auth lands).
-    if (!endpoint || !deployment) return null;
-    return {
-        endpoint,
-        deployment,
-        apiKey: row.azure_openai_api_key ?? null,
-        apiVersion: row.azure_openai_api_version ?? null,
-    };
-}
-
 export async function getUserModelSettings(
     userId: string,
     db?: ReturnType<typeof createServerSupabase>,
 ): Promise<UserModelSettings> {
     const client = db ?? createServerSupabase();
-    const { data } = await client
-        .from("user_profiles")
-        .select(
-            "tabular_model, fast_model, claude_api_key, gemini_api_key, openai_api_key, azure_openai_endpoint, azure_openai_api_key, azure_openai_api_version, azure_openai_deployment",
-        )
-        .eq("user_id", userId)
-        .single();
-
-    const api_keys: UserApiKeys = {
-        claude: data?.claude_api_key ?? null,
-        gemini: data?.gemini_api_key ?? null,
-        openai: data?.openai_api_key ?? null,
-        azureOpenai: buildAzureOpenaiSettings(data ?? null),
-    };
-
+    // Provider keys come from `user_api_keys` (encrypted, see
+    // `backend/src/lib/userApiKeys.ts`); model preferences still live on
+    // `user_profiles`. Issued in parallel — they're independent rows.
+    const [modelRow, api_keys] = await Promise.all([
+        client
+            .from("user_profiles")
+            .select("tabular_model, fast_model")
+            .eq("user_id", userId)
+            .single(),
+        readEncryptedApiKeys(userId, client),
+    ]);
     return {
-        fast_model: resolveFastModel(api_keys, data?.fast_model),
-        tabular_model: resolveModel(data?.tabular_model, DEFAULT_TABULAR_MODEL),
+        fast_model: resolveFastModel(api_keys, modelRow.data?.fast_model),
+        tabular_model: resolveModel(
+            modelRow.data?.tabular_model,
+            DEFAULT_TABULAR_MODEL,
+        ),
         api_keys,
     };
 }
@@ -94,20 +72,7 @@ export async function getUserApiKeys(
     userId: string,
     db?: ReturnType<typeof createServerSupabase>,
 ): Promise<UserApiKeys> {
-    const client = db ?? createServerSupabase();
-    const { data } = await client
-        .from("user_profiles")
-        .select(
-            "claude_api_key, gemini_api_key, openai_api_key, azure_openai_endpoint, azure_openai_api_key, azure_openai_api_version, azure_openai_deployment",
-        )
-        .eq("user_id", userId)
-        .single();
-    return {
-        claude: data?.claude_api_key ?? null,
-        gemini: data?.gemini_api_key ?? null,
-        openai: data?.openai_api_key ?? null,
-        azureOpenai: buildAzureOpenaiSettings(data ?? null),
-    };
+    return readEncryptedApiKeys(userId, db ?? createServerSupabase());
 }
 
 
