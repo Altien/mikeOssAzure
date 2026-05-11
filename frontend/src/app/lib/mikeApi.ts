@@ -127,9 +127,18 @@ export async function updateUserProfile(payload: {
     });
 }
 
-export type ApiKeyStatus = {
-    claude: boolean;
-    gemini: boolean;
+export type ApiKeyProvider = "claude" | "gemini" | "openai";
+export type ApiKeySource = "user" | "env" | null;
+export type ApiKeyState = Record<
+    ApiKeyProvider,
+    {
+        configured: boolean;
+        source: ApiKeySource;
+    }
+>;
+
+export type ApiKeyStatus = Record<ApiKeyProvider, boolean> & {
+    sources?: Partial<Record<ApiKeyProvider, ApiKeySource>>;
 };
 
 export async function getApiKeyStatus(): Promise<ApiKeyStatus> {
@@ -137,7 +146,7 @@ export async function getApiKeyStatus(): Promise<ApiKeyStatus> {
 }
 
 export async function saveApiKey(
-    provider: keyof ApiKeyStatus,
+    provider: ApiKeyProvider,
     apiKey: string | null,
 ): Promise<ApiKeyStatus> {
     return apiRequest<ApiKeyStatus>(`/user/api-keys/${provider}`, {
