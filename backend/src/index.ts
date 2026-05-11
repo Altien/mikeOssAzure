@@ -1,19 +1,14 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import cookieParser from "cookie-parser";
 import path from "node:path";
 import fs from "node:fs";
-// Upstream divergence (sync-log: ba6f771). Upstream's version of this file
-// imports `helmet` and `express-rate-limit` and decorates the route mounts
-// below with per-route limiters. Dev currently has neither package — the
-// security middleware is tracked as a follow-up commit on this branch;
-// `MIGRATION_KNOWLEDGE.md` and `backend/migrations/UPSTREAM_SYNC_LOG.md`
-// record the deferral. When added: install both packages, mount
-// `app.use(helmet(...))` near the top of middleware setup, configure a
-// `chatLimiter` / `uploadLimiter` / `chatCreateLimiter` (see upstream's
-// values), and decorate `app.post("/chat", chatLimiter)` etc. before the
-// `app.use("/chat", chatRouter)` mounts.
+// Security middleware below is taken directly from upstream ba6f771
+// ("Sync security and backend profile updates"). Adapted to dev's
+// `/api/` route prefix for per-route limiter decorators.
 import { chatRouter } from "./routes/chat";
 import { projectsRouter } from "./routes/projects";
 import { projectChatRouter } from "./routes/projectChat";
@@ -31,6 +26,68 @@ import { diagRouter } from "./routes/diag";
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
+const isProduction = process.env.NODE_ENV === "production";
+
+// ── Rate-limit configuration (from upstream ba6f771) ───────────────────────
+
+function envInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function minutes(value: number): number {
+  return value * 60 * 1000;
+}
+
+function hours(value: number): number {
+  return minutes(value * 60);
+}
+
+function makeLimiter(options: {
+  windowMs: number;
+  max: number;
+  message?: string;
+}) {
+  return rateLimit({
+    windowMs: options.windowMs,
+    max: options.max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => req.method === "OPTIONS",
+    message: {
+      detail:
+        options.message ?? "Too many requests. Please try again later.",
+    },
+  });
+}
+
+const generalLimiter = makeLimiter({
+  windowMs: minutes(envInt("RATE_LIMIT_GENERAL_WINDOW_MINUTES", 15)),
+  max: envInt("RATE_LIMIT_GENERAL_MAX", 300),
+});
+
+const chatLimiter = makeLimiter({
+  windowMs: minutes(envInt("RATE_LIMIT_CHAT_WINDOW_MINUTES", 15)),
+  max: envInt("RATE_LIMIT_CHAT_MAX", 30),
+  message: "Too many chat requests. Please try again later.",
+});
+
+const chatCreateLimiter = makeLimiter({
+  windowMs: minutes(envInt("RATE_LIMIT_CHAT_CREATE_WINDOW_MINUTES", 15)),
+  max: envInt("RATE_LIMIT_CHAT_CREATE_MAX", 60),
+});
+
+const uploadLimiter = makeLimiter({
+  windowMs: hours(envInt("RATE_LIMIT_UPLOAD_WINDOW_HOURS", 1)),
+  max: envInt("RATE_LIMIT_UPLOAD_MAX", 50),
+  message: "Too many upload requests. Please try again later.",
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+
+app.disable("x-powered-by");
 
 // Container Apps' ingress terminates TLS and rewrites the request to the
 // container as plain HTTP, with the original scheme + client host in
@@ -40,12 +97,34 @@ const PORT = process.env.PORT ?? 3001;
 // construction in routes/auth.ts (Microsoft rejects the http:// form).
 app.set("trust proxy", true);
 
+// helmet (security headers) — taken from upstream ba6f771; CSP and COEP
+// stay disabled because dev serves a static-exported Next.js bundle from
+// the same origin and we don't want to re-derive the policy on every
+// frontend change. HSTS only in production.
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    hsts: isProduction
+      ? {
+          maxAge: 15552000,
+          includeSubDomains: true,
+        }
+      : false,
+    referrerPolicy: { policy: "no-referrer" },
+  }),
+);
+
 app.use(
   cors({
     origin: process.env.FRONTEND_URL ?? "http://localhost:3000",
     credentials: true,
   }),
 );
+
+// Global rate limit. Per-route stricter limiters are decorated before
+// the route mounts below.
+app.use(generalLimiter);
 
 app.use(express.json({ limit: "50mb" }));
 // /install posts form-encoded bodies (the bootstrap-token paste form).
@@ -103,6 +182,19 @@ function findShell(reqPath: string): string | null {
   }
   return null;
 }
+
+// Per-route rate limiters (from upstream ba6f771, adapted to dev's
+// /api/ prefix). Must be registered before the corresponding router
+// mounts so express runs them ahead of the route handler.
+app.post("/api/chat", chatLimiter);
+app.post("/api/projects/:projectId/chat", chatLimiter);
+app.post("/api/tabular-review/:reviewId/chat", chatLimiter);
+app.post("/api/tabular-review/:reviewId/generate", chatLimiter);
+app.post("/api/chat/create", chatCreateLimiter);
+app.post("/api/chat/:chatId/generate-title", chatCreateLimiter);
+app.post("/api/single-documents", uploadLimiter);
+app.post("/api/single-documents/:documentId/versions", uploadLimiter);
+app.post("/api/projects/:projectId/documents", uploadLimiter);
 
 app.use("/api/chat", chatRouter);
 app.use("/api/projects", projectsRouter);
