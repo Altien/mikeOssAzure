@@ -115,18 +115,20 @@ export default function ModelsAndApiKeysPage() {
                     <ApiKeyField
                         label="Anthropic (Claude) API Key"
                         placeholder="sk-ant-…"
-                        initialValue={profile?.claudeApiKey ?? ""}
+                        hasSavedKey={!!profile?.claudeApiKey}
                         onSave={(value) =>
                             updateApiKey("claude", value.trim() || null)
                         }
+                        onRemove={() => updateApiKey("claude", null)}
                     />
                     <ApiKeyField
                         label="Google (Gemini) API Key"
                         placeholder="AI…"
-                        initialValue={profile?.geminiApiKey ?? ""}
+                        hasSavedKey={!!profile?.geminiApiKey}
                         onSave={(value) =>
                             updateApiKey("gemini", value.trim() || null)
                         }
+                        onRemove={() => updateApiKey("gemini", null)}
                     />
                     <ApiKeyField
                         label="OpenAI API Key"
@@ -544,30 +546,33 @@ function AzureOpenaiSettingsForm({
 function ApiKeyField({
     label,
     placeholder,
-    initialValue,
+    hasSavedKey,
     onSave,
+    onRemove,
 }: {
     label: string;
     placeholder: string;
-    initialValue: string;
+    hasSavedKey: boolean;
     onSave: (value: string) => Promise<boolean>;
+    onRemove: () => Promise<boolean>;
 }) {
-    const [value, setValue] = useState(initialValue);
+    const [value, setValue] = useState("");
     const [reveal, setReveal] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [saved, setSaved] = useState(false);
 
     useEffect(() => {
-        setValue(initialValue);
-    }, [initialValue]);
+        setValue("");
+    }, [hasSavedKey]);
 
-    const dirty = value !== initialValue;
+    const dirty = value.trim().length > 0;
 
     const handleSave = async () => {
         setIsSaving(true);
         const ok = await onSave(value);
         setIsSaving(false);
         if (ok) {
+            setValue("");
             setSaved(true);
             setTimeout(() => setSaved(false), 2000);
         } else {
@@ -575,16 +580,28 @@ function ApiKeyField({
         }
     };
 
+    const handleRemove = async () => {
+        setIsSaving(true);
+        const ok = await onRemove();
+        setIsSaving(false);
+        if (!ok) alert(`Failed to remove ${label}.`);
+    };
+
     return (
         <div>
             <label className="text-sm text-gray-600 block mb-2">{label}</label>
+            {hasSavedKey && (
+                <p className="text-xs text-gray-500 mb-2">
+                    A key is saved. Paste a new key to replace it.
+                </p>
+            )}
             <div className="flex gap-2">
                 <div className="relative flex-1">
                     <Input
                         type={reveal ? "text" : "password"}
                         value={value}
                         onChange={(e) => setValue(e.target.value)}
-                        placeholder={placeholder}
+                        placeholder={hasSavedKey ? "Saved key hidden" : placeholder}
                         className="pr-10"
                         autoComplete="off"
                         spellCheck={false}
@@ -618,6 +635,16 @@ function ApiKeyField({
                         "Save"
                     )}
                 </Button>
+                {hasSavedKey && (
+                    <Button
+                        type="button"
+                        variant="outline"
+                        onClick={handleRemove}
+                        disabled={isSaving}
+                    >
+                        Remove
+                    </Button>
+                )}
             </div>
         </div>
     );

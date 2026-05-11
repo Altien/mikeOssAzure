@@ -13,7 +13,10 @@ import {
     type EditInput,
 } from "./docxTrackedChanges";
 import { buildDownloadUrl } from "./downloadTokens";
-import { attachActiveVersionPaths, loadActiveVersion } from "./documentVersions";
+import {
+    attachActiveVersionPaths,
+    loadActiveVersion,
+} from "./documentVersions";
 import {
     streamChatWithTools,
     resolveModel,
@@ -56,7 +59,10 @@ export type TabularCellStore = {
     columns: { index: number; name: string }[];
     documents: { id: string; filename: string }[];
     /** key: `${colIndex}:${docId}` */
-    cells: Map<string, { summary: string; flag?: string; reasoning?: string } | null>;
+    cells: Map<
+        string,
+        { summary: string; flag?: string; reasoning?: string } | null
+    >;
 };
 
 export type ToolCall = {
@@ -320,25 +326,43 @@ export const TOOLS = [
                 properties: {
                     title: {
                         type: "string",
-                        description: "Document title (used as filename and heading)",
+                        description:
+                            "Document title (used as filename and heading)",
                     },
                     landscape: {
                         type: "boolean",
-                        description: "Set to true for landscape page orientation. Default is portrait.",
+                        description:
+                            "Set to true for landscape page orientation. Default is portrait.",
                     },
                     sections: {
                         type: "array",
-                        description: "List of document sections. Each section may contain a heading, prose content, or a table.",
+                        description:
+                            "List of document sections. Each section may contain a heading, prose content, or a table.",
                         items: {
                             type: "object",
                             properties: {
-                                heading: { type: "string", description: "Optional section heading" },
-                                level: { type: "integer", description: "Heading level: 1, 2, or 3" },
-                                content: { type: "string", description: "Prose text content (paragraphs separated by double newlines)" },
-                                pageBreak: { type: "boolean", description: "Set to true to start this section on a new page. Use for contract signature pages." },
+                                heading: {
+                                    type: "string",
+                                    description: "Optional section heading",
+                                },
+                                level: {
+                                    type: "integer",
+                                    description: "Heading level: 1, 2, or 3",
+                                },
+                                content: {
+                                    type: "string",
+                                    description:
+                                        "Prose text content (paragraphs separated by double newlines)",
+                                },
+                                pageBreak: {
+                                    type: "boolean",
+                                    description:
+                                        "Set to true to start this section on a new page. Use for contract signature pages.",
+                                },
                                 table: {
                                     type: "object",
-                                    description: "Optional table to render in this section",
+                                    description:
+                                        "Optional table to render in this section",
                                     properties: {
                                         headers: {
                                             type: "array",
@@ -351,7 +375,8 @@ export const TOOLS = [
                                                 type: "array",
                                                 items: { type: "string" },
                                             },
-                                            description: "Array of rows, each row is an array of cell strings matching the headers order",
+                                            description:
+                                                "Array of rows, each row is an array of cell strings matching the headers order",
                                         },
                                     },
                                     required: ["headers", "rows"],
@@ -390,22 +415,31 @@ export const TOOLS = [
                                 },
                                 replace: {
                                     type: "string",
-                                    description: "Replacement text. Empty string = pure deletion.",
+                                    description:
+                                        "Replacement text. Empty string = pure deletion.",
                                 },
                                 context_before: {
                                     type: "string",
-                                    description: "~40 chars immediately preceding `find`, used to disambiguate.",
+                                    description:
+                                        "~40 chars immediately preceding `find`, used to disambiguate.",
                                 },
                                 context_after: {
                                     type: "string",
-                                    description: "~40 chars immediately following `find`.",
+                                    description:
+                                        "~40 chars immediately following `find`.",
                                 },
                                 reason: {
                                     type: "string",
-                                    description: "Short explanation shown to the user on the card.",
+                                    description:
+                                        "Short explanation shown to the user on the card.",
                                 },
                             },
-                            required: ["find", "replace", "context_before", "context_after"],
+                            required: [
+                                "find",
+                                "replace",
+                                "context_before",
+                                "context_after",
+                            ],
                         },
                     },
                 },
@@ -578,7 +612,11 @@ export async function enrichWithPriorEvents(
 
 export function buildMessages(
     messages: ChatMessage[],
-    docAvailability: { doc_id: string; filename: string; folder_path?: string }[],
+    docAvailability: {
+        doc_id: string;
+        filename: string;
+        folder_path?: string;
+    }[],
     systemPromptExtra?: string,
     docIndex?: DocIndex,
 ) {
@@ -592,7 +630,9 @@ export function buildMessages(
     if (docAvailability.length) {
         systemContent += "\n\n---\nAVAILABLE DOCUMENTS:\n";
         for (const doc of docAvailability) {
-            const label = doc.folder_path ? `${doc.folder_path} / ${doc.filename}` : doc.filename;
+            const label = doc.folder_path
+                ? `${doc.folder_path} / ${doc.filename}`
+                : doc.filename;
             systemContent += `- ${doc.doc_id}: ${label}\n`;
         }
         systemContent +=
@@ -620,9 +660,7 @@ export function buildMessages(
                 const slug = f.document_id
                     ? slugByDocumentId.get(f.document_id)
                     : undefined;
-                return slug
-                    ? `- ${slug}: ${f.filename}`
-                    : `- ${f.filename}`;
+                return slug ? `- ${slug}: ${f.filename}` : `- ${f.filename}`;
             });
             content = `[The user attached the following document(s) to this message:\n${lines.join("\n")}]\n\n${content}`;
         }
@@ -676,30 +714,50 @@ export async function generateDocx(
 ) {
     try {
         const {
-            Document, Paragraph, HeadingLevel, Packer,
-            Table, TableRow, TableCell, WidthType, BorderStyle,
-            TextRun, AlignmentType, PageOrientation, PageBreak,
+            Document,
+            Paragraph,
+            HeadingLevel,
+            Packer,
+            Table,
+            TableRow,
+            TableCell,
+            WidthType,
+            BorderStyle,
+            TextRun,
+            AlignmentType,
+            PageOrientation,
+            PageBreak,
         } = await import("docx");
 
         const FONT = "Times New Roman";
         const SIZE = 22; // 11pt in half-points
 
-        type DocChild = InstanceType<typeof Paragraph> | InstanceType<typeof Table>;
+        type DocChild =
+            | InstanceType<typeof Paragraph>
+            | InstanceType<typeof Table>;
         const children: DocChild[] = [];
         children.push(
             new Paragraph({
                 heading: HeadingLevel.TITLE,
                 spacing: { after: 200 },
                 alignment: AlignmentType.CENTER,
-                children: [new TextRun({ text: title.toUpperCase(), color: "000000", font: FONT, size: SIZE, bold: true })],
+                children: [
+                    new TextRun({
+                        text: title.toUpperCase(),
+                        color: "000000",
+                        font: FONT,
+                        size: SIZE,
+                        bold: true,
+                    }),
+                ],
             }),
         );
 
         const cellBorder = {
-            top:    { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
+            top: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
             bottom: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
-            left:   { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
-            right:  { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
+            left: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
+            right: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
         };
 
         const headingLevels = [
@@ -718,9 +776,7 @@ export async function generateDocx(
             table?: { headers: string[]; rows: string[][] };
         }[]) {
             if (section.pageBreak) {
-                children.push(
-                    new Paragraph({ children: [new PageBreak()] }),
-                );
+                children.push(new Paragraph({ children: [new PageBreak()] }));
             }
             if (section.heading) {
                 const idx = Math.min((section.level ?? 1) - 1, 3);
@@ -732,7 +788,15 @@ export async function generateDocx(
                     new Paragraph({
                         heading: headingLevels[idx],
                         spacing: { after: 160 },
-                        children: [new TextRun({ text: headingText, color: "000000", font: FONT, size: SIZE, bold: true })],
+                        children: [
+                            new TextRun({
+                                text: headingText,
+                                color: "000000",
+                                font: FONT,
+                                size: SIZE,
+                                bold: true,
+                            }),
+                        ],
                     }),
                 );
             }
@@ -751,7 +815,14 @@ export async function generateDocx(
                                     shading: { fill: "F2F2F2" },
                                     children: [
                                         new Paragraph({
-                                            children: [new TextRun({ text: h, bold: true, font: FONT, size: SIZE })],
+                                            children: [
+                                                new TextRun({
+                                                    text: h,
+                                                    bold: true,
+                                                    font: FONT,
+                                                    size: SIZE,
+                                                }),
+                                            ],
                                             alignment: AlignmentType.LEFT,
                                         }),
                                     ],
@@ -784,7 +855,13 @@ export async function generateDocx(
                                         borders: cellBorder,
                                         children: [
                                             new Paragraph({
-                                                children: [new TextRun({ text: cell, font: FONT, size: SIZE })],
+                                                children: [
+                                                    new TextRun({
+                                                        text: cell,
+                                                        font: FONT,
+                                                        size: SIZE,
+                                                    }),
+                                                ],
                                             }),
                                         ],
                                     }),
@@ -810,14 +887,26 @@ export async function generateDocx(
                             new Paragraph({
                                 bullet: { level: 0 },
                                 spacing: { after: 120 },
-                                children: [new TextRun({ text: bulletMatch[1], font: FONT, size: SIZE })],
+                                children: [
+                                    new TextRun({
+                                        text: bulletMatch[1],
+                                        font: FONT,
+                                        size: SIZE,
+                                    }),
+                                ],
                             }),
                         );
                     } else {
                         children.push(
                             new Paragraph({
                                 spacing: { after: 120 },
-                                children: [new TextRun({ text: trimmed, font: FONT, size: SIZE })],
+                                children: [
+                                    new TextRun({
+                                        text: trimmed,
+                                        font: FONT,
+                                        size: SIZE,
+                                    }),
+                                ],
                             }),
                         );
                     }
@@ -829,7 +918,9 @@ export async function generateDocx(
             ? { page: { size: { orientation: PageOrientation.LANDSCAPE } } }
             : {};
 
-        const doc = new Document({ sections: [{ properties: pageSetup, children }] });
+        const doc = new Document({
+            sections: [{ properties: pageSetup, children }],
+        });
         const buf = await Packer.toBuffer(doc);
         const docId = crypto.randomUUID().replace(/-/g, "");
         const safeTitle =
@@ -973,11 +1064,11 @@ export async function runEditDocument(params: {
     const current = await loadCurrentVersionBytes(documentId, db);
     if (!current) return { ok: false, error: "Could not load document bytes." };
 
-    const { bytes: editedBytes, changes, errors } = await applyTrackedEdits(
-        current.bytes,
-        edits,
-        { author: "Mike" },
-    );
+    const {
+        bytes: editedBytes,
+        changes,
+        errors,
+    } = await applyTrackedEdits(current.bytes, edits, { author: "Mike" });
 
     if (changes.length === 0) {
         return {
@@ -1028,7 +1119,8 @@ export async function runEditDocument(params: {
             .order("version_number", { ascending: false, nullsFirst: false })
             .limit(1)
             .maybeSingle();
-        nextVersionNumber = ((maxRow?.version_number as number | null) ?? 1) + 1;
+        nextVersionNumber =
+            ((maxRow?.version_number as number | null) ?? 1) + 1;
 
         // Inherit the display name from the most recent prior version so
         // user-applied renames carry forward through further edits. Falls
@@ -1081,7 +1173,9 @@ export async function runEditDocument(params: {
     const { data: insertedEdits, error: editsErr } = await db
         .from("document_edits")
         .insert(editRows)
-        .select("id, change_id, del_w_id, ins_w_id, deleted_text, inserted_text, context_before, context_after");
+        .select(
+            "id, change_id, del_w_id, ins_w_id, deleted_text, inserted_text, context_before, context_after",
+        );
 
     if (editsErr || !insertedEdits) {
         return { ok: false, error: "Failed to record edits." };
@@ -1092,25 +1186,34 @@ export async function runEditDocument(params: {
         .update({ current_version_id: versionRowId })
         .eq("id", documentId);
 
-    const annotations: EditAnnotation[] = insertedEdits.map((r: { id: string; change_id: string; deleted_text: string; inserted_text: string; context_before: string | null; context_after: string | null }) => {
-        const src = changes.find((c) => c.id === r.change_id);
-        return {
-            kind: "edit",
-            edit_id: r.id,
-            document_id: documentId,
-            version_id: versionRowId,
-            version_number: nextVersionNumber,
-            change_id: r.change_id,
-            del_w_id: src?.delId,
-            ins_w_id: src?.insId,
-            deleted_text: r.deleted_text ?? "",
-            inserted_text: r.inserted_text ?? "",
-            context_before: r.context_before ?? "",
-            context_after: r.context_after ?? "",
-            reason: src?.reason,
-            status: "pending",
-        };
-    });
+    const annotations: EditAnnotation[] = insertedEdits.map(
+        (r: {
+            id: string;
+            change_id: string;
+            deleted_text: string;
+            inserted_text: string;
+            context_before: string | null;
+            context_after: string | null;
+        }) => {
+            const src = changes.find((c) => c.id === r.change_id);
+            return {
+                kind: "edit",
+                edit_id: r.id,
+                document_id: documentId,
+                version_id: versionRowId,
+                version_number: nextVersionNumber,
+                change_id: r.change_id,
+                del_w_id: src?.delId,
+                ins_w_id: src?.insId,
+                deleted_text: r.deleted_text ?? "",
+                inserted_text: r.inserted_text ?? "",
+                context_before: r.context_before ?? "",
+                context_after: r.context_after ?? "",
+                reason: src?.reason,
+                status: "pending",
+            };
+        },
+    );
 
     // Persistent, non-expiring permalink. The backend streams fresh bytes
     // on each request, so this URL stays valid as long as the file exists.
@@ -1216,9 +1319,7 @@ async function readDocumentContent(
         {
             const head = Buffer.from(raw).subarray(0, 8);
             const hex = head.toString("hex");
-            const ascii = head
-                .toString("binary")
-                .replace(/[^\x20-\x7e]/g, ".");
+            const ascii = head.toString("binary").replace(/[^\x20-\x7e]/g, ".");
             console.log(
                 `[read_document] magic bytes hex=${hex} ascii="${ascii}" for filename="${docInfo.filename}"`,
             );
@@ -1273,7 +1374,9 @@ async function readDocumentContent(
             err,
         );
         if (emitEvents)
-            write(`data: ${JSON.stringify({ type: "doc_read", filename: docInfo.filename })}\n\n`);
+            write(
+                `data: ${JSON.stringify({ type: "doc_read", filename: docInfo.filename })}\n\n`,
+            );
         return "Document could not be read.";
     }
 }
@@ -1385,7 +1488,10 @@ async function findInDocumentContent(params: {
     const { norm, origIdx } = normalizeWithMap(text);
     const needle = normalizeQuery(query);
     if (!needle) {
-        return JSON.stringify({ ok: false, error: "Empty query after normalization." });
+        return JSON.stringify({
+            ok: false,
+            error: "Empty query after normalization.",
+        });
     }
 
     type Hit = {
@@ -1528,19 +1634,30 @@ export async function runToolCalls(
             const rawDocId = args.doc_id as string;
             const docId =
                 resolveDocLabel(rawDocId, docStore, docIndex) ?? rawDocId;
-            const content = await readDocumentContent(docId, docStore, write, docIndex, db);
+            const content = await readDocumentContent(
+                docId,
+                docStore,
+                write,
+                docIndex,
+                db,
+            );
             const filename = docStore.get(docId)?.filename;
             const documentId = docIndex?.[docId]?.document_id;
             if (filename) docsRead.push({ filename, document_id: documentId });
             toolResults.push({ role: "tool", tool_call_id: tc.id, content });
-
         } else if (tc.function.name === "find_in_document") {
             const rawDocId = args.doc_id as string;
             const docId =
                 resolveDocLabel(rawDocId, docStore, docIndex) ?? rawDocId;
             const query = (args.query as string) ?? "";
-            const maxResults = typeof args.max_results === "number" ? args.max_results : undefined;
-            const contextChars = typeof args.context_chars === "number" ? args.context_chars : undefined;
+            const maxResults =
+                typeof args.max_results === "number"
+                    ? args.max_results
+                    : undefined;
+            const contextChars =
+                typeof args.context_chars === "number"
+                    ? args.context_chars
+                    : undefined;
             const content = await findInDocumentContent({
                 docLabel: docId,
                 query,
@@ -1569,7 +1686,6 @@ export async function runToolCalls(
                 });
             }
             toolResults.push({ role: "tool", tool_call_id: tc.id, content });
-
         } else if (tc.function.name === "list_documents") {
             const list = Array.from(docStore.entries()).map(
                 ([doc_id, info]) => ({
@@ -1583,7 +1699,6 @@ export async function runToolCalls(
                 tool_call_id: tc.id,
                 content: JSON.stringify(list),
             });
-
         } else if (tc.function.name === "fetch_documents") {
             const rawDocIds = (args.doc_ids as string[]) ?? [];
             const docIds = rawDocIds.map(
@@ -1591,7 +1706,13 @@ export async function runToolCalls(
             );
             const parts: string[] = [];
             for (const docId of docIds) {
-                const content = await readDocumentContent(docId, docStore, write, docIndex, db);
+                const content = await readDocumentContent(
+                    docId,
+                    docStore,
+                    write,
+                    docIndex,
+                    db,
+                );
                 const filename = docStore.get(docId)?.filename ?? docId;
                 parts.push(`--- ${filename} (${docId}) ---\n${content}`);
                 if (docStore.get(docId)) {
@@ -1604,18 +1725,25 @@ export async function runToolCalls(
                 tool_call_id: tc.id,
                 content: parts.join("\n\n"),
             });
-
         } else if (tc.function.name === "list_workflows") {
             const list = workflowStore
-                ? Array.from(workflowStore.entries()).map(([id, w]) => ({ id, title: w.title }))
+                ? Array.from(workflowStore.entries()).map(([id, w]) => ({
+                      id,
+                      title: w.title,
+                  }))
                 : [];
-            toolResults.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(list) });
-
+            toolResults.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: JSON.stringify(list),
+            });
         } else if (tc.function.name === "read_workflow") {
             const wfId = args.workflow_id as string;
             const wf = workflowStore?.get(wfId);
             if (wf) {
-                write(`data: ${JSON.stringify({ type: "workflow_applied", workflow_id: wfId, title: wf.title })}\n\n`);
+                write(
+                    `data: ${JSON.stringify({ type: "workflow_applied", workflow_id: wfId, title: wf.title })}\n\n`,
+                );
                 workflowsApplied.push({ workflow_id: wfId, title: wf.title });
             }
             toolResults.push({
@@ -1623,7 +1751,6 @@ export async function runToolCalls(
                 tool_call_id: tc.id,
                 content: wf ? wf.prompt_md : `Workflow '${wfId}' not found.`,
             });
-
         } else if (tc.function.name === "read_table_cells" && tabularStore) {
             const colIndices = args.col_indices as number[] | undefined;
             const rowIndices = args.row_indices as number[] | undefined;
@@ -1632,23 +1759,36 @@ export async function runToolCalls(
                 ? tabularStore.columns.filter((_, i) => colIndices.includes(i))
                 : tabularStore.columns;
             const filteredDocs = rowIndices?.length
-                ? tabularStore.documents.filter((_, i) => rowIndices.includes(i))
+                ? tabularStore.documents.filter((_, i) =>
+                      rowIndices.includes(i),
+                  )
                 : tabularStore.documents;
 
             const label = `${filteredCols.length} ${filteredCols.length === 1 ? "column" : "columns"} × ${filteredDocs.length} ${filteredDocs.length === 1 ? "row" : "rows"}`;
-            write(`data: ${JSON.stringify({ type: "doc_read_start", filename: label })}\n\n`);
+            write(
+                `data: ${JSON.stringify({ type: "doc_read_start", filename: label })}\n\n`,
+            );
 
             const lines: string[] = [];
             for (const col of filteredCols) {
-                const colPos = tabularStore.columns.findIndex((c) => c.index === col.index);
+                const colPos = tabularStore.columns.findIndex(
+                    (c) => c.index === col.index,
+                );
                 for (const doc of filteredDocs) {
-                    const rowPos = tabularStore.documents.findIndex((d) => d.id === doc.id);
-                    const cell = tabularStore.cells.get(`${col.index}:${doc.id}`);
-                    lines.push(`[COL:${colPos} "${col.name}" | ROW:${rowPos} "${doc.filename}"]`);
+                    const rowPos = tabularStore.documents.findIndex(
+                        (d) => d.id === doc.id,
+                    );
+                    const cell = tabularStore.cells.get(
+                        `${col.index}:${doc.id}`,
+                    );
+                    lines.push(
+                        `[COL:${colPos} "${col.name}" | ROW:${rowPos} "${doc.filename}"]`,
+                    );
                     if (cell?.summary) {
                         lines.push(`Summary: ${cell.summary}`);
                         if (cell.flag) lines.push(`Flag: ${cell.flag}`);
-                        if (cell.reasoning) lines.push(`Reasoning: ${cell.reasoning}`);
+                        if (cell.reasoning)
+                            lines.push(`Reasoning: ${cell.reasoning}`);
                     } else {
                         lines.push(`(not yet generated)`);
                     }
@@ -1656,14 +1796,15 @@ export async function runToolCalls(
                 }
             }
 
-            write(`data: ${JSON.stringify({ type: "doc_read", filename: label })}\n\n`);
+            write(
+                `data: ${JSON.stringify({ type: "doc_read", filename: label })}\n\n`,
+            );
             docsRead.push({ filename: label });
             toolResults.push({
                 role: "tool",
                 tool_call_id: tc.id,
                 content: lines.join("\n") || "No cells found.",
             });
-
         } else if (tc.function.name === "edit_document" && docIndex) {
             const rawDocId = args.doc_id as string;
             const editsRaw = args.edits as unknown[] | undefined;
@@ -1707,10 +1848,7 @@ export async function runToolCalls(
                     tool_call_id: tc.id,
                     content: JSON.stringify({ error: err }),
                 });
-            } else if (
-                !Array.isArray(editsRaw) ||
-                editsRaw.length === 0
-            ) {
+            } else if (!Array.isArray(editsRaw) || editsRaw.length === 0) {
                 const err = "edits array is required and must not be empty.";
                 emitEditError(docInfo.filename, indexed.document_id, err);
                 toolResults.push({
@@ -1733,15 +1871,15 @@ export async function runToolCalls(
                         filename: docInfo.filename,
                     })}\n\n`,
                 );
-                const edits: EditInput[] = (editsRaw as Record<string, unknown>[]).map(
-                    (e) => ({
-                        find: String(e.find ?? ""),
-                        replace: String(e.replace ?? ""),
-                        context_before: String(e.context_before ?? ""),
-                        context_after: String(e.context_after ?? ""),
-                        reason: e.reason ? String(e.reason) : undefined,
-                    }),
-                );
+                const edits: EditInput[] = (
+                    editsRaw as Record<string, unknown>[]
+                ).map((e) => ({
+                    find: String(e.find ?? ""),
+                    replace: String(e.replace ?? ""),
+                    context_before: String(e.context_before ?? ""),
+                    context_after: String(e.context_after ?? ""),
+                    reason: e.reason ? String(e.reason) : undefined,
+                }));
                 const reuseVersion = turnEditState?.get(indexed.document_id);
                 const result = await runEditDocument({
                     documentId: indexed.document_id,
@@ -1824,7 +1962,6 @@ export async function runToolCalls(
                     });
                 }
             }
-
         } else if (tc.function.name === "replicate_document" && docIndex) {
             const rawDocId = args.doc_id as string;
             const requestedFilename =
@@ -1933,7 +2070,11 @@ export async function runToolCalls(
                             .from("documents")
                             .insert(docRows)
                             .select("id, filename");
-                        if (docErr || !insertedDocs || insertedDocs.length === 0) {
+                        if (
+                            docErr ||
+                            !insertedDocs ||
+                            insertedDocs.length === 0
+                        ) {
                             fail(
                                 `Failed to record replicated documents: ${docErr?.message ?? "unknown"}`,
                             );
@@ -2008,7 +2149,10 @@ export async function runToolCalls(
                                     `Failed to record replicated document versions: ${verErr?.message ?? "unknown"}`,
                                 );
                             } else {
-                                const versionByDocId = new Map<string, string>();
+                                const versionByDocId = new Map<
+                                    string,
+                                    string
+                                >();
                                 for (const v of insertedVersions as {
                                     id: string;
                                     document_id: string;
@@ -2119,13 +2263,21 @@ export async function runToolCalls(
                     fail(`replicate_document failed: ${String(e)}`);
                 }
             }
-
         } else if (tc.function.name === "generate_docx") {
             const title = args.title as string;
-            const landscape = !!(args.landscape);
-            console.log(`[generate_docx] title="${title}" landscape=${landscape} args.landscape=${args.landscape}`);
-            const previewFilename = `${(title.replace(/[^a-zA-Z0-9 _-]/g, "").trim().slice(0, 64) || "document")}.docx`;
-            write(`data: ${JSON.stringify({ type: "doc_created_start", filename: previewFilename })}\n\n`);
+            const landscape = !!args.landscape;
+            console.log(
+                `[generate_docx] title="${title}" landscape=${landscape} args.landscape=${args.landscape}`,
+            );
+            const previewFilename = `${
+                title
+                    .replace(/[^a-zA-Z0-9 _-]/g, "")
+                    .trim()
+                    .slice(0, 64) || "document"
+            }.docx`;
+            write(
+                `data: ${JSON.stringify({ type: "doc_created_start", filename: previewFilename })}\n\n`,
+            );
             const result = await generateDocx(
                 title,
                 args.sections as unknown[],
@@ -2137,10 +2289,15 @@ export async function runToolCalls(
             if ("filename" in result && "download_url" in result) {
                 const dlFilename = result.filename as string;
                 const dlUrl = result.download_url as string;
-                const documentId = (result as { document_id?: string }).document_id;
-                const versionId = (result as { version_id?: string }).version_id;
-                const versionNumber = (result as { version_number?: number }).version_number ?? null;
-                const storagePath = (result as { storage_path?: string }).storage_path;
+                const documentId = (result as { document_id?: string })
+                    .document_id;
+                const versionId = (result as { version_id?: string })
+                    .version_id;
+                const versionNumber =
+                    (result as { version_number?: number }).version_number ??
+                    null;
+                const storagePath = (result as { storage_path?: string })
+                    .storage_path;
 
                 // Register the generated doc in the chat context so
                 // edit_document (and read_document / find_in_document)
@@ -2181,14 +2338,19 @@ export async function runToolCalls(
                     version_number: versionNumber,
                 });
             } else {
-                write(`data: ${JSON.stringify({ type: "doc_created", filename: previewFilename, download_url: "" })}\n\n`);
+                write(
+                    `data: ${JSON.stringify({ type: "doc_created", filename: previewFilename, download_url: "" })}\n\n`,
+                );
             }
             // Surface the chat-local doc label in the tool result so the
             // model can pass it as `doc_id` to edit_document / read_document
             // / find_in_document in the same turn. Without this the model
             // only sees the DB UUID, which isn't valid as a doc_id anchor.
             const toolResultPayload = newDocLabel
-                ? { ...(result as Record<string, unknown>), doc_id: newDocLabel }
+                ? {
+                      ...(result as Record<string, unknown>),
+                      doc_id: newDocLabel,
+                  }
                 : result;
             toolResults.push({
                 role: "tool",
@@ -2313,7 +2475,21 @@ export async function runLLMStream(params: {
      */
     projectId?: string | null;
 }): Promise<{ fullText: string; events: AssistantEvent[] }> {
-    const { apiMessages, docStore, docIndex, userId, db, write, extraTools, workflowStore, tabularStore, buildCitations, model, apiKeys, projectId } = params;
+    const {
+        apiMessages,
+        docStore,
+        docIndex,
+        userId,
+        db,
+        write,
+        extraTools,
+        workflowStore,
+        tabularStore,
+        buildCitations,
+        model,
+        apiKeys,
+        projectId,
+    } = params;
     const activeTools = extraTools?.length
         ? [...TOOLS, ...WORKFLOW_TOOLS, ...extraTools]
         : [...TOOLS, ...WORKFLOW_TOOLS];
@@ -2323,14 +2499,6 @@ export async function runLLMStream(params: {
     const rawMsgs = apiMessages as { role: string; content: string | null }[];
     const systemPrompt =
         rawMsgs[0]?.role === "system" ? (rawMsgs[0].content ?? "") : "";
-    console.log(
-        "[runLLMStream] system prompt:\n" +
-            "─".repeat(80) +
-            "\n" +
-            systemPrompt +
-            "\n" +
-            "─".repeat(80),
-    );
     const chatMessages: LlmMessage[] = rawMsgs
         .filter((m) => m.role !== "system")
         .map((m) => ({
@@ -2473,17 +2641,17 @@ export async function runLLMStream(params: {
                 workflowsApplied,
                 docsEdited,
             } = await runToolCalls(
-                    toolCalls,
-                    docStore,
-                    userId,
-                    db,
-                    write,
-                    workflowStore,
-                    tabularStore,
-                    docIndex,
-                    turnEditState,
-                    projectId,
-                );
+                toolCalls,
+                docStore,
+                userId,
+                db,
+                write,
+                workflowStore,
+                tabularStore,
+                docIndex,
+                turnEditState,
+                projectId,
+            );
             for (const r of docsRead) {
                 events.push({
                     type: "doc_read",
@@ -2589,7 +2757,7 @@ export async function runLLMStream(params: {
 export function extractAnnotations(
     fullText: string,
     docIndex: DocIndex,
-    events?: { type: string } & Record<string, unknown>[] | unknown[],
+    events?: ({ type: string } & Record<string, unknown>[]) | unknown[],
 ): unknown[] {
     const out: unknown[] = parseCitations(fullText).map((c) => {
         const docInfo = resolveDoc(c.doc_id, docIndex);
@@ -2606,9 +2774,13 @@ export function extractAnnotations(
         };
     });
     if (Array.isArray(events)) {
-        for (const ev of events as { type?: string; annotations?: EditAnnotation[] }[]) {
+        for (const ev of events as {
+            type?: string;
+            annotations?: EditAnnotation[];
+        }[]) {
             if (ev?.type === "doc_edited" && Array.isArray(ev.annotations)) {
-                for (const a of ev.annotations) out.push({ ...a, type: "edit_data" });
+                for (const a of ev.annotations)
+                    out.push({ ...a, type: "edit_data" });
             }
         }
     }
@@ -2652,8 +2824,7 @@ export async function buildDocContext(
             if (!Array.isArray(content)) continue;
             for (const ev of content as Record<string, unknown>[]) {
                 if (
-                    (ev?.type === "doc_created" ||
-                        ev?.type === "doc_edited") &&
+                    (ev?.type === "doc_created" || ev?.type === "doc_edited") &&
                     typeof ev.document_id === "string"
                 ) {
                     documentIds.add(ev.document_id);
@@ -2713,17 +2884,25 @@ export async function buildProjectDocContext(
     projectId: string,
     _userId: string,
     db: ReturnType<typeof createServerSupabase>,
-): Promise<{ docIndex: DocIndex; docStore: DocStore; folderPaths: Map<string, string> }> {
+): Promise<{
+    docIndex: DocIndex;
+    docStore: DocStore;
+    folderPaths: Map<string, string>;
+}> {
     const docIndex: DocIndex = {};
     const docStore: DocStore = new Map();
 
     const [{ data: docs }, { data: folders }] = await Promise.all([
-        db.from("documents")
-            .select("id, filename, file_type, current_version_id, status, folder_id")
+        db
+            .from("documents")
+            .select(
+                "id, filename, file_type, current_version_id, status, folder_id",
+            )
             .eq("project_id", projectId)
             .eq("status", "ready")
             .order("created_at", { ascending: true }),
-        db.from("project_subfolders")
+        db
+            .from("project_subfolders")
             .select("id, name, parent_folder_id")
             .eq("project_id", projectId),
     ]);
@@ -2739,8 +2918,15 @@ export async function buildProjectDocContext(
     await attachActiveVersionPaths(db, docList);
 
     // Build folder id → full path map
-    const folderMap = new Map<string, { name: string; parent_folder_id: string | null }>();
-    for (const f of folders ?? []) folderMap.set(f.id, { name: f.name, parent_folder_id: f.parent_folder_id });
+    const folderMap = new Map<
+        string,
+        { name: string; parent_folder_id: string | null }
+    >();
+    for (const f of folders ?? [])
+        folderMap.set(f.id, {
+            name: f.name,
+            parent_folder_id: f.parent_folder_id,
+        });
 
     function resolvePath(folderId: string | null): string {
         if (!folderId) return "";
@@ -2820,7 +3006,9 @@ export async function buildWorkflowStore(
             .from("workflow_shares")
             .select("workflow_id")
             .eq("shared_with_email", normalizedUserEmail);
-        const sharedIds = [...new Set((shares ?? []).map((share) => share.workflow_id))];
+        const sharedIds = [
+            ...new Set((shares ?? []).map((share) => share.workflow_id)),
+        ];
         if (sharedIds.length > 0) {
             const { data: sharedWorkflows } = await db
                 .from("workflows")
@@ -2829,7 +3017,10 @@ export async function buildWorkflowStore(
                 .eq("type", "assistant");
             for (const wf of sharedWorkflows ?? []) {
                 if (wf.prompt_md) {
-                    store.set(wf.id, { title: wf.title, prompt_md: wf.prompt_md });
+                    store.set(wf.id, {
+                        title: wf.title,
+                        prompt_md: wf.prompt_md,
+                    });
                 }
             }
         }
