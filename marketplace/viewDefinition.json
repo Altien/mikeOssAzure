@@ -6,7 +6,7 @@
       "kind": "Overview",
       "properties": {
         "header": "Mike AI",
-        "description": "AI document workflow stack — Postgres, PostgREST, backend Container App, Key Vault, Storage and observability deployed inside your subscription.",
+        "description": "AI document workflow stack — Postgres, PostgREST, backend Container App, Key Vault and Storage deployed inside your subscription.",
         "commands": [
           {
             "displayName": "Run database migration",
@@ -49,10 +49,6 @@
           {
             "displayName": "Storage account",
             "path": "outputs.storageAccountName"
-          },
-          {
-            "displayName": "Log Analytics workspace ID",
-            "path": "outputs.logAnalyticsCustomerId"
           }
         ]
       }
@@ -69,7 +65,6 @@
           "Microsoft.KeyVault/vaults",
           "Microsoft.Storage/storageAccounts",
           "Microsoft.ContainerRegistry/registries",
-          "Microsoft.OperationalInsights/workspaces",
           "Microsoft.Network/virtualNetworks"
         ]
       }

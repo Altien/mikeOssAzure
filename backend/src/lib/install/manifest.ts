@@ -502,25 +502,6 @@ const items: ManifestItem[] = [
         },
     },
 
-    // ── Optional ─────────────────────────────────────────────────────
-    {
-        id: "app-insights-connection",
-        label: "Application Insights connection string",
-        section: "Optional",
-        required: false,
-        check: () => checkKvSecret("appinsights-connection-string"),
-        fixedBy: {
-            type: "in-app-form",
-            submitTo: "kv",
-            fields: [{
-                name: "appinsights-connection-string",
-                label: "Application Insights connection string",
-                type: "password",
-                placeholder: "InstrumentationKey=…;IngestionEndpoint=…",
-                required: false,
-            }],
-        },
-    },
 ];
 
 export function findManifestItem(id: string): ManifestItem | undefined {

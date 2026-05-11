@@ -9,8 +9,7 @@ export type ManifestSection =
     | "AI providers"
     | "Entra ID"
     | "Tenant policy"
-    | "Lifecycle"
-    | "Optional";
+    | "Lifecycle";
 
 export type FormField = {
     name: string;

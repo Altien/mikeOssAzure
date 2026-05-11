@@ -6,7 +6,7 @@
     "config": {
       "isWizard": true,
       "basics": {
-        "description": "Deploy the Mike AI stack — VNet, Postgres Flexible Server, PostgREST, backend Container App, Key Vault, Storage and observability — into your own Azure subscription. You will need an Anthropic and/or OpenAI API key to enable AI features."
+        "description": "Deploy the Mike AI stack — VNet, Postgres Flexible Server, PostgREST, backend Container App, Key Vault and Storage — into your own Azure subscription. You will need an Anthropic and/or OpenAI API key to enable AI features."
       }
     },
     "basics": [
@@ -65,8 +65,8 @@
             "toolTip": "Postgres Flexible Server SKU. Burstable is cheapest; General Purpose is required for HA.",
             "constraints": {
               "allowedValues": [
-                { "label": "Burstable B1ms (1 vCPU, 2 GB)", "value": { "name": "Standard_B1ms", "tier": "Burstable" } },
                 { "label": "Burstable B2s (2 vCPU, 4 GB)",  "value": { "name": "Standard_B2s",  "tier": "Burstable" } },
+                { "label": "Burstable B1ms (1 vCPU, 2 GB)", "value": { "name": "Standard_B1ms", "tier": "Burstable" } },
                 { "label": "General Purpose D2ds_v5 (2 vCPU, 8 GB)", "value": { "name": "Standard_D2ds_v5", "tier": "GeneralPurpose" } }
               ],
               "required": true
@@ -133,7 +133,7 @@
               "validationMessage": "Must be empty or start with 'sk-ant-'."
             },
             "options": {
-              "hideConfirmation": true
+              "hideConfirmation": false
             }
           },
           {
@@ -148,7 +148,7 @@
               "required": false
             },
             "options": {
-              "hideConfirmation": true
+              "hideConfirmation": false
             }
           },
           {
@@ -159,8 +159,8 @@
             "toolTip": "Leave blank for api.openai.com. Set to your Azure AI Foundry endpoint URL to route requests there instead.",
             "constraints": {
               "required": false,
-              "regex": "^(|https://[A-Za-z0-9._/-]+)$",
-              "validationMessage": "Must be empty or an https:// URL."
+              "regex": "^(|https://[A-Za-z0-9._/-]{1,500})$",
+              "validationMessage": "Must be empty or an https:// URL up to 500 chars."
             }
           }
         ]
@@ -184,18 +184,9 @@
             "toolTip": "URL where you will host the Mike frontend. Used as the CORS allowed origin on the backend.",
             "constraints": {
               "required": true,
-              "regex": "^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._/-]*)?$",
-              "validationMessage": "Must be an https:// URL."
+              "regex": "^https://[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?(/[A-Za-z0-9._/-]{0,500})?$",
+              "validationMessage": "Must be an https:// URL up to ~500 chars."
             }
-          },
-          {
-            "name": "lawDailyQuotaGb",
-            "type": "Microsoft.Common.Slider",
-            "label": "Log Analytics daily ingestion cap (GB)",
-            "defaultValue": 1,
-            "min": 1,
-            "max": 50,
-            "toolTip": "Daily ingestion cap for Log Analytics. Lower values reduce monitoring cost but may drop logs on busy days."
           }
         ]
       }
@@ -214,9 +205,12 @@
       "openaiBaseUrl": "[steps('aiKeys').openaiBaseUrl]",
       "enableNatGateway": "[steps('networking').enableNatGateway]",
       "frontendUrl": "[steps('networking').frontendUrl]",
-      "lawDailyQuotaGb": "[int(steps('networking').lawDailyQuotaGb)]",
-      "createAcr": true,
-      "acrSku": "Standard"
+      "createAcr": false,
+      "acrSku": "Standard",
+      "imagePullAuth": "anonymous",
+      "containerRegistry": "acrmikeoss.azurecr.io",
+      "backendImage": "acrmikeoss.azurecr.io/backend:__VERSION__",
+      "postgrestImage": "acrmikeoss.azurecr.io/postgrest:v12.2.3"
     }
   }
 }

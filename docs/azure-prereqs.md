@@ -22,7 +22,7 @@ bottom.
 2. [Prerequisites](#2-prerequisites)
 3. [Set up your shell](#3-set-up-your-shell)
 4. [Resource group](#4-resource-group)
-5. [Log Analytics + Container Apps Environment](#5-log-analytics--container-apps-environment)
+5. [Container Apps Environment](#5-container-apps-environment)
 6. [Postgres](#6-postgres)
 7. [Storage Account](#7-storage-account)
 8. [Container Registry](#8-container-registry)
@@ -75,7 +75,7 @@ containers in it. Migrations run from your machine.
 
 ## 2. Prerequisites
 
-- An Azure subscription with quota for: 1× PostgreSQL Flexible Server, 1× Container Apps Environment, 1× Container Registry, 1× Storage Account, 1× Log Analytics workspace.
+- An Azure subscription with quota for: 1× PostgreSQL Flexible Server, 1× Container Apps Environment, 1× Container Registry, 1× Storage Account.
 - `az` CLI 2.55 or later. Verify with `az --version`.
 - **Node 18+ and `npm` on your laptop** — used to run schema migrations from local against the deployed Postgres.
 - The Mike source cloned locally — the migration step uses the migration files in `backend/migrations/`.
@@ -97,7 +97,6 @@ export LOC=uksouth                   # any region with quota
 export PG_SERVER=pg-mike-XYZ
 export STORAGE=stmikeXYZ             # 3-24 lowercase alphanumeric
 export ACR=acrmikeXYZ                # 5-50 alphanumeric
-export LAW=law-mike-XYZ
 export CAE=cae-mike-XYZ
 
 # Generate a strong Postgres admin password — save this NOW
@@ -116,27 +115,20 @@ echo "Postgres admin password: $PG_PASSWORD"
 az group create --name "$RG" --location "$LOC"
 ```
 
-## 5. Log Analytics + Container Apps Environment
-
-Container Apps require a logs destination. Cheapest option: a basic
-Log Analytics workspace.
+## 5. Container Apps Environment
 
 ```sh
-# Log Analytics — minimal config, 30-day retention, free-tier ingestion
-az monitor log-analytics workspace create \
-  --workspace-name "$LAW" --resource-group "$RG" --location "$LOC"
-
-LAW_CID=$(az monitor log-analytics workspace show \
-  -g "$RG" -n "$LAW" --query customerId -o tsv)
-LAW_KEY=$(az monitor log-analytics workspace get-shared-keys \
-  -g "$RG" -n "$LAW" --query primarySharedKey -o tsv)
-
-# Container Apps Environment — no VNet, just LAW
+# Container Apps Environment — no VNet, no log sink.
 az containerapp env create \
   --name "$CAE" --resource-group "$RG" --location "$LOC" \
-  --logs-workspace-id "$LAW_CID" \
-  --logs-workspace-key "$LAW_KEY"
+  --logs-destination none
 ```
+
+> **Logging is opt-in.** This minimal deployment ships container
+> stdout straight to `/dev/null`. If you want logs queryable in
+> KQL, provision a Log Analytics workspace and pass
+> `--logs-workspace-id`/`--logs-workspace-key` instead. See the
+> production-hardening doc for the wider observability stack.
 
 This step takes ~3 minutes. While it runs, continue to step 6 in
 another terminal — Postgres provisioning is also slow and can run
@@ -740,15 +732,15 @@ Splitting the sidecar back out to a dedicated Container App:
 - Can be reached from other Container Apps in the same environment.
 - Internal-only ingress is the trust boundary in entra mode.
 
-### 6. Application Insights
+### 6. Observability (Log Analytics + App Insights)
 
-For traces:
+For queryable logs and request/dependency/exception telemetry:
 
-- App Insights resource workspace-mode (linked to the same Log
-  Analytics).
-- Connection string in env / KV.
-- Backend reads `APPLICATIONINSIGHTS_CONNECTION_STRING` and emits
-  HTTP request, dependency, and exception telemetry.
+- Log Analytics workspace as the Container Apps log destination
+  (`--logs-workspace-id`/`--logs-workspace-key` on env create).
+- Workspace-based Application Insights resource linked to it.
+- Backend reads `APPLICATIONINSIGHTS_CONNECTION_STRING` (from KV)
+  and emits HTTP request, dependency, and exception telemetry.
 
 ### 7. NAT Gateway
 
@@ -771,6 +763,7 @@ For a branded URL and HTTP-layer attack mitigation:
 - Container App custom domain bound to your DNS.
 - Optionally Azure Front Door or Application Gateway with a WAF
   policy in front.
+
 
 ---
 

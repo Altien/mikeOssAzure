@@ -230,7 +230,6 @@ const SECTION_ORDER: ManifestSection[] = [
     "Entra ID",
     "Tenant policy",
     "Lifecycle",
-    "Optional",
 ];
 
 function renderItem(item: EvaluatedItem, ctx: InstallContext): string {

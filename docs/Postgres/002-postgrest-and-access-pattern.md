@@ -53,7 +53,7 @@ If the browser is no longer talking to PostgREST, a reasonable question is wheth
 - **`backend/src/lib/supabase.ts` changes one line** — `SUPABASE_URL` points at the internal PostgREST DNS. The frontend's `frontend/src/lib/supabase.ts` continues to exist for the auth flow; that file is rewritten by the EntraID agent.
 - **The PostgREST JWT secret** is set once during provisioning, lives in Key Vault, consumed by both the PostgREST app (as `PGRST_JWT_SECRET`) and the backend (so it can mint service-role-style tokens). The EntraID work replaces this with a JWKS URL pointing at the EntraID tenant.
 - **RLS becomes optional.** With no untrusted client talking to PostgREST, RLS is no longer a security boundary. The existing two policies on `user_profiles` can be removed (the EntraID agent will own this decision); authorization is enforced in `backend/src/lib/access.ts` and equivalents.
-- **No PostgREST upgrade is automatic.** We pin a version (`v12.2.x`) and update on a manual cadence. See `../infra/005-container-images-and-observability.md`.
+- **No PostgREST upgrade is automatic.** We pin a version (`v12.2.x`) and update on a manual cadence. See `../infra/005-container-images-and-observability.md` (image registry section).
 
 ## Deferred to the EntraID work
 

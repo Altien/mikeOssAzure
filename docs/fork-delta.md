@@ -95,3 +95,48 @@ more extensible for any deployment.
 | `docker-compose.dev.yml` | Local Postgres + PostgREST + Azurite. |
 | `Dockerfile`, `.dockerignore` | The bundled-frontend multi-stage build. |
 
+---
+
+## Tier C — Deployment infrastructure (private deploy repo)
+
+These files ship to the **private** deploy / marketplace repo (Repo 3),
+**never** to the public Tier B fork. Repo 3 contains zero application
+code; it contains only the artefacts in this section. See
+`docs/migration/04-proprietary-retention.md` for the rationale and
+`docs/migration/07-private-deploy-repo.md` for the publication mechanism.
+
+| File | Nature |
+|---|---|
+| `infra/main.bicep`, `infra/main.parameters.{dev,prod}.json` | Bicep entry point + per-environment parameters. |
+| `infra/modules/*.bicep` | Per-resource modules (acr, container-apps-env, postgres, storage, network, key-vault, managed-identity, etc.). |
+| `deploy.ps1` | Single-command deploy pipeline — provisioning, KV seeding, image build, migrate job, backend revision promotion. |
+| `check-azure.ps1` | Read-only health check tied to our resource names. |
+| `scripts/install/*.ps1` | Operator-run scripts for Entra app registration, AOAI provisioning, role assignments, install reset, installer-access revoke. Companions to the Tier B `/install` route. |
+| `scripts/setup-github-oidc.sh` | Provisions our GitHub Actions federated identity. |
+| `scripts/mirror-postgrest.sh` | Mirrors the upstream PostgREST image into our distribution ACR. |
+| `docs/runbook-dev-deployment.md` | Names our `rg-mike-dev`, FQDNs, SKUs. |
+| `docs/azure-production-hardening.md` | Production-hardening recipe specific to our deployment topology. |
+| `docs/install/scripts.md` | Operator script reference. |
+| `docs/infra/*` | Bicep-and-deployment-specific design docs. |
+| `docs/issues/azure-migration/` (Tier C subset) | The deployment-specific design issues — 001-003, 005-007 series, 015, 016, 023, 029. (The application-layer subset 004, 006.1-006.2, 008-014, 017-022, 024-028, 030-032 ships in Tier B.) |
+
+---
+
+## Stays only in Repo 1 (not even Tier C)
+
+| File | Nature |
+|---|---|
+| `docs/migration/` | Internal planning artefact; never published. |
+| `.claude/` | Internal agent harness; remains in `.gitignore` on Repo 2 and Repo 3. |
+
+---
+
+> **Rebase guidance:** when accepting an upstream merge, the only files that
+> need conflict resolution are the Tier A and Tier B entries above (Tier C
+> doesn't exist upstream so cannot conflict). Use the upstream version
+> verbatim for any file not on this list.
+
+> **Publication guidance:** Tier A flows to upstream PRs; Tier B flows to
+> Repo 2 squashed; Tier C flows to Repo 3 squashed. Repo 2 and Repo 3
+> share zero source — the runtime Docker image is the only artefact that
+> crosses between them.
