@@ -9,7 +9,9 @@
     "migrate": "node dist/scripts/runMigrations.js",
     "migrate:dev": "tsx src/scripts/runMigrations.ts",
     "migrate:legacy": "node-pg-migrate up --migrations-dir migrations --migration-file-language sql",
-    "migrate:down": "node-pg-migrate down --migrations-dir migrations --migration-file-language sql"
+    "migrate:down": "node-pg-migrate down --migrations-dir migrations --migration-file-language sql",
+    "migrate:user-api-keys": "node dist/scripts/migrate-user-api-keys.js",
+    "migrate:user-api-keys:dev": "tsx src/scripts/migrate-user-api-keys.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
