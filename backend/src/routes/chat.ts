@@ -310,6 +310,13 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
         console.error("[generate-title] LLM call failed, using message-prefix fallback", err);
     }
 
+    // Upstream divergence (sync-log: ba6f771). The upstream version of this
+    // endpoint updates by chat id alone:
+    //     await db.from("chats").update({ title }).eq("id", chatId);
+    //     res.json({ title });
+    // Dev intentionally filters by `user_id` too, so a user can only rename
+    // their own chats. Do not "simplify back" to upstream's form without
+    // establishing an equivalent access guard upstream of this point.
     const { error: updateError } = await db
         .from("chats")
         .update({ title })

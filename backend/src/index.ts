@@ -4,6 +4,16 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import path from "node:path";
 import fs from "node:fs";
+// Upstream divergence (sync-log: ba6f771). Upstream's version of this file
+// imports `helmet` and `express-rate-limit` and decorates the route mounts
+// below with per-route limiters. Dev currently has neither package — the
+// security middleware is tracked as a follow-up commit on this branch;
+// `MIGRATION_KNOWLEDGE.md` and `backend/migrations/UPSTREAM_SYNC_LOG.md`
+// record the deferral. When added: install both packages, mount
+// `app.use(helmet(...))` near the top of middleware setup, configure a
+// `chatLimiter` / `uploadLimiter` / `chatCreateLimiter` (see upstream's
+// values), and decorate `app.post("/chat", chatLimiter)` etc. before the
+// `app.use("/chat", chatRouter)` mounts.
 import { chatRouter } from "./routes/chat";
 import { projectsRouter } from "./routes/projects";
 import { projectChatRouter } from "./routes/projectChat";

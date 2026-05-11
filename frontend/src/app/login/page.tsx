@@ -83,7 +83,7 @@ export default function LoginPage() {
             </div>
             <div className="w-full max-w-md">
                 {/* Login Form */}
-                <div className="bg-white border border-gray-200 rounded-2xl p-8">
+                <div className="bg-white border border-gray-200 rounded-2xl p-8 mb-4">
                     <div className="flex justify-between items-center mb-6">
                         <h2 className="text-left text-2xl font-serif">
                             Log In
@@ -170,6 +170,12 @@ export default function LoginPage() {
                     </form>
                     )}
                 </div>
+                <p className="text-center text-xs text-gray-500 leading-relaxed px-2">
+                    Mike hosted on MikeOSS.com is currently a demo service.
+                    Please do not upload, submit, or store sensitive,
+                    confidential, privileged, client, or personally
+                    identifiable documents.
+                </p>
             </div>
         </div>
     );
