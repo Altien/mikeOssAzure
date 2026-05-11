@@ -22,9 +22,9 @@
 //      lands; remove the function then.
 
 import crypto from "node:crypto";
-import { getConfig } from "./config.js";
-import { createServerSupabase } from "./supabase.js";
-import type { AzureOpenaiSettings, UserApiKeys } from "./llm.js";
+import { getConfig } from "./config";
+import { createServerSupabase } from "./supabase";
+import type { AzureOpenaiSettings, UserApiKeys } from "./llm";
 
 export type ApiKeyProvider =
     | "claude"
@@ -132,8 +132,8 @@ function parseAzureOpenaiBlob(plaintext: string): AzureOpenaiSettings | null {
 function serializeAzureOpenaiBlob(settings: AzureOpenaiSettings): string {
     const blob: AzureOpenaiBlob = {
         endpoint: settings.endpoint,
-        key: settings.apiKey,
-        version: settings.apiVersion,
+        key: settings.apiKey ?? null,
+        version: settings.apiVersion ?? null,
         deployment: settings.deployment,
     };
     return JSON.stringify(blob);
