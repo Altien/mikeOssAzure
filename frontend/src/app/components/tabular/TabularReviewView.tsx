@@ -217,6 +217,11 @@ export function TRView() {
     }
 
     async function handleRegenerateCell(docId: string, colIndex: number) {
+        if (apiKeys && !isModelAvailable(tabularModel, apiKeys)) {
+            setApiKeyModalProvider(getModelProvider(tabularModel));
+            return;
+        }
+
         setCells((prev) =>
             prev.map((c) =>
                 c.document_id === docId && c.column_index === colIndex
@@ -275,40 +280,54 @@ export function TRView() {
 
         setGenerating(true);
 
-        // Optimistically set empty/pending/error cells to generating (skip done cells)
-        setCells((prev) =>
-            documents.flatMap((doc) =>
-                columns.map((col) => {
-                    const existing = prev.find(
-                        (c) =>
-                            c.document_id === doc.id &&
-                            c.column_index === col.index,
-                    );
-                    if (existing?.status === "done" && existing?.content) {
-                        return existing;
-                    }
-                    return existing
-                        ? {
-                              ...existing,
-                              status: "generating" as const,
-                              content: null,
-                          }
-                        : {
-                              id: `${doc.id}-${col.index}`,
-                              review_id: reviewId,
-                              document_id: doc.id,
-                              column_index: col.index,
-                              content: null,
-                              status: "generating" as const,
-                              created_at: new Date().toISOString(),
-                          };
-                }),
-            ),
-        );
-
         try {
             const response = await streamTabularGeneration(reviewId);
+            if (!response.ok) {
+                const payload = await response.json().catch(() => null);
+                const provider =
+                    payload &&
+                    ["claude", "gemini", "openai"].includes(payload.provider)
+                        ? (payload.provider as ModelProvider)
+                        : getModelProvider(tabularModel);
+                if (payload?.code === "missing_api_key" && provider) {
+                    setApiKeyModalProvider(provider);
+                }
+                throw new Error(
+                    payload?.detail ?? `Generation failed: ${response.status}`,
+                );
+            }
             if (!response.body) throw new Error("No body");
+
+            // Optimistically set empty/pending/error cells to generating (skip done cells)
+            setCells((prev) =>
+                documents.flatMap((doc) =>
+                    columns.map((col) => {
+                        const existing = prev.find(
+                            (c) =>
+                                c.document_id === doc.id &&
+                                c.column_index === col.index,
+                        );
+                        if (existing?.status === "done" && existing?.content) {
+                            return existing;
+                        }
+                        return existing
+                            ? {
+                                  ...existing,
+                                  status: "generating" as const,
+                                  content: null,
+                              }
+                            : {
+                                  id: `${doc.id}-${col.index}`,
+                                  review_id: reviewId,
+                                  document_id: doc.id,
+                                  column_index: col.index,
+                                  content: null,
+                                  status: "generating" as const,
+                                  created_at: new Date().toISOString(),
+                              };
+                    }),
+                ),
+            );
 
             const reader = response.body.getReader();
             const decoder = new TextDecoder();

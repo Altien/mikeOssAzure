@@ -10,8 +10,15 @@ import {
     type ChatMessage,
     type TabularCellStore,
 } from "../lib/chatTools";
-import { completeText, streamChatWithTools } from "../lib/llm";
-import { getUserApiKeys, getUserModelSettings } from "../lib/userSettings";
+import {
+    completeText,
+    providerForModel,
+    streamChatWithTools,
+    type Provider,
+    type UserApiKeys,
+} from "../lib/llm";
+import { getUserModelSettings } from "../lib/userSettings";
+import { resolveSecret } from "../lib/envSecrets";
 import {
     checkProjectAccess,
     ensureReviewAccess,
@@ -45,6 +52,46 @@ function formatPromptSuffix(format?: string, tags?: string[]): string {
 }
 
 export const tabularRouter = Router();
+
+function providerLabel(provider: Provider): string {
+    if (provider === "claude") return "Anthropic";
+    if (provider === "openai") return "OpenAI";
+    if (provider === "azureOpenai") return "Azure OpenAI";
+    return "Gemini";
+}
+
+// Server-side fallback secrets per provider (Key Vault first, env var
+// fallback — see lib/envSecrets.ts and the provider adapters' client()
+// functions, which use exactly these names).
+const SERVER_KEY_SECRETS: Record<Exclude<Provider, "azureOpenai">, string> = {
+    claude: "anthropic-api-key",
+    gemini: "gemini-api-key",
+    openai: "openai-api-key",
+};
+
+// Upstream divergence (sync-log: f39f175): upstream returns the 422
+// whenever the USER has no stored key for the model's provider. On dev a
+// missing user key is a fully supported state — the backend can hold an
+// org-level key in Key Vault, and Azure OpenAI can authenticate via
+// Managed Identity — so the 422 fires only when NO credential source
+// exists at all. Do not "simplify" this back to the user-key-only check.
+async function missingModelApiKey(model: string, apiKeys: UserApiKeys) {
+    const provider = providerForModel(model);
+    if (provider === "azureOpenai") {
+        // Compound settings + the Managed Identity fallback are validated
+        // in the AOAI adapter itself; a missing user entry is not an error.
+        return null;
+    }
+    if (apiKeys[provider]?.trim()) return null;
+    if ((await resolveSecret(SERVER_KEY_SECRETS[provider])).length > 0) {
+        return null;
+    }
+    return {
+        provider,
+        model,
+        detail: `${providerLabel(provider)} API key is required to use ${model}. Add an API key or select a different tabular review model.`,
+    };
+}
 
 // GET /tabular-review
 tabularRouter.get("/", requireAuth, async (req, res) => {
@@ -105,7 +152,7 @@ tabularRouter.get("/", requireAuth, async (req, res) => {
             ? db
                   .from("tabular_reviews")
                   .select("*")
-                  .contains("shared_with", JSON.stringify([userEmail]))
+                  .filter("shared_with", "cs", JSON.stringify([userEmail]))
                   .neq("user_id", userId)
                   .order("created_at", { ascending: false })
             : Promise.resolve({
@@ -700,6 +747,18 @@ tabularRouter.post(
             return void res.status(404).json({ detail: "Document not found" });
         const docActive = await loadActiveVersion(document_id, db);
 
+        const { tabular_model, api_keys } = await getUserModelSettings(
+            userId,
+            db,
+        );
+        const missingKey = await missingModelApiKey(tabular_model, api_keys);
+        if (missingKey) {
+            return void res.status(422).json({
+                code: "missing_api_key",
+                ...missingKey,
+            });
+        }
+
         await db
             .from("tabular_cells")
             .update({ status: "generating", content: null })
@@ -725,11 +784,7 @@ tabularRouter.post(
             }
         }
 
-        const { tabular_model, api_keys } = await getUserModelSettings(
-            userId,
-            db,
-        );
-        const result = await queryGemini(
+        const result = await queryTabularCell(
             tabular_model,
             doc.filename as string,
             markdown,
@@ -823,6 +878,13 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     }
 
     const { tabular_model, api_keys } = await getUserModelSettings(userId, db);
+    const missingKey = await missingModelApiKey(tabular_model, api_keys);
+    if (missingKey) {
+        return void res.status(422).json({
+            code: "missing_api_key",
+            ...missingKey,
+        });
+    }
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -888,7 +950,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                 // Single LLM call for all columns, streaming one JSON line per column
                 const receivedColumns = new Set<number>();
                 try {
-                    await queryGeminiAllColumns(
+                    await queryTabularAllColumns(
                         tabular_model,
                         filename,
                         markdown,
@@ -912,7 +974,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                     );
                 } catch (err) {
                     console.error(
-                        `[tabular/generate] queryGeminiAllColumns error doc=${docId}`,
+                        `[tabular/generate] queryTabularAllColumns error doc=${docId}`,
                         err,
                     );
                 }
@@ -1214,6 +1276,15 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
         ),
     };
 
+    const { tabular_model, api_keys } = await getUserModelSettings(userId, db);
+    const missingKey = await missingModelApiKey(tabular_model, api_keys);
+    if (missingKey) {
+        return void res.status(422).json({
+            code: "missing_api_key",
+            ...missingKey,
+        });
+    }
+
     // Create or verify chat record
     let chatId = existingChatId ?? null;
     let chatTitle: string | null = null;
@@ -1271,8 +1342,6 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
         write(`data: ${JSON.stringify({ type: "chat_id", chatId })}\n\n`);
     }
 
-    const apiKeys = await getUserApiKeys(userId, db);
-
     try {
         const { fullText, events } = await runLLMStream({
             apiMessages,
@@ -1285,7 +1354,8 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
             tabularStore,
             buildCitations: (text) =>
                 extractTabularAnnotations(text, tabularStore),
-            apiKeys,
+            model: tabular_model,
+            apiKeys: api_keys,
         });
 
         const annotations = extractTabularAnnotations(fullText, tabularStore);
@@ -1313,7 +1383,7 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
                     reviewTitle: clientReviewTitle ?? review.title ?? null,
                     projectName: clientProjectName ?? null,
                 },
-                apiKeys,
+                api_keys,
             );
             if (title) {
                 await db
@@ -1384,7 +1454,7 @@ function parseCellContent(
     return null;
 }
 
-async function queryGemini(
+async function queryTabularCell(
     model: string,
     filename: string,
     documentText: string,
@@ -1413,7 +1483,7 @@ The "summary" field must contain only the extracted value with inline citations 
             apiKeys,
         });
     } catch (err) {
-        console.error("[queryGemini] completion failed", err);
+        console.error("[queryTabularCell] completion failed", err);
         return null;
     }
     try {
@@ -1539,7 +1609,7 @@ type Column = {
     tags?: string[];
 };
 
-async function queryGeminiAllColumns(
+async function queryTabularAllColumns(
     model: string,
     filename: string,
     documentText: string,
@@ -1624,7 +1694,7 @@ Rules:
             },
         });
     } catch (err) {
-        console.error("[queryGeminiAllColumns] stream failed", err);
+        console.error("[queryTabularAllColumns] stream failed", err);
     }
 
     if (contentBuffer.trim()) pending.push(processLine(contentBuffer));

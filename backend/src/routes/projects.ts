@@ -13,6 +13,15 @@ import { singleFileUpload } from "../lib/upload";
 export const projectsRouter = Router();
 const ALLOWED_TYPES = new Set(["pdf", "docx", "doc"]);
 
+function normalizeDocumentFilename(nextName: unknown, currentName: string) {
+  if (typeof nextName !== "string") return null;
+  const trimmed = nextName.trim().slice(0, 200);
+  if (!trimmed) return null;
+  if (/\.[a-z0-9]{1,6}$/i.test(trimmed)) return trimmed;
+  const ext = currentName.match(/\.[a-z0-9]{1,6}$/i)?.[0] ?? "";
+  return `${trimmed}${ext}`;
+}
+
 // GET /projects
 projectsRouter.get("/", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
@@ -497,6 +506,51 @@ projectsRouter.post(
     }
   },
 );
+
+// PATCH /projects/:projectId/documents/:documentId — rename a project document
+projectsRouter.patch("/:projectId/documents/:documentId", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string | undefined;
+  const { projectId, documentId } = req.params;
+  const db = createServerSupabase();
+
+  const access = await checkProjectAccess(projectId, userId, userEmail, db);
+  if (!access.ok)
+    return void res.status(404).json({ detail: "Project not found" });
+
+  const { data: doc } = await db
+    .from("documents")
+    .select("id, filename, current_version_id")
+    .eq("id", documentId)
+    .eq("project_id", projectId)
+    .single();
+  if (!doc)
+    return void res.status(404).json({ detail: "Document not found" });
+
+  const filename = normalizeDocumentFilename(req.body?.filename, doc.filename as string);
+  if (!filename)
+    return void res.status(400).json({ detail: "filename is required" });
+
+  const { data: updated, error } = await db
+    .from("documents")
+    .update({ filename, updated_at: new Date().toISOString() })
+    .eq("id", documentId)
+    .eq("project_id", projectId)
+    .select("*")
+    .single();
+  if (error || !updated)
+    return void res.status(404).json({ detail: "Document not found" });
+
+  if (doc.current_version_id) {
+    await db
+      .from("document_versions")
+      .update({ display_name: filename })
+      .eq("id", doc.current_version_id)
+      .eq("document_id", documentId);
+  }
+
+  res.json(updated);
+});
 
 // POST /projects/:projectId/documents
 projectsRouter.post(

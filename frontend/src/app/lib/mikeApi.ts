@@ -271,6 +271,21 @@ export async function moveDocumentToFolder(
     );
 }
 
+export async function renameProjectDocument(
+    projectId: string,
+    documentId: string,
+    filename: string,
+): Promise<MikeDocument> {
+    return apiRequest<MikeDocument>(
+        `/projects/${projectId}/documents/${documentId}`,
+        {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ filename }),
+        },
+    );
+}
+
 export async function addDocumentToProject(
     projectId: string,
     documentId: string,
