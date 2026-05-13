@@ -88,9 +88,18 @@ function entraClientId(): string {
   return process.env.ENTRA_CLIENT_ID ?? process.env.ENTRA_FRONTEND_CLIENT_ID ?? "";
 }
 
+// Scope passed to the Entra OAuth endpoints. The backend's access_as_user
+// scope is fully deterministic from the backend app reg's client id
+// (api://<guid>/access_as_user), so storing it as a separate KV secret /
+// env var was redundant — and a frequent source of "install all green but
+// scope missing" failures (gap #4 in
+// docs/issues/azure-migration/036-marketplace-install-gaps.md). The only
+// override path that survives is ENTRA_AUTH_SCOPES, intended for
+// operators with non-standard scope sets (e.g. additional Graph
+// permissions). Plain ENTRA_BACKEND_SCOPE is no longer read.
 function entraScopes(): string {
-  const configured = process.env.ENTRA_AUTH_SCOPES ?? process.env.ENTRA_BACKEND_SCOPE;
-  if (configured) return configured;
+  const override = process.env.ENTRA_AUTH_SCOPES;
+  if (override) return override;
 
   const backendClientId = process.env.ENTRA_BACKEND_CLIENT_ID ?? "";
   return backendClientId ? `openid profile email offline_access api://${backendClientId}/access_as_user` : "";

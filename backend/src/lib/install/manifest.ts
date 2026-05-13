@@ -289,9 +289,13 @@ const items: ManifestItem[] = [
     // operators who created the apps in the portal (or in another
     // automation) can fill the values manually. Only the first item
     // (entra-tenant-id) renders the script Run block via `alsoAsScript`
-    // — the script writes ALL THREE secrets in one pass, so showing
-    // the same command three times added no value and obscured the
-    // independent paste paths.
+    // — the script writes ALL FIVE secrets in one pass (tenant id,
+    // backend app id, frontend app id, frontend client secret, plus a
+    // backend-scope row that is no longer manifest-tracked because it's
+    // deterministic from the backend client id; see gap #4 in
+    // docs/issues/azure-migration/036-marketplace-install-gaps.md), so
+    // showing the same command three times added no value and obscured
+    // the independent paste paths.
     {
         id: "entra-tenant-id",
         label: "Entra tenant ID",
@@ -378,21 +382,11 @@ const items: ManifestItem[] = [
             ],
         },
     },
-    {
-        id: "entra-backend-scope",
-        label: "Backend API scope (api://.../access_as_user)",
-        section: "Entra ID",
-        required: true,
-        requires: ["entra-backend-app"],
-        check: () => checkKvSecret("entra-backend-scope", {
-            format: /^api:\/\/[0-9a-f-]+\/access_as_user$/i,
-            formatHint: "api://<guid>/access_as_user",
-        }),
-        fixedBy: {
-            type: "auto",
-            description: "create-entra-apps.ps1 sets this from the backend app's identifierUri.",
-        },
-    },
+    // entra-backend-scope row removed: the scope is `api://<backend-client-id>/access_as_user`,
+    // fully derivable at runtime in routes/auth.ts's entraScopes(). Tracking it as a separate
+    // KV secret was the source of "all green except this row, with no fix path" failures.
+    // create-entra-apps.ps1 still writes the KV secret for backward compatibility with older
+    // installs; no code consults it. Gap #4 in 036-marketplace-install-gaps.md.
     {
         id: "entra-frontend-redirect-uris",
         label: "Frontend redirect URIs match the backend FQDN",
