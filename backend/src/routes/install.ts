@@ -26,7 +26,7 @@ import {
     verifyOidcState,
     type InstallSession,
 } from "../lib/install/installAuth";
-import { resolveUserGroups } from "../lib/install/userGroups";
+import { resolveGroupNames, resolveUserGroups } from "../lib/install/userGroups";
 import {
     clearSessionTokens,
     getSessionTokens,
@@ -1286,14 +1286,51 @@ installRouter.get("/auth/microsoft/callback", async (req: Request, res: Response
     const selfBootstrap = await isSelfBootstrapAllowed(tid, principal);
 
     if (!selfBootstrap && !(await isInAdminGroup(groups))) {
+        // Enrich the 403 with diagnostic data so the operator can
+        // actually fix the situation rather than guessing.  See gap #7
+        // in 036-marketplace-install-gaps.md.
+        const oid = typeof claims?.oid === "string" ? claims.oid : "(unknown)";
+        const rawAdminIds = (await getConfig("entra-admin-group-ids").catch(() => "")).trim();
+        const configuredAdminGuids = rawAdminIds
+            .split(",")
+            .map((s) => s.split("#")[0].trim())
+            .filter(Boolean);
+        const adminNamesMap = await resolveGroupNames(configuredAdminGuids, tokenJson.access_token);
+        const adminList = configuredAdminGuids.length === 0
+            ? "<em>(none configured — should have hit the self-bootstrap path; this means the tenant claim didn't match)</em>"
+            : configuredAdminGuids
+                .map((g) => {
+                    const name = adminNamesMap.get(g) ?? g;
+                    return `<li><code>${escape(g)}</code>${name !== g ? ` — ${escape(name)}` : ""}</li>`;
+                })
+                .join("");
+        const userGroupsList = groups.length === 0
+            ? "<em>(empty — token carried no <code>groups</code> claim, and Graph fallback either wasn't triggered or returned nothing. Check that the access token has GroupMember.Read.All / Group.Read.All.)</em>"
+            : groups.map((g) => `<li><code>${escape(g)}</code></li>`).join("");
+
         return void res
             .status(403)
             .send(pageShell(
                 "Not an admin",
                 `<h1>Sign-in succeeded but you're not in the admin group</h1>
-                 <p>Signed in as <code>${escape(principal)}</code>.  Your account is not a member of any group listed in <code>entra-admin-group-ids</code>.</p>
-                 <p>Either add yourself to the configured admin group, or update the manifest's <code>entra-admin-group-id</code> via the bootstrap-authed /install.</p>
-                 <p><a class="btn" href="/install">Back</a></p>`,
+                 <p>Signed in as <code>${escape(principal)}</code> (oid <code>${escape(oid)}</code>).</p>
+
+                 <h2 style="font-size:1rem; margin-top:1.5rem;">Configured admin group(s)</h2>
+                 ${configuredAdminGuids.length === 0 ? `<p>${adminList}</p>` : `<ul>${adminList}</ul>`}
+
+                 <h2 style="font-size:1rem; margin-top:1.5rem;">Your group memberships (as the backend sees them)</h2>
+                 ${groups.length === 0 ? `<p>${userGroupsList}</p>` : `<ul>${userGroupsList}</ul>`}
+
+                 <h2 style="font-size:1rem; margin-top:1.5rem;">How to recover</h2>
+                 <ul>
+                   <li><strong>Add yourself to the configured admin group</strong> in Entra ID, then sign out everywhere and try again.</li>
+                   <li><strong>Or change the configured admin group</strong> via the bootstrap-authed install path: read the bootstrap token from Key Vault with
+                       <code>az keyvault secret show --vault-name &lt;kv&gt; --name install-bootstrap-token --query value -o tsv</code>,
+                       paste it at <a href="/install">/install</a>, then update <code>entra-admin-group-ids</code>.</li>
+                   <li><strong>Or — if no admin group is set at all</strong> — the install backend should have auto-allowed you via self-bootstrap. If you reached this page despite that, the token's <code>tid</code> claim didn't match <code>entra-tenant-id</code> in KV (sign-in came from a different Entra tenant than the one this install is configured for).</li>
+                 </ul>
+
+                 <p style="margin-top:1.5rem;"><a class="btn" href="/install">Back</a></p>`,
             ));
     }
 

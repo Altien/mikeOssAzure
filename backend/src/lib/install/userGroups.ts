@@ -69,6 +69,63 @@ async function fetchFromGraph(accessToken: string): Promise<string[]> {
         .filter((id): id is string => id.length > 0);
 }
 
+// Best-effort lookup of group display names via Graph, keyed by group
+// GUID. Used to enrich the 403 "Not in admin group" page so the
+// operator can see WHICH group they need to be in, not just the GUID.
+// Cache survives across requests for 5 minutes (group names don't
+// usually change). Returns the GUID as fallback if the lookup fails
+// or the access token can't see the group.
+const nameCache = new Map<string, { name: string; fetchedAt: number }>();
+
+export async function resolveGroupNames(
+    groupIds: string[],
+    accessToken: string | undefined,
+): Promise<Map<string, string>> {
+    const result = new Map<string, string>();
+    if (groupIds.length === 0) return result;
+
+    const now = Date.now();
+    const toFetch: string[] = [];
+
+    for (const id of groupIds) {
+        const cached = nameCache.get(id);
+        if (cached && now - cached.fetchedAt < CACHE_TTL_MS) {
+            result.set(id, cached.name);
+        } else {
+            toFetch.push(id);
+        }
+    }
+
+    if (toFetch.length === 0 || !accessToken) {
+        // No token, or all from cache: fill any uncached with their GUID
+        // so the caller always gets a complete map.
+        for (const id of toFetch) result.set(id, id);
+        return result;
+    }
+
+    await Promise.all(
+        toFetch.map(async (id) => {
+            try {
+                const resp = await fetch(
+                    `https://graph.microsoft.com/v1.0/groups/${encodeURIComponent(id)}?$select=displayName`,
+                    { headers: { Authorization: `Bearer ${accessToken}` } },
+                );
+                if (!resp.ok) {
+                    result.set(id, id);
+                    return;
+                }
+                const data = (await resp.json()) as { displayName?: string };
+                const name = data.displayName || id;
+                nameCache.set(id, { name, fetchedAt: now });
+                result.set(id, name);
+            } catch {
+                result.set(id, id);
+            }
+        }),
+    );
+    return result;
+}
+
 export async function resolveUserGroups(
     claims: Claims | null,
     accessToken: string | undefined,
