@@ -13,9 +13,40 @@ import {
     type ManifestItem,
 } from "./types";
 
+// Default formatter: show the value as-is for short values (GUIDs,
+// URLs, mode strings), strip any `# display-name` suffix per the
+// install configurator surface (matches installAuth.ts:isInAdminGroup).
+function defaultDisplay(raw: string): string {
+    // Strip `# comment` if present — that's a documentation aid in the
+    // KV value, not part of the operative value.
+    const clean = raw.split("#")[0].trim();
+    return clean;
+}
+
+// Redacted display for secrets — first 4 chars then bullets. Tells the
+// operator the value IS set without revealing it.
+function redactedDisplay(raw: string): string {
+    if (raw.length === 0) return "";
+    if (raw.length <= 4) return "••••";
+    return `${raw.slice(0, 4)}••••`;
+}
+
+type CheckKvSecretOpts = {
+    format?: RegExp;
+    formatHint?: string;
+    /**
+     * How to render the value when the row is green. Defaults to
+     * showing the value as-is (safe for GUIDs, URLs, mode strings).
+     * Pass `redacted: true` for secrets, or a custom formatter for
+     * special cases (e.g., display-name extraction).
+     */
+    redacted?: boolean;
+    displayValue?: (raw: string) => string;
+};
+
 async function checkKvSecret(
     name: string,
-    opts: { format?: RegExp; formatHint?: string } = {},
+    opts: CheckKvSecretOpts = {},
 ): Promise<CheckResult> {
     try {
         const value = await getConfig(name);
@@ -26,7 +57,13 @@ async function checkKvSecret(
                 detail: `Format check failed${opts.formatHint ? ` (expected ${opts.formatHint})` : ""}.`,
             };
         }
-        return { status: "pass", detail: `length=${value.length}` };
+        // Show the current value on pass so operators can verify it's
+        // what they expect without clicking Edit. Sensitive values
+        // (client secrets, HMAC keys) pass `redacted: true` so the row
+        // shows that something is set without revealing the secret.
+        // See gap #30 in 036-marketplace-install-gaps.md.
+        const formatter = opts.displayValue ?? (opts.redacted ? redactedDisplay : defaultDisplay);
+        return { status: "pass", detail: formatter(value) };
     } catch (err) {
         return {
             status: "fail",
@@ -67,7 +104,7 @@ const items: ManifestItem[] = [
         label: "Bootstrap token stored in Key Vault",
         section: "Foundations",
         required: true,
-        check: () => checkKvSecret("install-bootstrap-token"),
+        check: () => checkKvSecret("install-bootstrap-token", { redacted: true }),
         fixedBy: { type: "auto", description: "Bicep generates and writes on greenfield deploy." },
     },
     {
@@ -75,7 +112,7 @@ const items: ManifestItem[] = [
         label: "Auth state secret stored in Key Vault",
         section: "Foundations",
         required: true,
-        check: () => checkKvSecret("auth-state-secret"),
+        check: () => checkKvSecret("auth-state-secret", { redacted: true }),
         fixedBy: { type: "auto", description: "Bicep generates on greenfield deploy." },
     },
     {
@@ -145,6 +182,7 @@ const items: ManifestItem[] = [
         check: () => checkKvSecret("anthropic-api-key", {
             format: /^sk-ant-/,
             formatHint: "sk-ant- prefix",
+            redacted: true,
         }),
         fixedBy: {
             type: "in-app-form",
@@ -167,6 +205,7 @@ const items: ManifestItem[] = [
         check: () => checkKvSecret("openai-api-key", {
             format: /^sk-(proj-)?/,
             formatHint: "sk- or sk-proj- prefix",
+            redacted: true,
         }),
         fixedBy: {
             type: "in-app-form",
@@ -188,6 +227,7 @@ const items: ManifestItem[] = [
         check: () => checkKvSecret("gemini-api-key", {
             format: /^AIza/,
             formatHint: "AIza prefix",
+            redacted: true,
         }),
         fixedBy: {
             type: "in-app-form",
@@ -213,9 +253,11 @@ const items: ManifestItem[] = [
                 formatHint: "https:// URL",
             });
             if (endpoint.status !== "pass") return endpoint;
-            const key = await checkKvSecret("azure-openai-api-key");
+            const key = await checkKvSecret("azure-openai-api-key", { redacted: true });
             if (key.status !== "pass") return key;
-            return { status: "pass", detail: "Endpoint + key present." };
+            // Show the endpoint and a redacted-key marker so operators can
+            // verify the endpoint matches expectations at a glance (gap #30).
+            return { status: "pass", detail: `${endpoint.detail ?? ""} · key set` };
         },
         fixedBy: {
             type: "in-app-form",
@@ -508,6 +550,25 @@ const items: ManifestItem[] = [
         },
     },
 
+    // ── Optional ─────────────────────────────────────────────────────
+    {
+        id: "app-insights-connection",
+        label: "Application Insights connection string",
+        section: "Optional",
+        required: false,
+        check: () => checkKvSecret("appinsights-connection-string", { redacted: true }),
+        fixedBy: {
+            type: "in-app-form",
+            submitTo: "kv",
+            fields: [{
+                name: "appinsights-connection-string",
+                label: "Application Insights connection string",
+                type: "password",
+                placeholder: "InstrumentationKey=…;IngestionEndpoint=…",
+                required: false,
+            }],
+        },
+    },
 ];
 
 export function findManifestItem(id: string): ManifestItem | undefined {
