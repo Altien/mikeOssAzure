@@ -205,7 +205,17 @@ function describeAction(item: EvaluatedItem, ctx: InstallContext): string {
         const verb = item.result.status === "pass" ? "Edit" : "Set";
         return `<a class="btn" href="/install/items/${encodeURIComponent(item.id)}">${verb}</a>`;
     }
-    return `<a class="btn" href="/install/scripts/${encodeURIComponent(fixedBy.scriptName)}">Download ${escape(fixedBy.scriptName)}</a>`;
+    const scriptMeta = getScriptMeta(fixedBy.scriptName);
+    const metaBadge = scriptMeta && (scriptMeta.version || scriptMeta.lastModified)
+        ? `<span class="meta" style="margin-left:0.5rem; font-size:0.7rem;">${
+            scriptMeta.version ? `v${escape(scriptMeta.version)}` : ""
+        }${
+            scriptMeta.version && scriptMeta.lastModified ? " · " : ""
+        }${
+            scriptMeta.lastModified ? `as of ${escape(scriptMeta.lastModified.toISOString().slice(0, 10))}` : ""
+        }</span>`
+        : "";
+    return `<a class="btn" href="/install/scripts/${encodeURIComponent(fixedBy.scriptName)}">Download ${escape(fixedBy.scriptName)}</a>${metaBadge}`;
 }
 
 // Renders the second-row command + copy block for external-script items.
@@ -1391,6 +1401,14 @@ installRouter.get("/scripts/:name", (req: Request, res: Response) => {
     if (!fs.existsSync(target)) {
         return void res.status(404).json({ detail: `Script not found: ${name}` });
     }
+    // Surface script identity headers so operators can detect drift
+    // between a local copy and the running backend's version. See
+    // gap #11 in 036-marketplace-install-gaps.md.
+    const stat = fs.statSync(target);
+    res.setHeader("Last-Modified", stat.mtime.toUTCString());
+    const version = readScriptVersion(target);
+    if (version) res.setHeader("X-Script-Version", version);
+
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader(
         "Content-Disposition",
@@ -1398,3 +1416,33 @@ installRouter.get("/scripts/:name", (req: Request, res: Response) => {
     );
     fs.createReadStream(target).pipe(res);
 });
+
+// Pulls `# version: N` from the first ~10 lines of a script file. Empty
+// string if not present. Read sync because we're already in a request
+// handler that's synchronous for the existence/stat checks.
+function readScriptVersion(filePath: string): string {
+    try {
+        const head = fs.readFileSync(filePath, { encoding: "utf-8" }).split(/\r?\n/, 10);
+        for (const line of head) {
+            const m = /^#\s*version:\s*(\S+)/.exec(line);
+            if (m) return m[1];
+        }
+    } catch {
+        // Unreadable file — header just isn't set
+    }
+    return "";
+}
+
+// Public-facing version of readScriptVersion, used by the manifest
+// renderer to surface version + as-of-date next to each Download
+// button. Returns null if the script doesn't exist or has no header.
+export function getScriptMeta(scriptName: string): { version: string; lastModified: Date } | null {
+    if (!SCRIPT_NAME_PATTERN.test(scriptName)) return null;
+    if (!fs.existsSync(SCRIPTS_DIR)) return null;
+    const target = path.join(SCRIPTS_DIR, scriptName);
+    if (!fs.existsSync(target)) return null;
+    return {
+        version: readScriptVersion(target),
+        lastModified: fs.statSync(target).mtime,
+    };
+}
