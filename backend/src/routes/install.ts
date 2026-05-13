@@ -1166,7 +1166,17 @@ installRouter.get("/auth/microsoft/start", async (req: Request, res: Response) =
             "https://graph.microsoft.com/Group.Read.All",
     );
     authorize.searchParams.set("state", state);
-    authorize.searchParams.set("prompt", "select_account");
+    // prompt=login forces Entra to re-authenticate even if the user has
+    // an active SSO session. select_account (the previous value) only
+    // showed the account picker but could still return a cached
+    // id_token — which carried stale group claims after we changed the
+    // app reg's groupMembershipClaims config during install setup. For
+    // the install flow specifically, the cost of re-entering credentials
+    // is small (operator only signs in once or twice during setup), and
+    // it eliminates an entire class of "I changed the config but the
+    // token still shows the old state" failure mode. See gap #18 in
+    // 036-marketplace-install-gaps.md.
+    authorize.searchParams.set("prompt", "login");
     res.redirect(authorize.toString());
 });
 
