@@ -71,6 +71,17 @@ async function reloadPostgrestSchemaCache(databaseUrl: string): Promise<void> {
   }
 }
 
+// Azure Postgres Flexible Server rejects non-TLS connections from outside
+// the server's own subnet with `no pg_hba.conf entry for host ..., no
+// encryption`. The entra-mode path below builds its own URL with
+// `?sslmode=require`; the env-var path inherits whatever the operator (or
+// the marketplace deploy seed) set in KV. We've seen `pgrst-db-uri` seeded
+// without sslmode in real installs (gap #22), so default-add it here.
+function ensureSslMode(url: string): string {
+  if (/[?&]sslmode=/i.test(url)) return url;
+  return url + (url.includes("?") ? "&" : "?") + "sslmode=require";
+}
+
 async function getDatabaseUrl(): Promise<string> {
   const provider = getAuthProvider();
 
@@ -79,7 +90,7 @@ async function getDatabaseUrl(): Promise<string> {
     if (!databaseUrl) {
       throw new Error("DATABASE_URL is required when AUTH_PROVIDER is not 'entra'");
     }
-    return databaseUrl;
+    return ensureSslMode(databaseUrl);
   }
 
   const pgHost = process.env.PG_HOST;
