@@ -208,3 +208,49 @@ export async function isInAdminGroup(
 export async function retireBootstrap(): Promise<void> {
     await setConfig("install-bootstrap-token", "");
 }
+
+// Self-bootstrap fast-path. Closes the chicken-and-egg of a fresh
+// marketplace install where the operator hasn't yet configured the
+// admin group: when entra-admin-group-ids is empty in KV, allow the
+// first Entra user reaching /install to configure (so they can set
+// the admin group from inside the configurator without needing the
+// bootstrap token at all).
+//
+// Per the no-strip-redundant-code principle, the bootstrap-token
+// path stays in source — OSS deployments and break-glass recovery
+// scenarios still use it. This helper only opens a parallel "no
+// admin group set" door.
+//
+// Defensive tenant check: even though the OIDC start route already
+// scopes sign-in to the configured tenantId, we double-check the
+// token's `tid` matches `entra-tenant-id` in KV. B2B guest users
+// or misconfigured `common` authorities could otherwise slip in.
+//
+// Fail-closed: if either KV read errors out, returns false (caller
+// falls back to the normal isInAdminGroup gate). Returning true
+// always logs prominently so the event is auditable.
+//
+// See docs/issues/azure-migration/036-marketplace-install-gaps.md
+// gap #9 (and 036a Phase 5 / B1 decision).
+export async function isSelfBootstrapAllowed(
+    tid: string | undefined,
+    principal: string,
+): Promise<boolean> {
+    if (!tid) return false;
+
+    const adminGroupIds = (await getConfig("entra-admin-group-ids").catch(() => "")).trim();
+    if (adminGroupIds) return false; // admin group already set — not a bootstrap scenario
+
+    const expectedTenantId = (await getConfig("entra-tenant-id").catch(() => "")).trim();
+    if (!expectedTenantId) return false; // can't verify tenant claim — fail closed
+
+    const tidMatches = tid.toLowerCase() === expectedTenantId.toLowerCase();
+    if (!tidMatches) return false;
+
+    console.warn("install.self_bootstrap_granted", {
+        principal,
+        tid,
+        timestamp: new Date().toISOString(),
+    });
+    return true;
+}

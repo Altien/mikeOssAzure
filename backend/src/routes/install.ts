@@ -17,6 +17,7 @@ import { randomBytes } from "node:crypto";
 import {
     clearInstallSession,
     isInAdminGroup,
+    isSelfBootstrapAllowed,
     issueInstallSession,
     loadInstallSession,
     readIdTokenClaims,
@@ -1248,8 +1249,18 @@ installRouter.get("/auth/microsoft/callback", async (req: Request, res: Response
     const claims = readIdTokenClaims(tokenJson.id_token);
     const groups = Array.isArray(claims?.groups) ? (claims!.groups as string[]) : [];
     const principal = (claims?.preferred_username as string) ?? (claims?.email as string) ?? "(unknown)";
+    const tid = typeof claims?.tid === "string" ? claims.tid : "";
 
-    if (!(await isInAdminGroup(groups))) {
+    // Self-bootstrap fast-path: when entra-admin-group-ids is empty in KV
+    // (fresh marketplace install, operator hasn't configured admin access
+    // yet), allow the first user from the configured tenant through so
+    // they can set the admin group from inside /install. Logged
+    // prominently inside isSelfBootstrapAllowed(). The bootstrap-token
+    // paste form remains available as the OSS / break-glass path. See
+    // 036a Phase 5 / B1 decision.
+    const selfBootstrap = await isSelfBootstrapAllowed(tid, principal);
+
+    if (!selfBootstrap && !(await isInAdminGroup(groups))) {
         return void res
             .status(403)
             .send(pageShell(
