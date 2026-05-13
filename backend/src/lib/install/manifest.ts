@@ -301,6 +301,13 @@ const items: ManifestItem[] = [
         label: "Entra tenant ID",
         section: "Entra ID",
         required: true,
+        // Marketplace operators should run create-entra-apps.ps1 (offered
+        // via alsoAsScript below) — that single command writes tenant id,
+        // both app reg ids, and the frontend client secret to KV in one
+        // pass. The paste form is retained for OSS deployments and
+        // operators who created the apps in the portal. Marked `advanced`
+        // so the UI de-emphasizes it. 036a Phase 6 (B6).
+        advanced: true,
         check: () => checkKvSecret("entra-tenant-id", {
             format: /^[0-9a-f-]{36}$/i,
             formatHint: "GUID",
@@ -320,7 +327,7 @@ const items: ManifestItem[] = [
             alsoAsScript: {
                 scriptName: "create-entra-apps.ps1",
                 argsTemplate: "-KeyVaultName <kv> -BackendFqdn <fqdn> -ResourceGroup <rg>",
-                description: "Or run this script to create the backend + frontend app registrations and write all three Entra secrets (tenant ID, backend app ID, frontend app ID) at once. Resource group is used to look up the backend UAMI and grant it ownership of the frontend app reg, which lets /install read the redirect URIs back via Graph for slice 9 verification.",
+                description: "Recommended: run this script to create the backend + frontend app registrations and write all the Entra secrets (tenant ID, both app reg ids, frontend client secret) to KV in one pass. Resource group is used to look up the backend UAMI and grant it ownership of the frontend app reg, which lets /install read the redirect URIs back via Graph for slice 9 verification.",
             },
         },
     },
@@ -330,6 +337,9 @@ const items: ManifestItem[] = [
         section: "Entra ID",
         required: true,
         requires: ["entra-tenant-id"],
+        // Same rationale as entra-tenant-id: marketplace path is the
+        // script. Paste form retained for OSS / portal-created apps.
+        advanced: true,
         check: () => checkKvSecret("entra-backend-client-id", {
             format: /^[0-9a-f-]{36}$/i,
             formatHint: "GUID",
@@ -354,6 +364,8 @@ const items: ManifestItem[] = [
         section: "Entra ID",
         required: true,
         requires: ["entra-tenant-id"],
+        // Same rationale as entra-tenant-id / entra-backend-app.
+        advanced: true,
         check: () => checkKvSecret("entra-client-id", {
             format: /^[0-9a-f-]{36}$/i,
             formatHint: "GUID",

@@ -75,6 +75,12 @@ function pageShell(title: string, body: string): string {
   .item { display: grid; grid-template-columns: auto 1fr auto; gap: 0.6rem 1rem; align-items: start; padding: 0.75rem 1rem; border: 1px solid #d0d7de; border-radius: 6px; margin-bottom: 0.5rem; background: #ffffff; }
   .item.fail { background: #fff5f5; border-color: #ffcecb; }
   .item.info { background: #ddf4ff; border-color: #b6e3ff; }
+  /* Advanced items are still rendered (the fix path is needed for OSS
+     deployments / power users / break-glass), but visually de-emphasized
+     so the marketplace happy path is obvious. See 036a Phase 6. */
+  .item.advanced { opacity: 0.65; border-style: dashed; background: #fafbfc; }
+  .item.advanced:hover, .item.advanced:focus-within { opacity: 1; }
+  .item.advanced .label::after { content: "advanced"; display: inline-block; margin-left: 0.5rem; padding: 0.1rem 0.45rem; border-radius: 999px; background: #eaeef2; color: #57606a; font-size: 0.65rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; vertical-align: middle; }
   .item .badge { width: 1.5rem; height: 1.5rem; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; color: white; font-size: 0.75rem; font-weight: 700; flex-shrink: 0; }
   .badge.pass { background: #1a7f37; }
   .badge.fail { background: #cf222e; }
@@ -235,8 +241,9 @@ const SECTION_ORDER: ManifestSection[] = [
 
 function renderItem(item: EvaluatedItem, ctx: InstallContext): string {
     const { result } = item;
+    const advancedClass = item.advanced ? " advanced" : "";
     return `
-<div class="item ${result.status}">
+<div class="item ${result.status}${advancedClass}">
   <div class="badge ${result.status}" title="${escape(result.status)}">${result.status === "pass" ? "✓" : result.status === "fail" ? "!" : "i"}</div>
   <div>
     <div class="label">${escape(item.label)}${item.required ? "" : ' <span class="meta" style="font-weight:400">(optional)</span>'}</div>

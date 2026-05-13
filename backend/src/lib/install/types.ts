@@ -89,6 +89,14 @@ export type ManifestItem = {
     check: (ctx: InstallContext) => Promise<CheckResult>;
     fixedBy: FixedBy;
     requiresRevisionRestart?: boolean;
+    /**
+     * When true, the row is rendered de-emphasized — the fix path is
+     * intended for power users / OSS deployments rather than the
+     * marketplace happy path. The check still runs and the row still
+     * shows its status; only the "how to fix" UX is collapsed. See
+     * 036a Phase 6 (B6 — "hide, don't delete" interpretation).
+     */
+    advanced?: boolean;
 };
 
 export type EvaluatedItem = ManifestItem & {
