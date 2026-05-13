@@ -244,11 +244,11 @@ function describeScriptCommand(item: EvaluatedItem, ctx: InstallContext): string
 }
 
 const SECTION_ORDER: ManifestSection[] = [
-    "Foundations",
+    "Core setup",
     "AI providers",
-    "Entra ID",
-    "Tenant policy",
-    "Lifecycle",
+    "Microsoft sign-in",
+    "Access rules",
+    "Cleanup",
 ];
 
 function renderItem(item: EvaluatedItem, ctx: InstallContext): string {

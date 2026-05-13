@@ -76,8 +76,8 @@ const items: ManifestItem[] = [
     // ── Foundations ──────────────────────────────────────────────────
     {
         id: "bicep-deployed",
-        label: "Container App is serving",
-        section: "Foundations",
+        label: "Mike's backend is up and running",
+        section: "Core setup",
         required: true,
         check: async () => ({
             status: "pass",
@@ -87,8 +87,8 @@ const items: ManifestItem[] = [
     },
     {
         id: "mi-client-id",
-        label: "AZURE_CLIENT_ID matches the attached UAMI",
-        section: "Foundations",
+        label: "Backend can talk to Azure (managed identity wired)",
+        section: "Core setup",
         required: true,
         check: async () => {
             const env = process.env.AZURE_CLIENT_ID ?? "";
@@ -101,24 +101,24 @@ const items: ManifestItem[] = [
     },
     {
         id: "kv-bootstrap-token",
-        label: "Bootstrap token stored in Key Vault",
-        section: "Foundations",
+        label: "First-time setup password ready",
+        section: "Core setup",
         required: true,
         check: () => checkKvSecret("install-bootstrap-token", { redacted: true }),
         fixedBy: { type: "auto", description: "Bicep generates and writes on greenfield deploy." },
     },
     {
         id: "kv-auth-state-secret",
-        label: "Auth state secret stored in Key Vault",
-        section: "Foundations",
+        label: "Sign-in signing key ready",
+        section: "Core setup",
         required: true,
         check: () => checkKvSecret("auth-state-secret", { redacted: true }),
         fixedBy: { type: "auto", description: "Bicep generates on greenfield deploy." },
     },
     {
         id: "kv-backend-public-url",
-        label: "Backend public URL recorded in Key Vault",
-        section: "Foundations",
+        label: "Backend's public web address",
+        section: "Core setup",
         required: true,
         check: () => checkKvSecret("backend-public-url", {
             format: /^https?:\/\/.+/,
@@ -145,8 +145,8 @@ const items: ManifestItem[] = [
         // (e.g. mike.altien.com) before the custom domain itself is
         // wired up on Container Apps ingress.
         id: "custom-backend-fqdn",
-        label: "Custom backend FQDN (overrides redirect-URI hostnames)",
-        section: "Foundations",
+        label: "Custom domain name (optional)",
+        section: "Core setup",
         required: false,
         check: async () => {
             const value = await getConfig("custom-backend-fqdn").catch(() => "");
@@ -244,7 +244,7 @@ const items: ManifestItem[] = [
     },
     {
         id: "ai-aoai-config",
-        label: "Azure OpenAI / Foundry endpoint + key",
+        label: "Azure OpenAI / AI Foundry",
         section: "AI providers",
         required: false,
         check: async () => {
@@ -340,8 +340,8 @@ const items: ManifestItem[] = [
     // the independent paste paths.
     {
         id: "entra-tenant-id",
-        label: "Entra tenant ID",
-        section: "Entra ID",
+        label: "Microsoft tenant (your organization)",
+        section: "Microsoft sign-in",
         required: true,
         // Marketplace operators should run create-entra-apps.ps1 (offered
         // via alsoAsScript below) — that single command writes tenant id,
@@ -364,7 +364,7 @@ const items: ManifestItem[] = [
                 placeholder: "00000000-0000-0000-0000-000000000000",
                 required: true,
                 pattern: "^[0-9a-fA-F-]{36}$",
-                helpText: "GUID of the Entra tenant. Find it in Azure portal → Microsoft Entra ID → Overview.",
+                helpText: "The unique ID of your Microsoft organization. Mike uses this to know which Microsoft accounts can sign in. Find it in the Azure portal → Microsoft Entra ID → Overview → Tenant ID.",
             }],
             alsoAsScript: {
                 scriptName: "create-entra-apps.ps1",
@@ -375,8 +375,8 @@ const items: ManifestItem[] = [
     },
     {
         id: "entra-backend-app",
-        label: "Backend app registration",
-        section: "Entra ID",
+        label: "Sign-in: backend identity",
+        section: "Microsoft sign-in",
         required: true,
         requires: ["entra-tenant-id"],
         // Same rationale as entra-tenant-id: marketplace path is the
@@ -396,14 +396,14 @@ const items: ManifestItem[] = [
                 placeholder: "00000000-0000-0000-0000-000000000000",
                 required: true,
                 pattern: "^[0-9a-fA-F-]{36}$",
-                helpText: "Application (client) ID of the backend API app registration. Find it under App registrations → <your backend app> → Overview.",
+                helpText: "The ID Microsoft uses to identify Mike's backend when validating sign-ins. Find it in the Azure portal → Microsoft Entra ID → App registrations → your backend app → Overview → Application (client) ID.",
             }],
         },
     },
     {
         id: "entra-frontend-app",
-        label: "Frontend app registration",
-        section: "Entra ID",
+        label: "Sign-in: user-facing identity",
+        section: "Microsoft sign-in",
         required: true,
         requires: ["entra-tenant-id"],
         // Same rationale as entra-tenant-id / entra-backend-app.
@@ -423,15 +423,15 @@ const items: ManifestItem[] = [
                     placeholder: "00000000-0000-0000-0000-000000000000",
                     required: true,
                     pattern: "^[0-9a-fA-F-]{36}$",
-                    helpText: "Application (client) ID of the frontend / sign-in app registration.",
+                    helpText: "The ID Microsoft uses to identify Mike to your users when they sign in. Find it in the Azure portal → Microsoft Entra ID → App registrations → your sign-in app → Overview → Application (client) ID.",
                 },
                 {
                     name: "entra-client-secret",
-                    label: "Frontend client secret",
+                    label: "Sign-in client secret",
                     type: "password",
-                    placeholder: "Paste a fresh client secret (Value, not Secret ID)",
+                    placeholder: "Paste the secret VALUE (not the Secret ID)",
                     required: true,
-                    helpText: "A client secret on the frontend app. The backend exchanges authorization codes with this. Mint a new one under App registrations → Certificates & secrets → Client secrets if needed.",
+                    helpText: "A password Microsoft generates for Mike to prove its identity. Mint a new one in the Azure portal → Microsoft Entra ID → App registrations → your sign-in app → Certificates & secrets → New client secret. Copy the VALUE column (not Secret ID).",
                 },
             ],
         },
@@ -443,8 +443,8 @@ const items: ManifestItem[] = [
     // installs; no code consults it. Gap #4 in 036-marketplace-install-gaps.md.
     {
         id: "entra-frontend-redirect-uris",
-        label: "Frontend redirect URIs match the backend FQDN",
-        section: "Entra ID",
+        label: "Sign-in callback URLs registered",
+        section: "Microsoft sign-in",
         required: true,
         requires: ["entra-frontend-app", "kv-backend-public-url"],
         // Real Microsoft Graph round-trip — see checks/redirectUris.ts.
@@ -459,8 +459,8 @@ const items: ManifestItem[] = [
     // ── Tenant policy ────────────────────────────────────────────────
     {
         id: "entra-admin-group-id",
-        label: "Admin group",
-        section: "Tenant policy",
+        label: "Admins (who can configure Mike)",
+        section: "Access rules",
         required: true,
         requires: ["entra-frontend-app"],
         check: () => checkKvSecret("entra-admin-group-ids", {
@@ -479,8 +479,8 @@ const items: ManifestItem[] = [
     },
     {
         id: "entra-member-group-id",
-        label: "Member group (optional)",
-        section: "Tenant policy",
+        label: "Users (who can use Mike, optional)",
+        section: "Access rules",
         required: false,
         requires: ["entra-frontend-app"],
         check: () => checkKvSecret("entra-member-group-ids"),
@@ -491,8 +491,8 @@ const items: ManifestItem[] = [
     },
     {
         id: "tenant-onboarding-mode",
-        label: "Tenant onboarding mode",
-        section: "Tenant policy",
+        label: "New sign-up handling (auto vs manual)",
+        section: "Access rules",
         required: true,
         check: async () => {
             const value = await getConfig("tenant-onboarding-mode").catch(() => "");
@@ -510,7 +510,7 @@ const items: ManifestItem[] = [
                 type: "text",
                 required: true,
                 options: ["auto", "manual"],
-                helpText: "auto = new tenants self-service via Microsoft sign-in (good for prod). manual = admins explicitly enrol each tenant before its users can sign in (good for dev / pilot).",
+                helpText: "auto: any user from your Microsoft organization can sign in straight away — best for single-tenant installs. manual: an admin must explicitly enrol each new Microsoft organization before its users can sign in — best for multi-tenant SaaS scenarios.",
             }],
         },
     },
@@ -518,8 +518,8 @@ const items: ManifestItem[] = [
     // ── Lifecycle ────────────────────────────────────────────────────
     {
         id: "bootstrap-retired",
-        label: "Bootstrap path retired (Entra admin sign-in seen)",
-        section: "Lifecycle",
+        label: "First-time setup completed (bootstrap retired)",
+        section: "Cleanup",
         required: true,
         check: async () => {
             const tok = await getConfig("install-bootstrap-token").catch(() => "");
@@ -538,8 +538,8 @@ const items: ManifestItem[] = [
     },
     {
         id: "installer-access-revoked",
-        label: "Installer's KV write access revoked",
-        section: "Lifecycle",
+        label: "Installer's setup access removed",
+        section: "Cleanup",
         required: false,
         // Real ARM round-trip — see checks/installerAccess.ts.
         check: (ctx) => checkInstallerAccessRevoked(ctx),
@@ -553,7 +553,7 @@ const items: ManifestItem[] = [
     // ── Optional ─────────────────────────────────────────────────────
     {
         id: "app-insights-connection",
-        label: "Application Insights connection string",
+        label: "Application Insights (telemetry / monitoring)",
         section: "Optional",
         required: false,
         check: () => checkKvSecret("appinsights-connection-string", { redacted: true }),

@@ -5,11 +5,11 @@
 // (`check`) and how the operator fixes it when the check fails (`fixedBy`).
 
 export type ManifestSection =
-    | "Foundations"
+    | "Core setup"
     | "AI providers"
-    | "Entra ID"
-    | "Tenant policy"
-    | "Lifecycle"
+    | "Microsoft sign-in"
+    | "Access rules"
+    | "Cleanup"
     | "Optional";
 
 export type FormField = {
