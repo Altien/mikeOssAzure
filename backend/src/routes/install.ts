@@ -17,6 +17,7 @@ import { randomBytes } from "node:crypto";
 import {
     clearInstallSession,
     isInAdminGroup,
+    isInitialAdmin,
     isSelfBootstrapAllowed,
     issueInstallSession,
     loadInstallSession,
@@ -1276,16 +1277,19 @@ installRouter.get("/auth/microsoft/callback", async (req: Request, res: Response
     const principal = (claims?.preferred_username as string) ?? (claims?.email as string) ?? "(unknown)";
     const tid = typeof claims?.tid === "string" ? claims.tid : "";
 
-    // Self-bootstrap fast-path: when entra-admin-group-ids is empty in KV
-    // (fresh marketplace install, operator hasn't configured admin access
-    // yet), allow the first user from the configured tenant through so
-    // they can set the admin group from inside /install. Logged
-    // prominently inside isSelfBootstrapAllowed(). The bootstrap-token
-    // paste form remains available as the OSS / break-glass path. See
-    // 036a Phase 5 / B1 decision.
+    // Two escape hatches sit beside the normal admin-group gate:
+    //   - selfBootstrap: when no admin group is configured yet (fresh
+    //     install), allow the first tenant user through. 036a Phase 5.
+    //   - initialAdmin: when the marketplace handshake (or deploy.ps1)
+    //     captured the buyer's oid in KV, treat that user as a
+    //     permanent admin — recovery from misconfigured-admin-group
+    //     lockouts. 036a Phase 8 / gap #8.
+    // Either passing skips the group check.
+    const oidClaim = typeof claims?.oid === "string" ? claims.oid : "";
     const selfBootstrap = await isSelfBootstrapAllowed(tid, principal);
+    const initialAdmin = await isInitialAdmin(oidClaim, principal);
 
-    if (!selfBootstrap && !(await isInAdminGroup(groups))) {
+    if (!selfBootstrap && !initialAdmin && !(await isInAdminGroup(groups))) {
         // Enrich the 403 with diagnostic data so the operator can
         // actually fix the situation rather than guessing.  See gap #7
         // in 036-marketplace-install-gaps.md.

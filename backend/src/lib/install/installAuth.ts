@@ -209,6 +209,38 @@ export async function retireBootstrap(): Promise<void> {
     await setConfig("install-bootstrap-token", "");
 }
 
+// Initial-admin escape hatch. Checks whether the signing-in user's oid
+// matches the install-initial-admin-oid seeded by Bicep at deploy time
+// (from marketplace handshake or deploy.ps1 invocation). When matched,
+// the user is granted admin access regardless of group membership —
+// permanent recovery path for "I misconfigured the admin group and
+// locked myself out" scenarios.
+//
+// Fail-closed: any KV read failure or empty-config returns false (the
+// caller falls back to the normal admin gate). When the match fires,
+// logs prominently for audit.
+//
+// See gap #8 in docs/issues/azure-migration/036-marketplace-install-gaps.md
+// (and 036a Phase 8).
+export async function isInitialAdmin(
+    oid: string | undefined,
+    principal: string,
+): Promise<boolean> {
+    if (!oid) return false;
+
+    const expected = (await getConfig("install-initial-admin-oid").catch(() => "")).trim();
+    if (!expected) return false; // not configured — escape hatch disabled
+
+    if (oid.toLowerCase() !== expected.toLowerCase()) return false;
+
+    console.warn("install.initial_admin_granted", {
+        principal,
+        oid,
+        timestamp: new Date().toISOString(),
+    });
+    return true;
+}
+
 // Self-bootstrap fast-path. Closes the chicken-and-egg of a fresh
 // marketplace install where the operator hasn't yet configured the
 // admin group: when entra-admin-group-ids is empty in KV, allow the
