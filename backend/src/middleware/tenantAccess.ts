@@ -77,7 +77,7 @@ export async function tenantAccess(
     return;
   }
 
-  const roles = resolveRoles(principal.groups ?? []);
+  const roles = await resolveRoles(principal.groups ?? []);
   if (roles.length === 0) {
     deny(res, tenantId, userId, "GROUP_NOT_WHITELISTED");
     return;
