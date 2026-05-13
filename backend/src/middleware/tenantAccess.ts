@@ -1,6 +1,7 @@
 import { NextFunction, Request, Response } from "express";
 import { createServerSupabase } from "../lib/supabase.js";
 import { resolveRoles } from "../lib/auth/roles.js";
+import { getConfig } from "../lib/config.js";
 
 function deny(res: Response, tenantId: string | undefined, userId: string, reason: string): void {
   console.warn("auth.tenant_access_denied", {
@@ -12,12 +13,26 @@ function deny(res: Response, tenantId: string | undefined, userId: string, reaso
   res.status(403).json({ detail: reason });
 }
 
+// getConfig() reads env first (preserves existing AUTH_PROVIDER /
+// TENANT_ONBOARDING_MODE env vars where they're set), then falls
+// back to KV. This lets operators change the value via /install and
+// have it take effect on the next request (after flushConfigCache),
+// without a Container App revision restart. See gap #1 in
+// docs/issues/azure-migration/036-marketplace-install-gaps.md.
+async function readAuthProvider(): Promise<string> {
+  return (await getConfig("auth-provider").catch(() => "")) || "supabase";
+}
+
+async function readOnboardingMode(): Promise<string> {
+  return (await getConfig("tenant-onboarding-mode").catch(() => "")) || "manual";
+}
+
 export async function tenantAccess(
   _req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
-  const provider = process.env.AUTH_PROVIDER ?? "supabase";
+  const provider = await readAuthProvider();
   if (provider !== "entra") {
     next();
     return;
@@ -45,7 +60,7 @@ export async function tenantAccess(
   }
 
   if (!tenant) {
-    const onboardingMode = process.env.TENANT_ONBOARDING_MODE ?? "manual";
+    const onboardingMode = await readOnboardingMode();
     if (onboardingMode === "auto") {
       const { error: insertError } = await admin.from("tenants").insert({ tenant_id: tenantId, status: "active" });
       if (insertError) {
