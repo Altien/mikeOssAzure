@@ -26,6 +26,7 @@ import {
     verifyOidcState,
     type InstallSession,
 } from "../lib/install/installAuth";
+import { resolveUserGroups } from "../lib/install/userGroups";
 import {
     clearSessionTokens,
     getSessionTokens,
@@ -1254,7 +1255,14 @@ installRouter.get("/auth/microsoft/callback", async (req: Request, res: Response
     }
 
     const claims = readIdTokenClaims(tokenJson.id_token);
-    const groups = Array.isArray(claims?.groups) ? (claims!.groups as string[]) : [];
+    // resolveUserGroups handles the inline-claim case (most users) AND
+    // the overage case where Entra has dropped `groups` from the token
+    // and emitted `hasgroups: true` / `_claim_names` instead. In overage
+    // it calls Microsoft Graph /me/memberOf using the access_token we
+    // just received. Cached per (oid, iat) for 5 minutes. Returns []
+    // on any failure — falls through to the admin gate which refuses.
+    // See 036a Phase 7 (B4 reinterpreted as additive).
+    const groups = await resolveUserGroups(claims, tokenJson.access_token);
     const principal = (claims?.preferred_username as string) ?? (claims?.email as string) ?? "(unknown)";
     const tid = typeof claims?.tid === "string" ? claims.tid : "";
 
