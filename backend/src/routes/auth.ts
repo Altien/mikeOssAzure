@@ -1,7 +1,16 @@
 import { createHmac, createHash } from "node:crypto";
 import { Router, type Request } from "express";
+import { getConfig } from "../lib/config.js";
 
 export const authRouter = Router();
+
+// Reads runtime config from KV via getConfig() — env-first fallback
+// preserves existing env-wired installs while supporting KV-only
+// installs and live updates from /install (after flushConfigCache).
+// Gap #1 in docs/issues/azure-migration/036-marketplace-install-gaps.md.
+async function readAuthProvider(): Promise<string> {
+  return (await getConfig("auth-provider").catch(() => "")) || "supabase";
+}
 
 interface OpenIdTokenResponse {
   access_token?: string;
@@ -35,26 +44,33 @@ function unb64url(input: string): Buffer {
   return Buffer.from(padded.replace(/-/g, "+").replace(/_/g, "/"), "base64");
 }
 
-function stateSecret(): string {
-  const secret = process.env.AUTH_STATE_SECRET ?? process.env.JWT_SECRET ?? process.env.ENTRA_CLIENT_SECRET ?? "";
+async function stateSecret(): Promise<string> {
+  // auth-state-secret: KV-owned, seeded by Bicep at greenfield deploy
+  // (random GUID) and never rotated automatically. Falls back to legacy
+  // JWT_SECRET / ENTRA_CLIENT_SECRET so older installs that pre-date
+  // the dedicated secret keep working.
+  const fromKv = await getConfig("auth-state-secret").catch(() => "");
+  const secret = fromKv || process.env.JWT_SECRET || process.env.ENTRA_CLIENT_SECRET || "";
   if (!secret && process.env.NODE_ENV === "production") {
-    throw new Error("AUTH_STATE_SECRET is required for production OpenID login");
+    throw new Error("auth-state-secret is required for production OpenID login");
   }
   return secret || "local-dev-openid-state-secret";
 }
 
-function signState(state: AuthState): string {
+async function signState(state: AuthState): Promise<string> {
   const payload = b64urlJson(state);
-  const signature = b64url(createHmac("sha256", stateSecret()).update(payload).digest());
+  const secret = await stateSecret();
+  const signature = b64url(createHmac("sha256", secret).update(payload).digest());
   return `${payload}.${signature}`;
 }
 
-function verifyState(rawState: unknown): AuthState | undefined {
+async function verifyState(rawState: unknown): Promise<AuthState | undefined> {
   if (typeof rawState !== "string") return undefined;
   const [payload, signature] = rawState.split(".");
   if (!payload || !signature) return undefined;
 
-  const expected = b64url(createHmac("sha256", stateSecret()).update(payload).digest());
+  const secret = await stateSecret();
+  const expected = b64url(createHmac("sha256", secret).update(payload).digest());
   if (signature !== expected) return undefined;
 
   const state = JSON.parse(unb64url(payload).toString("utf8")) as Partial<AuthState>;
@@ -67,8 +83,8 @@ function frontendUrl(): URL {
   return new URL(process.env.FRONTEND_URL ?? "http://localhost:3000");
 }
 
-function backendUrl(req: Request): string {
-  const configured = process.env.BACKEND_PUBLIC_URL;
+async function backendUrl(req: Request): Promise<string> {
+  const configured = (await getConfig("backend-public-url").catch(() => "")) || "";
   if (configured) return configured.replace(/\/+$/, "");
   return `${req.protocol}://${req.get("host")}`;
 }
@@ -84,8 +100,12 @@ function safeReturnUrl(rawReturnUrl: unknown): string {
   return resolved.toString();
 }
 
-function entraClientId(): string {
-  return process.env.ENTRA_CLIENT_ID ?? process.env.ENTRA_FRONTEND_CLIENT_ID ?? "";
+async function entraClientId(): Promise<string> {
+  // ENTRA_FRONTEND_CLIENT_ID is the legacy env-var name; preserved as a
+  // fallback for installs that haven't migrated.
+  return (await getConfig("entra-client-id").catch(() => "")) ||
+    process.env.ENTRA_FRONTEND_CLIENT_ID ||
+    "";
 }
 
 // Scope passed to the Entra OAuth endpoints. The backend's access_as_user
@@ -97,16 +117,16 @@ function entraClientId(): string {
 // override path that survives is ENTRA_AUTH_SCOPES, intended for
 // operators with non-standard scope sets (e.g. additional Graph
 // permissions). Plain ENTRA_BACKEND_SCOPE is no longer read.
-function entraScopes(): string {
+async function entraScopes(): Promise<string> {
   const override = process.env.ENTRA_AUTH_SCOPES;
   if (override) return override;
 
-  const backendClientId = process.env.ENTRA_BACKEND_CLIENT_ID ?? "";
+  const backendClientId = await getConfig("entra-backend-client-id").catch(() => "");
   return backendClientId ? `openid profile email offline_access api://${backendClientId}/access_as_user` : "";
 }
 
-function entraRedirectUri(req: Request): string {
-  return process.env.ENTRA_REDIRECT_URI ?? `${backendUrl(req)}/api/auth/openid-callback/microsoft`;
+async function entraRedirectUri(req: Request): Promise<string> {
+  return process.env.ENTRA_REDIRECT_URI ?? `${await backendUrl(req)}/api/auth/openid-callback/microsoft`;
 }
 
 function appendTokenFragment(returnUrl: string, tokenResponse: OpenIdTokenResponse): string {
@@ -122,10 +142,12 @@ function appendTokenFragment(returnUrl: string, tokenResponse: OpenIdTokenRespon
 }
 
 async function exchangeEntraCode(code: string, redirectUri: string): Promise<OpenIdTokenResponse> {
-  const tenantId = process.env.ENTRA_TENANT_ID ?? "";
-  const clientId = entraClientId();
-  const clientSecret = process.env.ENTRA_CLIENT_SECRET ?? "";
-  const scopes = entraScopes();
+  const [tenantId, clientId, clientSecret, scopes] = await Promise.all([
+    getConfig("entra-tenant-id").catch(() => ""),
+    entraClientId(),
+    getConfig("entra-client-secret").catch(() => ""),
+    entraScopes(),
+  ]);
 
   if (!tenantId || !clientId || !scopes) {
     throw new Error("Missing Entra OpenID configuration");
@@ -173,8 +195,8 @@ function mintLocalToken(secret: string, email: string): { token: string; user: {
   return { token: `${signingInput}.${signature}`, user };
 }
 
-authRouter.post("/local-login", (req, res) => {
-  if ((process.env.AUTH_PROVIDER ?? "supabase") !== "local") {
+authRouter.post("/local-login", async (req, res) => {
+  if ((await readAuthProvider()) !== "local") {
     res.status(404).json({ detail: "Local login is only available when AUTH_PROVIDER=local" });
     return;
   }
@@ -192,8 +214,8 @@ authRouter.post("/local-login", (req, res) => {
   res.json(mintLocalToken(secret, email));
 });
 
-authRouter.get("/providers", (_req, res) => {
-  const authProvider = process.env.AUTH_PROVIDER ?? "supabase";
+authRouter.get("/providers", async (_req, res) => {
+  const authProvider = await readAuthProvider();
   res.json({
     defaultProvider: authProvider === "entra" ? "microsoft" : authProvider,
     providers: [
@@ -212,8 +234,8 @@ authRouter.get("/providers", (_req, res) => {
 // customer-specific value.  In entra mode, redirects through Microsoft
 // so the IdP session is cleared too; in other modes, just back to the
 // app's login page.
-authRouter.get("/logout", (_req, res) => {
-  const provider = (process.env.AUTH_PROVIDER ?? "supabase").toLowerCase();
+authRouter.get("/logout", async (_req, res) => {
+  const provider = (await readAuthProvider()).toLowerCase();
   const loginUrl = new URL("/login", frontendUrl()).toString();
 
   if (provider !== "entra") {
@@ -221,7 +243,7 @@ authRouter.get("/logout", (_req, res) => {
     return;
   }
 
-  const tenantId = process.env.ENTRA_TENANT_ID ?? "";
+  const tenantId = await getConfig("entra-tenant-id").catch(() => "");
   if (!tenantId) {
     // Misconfigured entra mode — at least get the user back to the
     // login page rather than 500-ing on sign-out.
@@ -236,8 +258,8 @@ authRouter.get("/logout", (_req, res) => {
   res.redirect(microsoftLogout.toString());
 });
 
-authRouter.get("/select-provider", (req, res) => {
-  if ((process.env.AUTH_PROVIDER ?? "supabase") !== "entra") {
+authRouter.get("/select-provider", async (req, res) => {
+  if ((await readAuthProvider()) !== "entra") {
     res.status(404).json({ detail: "OpenID provider selection is only available when AUTH_PROVIDER=entra" });
     return;
   }
@@ -247,31 +269,35 @@ authRouter.get("/select-provider", (req, res) => {
   res.redirect(`/api/auth/login-provider/microsoft?returnUrl=${returnUrl}${selectAccount}`);
 });
 
-authRouter.get("/login-provider/:providerId", (req, res) => {
+authRouter.get("/login-provider/:providerId", async (req, res) => {
   if (req.params.providerId !== "microsoft") {
     res.status(404).json({ detail: `Unknown auth provider '${req.params.providerId}'` });
     return;
   }
-  if ((process.env.AUTH_PROVIDER ?? "supabase") !== "entra") {
+  if ((await readAuthProvider()) !== "entra") {
     res.status(404).json({ detail: "Microsoft login is only available when AUTH_PROVIDER=entra" });
     return;
   }
 
-  const tenantId = process.env.ENTRA_TENANT_ID ?? "";
-  const clientId = entraClientId();
-  const scopes = entraScopes();
+  const [tenantId, clientId, scopes, redirectUri] = await Promise.all([
+    getConfig("entra-tenant-id").catch(() => ""),
+    entraClientId(),
+    entraScopes(),
+    entraRedirectUri(req),
+  ]);
   if (!tenantId || !clientId || !scopes) {
     res.status(500).json({ detail: "Missing Entra OpenID configuration" });
     return;
   }
 
+  const state = await signState({ returnUrl: safeReturnUrl(req.query.returnUrl), createdAt: Date.now() });
   const authorize = new URL(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize`);
   authorize.searchParams.set("client_id", clientId);
   authorize.searchParams.set("response_type", "code");
   authorize.searchParams.set("response_mode", "query");
-  authorize.searchParams.set("redirect_uri", entraRedirectUri(req));
+  authorize.searchParams.set("redirect_uri", redirectUri);
   authorize.searchParams.set("scope", scopes);
-  authorize.searchParams.set("state", signState({ returnUrl: safeReturnUrl(req.query.returnUrl), createdAt: Date.now() }));
+  authorize.searchParams.set("state", state);
   if (req.query.selectAccount === "true") {
     authorize.searchParams.set("prompt", "select_account");
   }
@@ -291,14 +317,15 @@ authRouter.get("/openid-callback/:providerId", async (req, res) => {
   }
 
   const code = typeof req.query.code === "string" ? req.query.code : "";
-  const state = verifyState(req.query.state);
+  const state = await verifyState(req.query.state);
   if (!code || !state) {
     res.status(400).json({ detail: "Invalid OpenID callback" });
     return;
   }
 
   try {
-    const tokenResponse = await exchangeEntraCode(code, entraRedirectUri(req));
+    const redirectUri = await entraRedirectUri(req);
+    const tokenResponse = await exchangeEntraCode(code, redirectUri);
     res.redirect(appendTokenFragment(state.returnUrl, tokenResponse));
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Failed to complete Entra login";
