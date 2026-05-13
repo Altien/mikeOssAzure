@@ -114,6 +114,74 @@ async function getDatabaseUrl(): Promise<string> {
   return `postgresql://${encodeURIComponent(pgMiUsername)}:${encodeURIComponent(token.token)}@${pgHost}:${pgPort}/${pgDatabase}?sslmode=require`;
 }
 
+// Creates / refreshes the `authenticator` Postgres role that PostgREST
+// connects as in the marketplace flavour. The role has only LOGIN +
+// NOINHERIT plus membership in web_anon / authenticated / service_role
+// — minimum privileges to SET ROLE at PostgREST's connection boundary,
+// nothing else. Replaces the previous pattern where PostgREST connected
+// as `mikeadmin` (full superuser).
+//
+// Runs after node-pg-migrate (which created the role tier in
+// 0005_postgres_roles.sql) and is fully idempotent: creates the role if
+// missing, syncs the password every run, re-grants memberships.
+//
+// Password comes from PGRST_AUTHENTICATOR_PASSWORD env var, sourced
+// from a Bicep-generated KV secret (newGuid() per deploy). DDL can't
+// be parameterized so we interpolate into the SQL — Bicep's newGuid()
+// format is alphanumeric+hyphen only, which we validate defensively
+// before interpolation. Throws on a non-conforming value rather than
+// risking SQL injection.
+//
+// Skipped (no-op) when the env var is unset — keeps legacy installs
+// working until they pick up the Bicep change that sets the var. See
+// gap #24 in docs/issues/azure-migration/036-marketplace-install-gaps.md.
+async function ensureAuthenticatorRole(databaseUrl: string): Promise<void> {
+  const password = process.env.PGRST_AUTHENTICATOR_PASSWORD;
+  if (!password) {
+    console.log(
+      "[migrate] PGRST_AUTHENTICATOR_PASSWORD not set — skipping authenticator role setup (legacy install / OSS deploy)",
+    );
+    return;
+  }
+  // newGuid() output is alphanumeric + hyphen. Anything else would risk
+  // DDL injection because CREATE/ALTER ROLE don't support parameterized
+  // queries. Fail loudly rather than silently quote-escape something we
+  // didn't expect.
+  if (!/^[A-Za-z0-9-]+$/.test(password)) {
+    throw new Error(
+      "PGRST_AUTHENTICATOR_PASSWORD must be alphanumeric+hyphen (newGuid format)",
+    );
+  }
+
+  const client = new Client({ connectionString: databaseUrl, ssl: { rejectUnauthorized: false } });
+  try {
+    await client.connect();
+    const existsRow = await client.query<{ exists: boolean }>(
+      "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticator') AS exists",
+    );
+    const exists = Boolean(existsRow.rows[0]?.exists);
+    if (exists) {
+      await client.query(
+        `ALTER ROLE authenticator WITH LOGIN NOINHERIT PASSWORD '${password}'`,
+      );
+      console.log("[migrate] authenticator role: password refreshed");
+    } else {
+      await client.query(
+        `CREATE ROLE authenticator LOGIN NOINHERIT PASSWORD '${password}'`,
+      );
+      console.log("[migrate] authenticator role: created");
+    }
+    // Membership in the role tier (created by 0005_postgres_roles.sql).
+    // GRANT is idempotent — no-op if already a member.
+    await client.query("GRANT web_anon TO authenticator");
+    await client.query("GRANT authenticated TO authenticator");
+    await client.query("GRANT service_role TO authenticator");
+    console.log("[migrate] authenticator role: memberships ensured");
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
 async function main() {
   const databaseUrl = await getDatabaseUrl();
   const exitCode = await runNodePgMigrate(databaseUrl);
@@ -122,6 +190,7 @@ async function main() {
     throw new Error(`node-pg-migrate exited with code ${exitCode}`);
   }
 
+  await ensureAuthenticatorRole(databaseUrl);
   await reloadPostgrestSchemaCache(databaseUrl);
 }
 
