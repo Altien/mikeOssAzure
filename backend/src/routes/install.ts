@@ -378,6 +378,10 @@ function renderChecklist(
 </div>
 ${progressBanner}
 ${savedItem ? `<div class="flash ok">Saved <code>${escape(savedItem.id)}</code> to Key Vault.${savedItem.requiresRevisionRestart === false ? "" : " A Container App revision restart is required for the new value to be picked up by the backend (see issue 023's secret-ref caveat)."}</div>` : ""}
+<div class="cta-row" style="margin: 0 0 1.5rem 0; padding: 0.7rem 1rem; background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; font-size: 0.9rem; display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
+  <span>Want users to reach Mike on a friendly hostname like <code>mike.your-company.com</code>?</span>
+  <a class="btn secondary" href="/install/custom-domain">Custom domain walkthrough →</a>
+</div>
 ${sections}
 <script>
 (function() {
@@ -1493,3 +1497,203 @@ export function getScriptMeta(scriptName: string): { version: string; lastModifi
         lastModified: fs.statSync(target).mtime,
     };
 }
+
+// ── Custom-domain walkthrough ─────────────────────────────────────────────
+//
+// Static step-by-step guide for wiring a custom hostname (e.g. mike.altien.com)
+// to the backend Container App. The full automated wizard from 036a Phase 11
+// would orchestrate each step via ARM calls; this is the design contract
+// it'd automate. For now operators copy commands from the page and run them
+// locally — every command is pre-filled with the live values we can read
+// (KV name, frontend app reg id, backend FQDN, resource group, env).
+//
+// Detects Cloudflare DNS by looking at the inbound Host header (if the
+// operator reached /install via the custom domain already, we can sniff the
+// upstream IP via x-forwarded-for; if it's a Cloudflare range, surface the
+// orange-cloud caveat). Conservatively assumes "maybe Cloudflare" so the
+// guidance shows regardless.
+//
+// See gap #19 in docs/issues/azure-migration/036-marketplace-install-gaps.md.
+
+async function renderCustomDomainPage(
+    session: InstallSession,
+    backendHost: string,
+): Promise<string> {
+    const kvName = process.env.KEY_VAULT_NAME ?? "<your-kv>";
+    const rgName = process.env.RESOURCE_GROUP ?? "<your-rg>";
+    const subscriptionId = process.env.SUBSCRIPTION_ID ?? "<your-subscription-id>";
+    const frontendClientId = (await getConfig("entra-client-id").catch(() => "")) || "<your-frontend-app-id>";
+    // The Container App Environment name is conventionally `cae-mike-<env>`
+    // where <env> is the suffix after `kv-mike-`. Derive defensively;
+    // operator can override at any step.
+    const envSuffix = kvName.replace(/^kv-mike-/, "") || "<env>";
+    const caeName = `cae-mike-${envSuffix}`;
+    const containerAppName = "backend";
+
+    const body = `
+<h1>Custom domain setup</h1>
+<p class="lead" style="font-size:0.95rem; color:#444; max-width:50rem; line-height:1.5;">
+  Use this walkthrough to point a friendly hostname (e.g. <code>mike.your-company.com</code>) at Mike's backend.
+  Six steps, ~15-20 minutes of operator work spread across your DNS provider, the Azure CLI, and your Microsoft Entra app registration.
+</p>
+
+<div class="install-progress" style="margin-bottom:1.5rem">
+  <strong>Public IP situation:</strong> Mike's backend already has a stable public address — <code>${escape(backendHost)}</code>.
+  No new Public IP resource needs provisioning. The static IP that backs this hostname (<code>20.x.x.x</code> for Azure Container Apps environments)
+  doesn't change across revisions, so it's safe to point DNS at it.
+  Run <code>az containerapp env show --name ${escape(caeName)} --resource-group ${escape(rgName)} --query properties.staticIp -o tsv</code> to see the exact IP if you need an A-record.
+</div>
+
+<h2>Step 1 — Pick your hostname</h2>
+<p class="section-intro">
+  Decide what URL you want users to reach Mike on. For one customer install, something like <code>mike.your-company.com</code> is typical.
+  You'll need control of the parent DNS zone (your-company.com) to add records.
+</p>
+
+<h2>Step 2 — Add DNS records at your provider</h2>
+<p class="section-intro">
+  Three records, all at the parent zone. Cloudflare, Route 53, GoDaddy, Namecheap all work — anywhere you manage DNS for the parent.
+</p>
+
+<div class="dns-records">
+  <div class="dns-record">
+    <div class="dns-record-title">Record 1 — Point your hostname at the backend</div>
+    <table>
+      <tr><th>Type</th><td>CNAME</td></tr>
+      <tr><th>Name</th><td>your subdomain (e.g. <code>mike</code> if you want <code>mike.your-company.com</code>)</td></tr>
+      <tr><th>Target</th><td><code>${escape(backendHost)}</code></td></tr>
+      <tr><th>Proxy</th><td><em>See Cloudflare note below if applicable</em></td></tr>
+    </table>
+  </div>
+
+  <div class="dns-record">
+    <div class="dns-record-title">Record 2 — Prove you own the domain (Azure verification)</div>
+    <p style="margin:0.4rem 0 0.6rem 0">First, run this to get the verification token:</p>
+    <pre>az containerapp show --name ${escape(containerAppName)} \\
+  --resource-group ${escape(rgName)} \\
+  --query properties.customDomainVerificationId -o tsv</pre>
+    <p style="margin:0.4rem 0 0.6rem 0">Then add this TXT record at your DNS provider (substitute the value from the command above):</p>
+    <table>
+      <tr><th>Type</th><td>TXT</td></tr>
+      <tr><th>Name</th><td><code>asuid.&lt;your subdomain&gt;</code> (e.g. <code>asuid.mike</code>)</td></tr>
+      <tr><th>Content</th><td>The verification ID from the <code>az</code> command above</td></tr>
+      <tr><th>Proxy</th><td>N/A (TXT records aren't proxied)</td></tr>
+    </table>
+  </div>
+</div>
+
+<h3 style="font-size:1rem; margin-top:1rem;">⚠ Cloudflare-proxied? Read this</h3>
+<p class="section-intro">
+  If you set Record 1's proxy status to <strong>Proxied</strong> (orange cloud), Azure can't see the underlying CNAME and certificate
+  provisioning will time out. The workaround is to flip the record to <strong>DNS-only</strong> (grey cloud) for the duration of cert
+  provisioning (steps 3 and 4), then flip back to Proxied afterwards. Container Apps managed certs renew every ~3 months, so this
+  flip will recur — for permanent Cloudflare-proxied mode, use Cloudflare's Origin Certificate (long-lived, bring-your-own) instead.
+</p>
+
+<h2>Step 3 — Register the hostname on the Container App</h2>
+<p class="section-intro">Tells Azure to accept incoming requests on the new hostname. Idempotent — re-running with the same hostname is a no-op.</p>
+<pre>az containerapp hostname add \\
+  --hostname &lt;your-hostname&gt; \\
+  --name ${escape(containerAppName)} \\
+  --resource-group ${escape(rgName)}</pre>
+<p class="section-intro" style="margin-top:0.5rem">
+  Expected output: a JSON blob showing the hostname with <code>bindingType: "Disabled"</code> — that's fine, the cert binding comes in Step 4.
+</p>
+
+<h2>Step 4 — Provision the TLS certificate</h2>
+<p class="section-intro">Azure generates a free managed cert via DNS validation. Pick CNAME validation (works through Cloudflare-grey or unproxied).</p>
+<pre>az containerapp env certificate create \\
+  --name ${escape(caeName)} \\
+  --resource-group ${escape(rgName)} \\
+  --certificate-name &lt;cert-name-of-your-choice&gt; \\
+  --hostname &lt;your-hostname&gt; \\
+  --validation-method CNAME</pre>
+<p class="section-intro" style="margin-top:0.5rem">
+  The command returns immediately with <code>provisioningState: "Pending"</code> and a validation token if needed. Cert issuance takes ~3-5 minutes.
+  Poll status with:
+</p>
+<pre>az containerapp env certificate list \\
+  --name ${escape(caeName)} --resource-group ${escape(rgName)} \\
+  --query "[?name=='&lt;cert-name&gt;'].properties.provisioningState" -o tsv</pre>
+<p class="section-intro" style="margin-top:0.5rem">Wait until it returns <code>Succeeded</code> before moving on.</p>
+
+<h3 style="font-size:1rem; margin-top:1rem;">Then bind the cert to the hostname</h3>
+<pre>az containerapp hostname bind \\
+  --hostname &lt;your-hostname&gt; \\
+  --name ${escape(containerAppName)} \\
+  --resource-group ${escape(rgName)} \\
+  --environment ${escape(caeName)} \\
+  --certificate &lt;cert-name&gt;</pre>
+<p class="section-intro" style="margin-top:0.5rem">
+  Expected output: <code>bindingType: "SniEnabled"</code>. The hostname is now reachable at <code>https://&lt;your-hostname&gt;</code>.
+</p>
+
+<h2>Step 5 — Update Microsoft sign-in</h2>
+<p class="section-intro">
+  Add the new hostname to the frontend app registration's redirect URIs so Microsoft sign-in works on the custom domain.
+  Two web redirects (install + main app callbacks) and one SPA redirect (login page).
+</p>
+<pre>$appId = "${escape(frontendClientId)}"
+$host  = "&lt;your-hostname&gt;"
+
+# Read current URIs (we merge, never overwrite)
+$webNow = @(az ad app show --id $appId --query "web.redirectUris" -o tsv) -split "\`r?\`n" | Where-Object { $_ }
+$spaNow = @(az ad app show --id $appId --query "spa.redirectUris" -o tsv) -split "\`r?\`n" | Where-Object { $_ }
+
+# Add the new ones
+$webNext = @($webNow + "https://$host/api/auth/openid-callback/microsoft" + "https://$host/install/auth/microsoft/callback" | Sort-Object -Unique)
+$spaNext = @($spaNow + "https://$host/login" | Sort-Object -Unique)
+
+az ad app update --id $appId --web-redirect-uris @webNext
+
+# SPA needs Graph PATCH because az ad app update doesn't have --spa-redirect-uris yet
+$objId = az ad app show --id $appId --query id -o tsv
+$body = @{ spa = @{ redirectUris = $spaNext } } | ConvertTo-Json -Depth 4 -Compress
+az rest --method patch \`
+  --uri "https://graph.microsoft.com/v1.0/applications/$objId" \`
+  --headers "Content-Type=application/json" \`
+  --body $body</pre>
+
+<h3 style="font-size:1rem; margin-top:1rem;">Update Container App's FRONTEND_URL env var</h3>
+<p class="section-intro">So Mike's backend builds OAuth returnUrls pointing at the new hostname:</p>
+<pre>az containerapp update --name ${escape(containerAppName)} --resource-group ${escape(rgName)} \\
+  --set-env-vars FRONTEND_URL=https://&lt;your-hostname&gt;</pre>
+
+<h2>Step 6 — Test</h2>
+<p class="section-intro">
+  Open <code>https://&lt;your-hostname&gt;/install</code> in a fresh InPrivate window. The page should load over TLS, and signing in via Microsoft should redirect back to the new hostname.
+  If you see <code>AADSTS50011</code>, double-check Step 5 — a redirect URI is probably missing.
+</p>
+
+<div class="install-done" style="margin-top:2rem">
+  <h2 style="margin:0 0 0.4rem 0">Done. Your custom domain is live.</h2>
+  <p style="margin:0">
+    If you flipped Cloudflare to grey-cloud in Step 2, flip it back to orange now. Mark your calendar
+    for ~3 months from now — Container Apps managed certs auto-renew, and the renewal uses the same DNS validation, so you'll need to flip again briefly.
+  </p>
+</div>
+
+<p style="margin-top:2rem"><a class="btn secondary" href="/install">← Back to install</a></p>
+`;
+
+    return pageShell("Mike — Custom domain setup", body) +
+        `<style>
+.dns-records { display: grid; gap: 1rem; margin: 1rem 0; }
+.dns-record { padding: 0.85rem 1rem; border: 1px solid #d0d7de; border-radius: 6px; background: #fafbfc; }
+.dns-record-title { font-weight: 600; margin-bottom: 0.5rem; }
+.dns-record table { border-collapse: collapse; }
+.dns-record th { text-align: left; padding: 0.2rem 0.6rem 0.2rem 0; font-weight: 600; font-size: 0.85rem; color: #57606a; vertical-align: top; }
+.dns-record td { padding: 0.2rem 0; font-size: 0.9rem; }
+.dns-record code, pre code { background: #eaeef2; padding: 0.05rem 0.3rem; border-radius: 3px; font-size: 0.85rem; }
+pre { background: #1f2328; color: #f6f8fa; padding: 0.75rem 1rem; border-radius: 6px; overflow-x: auto; font-size: 0.82rem; line-height: 1.5; }
+pre code { background: transparent; color: inherit; padding: 0; }
+</style>`;
+}
+
+installRouter.get("/custom-domain", async (req: Request, res: Response) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const backendHost = req.get("host") ?? "your-backend.azurecontainerapps.io";
+    res.set("Content-Type", "text/html; charset=utf-8");
+    res.send(await renderCustomDomainPage(session, backendHost));
+});
