@@ -74,7 +74,13 @@ function pageShell(title: string, body: string): string {
   .err { padding: 0.6rem 0.75rem; border-left: 3px solid #cf222e; background: #fff5f5; color: #82071e; font-size: 0.9rem; margin-bottom: 1rem; }
   .session { padding: 0.6rem 0.75rem; background: #ddf4ff; border-left: 3px solid #1f6feb; font-size: 0.85rem; margin-bottom: 1.25rem; display: flex; justify-content: space-between; align-items: center; }
   .session form { display: inline; }
-  .item { display: grid; grid-template-columns: auto 1fr auto; gap: 0.6rem 1rem; align-items: start; padding: 0.75rem 1rem; border: 1px solid #d0d7de; border-radius: 6px; margin-bottom: 0.5rem; background: #ffffff; }
+  /* Progress banner — gap #32. Shown above the section list. */
+  .install-progress { padding: 0.7rem 1rem; background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; font-size: 0.9rem; margin-bottom: 1.5rem; }
+  .install-done { padding: 1rem 1.25rem; background: #dafbe1; border: 1px solid #6fdb7e; border-radius: 6px; margin-bottom: 1.5rem; }
+  .install-done h2 { color: #1a7f37; }
+  .install-done .btn { display: inline-block; padding: 0.5rem 1rem; border-radius: 6px; color: white; text-decoration: none; font-weight: 600; }
+  .section-intro { font-size: 0.85rem; color: #57606a; margin: 0.25rem 0 0.85rem 0; max-width: 50rem; line-height: 1.45; }
+  .item { display: grid; grid-template-columns: auto 1fr; gap: 0.6rem 1rem; align-items: start; padding: 0.75rem 1rem; border: 1px solid #d0d7de; border-radius: 6px; margin-bottom: 0.5rem; background: #ffffff; }
   .item.fail { background: #fff5f5; border-color: #ffcecb; }
   .item.info { background: #ddf4ff; border-color: #b6e3ff; }
   /* Advanced items are still rendered (the fix path is needed for OSS
@@ -90,7 +96,7 @@ function pageShell(title: string, body: string): string {
   .item .label { font-weight: 600; font-size: 0.95rem; }
   .item .meta { font-size: 0.8rem; color: #656d76; margin-top: 0.15rem; }
   .item .detail { font-size: 0.8rem; color: #57606a; margin-top: 0.25rem; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; word-break: break-all; }
-  .item .action { font-size: 0.8rem; color: #57606a; align-self: center; }
+  .item .action { font-size: 0.8rem; color: #57606a; margin-top: 0.65rem; display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
   .item .action .pill { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; background: #eaeef2; color: #1f2328; font-weight: 600; font-size: 0.7rem; letter-spacing: 0.04em; }
   /* External-script items render an extra full-width row below the
      header cells, holding the multi-line command + Copy button. */
@@ -261,11 +267,29 @@ function renderItem(item: EvaluatedItem, ctx: InstallContext): string {
     <div class="label">${escape(item.label)}${item.required ? "" : ' <span class="meta" style="font-weight:400">(optional)</span>'}</div>
     <div class="meta"><code>${escape(item.id)}</code> · ${escape(item.section)}</div>
     ${result.detail ? `<div class="detail">${escape(result.detail)}</div>` : ""}
+    <div class="action">${describeAction(item, ctx)}</div>
   </div>
-  <div class="action">${describeAction(item, ctx)}</div>
   ${describeScriptCommand(item, ctx)}
 </div>`;
 }
+
+// Plain-English intro for each section, shown above the rows. Helps
+// non-engineer operators understand what they're configuring before
+// they look at each row. See gap #32 in 036-marketplace-install-gaps.md.
+const SECTION_INTROS: Record<ManifestSection, string> = {
+    "Core setup":
+        "Required Azure plumbing — the bits that should already be in place when you arrive here. If anything is red, the install template didn't finish cleanly.",
+    "AI providers":
+        "API keys for the AI models Mike will use. You only need one — pick whichever provider you have a key for. Multiple providers can coexist.",
+    "Microsoft sign-in":
+        "Wire Mike to your Microsoft organization so users can sign in with their work accounts. The recommended path is to run create-entra-apps.ps1 (offered on the first row) — it sets up everything in one go. The manual paste forms are for advanced operators with existing app registrations.",
+    "Access rules":
+        "Decide which Microsoft user groups can use Mike, and how new users from your organization are enrolled.",
+    "Cleanup":
+        "Final tidy-up after first-time setup is complete. Retiring the bootstrap token closes the first-time setup back-door; revoking installer access takes away the elevated permissions used during install.",
+    "Optional":
+        "Things that are nice to have but Mike will work without them.",
+};
 
 function renderChecklist(
     session: InstallSession,
@@ -279,14 +303,35 @@ function renderChecklist(
     );
     const passes = items.filter((i) => i.result.status === "pass").length;
     const fails = items.filter((i) => i.result.status === "fail").length;
+    // Progress is measured against REQUIRED rows only — operators don't
+    // need every optional row green to call setup done.
+    const required = items.filter((i) => i.required);
+    const requiredPass = required.filter((i) => i.result.status === "pass").length;
+    const allRequiredPass = required.length > 0 && requiredPass === required.length;
     const savedItem = savedItemId
         ? items.find((i) => i.id === savedItemId)
         : null;
     const sections = SECTION_ORDER.map((sec) => {
         const inSection = items.filter((i) => i.section === sec);
         if (inSection.length === 0) return "";
-        return `<h2>${escape(sec)}</h2>\n${inSection.map((it) => renderItem(it, ctx)).join("\n")}`;
+        const intro = SECTION_INTROS[sec] ?? "";
+        const introHtml = intro
+            ? `<p class="section-intro">${escape(intro)}</p>\n`
+            : "";
+        return `<h2>${escape(sec)}</h2>\n${introHtml}${inSection.map((it) => renderItem(it, ctx)).join("\n")}`;
     }).join("\n");
+    // Banner: progress at top + celebration when complete. Shown above
+    // the existing session info / preflight modal.
+    const progressBanner = allRequiredPass
+        ? `<div class="install-done">
+  <h2 style="margin:0 0 0.4rem 0">✓ Setup complete</h2>
+  <p style="margin:0 0 0.6rem 0">All required items are green. Mike is ready for users.</p>
+  <a class="btn" href="${escape(process.env.FRONTEND_URL ?? "/")}" style="background:#1a7f37">Go to Mike</a>
+</div>`
+        : `<div class="install-progress">
+  <strong>Step ${requiredPass} of ${required.length}</strong> of required setup complete.
+  ${fails > 0 ? `<span style="color:#cf222e; margin-left:0.6rem">${fails} row${fails === 1 ? "" : "s"} need${fails === 1 ? "s" : ""} attention.</span>` : ""}
+</div>`;
     const hasScripts = items.some((i) => i.fixedBy.type === "external-script");
     return pageShell(
         "Mike — Install",
@@ -331,6 +376,7 @@ function renderChecklist(
     <button type="submit" class="secondary">Sign out</button>
   </form>
 </div>
+${progressBanner}
 ${savedItem ? `<div class="flash ok">Saved <code>${escape(savedItem.id)}</code> to Key Vault.${savedItem.requiresRevisionRestart === false ? "" : " A Container App revision restart is required for the new value to be picked up by the backend (see issue 023's secret-ref caveat)."}</div>` : ""}
 ${sections}
 <script>
@@ -635,10 +681,11 @@ ${inputs}
   </div>
 </form>
 <div class="restart-warn">
-  Saving writes the value to your configured Key Vault.  If this secret
+  Saving writes the value to <code>kv-mike-dev</code>.  If this secret
   is also wired as a Container App secret-ref env var, the running
   backend continues to serve the previously-cached value until the
-  next revision restart.
+  next revision restart.  See issue 023's "Secret-ref restart caveat"
+  for the transitional plan.
 </div>
 ${alsoAsScript}
 `,
