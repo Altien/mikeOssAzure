@@ -425,6 +425,12 @@ first knows what to expect:
   module is small enough that every branch was already correct;
   the test value is forward-looking (the localStorage key contract
   is now reviewer-readable from the test file alone).
+- **2026-05-14** — `src/contexts/ConfigContext.tsx` covered. 14
+  tests, 100% lines / 100% funcs / 88% branches (the two missed
+  branches are the SSR guards in private helpers — unreachable from
+  a `"use client"` module). Suite stands at **41 tests** across **3
+  files**, ~1.4s runtime. First slice that uses the real provider
+  with MSW responding — the harness pattern is confirmed.
 
 ## 11. Frontend toolchain
 
@@ -494,11 +500,12 @@ Pages and middleware are out of scope per `frontend-test-suite-prompt.md`
 3. `src/lib/utils.ts`, `src/lib/slug.ts`, `src/lib/label.ts` — tiny
    pure modules. Cover only if there's real logic; skip the
    one-liners and document why in §13.
-4. `src/contexts/ConfigContext.tsx` — uses the real provider with
-   MSW driving `/config`. Pin: the cache read on mount, the
-   fetch-and-overwrite path, the failed-fetch fallback to cached
-   value, `getCachedAuthProvider` reading the same key the provider
-   writes (round-trip), and the cancelled-effect path.
+4. ~~`src/contexts/ConfigContext.tsx`~~ — done. 14 tests, 100% lines
+   / 100% funcs / 88% branches. Used the real provider with MSW
+   driving `/config`. Pins the cache→fetch→cache round-trip, the
+   input allow-list, the failed-fetch fallback, and the cancelled-
+   effect guard. Two SSR branches in private helpers are unreachable
+   from a `"use client"` module; documented in §13.
 5. `src/contexts/AuthContext.tsx` — three provider modes. Pin:
    waiting on `configLoading`, the supabase `onAuthStateChange`
    subscription + unsubscribe on unmount, the local-mode stored-user
@@ -549,6 +556,7 @@ pin.
 | --- | --- | --- | --- | --- | --- |
 | `src/test/harness.test.tsx` | 2 | n/a | n/a | n/a | Harness smoke. Excluded from coverage. |
 | `src/lib/auth-token.ts` | 25 | 100 | 100 | 100 | Pins the four localStorage key literals, the provider fork in `getBrowserAccessToken` (entra/local/supabase + supabase-factory-throws fallthrough + getSession rejection), `clearStoredAuthState`'s scope (entra+local only — leaves `mike.config.authProvider` and unrelated keys untouched), and `bounceIfUnauthorized`'s idempotent no-redirect-when-already-on-/login behaviour. Three SSR / no-window tests close the defensive `typeof window === "undefined"` branches in all three functions. |
+| `src/contexts/ConfigContext.tsx` | 14 | 94 | 88 | 100 | Pins the cache→fetch→cache round-trip with `auth-token.ts` (same `mike.config.authProvider` key both sides read/write), the input allow-list (`entra`/`local`/`supabase` only — anything else clamps to `supabase`), the failed-fetch fallback (cache survives a 5xx or a network error; `loading` still flips to `false`; `console.warn` is the only side effect), and the cancelled-effect guard that prevents a late `/config` response from overwriting state on an unmounted provider. Lines 44 + 53 uncovered: the SSR guards in `readCachedProvider`/`writeCachedProvider` — structurally unreachable because the file is `"use client"`. |
 
 (Filled in per slice as the queue advances.)
 
