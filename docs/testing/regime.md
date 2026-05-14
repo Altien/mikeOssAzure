@@ -133,6 +133,7 @@ Numbers are line / branch / function percentages.
 | `src/lib/auth/providers/supabase.ts` | 8 | 100 | 100 | 100 | — |
 | `src/lib/auth/providers/local.ts` | 19 | 100 | 100 | 100 | Real HMAC verification — tests cover alg-confusion, tampered payloads, wrong-length signatures. |
 | `src/lib/auth/providers/entra.ts` | 33 | 100 | 97 | 100 | Real RS256 signing with a generated key pair + stubbed JWKS — exercises full verifier, JWKS cache, both token versions. |
+| `src/lib/downloadTokens.ts` | 21 | 100 | 100 | 100 | Real HMAC round-trips; covers payload tampering, sig truncation, secret-fallback chain, prod-mode hard fail. |
 | `src/middleware/auth.ts` | 16 | 100 | 100 | 100 | — |
 | `src/middleware/tenantAccess.ts` | 14 | 100 | 100 | 100 | — |
 | `src/middleware/requireRole.ts` | 8 | 100 | 100 | 100 | — |
@@ -158,8 +159,10 @@ that each entry, once worked, lands with substantial behavioural tests
    mode, the v1/v2 issuer fork, both audience shapes (`<guid>` and
    `api://<guid>`), the groups-overage warning, and the email/display
    name fallback chains.
-6. `src/lib/downloadTokens.ts` — signed download URLs; expiry, scoping
-   to a single doc, signature integrity.
+6. ~~`src/lib/downloadTokens.ts`~~ — done. 21 tests covering HMAC
+   round-trips, payload tampering (CWE-345), signature truncation,
+   URL-safe encoding, the DOWNLOAD_SIGNING_SECRET / SUPABASE_SECRET_KEY
+   / dev-fallback chain, and the production hard-fail.
 7. `src/lib/userApiKeys.ts` — at-rest secret handling.
 8. `src/lib/userSettings.ts` — `upsertUserProfile` is called from every
    authenticated request; idempotency under race.
