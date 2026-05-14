@@ -140,6 +140,7 @@ Numbers are line / branch / function percentages.
 | `src/routes/auth.ts` | 37 | 98 | 87 | 100 | OAuth state HMAC + 10-min replay window, open-redirect guard on returnUrl, alg-confusion-style state tampering, every error→/login redirect path. |
 | `src/routes/config.ts` | 13 | 100 | 100 | 100 | Allow-list on AUTH_PROVIDER (clamps unknown values to "supabase"), explicit secret-leak guard with placeholder secrets in env. |
 | `src/routes/downloads.ts` | 13 | 100 | 100 | 100 | requireAuth wiring; refuses-to-leak-existence (404 on access deny rather than 403); MIME mapping per extension; deleted-blob handling. |
+| `src/routes/user.ts` | 28 | 89 | 76 | 94 | **Pins a latent bug** in GET /profile: the credit-rolling block (lines 50–60) is unreachable today because normalizeCreditsResetDate rewrites past dates to future ones *before* the rolling check fires. A future refactor that fixes the rolling logic will break the "credits stay at 99" pin — that's the intended signal. The other uncovered branches are nullish-fallback variants on already-tested code paths. |
 | `src/middleware/auth.ts` | 16 | 100 | 100 | 100 | — |
 | `src/middleware/tenantAccess.ts` | 14 | 100 | 100 | 100 | — |
 | `src/middleware/requireRole.ts` | 8 | 100 | 100 | 100 | — |
@@ -279,8 +280,15 @@ get `app` without it.
     (NOT 403 — refuses to leak existence), the storage-returns-null
     case (deleted blob), and MIME mapping for pdf/docx/xlsx/case-
     insensitive/octet-stream fallback.
-14. `src/routes/user.ts` — user-API-key surface (CRUD on the
-    encrypted store).
+14. ~~`src/routes/user.ts`~~ — done. 28 tests covering GET /profile
+    (canonical shape, global-API-keys booleans-without-values, secret-
+    leak guard on env vars, profile-read 500), PATCH /profile (no-op
+    rejection, profile updates with updated_at stamp, flat-key
+    set/delete, azure compound merge, azure clear-both → delete,
+    azure clear-one → 400, every 500 path), POST credits/increment
+    (default null→0, read/update 500s), DELETE /account (entra-mode
+    403, FK-safe table order, stop-on-first-error with table-named
+    message, optional workflow_shares-by-email cleanup).
 15. `src/routes/documents.ts`, `projects.ts`, `tabular.ts`, `chat.ts`,
     `projectChat.ts`, `workflows.ts` — domain routes; tenant scoping
     at the boundary is the headline assertion.
@@ -333,6 +341,11 @@ patterns the reviewer should reject:
 - **2026-05-14** — Initial regime. Vitest bootstrap; `access.ts`,
   `middleware/auth.ts`, `tenantAccess`, `requireRole`, `auth/roles`,
   all three auth providers, `downloadTokens`, `userApiKeys`,
-  `userSettings`, and `config` covered. Suite stands at **220 tests**
-  across 12 files, all green, ~1.2s total runtime. Routes deferred until
-  `src/index.ts` is split into `src/app.ts` + `src/index.ts`.
+  `userSettings`, and `config` covered.
+- **2026-05-14** — `src/app.ts` split landed; route suite kicked off
+  with `routes/auth.ts`, `routes/config.ts`, `routes/downloads.ts`,
+  and `routes/user.ts`. Suite stands at **312 tests** across 16
+  files, all green, ~4s total runtime. Discovered (and pinned) one
+  latent bug along the way: `user.ts` GET /profile's credit-rolling
+  block is unreachable because `normalizeCreditsResetDate` rewrites
+  past dates before the rolling check sees them.
