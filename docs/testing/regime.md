@@ -134,6 +134,7 @@ Numbers are line / branch / function percentages.
 | `src/lib/auth/providers/local.ts` | 19 | 100 | 100 | 100 | Real HMAC verification — tests cover alg-confusion, tampered payloads, wrong-length signatures. |
 | `src/lib/auth/providers/entra.ts` | 33 | 100 | 97 | 100 | Real RS256 signing with a generated key pair + stubbed JWKS — exercises full verifier, JWKS cache, both token versions. |
 | `src/lib/downloadTokens.ts` | 21 | 100 | 100 | 100 | Real HMAC round-trips; covers payload tampering, sig truncation, secret-fallback chain, prod-mode hard fail. |
+| `src/lib/userApiKeys.ts` | 28 | 99 | 91 | 100 | Real AES-256-GCM encrypt/decrypt; covers ciphertext-never-in-DB invariant, IV uniqueness, GCM tampering rejection, azure_openai blob serialisation, legacy column fallback. |
 | `src/middleware/auth.ts` | 16 | 100 | 100 | 100 | — |
 | `src/middleware/tenantAccess.ts` | 14 | 100 | 100 | 100 | — |
 | `src/middleware/requireRole.ts` | 8 | 100 | 100 | 100 | — |
@@ -163,7 +164,11 @@ that each entry, once worked, lands with substantial behavioural tests
    round-trips, payload tampering (CWE-345), signature truncation,
    URL-safe encoding, the DOWNLOAD_SIGNING_SECRET / SUPABASE_SECRET_KEY
    / dev-fallback chain, and the production hard-fail.
-7. `src/lib/userApiKeys.ts` — at-rest secret handling.
+7. ~~`src/lib/userApiKeys.ts`~~ — done. 28 tests, real AES-256-GCM.
+   Pins down: plaintext never sent to DB, IVs are unique per call,
+   GCM tampering is rejected (a corrupted auth tag silently drops the
+   row), legacy column fallback fires only when no encrypted row
+   exists, wrong-shape plaintexts throw for non-azure providers.
 8. `src/lib/userSettings.ts` — `upsertUserProfile` is called from every
    authenticated request; idempotency under race.
 9. `src/lib/config.ts` — runtime config exposure; `/config` must not
