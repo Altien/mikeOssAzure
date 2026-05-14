@@ -139,6 +139,7 @@ Numbers are line / branch / function percentages.
 | `src/lib/config.ts` | 17 | 100 | 100 | 100 | Env-var override (uppercase + hyphen→underscore), per-secret cache, TTL respected, custom TTL via env, KV writes invalidate only that key. |
 | `src/routes/auth.ts` | 37 | 98 | 87 | 100 | OAuth state HMAC + 10-min replay window, open-redirect guard on returnUrl, alg-confusion-style state tampering, every error→/login redirect path. |
 | `src/routes/config.ts` | 13 | 100 | 100 | 100 | Allow-list on AUTH_PROVIDER (clamps unknown values to "supabase"), explicit secret-leak guard with placeholder secrets in env. |
+| `src/routes/downloads.ts` | 13 | 100 | 100 | 100 | requireAuth wiring; refuses-to-leak-existence (404 on access deny rather than 403); MIME mapping per extension; deleted-blob handling. |
 | `src/middleware/auth.ts` | 16 | 100 | 100 | 100 | — |
 | `src/middleware/tenantAccess.ts` | 14 | 100 | 100 | 100 | — |
 | `src/middleware/requireRole.ts` | 8 | 100 | 100 | 100 | — |
@@ -271,7 +272,13 @@ get `app` without it.
     clamps to supabase), and a secret-leak guard that puts placeholder
     secrets into every server-only env var and asserts none of them
     appear in the response body.
-13. `src/routes/downloads.ts` — token validation + streaming.
+13. ~~`src/routes/downloads.ts`~~ — done. 13 tests pin requireAuth
+    wiring (401 without header, forwards provider failures), short-
+    circuit on invalid token (no DB or storage call), version-not-
+    found / doc-not-found 404s, the access-deny path returning 404
+    (NOT 403 — refuses to leak existence), the storage-returns-null
+    case (deleted blob), and MIME mapping for pdf/docx/xlsx/case-
+    insensitive/octet-stream fallback.
 14. `src/routes/user.ts` — user-API-key surface (CRUD on the
     encrypted store).
 15. `src/routes/documents.ts`, `projects.ts`, `tabular.ts`, `chat.ts`,
