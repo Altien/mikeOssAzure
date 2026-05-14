@@ -341,10 +341,27 @@ workflowsRouter.delete("/:workflowId/shares/:shareId", requireAuth, asyncRoute(a
 // POST /workflows/:workflowId/share
 workflowsRouter.post("/:workflowId/share", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string | undefined;
   const { workflowId } = req.params;
   const { emails, allow_edit } = req.body as { emails: string[]; allow_edit: boolean };
 
   if (!emails?.length) return void res.status(400).json({ detail: "emails is required" });
+  const normalizedEmails = [
+    ...new Set(
+      emails
+        .map((email) => email.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ];
+  if (normalizedEmails.length === 0) {
+    return void res.status(400).json({ detail: "emails is required" });
+  }
+  const normalizedUserEmail = userEmail?.trim().toLowerCase();
+  if (normalizedUserEmail && normalizedEmails.includes(normalizedUserEmail)) {
+    return void res
+      .status(400)
+      .json({ detail: "You cannot share a workflow with yourself." });
+  }
 
   const db = createServerSupabase();
   // Verify ownership
@@ -357,10 +374,10 @@ workflowsRouter.post("/:workflowId/share", requireAuth, asyncRoute(async (req, r
     .single();
   if (!wf) return void res.status(404).json({ detail: "Workflow not found or not editable" });
 
-  const rows = emails.map((email: string) => ({
+  const rows = normalizedEmails.map((email: string) => ({
     workflow_id: workflowId,
     shared_by_user_id: userId,
-    shared_with_email: email.trim().toLowerCase(),
+    shared_with_email: email,
     allow_edit: allow_edit ?? false,
   }));
   // Upsert on (workflow_id, shared_with_email) so re-sharing to the same
