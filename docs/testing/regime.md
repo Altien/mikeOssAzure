@@ -448,6 +448,12 @@ first knows what to expect:
   rule), and the 0-credits-remaining / no-profile / no-user
   short-circuits. Suite stands at **87 tests** across **5 files**,
   ~2.7s runtime. No latent bugs found.
+- **2026-05-14** — Two small hooks covered:
+  `useSelectedModel` (8 tests — symmetric read/write allow-list,
+  AOAI prefix acceptance, useCallback stability) and
+  `useGenerateChatTitle` (4 tests — happy-path call sequence +
+  best-effort error swallow on either step). Suite stands at **99
+  tests** across **7 files**, ~3.6s runtime.
 
 ## 11. Frontend toolchain
 
@@ -536,10 +542,12 @@ Pages and middleware are out of scope per `frontend-test-suite-prompt.md`
    normalisation rule, the per-key membership semantics on the
    azure patch, the credits-remaining short-circuit, and the
    no-user / no-profile guards on each updater.
-7. `src/app/hooks/useDocumentVersions.ts`, `useFetchSingleDoc.ts`,
-   `useFetchDocxBytes.ts`, `useSelectedModel.ts`,
-   `useGenerateChatTitle.ts` — small hooks, one file per commit.
-   Cover loading / success / error / refetch-on-dep-change with
+7. ~~`useSelectedModel.ts`, `useGenerateChatTitle.ts`~~ — done.
+   12 tests total. Both pinned with their respective fallback /
+   swallow semantics. See §13 entries.
+8. `src/app/hooks/useDocumentVersions.ts`, `useFetchSingleDoc.ts`,
+   `useFetchDocxBytes.ts` — bigger hooks; one commit per file.
+   Loading / success / error / refetch-on-dep-change with
    `renderHook` from RTL.
 8. `src/app/hooks/useAssistantChat.ts` — 956 lines, last in the
    hook queue. Stream handling, abort logic, error mapping. Slice
@@ -578,6 +586,8 @@ pin.
 | `src/contexts/ConfigContext.tsx` | 14 | 94 | 88 | 100 | Pins the cache→fetch→cache round-trip with `auth-token.ts` (same `mike.config.authProvider` key both sides read/write), the input allow-list (`entra`/`local`/`supabase` only — anything else clamps to `supabase`), the failed-fetch fallback (cache survives a 5xx or a network error; `loading` still flips to `false`; `console.warn` is the only side effect), and the cancelled-effect guard that prevents a late `/config` response from overwriting state on an unmounted provider. Lines 44 + 53 uncovered: the SSR guards in `readCachedProvider`/`writeCachedProvider` — structurally unreachable because the file is `"use client"`. |
 | `src/contexts/AuthContext.tsx` | 27 | 99 | 93 | 100 | Pins all three provider modes against the real `AuthProvider`. Supabase: initial `getSession`, `onAuthStateChange` sign-in/sign-out, `unsubscribe()` on unmount, `signOut` delegation. Local: stored-user restore, corrupt-JSON cleanup (drops the paired token too), `signInLocal` POST shape (body, content-type, error-body throw), `signOut` clears both keys. Entra: URL-hash token extraction, `decodeJwtUser` claim fallback chain (`oid`→`sub`, `preferred_username`→`email`→`upn`), email lower-casing, history-replaceState fragment strip, corrupt-stored-user cleanup, `signOut` redirects through backend `/auth/logout`. `useAuth` outside a provider throws. The gating on `configLoading` (no auth flow runs until config is ready) and `getAccessToken`'s delegation to `auth-token.ts` are both pinned. Three remaining uncovered branches are defensive fallbacks (no-dot JWT, email-empty fork on a different code path) — well over threshold. |
 | `src/contexts/UserProfileContext.tsx` | 19 | 98 | 84 | 100 | Pins the snake_case→camelCase profile mapping (with `tier`→`"Free"` and `tabular_model`→`"gemini-3-flash-preview"` defaults, credit math, boolean coercion on `global_api_keys`), the offline 30-day-future-tier fallback when `/user/profile` 5xxs, the unauthenticated path (no network, profile=null), the `authedFetch` wiring (Authorization header injection + `bounceIfUnauthorized` call on every response + token-null edge case), AOAI deployments auto-fetch + reload-on-failure + the `err instanceof Error` message extraction, every update function (`displayName`/`organisation`/`modelPreference`/`apiKey` with trim-whitespace→null + DB column mapping; `azureOpenai` with per-key `"key" in patch` membership semantics + empty-patch fast-path + post-save deployments reload), `incrementMessageCredits`'s 0-credits-remaining short-circuit and pre-profile-load guard, every `catch { return false; }` failure path, and `useUserProfile` outside a provider throws. Remaining branch gaps are deep inside the AOAI merge ternaries — both sides hit across the suite but not all four keys cross-checked. |
+| `src/app/hooks/useSelectedModel.ts` | 8 | 94 | 80 | 100 | Pins the localStorage allow-list (read-time rejects unknown ids back to `DEFAULT_MODEL_ID`, write-time clamps unknown inputs the same way — neither path can leave storage in an invalid state), the `aoai:` prefix acceptance for runtime-named deployments, and the setter's `useCallback([])` stability across renders. SSR guards uncovered (defensive; hook is `"use client"`). |
+| `src/app/hooks/useGenerateChatTitle.tsx` | 4 | 100 | 100 | 100 | Pins the happy-path call sequence (`generateChatTitle` → `renameChat` with the returned title) plus the best-effort error swallow on either step. Title generation must never break the chat — both reject paths resolve undefined and don't propagate. |
 
 (Filled in per slice as the queue advances.)
 
