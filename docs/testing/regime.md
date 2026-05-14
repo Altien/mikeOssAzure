@@ -189,10 +189,99 @@ that each entry, once worked, lands with substantial behavioural tests
     no defensive value. Test only if/when a registry-lookup function
     is added.
 
-Routes (`src/routes/**`) are deferred until `src/index.ts` is split into
-`src/app.ts` + `src/index.ts` so `supertest` can mount the app without
-`listen()`. That split is the only production-code change the suite is
-expected to make; everything else is additive.
+Routes (`src/routes/**`) are unblocked by the `src/app.ts` split
+documented below.
+
+## 7a. The `src/app.ts` split — production-code refactor
+
+This is the **one** production-code change the test suite makes. It's
+documented before the work so the diff has a recorded justification.
+
+### Why
+
+Today `src/index.ts` does three things in one module:
+
+1. Imports the route files.
+2. Builds an Express `app` with helmet / cors / rate limiters / parsers
+   / routers / SPA fallback.
+3. Calls `app.listen(PORT)`.
+
+The third step is a side effect at module-load time. Any test that does
+`import { app } from "@/index"` would bind `PORT=3001` for real, fight
+parallel test workers for the socket, and leak a server past
+`vitest run`. `supertest` mounts the app on its own ephemeral server
+per request, so we don't *need* `listen()` for tests — we just need to
+get `app` without it.
+
+### What moves
+
+- All construction (helmet, cors, limiters, parsers, route mounts, SPA
+  fallback) moves into a new `src/app.ts` exporting
+  `buildApp(): express.Express`.
+- The rate-limiter setup, the `PUBLIC_DIR` / `FRONTEND_BUNDLED` checks,
+  and the `findShell` helper move *inside* `buildApp` so each call
+  reads the **current** `process.env` and filesystem state. This
+  matters: tests mutate env vars between cases, so module-load-time
+  reads would be brittle.
+- `src/index.ts` shrinks to:
+
+  ```ts
+  import "dotenv/config";
+  import { buildApp } from "./app";
+  const PORT = process.env.PORT ?? 3001;
+  buildApp().listen(PORT, () => console.log(...));
+  ```
+
+### What stays the same
+
+- Mount paths, route ordering, middleware order, headers — every byte
+  of observable production behaviour. Confirmed by `npm run build`
+  passing and by re-reading the diff for behavioural changes.
+- The `dotenv/config` import stays in `index.ts` only. Tests that
+  import `@/app` get the env they explicitly set, not whatever happens
+  to be in `.env` — which they shouldn't depend on anyway.
+- `tsconfig.json`, build scripts, Dockerfile entrypoint — all
+  unchanged. The `Dockerfile`'s `CMD ["node", "dist/index.js"]` still
+  works because `index.ts` still binds the port.
+
+### Risks and mitigations
+
+| Risk | Mitigation |
+| --- | --- |
+| A route module reads `process.env` at top-level import order | Imports stay in source order; only the wrapping changes. `tsc` + a manual smoke check are the gate. |
+| Tests import `@/app` before stubbing env, so limiters / static-bundle detection see the wrong values | Per-call construction inside `buildApp()` means env reads happen at call time. |
+| Dependency-injection creep (taking `db`, `llm`, etc. as `buildApp` params) | Resisting in this slice. `buildApp` is parameter-less. Routes still reach for module singletons; tests mock at the module boundary, the same pattern `middleware/auth.test.ts` already uses. Revisit only if a specific route resists mocking. |
+
+### Route-test queue (post-split)
+
+11. `src/routes/auth.ts` — OAuth callbacks. Smallest blast radius for
+    learning the route-test pattern.
+12. `src/routes/config.ts` — `/config` is unauthenticated and **must
+    not** leak server-only env values; both directions need pinning.
+13. `src/routes/downloads.ts` — token validation + streaming.
+14. `src/routes/user.ts` — user-API-key surface (CRUD on the
+    encrypted store).
+15. `src/routes/documents.ts`, `projects.ts`, `tabular.ts`, `chat.ts`,
+    `projectChat.ts`, `workflows.ts` — domain routes; tenant scoping
+    at the boundary is the headline assertion.
+16. `src/routes/llm.ts`, `diagnostics.ts`, `diag.ts`, `install.ts` —
+    operator and meta routes.
+
+### Per-route checklist
+
+For each route file, the test should pin at least:
+
+- **Wiring**: `requireAuth` is applied (or deliberately omitted, e.g.
+  `/config`, `/diag`). 401 with no header, 200/expected with a header.
+- **Tenant scoping**: a request whose principal has tenant A cannot
+  read a resource from tenant B. The deny path returns 403/404 with
+  no leak of resource existence.
+- **Validation**: malformed JSON / wrong content-type / oversized
+  bodies get 400, not 500.
+- **Downstream errors**: the DB or LLM throwing should produce a
+  mapped 5xx, not crash the server.
+- **Response shape**: assert the keys in the response body — a
+  reviewer should be able to recover the API contract from the test.
 
 ## 8. Definition of done per module
 
