@@ -1,13 +1,19 @@
-# Backend Testing Regime
+# Testing Regime
 
-Living document. Describes **how** backend unit tests are organised in
-`backend/`, **what** is currently covered, and **what is intentionally out
-of scope** for the unit suite (vs. the future integration suite).
+Living document. Describes **how** unit tests are organised in
+`backend/` and `frontend/`, **what** is currently covered, and **what
+is intentionally out of scope** for the unit suite (vs. the future
+integration suite).
 
-The companion document `backend-test-suite-prompt.md` is the *specification*
-fed to an agent to extend the suite. This file is the *operational tracker*:
-what exists today, what's queued, and the conventions/patterns the suite
-already follows so subsequent work stays consistent.
+The companion documents `backend-test-suite-prompt.md` and
+`frontend-test-suite-prompt.md` are the *specifications* fed to an
+agent to extend each suite. This file is the *operational tracker*:
+what exists today, what's queued, and the conventions/patterns the
+suites already follow so subsequent work stays consistent.
+
+Backend material lives in §1–§8 and §10. Frontend material lives in
+§11–§14. §9 is the cross-suite handoff. Both sides share §10
+(change log).
 
 ---
 
@@ -403,3 +409,155 @@ first knows what to expect:
   `docs/testing/frontend-test-suite-prompt.md` authored as the brief
   for a new session that will land the frontend suite on its own
   branch off main.
+- **2026-05-14** — Frontend test harness bootstrapped on branch
+  `claude/frontend-test-suite-prep-8y3gI`. Added Vitest 4 + jsdom +
+  React Testing Library + MSW v2; `frontend/vitest.config.ts`;
+  `frontend/src/test/{setup,msw-server,render}.{ts,tsx}`; one harness
+  smoke test (2 assertions, green in ~1.2s). Two production-code
+  changes: `ConfigContext` and `AuthContext` are now `export`ed from
+  their source files so the test render helper can inject context
+  values without re-running the providers' real effects (no
+  behaviour change; consumers still use the `useConfig` / `useAuth`
+  hooks). See §11 for the frontend plan.
+
+## 11. Frontend toolchain
+
+| Concern | Tool | Why |
+| --- | --- | --- |
+| Runner | **Vitest 4** | Same runner as the backend; TS + ESM first-class; no `ts-jest` or babel-jest. |
+| Env | **jsdom 27** | A DOM in Node. Real browser quirks belong in a Playwright suite, not here. |
+| Render | **@testing-library/react 16** | RTL 16 is the first React 19-compatible release. |
+| User input | **@testing-library/user-event 14** | Dispatches the full event sequence a real user produces; preferred over `fireEvent`. |
+| Matchers | **@testing-library/jest-dom 6** | `toBeInTheDocument`, `toHaveTextContent`, etc. Imported via the `/vitest` subpath in `setup.ts`. |
+| Network | **MSW 2** | Intercepts `fetch` at the network layer. Tests exercise the real `mikeApi.ts` code path, not a stubbed wrapper. `onUnhandledRequest: "error"` so a forgotten handler fails loudly. |
+| Path aliases | **vite-tsconfig-paths** | Resolves `@/*` from `tsconfig.json`. (Vite 7 has a native option; keeping the plugin for symmetry with the backend config and to avoid a one-off divergence.) |
+| Coverage | **@vitest/coverage-v8** | Built-in, accurate branch counts. |
+| React | **@vitejs/plugin-react** | JSX transform + the React Compiler babel plugin the production build uses, so test behaviour matches prod. |
+
+Config lives in `frontend/vitest.config.ts`. Setup, MSW handlers,
+and the render helper live in `frontend/src/test/`. Test files are
+co-located with sources (`Foo.tsx` → `Foo.test.tsx`).
+
+Run from `frontend/`:
+
+```bash
+npm test                  # one-shot
+npm run test:watch        # interactive
+npm run test:coverage     # one-shot + v8 coverage (html, text, lcov)
+```
+
+The conventions in §3 carry over verbatim (explicit imports of
+`describe`/`it`/`expect`/`vi`, AAA layout, one behaviour per test,
+no real network/clocks). The full frontend-specific list — including
+the prohibition on `data-testid` for production elements, the
+"`waitFor` around a sync expectation" anti-pattern, etc. — is in
+`frontend-test-suite-prompt.md` §8 and §11.
+
+### Production-code changes
+
+The frontend suite landed exactly one production-code change in its
+bootstrap commit: `ConfigContext` and `AuthContext` are now exported
+from their source files. Without that, the test render helper would
+have to use the real providers, which fire effects (a `/config`
+`fetch`, a supabase client construction, an Entra URL-hash decode)
+that turn every render call into an integration test. Exporting the
+context objects lets the helper inject context values directly —
+zero behaviour change for production consumers (they still go
+through `useConfig` / `useAuth`). Mirrors the backend's `app.ts`
+split discipline: a small, documented refactor before the slice
+that needs it.
+
+## 12. Frontend queue
+
+Ordered bottom-up — pure modules first, then the contexts that
+others depend on, then hooks, then the API client, then components.
+Pages and middleware are out of scope per `frontend-test-suite-prompt.md`
+§5.
+
+1. ~~Harness bootstrap~~ — done (this commit). Vitest config,
+   setup, MSW server, render helper, smoke test.
+2. `src/lib/auth-token.ts` — pure-ish. Pin the localStorage key
+   contract (`mike.entra.access_token` / `mike.entra.user` /
+   `mike.local.*`), the provider fork in `getBrowserAccessToken`,
+   the supabase fallthrough that catches a thrown factory and
+   returns null, `clearStoredAuthState`'s scope (entra + local keys
+   only, not supabase), and `bounceIfUnauthorized`'s idempotent
+   redirect-to-login behaviour.
+3. `src/lib/utils.ts`, `src/lib/slug.ts`, `src/lib/label.ts` — tiny
+   pure modules. Cover only if there's real logic; skip the
+   one-liners and document why in §13.
+4. `src/contexts/ConfigContext.tsx` — uses the real provider with
+   MSW driving `/config`. Pin: the cache read on mount, the
+   fetch-and-overwrite path, the failed-fetch fallback to cached
+   value, `getCachedAuthProvider` reading the same key the provider
+   writes (round-trip), and the cancelled-effect path.
+5. `src/contexts/AuthContext.tsx` — three provider modes. Pin:
+   waiting on `configLoading`, the supabase `onAuthStateChange`
+   subscription + unsubscribe on unmount, the local-mode stored-user
+   restore + corrupt-JSON cleanup, the entra mode's URL-hash token
+   extraction + `decodeJwtUser` (oid/sub/upn fallback chain, lowercase
+   email), `signInLocal` POST shape, `signOut` per-provider behaviour
+   (entra redirects through backend logout).
+6. `src/contexts/UserProfileContext.tsx` — 444 lines; the largest
+   context. Worth pinning in detail because it's the
+   model-availability and credit-display surface most components
+   read from.
+7. `src/app/hooks/useDocumentVersions.ts`, `useFetchSingleDoc.ts`,
+   `useFetchDocxBytes.ts`, `useSelectedModel.ts`,
+   `useGenerateChatTitle.ts` — small hooks, one file per commit.
+   Cover loading / success / error / refetch-on-dep-change with
+   `renderHook` from RTL.
+8. `src/app/hooks/useAssistantChat.ts` — 956 lines, last in the
+   hook queue. Stream handling, abort logic, error mapping. Slice
+   into multiple commits if the test file grows past ~600 lines.
+9. `src/app/lib/mikeApi.ts` — 880 lines, the seam most likely to
+   regress when the backend contract changes. URL construction,
+   header injection, the 401 → bounce-to-login flow, error
+   envelope mapping. Tests exercise the real client through MSW.
+10. **Component pass.** Sample set, NOT every component:
+    `components/ui/button.tsx` (smoke; primitive), `chat/mike-icon.tsx`
+    (if non-trivial), then `EmailPillInput`, `DocumentCard`,
+    `DocViewModal`, `PeopleModal`, `OwnerOnlyModal`, `ToolbarTabs`,
+    `RenameableTitle`, `VersionChip`, `RowActions`, `ApiKeyMissingModal`,
+    `ProjectPicker`, then `tabular/{TRTable,TREditColumnMenu,AddColumnModal,
+    AddNewTRModal,TRChatPanel,TRSidePanel}`. Heavy viewers (PDF,
+    docx-preview, tiptap, recharts) are mocked at the module
+    boundary per `frontend-test-suite-prompt.md` §7; their wrappers
+    are tested for "right src is passed in", not "PDF renders".
+11. Pure helpers under `src/app/components/tabular/*`
+    (`pillUtils.ts`, `prompt-generator.ts`, `columnFormat.ts`,
+    `exportToExcel.ts`, `citation-utils.ts`, `columnPresets.ts`) —
+    no React, easy wins.
+
+Each entry lands as one commit (`test(frontend/...)` prefix).
+Coverage manifest in §13 updated each time. Latent bugs found
+along the way get pinned in place and called out in the change log
+(§10) — same discipline as the backend's `user.ts` rolling-block
+pin.
+
+## 13. Frontend coverage manifest
+
+| File | Tests | Stmts | Branch | Funcs | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `src/test/harness.test.tsx` | 2 | n/a | n/a | n/a | Harness smoke. Excluded from coverage. |
+
+(Filled in per slice as the queue advances.)
+
+## 14. Frontend definition of done
+
+Inherited from `frontend-test-suite-prompt.md` §14 and the backend
+DoD in §8 — repeated here so a future agent doesn't have to flip
+between docs:
+
+- `npm test` passes with zero skipped tests.
+- `npm run test:coverage` clears the prompt §10 thresholds
+  (`src/contexts/**`, `src/lib/**`, `src/app/hooks/**`,
+  `src/app/lib/**` ≥ 80% line + branch; UI components ≥ 70%).
+- No test fires a real network request (`onUnhandledRequest: "error"`
+  in MSW catches this; a green suite proves it).
+- No test reads from real `localStorage` left over from a previous
+  run (`setup.ts` clears both storages in `afterEach`).
+- Every interactive component has at least one test that exercises
+  a real user gesture (click, type, focus, keyboard nav) and
+  asserts the resulting state / call / navigation.
+- This regime doc is updated (§10 + §13 minimum).

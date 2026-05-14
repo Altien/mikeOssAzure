@@ -36,7 +36,7 @@ const DEFAULT_CONFIG: RuntimeConfig = {
 
 const CONFIG_PROVIDER_CACHE_KEY = "mike.config.authProvider";
 
-const ConfigContext = createContext<{ config: RuntimeConfig; loading: boolean }>(
+export const ConfigContext = createContext<{ config: RuntimeConfig; loading: boolean }>(
     { config: DEFAULT_CONFIG, loading: true },
 );
 
