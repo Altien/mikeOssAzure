@@ -1,13 +1,19 @@
-# Backend Testing Regime
+# Testing Regime
 
-Living document. Describes **how** backend unit tests are organised in
-`backend/`, **what** is currently covered, and **what is intentionally out
-of scope** for the unit suite (vs. the future integration suite).
+Living document. Describes **how** unit tests are organised in
+`backend/` and `frontend/`, **what** is currently covered, and **what
+is intentionally out of scope** for the unit suite (vs. the future
+integration suite).
 
-The companion document `backend-test-suite-prompt.md` is the *specification*
-fed to an agent to extend the suite. This file is the *operational tracker*:
-what exists today, what's queued, and the conventions/patterns the suite
-already follows so subsequent work stays consistent.
+The companion documents `backend-test-suite-prompt.md` and
+`frontend-test-suite-prompt.md` are the *specifications* fed to an
+agent to extend each suite. This file is the *operational tracker*:
+what exists today, what's queued, and the conventions/patterns the
+suites already follow so subsequent work stays consistent.
+
+Backend material lives in §1–§8 and §10. Frontend material lives in
+§11–§14. §9 is the cross-suite handoff. Both sides share §10
+(change log).
 
 ---
 
@@ -403,3 +409,289 @@ first knows what to expect:
   `docs/testing/frontend-test-suite-prompt.md` authored as the brief
   for a new session that will land the frontend suite on its own
   branch off main.
+- **2026-05-14** — Frontend test harness bootstrapped on branch
+  `claude/frontend-test-suite-prep-8y3gI`. Added Vitest 4 + jsdom +
+  React Testing Library + MSW v2; `frontend/vitest.config.ts`;
+  `frontend/src/test/{setup,msw-server,render}.{ts,tsx}`; one harness
+  smoke test (2 assertions, green in ~1.2s). Two production-code
+  changes: `ConfigContext` and `AuthContext` are now `export`ed from
+  their source files so the test render helper can inject context
+  values without re-running the providers' real effects (no
+  behaviour change; consumers still use the `useConfig` / `useAuth`
+  hooks). See §11 for the frontend plan.
+- **2026-05-14** — `src/lib/auth-token.ts` covered. 25 tests,
+  100/100/100 coverage. Suite stands at **27 tests** across **2
+  files**, ~1.3s runtime. No latent bugs found this slice — the
+  module is small enough that every branch was already correct;
+  the test value is forward-looking (the localStorage key contract
+  is now reviewer-readable from the test file alone).
+- **2026-05-14** — `src/contexts/ConfigContext.tsx` covered. 14
+  tests, 100% lines / 100% funcs / 88% branches (the two missed
+  branches are the SSR guards in private helpers — unreachable from
+  a `"use client"` module). Suite stands at **41 tests** across **3
+  files**, ~1.4s runtime. First slice that uses the real provider
+  with MSW responding — the harness pattern is confirmed.
+- **2026-05-14** — `src/contexts/AuthContext.tsx` covered. 27
+  tests, 100/100/93 (lines / funcs / branches). All three provider
+  modes pinned end-to-end against the real provider — supabase
+  with a fake client, local + entra with localStorage + MSW. Suite
+  stands at **68 tests** across **4 files**, ~2.4s runtime. No
+  latent bugs found; the `decodeJwtUser` claim fallback chain
+  surface is now reviewer-readable from the test file alone.
+- **2026-05-14** — `src/contexts/UserProfileContext.tsx` covered.
+  19 tests, 100% lines / 100% funcs / 84% branches. The biggest
+  context (444 LOC) — pins the bootstrap fetch shape, the offline
+  fallback profile, the `authedFetch` wiring (including the
+  `bounceIfUnauthorized` integration), AOAI deployments lifecycle,
+  every update function's normalisation + state-merge semantics
+  (especially `updateAzureOpenaiSettings`'s per-key membership
+  rule), and the 0-credits-remaining / no-profile / no-user
+  short-circuits. Suite stands at **87 tests** across **5 files**,
+  ~2.7s runtime. No latent bugs found.
+- **2026-05-14** — Two small hooks covered:
+  `useSelectedModel` (8 tests — symmetric read/write allow-list,
+  AOAI prefix acceptance, useCallback stability) and
+  `useGenerateChatTitle` (4 tests — happy-path call sequence +
+  best-effort error swallow on either step). Suite stands at **99
+  tests** across **7 files**, ~3.6s runtime.
+- **2026-05-14** — Three doc-loading hooks covered in one slice:
+  `useDocumentVersions` (11 tests), `useFetchSingleDoc` (9 tests),
+  `useFetchDocxBytes` (9 tests). 29 tests total, 100% lines / 95%
+  funcs / 85% branches across the three. Pinned each hook's
+  dedupe / cache strategy and the shared auth-header + 401-bounce
+  contract. **Finding:** `useFetchDocxBytes` ships a `console.log`
+  at line 50 that is debug noise (no real diagnostic value once
+  the suite is green) — flagged for a follow-up cleanup commit,
+  not pinned in tests because asserting "no console.log" is
+  brittle. Suite stands at **131 tests** across **10 files**,
+  ~5s runtime.
+- **2026-05-14** — `src/app/hooks/useAssistantChat.ts` covered.
+  40 tests, 93/83/93 (lines / branches / funcs). The biggest
+  hook in the codebase (956 LOC) — pins the surface contract
+  (input validation, client routing, error / cancel / new-chat),
+  the SSE protocol every event type at a time
+  (`chat_id`, `content_*`, `reasoning_*`, `tool_call_start`,
+  `workflow_applied`, `doc_read*`, `doc_find*`, `doc_created*`,
+  `doc_download`, `doc_replicate*`, `doc_edited*`, `citations`),
+  and the 16ms `setInterval` drip animation via
+  `vi.useFakeTimers`. **Finding:** the `content_delta` events
+  carry incremental fragments, not cumulative state — pinning
+  this saved a refactor that would have produced visible
+  duplicated text on every reply. Suite stands at **172 tests**
+  across **11 files**, ~5.6s runtime.
+- **2026-05-14** — `src/app/lib/mikeApi.ts` covered. 82 tests,
+  100% lines / 100% funcs / 94% branches. 880-LOC client; the
+  seam where backend changes most often break the frontend
+  silently. Detailed pins on `apiRequest`, the streaming helpers,
+  FormData uploads, the `getChat` server→client message
+  transform, and `mapTRMessages`; smoke coverage on every CRUD
+  wrapper (projects, folders, versions, chats, tabular review,
+  workflows). Two MSW/jsdom v2 quirks caught and worked around in
+  the harness: `formData().get("file").name` is "" not the
+  original filename (assert on field presence instead); `Blob`
+  instances cross realms and fail `instanceof` checks (duck-type
+  on `size` + `arrayBuffer()` instead). Suite stands at **254
+  tests** across **12 files**, ~5.7s runtime.
+- **2026-05-14** — Interactive components — sample set covered.
+  64 tests across 9 files: primitives (`Button`, `Input`,
+  `Badge`), core interactive (`CiteButton`, `TextSearchWidget`,
+  `EmailPillInput`, `RenameableTitle`, `ApiKeyMissingModal`), and
+  the `VersionChip` rendering helper. All 9 over the §10 70%
+  line/branch threshold for UI; the EmailPillInput's UX contract
+  (Enter/comma commit, Backspace removes pill on empty input
+  only, dedupe, validate hook) and the ApiKeyMissingModal's
+  portal-close contract are now reviewer-readable from the test
+  file. Caught one workaround need:
+  `vi.useFakeTimers({ shouldAdvanceTime: true })` is needed when
+  combining fake timers with user-event v14 — otherwise the
+  click's internal awaits hang indefinitely. Suite stands at
+  **319 tests** across **21 files**, ~10s runtime.
+
+## 11. Frontend toolchain
+
+| Concern | Tool | Why |
+| --- | --- | --- |
+| Runner | **Vitest 4** | Same runner as the backend; TS + ESM first-class; no `ts-jest` or babel-jest. |
+| Env | **jsdom 27** | A DOM in Node. Real browser quirks belong in a Playwright suite, not here. |
+| Render | **@testing-library/react 16** | RTL 16 is the first React 19-compatible release. |
+| User input | **@testing-library/user-event 14** | Dispatches the full event sequence a real user produces; preferred over `fireEvent`. |
+| Matchers | **@testing-library/jest-dom 6** | `toBeInTheDocument`, `toHaveTextContent`, etc. Imported via the `/vitest` subpath in `setup.ts`. |
+| Network | **MSW 2** | Intercepts `fetch` at the network layer. Tests exercise the real `mikeApi.ts` code path, not a stubbed wrapper. `onUnhandledRequest: "error"` so a forgotten handler fails loudly. |
+| Path aliases | **vite-tsconfig-paths** | Resolves `@/*` from `tsconfig.json`. (Vite 7 has a native option; keeping the plugin for symmetry with the backend config and to avoid a one-off divergence.) |
+| Coverage | **@vitest/coverage-v8** | Built-in, accurate branch counts. |
+| React | **@vitejs/plugin-react** | JSX transform + the React Compiler babel plugin the production build uses, so test behaviour matches prod. |
+
+Config lives in `frontend/vitest.config.ts`. Setup, MSW handlers,
+and the render helper live in `frontend/src/test/`. Test files are
+co-located with sources (`Foo.tsx` → `Foo.test.tsx`).
+
+Run from `frontend/`:
+
+```bash
+npm test                  # one-shot
+npm run test:watch        # interactive
+npm run test:coverage     # one-shot + v8 coverage (html, text, lcov)
+```
+
+The conventions in §3 carry over verbatim (explicit imports of
+`describe`/`it`/`expect`/`vi`, AAA layout, one behaviour per test,
+no real network/clocks). The full frontend-specific list — including
+the prohibition on `data-testid` for production elements, the
+"`waitFor` around a sync expectation" anti-pattern, etc. — is in
+`frontend-test-suite-prompt.md` §8 and §11.
+
+### Production-code changes
+
+The frontend suite landed exactly one production-code change in its
+bootstrap commit: `ConfigContext` and `AuthContext` are now exported
+from their source files. Without that, the test render helper would
+have to use the real providers, which fire effects (a `/config`
+`fetch`, a supabase client construction, an Entra URL-hash decode)
+that turn every render call into an integration test. Exporting the
+context objects lets the helper inject context values directly —
+zero behaviour change for production consumers (they still go
+through `useConfig` / `useAuth`). Mirrors the backend's `app.ts`
+split discipline: a small, documented refactor before the slice
+that needs it.
+
+## 12. Frontend queue
+
+Ordered bottom-up — pure modules first, then the contexts that
+others depend on, then hooks, then the API client, then components.
+Pages and middleware are out of scope per `frontend-test-suite-prompt.md`
+§5.
+
+1. ~~Harness bootstrap~~ — done (this commit). Vitest config,
+   setup, MSW server, render helper, smoke test.
+2. ~~`src/lib/auth-token.ts`~~ — done. 25 tests, 100/100/100. Pins
+   the four localStorage key literals, the provider fork in
+   `getBrowserAccessToken` (entra/local/supabase + supabase-factory-
+   throws fallthrough + getSession rejection), `clearStoredAuthState`'s
+   scope (entra+local only — leaves `mike.config.authProvider` and
+   unrelated keys untouched), and `bounceIfUnauthorized`'s
+   idempotent no-redirect-when-already-on-`/login` behaviour. Three
+   SSR / no-window tests close the defensive `typeof window === "undefined"`
+   branches.
+3. `src/lib/utils.ts`, `src/lib/slug.ts`, `src/lib/label.ts` — tiny
+   pure modules. Cover only if there's real logic; skip the
+   one-liners and document why in §13.
+4. ~~`src/contexts/ConfigContext.tsx`~~ — done. 14 tests, 100% lines
+   / 100% funcs / 88% branches. Used the real provider with MSW
+   driving `/config`. Pins the cache→fetch→cache round-trip, the
+   input allow-list, the failed-fetch fallback, and the cancelled-
+   effect guard. Two SSR branches in private helpers are unreachable
+   from a `"use client"` module; documented in §13.
+5. ~~`src/contexts/AuthContext.tsx`~~ — done. 27 tests, 100/100/93.
+   Pins all three modes against the real `AuthProvider`: supabase
+   subscription + unsubscribe, local stored-user restore + corrupt-
+   JSON cleanup, entra URL-hash token + `decodeJwtUser` claim
+   fallback chain, per-mode `signOut`, `useAuth` outside provider
+   throws. Three uncovered branches are deep defensive fallbacks.
+6. ~~`src/contexts/UserProfileContext.tsx`~~ — done. 19 tests, 100%
+   lines / 100% funcs / 84% branches. Pins the snake→camel mapping
+   + defaults, the offline-tier fallback, the `authedFetch`
+   wiring, AOAI deployments lifecycle, every update function's
+   normalisation rule, the per-key membership semantics on the
+   azure patch, the credits-remaining short-circuit, and the
+   no-user / no-profile guards on each updater.
+7. ~~`useSelectedModel.ts`, `useGenerateChatTitle.ts`~~ — done.
+   12 tests total. Both pinned with their respective fallback /
+   swallow semantics. See §13 entries.
+8. ~~`useDocumentVersions.ts`, `useFetchSingleDoc.ts`,
+   `useFetchDocxBytes.ts`~~ — done in one commit (small enough to
+   group). 29 tests total. All three pin the auth header + 401
+   delegation pattern; each pins its specific dedupe (refresh
+   tick / prevKeyRef / module-level cache + in-flight Promise).
+   Caught a leftover `console.log` in `useFetchDocxBytes`; not
+   pinned but noted in §13 for a follow-up.
+9. ~~`src/app/hooks/useAssistantChat.ts`~~ — done. 40 tests, 93/83/93
+   (lines / branches / funcs). The deep SSE coverage and drip
+   animation are in this single slice; no follow-up needed.
+10. ~~`src/app/lib/mikeApi.ts`~~ — done. 82 tests, 100/94/100 (lines
+    / branches / funcs). Detailed contract pins on `apiRequest`,
+    the streaming helpers, FormData uploads, the `getChat`
+    transform, and `mapTRMessages`; smoke coverage on every CRUD
+    wrapper. The seam most likely to silently break under a backend
+    refactor is now reviewer-readable from the test file alone.
+11. ~~Interactive components — sample set~~ — done. 64 tests across
+    9 files. Primitives covered (`Button`, `Input`, `Badge` —
+    Slot composition + variants); core interactive components
+    covered (`CiteButton`, `TextSearchWidget`, `EmailPillInput`,
+    `RenameableTitle`, `ApiKeyMissingModal`); `VersionChip` covered
+    as a pure rendering helper. `dropdown-menu.tsx` (Radix
+    wrapper) deliberately skipped — same defensible exclusion as
+    the heavy viewers from prompt §7.
+8. `src/app/hooks/useAssistantChat.ts` — 956 lines, last in the
+   hook queue. Stream handling, abort logic, error mapping. Slice
+   into multiple commits if the test file grows past ~600 lines.
+9. `src/app/lib/mikeApi.ts` — 880 lines, the seam most likely to
+   regress when the backend contract changes. URL construction,
+   header injection, the 401 → bounce-to-login flow, error
+   envelope mapping. Tests exercise the real client through MSW.
+10. **Component pass.** Sample set, NOT every component:
+    `components/ui/button.tsx` (smoke; primitive), `chat/mike-icon.tsx`
+    (if non-trivial), then `EmailPillInput`, `DocumentCard`,
+    `DocViewModal`, `PeopleModal`, `OwnerOnlyModal`, `ToolbarTabs`,
+    `RenameableTitle`, `VersionChip`, `RowActions`, `ApiKeyMissingModal`,
+    `ProjectPicker`, then `tabular/{TRTable,TREditColumnMenu,AddColumnModal,
+    AddNewTRModal,TRChatPanel,TRSidePanel}`. Heavy viewers (PDF,
+    docx-preview, tiptap, recharts) are mocked at the module
+    boundary per `frontend-test-suite-prompt.md` §7; their wrappers
+    are tested for "right src is passed in", not "PDF renders".
+11. Pure helpers under `src/app/components/tabular/*`
+    (`pillUtils.ts`, `prompt-generator.ts`, `columnFormat.ts`,
+    `exportToExcel.ts`, `citation-utils.ts`, `columnPresets.ts`) —
+    no React, easy wins.
+
+Each entry lands as one commit (`test(frontend/...)` prefix).
+Coverage manifest in §13 updated each time. Latent bugs found
+along the way get pinned in place and called out in the change log
+(§10) — same discipline as the backend's `user.ts` rolling-block
+pin.
+
+## 13. Frontend coverage manifest
+
+| File | Tests | Stmts | Branch | Funcs | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `src/test/harness.test.tsx` | 2 | n/a | n/a | n/a | Harness smoke. Excluded from coverage. |
+| `src/lib/auth-token.ts` | 25 | 100 | 100 | 100 | Pins the four localStorage key literals, the provider fork in `getBrowserAccessToken` (entra/local/supabase + supabase-factory-throws fallthrough + getSession rejection), `clearStoredAuthState`'s scope (entra+local only — leaves `mike.config.authProvider` and unrelated keys untouched), and `bounceIfUnauthorized`'s idempotent no-redirect-when-already-on-/login behaviour. Three SSR / no-window tests close the defensive `typeof window === "undefined"` branches in all three functions. |
+| `src/contexts/ConfigContext.tsx` | 14 | 94 | 88 | 100 | Pins the cache→fetch→cache round-trip with `auth-token.ts` (same `mike.config.authProvider` key both sides read/write), the input allow-list (`entra`/`local`/`supabase` only — anything else clamps to `supabase`), the failed-fetch fallback (cache survives a 5xx or a network error; `loading` still flips to `false`; `console.warn` is the only side effect), and the cancelled-effect guard that prevents a late `/config` response from overwriting state on an unmounted provider. Lines 44 + 53 uncovered: the SSR guards in `readCachedProvider`/`writeCachedProvider` — structurally unreachable because the file is `"use client"`. |
+| `src/contexts/AuthContext.tsx` | 27 | 99 | 93 | 100 | Pins all three provider modes against the real `AuthProvider`. Supabase: initial `getSession`, `onAuthStateChange` sign-in/sign-out, `unsubscribe()` on unmount, `signOut` delegation. Local: stored-user restore, corrupt-JSON cleanup (drops the paired token too), `signInLocal` POST shape (body, content-type, error-body throw), `signOut` clears both keys. Entra: URL-hash token extraction, `decodeJwtUser` claim fallback chain (`oid`→`sub`, `preferred_username`→`email`→`upn`), email lower-casing, history-replaceState fragment strip, corrupt-stored-user cleanup, `signOut` redirects through backend `/auth/logout`. `useAuth` outside a provider throws. The gating on `configLoading` (no auth flow runs until config is ready) and `getAccessToken`'s delegation to `auth-token.ts` are both pinned. Three remaining uncovered branches are defensive fallbacks (no-dot JWT, email-empty fork on a different code path) — well over threshold. |
+| `src/contexts/UserProfileContext.tsx` | 19 | 98 | 84 | 100 | Pins the snake_case→camelCase profile mapping (with `tier`→`"Free"` and `tabular_model`→`"gemini-3-flash-preview"` defaults, credit math, boolean coercion on `global_api_keys`), the offline 30-day-future-tier fallback when `/user/profile` 5xxs, the unauthenticated path (no network, profile=null), the `authedFetch` wiring (Authorization header injection + `bounceIfUnauthorized` call on every response + token-null edge case), AOAI deployments auto-fetch + reload-on-failure + the `err instanceof Error` message extraction, every update function (`displayName`/`organisation`/`modelPreference`/`apiKey` with trim-whitespace→null + DB column mapping; `azureOpenai` with per-key `"key" in patch` membership semantics + empty-patch fast-path + post-save deployments reload), `incrementMessageCredits`'s 0-credits-remaining short-circuit and pre-profile-load guard, every `catch { return false; }` failure path, and `useUserProfile` outside a provider throws. Remaining branch gaps are deep inside the AOAI merge ternaries — both sides hit across the suite but not all four keys cross-checked. |
+| `src/app/hooks/useSelectedModel.ts` | 8 | 94 | 80 | 100 | Pins the localStorage allow-list (read-time rejects unknown ids back to `DEFAULT_MODEL_ID`, write-time clamps unknown inputs the same way — neither path can leave storage in an invalid state), the `aoai:` prefix acceptance for runtime-named deployments, and the setter's `useCallback([])` stability across renders. SSR guards uncovered (defensive; hook is `"use client"`). |
+| `src/app/hooks/useGenerateChatTitle.tsx` | 4 | 100 | 100 | 100 | Pins the happy-path call sequence (`generateChatTitle` → `renameChat` with the returned title) plus the best-effort error swallow on either step. Title generation must never break the chat — both reject paths resolve undefined and don't propagate. |
+| `src/app/hooks/useDocumentVersions.ts` | 11 | 100 | 95 | 100 | Pins the disabled-on-null behaviour, the fetch lifecycle (Authorization header injection + `HTTP {status}` error envelope + missing-keys fallback to `[]`/`null`), the three refetch triggers (`documentId` change, `refreshKey` change, the `refresh()` callback's internal tick), the clear-on-null transition, and the cancelled-effect guards on both the success and error paths. |
+| `src/app/hooks/useFetchSingleDoc.ts` | 9 | 96 | 80 | 100 | Pins the content-type branching (PDF → buffer; anything else → `{ type: "docx" }` so the caller falls through to `DocxView`), the `prevKeyRef` dedupe (rerenders with the same `(documentId, versionId)` skip the fetch entirely), the `encodeURIComponent` query-string encoding, the generic user-facing error string (`"Failed to load document."` — never the raw HTTP code), the `bounceIfUnauthorized` delegation, and the cancellation guard on unmount. |
+| `src/app/hooks/useFetchDocxBytes.ts` | 9 | 97 | 100 | 100 | Pins the fetch lifecycle, the module-level cache (same-key remounts return bytes synchronously with no spinner), separate-key isolation (`(docId, versionId, refetchKey)` is the cache key), `refetchKey` forcing a refresh, `invalidateDocxBytes(docId, versionId)` evicting a single tuple, `invalidateDocxBytes(docId)` evicting every version, the in-flight `Promise` dedupe (two simultaneous mounts share one network request), and the clear-on-null transition. **Finding:** the hook has a leftover `console.log` at line 50 — debug noise that should be removed in a follow-up. Not pinned (it's noise, not a contract). |
+| `src/app/hooks/useAssistantChat.ts` | 40 | 93 | 83 | 93 | 956-LOC hook; the largest in the codebase. Pins the public-facing contract: input validation (whitespace guard on `handleChat` and `handleNewChat`), the `streamChat` vs `streamProjectChat` routing, `displayed_doc` shaping, the `attached_documents` filter (only files with `document_id`, undefined when the filtered list is empty), the SSE `chat_id` event (sets state, `setCurrentChatId`, `router.replace(...)`, `generateTitle` on first-message new chats), `content_delta` incremental-fragment accumulation through the drip + final `flushDrip()` commit, the `content_done` / `citations` end-of-stream signals, malformed-JSON line resilience (parser warns + stream continues), HTTP non-2xx → assistant `error` field, `cancel()` aborts and writes a "Cancelled by user" content event, the dedupe guard against double-appending an already-last user message, and `loadChats` + `replaceChatId` history side-effects. Deep SSE coverage: `reasoning_delta` (start + append branches; both `text` accumulation and the cross-event finalisation from `finalizeStreamingReasoning`), `reasoning_block_end`, `tool_call_start`, `workflow_applied`, `doc_read_start`/`doc_read`, `doc_find_start`/`doc_find` (including the omit-total_matches preserve-prior branch), `doc_created_start`/`doc_download`/`doc_created`, `doc_replicate_start`/`doc_replicated` (with copies-as-count fallback and error-string passthrough), `doc_edited_start`/`doc_edited`. The 16ms `setInterval` drip animation is exercised with `vi.useFakeTimers` — 8 chars per tick, observed at 16ms / 32ms / 48ms boundaries. |
+| `src/app/lib/mikeApi.ts` | 82 | 99 | 94 | 100 | 880-LOC client; **the seam where backend changes most often break the frontend silently**. Detailed pins on the `apiRequest` wrapper: URL prefix construction, `Authorization: Bearer <token>` injection (omitted when the token is null), `Accept: application/json` default + per-call `Content-Type` override merge, `bounceIfUnauthorized` call on every response, response-text → `Error.message` mapping on non-2xx with the `"API error: ${status}"` fallback when the body is empty, undefined return for 204 and `Content-Length: 0`. Detailed pins on `getChat`'s server→client message transform (user messages with `null` content map to `""`; assistant messages join `content`-type events into a plain `content` string and preserve the full `events` array; non-array assistant content is the legacy-row branch that maps to empty content + undefined events). Detailed pins on the streaming helpers (`streamChat`/`streamProjectChat`): `Accept: text/event-stream`, the `signal` is destructured out of the body, the returned `Response` carries a `ReadableStream`, `bounceIfUnauthorized` fires before the caller reads. Detailed pins on the FormData upload helpers (no `Content-Type` override — fetch derives the multipart boundary; optional fields like `display_name` are only appended when set). Smoke coverage of every CRUD wrapper (projects, folders, document versions, chats, tabular review CRUD + chat + cells, workflows + shares + hidden + visibility) — each test pins path + method + body shape so a typo or wrong verb fails loudly. `mapTRMessages` pure helper covered separately for the same content-join contract as `getChat`. |
+| `src/components/ui/button.tsx` | 6 | 100 | 100 | 100 | Pins the role + DOM tag (`<button>` by default), the click-fires-onClick contract, the disabled-doesn't-fire contract, the `asChild` Slot composition (renders the supplied element with the button's styles + `data-slot="button"`), and the `buttonVariants` cva exposure for callers that want the same classes without wrapping in `<Button>`. |
+| `src/components/ui/input.tsx` | 5 | 100 | 100 | 100 | Pins the controlled-value pass-through, the onChange-on-type contract, the disabled-rejects-input contract, the `type` prop forwarding (e.g. `email`), and the `aria-invalid` reflection for form-level error states. |
+| `src/components/ui/badge.tsx` | 3 | 100 | 100 | 100 | Pins the default `<span>` rendering with `data-slot="badge"`, the `asChild` anchor composition (style-only — the element stays an `<a>` with link semantics), and the cva exposure. |
+| `src/components/ui/cite-button.tsx` | 7 | 95 | 94 | 100 | Pins the idle-state rendering (QuoteIcon + "Cite"), the clipboard write contract (`"<quote>" <citation>` with inner double-quotes downgraded to single quotes so the pasted text is safe inside another double-quoted context), the post-click "Copied" flip, the 2-second timeout revert (via `vi.useFakeTimers({ shouldAdvanceTime: true })`), the `showText=false` icon-only branch, the clipboard-error swallow (`console.error` fires but the button stays in idle state — no false success flash), and the `stopPropagation` contract (a click on the button must NOT bubble to an ancestor's onClick — important UX since CiteButtons sit inside clickable citation chips). |
+| `src/components/ui/text-search-widget.tsx` | 11 | 100 | 100 | 100 | Pins the open/closed visibility, the search-input typing → `onSearchChange` propagation, the **keyboard contract**: Enter cycles next (with `(prev + 1) % count` wrap-around), Shift+Enter cycles prev (with `(prev - 1 + count) % count` wrap-around), Escape closes + clears the query, and the no-match short-circuit (Enter is a no-op + buttons are disabled when `matchCount=0`). Also pins the "<idx+1> of <count>" / "No results" results-bar shaping. |
+| `src/app/components/shared/VersionChip.tsx` | 5 | 100 | 100 | 100 | Pins the 1-indexed rendering (`V<n>` for positive ints), the null/undefined/<1/NaN/Infinity hiding (each tested as its own case so any future change to the `typeof n !== "number" \|\| !Number.isFinite(n) \|\| n < 1` guard must update the test deliberately). |
+| `src/app/components/shared/EmailPillInput.tsx` | 12 | 100 | 97 | 100 | Pins the **UX contract** that matters: Enter and comma both commit; Backspace on an empty input removes the trailing pill but is a no-op when the input has text; emails are lowercased + trimmed; duplicates are silently deduped (no error message); the `EMAIL_RE` regex rejects malformed addresses with the inline error; the `validate` async hook is awaited and its returned error string is shown; a `validate` throw shows the generic "Could not verify" fallback; the `onValidatingChange` flag toggles true→false around the call. Per-pill X click removes that specific email. |
+| `src/app/components/shared/RenameableTitle.tsx` | 7 | 90 | 78 | 100 | Pins the idle-state span + suffix, the click-to-edit transition (input is auto-focused with the current value), Enter-commits + blur-commits (with trim), Escape-cancels (no commit, original value still shown). Empty/whitespace-only drafts pass through as `""` — the component delegates the "should we accept empty?" decision to the caller. The 12% missing branch is the `caretRangeFromPoint` legacy-browser fallback chain — a non-standard API path that's hard to exercise in jsdom without mocking the document. |
+| `src/app/components/shared/ApiKeyMissingModal.tsx` | 8 | 100 | 100 | 100 | Pins the portal-based open/closed behaviour (renders nothing when closed; renders the heading + provider-specific body via `providerLabel` when open), the `provider=null` → "this provider" fallback, the custom `message` override, both action buttons (Cancel → onClose only; "Go to account settings" → onClose **and** `router.push("/account/models")`), the backdrop-click closes contract, and the dialog-card click does **not** close (event-propagation guard). |
+
+(Filled in per slice as the queue advances.)
+
+## 14. Frontend definition of done
+
+Inherited from `frontend-test-suite-prompt.md` §14 and the backend
+DoD in §8 — repeated here so a future agent doesn't have to flip
+between docs:
+
+- `npm test` passes with zero skipped tests.
+- `npm run test:coverage` clears the prompt §10 thresholds
+  (`src/contexts/**`, `src/lib/**`, `src/app/hooks/**`,
+  `src/app/lib/**` ≥ 80% line + branch; UI components ≥ 70%).
+- No test fires a real network request (`onUnhandledRequest: "error"`
+  in MSW catches this; a green suite proves it).
+- No test reads from real `localStorage` left over from a previous
+  run (`setup.ts` clears both storages in `afterEach`).
+- Every interactive component has at least one test that exercises
+  a real user gesture (click, type, focus, keyboard nav) and
+  asserts the resulting state / call / navigation.
+- This regime doc is updated (§10 + §13 minimum).

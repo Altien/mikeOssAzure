@@ -17,7 +17,7 @@ interface AuthContextType {
   signInLocal: (email: string) => Promise<void>;
   signOut: () => Promise<void>; getAccessToken: () => Promise<string | null>;
 }
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 function decodeJwtUser(token: string): User {
   const payload = token.split(".")[1];
