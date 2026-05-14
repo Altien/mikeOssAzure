@@ -135,6 +135,7 @@ Numbers are line / branch / function percentages.
 | `src/lib/auth/providers/entra.ts` | 33 | 100 | 97 | 100 | Real RS256 signing with a generated key pair + stubbed JWKS — exercises full verifier, JWKS cache, both token versions. |
 | `src/lib/downloadTokens.ts` | 21 | 100 | 100 | 100 | Real HMAC round-trips; covers payload tampering, sig truncation, secret-fallback chain, prod-mode hard fail. |
 | `src/lib/userApiKeys.ts` | 28 | 99 | 91 | 100 | Real AES-256-GCM encrypt/decrypt; covers ciphertext-never-in-DB invariant, IV uniqueness, GCM tampering rejection, azure_openai blob serialisation, legacy column fallback. |
+| `src/lib/userSettings.ts` | 26 | 100 | 100 | 100 | Pins the IdP-display-name back-fill rule (user's typed name wins), the gemini→openai→claude→aoai fast-model chain, and idempotency when nothing changed. |
 | `src/middleware/auth.ts` | 16 | 100 | 100 | 100 | — |
 | `src/middleware/tenantAccess.ts` | 14 | 100 | 100 | 100 | — |
 | `src/middleware/requireRole.ts` | 8 | 100 | 100 | 100 | — |
@@ -169,8 +170,11 @@ that each entry, once worked, lands with substantial behavioural tests
    GCM tampering is rejected (a corrupted auth tag silently drops the
    row), legacy column fallback fires only when no encrypted row
    exists, wrong-shape plaintexts throw for non-azure providers.
-8. `src/lib/userSettings.ts` — `upsertUserProfile` is called from every
-   authenticated request; idempotency under race.
+8. ~~`src/lib/userSettings.ts`~~ — done. 26 tests pin the
+   gemini→openai→claude→aoai fast-model fallback chain, the
+   AZURE_OPENAI_DEPLOYMENT env fallback, the
+   user-display-name-beats-IdP back-fill rule, and idempotency when
+   nothing changed.
 9. `src/lib/config.ts` — runtime config exposure; `/config` must not
    leak server-only env values.
 10. `src/lib/builtinWorkflows.ts` — registry/lookup correctness.
