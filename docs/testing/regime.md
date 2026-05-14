@@ -431,6 +431,13 @@ first knows what to expect:
   a `"use client"` module). Suite stands at **41 tests** across **3
   files**, ~1.4s runtime. First slice that uses the real provider
   with MSW responding — the harness pattern is confirmed.
+- **2026-05-14** — `src/contexts/AuthContext.tsx` covered. 27
+  tests, 100/100/93 (lines / funcs / branches). All three provider
+  modes pinned end-to-end against the real provider — supabase
+  with a fake client, local + entra with localStorage + MSW. Suite
+  stands at **68 tests** across **4 files**, ~2.4s runtime. No
+  latent bugs found; the `decodeJwtUser` claim fallback chain
+  surface is now reviewer-readable from the test file alone.
 
 ## 11. Frontend toolchain
 
@@ -506,13 +513,12 @@ Pages and middleware are out of scope per `frontend-test-suite-prompt.md`
    input allow-list, the failed-fetch fallback, and the cancelled-
    effect guard. Two SSR branches in private helpers are unreachable
    from a `"use client"` module; documented in §13.
-5. `src/contexts/AuthContext.tsx` — three provider modes. Pin:
-   waiting on `configLoading`, the supabase `onAuthStateChange`
-   subscription + unsubscribe on unmount, the local-mode stored-user
-   restore + corrupt-JSON cleanup, the entra mode's URL-hash token
-   extraction + `decodeJwtUser` (oid/sub/upn fallback chain, lowercase
-   email), `signInLocal` POST shape, `signOut` per-provider behaviour
-   (entra redirects through backend logout).
+5. ~~`src/contexts/AuthContext.tsx`~~ — done. 27 tests, 100/100/93.
+   Pins all three modes against the real `AuthProvider`: supabase
+   subscription + unsubscribe, local stored-user restore + corrupt-
+   JSON cleanup, entra URL-hash token + `decodeJwtUser` claim
+   fallback chain, per-mode `signOut`, `useAuth` outside provider
+   throws. Three uncovered branches are deep defensive fallbacks.
 6. `src/contexts/UserProfileContext.tsx` — 444 lines; the largest
    context. Worth pinning in detail because it's the
    model-availability and credit-display surface most components
@@ -557,6 +563,7 @@ pin.
 | `src/test/harness.test.tsx` | 2 | n/a | n/a | n/a | Harness smoke. Excluded from coverage. |
 | `src/lib/auth-token.ts` | 25 | 100 | 100 | 100 | Pins the four localStorage key literals, the provider fork in `getBrowserAccessToken` (entra/local/supabase + supabase-factory-throws fallthrough + getSession rejection), `clearStoredAuthState`'s scope (entra+local only — leaves `mike.config.authProvider` and unrelated keys untouched), and `bounceIfUnauthorized`'s idempotent no-redirect-when-already-on-/login behaviour. Three SSR / no-window tests close the defensive `typeof window === "undefined"` branches in all three functions. |
 | `src/contexts/ConfigContext.tsx` | 14 | 94 | 88 | 100 | Pins the cache→fetch→cache round-trip with `auth-token.ts` (same `mike.config.authProvider` key both sides read/write), the input allow-list (`entra`/`local`/`supabase` only — anything else clamps to `supabase`), the failed-fetch fallback (cache survives a 5xx or a network error; `loading` still flips to `false`; `console.warn` is the only side effect), and the cancelled-effect guard that prevents a late `/config` response from overwriting state on an unmounted provider. Lines 44 + 53 uncovered: the SSR guards in `readCachedProvider`/`writeCachedProvider` — structurally unreachable because the file is `"use client"`. |
+| `src/contexts/AuthContext.tsx` | 27 | 99 | 93 | 100 | Pins all three provider modes against the real `AuthProvider`. Supabase: initial `getSession`, `onAuthStateChange` sign-in/sign-out, `unsubscribe()` on unmount, `signOut` delegation. Local: stored-user restore, corrupt-JSON cleanup (drops the paired token too), `signInLocal` POST shape (body, content-type, error-body throw), `signOut` clears both keys. Entra: URL-hash token extraction, `decodeJwtUser` claim fallback chain (`oid`→`sub`, `preferred_username`→`email`→`upn`), email lower-casing, history-replaceState fragment strip, corrupt-stored-user cleanup, `signOut` redirects through backend `/auth/logout`. `useAuth` outside a provider throws. The gating on `configLoading` (no auth flow runs until config is ready) and `getAccessToken`'s delegation to `auth-token.ts` are both pinned. Three remaining uncovered branches are defensive fallbacks (no-dot JWT, email-empty fork on a different code path) — well over threshold. |
 
 (Filled in per slice as the queue advances.)
 
