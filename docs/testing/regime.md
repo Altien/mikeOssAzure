@@ -136,6 +136,7 @@ Numbers are line / branch / function percentages.
 | `src/lib/downloadTokens.ts` | 21 | 100 | 100 | 100 | Real HMAC round-trips; covers payload tampering, sig truncation, secret-fallback chain, prod-mode hard fail. |
 | `src/lib/userApiKeys.ts` | 28 | 99 | 91 | 100 | Real AES-256-GCM encrypt/decrypt; covers ciphertext-never-in-DB invariant, IV uniqueness, GCM tampering rejection, azure_openai blob serialisation, legacy column fallback. |
 | `src/lib/userSettings.ts` | 26 | 100 | 100 | 100 | Pins the IdP-display-name back-fill rule (user's typed name wins), the gemini→openai→claude→aoai fast-model chain, and idempotency when nothing changed. |
+| `src/lib/config.ts` | 17 | 100 | 100 | 100 | Env-var override (uppercase + hyphen→underscore), per-secret cache, TTL respected, custom TTL via env, KV writes invalidate only that key. |
 | `src/middleware/auth.ts` | 16 | 100 | 100 | 100 | — |
 | `src/middleware/tenantAccess.ts` | 14 | 100 | 100 | 100 | — |
 | `src/middleware/requireRole.ts` | 8 | 100 | 100 | 100 | — |
@@ -175,9 +176,18 @@ that each entry, once worked, lands with substantial behavioural tests
    AZURE_OPENAI_DEPLOYMENT env fallback, the
    user-display-name-beats-IdP back-fill rule, and idempotency when
    nothing changed.
-9. `src/lib/config.ts` — runtime config exposure; `/config` must not
-   leak server-only env values.
-10. `src/lib/builtinWorkflows.ts` — registry/lookup correctness.
+9. ~~`src/lib/config.ts`~~ — done. 17 tests cover the env-override →
+   cache → KV-fetch order, hyphen-to-underscore env-name mapping,
+   per-secret cache scoping, `flushConfigCache()` rotation, `setConfig`
+   invalidating only the affected key, and the configurable
+   CONFIG_CACHE_TTL_SECONDS (including non-numeric/negative input).
+10. `src/lib/builtinWorkflows.ts` — **deliberately not tested**. The
+    file is a static array of three prompt strings with zero logic.
+    Asserting "the array has 3 entries with these ids" would not catch
+    a real refactoring failure — anyone editing the prompts would have
+    to update the test in lockstep, making it a churn-multiplier with
+    no defensive value. Test only if/when a registry-lookup function
+    is added.
 
 Routes (`src/routes/**`) are deferred until `src/index.ts` is split into
 `src/app.ts` + `src/index.ts` so `supertest` can mount the app without
@@ -211,5 +221,9 @@ patterns the reviewer should reject:
 
 ## 9. Change log
 
-- **2026-05-14** — Initial regime. Vitest bootstrap, `access.ts`,
-  `middleware/auth.ts` covered.
+- **2026-05-14** — Initial regime. Vitest bootstrap; `access.ts`,
+  `middleware/auth.ts`, `tenantAccess`, `requireRole`, `auth/roles`,
+  all three auth providers, `downloadTokens`, `userApiKeys`,
+  `userSettings`, and `config` covered. Suite stands at **220 tests**
+  across 12 files, all green, ~1.2s total runtime. Routes deferred until
+  `src/index.ts` is split into `src/app.ts` + `src/index.ts`.
