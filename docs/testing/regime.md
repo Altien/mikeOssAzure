@@ -438,6 +438,16 @@ first knows what to expect:
   stands at **68 tests** across **4 files**, ~2.4s runtime. No
   latent bugs found; the `decodeJwtUser` claim fallback chain
   surface is now reviewer-readable from the test file alone.
+- **2026-05-14** — `src/contexts/UserProfileContext.tsx` covered.
+  19 tests, 100% lines / 100% funcs / 84% branches. The biggest
+  context (444 LOC) — pins the bootstrap fetch shape, the offline
+  fallback profile, the `authedFetch` wiring (including the
+  `bounceIfUnauthorized` integration), AOAI deployments lifecycle,
+  every update function's normalisation + state-merge semantics
+  (especially `updateAzureOpenaiSettings`'s per-key membership
+  rule), and the 0-credits-remaining / no-profile / no-user
+  short-circuits. Suite stands at **87 tests** across **5 files**,
+  ~2.7s runtime. No latent bugs found.
 
 ## 11. Frontend toolchain
 
@@ -519,10 +529,13 @@ Pages and middleware are out of scope per `frontend-test-suite-prompt.md`
    JSON cleanup, entra URL-hash token + `decodeJwtUser` claim
    fallback chain, per-mode `signOut`, `useAuth` outside provider
    throws. Three uncovered branches are deep defensive fallbacks.
-6. `src/contexts/UserProfileContext.tsx` — 444 lines; the largest
-   context. Worth pinning in detail because it's the
-   model-availability and credit-display surface most components
-   read from.
+6. ~~`src/contexts/UserProfileContext.tsx`~~ — done. 19 tests, 100%
+   lines / 100% funcs / 84% branches. Pins the snake→camel mapping
+   + defaults, the offline-tier fallback, the `authedFetch`
+   wiring, AOAI deployments lifecycle, every update function's
+   normalisation rule, the per-key membership semantics on the
+   azure patch, the credits-remaining short-circuit, and the
+   no-user / no-profile guards on each updater.
 7. `src/app/hooks/useDocumentVersions.ts`, `useFetchSingleDoc.ts`,
    `useFetchDocxBytes.ts`, `useSelectedModel.ts`,
    `useGenerateChatTitle.ts` — small hooks, one file per commit.
@@ -564,6 +577,7 @@ pin.
 | `src/lib/auth-token.ts` | 25 | 100 | 100 | 100 | Pins the four localStorage key literals, the provider fork in `getBrowserAccessToken` (entra/local/supabase + supabase-factory-throws fallthrough + getSession rejection), `clearStoredAuthState`'s scope (entra+local only — leaves `mike.config.authProvider` and unrelated keys untouched), and `bounceIfUnauthorized`'s idempotent no-redirect-when-already-on-/login behaviour. Three SSR / no-window tests close the defensive `typeof window === "undefined"` branches in all three functions. |
 | `src/contexts/ConfigContext.tsx` | 14 | 94 | 88 | 100 | Pins the cache→fetch→cache round-trip with `auth-token.ts` (same `mike.config.authProvider` key both sides read/write), the input allow-list (`entra`/`local`/`supabase` only — anything else clamps to `supabase`), the failed-fetch fallback (cache survives a 5xx or a network error; `loading` still flips to `false`; `console.warn` is the only side effect), and the cancelled-effect guard that prevents a late `/config` response from overwriting state on an unmounted provider. Lines 44 + 53 uncovered: the SSR guards in `readCachedProvider`/`writeCachedProvider` — structurally unreachable because the file is `"use client"`. |
 | `src/contexts/AuthContext.tsx` | 27 | 99 | 93 | 100 | Pins all three provider modes against the real `AuthProvider`. Supabase: initial `getSession`, `onAuthStateChange` sign-in/sign-out, `unsubscribe()` on unmount, `signOut` delegation. Local: stored-user restore, corrupt-JSON cleanup (drops the paired token too), `signInLocal` POST shape (body, content-type, error-body throw), `signOut` clears both keys. Entra: URL-hash token extraction, `decodeJwtUser` claim fallback chain (`oid`→`sub`, `preferred_username`→`email`→`upn`), email lower-casing, history-replaceState fragment strip, corrupt-stored-user cleanup, `signOut` redirects through backend `/auth/logout`. `useAuth` outside a provider throws. The gating on `configLoading` (no auth flow runs until config is ready) and `getAccessToken`'s delegation to `auth-token.ts` are both pinned. Three remaining uncovered branches are defensive fallbacks (no-dot JWT, email-empty fork on a different code path) — well over threshold. |
+| `src/contexts/UserProfileContext.tsx` | 19 | 98 | 84 | 100 | Pins the snake_case→camelCase profile mapping (with `tier`→`"Free"` and `tabular_model`→`"gemini-3-flash-preview"` defaults, credit math, boolean coercion on `global_api_keys`), the offline 30-day-future-tier fallback when `/user/profile` 5xxs, the unauthenticated path (no network, profile=null), the `authedFetch` wiring (Authorization header injection + `bounceIfUnauthorized` call on every response + token-null edge case), AOAI deployments auto-fetch + reload-on-failure + the `err instanceof Error` message extraction, every update function (`displayName`/`organisation`/`modelPreference`/`apiKey` with trim-whitespace→null + DB column mapping; `azureOpenai` with per-key `"key" in patch` membership semantics + empty-patch fast-path + post-save deployments reload), `incrementMessageCredits`'s 0-credits-remaining short-circuit and pre-profile-load guard, every `catch { return false; }` failure path, and `useUserProfile` outside a provider throws. Remaining branch gaps are deep inside the AOAI merge ternaries — both sides hit across the suite but not all four keys cross-checked. |
 
 (Filled in per slice as the queue advances.)
 
