@@ -465,6 +465,20 @@ first knows what to expect:
   not pinned in tests because asserting "no console.log" is
   brittle. Suite stands at **131 tests** across **10 files**,
   ~5s runtime.
+- **2026-05-14** — `src/app/hooks/useAssistantChat.ts` covered.
+  40 tests, 93/83/93 (lines / branches / funcs). The biggest
+  hook in the codebase (956 LOC) — pins the surface contract
+  (input validation, client routing, error / cancel / new-chat),
+  the SSE protocol every event type at a time
+  (`chat_id`, `content_*`, `reasoning_*`, `tool_call_start`,
+  `workflow_applied`, `doc_read*`, `doc_find*`, `doc_created*`,
+  `doc_download`, `doc_replicate*`, `doc_edited*`, `citations`),
+  and the 16ms `setInterval` drip animation via
+  `vi.useFakeTimers`. **Finding:** the `content_delta` events
+  carry incremental fragments, not cumulative state — pinning
+  this saved a refactor that would have produced visible
+  duplicated text on every reply. Suite stands at **172 tests**
+  across **11 files**, ~5.6s runtime.
 
 ## 11. Frontend toolchain
 
@@ -563,6 +577,9 @@ Pages and middleware are out of scope per `frontend-test-suite-prompt.md`
    tick / prevKeyRef / module-level cache + in-flight Promise).
    Caught a leftover `console.log` in `useFetchDocxBytes`; not
    pinned but noted in §13 for a follow-up.
+9. ~~`src/app/hooks/useAssistantChat.ts`~~ — done. 40 tests, 93/83/93
+   (lines / branches / funcs). The deep SSE coverage and drip
+   animation are in this single slice; no follow-up needed.
 8. `src/app/hooks/useAssistantChat.ts` — 956 lines, last in the
    hook queue. Stream handling, abort logic, error mapping. Slice
    into multiple commits if the test file grows past ~600 lines.
@@ -605,6 +622,7 @@ pin.
 | `src/app/hooks/useDocumentVersions.ts` | 11 | 100 | 95 | 100 | Pins the disabled-on-null behaviour, the fetch lifecycle (Authorization header injection + `HTTP {status}` error envelope + missing-keys fallback to `[]`/`null`), the three refetch triggers (`documentId` change, `refreshKey` change, the `refresh()` callback's internal tick), the clear-on-null transition, and the cancelled-effect guards on both the success and error paths. |
 | `src/app/hooks/useFetchSingleDoc.ts` | 9 | 96 | 80 | 100 | Pins the content-type branching (PDF → buffer; anything else → `{ type: "docx" }` so the caller falls through to `DocxView`), the `prevKeyRef` dedupe (rerenders with the same `(documentId, versionId)` skip the fetch entirely), the `encodeURIComponent` query-string encoding, the generic user-facing error string (`"Failed to load document."` — never the raw HTTP code), the `bounceIfUnauthorized` delegation, and the cancellation guard on unmount. |
 | `src/app/hooks/useFetchDocxBytes.ts` | 9 | 97 | 100 | 100 | Pins the fetch lifecycle, the module-level cache (same-key remounts return bytes synchronously with no spinner), separate-key isolation (`(docId, versionId, refetchKey)` is the cache key), `refetchKey` forcing a refresh, `invalidateDocxBytes(docId, versionId)` evicting a single tuple, `invalidateDocxBytes(docId)` evicting every version, the in-flight `Promise` dedupe (two simultaneous mounts share one network request), and the clear-on-null transition. **Finding:** the hook has a leftover `console.log` at line 50 — debug noise that should be removed in a follow-up. Not pinned (it's noise, not a contract). |
+| `src/app/hooks/useAssistantChat.ts` | 40 | 93 | 83 | 93 | 956-LOC hook; the largest in the codebase. Pins the public-facing contract: input validation (whitespace guard on `handleChat` and `handleNewChat`), the `streamChat` vs `streamProjectChat` routing, `displayed_doc` shaping, the `attached_documents` filter (only files with `document_id`, undefined when the filtered list is empty), the SSE `chat_id` event (sets state, `setCurrentChatId`, `router.replace(...)`, `generateTitle` on first-message new chats), `content_delta` incremental-fragment accumulation through the drip + final `flushDrip()` commit, the `content_done` / `citations` end-of-stream signals, malformed-JSON line resilience (parser warns + stream continues), HTTP non-2xx → assistant `error` field, `cancel()` aborts and writes a "Cancelled by user" content event, the dedupe guard against double-appending an already-last user message, and `loadChats` + `replaceChatId` history side-effects. Deep SSE coverage: `reasoning_delta` (start + append branches; both `text` accumulation and the cross-event finalisation from `finalizeStreamingReasoning`), `reasoning_block_end`, `tool_call_start`, `workflow_applied`, `doc_read_start`/`doc_read`, `doc_find_start`/`doc_find` (including the omit-total_matches preserve-prior branch), `doc_created_start`/`doc_download`/`doc_created`, `doc_replicate_start`/`doc_replicated` (with copies-as-count fallback and error-string passthrough), `doc_edited_start`/`doc_edited`. The 16ms `setInterval` drip animation is exercised with `vi.useFakeTimers` — 8 chars per tick, observed at 16ms / 32ms / 48ms boundaries. |
 
 (Filled in per slice as the queue advances.)
 
