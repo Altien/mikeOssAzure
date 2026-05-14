@@ -419,6 +419,12 @@ first knows what to expect:
   values without re-running the providers' real effects (no
   behaviour change; consumers still use the `useConfig` / `useAuth`
   hooks). See §11 for the frontend plan.
+- **2026-05-14** — `src/lib/auth-token.ts` covered. 25 tests,
+  100/100/100 coverage. Suite stands at **27 tests** across **2
+  files**, ~1.3s runtime. No latent bugs found this slice — the
+  module is small enough that every branch was already correct;
+  the test value is forward-looking (the localStorage key contract
+  is now reviewer-readable from the test file alone).
 
 ## 11. Frontend toolchain
 
@@ -476,13 +482,15 @@ Pages and middleware are out of scope per `frontend-test-suite-prompt.md`
 
 1. ~~Harness bootstrap~~ — done (this commit). Vitest config,
    setup, MSW server, render helper, smoke test.
-2. `src/lib/auth-token.ts` — pure-ish. Pin the localStorage key
-   contract (`mike.entra.access_token` / `mike.entra.user` /
-   `mike.local.*`), the provider fork in `getBrowserAccessToken`,
-   the supabase fallthrough that catches a thrown factory and
-   returns null, `clearStoredAuthState`'s scope (entra + local keys
-   only, not supabase), and `bounceIfUnauthorized`'s idempotent
-   redirect-to-login behaviour.
+2. ~~`src/lib/auth-token.ts`~~ — done. 25 tests, 100/100/100. Pins
+   the four localStorage key literals, the provider fork in
+   `getBrowserAccessToken` (entra/local/supabase + supabase-factory-
+   throws fallthrough + getSession rejection), `clearStoredAuthState`'s
+   scope (entra+local only — leaves `mike.config.authProvider` and
+   unrelated keys untouched), and `bounceIfUnauthorized`'s
+   idempotent no-redirect-when-already-on-`/login` behaviour. Three
+   SSR / no-window tests close the defensive `typeof window === "undefined"`
+   branches.
 3. `src/lib/utils.ts`, `src/lib/slug.ts`, `src/lib/label.ts` — tiny
    pure modules. Cover only if there's real logic; skip the
    one-liners and document why in §13.
@@ -540,6 +548,7 @@ pin.
 | File | Tests | Stmts | Branch | Funcs | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `src/test/harness.test.tsx` | 2 | n/a | n/a | n/a | Harness smoke. Excluded from coverage. |
+| `src/lib/auth-token.ts` | 25 | 100 | 100 | 100 | Pins the four localStorage key literals, the provider fork in `getBrowserAccessToken` (entra/local/supabase + supabase-factory-throws fallthrough + getSession rejection), `clearStoredAuthState`'s scope (entra+local only — leaves `mike.config.authProvider` and unrelated keys untouched), and `bounceIfUnauthorized`'s idempotent no-redirect-when-already-on-/login behaviour. Three SSR / no-window tests close the defensive `typeof window === "undefined"` branches in all three functions. |
 
 (Filled in per slice as the queue advances.)
 
