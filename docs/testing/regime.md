@@ -336,7 +336,57 @@ patterns the reviewer should reject:
 - A "happy path only" test for a function that has explicit error
   handling.
 
-## 9. Change log
+## 9. Frontend handoff
+
+The frontend suite is a separate effort, intentionally split off so it
+can be developed against its own focused prompt and merged as its own
+PR. See `docs/testing/frontend-test-suite-prompt.md` for the brief.
+
+### Why split
+
+The frontend stack (Next.js 16 App Router, React 19, jsdom, RTL, MSW)
+is meaningfully different from the backend's Express/Node world. A
+single PR that mixes both would be hard to review, and the two test
+files would share no code. The backend suite proved that
+prompt-first authoring produces disciplined output; we want the same
+flywheel for the frontend.
+
+### Hand-off contract
+
+When the new session picks up the frontend work:
+
+1. It branches from `main` after this backend work has landed there.
+   The conventional branch name is `claude/typescript-testing-frontend`.
+2. It reads `frontend-test-suite-prompt.md` as its brief.
+3. It reads this regime doc for the convention library — particularly
+   §3 (Conventions), §4 (Patterns), §8 (Definition of done), §7a
+   (the `src/app.ts` split — the prompt-first / split-before-test
+   discipline carries over).
+4. It surveys `frontend/` and starts at the bottom of the dependency
+   graph (`src/lib/auth-token.ts`, then the three contexts, then
+   hooks, then `mikeApi.ts`, then components).
+5. It updates this regime doc (§6 coverage manifest, §9 change log)
+   per slice, the same way the backend slices did.
+
+### Shared invariants between the two suites
+
+These apply equally to both sides and the frontend prompt repeats
+them — keeping them listed here too so a reader hitting the regime
+first knows what to expect:
+
+- **Substantial tests, not Mickey Mouse.** A test that would still
+  pass after the function under test is silently broken is rejected.
+- **No real network, DB, or browser engine traffic.** MSW intercepts
+  on the frontend; module mocks intercept on the backend.
+- **Real crypto where possible.** The backend's auth-provider tests
+  generate RSA keys and sign tokens; the frontend should similarly
+  not stub `crypto.subtle` for token-shaping code if it's added
+  later.
+- **One latent bug per slice is a win, not a problem.** Pin it,
+  document it (`user.ts` rolling block is the worked example), and
+  let the future refactor break the pin deliberately.
+
+## 10. Change log
 
 - **2026-05-14** — Initial regime. Vitest bootstrap; `access.ts`,
   `middleware/auth.ts`, `tenantAccess`, `requireRole`, `auth/roles`,
@@ -349,3 +399,7 @@ patterns the reviewer should reject:
   latent bug along the way: `user.ts` GET /profile's credit-rolling
   block is unreachable because `normalizeCreditsResetDate` rewrites
   past dates before the rolling check sees them.
+- **2026-05-14** — Frontend handoff prepared.
+  `docs/testing/frontend-test-suite-prompt.md` authored as the brief
+  for a new session that will land the frontend suite on its own
+  branch off main.
