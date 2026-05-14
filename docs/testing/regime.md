@@ -479,6 +479,19 @@ first knows what to expect:
   this saved a refactor that would have produced visible
   duplicated text on every reply. Suite stands at **172 tests**
   across **11 files**, ~5.6s runtime.
+- **2026-05-14** — `src/app/lib/mikeApi.ts` covered. 82 tests,
+  100% lines / 100% funcs / 94% branches. 880-LOC client; the
+  seam where backend changes most often break the frontend
+  silently. Detailed pins on `apiRequest`, the streaming helpers,
+  FormData uploads, the `getChat` server→client message
+  transform, and `mapTRMessages`; smoke coverage on every CRUD
+  wrapper (projects, folders, versions, chats, tabular review,
+  workflows). Two MSW/jsdom v2 quirks caught and worked around in
+  the harness: `formData().get("file").name` is "" not the
+  original filename (assert on field presence instead); `Blob`
+  instances cross realms and fail `instanceof` checks (duck-type
+  on `size` + `arrayBuffer()` instead). Suite stands at **254
+  tests** across **12 files**, ~5.7s runtime.
 
 ## 11. Frontend toolchain
 
@@ -580,6 +593,12 @@ Pages and middleware are out of scope per `frontend-test-suite-prompt.md`
 9. ~~`src/app/hooks/useAssistantChat.ts`~~ — done. 40 tests, 93/83/93
    (lines / branches / funcs). The deep SSE coverage and drip
    animation are in this single slice; no follow-up needed.
+10. ~~`src/app/lib/mikeApi.ts`~~ — done. 82 tests, 100/94/100 (lines
+    / branches / funcs). Detailed contract pins on `apiRequest`,
+    the streaming helpers, FormData uploads, the `getChat`
+    transform, and `mapTRMessages`; smoke coverage on every CRUD
+    wrapper. The seam most likely to silently break under a backend
+    refactor is now reviewer-readable from the test file alone.
 8. `src/app/hooks/useAssistantChat.ts` — 956 lines, last in the
    hook queue. Stream handling, abort logic, error mapping. Slice
    into multiple commits if the test file grows past ~600 lines.
@@ -623,6 +642,7 @@ pin.
 | `src/app/hooks/useFetchSingleDoc.ts` | 9 | 96 | 80 | 100 | Pins the content-type branching (PDF → buffer; anything else → `{ type: "docx" }` so the caller falls through to `DocxView`), the `prevKeyRef` dedupe (rerenders with the same `(documentId, versionId)` skip the fetch entirely), the `encodeURIComponent` query-string encoding, the generic user-facing error string (`"Failed to load document."` — never the raw HTTP code), the `bounceIfUnauthorized` delegation, and the cancellation guard on unmount. |
 | `src/app/hooks/useFetchDocxBytes.ts` | 9 | 97 | 100 | 100 | Pins the fetch lifecycle, the module-level cache (same-key remounts return bytes synchronously with no spinner), separate-key isolation (`(docId, versionId, refetchKey)` is the cache key), `refetchKey` forcing a refresh, `invalidateDocxBytes(docId, versionId)` evicting a single tuple, `invalidateDocxBytes(docId)` evicting every version, the in-flight `Promise` dedupe (two simultaneous mounts share one network request), and the clear-on-null transition. **Finding:** the hook has a leftover `console.log` at line 50 — debug noise that should be removed in a follow-up. Not pinned (it's noise, not a contract). |
 | `src/app/hooks/useAssistantChat.ts` | 40 | 93 | 83 | 93 | 956-LOC hook; the largest in the codebase. Pins the public-facing contract: input validation (whitespace guard on `handleChat` and `handleNewChat`), the `streamChat` vs `streamProjectChat` routing, `displayed_doc` shaping, the `attached_documents` filter (only files with `document_id`, undefined when the filtered list is empty), the SSE `chat_id` event (sets state, `setCurrentChatId`, `router.replace(...)`, `generateTitle` on first-message new chats), `content_delta` incremental-fragment accumulation through the drip + final `flushDrip()` commit, the `content_done` / `citations` end-of-stream signals, malformed-JSON line resilience (parser warns + stream continues), HTTP non-2xx → assistant `error` field, `cancel()` aborts and writes a "Cancelled by user" content event, the dedupe guard against double-appending an already-last user message, and `loadChats` + `replaceChatId` history side-effects. Deep SSE coverage: `reasoning_delta` (start + append branches; both `text` accumulation and the cross-event finalisation from `finalizeStreamingReasoning`), `reasoning_block_end`, `tool_call_start`, `workflow_applied`, `doc_read_start`/`doc_read`, `doc_find_start`/`doc_find` (including the omit-total_matches preserve-prior branch), `doc_created_start`/`doc_download`/`doc_created`, `doc_replicate_start`/`doc_replicated` (with copies-as-count fallback and error-string passthrough), `doc_edited_start`/`doc_edited`. The 16ms `setInterval` drip animation is exercised with `vi.useFakeTimers` — 8 chars per tick, observed at 16ms / 32ms / 48ms boundaries. |
+| `src/app/lib/mikeApi.ts` | 82 | 99 | 94 | 100 | 880-LOC client; **the seam where backend changes most often break the frontend silently**. Detailed pins on the `apiRequest` wrapper: URL prefix construction, `Authorization: Bearer <token>` injection (omitted when the token is null), `Accept: application/json` default + per-call `Content-Type` override merge, `bounceIfUnauthorized` call on every response, response-text → `Error.message` mapping on non-2xx with the `"API error: ${status}"` fallback when the body is empty, undefined return for 204 and `Content-Length: 0`. Detailed pins on `getChat`'s server→client message transform (user messages with `null` content map to `""`; assistant messages join `content`-type events into a plain `content` string and preserve the full `events` array; non-array assistant content is the legacy-row branch that maps to empty content + undefined events). Detailed pins on the streaming helpers (`streamChat`/`streamProjectChat`): `Accept: text/event-stream`, the `signal` is destructured out of the body, the returned `Response` carries a `ReadableStream`, `bounceIfUnauthorized` fires before the caller reads. Detailed pins on the FormData upload helpers (no `Content-Type` override — fetch derives the multipart boundary; optional fields like `display_name` are only appended when set). Smoke coverage of every CRUD wrapper (projects, folders, document versions, chats, tabular review CRUD + chat + cells, workflows + shares + hidden + visibility) — each test pins path + method + body shape so a typo or wrong verb fails loudly. `mapTRMessages` pure helper covered separately for the same content-join contract as `getChat`. |
 
 (Filled in per slice as the queue advances.)
 
