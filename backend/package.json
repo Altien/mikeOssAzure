@@ -26,6 +26,7 @@
     "@google/genai": "^1.50.1",
     "@supabase/supabase-js": "^2.49.4",
     "@types/pg": "^8.20.0",
+    "applicationinsights": "^3.14.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "docx": "^9.5.0",
