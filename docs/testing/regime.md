@@ -138,6 +138,7 @@ Numbers are line / branch / function percentages.
 | `src/lib/userSettings.ts` | 26 | 100 | 100 | 100 | Pins the IdP-display-name back-fill rule (user's typed name wins), the gemini→openai→claude→aoai fast-model chain, and idempotency when nothing changed. |
 | `src/lib/config.ts` | 17 | 100 | 100 | 100 | Env-var override (uppercase + hyphen→underscore), per-secret cache, TTL respected, custom TTL via env, KV writes invalidate only that key. |
 | `src/routes/auth.ts` | 37 | 98 | 87 | 100 | OAuth state HMAC + 10-min replay window, open-redirect guard on returnUrl, alg-confusion-style state tampering, every error→/login redirect path. |
+| `src/routes/config.ts` | 13 | 100 | 100 | 100 | Allow-list on AUTH_PROVIDER (clamps unknown values to "supabase"), explicit secret-leak guard with placeholder secrets in env. |
 | `src/middleware/auth.ts` | 16 | 100 | 100 | 100 | — |
 | `src/middleware/tenantAccess.ts` | 14 | 100 | 100 | 100 | — |
 | `src/middleware/requireRole.ts` | 8 | 100 | 100 | 100 | — |
@@ -265,8 +266,11 @@ get `app` without it.
     `/openid-callback/microsoft` (every state-failure mode rejects
     with 400, every exchange-failure redirects to /login?error=…
     rather than 5xx-ing).
-12. `src/routes/config.ts` — `/config` is unauthenticated and **must
-    not** leak server-only env values; both directions need pinning.
+12. ~~`src/routes/config.ts`~~ — done. 13 tests pinning the JSON
+    shape, the AUTH_PROVIDER allow-list (anything not entra/local
+    clamps to supabase), and a secret-leak guard that puts placeholder
+    secrets into every server-only env var and asserts none of them
+    appear in the response body.
 13. `src/routes/downloads.ts` — token validation + streaming.
 14. `src/routes/user.ts` — user-API-key surface (CRUD on the
     encrypted store).
