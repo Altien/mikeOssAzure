@@ -12,8 +12,24 @@ import { resolveSecret } from "../envSecrets";
 // OpenAIToolSchema, so we pass tools through untouched. Streaming and
 // tool-call assembly are the only things the adapter has to do.
 
+// Upstream divergence (sync-log: a2368a7): upstream's adapter is a raw
+// fetch against the Responses API with a sync env-var apiKey(); dev uses
+// the official SDK with Key Vault-first secret resolution (lib/envSecrets,
+// internal design notes §2.4). Upstream's hard fail on a missing key is
+// preserved here; its status-tagging of Responses-API fetch errors is N/A
+// (the SDK's APIError already carries `status`).
+async function apiKey(override?: string | null): Promise<string> {
+    const key = override?.trim() || (await resolveSecret("openai-api-key"));
+    if (!key) {
+        throw new Error(
+            "OpenAI API key is not configured. Set the openai-api-key Key Vault secret (or its env fallback) or add a user OpenAI key.",
+        );
+    }
+    return key;
+}
+
 async function client(override?: string | null): Promise<OpenAI> {
-    const apiKey = override?.trim() || await resolveSecret("openai-api-key");
+    const apiKeyValue = await apiKey(override);
     // Base URL must be resolved explicitly now that ANTHROPIC_API_KEY /
     // OPENAI_API_KEY env vars are no longer wired via Container App
     // secretRef (see infra/modules/containerapp-backend.bicep — the AI
@@ -22,7 +38,7 @@ async function client(override?: string | null): Promise<OpenAI> {
     // we pass it via the constructor. undefined leaves the SDK default
     // (api.openai.com).
     const baseURL = (await resolveSecret("openai-base-url")) || undefined;
-    return new OpenAI({ apiKey, baseURL });
+    return new OpenAI({ apiKey: apiKeyValue, baseURL });
 }
 
 function toNativeMessages(

@@ -1,15 +1,6 @@
-import { Router } from "express";
-import { createClient } from "@supabase/supabase-js";
+import { Router, type NextFunction, type Request, type Response } from "express";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
-
-function getAdminClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-    process.env.SUPABASE_SECRET_KEY ?? "",
-    { auth: { autoRefreshToken: false, persistSession: false } },
-  );
-}
 
 export const workflowsRouter = Router();
 
@@ -30,6 +21,14 @@ type WorkflowAccess =
     }
   | null;
 
+type AsyncRoute = (req: Request, res: Response) => Promise<unknown>;
+
+function asyncRoute(handler: AsyncRoute) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    void handler(req, res).catch(next);
+  };
+}
+
 function withWorkflowAccess<T extends Record<string, unknown>>(
   workflow: T,
   access: { allowEdit: boolean; isOwner: boolean; sharedByName?: string | null },
@@ -42,6 +41,12 @@ function withWorkflowAccess<T extends Record<string, unknown>>(
   };
 }
 
+// Upstream divergence (sync-log: a2368a7): upstream extracted a
+// `loadSharerNames` helper that falls back to `db.auth.admin.getUserById`
+// for sharer emails. Dev rejects it — Entra mode has no Supabase auth
+// admin API, and dev already reads both display_name AND email from
+// user_profiles (see the GET / handler below). Don't reintroduce an
+// auth.admin-based lookup here.
 async function resolveWorkflowAccess(
   workflowId: string,
   userId: string,
@@ -74,7 +79,7 @@ async function resolveWorkflowAccess(
 }
 
 // GET /workflows
-workflowsRouter.get("/", requireAuth, async (req, res) => {
+workflowsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string;
   const { type } = req.query as { type?: string };
@@ -106,23 +111,25 @@ workflowsRouter.get("/", requireAuth, async (req, res) => {
     const { data: wfs } = await sharedQuery;
 
     if (wfs && wfs.length > 0) {
-      // Fetch sharer profiles
+      // Fetch sharer profiles — display_name and email both come from
+      // user_profiles now.  The previous implementation used auth.admin
+      // .listUsers as the email source, which only worked in supabase
+      // mode.  Sharers who haven't logged in since the email column was
+      // added will be missing email; their `shared_by_name` falls back
+      // to the user_id, matching the prior null fallback.
       const sharerIds = [...new Set(shares.map((s) => s.shared_by_user_id).filter(Boolean))];
       const { data: profiles } = sharerIds.length > 0
-        ? await db.from("user_profiles").select("user_id, display_name").in("user_id", sharerIds)
-        : { data: [] };
-
-      // Fetch sharer emails via admin client
-      const admin = getAdminClient();
-      const { data: authData } = await admin.auth.admin.listUsers({ perPage: 1000 });
-      const authUsers = authData?.users ?? [];
+        ? await db
+            .from("user_profiles")
+            .select("user_id, display_name, email")
+            .in("user_id", sharerIds)
+        : { data: [] as { user_id: string; display_name: string | null; email: string | null }[] };
 
       sharedWorkflows = wfs.map((wf) => {
         const share = shares.find((s) => s.workflow_id === wf.id);
         const sharerId = share?.shared_by_user_id;
         const profile = profiles?.find((p) => p.user_id === sharerId);
-        const authUser = authUsers.find((u) => u.id === sharerId);
-        const shared_by_name = profile?.display_name || authUser?.email || null;
+        const shared_by_name = profile?.display_name || profile?.email || null;
         return withWorkflowAccess(wf, {
           allowEdit: !!share?.allow_edit,
           isOwner: false,
@@ -136,10 +143,10 @@ workflowsRouter.get("/", requireAuth, async (req, res) => {
     withWorkflowAccess(wf, { allowEdit: true, isOwner: true }),
   );
   res.json([...ownWithFlag, ...sharedWorkflows]);
-});
+}));
 
 // POST /workflows
-workflowsRouter.post("/", requireAuth, async (req, res) => {
+workflowsRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const { title, type, prompt_md, columns_config, practice } = req.body as {
     title: string;
@@ -171,9 +178,9 @@ workflowsRouter.post("/", requireAuth, async (req, res) => {
     .single();
   if (error) return void res.status(500).json({ detail: error.message });
   res.status(201).json(data);
-});
+}));
 
-async function handleWorkflowUpdate(req: import("express").Request, res: import("express").Response) {
+async function handleWorkflowUpdate(req: Request, res: Response) {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { workflowId } = req.params;
@@ -211,13 +218,13 @@ async function handleWorkflowUpdate(req: import("express").Request, res: import(
 }
 
 // PUT /workflows/:workflowId
-workflowsRouter.put("/:workflowId", requireAuth, handleWorkflowUpdate);
+workflowsRouter.put("/:workflowId", requireAuth, asyncRoute(handleWorkflowUpdate));
 
 // PATCH /workflows/:workflowId
-workflowsRouter.patch("/:workflowId", requireAuth, handleWorkflowUpdate);
+workflowsRouter.patch("/:workflowId", requireAuth, asyncRoute(handleWorkflowUpdate));
 
 // DELETE /workflows/:workflowId
-workflowsRouter.delete("/:workflowId", requireAuth, async (req, res) => {
+workflowsRouter.delete("/:workflowId", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const { workflowId } = req.params;
   const db = createServerSupabase();
@@ -229,10 +236,10 @@ workflowsRouter.delete("/:workflowId", requireAuth, async (req, res) => {
     .eq("is_system", false);
   if (error) return void res.status(500).json({ detail: error.message });
   res.status(204).send();
-});
+}));
 
 // GET /workflows/hidden
-workflowsRouter.get("/hidden", requireAuth, async (req, res) => {
+workflowsRouter.get("/hidden", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const db = createServerSupabase();
   const { data, error } = await db
@@ -241,10 +248,10 @@ workflowsRouter.get("/hidden", requireAuth, async (req, res) => {
     .eq("user_id", userId);
   if (error) return void res.status(500).json({ detail: error.message });
   res.json((data ?? []).map((r) => r.workflow_id));
-});
+}));
 
 // POST /workflows/hidden
-workflowsRouter.post("/hidden", requireAuth, async (req, res) => {
+workflowsRouter.post("/hidden", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const { workflow_id } = req.body as { workflow_id: string };
   if (!workflow_id?.trim())
@@ -255,10 +262,10 @@ workflowsRouter.post("/hidden", requireAuth, async (req, res) => {
     .upsert({ user_id: userId, workflow_id }, { onConflict: "user_id,workflow_id" });
   if (error) return void res.status(500).json({ detail: error.message });
   res.status(204).send();
-});
+}));
 
 // DELETE /workflows/hidden/:workflowId
-workflowsRouter.delete("/hidden/:workflowId", requireAuth, async (req, res) => {
+workflowsRouter.delete("/hidden/:workflowId", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const { workflowId } = req.params;
   const db = createServerSupabase();
@@ -269,10 +276,10 @@ workflowsRouter.delete("/hidden/:workflowId", requireAuth, async (req, res) => {
     .eq("workflow_id", workflowId);
   if (error) return void res.status(500).json({ detail: error.message });
   res.status(204).send();
-});
+}));
 
 // GET /workflows/:workflowId
-workflowsRouter.get("/:workflowId", requireAuth, async (req, res) => {
+workflowsRouter.get("/:workflowId", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { workflowId } = req.params;
@@ -286,10 +293,10 @@ workflowsRouter.get("/:workflowId", requireAuth, async (req, res) => {
       isOwner: access.isOwner,
     }),
   );
-});
+}));
 
 // GET /workflows/:workflowId/shares
-workflowsRouter.get("/:workflowId/shares", requireAuth, async (req, res) => {
+workflowsRouter.get("/:workflowId/shares", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const { workflowId } = req.params;
   const db = createServerSupabase();
@@ -311,10 +318,10 @@ workflowsRouter.get("/:workflowId/shares", requireAuth, async (req, res) => {
   if (error) return void res.status(500).json({ detail: error.message });
 
   res.json(shares ?? []);
-});
+}));
 
 // DELETE /workflows/:workflowId/shares/:shareId
-workflowsRouter.delete("/:workflowId/shares/:shareId", requireAuth, async (req, res) => {
+workflowsRouter.delete("/:workflowId/shares/:shareId", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const { workflowId, shareId } = req.params;
   const db = createServerSupabase();
@@ -329,10 +336,10 @@ workflowsRouter.delete("/:workflowId/shares/:shareId", requireAuth, async (req, 
 
   await db.from("workflow_shares").delete().eq("id", shareId).eq("workflow_id", workflowId);
   res.status(204).send();
-});
+}));
 
 // POST /workflows/:workflowId/share
-workflowsRouter.post("/:workflowId/share", requireAuth, async (req, res) => {
+workflowsRouter.post("/:workflowId/share", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const { workflowId } = req.params;
   const { emails, allow_edit } = req.body as { emails: string[]; allow_edit: boolean };
@@ -364,4 +371,12 @@ workflowsRouter.post("/:workflowId/share", requireAuth, async (req, res) => {
   if (error) return void res.status(500).json({ detail: error.message });
 
   res.status(204).send();
-});
+}));
+
+workflowsRouter.use(
+  (err: unknown, _req: Request, res: Response, next: NextFunction) => {
+    if (res.headersSent) return next(err);
+    console.error("[workflows] unhandled route error", err);
+    res.status(500).json({ detail: "Failed to process workflow request" });
+  },
+);

@@ -21,9 +21,24 @@ type NativeMessage = {
 
 const MAX_TOKENS = 16384;
 
+// Upstream divergence (sync-log: a2368a7): upstream reads the key from
+// process.env.ANTHROPIC_API_KEY synchronously. Dev resolves secrets
+// through Azure Key Vault first (env var is only the local-dev fallback
+// inside resolveSecret) — see lib/envSecrets.ts and
+// internal design notes §2.4. Upstream's hard fail on a missing key is
+// preserved.
+async function apiKey(override?: string | null): Promise<string> {
+    const key = override?.trim() || (await resolveSecret("anthropic-api-key"));
+    if (!key) {
+        throw new Error(
+            "Anthropic API key is not configured. Set the anthropic-api-key Key Vault secret (or its env fallback) or add a user Anthropic key.",
+        );
+    }
+    return key;
+}
+
 async function client(override?: string | null): Promise<Anthropic> {
-    const apiKey = override?.trim() || await resolveSecret("anthropic-api-key");
-    return new Anthropic({ apiKey });
+    return new Anthropic({ apiKey: await apiKey(override) });
 }
 
 function toNativeMessages(
