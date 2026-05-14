@@ -129,7 +129,10 @@ Numbers are line / branch / function percentages.
 | File | Tests | Stmts | Branch | Funcs | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `src/lib/access.ts` | 22 | 95 | 88 | 100 | Lines 119, 204-209 are defensive null/throw branches. |
+| `src/lib/auth/roles.ts` | 8 | 100 | 100 | 100 | — |
 | `src/middleware/auth.ts` | 16 | 100 | 100 | 100 | — |
+| `src/middleware/tenantAccess.ts` | 14 | 100 | 100 | 100 | — |
+| `src/middleware/requireRole.ts` | 8 | 100 | 100 | 100 | — |
 
 ## 7. Queue
 
@@ -137,11 +140,11 @@ Ordered by **security risk × refactor frequency**. The expectation is
 that each entry, once worked, lands with substantial behavioural tests
 (not just happy-path smoke).
 
-1. `src/middleware/tenantAccess.ts` — tenant scoping is the load-bearing
-   security boundary; must reject mismatched tenant IDs and missing
-   claims.
-2. `src/middleware/requireRole.ts` — role gating; should test the deny
-   path more than the allow path.
+1. ~~`src/middleware/tenantAccess.ts`~~ — done. 14 tests pin down the
+   entra-only gating, the manual-vs-auto onboarding fork, every
+   tenant-status outcome, and the GROUP_NOT_WHITELISTED deny.
+2. ~~`src/middleware/requireRole.ts`~~ — done. 8 tests, case-sensitive
+   role check, defensive against missing principal/roles.
 3. `src/lib/auth/providers/supabase.ts` — token validation against the
    supabase client.
 4. `src/lib/auth/providers/local.ts` — local JWT validation; signature
