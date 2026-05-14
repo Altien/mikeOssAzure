@@ -137,6 +137,7 @@ Numbers are line / branch / function percentages.
 | `src/lib/userApiKeys.ts` | 28 | 99 | 91 | 100 | Real AES-256-GCM encrypt/decrypt; covers ciphertext-never-in-DB invariant, IV uniqueness, GCM tampering rejection, azure_openai blob serialisation, legacy column fallback. |
 | `src/lib/userSettings.ts` | 26 | 100 | 100 | 100 | Pins the IdP-display-name back-fill rule (user's typed name wins), the gemini→openai→claude→aoai fast-model chain, and idempotency when nothing changed. |
 | `src/lib/config.ts` | 17 | 100 | 100 | 100 | Env-var override (uppercase + hyphen→underscore), per-secret cache, TTL respected, custom TTL via env, KV writes invalidate only that key. |
+| `src/routes/auth.ts` | 37 | 98 | 87 | 100 | OAuth state HMAC + 10-min replay window, open-redirect guard on returnUrl, alg-confusion-style state tampering, every error→/login redirect path. |
 | `src/middleware/auth.ts` | 16 | 100 | 100 | 100 | — |
 | `src/middleware/tenantAccess.ts` | 14 | 100 | 100 | 100 | — |
 | `src/middleware/requireRole.ts` | 8 | 100 | 100 | 100 | — |
@@ -254,8 +255,16 @@ get `app` without it.
 
 ### Route-test queue (post-split)
 
-11. `src/routes/auth.ts` — OAuth callbacks. Smallest blast radius for
-    learning the route-test pattern.
+11. ~~`src/routes/auth.ts`~~ — done. 37 tests covering local-login
+    (404 unless local mode, mints HS256 token verifiable against
+    JWT_SECRET, deterministic UUID from email), provider listing,
+    sign-out (entra → MSFT logout, defensive fallback when
+    misconfigured), `/login-provider/microsoft` (state HMAC verified
+    against AUTH_STATE_SECRET, open-redirect guard on returnUrl,
+    selectAccount→prompt mapping, ENTRA_REDIRECT_URI override), and
+    `/openid-callback/microsoft` (every state-failure mode rejects
+    with 400, every exchange-failure redirects to /login?error=…
+    rather than 5xx-ing).
 12. `src/routes/config.ts` — `/config` is unauthenticated and **must
     not** leak server-only env values; both directions need pinning.
 13. `src/routes/downloads.ts` — token validation + streaming.
