@@ -454,6 +454,17 @@ first knows what to expect:
   `useGenerateChatTitle` (4 tests — happy-path call sequence +
   best-effort error swallow on either step). Suite stands at **99
   tests** across **7 files**, ~3.6s runtime.
+- **2026-05-14** — Three doc-loading hooks covered in one slice:
+  `useDocumentVersions` (11 tests), `useFetchSingleDoc` (9 tests),
+  `useFetchDocxBytes` (9 tests). 29 tests total, 100% lines / 95%
+  funcs / 85% branches across the three. Pinned each hook's
+  dedupe / cache strategy and the shared auth-header + 401-bounce
+  contract. **Finding:** `useFetchDocxBytes` ships a `console.log`
+  at line 50 that is debug noise (no real diagnostic value once
+  the suite is green) — flagged for a follow-up cleanup commit,
+  not pinned in tests because asserting "no console.log" is
+  brittle. Suite stands at **131 tests** across **10 files**,
+  ~5s runtime.
 
 ## 11. Frontend toolchain
 
@@ -545,10 +556,13 @@ Pages and middleware are out of scope per `frontend-test-suite-prompt.md`
 7. ~~`useSelectedModel.ts`, `useGenerateChatTitle.ts`~~ — done.
    12 tests total. Both pinned with their respective fallback /
    swallow semantics. See §13 entries.
-8. `src/app/hooks/useDocumentVersions.ts`, `useFetchSingleDoc.ts`,
-   `useFetchDocxBytes.ts` — bigger hooks; one commit per file.
-   Loading / success / error / refetch-on-dep-change with
-   `renderHook` from RTL.
+8. ~~`useDocumentVersions.ts`, `useFetchSingleDoc.ts`,
+   `useFetchDocxBytes.ts`~~ — done in one commit (small enough to
+   group). 29 tests total. All three pin the auth header + 401
+   delegation pattern; each pins its specific dedupe (refresh
+   tick / prevKeyRef / module-level cache + in-flight Promise).
+   Caught a leftover `console.log` in `useFetchDocxBytes`; not
+   pinned but noted in §13 for a follow-up.
 8. `src/app/hooks/useAssistantChat.ts` — 956 lines, last in the
    hook queue. Stream handling, abort logic, error mapping. Slice
    into multiple commits if the test file grows past ~600 lines.
@@ -588,6 +602,9 @@ pin.
 | `src/contexts/UserProfileContext.tsx` | 19 | 98 | 84 | 100 | Pins the snake_case→camelCase profile mapping (with `tier`→`"Free"` and `tabular_model`→`"gemini-3-flash-preview"` defaults, credit math, boolean coercion on `global_api_keys`), the offline 30-day-future-tier fallback when `/user/profile` 5xxs, the unauthenticated path (no network, profile=null), the `authedFetch` wiring (Authorization header injection + `bounceIfUnauthorized` call on every response + token-null edge case), AOAI deployments auto-fetch + reload-on-failure + the `err instanceof Error` message extraction, every update function (`displayName`/`organisation`/`modelPreference`/`apiKey` with trim-whitespace→null + DB column mapping; `azureOpenai` with per-key `"key" in patch` membership semantics + empty-patch fast-path + post-save deployments reload), `incrementMessageCredits`'s 0-credits-remaining short-circuit and pre-profile-load guard, every `catch { return false; }` failure path, and `useUserProfile` outside a provider throws. Remaining branch gaps are deep inside the AOAI merge ternaries — both sides hit across the suite but not all four keys cross-checked. |
 | `src/app/hooks/useSelectedModel.ts` | 8 | 94 | 80 | 100 | Pins the localStorage allow-list (read-time rejects unknown ids back to `DEFAULT_MODEL_ID`, write-time clamps unknown inputs the same way — neither path can leave storage in an invalid state), the `aoai:` prefix acceptance for runtime-named deployments, and the setter's `useCallback([])` stability across renders. SSR guards uncovered (defensive; hook is `"use client"`). |
 | `src/app/hooks/useGenerateChatTitle.tsx` | 4 | 100 | 100 | 100 | Pins the happy-path call sequence (`generateChatTitle` → `renameChat` with the returned title) plus the best-effort error swallow on either step. Title generation must never break the chat — both reject paths resolve undefined and don't propagate. |
+| `src/app/hooks/useDocumentVersions.ts` | 11 | 100 | 95 | 100 | Pins the disabled-on-null behaviour, the fetch lifecycle (Authorization header injection + `HTTP {status}` error envelope + missing-keys fallback to `[]`/`null`), the three refetch triggers (`documentId` change, `refreshKey` change, the `refresh()` callback's internal tick), the clear-on-null transition, and the cancelled-effect guards on both the success and error paths. |
+| `src/app/hooks/useFetchSingleDoc.ts` | 9 | 96 | 80 | 100 | Pins the content-type branching (PDF → buffer; anything else → `{ type: "docx" }` so the caller falls through to `DocxView`), the `prevKeyRef` dedupe (rerenders with the same `(documentId, versionId)` skip the fetch entirely), the `encodeURIComponent` query-string encoding, the generic user-facing error string (`"Failed to load document."` — never the raw HTTP code), the `bounceIfUnauthorized` delegation, and the cancellation guard on unmount. |
+| `src/app/hooks/useFetchDocxBytes.ts` | 9 | 97 | 100 | 100 | Pins the fetch lifecycle, the module-level cache (same-key remounts return bytes synchronously with no spinner), separate-key isolation (`(docId, versionId, refetchKey)` is the cache key), `refetchKey` forcing a refresh, `invalidateDocxBytes(docId, versionId)` evicting a single tuple, `invalidateDocxBytes(docId)` evicting every version, the in-flight `Promise` dedupe (two simultaneous mounts share one network request), and the clear-on-null transition. **Finding:** the hook has a leftover `console.log` at line 50 — debug noise that should be removed in a follow-up. Not pinned (it's noise, not a contract). |
 
 (Filled in per slice as the queue advances.)
 
