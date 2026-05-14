@@ -130,6 +130,9 @@ Numbers are line / branch / function percentages.
 | --- | --- | --- | --- | --- | --- |
 | `src/lib/access.ts` | 22 | 95 | 88 | 100 | Lines 119, 204-209 are defensive null/throw branches. |
 | `src/lib/auth/roles.ts` | 8 | 100 | 100 | 100 | — |
+| `src/lib/auth/providers/supabase.ts` | 8 | 100 | 100 | 100 | — |
+| `src/lib/auth/providers/local.ts` | 19 | 100 | 100 | 100 | Real HMAC verification — tests cover alg-confusion, tampered payloads, wrong-length signatures. |
+| `src/lib/auth/providers/entra.ts` | 33 | 100 | 97 | 100 | Real RS256 signing with a generated key pair + stubbed JWKS — exercises full verifier, JWKS cache, both token versions. |
 | `src/middleware/auth.ts` | 16 | 100 | 100 | 100 | — |
 | `src/middleware/tenantAccess.ts` | 14 | 100 | 100 | 100 | — |
 | `src/middleware/requireRole.ts` | 8 | 100 | 100 | 100 | — |
@@ -145,12 +148,16 @@ that each entry, once worked, lands with substantial behavioural tests
    tenant-status outcome, and the GROUP_NOT_WHITELISTED deny.
 2. ~~`src/middleware/requireRole.ts`~~ — done. 8 tests, case-sensitive
    role check, defensive against missing principal/roles.
-3. `src/lib/auth/providers/supabase.ts` — token validation against the
-   supabase client.
-4. `src/lib/auth/providers/local.ts` — local JWT validation; signature
-   verification must not be bypassable.
-5. `src/lib/auth/providers/entra.ts` — Entra/AAD validation with JWKS;
-   highest blast radius for a missed test.
+3. ~~`src/lib/auth/providers/supabase.ts`~~ — done. 8 tests covering
+   config gaps, getUser mocking, principal shape, secret-leak guard.
+4. ~~`src/lib/auth/providers/local.ts`~~ — done. 19 tests covering
+   alg-confusion (RS256 in header, alg=none), tampered-payload
+   detection, wrong-length sig, every claim-validation branch.
+5. ~~`src/lib/auth/providers/entra.ts`~~ — done. 33 tests covering
+   real RS256 signing with a generated key pair, every JWKS failure
+   mode, the v1/v2 issuer fork, both audience shapes (`<guid>` and
+   `api://<guid>`), the groups-overage warning, and the email/display
+   name fallback chains.
 6. `src/lib/downloadTokens.ts` — signed download URLs; expiry, scoping
    to a single doc, signature integrity.
 7. `src/lib/userApiKeys.ts` — at-rest secret handling.
