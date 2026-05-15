@@ -291,10 +291,18 @@ export function ProjectPage() {
     const [loading, setLoading] = useState(true);
     const searchParams = useSearchParams();
     const tabParam = searchParams.get("tab");
+    // Fall back to pathname-derived tab so deep-link sub-routes
+    // (/projects/[id]/assistant, /projects/[id]/tabular-reviews) work
+    // without callers having to pass props. handleTabChange always
+    // normalises back to /projects/[id]?tab=... after the first click.
     const tab: Tab =
         tabParam === "assistant" || tabParam === "reviews"
             ? tabParam
-            : "documents";
+            : pathname.endsWith("/assistant")
+              ? "assistant"
+              : pathname.endsWith("/tabular-reviews")
+                ? "reviews"
+                : "documents";
     const [addDocsOpen, setAddDocsOpen] = useState(false);
     const [peopleModalOpen, setPeopleModalOpen] = useState(false);
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);

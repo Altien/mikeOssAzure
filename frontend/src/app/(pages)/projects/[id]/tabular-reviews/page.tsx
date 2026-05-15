@@ -1,13 +1,9 @@
-"use client";
-
-import { use } from "react";
 import { ProjectPage } from "@/app/components/projects/ProjectPage";
 
-interface Props {
-    params: Promise<{ id: string }>;
+export function generateStaticParams() {
+    return [{ id: "_" }];
 }
 
-export default function ProjectTabularReviewsPage({ params }: Props) {
-    const { id } = use(params);
-    return <ProjectPage projectId={id} initialTab="reviews" />;
+export default function ProjectTabularReviewsPage() {
+    return <ProjectPage />;
 }

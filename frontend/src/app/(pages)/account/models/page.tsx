@@ -133,10 +133,11 @@ export default function ModelsAndApiKeysPage() {
                     <ApiKeyField
                         label="OpenAI API Key"
                         placeholder="sk-…"
-                        initialValue={profile?.openaiApiKey ?? ""}
+                        hasSavedKey={!!profile?.openaiApiKey}
                         onSave={(value) =>
                             updateApiKey("openai", value.trim() || null)
                         }
+                        onRemove={() => updateApiKey("openai", null)}
                     />
                 </div>
             </div>
