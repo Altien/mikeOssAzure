@@ -111,7 +111,7 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
 // POST /projects
 projectsRouter.post("/", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
-  const userEmail = res.locals.userEmail as string;
+  const userEmail = res.locals.userEmail as string | undefined;
   const { name, cm_number, shared_with } = req.body as {
     name: string;
     cm_number?: string;
@@ -119,13 +119,30 @@ projectsRouter.post("/", requireAuth, async (req, res) => {
   };
   if (!name?.trim())
     return void res.status(400).json({ detail: "name is required" });
+  const normalizedUserEmail = userEmail?.trim().toLowerCase();
+  const cleanedSharedWith: string[] = [];
+  const seenSharedEmails = new Set<string>();
+  if (Array.isArray(shared_with)) {
+    for (const raw of shared_with) {
+      if (typeof raw !== "string") continue;
+      const e = raw.trim().toLowerCase();
+      if (!e || seenSharedEmails.has(e)) continue;
+      if (normalizedUserEmail && e === normalizedUserEmail) {
+        return void res
+          .status(400)
+          .json({ detail: "You cannot share a project with yourself." });
+      }
+      seenSharedEmails.add(e);
+      cleanedSharedWith.push(e);
+    }
+  }
 
   const db = createServerSupabase();
   const insertPayload = {
     user_id: userId,
     name: name.trim(),
     cm_number: cm_number ?? null,
-    shared_with: shared_with ?? [],
+    shared_with: cleanedSharedWith,
   };
   console.log("[projects.POST] inserting", {
     auth: { userId, userEmail },
@@ -299,18 +316,25 @@ projectsRouter.get("/:projectId/people", requireAuth, async (req, res) => {
 // PATCH /projects/:projectId
 projectsRouter.patch("/:projectId", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
   const updates: Record<string, unknown> = {};
   if (req.body.name != null) updates.name = req.body.name;
   if (req.body.cm_number != null) updates.cm_number = req.body.cm_number;
   if (Array.isArray(req.body.shared_with)) {
     // Normalise: lowercase + dedupe + drop empties.
+    const normalizedUserEmail = userEmail?.trim().toLowerCase();
     const seen = new Set<string>();
     const cleaned: string[] = [];
     for (const raw of req.body.shared_with) {
       if (typeof raw !== "string") continue;
       const e = raw.trim().toLowerCase();
       if (!e || seen.has(e)) continue;
+      if (normalizedUserEmail && e === normalizedUserEmail) {
+        return void res
+          .status(400)
+          .json({ detail: "You cannot share a project with yourself." });
+      }
       seen.add(e);
       cleaned.push(e);
     }

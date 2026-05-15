@@ -485,12 +485,18 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
     // making the call. Normalize lowercase + dedupe + drop empties.
     let sharedWithUpdate: string[] | undefined;
     if (Array.isArray(req.body.shared_with)) {
+        const normalizedUserEmail = userEmail?.trim().toLowerCase();
         const seen = new Set<string>();
         const cleaned: string[] = [];
         for (const raw of req.body.shared_with) {
             if (typeof raw !== "string") continue;
             const e = raw.trim().toLowerCase();
             if (!e || seen.has(e)) continue;
+            if (normalizedUserEmail && e === normalizedUserEmail) {
+                return void res.status(400).json({
+                    detail: "You cannot share a tabular review with yourself.",
+                });
+            }
             seen.add(e);
             cleaned.push(e);
         }
