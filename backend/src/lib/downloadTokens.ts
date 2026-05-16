@@ -13,29 +13,28 @@ function getSecret(): string {
     const explicit = process.env.DOWNLOAD_SIGNING_SECRET;
     if (explicit && explicit.length >= 16) return explicit;
 
-    // Legacy fallback: in supabase mode the service-role JWT was already a
-    // strong secret shared only with the backend, so reuse it. In entra/local
-    // modes SUPABASE_SECRET_KEY may be unset or a low-entropy local-dev value,
-    // so we only honour it when long enough to be cryptographically useful.
-    const legacy = process.env.SUPABASE_SECRET_KEY;
-    if (legacy && legacy.length >= 32) return legacy;
+    // Upstream ea48cde removed the SUPABASE_SECRET_KEY legacy fallback and
+    // now requires a dedicated DOWNLOAD_SIGNING_SECRET. Dev follows: the
+    // supabase-mode service-role-JWT reuse that used to live here is gone,
+    // so token signing never piggybacks on another credential.
 
     if (process.env.NODE_ENV === "production") {
         throw new Error(
             "DOWNLOAD_SIGNING_SECRET must be set in production (>= 16 chars). " +
+                "Generate a strong random value (e.g. `openssl rand -hex 32`) and set it in the environment. " +
                 "Without it the backend would mint download tokens with a weak " +
                 "hardcoded secret that anyone could forge.",
         );
     }
 
-    // Upstream divergence (sync-log: eb44140). Upstream's eb44140 closed
-    // the equivalent fallback unconditionally: it throws even in
-    // non-production rather than returning a hardcoded string. Dev retains
-    // the local-dev fallback below for `npm run dev` convenience. A
-    // follow-up could remove this fallback and require operators to set
-    // DOWNLOAD_SIGNING_SECRET even locally — the trade-off is between
-    // local-dev ergonomics and never letting a misconfigured deploy
-    // accidentally fall through to a forgeable hardcoded secret.
+    // Upstream divergence (sync-log: eb44140, ea48cde). Upstream throws
+    // unconditionally whenever DOWNLOAD_SIGNING_SECRET is unset, even in
+    // non-production. Dev retains the local-dev fallback below for
+    // `npm run dev` convenience. A follow-up could remove this fallback and
+    // require operators to set DOWNLOAD_SIGNING_SECRET even locally — the
+    // trade-off is between local-dev ergonomics and never letting a
+    // misconfigured deploy accidentally fall through to a forgeable
+    // hardcoded secret.
     return "dev-secret-change-me-please-change-me";
 }
 
