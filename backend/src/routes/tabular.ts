@@ -190,6 +190,15 @@ tabularRouter.get("/", requireAuth, async (req, res) => {
     // Fetch distinct document counts per review
     const reviewIds = reviews.map((r) => (r as { id: string }).id);
     let docCounts: Record<string, number> = {};
+    const reviewsWithExplicitDocs = new Set<string>();
+    for (const review of reviews) {
+        const id = (review as { id: string }).id;
+        if (Array.isArray(review.document_ids)) {
+            const explicitDocIds = review.document_ids;
+            reviewsWithExplicitDocs.add(id);
+            docCounts[id] = new Set(explicitDocIds).size;
+        }
+    }
     if (reviewIds.length > 0) {
         const { data: cells } = await db
             .from("tabular_cells")
@@ -201,8 +210,10 @@ tabularRouter.get("/", requireAuth, async (req, res) => {
                 const key = `${cell.review_id}:${cell.document_id}`;
                 if (!seen.has(key)) {
                     seen.add(key);
-                    docCounts[cell.review_id] =
-                        (docCounts[cell.review_id] ?? 0) + 1;
+                    if (!reviewsWithExplicitDocs.has(cell.review_id)) {
+                        docCounts[cell.review_id] =
+                            (docCounts[cell.review_id] ?? 0) + 1;
+                    }
                 }
             }
         }
@@ -258,6 +269,7 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
             user_id: userId,
             title: title ?? null,
             columns_config,
+            document_ids: allowedDocumentIds,
             project_id: project_id ?? null,
             workflow_id: workflow_id ?? null,
         })
@@ -374,17 +386,19 @@ tabularRouter.get("/:reviewId", requireAuth, async (req, res) => {
         .from("tabular_cells")
         .select("*")
         .eq("review_id", reviewId);
-    const docIds = [...new Set((cells ?? []).map((c) => c.document_id))];
+    const cellDocIds = [...new Set((cells ?? []).map((c) => c.document_id))];
+    const hasExplicitDocIds = Array.isArray(review.document_ids);
+    const explicitDocIds = hasExplicitDocIds
+        ? (review.document_ids as string[])
+        : [];
+    const docIds =
+        hasExplicitDocIds
+            ? explicitDocIds
+            : cellDocIds;
     const docsResult =
         docIds.length > 0
             ? await db.from("documents").select("*").in("id", docIds)
-            : review.project_id
-              ? await db
-                    .from("documents")
-                    .select("*")
-                    .eq("project_id", review.project_id)
-                    .order("created_at", { ascending: true })
-              : { data: [] as Record<string, unknown>[] };
+            : { data: [] as Record<string, unknown>[] };
 
     res.json({
         review: { ...review, is_owner: access.isOwner },
@@ -539,6 +553,7 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
             detail: updateError?.message ?? "Failed to update review",
         });
 
+    let persistedDocumentIds: string[] | undefined;
     if (
         Array.isArray(req.body.columns_config) ||
         Array.isArray(req.body.document_ids)
@@ -602,13 +617,21 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
                     (existingCells ?? []).map((cell) => cell.document_id),
                 ),
             ];
-            if (documentIds.length === 0 && existingReview.project_id) {
-                const { data: projectDocs } = await db
-                    .from("documents")
-                    .select("id")
-                    .eq("project_id", existingReview.project_id);
-                documentIds = (projectDocs ?? []).map((doc) => doc.id);
-            }
+        }
+
+        if (Array.isArray(req.body.document_ids)) {
+            persistedDocumentIds = documentIds;
+            const { error: documentIdsError } = await db
+                .from("tabular_reviews")
+                .update({
+                    document_ids: documentIds,
+                    updated_at: new Date().toISOString(),
+                })
+                .eq("id", reviewId);
+            if (documentIdsError)
+                return void res.status(500).json({
+                    detail: documentIdsError.message,
+                });
         }
 
         const activeColumns = Array.isArray(req.body.columns_config)
@@ -639,7 +662,10 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
         }
     }
 
-    res.json(updatedReview);
+    res.json({
+        ...updatedReview,
+        ...(persistedDocumentIds ? { document_ids: persistedDocumentIds } : {}),
+    });
 });
 
 // DELETE /tabular-review/:reviewId

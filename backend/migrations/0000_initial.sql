@@ -274,6 +274,7 @@ create table if not exists public.tabular_reviews (
   user_id text not null,
   title text,
   columns_config jsonb,
+  document_ids jsonb,
   workflow_id uuid references public.workflows(id) on delete set null,
   practice text,
   shared_with jsonb not null default '[]'::jsonb,

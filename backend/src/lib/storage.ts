@@ -31,6 +31,11 @@ export interface StorageProvider {
 
 class R2Provider implements StorageProvider {
   private readonly bucket: string;
+  // Upstream caches the S3 client at module level (4f33843, "storage
+  // caching"); dev's provider-class structure relocates that cache into the
+  // provider instance. Upstream's requireStorageConfig() throw-on-upload is
+  // already covered (more strongly) by requireProvider() below.
+  private cachedClient?: S3Client;
 
   constructor() {
     if (
@@ -46,15 +51,18 @@ class R2Provider implements StorageProvider {
   }
 
   private client(): S3Client {
-    return new S3Client({
-      region: "auto",
-      endpoint: process.env.R2_ENDPOINT_URL!,
-      forcePathStyle: true,
-      credentials: {
-        accessKeyId: process.env.R2_ACCESS_KEY_ID!,
-        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
-      },
-    });
+    if (!this.cachedClient) {
+      this.cachedClient = new S3Client({
+        region: "auto",
+        endpoint: process.env.R2_ENDPOINT_URL!,
+        forcePathStyle: true,
+        credentials: {
+          accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+          secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+        },
+      });
+    }
+    return this.cachedClient;
   }
 
   async upload(

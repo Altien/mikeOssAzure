@@ -79,7 +79,7 @@ function isDocxTab(filename: string) {
     return ext === "docx" || ext === "doc";
 }
 
-const ICON_SIZE = 30;
+const ICON_SIZE = 28;
 const GAP = 14;
 const EXPLORER_MIN = 160;
 const EXPLORER_DEFAULT = 280;
@@ -87,17 +87,18 @@ const CHAT_MIN = 320;
 const CHAT_DEFAULT = 420;
 
 function AssistantGreeting({ username }: { username: string }) {
+    const { profile } = useUserProfile();
     const [loaded, setLoaded] = useState(false);
     const [iconOffset, setIconOffset] = useState(0);
     const [textOffset, setTextOffset] = useState(0);
     const textRef = useRef<HTMLHeadingElement>(null);
 
     useLayoutEffect(() => {
-        if (!textRef.current) return;
+        if (!profile || !textRef.current) return;
         const h1Width = textRef.current.offsetWidth;
         setIconOffset((h1Width + GAP) / 2);
         setTextOffset((ICON_SIZE + GAP) / 2);
-    }, [username]);
+    }, [profile]);
 
     useEffect(() => {
         if (!iconOffset) return;
@@ -107,7 +108,7 @@ function AssistantGreeting({ username }: { username: string }) {
 
     return (
         <div className="flex-1 flex items-center justify-center">
-            <div className="relative flex items-center justify-center h-[30px]">
+            <div className="relative flex items-center justify-center h-[28px]">
                 <div
                     className="absolute h-[30px]"
                     style={{
@@ -123,7 +124,7 @@ function AssistantGreeting({ username }: { username: string }) {
                 </div>
                 <h1
                     ref={textRef}
-                    className="absolute text-2xl font-serif font-light text-gray-900 whitespace-nowrap"
+                    className="absolute text-3xl font-serif font-light text-gray-900 whitespace-nowrap"
                     style={{
                         left: "50%",
                         transform: loaded
