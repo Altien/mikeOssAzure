@@ -3,7 +3,7 @@
 # same process. Replaces the previous backend-only Dockerfile.
 #
 # Build stages:
-#   1. frontend-builder — runs `npm run build` against frontend/, which
+#   1. frontend-builder — runs `pnpm run build` against frontend/, which
 #      emits a static export to /app/out (config: output: 'export').
 #   2. backend-builder  — compiles the TypeScript backend to /app/dist.
 #   3. runtime          — production-deps-only Node image with the
@@ -12,10 +12,17 @@
 #
 # Build context is the repo root (not backend/) so we can COPY both
 # subdirectories into the appropriate stage.
+#
+# Package manager is pnpm — pinned per-package via the `packageManager`
+# field in package.json and activated via `corepack enable`. The
+# `pnpm-workspace.yaml` files carry the `allowBuilds` allowlist that
+# gates which dependencies may run install scripts; this is the
+# supply-chain hardening mechanism that replaces `npm ci --ignore-scripts`.
 
 # ── Frontend build ───────────────────────────────────────────────────────────
 FROM node:22-slim AS frontend-builder
 WORKDIR /app
+RUN corepack enable
 
 # NEXT_PUBLIC_API_BASE_URL is the only build-arg the frontend bundle
 # needs to know at compile time, because Next.js inlines NEXT_PUBLIC_*
@@ -35,33 +42,30 @@ WORKDIR /app
 ARG NEXT_PUBLIC_API_BASE_URL=
 ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
 
-COPY frontend/package.json frontend/package-lock.json ./
-# `--legacy-peer-deps` because @opennextjs/cloudflare (left over from a
-# previous deploy-target experiment) peer-depends on an older Next.js
-# range than the one we pin. We don't actually use OpenNext anymore —
-# that dep can be removed in a later cleanup. Local dev has been
-# bypassing this same warning via npm install's permissive mode.
-RUN npm ci --ignore-scripts --legacy-peer-deps
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/.npmrc frontend/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
 
 COPY frontend/. ./
-RUN npm run build
+RUN pnpm run build
 # Result: /app/out — static HTML, JS, CSS, fonts.
 
 # ── Backend build ────────────────────────────────────────────────────────────
 FROM node:22-slim AS backend-builder
 WORKDIR /app
+RUN corepack enable
 
-COPY backend/package.json backend/package-lock.json ./
-RUN npm ci --ignore-scripts
+COPY backend/package.json backend/pnpm-lock.yaml backend/.npmrc backend/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
 
 COPY backend/tsconfig.json ./
 COPY backend/src ./src
 
-RUN npm run build
+RUN pnpm run build
 # Result: /app/dist — compiled JS.
 
 # ── Runtime ──────────────────────────────────────────────────────────────────
 FROM node:22-slim AS runtime
+RUN corepack enable
 
 # libreoffice-convert requires LibreOffice at runtime for DOCX → PDF conversion.
 RUN apt-get update && apt-get install -y --no-install-recommends libreoffice \
@@ -69,8 +73,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends libreoffice \
 
 WORKDIR /app
 
-COPY backend/package.json backend/package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts
+COPY backend/package.json backend/pnpm-lock.yaml backend/.npmrc backend/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile --prod
 
 COPY --from=backend-builder /app/dist ./dist
 # Frontend static output is served from /app/public via express.static.

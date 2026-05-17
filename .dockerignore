@@ -2,9 +2,9 @@
 # (including backend/node_modules and frontend/node_modules, which are
 # easily 1+ GB) gets tarred up and shipped to ACR's build agent.
 #
-# The Dockerfile runs `npm ci` itself in each builder stage, so node_modules
-# from the host is never wanted. Same for build outputs — they get rebuilt
-# inside the image.
+# The Dockerfile runs `pnpm install` itself in each builder stage, so
+# node_modules from the host is never wanted. Same for build outputs —
+# they get rebuilt inside the image.
 
 # Dependencies
 **/node_modules
