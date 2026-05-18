@@ -16,6 +16,7 @@ import { getConfig, setConfig } from "../lib/config";
 import { randomBytes } from "node:crypto";
 import {
     clearInstallSession,
+    isFirstVisitEligible,
     isInAdminGroup,
     isInitialAdmin,
     isSelfBootstrapAllowed,
@@ -143,7 +144,7 @@ ${error ? `<div class="err">${escape(error)}</div>` : ""}
 <form class="inline" method="post" action="/install/auth" autocomplete="off">
   <label for="token">Bootstrap token</label>
   <input id="token" name="token" type="password" required autofocus
-         placeholder="from Bicep deployment 'bootstrapToken' output">
+         placeholder="from Key Vault secret 'install-bootstrap-token'">
   <button type="submit">Continue with bootstrap</button>
 </form>
 <div style="margin-top:1.5rem; padding-top:1rem; border-top:1px solid #d0d7de;">
@@ -152,6 +153,44 @@ ${error ? `<div class="err">${escape(error)}</div>` : ""}
     Available once Entra apps are configured AND you're a member of the configured admin group.
   </div>
 </div>
+`,
+    );
+}
+
+// Entry page shown when the admin group is not yet configured. The
+// install URL is an unguessable Container Apps subdomain that only the
+// buyer who deployed has seen, so we don't gate this behind a paste
+// form — one-click through. Bootstrap-token paste stays available as
+// a disclosure for OSS / break-glass use. See
+// docs/issues/azure-migration/038-install-first-visit-bootstrap.md.
+function renderFirstVisitEntry(): string {
+    return pageShell(
+        "Mike — Install",
+        `
+<h1>Mike installation</h1>
+<div class="sub">First-time setup. Continue below to start configuring your install.</div>
+<form class="inline" method="post" action="/install/first-visit" autocomplete="off">
+  <button type="submit">Continue to setup</button>
+</form>
+<div style="margin-top:1.5rem; padding-top:1rem; border-top:1px solid #d0d7de;">
+  <a class="btn secondary" href="/install/auth/microsoft/start">Sign in with Microsoft</a>
+  <div class="meta" style="margin-top:0.4rem">
+    Available once Entra apps are configured.
+  </div>
+</div>
+<details style="margin-top:1.5rem; padding-top:1rem; border-top:1px solid #d0d7de;">
+  <summary style="cursor:pointer; font-size:0.85rem; color:#57606a;">Advanced: use bootstrap token instead</summary>
+  <form class="inline" method="post" action="/install/auth" autocomplete="off" style="margin-top:0.75rem">
+    <label for="token">Bootstrap token</label>
+    <input id="token" name="token" type="password" required
+           placeholder="from Key Vault secret 'install-bootstrap-token'">
+    <button type="submit">Continue with bootstrap</button>
+  </form>
+  <div class="meta" style="margin-top:0.4rem">
+    For OSS deployments or break-glass recovery. Read the token via
+    <code>az keyvault secret show --vault-name &lt;your-kv&gt; --name install-bootstrap-token --query value -o tsv</code>.
+  </div>
+</details>
 `,
     );
 }
@@ -458,12 +497,50 @@ async function buildContext(req: Request): Promise<InstallContext> {
 installRouter.get("/", async (req: Request, res: Response) => {
     const session = res.locals.installSession as InstallSession | null;
     res.set("Content-Type", "text/html; charset=utf-8");
-    if (!session) return void res.send(renderPasteForm());
+    if (!session) {
+        // While admin-group is unset, the gate is open — render the
+        // one-click entry page. As soon as admin-group is configured,
+        // future visitors see the paste form (or sign in via Microsoft).
+        // See 038.
+        if (await isFirstVisitEligible()) {
+            return void res.send(renderFirstVisitEntry());
+        }
+        return void res.send(renderPasteForm());
+    }
 
     const ctx = await buildContext(req);
     const items = await evaluateManifest(ctx);
     const saved = typeof req.query.saved === "string" ? req.query.saved : null;
     res.send(renderChecklist(session, items, saved, ctx));
+});
+
+// First-visit grant. Issues a bootstrap-source session without a token
+// or sign-in, but ONLY while entra-admin-group-ids is empty in KV. Once
+// the operator sets the admin group from inside the configurator, this
+// route closes — subsequent requests hit the "not eligible" branch and
+// the operator must use the bootstrap token or Microsoft sign-in.
+//
+// Every successful grant logs via console.warn for audit. See 038.
+installRouter.post("/first-visit", async (req: Request, res: Response) => {
+    res.set("Content-Type", "text/html; charset=utf-8");
+    if (!(await isFirstVisitEligible())) {
+        res.status(403).send(
+            renderPasteForm("Admin group is already configured. Sign in via Microsoft or use the bootstrap token."),
+        );
+        return;
+    }
+    const remote = req.ip ?? "unknown";
+    const ua = req.get("user-agent") ?? "unknown";
+    console.warn(
+        "install.first_visit_granted",
+        JSON.stringify({
+            remote,
+            ua,
+            timestamp: new Date().toISOString(),
+        }),
+    );
+    await issueInstallSession(res, "bootstrap");
+    res.redirect("/install");
 });
 
 function requireSession(req: Request, res: Response): InstallSession | null {

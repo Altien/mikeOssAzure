@@ -264,6 +264,30 @@ export async function isInitialAdmin(
 //
 // See docs/issues/azure-migration/036-marketplace-install-gaps.md
 // gap #9 (and 036a Phase 5 / B1 decision).
+// First-visit gate. While entra-admin-group-ids is empty in KV (no admin
+// gate exists yet), allow any visitor to /install through to the
+// configurator without a bootstrap token or Entra sign-in. The state of
+// the admin-group secret IS the gate — open while unset, closed once
+// set. As soon as the operator sets entra-admin-group-ids from inside
+// /install, this fast-path stops firing.
+//
+// Threat model: any tenant-internal user who knows the install URL
+// could race the buyer and claim setup. Mitigations are (a) the URL is
+// an unguessable Container Apps subdomain only the buyer saw at deploy
+// output time, (b) every grant logs via console.warn for audit, and
+// (c) the buyer's marketplace-handshake OID (install-initial-admin-oid)
+// acts as a permanent escape hatch.
+//
+// Per the no-strip-redundant-code principle, the bootstrap-token paste
+// form remains in source for OSS / break-glass scenarios; this helper
+// just opens a parallel "open door" while the admin group is unset.
+//
+// See docs/issues/azure-migration/038-install-first-visit-bootstrap.md.
+export async function isFirstVisitEligible(): Promise<boolean> {
+    const adminGroupIds = (await getConfig("entra-admin-group-ids").catch(() => "")).trim();
+    return adminGroupIds === "";
+}
+
 export async function isSelfBootstrapAllowed(
     tid: string | undefined,
     principal: string,
