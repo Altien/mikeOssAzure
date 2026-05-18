@@ -55,6 +55,10 @@ export async function tenantAccess(
     .maybeSingle();
 
   if (error) {
+    console.error(
+      "tenantAccess.lookup_failed",
+      JSON.stringify({ tenantId, userId, error }),
+    );
     res.status(500).json({ detail: "Unable to evaluate tenant access" });
     return;
   }
@@ -64,6 +68,22 @@ export async function tenantAccess(
     if (onboardingMode === "auto") {
       const { error: insertError } = await admin.from("tenants").insert({ tenant_id: tenantId, status: "active" });
       if (insertError) {
+        // Log the underlying PostgREST / Supabase error so the operator
+        // has a diagnostic trail. Previously the error was swallowed
+        // and the operator saw only an opaque 500 — observed during
+        // rg-mike-test2 walkthrough 2026-05-18 and we burned ~20 min
+        // tailing logs to find nothing because this swallow erased the
+        // root cause before it ever reached stdout. Single line; logs
+        // the structured error object so the cause (RLS denial, schema
+        // mismatch, network failure, etc.) is visible.
+        console.error(
+          "tenantAccess.onboard_failed",
+          JSON.stringify({
+            tenantId,
+            userId,
+            error: insertError,
+          }),
+        );
         res.status(500).json({ detail: "Unable to onboard tenant" });
         return;
       }
