@@ -1,6 +1,7 @@
 import { createPublicKey, createVerify } from "node:crypto";
 import type { JsonWebKey } from "node:crypto";
 import type { AuthValidationResult } from "../types.js";
+import { getConfig } from "../../config.js";
 
 interface JwtHeader {
   alg?: unknown;
@@ -87,11 +88,30 @@ function verifySignature(token: string, key: JsonWebKey): boolean {
   return verifier.verify(publicKey, b64urlToBuffer(sigB64));
 }
 
+// One-shot diagnostic flag so the "Server auth is not configured" path
+// emits a clear log line exactly once per process lifetime. Without this
+// the operator sees opaque 401s with no signal pointing at the missing
+// KV / env state — see 040 Entry 11.
+let configMissingLogged = false;
+
 export async function validateEntraToken(token: string): Promise<AuthValidationResult> {
-  const tenantId = process.env.ENTRA_TENANT_ID ?? "";
-  const backendClientId = process.env.ENTRA_BACKEND_CLIENT_ID ?? "";
+  // getConfig() checks process.env first (uppercased, hyphens → underscores)
+  // and falls back to KV via the install backend's UAMI. Marketplace installs
+  // populate KV via create-entra-apps.ps1 or 039's deploy-time provisioning;
+  // OSS / dev deploys still work via ENTRA_TENANT_ID / ENTRA_BACKEND_CLIENT_ID
+  // env vars. Single call site, both sources, no further plumbing required.
+  // Closes 040 Entry 11.
+  const tenantId = await getConfig("entra-tenant-id").catch(() => "");
+  const backendClientId = await getConfig("entra-backend-client-id").catch(() => "");
 
   if (!tenantId || !backendClientId) {
+    if (!configMissingLogged) {
+      console.error(
+        "auth.entra.config_missing",
+        "Token validation cannot proceed — neither KV (entra-tenant-id / entra-backend-client-id) nor env (ENTRA_TENANT_ID / ENTRA_BACKEND_CLIENT_ID) provided values. Run create-entra-apps.ps1 from /install OR set the env vars on the Container App. This warning is logged once per process.",
+      );
+      configMissingLogged = true;
+    }
     return { ok: false, status: 401, detail: "Server auth is not configured" };
   }
 
