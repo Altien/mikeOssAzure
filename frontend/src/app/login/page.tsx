@@ -170,12 +170,18 @@ export default function LoginPage() {
                     </form>
                     )}
                 </div>
-                <p className="text-center text-xs text-gray-500 leading-relaxed px-2">
-                    Mike hosted on MikeOSS.com is currently a demo service.
-                    Please do not upload, submit, or store sensitive,
-                    confidential, privileged, client, or personally
-                    identifiable documents.
-                </p>
+                {/* Demo-mode banner: only shown when NEXT_PUBLIC_DEMO_MODE=true */}
+                {/* (set on the MikeOSS.com public-demo deployment). Marketplace */}
+                {/* customer installs leave the flag unset and don't see this. */}
+                {/* Per docs/issues/azure-migration/040 Entry 10. */}
+                {process.env.NEXT_PUBLIC_DEMO_MODE === "true" && (
+                    <p className="text-center text-xs text-gray-500 leading-relaxed px-2">
+                        Mike hosted on MikeOSS.com is currently a demo service.
+                        Please do not upload, submit, or store sensitive,
+                        confidential, privileged, client, or personally
+                        identifiable documents.
+                    </p>
+                )}
             </div>
         </div>
     );
