@@ -83,35 +83,42 @@ function ensureSslMode(url: string): string {
 }
 
 async function getDatabaseUrl(): Promise<string> {
-  const provider = getAuthProvider();
-
-  if (provider !== "entra") {
-    const databaseUrl = process.env.DATABASE_URL;
-    if (!databaseUrl) {
-      throw new Error("DATABASE_URL is required when AUTH_PROVIDER is not 'entra'");
-    }
+  // Migrate-job DB connection strategy is independent of AUTH_PROVIDER
+  // (which is the app sign-in mode, consumed by routes/auth.ts).
+  // Conflating them blocked marketplace installs that legitimately want
+  // Entra sign-in for users + password auth from the migrate job — see
+  // docs/issues/azure-migration/037-migrate-job-auth-decoupling.md.
+  //
+  // Preference order:
+  //   1. DATABASE_URL — works for marketplace (KV pgrst-db-uri),
+  //      supabase, local, and any entra-with-password setup.
+  //   2. MI-token path — for Entra-Postgres installs where the flex
+  //      server has activeDirectoryAuth=Enabled and the UAMI is
+  //      registered as a Postgres role.
+  const databaseUrl = process.env.DATABASE_URL;
+  if (databaseUrl) {
     return ensureSslMode(databaseUrl);
   }
 
   const pgHost = process.env.PG_HOST;
-  const pgDatabase = process.env.PG_DATABASE ?? "postgres";
   const pgMiUsername = process.env.PG_MI_USERNAME;
-  const pgPort = process.env.PG_PORT ?? "5432";
+  if (pgHost && pgMiUsername) {
+    const pgDatabase = process.env.PG_DATABASE ?? "postgres";
+    const pgPort = process.env.PG_PORT ?? "5432";
 
-  if (!pgHost || !pgMiUsername) {
-    throw new Error(
-      "PG_HOST and PG_MI_USERNAME are required when AUTH_PROVIDER=entra for migration job",
-    );
+    const credential = new DefaultAzureCredential();
+    const token = await credential.getToken(AAD_SCOPE);
+
+    if (!token?.token) {
+      throw new Error("Failed to acquire Managed Identity token for PostgreSQL");
+    }
+
+    return `postgresql://${encodeURIComponent(pgMiUsername)}:${encodeURIComponent(token.token)}@${pgHost}:${pgPort}/${pgDatabase}?sslmode=require`;
   }
 
-  const credential = new DefaultAzureCredential();
-  const token = await credential.getToken(AAD_SCOPE);
-
-  if (!token?.token) {
-    throw new Error("Failed to acquire Managed Identity token for PostgreSQL");
-  }
-
-  return `postgresql://${encodeURIComponent(pgMiUsername)}:${encodeURIComponent(token.token)}@${pgHost}:${pgPort}/${pgDatabase}?sslmode=require`;
+  throw new Error(
+    "Migrate job needs either DATABASE_URL, or PG_HOST + PG_MI_USERNAME for MI-token auth",
+  );
 }
 
 // Creates / refreshes the `authenticator` Postgres role that PostgREST
