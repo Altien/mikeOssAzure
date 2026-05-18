@@ -5,6 +5,7 @@ import type {
     NormalizedToolCall,
 } from "./types";
 import { toGeminiTools } from "./tools";
+import { resolveSecret } from "../envSecrets";
 
 type GeminiPart = {
     text?: string;
@@ -28,8 +29,8 @@ type GeminiContent = {
     parts: GeminiPart[];
 };
 
-function client(override?: string | null): GoogleGenAI {
-    const apiKey = override?.trim() || process.env.GEMINI_API_KEY || "";
+async function client(override?: string | null): Promise<GoogleGenAI> {
+    const apiKey = override?.trim() || await resolveSecret("gemini-api-key");
     return new GoogleGenAI({ apiKey });
 }
 
@@ -45,7 +46,7 @@ export async function streamGemini(
 ): Promise<StreamChatResult> {
     const { model, systemPrompt, tools = [], callbacks = {}, runTools, apiKeys, enableThinking } = params;
     const maxIter = params.maxIterations ?? 10;
-    const ai = client(apiKeys?.gemini);
+    const ai = await client(apiKeys?.gemini);
     const functionDeclarations = toGeminiTools(tools);
 
     const contents: GeminiContent[] = toNativeContents(params.messages);
@@ -149,7 +150,7 @@ export async function completeGeminiText(params: {
     user: string;
     apiKeys?: { gemini?: string | null };
 }): Promise<string> {
-    const ai = client(params.apiKeys?.gemini);
+    const ai = await client(params.apiKeys?.gemini);
     const resp = await ai.models.generateContent({
         model: params.model,
         contents: [{ role: "user", parts: [{ text: params.user }] }],

@@ -7,7 +7,7 @@ import type {
     NormalizedToolResult,
 } from "./types";
 import { toClaudeTools } from "./tools";
-import { readSecretEnv } from "../envSecrets";
+import { resolveSecret } from "../envSecrets";
 
 type ContentBlock =
     | { type: "text"; text: string }
@@ -21,8 +21,8 @@ type NativeMessage = {
 
 const MAX_TOKENS = 16384;
 
-function client(override?: string | null): Anthropic {
-    const apiKey = override?.trim() || readSecretEnv("ANTHROPIC_API_KEY");
+async function client(override?: string | null): Promise<Anthropic> {
+    const apiKey = override?.trim() || await resolveSecret("anthropic-api-key");
     return new Anthropic({ apiKey });
 }
 
@@ -45,7 +45,7 @@ export async function streamClaude(
         enableThinking,
     } = params;
     const maxIter = params.maxIterations ?? 10;
-    const anthropic = client(apiKeys?.claude);
+    const anthropic = await client(apiKeys?.claude);
     const claudeTools = toClaudeTools(tools);
 
     const messages: NativeMessage[] = toNativeMessages(params.messages);
@@ -142,7 +142,7 @@ export async function completeClaudeText(params: {
     maxTokens?: number;
     apiKeys?: { claude?: string | null };
 }): Promise<string> {
-    const anthropic = client(params.apiKeys?.claude);
+    const anthropic = await client(params.apiKeys?.claude);
     const resp = await anthropic.messages.create({
         model: params.model,
         max_tokens: params.maxTokens ?? 512,

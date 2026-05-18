@@ -18,6 +18,7 @@
 // them bubble up unfiltered to the client.
 
 import type { AzureOpenaiSettings } from "./types";
+import { resolveSecret } from "../envSecrets";
 
 // Pinned for the LISTING call only. Newer api-versions (2024-10-21,
 // 2024-08-01-preview) return 404 against the /openai/deployments route
@@ -51,17 +52,20 @@ type RawListResponse = {
     data?: RawDeployment[];
 };
 
-function pickSettingsSource(
+async function pickSettingsSource(
     personal?: AzureOpenaiSettings | null,
-): {
+): Promise<{
     source: "personal" | "global";
     endpoint: string;
     apiKey: string;
-} | null {
+} | null> {
     // Prefer the user's own AOAI when both endpoint + key are filled in.
-    // Otherwise fall back to the env-global pair. We don't merge the
-    // two — listing deployments from two different resources in the
-    // same picker would be confusing.
+    // Otherwise fall back to the global pair via resolveSecret() — which
+    // covers BOTH the env (Bicep secretRef) and the KV-direct paths the
+    // install configurator writes. Closes 040 Entry 12 for the
+    // deployment-discovery code path. We don't merge personal + global —
+    // listing deployments from two different resources in the same
+    // picker would be confusing.
     if (personal?.endpoint?.trim() && personal?.apiKey?.trim()) {
         return {
             source: "personal",
@@ -69,13 +73,13 @@ function pickSettingsSource(
             apiKey: personal.apiKey.trim(),
         };
     }
-    const envEndpoint = process.env.AZURE_OPENAI_ENDPOINT?.trim();
-    const envKey = process.env.AZURE_OPENAI_API_KEY?.trim();
-    if (envEndpoint && envKey) {
+    const endpoint = await resolveSecret("azure-openai-endpoint");
+    const apiKey = await resolveSecret("azure-openai-api-key");
+    if (endpoint && apiKey) {
         return {
             source: "global",
-            endpoint: envEndpoint,
-            apiKey: envKey,
+            endpoint,
+            apiKey,
         };
     }
     return null;
@@ -84,7 +88,7 @@ function pickSettingsSource(
 export async function listAzureOpenaiDeployments(
     personal?: AzureOpenaiSettings | null,
 ): Promise<ListDeploymentsResult> {
-    const picked = pickSettingsSource(personal);
+    const picked = await pickSettingsSource(personal);
     if (!picked) return { ok: false, reason: "not_configured" };
 
     // AOAI is happy with or without a trailing slash; normalize so the

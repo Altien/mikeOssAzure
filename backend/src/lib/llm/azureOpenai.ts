@@ -6,6 +6,7 @@ import type {
     NormalizedToolCall,
     AzureOpenaiSettings,
 } from "./types";
+import { resolveSecret } from "../envSecrets";
 
 // Azure OpenAI is the same chat-completions API as classic OpenAI but
 // with extra connection parameters: endpoint, apiVersion, and deployment
@@ -18,17 +19,22 @@ import type {
 
 const DEFAULT_API_VERSION = "2024-10-21";
 
-// Resolve endpoint + key + apiVersion from user override, then env, then
-// default. Deployment is intentionally NOT resolved here — it comes from
-// the model id (`aoai:<deployment>`) so the caller can pick any of the
-// deployments returned by deployment discovery, not just one default.
-function resolveCredentials(
+// Resolve endpoint + key + apiVersion from user override, then KV (via
+// resolveSecret which checks env first), then default. Deployment is
+// intentionally NOT resolved here — it comes from the model id
+// (`aoai:<deployment>`) so the caller can pick any of the deployments
+// returned by deployment discovery, not just one default.
+//
+// KV path covers marketplace installs where the configurator writes
+// azure-openai-endpoint + azure-openai-api-key without any Bicep env
+// wiring. Closes 040 Entry 12 for AOAI.
+async function resolveCredentials(
     override?: AzureOpenaiSettings | null,
-): { endpoint: string; apiKey: string; apiVersion: string } {
+): Promise<{ endpoint: string; apiKey: string; apiVersion: string }> {
     const endpoint =
-        override?.endpoint?.trim() || process.env.AZURE_OPENAI_ENDPOINT || "";
+        override?.endpoint?.trim() || await resolveSecret("azure-openai-endpoint");
     const apiKey =
-        override?.apiKey?.trim() || process.env.AZURE_OPENAI_API_KEY || "";
+        override?.apiKey?.trim() || await resolveSecret("azure-openai-api-key");
     const apiVersion =
         override?.apiVersion?.trim() ||
         process.env.AZURE_OPENAI_API_VERSION ||
@@ -36,7 +42,7 @@ function resolveCredentials(
 
     if (!endpoint) {
         throw new Error(
-            "Azure OpenAI not configured: endpoint missing (set AZURE_OPENAI_ENDPOINT or the user's azure_openai_endpoint).",
+            "Azure OpenAI not configured: endpoint missing (set azure-openai-endpoint in KV via /install, AZURE_OPENAI_ENDPOINT env, or the user's azure_openai_endpoint).",
         );
     }
     if (!apiKey) {
@@ -71,11 +77,11 @@ function deploymentFromModelId(
     return fallback;
 }
 
-function client(
+async function client(
     deployment: string,
     override?: AzureOpenaiSettings | null,
-): AzureOpenAI {
-    const c = resolveCredentials(override);
+): Promise<AzureOpenAI> {
+    const c = await resolveCredentials(override);
     return new AzureOpenAI({
         apiKey: c.apiKey,
         endpoint: c.endpoint,
@@ -115,7 +121,7 @@ export async function streamAzureOpenAI(
     } = params;
     const maxIter = params.maxIterations ?? 10;
     const deployment = deploymentFromModelId(model, apiKeys?.azureOpenai);
-    const aoai = client(deployment, apiKeys?.azureOpenai);
+    const aoai = await client(deployment, apiKeys?.azureOpenai);
 
     const messages = toNativeMessages(params.messages, systemPrompt);
     let fullText = "";
@@ -229,7 +235,7 @@ export async function completeAzureOpenAIText(params: {
         params.model,
         params.apiKeys?.azureOpenai,
     );
-    const aoai = client(deployment, params.apiKeys?.azureOpenai);
+    const aoai = await client(deployment, params.apiKeys?.azureOpenai);
     const messages: ChatCompletionMessageParam[] = [];
     if (params.systemPrompt) {
         messages.push({ role: "system", content: params.systemPrompt });

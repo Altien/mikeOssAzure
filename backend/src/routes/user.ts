@@ -7,7 +7,7 @@ import {
     deleteUserApiKey,
 } from "../lib/userApiKeys";
 import type { AzureOpenaiSettings } from "../lib/llm";
-import { readSecretEnv } from "../lib/envSecrets";
+import { resolveSecret } from "../lib/envSecrets";
 
 export const userRouter = Router();
 
@@ -95,13 +95,19 @@ userRouter.get("/profile", requireAuth, async (_req, res) => {
     // server. Azure OpenAI is "globally configured" once endpoint +
     // apiKey are set — deployment is no longer required because the
     // user picks one per message from the discovered list.
+    // global_api_keys covers BOTH the env-var path (Bicep secretRef into KV
+    // for anthropic + openai) AND the KV-direct path (install configurator
+    // writes for gemini + azure-openai-* with no Bicep wiring). resolveSecret
+    // unifies them — env first via getConfig's built-in env check, KV via
+    // UAMI fallback, with the __unset__ placeholder filtered. Closes 040
+    // Entry 12's availability-flag arm.
     global_api_keys: {
-      claude: !!readSecretEnv("ANTHROPIC_API_KEY"),
-      gemini: !!readSecretEnv("GEMINI_API_KEY"),
-      openai: !!readSecretEnv("OPENAI_API_KEY"),
+      claude: !!(await resolveSecret("anthropic-api-key")),
+      gemini: !!(await resolveSecret("gemini-api-key")),
+      openai: !!(await resolveSecret("openai-api-key")),
       azureOpenai:
-        !!readSecretEnv("AZURE_OPENAI_ENDPOINT") &&
-        !!readSecretEnv("AZURE_OPENAI_API_KEY"),
+        !!(await resolveSecret("azure-openai-endpoint")) &&
+        !!(await resolveSecret("azure-openai-api-key")),
     },
   });
 });

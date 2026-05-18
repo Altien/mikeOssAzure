@@ -6,14 +6,14 @@ import type {
     NormalizedToolCall,
     NormalizedToolResult,
 } from "./types";
-import { readSecretEnv } from "../envSecrets";
+import { resolveSecret } from "../envSecrets";
 
 // OpenAI's tool-call schema is what the rest of the codebase calls
 // OpenAIToolSchema, so we pass tools through untouched. Streaming and
 // tool-call assembly are the only things the adapter has to do.
 
-function client(override?: string | null): OpenAI {
-    const apiKey = override?.trim() || readSecretEnv("OPENAI_API_KEY");
+async function client(override?: string | null): Promise<OpenAI> {
+    const apiKey = override?.trim() || await resolveSecret("openai-api-key");
     return new OpenAI({ apiKey });
 }
 
@@ -51,7 +51,7 @@ export async function streamOpenAI(
         apiKeys,
     } = params;
     const maxIter = params.maxIterations ?? 10;
-    const openai = client(apiKeys?.openai);
+    const openai = await client(apiKeys?.openai);
 
     const messages = toNativeMessages(params.messages, systemPrompt);
     let fullText = "";
@@ -163,7 +163,7 @@ export async function completeOpenAIText(params: {
     maxTokens?: number;
     apiKeys?: { openai?: string | null };
 }): Promise<string> {
-    const openai = client(params.apiKeys?.openai);
+    const openai = await client(params.apiKeys?.openai);
     const messages: ChatCompletionMessageParam[] = [];
     if (params.systemPrompt) {
         messages.push({ role: "system", content: params.systemPrompt });
