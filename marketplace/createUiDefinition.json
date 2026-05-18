@@ -175,18 +175,6 @@
             "label": "Provision NAT Gateway (recommended for production)",
             "defaultValue": true,
             "toolTip": "Gives outbound traffic a stable public IP. Adds ~30 USD/month — disable for low-cost dev environments."
-          },
-          {
-            "name": "frontendUrl",
-            "type": "Microsoft.Common.TextBox",
-            "label": "Frontend URL (CORS allow-origin)",
-            "defaultValue": "https://app.example.com",
-            "toolTip": "URL where you will host the Mike frontend. Used as the CORS allowed origin on the backend.",
-            "constraints": {
-              "required": true,
-              "regex": "^https://[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?(/[A-Za-z0-9._/-]{0,500})?$",
-              "validationMessage": "Must be an https:// URL up to ~500 chars."
-            }
           }
         ]
       }
@@ -204,7 +192,6 @@
       "openaiApiKey": "[steps('aiKeys').openaiApiKey]",
       "openaiBaseUrl": "[steps('aiKeys').openaiBaseUrl]",
       "enableNatGateway": "[steps('networking').enableNatGateway]",
-      "frontendUrl": "[steps('networking').frontendUrl]",
       "createAcr": false,
       "acrSku": "Standard",
       "imagePullAuth": "anonymous",
