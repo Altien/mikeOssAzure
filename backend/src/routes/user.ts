@@ -7,6 +7,7 @@ import {
     deleteUserApiKey,
 } from "../lib/userApiKeys";
 import type { AzureOpenaiSettings } from "../lib/llm";
+import { readSecretEnv } from "../lib/envSecrets";
 
 export const userRouter = Router();
 
@@ -95,12 +96,12 @@ userRouter.get("/profile", requireAuth, async (_req, res) => {
     // apiKey are set — deployment is no longer required because the
     // user picks one per message from the discovered list.
     global_api_keys: {
-      claude: !!process.env.ANTHROPIC_API_KEY?.trim(),
-      gemini: !!process.env.GEMINI_API_KEY?.trim(),
-      openai: !!process.env.OPENAI_API_KEY?.trim(),
+      claude: !!readSecretEnv("ANTHROPIC_API_KEY"),
+      gemini: !!readSecretEnv("GEMINI_API_KEY"),
+      openai: !!readSecretEnv("OPENAI_API_KEY"),
       azureOpenai:
-        !!process.env.AZURE_OPENAI_ENDPOINT?.trim() &&
-        !!process.env.AZURE_OPENAI_API_KEY?.trim(),
+        !!readSecretEnv("AZURE_OPENAI_ENDPOINT") &&
+        !!readSecretEnv("AZURE_OPENAI_API_KEY"),
     },
   });
 });

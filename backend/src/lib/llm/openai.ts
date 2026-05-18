@@ -6,13 +6,14 @@ import type {
     NormalizedToolCall,
     NormalizedToolResult,
 } from "./types";
+import { readSecretEnv } from "../envSecrets";
 
 // OpenAI's tool-call schema is what the rest of the codebase calls
 // OpenAIToolSchema, so we pass tools through untouched. Streaming and
 // tool-call assembly are the only things the adapter has to do.
 
 function client(override?: string | null): OpenAI {
-    const apiKey = override?.trim() || process.env.OPENAI_API_KEY || "";
+    const apiKey = override?.trim() || readSecretEnv("OPENAI_API_KEY");
     return new OpenAI({ apiKey });
 }
 

@@ -7,6 +7,7 @@ import type {
     NormalizedToolResult,
 } from "./types";
 import { toClaudeTools } from "./tools";
+import { readSecretEnv } from "../envSecrets";
 
 type ContentBlock =
     | { type: "text"; text: string }
@@ -21,7 +22,7 @@ type NativeMessage = {
 const MAX_TOKENS = 16384;
 
 function client(override?: string | null): Anthropic {
-    const apiKey = override?.trim() || process.env.ANTHROPIC_API_KEY || "";
+    const apiKey = override?.trim() || readSecretEnv("ANTHROPIC_API_KEY");
     return new Anthropic({ apiKey });
 }
 
