@@ -339,6 +339,15 @@ function describeScriptCommand(item: EvaluatedItem, ctx: InstallContext, allItem
     // require: — the operator would just hit "Run the prerequisite first."
     if (unmetRequires(item, allItems).length > 0 && item.result.status !== "pass") return "";
 
+    // Don't render script affordances for "info"-state rows — info means
+    // the check couldn't determine pass/fail (verify-access denied,
+    // propagation lag, transient Graph error). The fix isn't usually
+    // "run the script"; it's "refresh in a minute". Closes 040 Entry 6
+    // fix A — script offer no longer renders for entra-frontend-
+    // redirect-uris during the post-create-entra-apps propagation
+    // window, where it was misleading.
+    if (item.result.status === "info") return "";
+
     if (item.fixedBy.type === "external-script") {
         const filled = fillArgs(item.fixedBy.argsTemplate, ctx);
         const cmd = formatPowershellCommand(item.fixedBy.scriptName, filled);

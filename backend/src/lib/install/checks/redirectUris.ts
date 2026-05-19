@@ -88,6 +88,25 @@ export async function checkRedirectUris(
     }
 
     if (resp.status === 401 || resp.status === 403) {
+        // Graph 403 immediately after the UAMI was granted ownership is
+        // almost always a token / cache propagation lag — Azure AD takes
+        // a minute or two to propagate role grants to the cached token
+        // we just minted. Retry once after a brief delay before treating
+        // it as a hard verify-access failure. Closes 040 Entry 6 fix B.
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+        try {
+            resp = await fetch(url, {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    Accept: "application/json",
+                },
+            });
+        } catch {
+            /* fall through to the original-failure handling below */
+        }
+    }
+
+    if (resp.status === 401 || resp.status === 403) {
         const bodyText = (await resp.text()).slice(0, 300);
         let code = "";
         try {
@@ -98,11 +117,18 @@ export async function checkRedirectUris(
         }
         return {
             status: "info",
+            // Plain-English first sentence describing the state, then
+            // the technical remediation. The script affordance is
+            // suppressed at the renderer for info-state rows (Entry 6
+            // fix A) so this row no longer offers a script that doesn't
+            // address the verify-only failure.
             detail:
-                `Graph denied the read (${resp.status}${code ? ` ${code}` : ""}). ` +
-                "Grant the UAMI access by either: (a) adding it as an owner of " +
-                "the frontend app registration, or (b) granting the UAMI's " +
-                "service principal the Application.Read.All app role on Microsoft Graph.",
+                "Couldn't verify the sign-in callback URLs are registered. " +
+                "This is normally a Microsoft Entra propagation delay after " +
+                "create-entra-apps.ps1 finishes — refresh this page in a " +
+                "minute or two. If it persists, the install backend's " +
+                "managed identity needs read access to the frontend app " +
+                `registration (Graph ${resp.status}${code ? ` ${code}` : ""}).`,
         };
     }
 
