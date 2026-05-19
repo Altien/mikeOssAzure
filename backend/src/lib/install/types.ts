@@ -79,6 +79,11 @@ export type InstallContext = {
     // operators can register a custom domain (e.g. mike.altien.com) on the
     // Entra app reg without changing how they reach /install itself.
     customFqdn?: string;
+    // 'bootstrap' = paste-token or first-visit session; 'entra' = signed in
+    // via Microsoft. Action renderers use this to swap picker buttons for a
+    // "Sign in with Microsoft" link when the bootstrap session can't drive
+    // a Graph-backed picker. Closes 040 Entry 7 fix B.
+    sessionSource?: "bootstrap" | "entra";
 };
 
 export type ManifestItem = {

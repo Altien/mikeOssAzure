@@ -251,10 +251,16 @@ function describeAction(
     allItems: EvaluatedItem[],
 ): string {
     const fixedBy = item.fixedBy;
-    // Group items are picker-only per issue 023.  The picker lives at the
-    // standard /install/items/:id path so the rest of the renderer pipes
-    // are unchanged.
+    // Group items are picker-only per issue 023. The picker requires a
+    // Graph access token, which only Entra-source sessions have — a
+    // bootstrap-source session won't be able to drive the picker. Show
+    // the operator the actual action they need ("Sign in with Microsoft
+    // to pick a group") instead of letting them click through to a 403.
+    // Closes 040 Entry 7 fix B.
     if (item.id === "entra-admin-group-id" || item.id === "entra-member-group-id") {
+        if (ctx.sessionSource === "bootstrap") {
+            return `<a class="btn" href="/install/auth/microsoft/start">Sign in with Microsoft to pick group</a>`;
+        }
         const verb = item.result.status === "pass" ? "Change" : "Pick";
         return `<a class="btn" href="/install/items/${encodeURIComponent(item.id)}">${verb} group</a>`;
     }
@@ -578,12 +584,14 @@ ${sections}
     );
 }
 
-async function buildContext(req: Request): Promise<InstallContext> {
+async function buildContext(req: Request, res?: Response): Promise<InstallContext> {
+    const session = res?.locals.installSession as InstallSession | null | undefined;
     return {
         backendFqdn: req.hostname,
         keyVaultName: process.env.KEY_VAULT_NAME ?? "",
         resourceGroup: process.env.RESOURCE_GROUP ?? "",
         customFqdn: await readCustomFqdn(),
+        sessionSource: session?.source,
     };
 }
 
@@ -601,7 +609,7 @@ installRouter.get("/", async (req: Request, res: Response) => {
         return void res.send(renderPasteForm());
     }
 
-    const ctx = await buildContext(req);
+    const ctx = await buildContext(req, res);
     const items = await evaluateManifest(ctx);
     const saved = typeof req.query.saved === "string" ? req.query.saved : null;
     res.send(renderChecklist(session, items, saved, ctx));

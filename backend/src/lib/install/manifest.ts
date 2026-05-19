@@ -495,14 +495,29 @@ const items: ManifestItem[] = [
     },
     {
         id: "entra-member-group-id",
-        label: "Users (who can use Mike, optional)",
+        label: "Users (who can use Mike)",
         section: "Access rules",
         required: false,
         requires: ["entra-frontend-app"],
-        check: () => checkKvSecret("entra-member-group-ids"),
+        // Default behaviour: empty member-group ID list means anyone in
+        // your tenant can use Mike (resolveRoles grants Member to any
+        // authenticated tenant user). Pick a group to restrict access
+        // to a subset. The row passes either way — empty is a valid
+        // intentional choice, not a missing setting. Closes 040 Entry
+        // 7 fix A's labelling problem.
+        check: async () => {
+            const value = (await getConfig("entra-member-group-ids").catch(() => "")).trim();
+            if (!value) {
+                return {
+                    status: "pass",
+                    detail: "Default: anyone in your Microsoft organisation can use Mike. Pick a group to restrict.",
+                };
+            }
+            return { status: "pass", detail: value };
+        },
         fixedBy: {
             type: "auto",
-            description: "Group picker UI lands in slice 8 (Graph /me/memberOf + search).",
+            description: "Pick a group to restrict who can use Mike, or leave unset for tenant-wide access.",
         },
     },
     {

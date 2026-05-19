@@ -38,6 +38,17 @@ export async function resolveRoles(groups: string[]): Promise<AppRole[]> {
     return ["TenantAdmin", "Member"];
   }
 
+  // Empty member-group means "no restriction on who can use Mike beyond
+  // tenant membership." Tenant membership has already been verified by
+  // the token's `tid` claim before this function runs, so granting
+  // Member here is safe. Avoids forcing operators who legitimately want
+  // "anyone in my tenant" to invent an artificial group. The /install
+  // 'Users (who can use Mike)' row makes this default explicit in copy.
+  // Closes 040 Entry 7 fix A.
+  if (memberGroupIds.size === 0) {
+    return ["Member"];
+  }
+
   const matchedMember = userGroupsLower.some((group) => memberGroupIds.has(group));
   if (matchedMember) {
     return ["Member"];
