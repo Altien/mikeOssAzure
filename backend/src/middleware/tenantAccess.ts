@@ -66,22 +66,29 @@ export async function tenantAccess(
   if (!tenant) {
     const onboardingMode = await readOnboardingMode();
     if (onboardingMode === "auto") {
-      const { error: insertError } = await admin.from("tenants").insert({ tenant_id: tenantId, status: "active" });
-      if (insertError) {
-        // Log the underlying PostgREST / Supabase error so the operator
-        // has a diagnostic trail. Previously the error was swallowed
-        // and the operator saw only an opaque 500 — observed during
-        // rg-mike-test2 walkthrough 2026-05-18 and we burned ~20 min
-        // tailing logs to find nothing because this swallow erased the
-        // root cause before it ever reached stdout. Single line; logs
-        // the structured error object so the cause (RLS denial, schema
-        // mismatch, network failure, etc.) is visible.
+      // Upsert with ignoreDuplicates instead of plain insert: when a
+      // freshly-signed-in user fires several authenticated requests in
+      // parallel (profile + projects + deployments + chat on first
+      // page load is common), every one of those requests races through
+      // here together, all SELECT empty, all attempt INSERT, all but
+      // the first hit Postgres 23505 unique_violation. The losers got
+      // an opaque 500 "Unable to onboard tenant" and the operator saw
+      // half the app fail to load on first sign-in. Observed on
+      // rg-mike-test4 2026-05-19. Upsert collapses the race — losers
+      // become no-op and the request proceeds.
+      const { error: upsertError } = await admin
+        .from("tenants")
+        .upsert(
+          { tenant_id: tenantId, status: "active" },
+          { onConflict: "tenant_id", ignoreDuplicates: true },
+        );
+      if (upsertError) {
         console.error(
           "tenantAccess.onboard_failed",
           JSON.stringify({
             tenantId,
             userId,
-            error: insertError,
+            error: upsertError,
           }),
         );
         res.status(500).json({ detail: "Unable to onboard tenant" });
