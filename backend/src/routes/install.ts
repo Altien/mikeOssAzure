@@ -234,7 +234,22 @@ function formatPowershellCommand(scriptName: string, filledArgs: string): string
     return [`.\\${scriptName} \``, ...parts.map((p, i) => `  ${p}${i === parts.length - 1 ? "" : " `"}`)].join("\n");
 }
 
-function describeAction(item: EvaluatedItem, ctx: InstallContext): string {
+// Returns the labels of rows this item depends on that haven't passed yet.
+// Used to render "Waiting on: X" copy instead of an action button — stops
+// operators clicking into a row whose required predecessor hasn't run.
+// Closes 040 Entry 4 fix D.
+function unmetRequires(item: EvaluatedItem, allItems: EvaluatedItem[]): EvaluatedItem[] {
+    if (!item.requires || item.requires.length === 0) return [];
+    return item.requires
+        .map((id) => allItems.find((i) => i.id === id))
+        .filter((dep): dep is EvaluatedItem => !!dep && dep.result.status !== "pass");
+}
+
+function describeAction(
+    item: EvaluatedItem,
+    ctx: InstallContext,
+    allItems: EvaluatedItem[],
+): string {
     const fixedBy = item.fixedBy;
     // Group items are picker-only per issue 023.  The picker lives at the
     // standard /install/items/:id path so the rest of the renderer pipes
@@ -246,9 +261,27 @@ function describeAction(item: EvaluatedItem, ctx: InstallContext): string {
     if (fixedBy.type === "auto") {
         return `<span class="pill">AUTO</span><div class="meta">${escape(fixedBy.description)}</div>`;
     }
+
+    // Workflow gate: if any of this row's `requires:` haven't passed yet,
+    // render a "Waiting on" hint instead of offering the action. Avoids
+    // sending operators down a path that will fail (e.g. running
+    // register-redirect-uris.ps1 before create-entra-apps.ps1).
+    // Closes 040 Entry 4 fix D.
+    const unmet = unmetRequires(item, allItems);
+    if (unmet.length > 0 && item.result.status !== "pass") {
+        const names = unmet.map((d) => escape(d.label)).join(", ");
+        return `<span class="pill" style="background:#fff8c5;color:#9a6700">WAITING</span><div class="meta">Complete first: ${names}.</div>`;
+    }
+
     if (fixedBy.type === "in-app-form") {
-        const verb = item.result.status === "pass" ? "Edit" : "Set";
-        return `<a class="btn" href="/install/items/${encodeURIComponent(item.id)}">${verb}</a>`;
+        // When alsoAsScript exists, the script is the recommended path
+        // (the section intro usually calls it out as "recommended"). The
+        // paste form becomes the secondary "I have a value already" path.
+        // Verb flips accordingly. Closes 040 Entry 4 fix B.
+        const hasScript = !!fixedBy.alsoAsScript;
+        const verb = item.result.status === "pass" ? "Edit value" : (hasScript ? "Paste value" : "Set");
+        const cls = hasScript ? "btn secondary" : "btn";
+        return `<a class="${cls}" href="/install/items/${encodeURIComponent(item.id)}">${verb}</a>`;
     }
     const scriptMeta = getScriptMeta(fixedBy.scriptName);
     const metaBadge = scriptMeta && (scriptMeta.version || scriptMeta.lastModified)
@@ -270,14 +303,27 @@ function describeAction(item: EvaluatedItem, ctx: InstallContext): string {
 // announce "Copy" / "Copied".
 const COPY_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
 
-function describeScriptCommand(item: EvaluatedItem, ctx: InstallContext): string {
-    if (item.fixedBy.type !== "external-script") return "";
-    const filled = fillArgs(item.fixedBy.argsTemplate, ctx);
-    const cmd = formatPowershellCommand(item.fixedBy.scriptName, filled);
+function renderScriptBlock(scriptName: string, argsTemplate: string, ctx: InstallContext): string {
+    const filled = fillArgs(argsTemplate, ctx);
+    const cmd = formatPowershellCommand(scriptName, filled);
     const dataCmd = JSON.stringify(cmd);
+    const scriptMeta = getScriptMeta(scriptName);
+    const metaBadge = scriptMeta && (scriptMeta.version || scriptMeta.lastModified)
+        ? `<span class="meta" style="margin-left:0.5rem; font-size:0.7rem;">${
+            scriptMeta.version ? `v${escape(scriptMeta.version)}` : ""
+        }${
+            scriptMeta.version && scriptMeta.lastModified ? " · " : ""
+        }${
+            scriptMeta.lastModified ? `as of ${escape(scriptMeta.lastModified.toISOString().slice(0, 10))}` : ""
+        }</span>`
+        : "";
     return `
 <div class="script-cmd">
-  <div class="script-cmd-label">Run with (PowerShell):</div>
+  <div class="script-cmd-label" style="display:flex; align-items:center; gap:0.5rem;">
+    <a class="btn" href="/install/scripts/${encodeURIComponent(scriptName)}">Download ${escape(scriptName)}</a>
+    ${metaBadge}
+  </div>
+  <div class="script-cmd-label" style="margin-top:0.5rem;">Run with (PowerShell):</div>
   <div class="script-cmd-row">
     <pre>${escape(cmd)}</pre>
     <button type="button" class="copy-btn" data-cmd='${escape(dataCmd)}' aria-label="Copy command to clipboard" title="Copy">
@@ -288,6 +334,44 @@ function describeScriptCommand(item: EvaluatedItem, ctx: InstallContext): string
 </div>`;
 }
 
+function describeScriptCommand(item: EvaluatedItem, ctx: InstallContext, allItems: EvaluatedItem[]): string {
+    // Don't render script affordances when the row is blocked by an unmet
+    // require: — the operator would just hit "Run the prerequisite first."
+    if (unmetRequires(item, allItems).length > 0 && item.result.status !== "pass") return "";
+
+    if (item.fixedBy.type === "external-script") {
+        const filled = fillArgs(item.fixedBy.argsTemplate, ctx);
+        const cmd = formatPowershellCommand(item.fixedBy.scriptName, filled);
+        const dataCmd = JSON.stringify(cmd);
+        return `
+<div class="script-cmd">
+  <div class="script-cmd-label">Run with (PowerShell):</div>
+  <div class="script-cmd-row">
+    <pre>${escape(cmd)}</pre>
+    <button type="button" class="copy-btn" data-cmd='${escape(dataCmd)}' aria-label="Copy command to clipboard" title="Copy">
+      ${COPY_ICON_SVG}
+      <span class="copy-label">Copy</span>
+    </button>
+  </div>
+</div>`;
+    }
+
+    // In-app-form rows with alsoAsScript: render the script as the
+    // primary affordance directly on the checklist row. Previously the
+    // script offer was buried behind the "Set" button, so operators who
+    // didn't have a value to paste (the marketplace happy path) never
+    // discovered it. Closes 040 Entry 4 fix A.
+    if (item.fixedBy.type === "in-app-form" && item.fixedBy.alsoAsScript && item.result.status !== "pass") {
+        return renderScriptBlock(
+            item.fixedBy.alsoAsScript.scriptName,
+            item.fixedBy.alsoAsScript.argsTemplate,
+            ctx,
+        );
+    }
+
+    return "";
+}
+
 const SECTION_ORDER: ManifestSection[] = [
     "Core setup",
     "AI providers",
@@ -296,7 +380,7 @@ const SECTION_ORDER: ManifestSection[] = [
     "Cleanup",
 ];
 
-function renderItem(item: EvaluatedItem, ctx: InstallContext): string {
+function renderItem(item: EvaluatedItem, ctx: InstallContext, allItems: EvaluatedItem[]): string {
     const { result } = item;
     const advancedClass = item.advanced ? " advanced" : "";
     return `
@@ -306,9 +390,9 @@ function renderItem(item: EvaluatedItem, ctx: InstallContext): string {
     <div class="label">${escape(item.label)}${item.required ? "" : ' <span class="meta" style="font-weight:400">(optional)</span>'}</div>
     <div class="meta"><code>${escape(item.id)}</code> · ${escape(item.section)}</div>
     ${result.detail ? `<div class="detail">${escape(result.detail)}</div>` : ""}
-    <div class="action">${describeAction(item, ctx)}</div>
+    <div class="action">${describeAction(item, ctx, allItems)}</div>
   </div>
-  ${describeScriptCommand(item, ctx)}
+  ${describeScriptCommand(item, ctx, allItems)}
 </div>`;
 }
 
@@ -357,7 +441,7 @@ function renderChecklist(
         const introHtml = intro
             ? `<p class="section-intro">${escape(intro)}</p>\n`
             : "";
-        return `<h2>${escape(sec)}</h2>\n${introHtml}${inSection.map((it) => renderItem(it, ctx)).join("\n")}`;
+        return `<h2>${escape(sec)}</h2>\n${introHtml}${inSection.map((it) => renderItem(it, ctx, items)).join("\n")}`;
     }).join("\n");
     // Banner: progress at top + celebration when complete. Shown above
     // the existing session info / preflight modal.
@@ -762,11 +846,11 @@ ${inputs}
   </div>
 </form>
 <div class="restart-warn">
-  Saving writes the value to <code>kv-mike-dev</code>.  If this secret
-  is also wired as a Container App secret-ref env var, the running
-  backend continues to serve the previously-cached value until the
-  next revision restart.  See issue 023's "Secret-ref restart caveat"
-  for the transitional plan.
+  Saving stores the value in <code>${escape(process.env.KEY_VAULT_NAME ?? "your Key Vault")}</code>.
+  Most settings take effect on the next request. A few (Container App
+  env vars that secret-ref Key Vault) only refresh after the backend
+  restarts — if a change doesn't seem to land, restart the backend
+  Container App and refresh.
 </div>
 ${alsoAsScript}
 `,

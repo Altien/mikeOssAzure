@@ -147,7 +147,7 @@ const items: ManifestItem[] = [
                 name: "backend-public-url",
                 label: "Backend public URL",
                 type: "url",
-                placeholder: "https://backend.<env>.azurecontainerapps.io",
+                placeholder: "https://backend.<random>-<hash>.<region>.azurecontainerapps.io",
                 required: true,
                 pattern: "^https?:\\/\\/.+",
             }],
