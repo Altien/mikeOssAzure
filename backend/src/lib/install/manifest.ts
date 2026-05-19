@@ -44,13 +44,26 @@ type CheckKvSecretOpts = {
     displayValue?: (raw: string) => string;
 };
 
+// Azure SDK throws a RestError with code 'SecretNotFound' (HTTP 404)
+// when the KV secret doesn't exist. We treat that as "operator hasn't
+// configured this yet" — semantically equivalent to value === "" — and
+// render a clean human message rather than leaking the SDK error.
+// Any other thrown error IS an unexpected failure (KV unreachable,
+// auth denied, etc.) and surfaces its message so we can diagnose.
+// Closes 040 Entry 1 problem 1.
+function isSecretNotFound(err: unknown): boolean {
+    if (!err || typeof err !== "object") return false;
+    const e = err as { code?: unknown; statusCode?: unknown };
+    return e.code === "SecretNotFound" || e.statusCode === 404;
+}
+
 async function checkKvSecret(
     name: string,
     opts: CheckKvSecretOpts = {},
 ): Promise<CheckResult> {
     try {
         const value = await getConfig(name);
-        if (!value) return { status: "fail", detail: "Not set." };
+        if (!value) return { status: "fail", detail: "Not yet configured." };
         if (opts.format && !opts.format.test(value)) {
             return {
                 status: "fail",
@@ -65,6 +78,9 @@ async function checkKvSecret(
         const formatter = opts.displayValue ?? (opts.redacted ? redactedDisplay : defaultDisplay);
         return { status: "pass", detail: formatter(value) };
     } catch (err) {
+        if (isSecretNotFound(err)) {
+            return { status: "fail", detail: "Not yet configured." };
+        }
         return {
             status: "fail",
             detail: err instanceof Error ? err.message : String(err),
