@@ -101,7 +101,34 @@ export function ModelToggle({ value, onChange, apiKeys, extraModels }: Props) {
             <DropdownMenuContent className="w-56 z-50" side="top" align="start">
                 {GROUP_ORDER.map((group, gi) => {
                     const items = allModels.filter((m) => m.group === group);
-                    if (items.length === 0) return null;
+                    // Azure OpenAI is special-cased: render its section
+                    // header + a disabled placeholder when there are no
+                    // deployments yet (discovery hasn't run / global key
+                    // unset / no deployments returned). Without this, AOAI
+                    // is INVISIBLE even when configured, so the operator
+                    // has no on-screen confirmation it took effect.
+                    // Closes 040 Entry 13 fix A.
+                    if (items.length === 0) {
+                        if (group !== "Azure OpenAI") return null;
+                        return (
+                            <div key={group}>
+                                {gi > 0 && <DropdownMenuSeparator />}
+                                <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-gray-400">
+                                    {group}
+                                </DropdownMenuLabel>
+                                <DropdownMenuItem
+                                    disabled
+                                    className="cursor-default"
+                                >
+                                    <span className="flex-1 text-gray-400 italic">
+                                        {apiKeys?.globalApiKeys?.azureOpenai
+                                            ? "Discovering deployments…"
+                                            : "Configure in /install to use"}
+                                    </span>
+                                </DropdownMenuItem>
+                            </div>
+                        );
+                    }
                     return (
                         <div key={group}>
                             {gi > 0 && <DropdownMenuSeparator />}
