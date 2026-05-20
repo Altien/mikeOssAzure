@@ -83,6 +83,11 @@ function pageShell(title: string, body: string): string {
   .section-intro { font-size: 0.85rem; color: #57606a; margin: 0.25rem 0 0.85rem 0; max-width: 50rem; line-height: 1.45; }
   .item { display: grid; grid-template-columns: auto 1fr; gap: 0.6rem 1rem; align-items: start; padding: 0.75rem 1rem; border: 1px solid #d0d7de; border-radius: 6px; margin-bottom: 0.5rem; background: #ffffff; }
   .item.fail { background: #fff5f5; border-color: #ffcecb; }
+  /* Optional rows that aren't set: same shape as fail but amber, not red.
+     Operator's eye should distinguish "Mike is broken without this" from
+     "Mike works fine without this." See 040 Entry 17. */
+  .item.fail.optional-row { background: #fff8c5; border-color: #f0d77a; }
+  .item.fail.optional-row .badge.fail { background: #9a6700; }
   .item.info { background: #ddf4ff; border-color: #b6e3ff; }
   /* Advanced items are still rendered (the fix path is needed for OSS
      deployments / power users / break-glass), but visually de-emphasized
@@ -404,8 +409,12 @@ const SECTION_ORDER: ManifestSection[] = [
 function renderItem(item: EvaluatedItem, ctx: InstallContext, allItems: EvaluatedItem[]): string {
     const { result } = item;
     const advancedClass = item.advanced ? " advanced" : "";
+    // Optional rows that are failing get amber treatment instead of red
+    // (Mike works without them). 040 Entry 17 fix A.
+    const optionalRowClass =
+        !item.required && result.status === "fail" ? " optional-row" : "";
     return `
-<div class="item ${result.status}${advancedClass}">
+<div class="item ${result.status}${advancedClass}${optionalRowClass}">
   <div class="badge ${result.status}" title="${escape(result.status)}">${result.status === "pass" ? "✓" : result.status === "fail" ? "!" : "i"}</div>
   <div>
     <div class="label">${escape(item.label)}${item.required ? "" : ' <span class="meta" style="font-weight:400">(optional)</span>'}</div>
@@ -446,11 +455,15 @@ function renderChecklist(
         Math.round((session.expiresAt - Date.now()) / 60000),
     );
     const passes = items.filter((i) => i.result.status === "pass").length;
-    const fails = items.filter((i) => i.result.status === "fail").length;
-    // Progress is measured against REQUIRED rows only — operators don't
-    // need every optional row green to call setup done.
+    // Split fails by required-ness so the banner can describe them
+    // separately. Previously banner read 'Step 10 of 12 required ...
+    // 4 rows need attention' which is mathematically inconsistent
+    // (the 4 mixed required + optional fails). 040 Entry 17.
     const required = items.filter((i) => i.required);
+    const optional = items.filter((i) => !i.required);
     const requiredPass = required.filter((i) => i.result.status === "pass").length;
+    const requiredFails = required.filter((i) => i.result.status === "fail").length;
+    const optionalFails = optional.filter((i) => i.result.status === "fail").length;
     const allRequiredPass = required.length > 0 && requiredPass === required.length;
     const savedItem = savedItemId
         ? items.find((i) => i.id === savedItemId)
@@ -474,7 +487,8 @@ function renderChecklist(
 </div>`
         : `<div class="install-progress">
   <strong>Step ${requiredPass} of ${required.length}</strong> of required setup complete.
-  ${fails > 0 ? `<span style="color:#cf222e; margin-left:0.6rem">${fails} row${fails === 1 ? "" : "s"} need${fails === 1 ? "s" : ""} attention.</span>` : ""}
+  ${requiredFails > 0 ? `<span style="color:#cf222e; margin-left:0.6rem">${requiredFails} required row${requiredFails === 1 ? "" : "s"} need${requiredFails === 1 ? "s" : ""} attention.</span>` : ""}
+  ${optionalFails > 0 ? `<span style="color:#9a6700; margin-left:0.6rem">${optionalFails} optional row${optionalFails === 1 ? "" : "s"} unset.</span>` : ""}
 </div>`;
     const hasScripts = items.some((i) => i.fixedBy.type === "external-script");
     return pageShell(
@@ -513,7 +527,7 @@ function renderChecklist(
 </div>
 
 <h1>Mike installation</h1>
-<div class="sub">Signed in via ${escape(session.source)} — session expires in ${expiresIn} min. ${passes} passing, ${fails} failing.</div>
+<div class="sub">Signed in via ${escape(session.source)} — session expires in ${expiresIn} min. ${passes} passing, ${requiredFails + optionalFails} failing.</div>
 <div class="session">
   <span>Session source: <code>${escape(session.source)}</code></span>
   <form method="post" action="/install/sign-out">
