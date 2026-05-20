@@ -907,8 +907,9 @@ function renderGroupPicker(itemId: string, kind: "admin" | "member"): string {
 
 <div id="picker-status" class="meta" style="margin-top:1rem;">Loading your groups…</div>
 
-<label for="picker-search" class="meta" style="display:block; margin-top:1rem;">Search the wider tenant (leave blank for groups you belong to):</label>
-<input id="picker-search" type="text" placeholder="Type to search by display name" style="width:100%;" autocomplete="off">
+<div class="meta" style="margin-top:1rem; padding:0.5rem 0.75rem; background:#fff8c5; border-left:3px solid #d4a72c; border-radius:0 4px 4px 0; font-size:0.85rem;">
+  Only groups you're a member of are shown. This is deliberate: picking a group you're not in for the admin row would lock you out of the install on next sign-in. To use a group you're not currently in, add yourself to it in Entra ID first, then refresh.
+</div>
 
 <label for="picker-select" class="meta" style="display:block; margin-top:1rem;">Group:</label>
 <select id="picker-select" style="width:100%; font-family:inherit; padding:0.4rem;">
@@ -936,7 +937,6 @@ function renderGroupPicker(itemId: string, kind: "admin" | "member"): string {
 <script>
 (function() {
   var statusEl   = document.getElementById("picker-status");
-  var searchEl   = document.getElementById("picker-search");
   var selectEl   = document.getElementById("picker-select");
   var membersTitle = document.getElementById("picker-members-title");
   var membersBody  = document.getElementById("picker-members-body");
@@ -1051,8 +1051,18 @@ function renderGroupPicker(itemId: string, kind: "admin" | "member"): string {
       var members = (data.value || []).slice(0, 50);
       var html;
       if (!members.length) {
-        html = '<em>No members returned.</em>';
+        // Empty group → block save. Picking a 0-member group renders
+        // the app unusable: admin row empties admin role, member row
+        // empties member role. Either way, no one (or only admin) can
+        // use Mike. Closes 040 Entry 15 fix B.
+        useBtn.disabled = true;
+        useBtn.title = "This group has no members — pick another";
+        html = '<em style="color:#cf222e;">This group has no members. Pick a different group, or add members in Entra ID first.</em>';
       } else {
+        // Restore the button (loadMembers may have been called from
+        // setSelected which already enabled it; we re-confirm here).
+        useBtn.disabled = false;
+        useBtn.title = "";
         html = members.map(function(m) {
           // Try every field Graph might use to identify the member.
           // displayName / userPrincipalName for users, mail for groups,
@@ -1084,6 +1094,12 @@ function renderGroupPicker(itemId: string, kind: "admin" | "member"): string {
     setSelected(selectEl.value);
   });
 
+  // Picker is restricted to groups the operator is a member of. The
+  // tenant-wide search was removed because it lets the operator pick
+  // a group they're NOT in, locking themselves out of their own
+  // install on next sign-in (admin group GUID has to appear in the
+  // operator's token group claim). Observed on rg-mike-mtest1
+  // 2026-05-20. Closes 040 Entry 15 fix A.
   async function loadDefault() {
     statusEl.textContent = "Loading your groups…";
     try {
@@ -1091,28 +1107,11 @@ function renderGroupPicker(itemId: string, kind: "admin" | "member"): string {
       var sec = (data.value || []).filter(function(g) {
         return g.securityEnabled === true || g["@odata.type"] === "#microsoft.graph.group";
       });
-      statusEl.textContent = sec.length + " group(s) you belong to. Type above to search the wider tenant.";
+      statusEl.textContent = sec.length + " group(s) you belong to.";
       populateSelect(sec);
       setSelected(null);
     } catch (e) { /* status set in proxy() */ }
   }
-
-  var debounce = null;
-  searchEl.addEventListener("input", function() {
-    clearTimeout(debounce);
-    var q = searchEl.value.trim();
-    if (!q) { loadDefault(); return; }
-    debounce = setTimeout(async function() {
-      statusEl.textContent = "Searching…";
-      try {
-        var data = await proxy("/install/groups/search?q=" + encodeURIComponent(q));
-        var groups = data.value || [];
-        statusEl.textContent = groups.length + " match(es) for " + JSON.stringify(q);
-        populateSelect(groups);
-        setSelected(null);
-      } catch (e) { /* status set */ }
-    }, 250);
-  });
 
   loadDefault();
 })();

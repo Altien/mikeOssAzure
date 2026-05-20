@@ -508,9 +508,14 @@ const items: ManifestItem[] = [
         check: async () => {
             const value = (await getConfig("entra-member-group-ids").catch(() => "")).trim();
             if (!value) {
+                // Info (not pass) so the row draws operator attention.
+                // Green ✓ misled operators on rg-mike-mtest1 2026-05-20 into
+                // thinking they'd made a deliberate restrict-access decision.
+                // Default-behaviour-but-worth-deliberate-choice is exactly
+                // what info status is for. Closes 040 Entry 15 fix C.
                 return {
-                    status: "pass",
-                    detail: "Default: anyone in your Microsoft organisation can use Mike. Pick a group to restrict.",
+                    status: "info",
+                    detail: "Anyone in your Microsoft organisation can use Mike right now (default). Pick a group below to restrict access to a subset.",
                 };
             }
             return { status: "pass", detail: value };
