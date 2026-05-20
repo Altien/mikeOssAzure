@@ -88,7 +88,13 @@ function pageShell(title: string, body: string): string {
      "Mike works fine without this." See 040 Entry 17. */
   .item.fail.optional-row { background: #fff8c5; border-color: #f0d77a; }
   .item.fail.optional-row .badge.fail { background: #9a6700; }
-  .item.info { background: #ddf4ff; border-color: #b6e3ff; }
+  /* Amber/yellow — operator-attention-required-but-not-broken. Used for
+     'Users (who can use Mike)' when the default tenant-wide policy is in
+     effect, and for verify-only failures (e.g. redirect-URI Graph
+     propagation lag). Previous blue palette mapped 'info' to a neutral
+     informational tone that didn't draw enough attention — operator on
+     rg-mike-mtest2 2026-05-20 explicitly asked for yellow here. */
+  .item.info { background: #fff8c5; border-color: #f0d77a; }
   /* Advanced items are still rendered (the fix path is needed for OSS
      deployments / power users / break-glass), but visually de-emphasized
      so the marketplace happy path is obvious. See 036a Phase 6. */
@@ -98,7 +104,7 @@ function pageShell(title: string, body: string): string {
   .item .badge { width: 1.5rem; height: 1.5rem; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; color: white; font-size: 0.75rem; font-weight: 700; flex-shrink: 0; }
   .badge.pass { background: #1a7f37; }
   .badge.fail { background: #cf222e; }
-  .badge.info { background: #1f6feb; }
+  .badge.info { background: #9a6700; }
   .item .label { font-weight: 600; font-size: 0.95rem; }
   .item .meta { font-size: 0.8rem; color: #656d76; margin-top: 0.15rem; }
   .item .detail { font-size: 0.8rem; color: #57606a; margin-top: 0.25rem; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; word-break: break-all; }
@@ -1127,10 +1133,15 @@ function renderGroupPicker(itemId: string, kind: "admin" | "member"): string {
     statusEl.textContent = "Loading your groups…";
     try {
       var data = await proxy("/install/groups/me-member-of");
+      // securityEnabled true ONLY. Earlier filter let any group through,
+      // including M365 / distribution lists which are NOT in the token
+      // groups claim (groupMembershipClaims SecurityGroup emits only
+      // security groups). Picking a non-security group as admin would
+      // lock the operator out. 040 Entry 15 fix recurrence.
       var sec = (data.value || []).filter(function(g) {
-        return g.securityEnabled === true || g["@odata.type"] === "#microsoft.graph.group";
+        return g.securityEnabled === true;
       });
-      statusEl.textContent = sec.length + " group(s) you belong to.";
+      statusEl.textContent = sec.length + " security group(s) you belong to.";
       populateSelect(sec);
       setSelected(null);
     } catch (e) { /* status set in proxy() */ }
