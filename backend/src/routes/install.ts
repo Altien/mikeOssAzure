@@ -227,11 +227,17 @@ async function readCustomFqdn(): Promise<string | undefined> {
 // glued to their flag.  If the whole thing fits in 60 chars we keep it
 // on one line for readability.
 function formatPowershellCommand(scriptName: string, filledArgs: string): string {
-    const single = `.\\${scriptName} ${filledArgs}`.trim();
+    // `pwsh -File` rather than `.\<script>` because Windows-PowerShell-5.1
+    // (the default association for .ps1 files on Windows desktops) chokes
+    // on UTF-8 em-dashes / fancy quotes in our script comments, even
+    // though the scripts themselves are PS-7-only via #requires. Forcing
+    // pwsh in the displayed command avoids the parser blowing up before
+    // it sees the #requires directive. See feedback_ps_scripts_pwsh_required.
+    const single = `pwsh -File .\\${scriptName} ${filledArgs}`.trim();
     if (single.length <= 60) return single;
     // Split on space-then-hyphen so each `-FlagName value` chunk is its own line.
     const parts = filledArgs.split(/\s+(?=-)/g).filter(Boolean);
-    return [`.\\${scriptName} \``, ...parts.map((p, i) => `  ${p}${i === parts.length - 1 ? "" : " `"}`)].join("\n");
+    return [`pwsh -File .\\${scriptName} \``, ...parts.map((p, i) => `  ${p}${i === parts.length - 1 ? "" : " `"}`)].join("\n");
 }
 
 // Returns the labels of rows this item depends on that haven't passed yet.
