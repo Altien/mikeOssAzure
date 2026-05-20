@@ -27,6 +27,10 @@
         "displayName": "Endpoints",
         "fact": [
           {
+            "displayName": "Install URL — open this to start setup",
+            "path": "outputs.installUrl"
+          },
+          {
             "displayName": "Backend FQDN",
             "path": "outputs.backendFqdn"
           },
