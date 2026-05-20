@@ -14,7 +14,15 @@ import { resolveSecret } from "../envSecrets";
 
 async function client(override?: string | null): Promise<OpenAI> {
     const apiKey = override?.trim() || await resolveSecret("openai-api-key");
-    return new OpenAI({ apiKey });
+    // Base URL must be resolved explicitly now that ANTHROPIC_API_KEY /
+    // OPENAI_API_KEY env vars are no longer wired via Container App
+    // secretRef (see infra/modules/containerapp-backend.bicep — the AI
+    // env-var bridge was removed to fix the redeploy-clobber bug, 040
+    // Entry 19). The OpenAI SDK used to auto-read OPENAI_BASE_URL; now
+    // we pass it via the constructor. undefined leaves the SDK default
+    // (api.openai.com).
+    const baseURL = (await resolveSecret("openai-base-url")) || undefined;
+    return new OpenAI({ apiKey, baseURL });
 }
 
 function toNativeMessages(

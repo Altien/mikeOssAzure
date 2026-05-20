@@ -107,65 +107,6 @@
         ]
       },
       {
-        "name": "aiKeys",
-        "label": "AI providers",
-        "elements": [
-          {
-            "name": "info",
-            "type": "Microsoft.Common.InfoBox",
-            "visible": true,
-            "options": {
-              "icon": "Info",
-              "text": "Provide at least one AI provider key. Keys are written to the Key Vault provisioned in your subscription and are never visible to the publisher. You can leave both blank and add them via Key Vault later — AI features will be disabled until set."
-            }
-          },
-          {
-            "name": "anthropicApiKey",
-            "type": "Microsoft.Common.PasswordBox",
-            "label": {
-              "password": "Anthropic API key",
-              "confirmPassword": "Confirm Anthropic API key"
-            },
-            "toolTip": "From console.anthropic.com. Leave blank to skip.",
-            "constraints": {
-              "required": false,
-              "regex": "^(|sk-ant-[A-Za-z0-9_-]{20,})$",
-              "validationMessage": "Must be empty or start with 'sk-ant-'."
-            },
-            "options": {
-              "hideConfirmation": false
-            }
-          },
-          {
-            "name": "openaiApiKey",
-            "type": "Microsoft.Common.PasswordBox",
-            "label": {
-              "password": "OpenAI API key",
-              "confirmPassword": "Confirm OpenAI API key"
-            },
-            "toolTip": "OpenAI key, or an Azure AI Foundry / Azure OpenAI key when using a custom base URL. Leave blank to skip.",
-            "constraints": {
-              "required": false
-            },
-            "options": {
-              "hideConfirmation": false
-            }
-          },
-          {
-            "name": "openaiBaseUrl",
-            "type": "Microsoft.Common.TextBox",
-            "label": "OpenAI base URL (optional)",
-            "defaultValue": "",
-            "toolTip": "Leave blank for api.openai.com. Set to your Azure AI Foundry endpoint URL to route requests there instead.",
-            "constraints": {
-              "required": false,
-              "regex": "^(|https://[A-Za-z0-9._/-]{1,500})$",
-              "validationMessage": "Must be empty or an https:// URL up to 500 chars."
-            }
-          }
-        ]
-      },
-      {
         "name": "networking",
         "label": "Networking",
         "elements": [
@@ -188,9 +129,6 @@
       "pgStorageGb": "[int(steps('database').pgStorageGb)]",
       "pgBackupRetentionDays": "[int(steps('database').pgBackupRetentionDays)]",
       "enableHa": "[steps('database').enableHa]",
-      "anthropicApiKey": "[steps('aiKeys').anthropicApiKey]",
-      "openaiApiKey": "[steps('aiKeys').openaiApiKey]",
-      "openaiBaseUrl": "[steps('aiKeys').openaiBaseUrl]",
       "enableNatGateway": "[steps('networking').enableNatGateway]",
       "createAcr": false,
       "acrSku": "Standard",
