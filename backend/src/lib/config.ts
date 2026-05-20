@@ -50,7 +50,15 @@ function getSecretClient(): SecretClient {
 export async function getConfig(secretName: string): Promise<string> {
     const envKey = secretName.toUpperCase().replaceAll("-", "_");
     const fromEnv = process.env[envKey];
-    if (fromEnv !== undefined && fromEnv !== "") return fromEnv;
+    // '__unset__' is the Bicep placeholder used to make Container App
+    // secretRef'd env vars resolve at revision boot even before the
+    // operator has set a real value. Treat it as "not in env" here so
+    // we fall through to the cache/KV path and pick up values the
+    // operator wrote via /install — without requiring a revision rebuild
+    // to flush the stale placeholder out of process.env. Surfaced on
+    // rg-mike-mtest1 2026-05-20 where /install Save appeared to silently
+    // do nothing after writing the value to KV.
+    if (fromEnv !== undefined && fromEnv !== "" && fromEnv !== "__unset__") return fromEnv;
 
     const now = Date.now();
     const cached = cache.get(secretName);
