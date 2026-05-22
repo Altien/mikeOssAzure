@@ -857,15 +857,20 @@ async function renderItemForm(
   var selects = document.querySelectorAll(".tweak-select[data-tweak]");
 
   function format(scriptName, filledArgs) {
-    var single = "." + "\\\\" + scriptName + " " + filledArgs;
-    if (single.length <= 60) return single;
+    // Match formatPowershellCommand server-side: Unblock-File first
+    // (handles Internet-zone Mark-of-the-Web), then pwsh -File (forces
+    // PS7+ which our scripts require). Tweak-rerender stays in sync
+    // with the initial render. 040 Entry 22 follow-up.
+    var unblock = "Unblock-File ." + "\\\\" + scriptName;
+    var single = "pwsh -File ." + "\\\\" + scriptName + " " + filledArgs;
+    if (single.length <= 60) return unblock + "\\n" + single;
     var parts = filledArgs.split(/\\s+(?=-)/g).filter(Boolean);
-    if (parts.length <= 1) return single;
-    var out = ["." + "\\\\" + scriptName + " \`"];
+    if (parts.length <= 1) return unblock + "\\n" + single;
+    var out = ["pwsh -File ." + "\\\\" + scriptName + " \`"];
     for (var i = 0; i < parts.length; i++) {
       out.push("  " + parts[i] + (i === parts.length - 1 ? "" : " \`"));
     }
-    return out.join("\\n");
+    return unblock + "\\n" + out.join("\\n");
   }
 
   function rebuild() {
