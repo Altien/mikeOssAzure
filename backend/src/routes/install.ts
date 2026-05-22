@@ -402,7 +402,17 @@ function describeScriptCommand(item: EvaluatedItem, ctx: InstallContext, allItem
     // script offer was buried behind the "Set" button, so operators who
     // didn't have a value to paste (the marketplace happy path) never
     // discovered it. Closes 040 Entry 4 fix A.
-    if (item.fixedBy.type === "in-app-form" && item.fixedBy.alsoAsScript && item.result.status !== "pass") {
+    //
+    // Show the script regardless of THIS row's status — alsoAsScript
+    // typically configures MULTIPLE rows (create-entra-apps.ps1 writes
+    // tenant-id, both client-ids, and the frontend client secret in one
+    // pass). When an upstream row passes (e.g. entra-tenant-id pre-seeded
+    // by Bicep) but downstream rows still need the script, the offer
+    // must remain visible. Idempotent scripts make a "still here as a
+    // re-run affordance" appearance harmless even on fully-green rows.
+    // Observed on rg-mike-mtest3 2026-05-22 where pre-seeding tenant-id
+    // (040 Entry 21) hid the Entra setup script entirely.
+    if (item.fixedBy.type === "in-app-form" && item.fixedBy.alsoAsScript) {
         return renderScriptBlock(
             item.fixedBy.alsoAsScript.scriptName,
             item.fixedBy.alsoAsScript.argsTemplate,
