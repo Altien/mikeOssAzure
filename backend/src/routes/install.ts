@@ -777,6 +777,7 @@ async function renderItemForm(
     item: ManifestItem,
     fields: FormField[],
     error: string | null,
+    req?: Request,
 ): Promise<string> {
     const current = await readCurrentValues(fields);
     const inputs = fields
@@ -788,8 +789,16 @@ async function renderItemForm(
     // the script covers provision-a-new-resource).
     let alsoAsScript = "";
     if (item.fixedBy.type === "in-app-form" && item.fixedBy.alsoAsScript) {
+        // backendFqdn was previously read from process.env.BACKEND_PUBLIC_URL,
+        // which Bicep never wires — so `<fqdn>` substitution left
+        // `-BackendFqdn` blank in the displayed command. Prefer KV's
+        // `backend-public-url` (seeded by Bicep at deploy, commit 6f5b589),
+        // and fall back to req.hostname for direct-deploy / dev cases.
+        // 040 Entry 22 walkthrough on rg-mike-mtest3 2026-05-22.
+        const kvBackendUrl = (await getConfig("backend-public-url").catch(() => "")).trim();
+        const fromKv = kvBackendUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "");
         const ctx: InstallContext = {
-            backendFqdn: process.env.BACKEND_PUBLIC_URL?.replace(/^https?:\/\//, "") ?? "",
+            backendFqdn: fromKv || req?.hostname || "",
             keyVaultName: process.env.KEY_VAULT_NAME ?? "",
             resourceGroup: process.env.RESOURCE_GROUP ?? "",
             customFqdn: await readCustomFqdn(),
@@ -1183,7 +1192,7 @@ installRouter.get("/items/:id", async (req: Request, res: Response) => {
         res.status(400);
         return void res.send(pageShell("Not an in-app form", `<h1>${escape(item.label)} is not edited via /install</h1><p>Use the <code>${escape(item.fixedBy.type === "external-script" ? item.fixedBy.scriptName : "auto")}</code> path instead.</p><p><a href="/install">Back</a></p>`));
     }
-    res.send(await renderItemForm(item, item.fixedBy.fields, null));
+    res.send(await renderItemForm(item, item.fixedBy.fields, null, req));
 });
 
 // Graph proxy for the picker. The picker page can't call Graph
@@ -1311,7 +1320,7 @@ installRouter.post("/items/:id", async (req: Request, res: Response) => {
         );
         if (err) {
             res.status(400).set("Content-Type", "text/html; charset=utf-8");
-            return void res.send(await renderItemForm(item, fields, err));
+            return void res.send(await renderItemForm(item, fields, err, req));
         }
     }
 
@@ -1325,7 +1334,7 @@ installRouter.post("/items/:id", async (req: Request, res: Response) => {
         const detail = err instanceof Error ? err.message : String(err);
         res.status(500).set("Content-Type", "text/html; charset=utf-8");
         return void res.send(
-            await renderItemForm(item, fields, `Save partially failed: ${detail}`),
+            await renderItemForm(item, fields, `Save partially failed: ${detail}`, req),
         );
     }
 
