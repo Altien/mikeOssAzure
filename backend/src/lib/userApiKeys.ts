@@ -23,13 +23,20 @@
 
 import crypto from "node:crypto";
 import { getConfig } from "./config";
+import { resolveSecret } from "./envSecrets";
 import { createServerSupabase } from "./supabase";
 import type { AzureOpenaiSettings, UserApiKeys } from "./llm";
 
+// `openrouter` and `courtlistener` added with upstream 44e868e
+// (CourtListener integration). Unlike upstream, their org-level
+// fallback goes through resolveSecret() (Key Vault primary, env var
+// fallback — internal design notes §2.4) instead of raw process.env.
 export type ApiKeyProvider =
     | "claude"
     | "gemini"
     | "openai"
+    | "openrouter"
+    | "courtlistener"
     | "azure_openai";
 
 const ENCRYPTION_SECRET_NAME = "user-api-keys-encryption-key";
@@ -189,10 +196,25 @@ export async function getUserApiKeys(
         ? null
         : await readLegacyProviderKeys(userId, client);
 
+    // openrouter / courtlistener (44e868e): no legacy user_profiles
+    // columns to fall back to — instead fall back to the org-level
+    // secret (KV primary, env fallback: OPENROUTER_API_KEY /
+    // COURTLISTENER_API_TOKEN — same env names upstream reads directly).
+    const openrouter =
+        decrypted.openrouter ??
+        (await resolveSecret("openrouter-api-key")) ??
+        null;
+    const courtlistener =
+        decrypted.courtlistener ??
+        (await resolveSecret("courtlistener-api-token")) ??
+        null;
+
     return {
         claude: decrypted.claude ?? legacy?.claude ?? null,
         gemini: decrypted.gemini ?? legacy?.gemini ?? null,
         openai: decrypted.openai ?? legacy?.openai ?? null,
+        openrouter: openrouter || null,
+        courtlistener: courtlistener || null,
         azureOpenai: decrypted.azure_openai
             ? parseAzureOpenaiBlob(decrypted.azure_openai)
             : (legacy?.azureOpenai ?? null),
@@ -283,6 +305,8 @@ export async function getConfiguredProviders(
         claude: false,
         gemini: false,
         openai: false,
+        openrouter: false,
+        courtlistener: false,
         azure_openai: false,
     };
     for (const row of (rows ?? []) as { provider: ApiKeyProvider }[]) {

@@ -2,8 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Plus, Loader2, Play, ChevronDown, MessageSquare, Download, Users, Upload } from "lucide-react";
-import { HeaderSearchBtn } from "../shared/HeaderSearchBtn";
+import { Plus, Loader2, Play, ChevronDown, MessageSquare, Download, Users, Upload, X } from "lucide-react";
 
 import {
     clearTabularCells,
@@ -17,8 +16,8 @@ import {
 } from "@/app/lib/mikeApi";
 import type {
     ColumnConfig,
-    MikeDocument,
-    MikeProject,
+    Document,
+    Project,
     TabularCell,
     TabularReview,
 } from "../shared/types";
@@ -42,6 +41,7 @@ import type { TRTableHandle } from "./TRTable";
 import { TRChatPanel } from "./TRChatPanel";
 import { exportTabularReviewToExcel } from "./exportToExcel";
 import { useSidebar } from "@/app/contexts/SidebarContext";
+import { PageHeader } from "../shared/PageHeader";
 
 export function TRView() {
     // Read both ids from the live URL — useParams() reports the
@@ -68,9 +68,9 @@ export function TRView() {
             : "";
     const { setSidebarOpen } = useSidebar();
     const [review, setReview] = useState<TabularReview | null>(null);
-    const [project, setProject] = useState<MikeProject | null>(null);
+    const [project, setProject] = useState<Project | null>(null);
     const [cells, setCells] = useState<TabularCell[]>([]);
-    const [documents, setDocuments] = useState<MikeDocument[]>([]);
+    const [documents, setDocuments] = useState<Document[]>([]);
     const [columns, setColumns] = useState<ColumnConfig[]>([]);
     const [loading, setLoading] = useState(true);
     const [generating, setGenerating] = useState(false);
@@ -188,7 +188,7 @@ export function TRView() {
         }
     }
 
-    async function handleAddDocuments(newDocs: MikeDocument[]) {
+    async function handleAddDocuments(newDocs: Document[]) {
         const toAdd = newDocs.filter(
             (d) => !documents.some((existing) => existing.id === d.id),
         );
@@ -229,7 +229,7 @@ export function TRView() {
         if (files.length === 0) return;
         setUploadingDroppedFilenames(files.map((file) => file.name));
         try {
-            const uploaded: MikeDocument[] = [];
+            const uploaded: Document[] = [];
             const documentIds = documents.map((document) => document.id);
             for (const file of files) {
                 const document = await uploadReviewDocument(reviewId, file, {
@@ -554,135 +554,123 @@ export function TRView() {
         : documents;
 
     return (
-        <div className="flex h-full overflow-hidden bg-white">
+        <div className="flex h-full overflow-hidden">
             <div className="flex flex-1 flex-col overflow-hidden">
                 {/* Header */}
-                <div className="mb-1 bg-white px-4 py-3 md:px-10 flex items-start justify-between shrink-0 gap-4">
-                    <div className="flex items-center gap-1.5 text-2xl font-medium font-serif">
-                        {projectId && (
-                            <>
-                                <button
-                                    onClick={() => router.push("/projects")}
-                                    className="text-gray-500 hover:text-gray-700 transition-colors"
-                                >
-                                    Projects
-                                </button>
-                                <span className="text-gray-300">›</span>
-                                <button
-                                    onClick={() =>
-                                        router.push(`/projects/${projectId}`)
-                                    }
-                                    className="text-gray-500 hover:text-gray-700 transition-colors"
-                                >
-                                    {loading ? (
-                                        <div className="h-6 w-32 rounded bg-gray-100 animate-pulse" />
-                                    ) : (
-                                        <>
-                                            {project?.name ?? ""}
-                                            {project?.cm_number && (
+                <PageHeader
+                    align="start"
+                    shrink
+                    className="gap-4"
+                    breadcrumbs={[
+                        ...(projectId
+                            ? [
+                                  {
+                                      label: "Projects",
+                                      onClick: () => router.push("/projects"),
+                                  },
+                                  loading
+                                      ? {
+                                            loading: true,
+                                            skeletonClassName: "w-32",
+                                            onClick: () =>
+                                                router.push(`/projects/${projectId}`),
+                                            title: "Back to project",
+                                        }
+                                      : {
+                                            label: project?.name ?? "",
+                                            suffix: project?.cm_number ? (
                                                 <span className="ml-1 text-gray-400">
                                                     (#{project.cm_number})
                                                 </span>
-                                            )}
-                                        </>
-                                    )}
-                                </button>
-                                <span className="text-gray-300">›</span>
-                                <button
-                                    onClick={() =>
-                                        router.push(
-                                            `/projects/${projectId}?tab=reviews`,
-                                        )
-                                    }
-                                    className="text-gray-500 hover:text-gray-700 transition-colors"
-                                >
-                                    Tabular Reviews
-                                </button>
-                            </>
-                        )}
-                        {!projectId && (
-                            <button
-                                onClick={() => router.push("/tabular-reviews")}
-                                className="text-gray-500 hover:text-gray-700 transition-colors"
-                            >
-                                Tabular Reviews
-                            </button>
-                        )}
-                        <span className="text-gray-300">›</span>
-                        {loading ? (
-                            <div className="h-6 w-40 rounded bg-gray-100 animate-pulse" />
-                        ) : (
-                            <RenameableTitle
-                                value={review?.title || "Untitled Review"}
-                                onCommit={handleTitleCommit}
-                            />
-                        )}
-                    </div>
-                    {!loading && (
-                        <div className="flex items-center gap-2">
-                            <HeaderSearchBtn value={search} onChange={setSearch} placeholder="Search documents…" />
-                            {!projectId && (
-                                <button
-                                    onClick={() => setPeopleModalOpen(true)}
-                                    disabled={loading}
-                                    className={`flex h-8 w-8 items-center justify-center text-sm transition-colors ${
-                                        loading
-                                            ? "text-gray-300 cursor-default"
-                                            : "text-gray-500 hover:text-gray-900 cursor-pointer"
-                                    }`}
-                                    title="People with access"
-                                    aria-label="People with access"
-                                >
-                                    <Users className="h-4 w-4" />
-                                </button>
-                            )}
-                            <button
-                                onClick={() =>
-                                    exportTabularReviewToExcel({
-                                        reviewTitle: review?.title || "Tabular Review",
-                                        columns,
-                                        documents,
-                                        cells,
-                                    })
-                                }
-                                disabled={columns.length === 0 || documents.length === 0}
-                                title="Export to Excel"
-                                className={`flex h-8 items-center justify-center gap-1.5 px-3 text-sm transition-colors ${
-                                    columns.length === 0 || documents.length === 0
-                                        ? "text-gray-300 cursor-default"
-                                        : "text-gray-700 hover:text-gray-900 cursor-pointer"
-                                }`}
-                            >
-                                <Download className="h-4 w-4" />
-                                Export
-                            </button>
-                            <button
-                                onClick={handleGenerate}
-                                disabled={
-                                    generating ||
-                                    columns.length === 0 ||
-                                    documents.length === 0 ||
-                                    savingColumnsConfig
-                                }
-                                className={`flex h-8 items-center justify-center gap-1.5 px-3 text-sm transition-colors ${
-                                    generating ||
-                                    columns.length === 0 ||
-                                    documents.length === 0 ||
-                                    savingColumnsConfig
-                                        ? "text-gray-300 cursor-default"
-                                        : "text-gray-700 hover:text-gray-900 cursor-pointer"
-                                }`}
-                            >
-                                {generating ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                    <Play className="h-4 w-4" />
-                                )}
-                                {generating ? "Running…" : "Run"}
-                            </button>
-                        </div>
-                    )}
-                </div>
+                                            ) : null,
+                                            onClick: () =>
+                                                router.push(`/projects/${projectId}`),
+                                            title: "Back to project",
+                                        },
+                              ]
+                            : [
+                                  {
+                                      label: "Tabular Reviews",
+                                      onClick: () => router.push("/tabular-reviews"),
+                                      title: "Back to Tabular Reviews",
+                                  },
+                              ]),
+                        loading
+                            ? {
+                                  loading: true,
+                                  skeletonClassName: "w-40",
+                              }
+                            : {
+                                  label: (
+                                      <RenameableTitle
+                                          value={review?.title || "Untitled Review"}
+                                          onCommit={handleTitleCommit}
+                                      />
+                                  ),
+                              },
+                    ]}
+                    actions={
+                        !loading
+                            ? [
+                                  {
+                                      type: "search",
+                                      value: search,
+                                      onChange: setSearch,
+                                      placeholder: "Search documents…",
+                                  },
+                                  !projectId
+                                      ? {
+                                            onClick: () =>
+                                                setPeopleModalOpen(true),
+                                            disabled: loading,
+                                            iconOnly: true,
+                                            title: "People with access",
+                                            icon: <Users className="h-4 w-4" />,
+                                        }
+                                      : null,
+                                  {
+                                      onClick: () =>
+                                          exportTabularReviewToExcel({
+                                              reviewTitle:
+                                                  review?.title ||
+                                                  "Tabular Review",
+                                              columns,
+                                              documents,
+                                              cells,
+                                          }),
+                                      disabled:
+                                          columns.length === 0 ||
+                                          documents.length === 0,
+                                      title: "Export to Excel",
+                                      icon: <Download className="h-4 w-4" />,
+                                      label: (
+                                          <span className="hidden sm:inline">
+                                              Export
+                                          </span>
+                                      ),
+                                  },
+                                  {
+                                      onClick: handleGenerate,
+                                      disabled:
+                                          generating ||
+                                          columns.length === 0 ||
+                                          documents.length === 0 ||
+                                          savingColumnsConfig,
+                                      icon: generating ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                      ) : (
+                                          <Play className="h-4 w-4" />
+                                      ),
+                                      label: (
+                                          <span className="hidden sm:inline">
+                                              {generating ? "Running…" : "Run"}
+                                          </span>
+                                      ),
+                                  },
+                              ]
+                            : undefined
+                    }
+                />
 
                 {/* Toolbar */}
                 <div className="flex items-center h-10 px-4 md:px-10 border-b border-gray-200 gap-4">
@@ -699,8 +687,12 @@ export function TRView() {
                                 : "text-gray-700 hover:text-gray-900"
                         }`}
                     >
-                        <MessageSquare className="h-3.5 w-3.5" />
-                        Assistant in Tabular Review
+                        {chatOpen ? (
+                            <X className="h-3.5 w-3.5" />
+                        ) : (
+                            <MessageSquare className="h-3.5 w-3.5" />
+                        )}
+                        Assistant
                     </button>
                     <div className="ml-auto flex items-center gap-5">
                         {loading ? (
@@ -898,7 +890,7 @@ export function TRView() {
                 <AddProjectDocsModal
                     open={addDocsOpen}
                     onClose={() => setAddDocsOpen(false)}
-                    onSelect={(docs: MikeDocument[]) =>
+                    onSelect={(docs: Document[]) =>
                         handleAddDocuments(docs)
                     }
                     breadcrumb={[
@@ -918,7 +910,7 @@ export function TRView() {
                 <AddDocumentsModal
                     open={addDocsOpen}
                     onClose={() => setAddDocsOpen(false)}
-                    onSelect={(docs: MikeDocument[]) =>
+                    onSelect={(docs: Document[]) =>
                         handleAddDocuments(docs)
                     }
                     breadcrumb={[

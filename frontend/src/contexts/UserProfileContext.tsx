@@ -18,6 +18,7 @@ interface UserProfile {
     creditsResetDate: string;
     creditsRemaining: number;
     tier: string;
+    titleModel: string;
     tabularModel: string;
     fastModel: string | null;
     claudeApiKey: string | null;
@@ -159,6 +160,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 creditsResetDate: futureResetDate.toISOString(),
                 creditsRemaining: 999999,
                 tier: "Free",
+                titleModel: "gemini-3.1-flash-lite-preview",
                 tabularModel: "gemini-3-flash-preview",
                 fastModel: null,
                 claudeApiKey: null,

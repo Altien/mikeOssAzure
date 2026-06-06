@@ -6,14 +6,14 @@
 import { getBrowserAccessToken, bounceIfUnauthorized } from "@/lib/auth-token";
 import type {
     AssistantEvent,
-    MikeChat,
-    MikeChatDetailOut,
-    MikeCitationAnnotation,
-    MikeDocument,
-    MikeFolder,
-    MikeMessage,
-    MikeProject,
-    MikeWorkflow,
+    Chat,
+    ChatDetailOut,
+    CitationAnnotation,
+    Document,
+    Folder,
+    Message,
+    Project,
+    Workflow,
     TabularReview,
     TabularReviewDetailOut,
 } from "@/app/components/shared/types";
@@ -26,11 +26,11 @@ interface ServerMessage {
     content: string | AssistantEvent[] | null;
     files?: { filename: string; document_id?: string }[] | null;
     workflow?: { id: string; title: string } | null;
-    annotations?: MikeCitationAnnotation[] | null;
+    annotations?: CitationAnnotation[] | null;
     created_at: string;
 }
 interface ServerChatDetailOut {
-    chat: MikeChat;
+    chat: Chat;
     messages: ServerMessage[];
 }
 
@@ -80,16 +80,16 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
 // Projects
 // ---------------------------------------------------------------------------
 
-export async function listProjects(): Promise<MikeProject[]> {
-    return apiRequest<MikeProject[]>("/projects");
+export async function listProjects(): Promise<Project[]> {
+    return apiRequest<Project[]>("/projects");
 }
 
 export async function createProject(
     name: string,
     cm_number?: string,
     shared_with?: string[],
-): Promise<MikeProject> {
-    return apiRequest<MikeProject>("/projects", {
+): Promise<Project> {
+    return apiRequest<Project>("/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, cm_number, shared_with }),
@@ -107,6 +107,7 @@ export interface UserProfile {
     creditsResetDate: string;
     creditsRemaining: number;
     tier: string;
+    titleModel: string;
     tabularModel: string;
     apiKeyStatus: ApiKeyStatus;
 }
@@ -118,6 +119,7 @@ export async function getUserProfile(): Promise<UserProfile> {
 export async function updateUserProfile(payload: {
     displayName?: string | null;
     organisation?: string | null;
+    titleModel?: string;
     tabularModel?: string;
 }): Promise<UserProfile> {
     return apiRequest<UserProfile>("/user/profile", {
@@ -127,7 +129,12 @@ export async function updateUserProfile(payload: {
     });
 }
 
-export type ApiKeyProvider = "claude" | "gemini" | "openai";
+export type ApiKeyProvider =
+    | "claude"
+    | "gemini"
+    | "openai"
+    | "openrouter"
+    | "courtlistener";
 export type ApiKeySource = "user" | "env" | null;
 export type ApiKeyState = Record<
     ApiKeyProvider,
@@ -156,8 +163,8 @@ export async function saveApiKey(
     });
 }
 
-export async function getProject(projectId: string): Promise<MikeProject> {
-    return apiRequest<MikeProject>(`/projects/${projectId}`);
+export async function getProject(projectId: string): Promise<Project> {
+    return apiRequest<Project>(`/projects/${projectId}`);
 }
 
 export async function updateProject(
@@ -167,8 +174,8 @@ export async function updateProject(
         cm_number?: string;
         shared_with?: string[];
     },
-): Promise<MikeProject> {
-    return apiRequest<MikeProject>(`/projects/${projectId}`, {
+): Promise<Project> {
+    return apiRequest<Project>(`/projects/${projectId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -206,8 +213,8 @@ export async function createProjectFolder(
     projectId: string,
     name: string,
     parentFolderId?: string | null,
-): Promise<MikeFolder> {
-    return apiRequest<MikeFolder>(`/projects/${projectId}/folders`, {
+): Promise<Folder> {
+    return apiRequest<Folder>(`/projects/${projectId}/folders`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -221,8 +228,8 @@ export async function renameProjectFolder(
     projectId: string,
     folderId: string,
     name: string,
-): Promise<MikeFolder> {
-    return apiRequest<MikeFolder>(
+): Promise<Folder> {
+    return apiRequest<Folder>(
         `/projects/${projectId}/folders/${folderId}`,
         {
             method: "PATCH",
@@ -245,8 +252,8 @@ export async function moveSubfolderToFolder(
     projectId: string,
     folderId: string,
     parentFolderId: string | null,
-): Promise<MikeFolder> {
-    return apiRequest<MikeFolder>(
+): Promise<Folder> {
+    return apiRequest<Folder>(
         `/projects/${projectId}/folders/${folderId}`,
         {
             method: "PATCH",
@@ -260,8 +267,8 @@ export async function moveDocumentToFolder(
     projectId: string,
     documentId: string,
     folderId: string | null,
-): Promise<MikeDocument> {
-    return apiRequest<MikeDocument>(
+): Promise<Document> {
+    return apiRequest<Document>(
         `/projects/${projectId}/documents/${documentId}/folder`,
         {
             method: "PATCH",
@@ -275,8 +282,8 @@ export async function renameProjectDocument(
     projectId: string,
     documentId: string,
     filename: string,
-): Promise<MikeDocument> {
-    return apiRequest<MikeDocument>(
+): Promise<Document> {
+    return apiRequest<Document>(
         `/projects/${projectId}/documents/${documentId}`,
         {
             method: "PATCH",
@@ -289,24 +296,27 @@ export async function renameProjectDocument(
 export async function addDocumentToProject(
     projectId: string,
     documentId: string,
-): Promise<MikeDocument> {
-    return apiRequest<MikeDocument>(
+): Promise<Document> {
+    return apiRequest<Document>(
         `/projects/${projectId}/documents/${documentId}`,
         { method: "POST" },
     );
 }
 
-export interface MikeDocumentVersion {
+export interface DocumentVersion {
     id: string;
     version_number: number | null;
     source: string;
     created_at: string;
-    display_name: string | null;
+    filename: string | null;
+    file_type?: string | null;
+    size_bytes?: number | null;
+    page_count?: number | null;
 }
 
 export async function listDocumentVersions(documentId: string): Promise<{
     current_version_id: string | null;
-    versions: MikeDocumentVersion[];
+    versions: DocumentVersion[];
 }> {
     return apiRequest(`/single-documents/${documentId}/versions`);
 }
@@ -314,12 +324,12 @@ export async function listDocumentVersions(documentId: string): Promise<{
 export async function uploadDocumentVersion(
     documentId: string,
     file: File,
-    displayName?: string,
-): Promise<MikeDocumentVersion> {
+    filename?: string,
+): Promise<DocumentVersion> {
     const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
-    if (displayName) form.append("display_name", displayName);
+    if (filename) form.append("filename", filename);
     const response = await fetch(
         `${API_BASE}/single-documents/${documentId}/versions`,
         {
@@ -330,28 +340,58 @@ export async function uploadDocumentVersion(
     );
     bounceIfUnauthorized(response);
     if (!response.ok) throw new Error(await response.text());
-    return response.json() as Promise<MikeDocumentVersion>;
+    return response.json() as Promise<DocumentVersion>;
+}
+
+export async function copyDocumentVersionFromDocument(
+    documentId: string,
+    sourceDocumentId: string,
+    filename?: string,
+): Promise<DocumentVersion> {
+    return apiRequest<DocumentVersion>(
+        `/single-documents/${documentId}/versions/from-document`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                source_document_id: sourceDocumentId,
+                filename,
+            }),
+        },
+    );
 }
 
 export async function renameDocumentVersion(
     documentId: string,
     versionId: string,
-    displayName: string | null,
-): Promise<MikeDocumentVersion> {
-    return apiRequest<MikeDocumentVersion>(
+    filename: string | null,
+): Promise<DocumentVersion> {
+    return apiRequest<DocumentVersion>(
         `/single-documents/${documentId}/versions/${versionId}`,
         {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ display_name: displayName }),
+            body: JSON.stringify({ filename }),
         },
     );
+}
+
+export async function deleteDocumentVersion(
+    documentId: string,
+    versionId: string,
+): Promise<{
+    deleted_version_id: string;
+    current_version_id: string | null;
+}> {
+    return apiRequest(`/single-documents/${documentId}/versions/${versionId}`, {
+        method: "DELETE",
+    });
 }
 
 export async function uploadProjectDocument(
     projectId: string,
     file: File,
-): Promise<MikeDocument> {
+): Promise<Document> {
     const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
@@ -365,12 +405,12 @@ export async function uploadProjectDocument(
     );
     bounceIfUnauthorized(response);
     if (!response.ok) throw new Error(await response.text());
-    return response.json() as Promise<MikeDocument>;
+    return response.json() as Promise<Document>;
 }
 
 export async function uploadStandaloneDocument(
     file: File,
-): Promise<MikeDocument> {
+): Promise<Document> {
     const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
@@ -381,11 +421,11 @@ export async function uploadStandaloneDocument(
     });
     bounceIfUnauthorized(response);
     if (!response.ok) throw new Error(await response.text());
-    return response.json() as Promise<MikeDocument>;
+    return response.json() as Promise<Document>;
 }
 
-export async function listStandaloneDocuments(): Promise<MikeDocument[]> {
-    return apiRequest<MikeDocument[]>("/single-documents");
+export async function listStandaloneDocuments(): Promise<Document[]> {
+    return apiRequest<Document[]>("/single-documents");
 }
 
 export async function deleteDocument(documentId: string): Promise<void> {
@@ -435,20 +475,20 @@ export async function createChat(payload?: {
     });
 }
 
-export async function listChats(options?: { limit?: number }): Promise<MikeChat[]> {
+export async function listChats(options?: { limit?: number }): Promise<Chat[]> {
     const params = new URLSearchParams();
     if (options?.limit) params.set("limit", String(options.limit));
     const query = params.toString();
-    return apiRequest<MikeChat[]>(`/chat${query ? `?${query}` : ""}`);
+    return apiRequest<Chat[]>(`/chat${query ? `?${query}` : ""}`);
 }
 
-export async function listProjectChats(projectId: string): Promise<MikeChat[]> {
-    return apiRequest<MikeChat[]>(`/projects/${projectId}/chats`);
+export async function listProjectChats(projectId: string): Promise<Chat[]> {
+    return apiRequest<Chat[]>(`/projects/${projectId}/chats`);
 }
 
-export async function getChat(chatId: string): Promise<MikeChatDetailOut> {
+export async function getChat(chatId: string): Promise<ChatDetailOut> {
     const raw = await apiRequest<ServerChatDetailOut>(`/chat/${chatId}`);
-    const messages: MikeMessage[] = raw.messages.map((m) => {
+    const messages: Message[] = raw.messages.map((m) => {
         if (m.role === "user") {
             return {
                 role: "user",
@@ -495,6 +535,32 @@ export async function generateChatTitle(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message }),
     });
+}
+
+export type CaseLawOpinion = {
+    opinionId: number | null;
+    apiUrl?: string | null;
+    type: string | null;
+    author: string | null;
+    url: string | null;
+    text?: string | null;
+    html?: string | null;
+};
+
+export async function getCourtlistenerOpinions(
+    clusterId: number,
+): Promise<CaseLawOpinion[]> {
+    const result = await apiRequest<{ opinions: CaseLawOpinion[] }>(
+        "/case-law/case-opinions",
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                clusterId,
+            }),
+        },
+    );
+    return result.opinions;
 }
 
 export async function streamChat(payload: {
@@ -638,7 +704,7 @@ export async function uploadReviewDocument(
         documentIds?: string[];
         columnsConfig?: { index: number; name: string; prompt: string }[];
     },
-): Promise<MikeDocument> {
+): Promise<Document> {
     const uploaded = options?.projectId
         ? await uploadProjectDocument(options.projectId, file)
         : await uploadStandaloneDocument(file);
@@ -804,16 +870,16 @@ export async function clearTabularCells(
 // Workflows
 // ---------------------------------------------------------------------------
 
-type WorkflowType = MikeWorkflow["type"];
+type WorkflowType = Workflow["type"];
 
 export async function listWorkflows(
     type: WorkflowType,
-): Promise<MikeWorkflow[]> {
-    return apiRequest<MikeWorkflow[]>(`/workflows?type=${type}`);
+): Promise<Workflow[]> {
+    return apiRequest<Workflow[]>(`/workflows?type=${type}`);
 }
 
-export async function getWorkflow(workflowId: string): Promise<MikeWorkflow> {
-    return apiRequest<MikeWorkflow>(`/workflows/${workflowId}`);
+export async function getWorkflow(workflowId: string): Promise<Workflow> {
+    return apiRequest<Workflow>(`/workflows/${workflowId}`);
 }
 
 export async function createWorkflow(payload: {
@@ -822,8 +888,8 @@ export async function createWorkflow(payload: {
     prompt_md?: string;
     columns_config?: { index: number; name: string; prompt: string }[];
     practice?: string | null;
-}): Promise<MikeWorkflow> {
-    return apiRequest<MikeWorkflow>("/workflows", {
+}): Promise<Workflow> {
+    return apiRequest<Workflow>("/workflows", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -838,8 +904,8 @@ export async function updateWorkflow(
         columns_config?: { index: number; name: string; prompt: string }[];
         practice?: string | null;
     },
-): Promise<MikeWorkflow> {
-    return apiRequest<MikeWorkflow>(`/workflows/${workflowId}`, {
+): Promise<Workflow> {
+    return apiRequest<Workflow>(`/workflows/${workflowId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

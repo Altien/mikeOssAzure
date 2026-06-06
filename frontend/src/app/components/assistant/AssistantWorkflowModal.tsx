@@ -1,18 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
 import { ChevronLeft, Search, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { MikeWorkflow } from "../shared/types";
+import type { Workflow } from "../shared/types";
 import { listWorkflows } from "@/app/lib/mikeApi";
 import { BUILT_IN_WORKFLOWS } from "../workflows/builtinWorkflows";
+import { Modal } from "../shared/Modal";
 
 interface Props {
     open: boolean;
     onClose: () => void;
-    onSelect: (workflow: MikeWorkflow) => void;
+    onSelect: (workflow: Workflow) => void;
     projectName?: string;
     projectCmNumber?: string | null;
     initialWorkflowId?: string;
@@ -26,9 +26,9 @@ export function AssistantWorkflowModal({
     projectCmNumber,
     initialWorkflowId,
 }: Props) {
-    const [workflows, setWorkflows] = useState<MikeWorkflow[]>([]);
+    const [workflows, setWorkflows] = useState<Workflow[]>([]);
     const [loading, setLoading] = useState(false);
-    const [selected, setSelected] = useState<MikeWorkflow | null>(null);
+    const [selected, setSelected] = useState<Workflow | null>(null);
     const [search, setSearch] = useState("");
     const [rightVisible, setRightVisible] = useState(false);
 
@@ -87,45 +87,28 @@ export function AssistantWorkflowModal({
         onClose();
     }
 
-    return createPortal(
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/10 backdrop-blur-xs">
-            <div
-                className={`w-full rounded-2xl bg-white shadow-2xl flex flex-col h-[600px] ${selected ? "max-w-4xl" : "max-w-2xl"}`}
-            >
-                {/* Header */}
-                <div className="flex items-center justify-between px-4 py-4 shrink-0 border-b border-gray-100">
-                    <div className="flex items-center gap-1.5 text-xs text-gray-400">
-                        {projectName ? (
-                            <>
-                                <span>Projects</span>
-                                <span>›</span>
-                                <span>
-                                    {projectName}
-                                    {projectCmNumber
-                                        ? ` (#${projectCmNumber})`
-                                        : ""}
-                                </span>
-                                <span>›</span>
-                                <span>Assistant</span>
-                                <span>›</span>
-                                <span>Add workflow</span>
-                            </>
-                        ) : (
-                            <>
-                                <span>Assistant</span>
-                                <span>›</span>
-                                <span>Add workflow</span>
-                            </>
-                        )}
-                    </div>
-                    <button
-                        onClick={onClose}
-                        className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
-                    >
-                        <X className="h-4 w-4" />
-                    </button>
-                </div>
+    const breadcrumbs = projectName
+        ? [
+              "Projects",
+              `${projectName}${projectCmNumber ? ` (#${projectCmNumber})` : ""}`,
+              "Assistant",
+              "Add workflow",
+          ]
+        : ["Assistant", "Add workflow"];
 
+    return (
+        <Modal
+            open={open}
+            onClose={onClose}
+            size={selected ? "xl" : "lg"}
+            breadcrumbs={breadcrumbs}
+            primaryAction={{
+                label: "Use",
+                type: "button",
+                onClick: handleUse,
+                disabled: !selected,
+            }}
+        >
                 {/* Content */}
                 <div className="flex flex-row flex-1 min-h-0 overflow-hidden">
                     {/* Left panel — workflow list */}
@@ -133,7 +116,7 @@ export function AssistantWorkflowModal({
                         className={`overflow-y-auto ${selected ? "w-80 shrink-0" : "flex-1"}`}
                     >
                         {/* Search */}
-                        <div className="px-4 pt-3 pb-2 shrink-0">
+                        <div className="pt-3 pb-2 shrink-0">
                             <div className="flex items-center gap-1.5 rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1">
                                 <Search className="h-3 w-3 text-gray-400 shrink-0" />
                                 <input
@@ -152,7 +135,7 @@ export function AssistantWorkflowModal({
                         </div>
 
                         {loading ? (
-                            <div className="space-y-px px-4 pt-1">
+                            <div className="space-y-px pt-1">
                                 {[60, 45, 75, 50, 65, 40, 55].map((w, i) => (
                                     <div
                                         key={i}
@@ -167,7 +150,7 @@ export function AssistantWorkflowModal({
                                 ))}
                             </div>
                         ) : filteredWorkflows.length === 0 ? (
-                            <p className="px-4 py-8 text-sm text-center text-gray-400">
+                            <p className="py-8 text-sm text-center text-gray-400">
                                 {search ? "No matches found" : "No assistant workflows found"}
                             </p>
                         ) : (
@@ -268,26 +251,6 @@ export function AssistantWorkflowModal({
                     )}
                 </div>
 
-                {/* Footer */}
-                <div className="border-t border-gray-100 px-4 py-3 flex items-center justify-end gap-2 shrink-0">
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        className="rounded-lg px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-100 transition-colors"
-                    >
-                        Cancel
-                    </button>
-                    <button
-                        type="button"
-                        onClick={handleUse}
-                        disabled={!selected}
-                        className="rounded-lg bg-gray-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-40 transition-colors"
-                    >
-                        Use
-                    </button>
-                </div>
-            </div>
-        </div>,
-        document.body,
+        </Modal>
     );
 }

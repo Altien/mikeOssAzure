@@ -9,7 +9,7 @@
 -- dedicated table with AES-256-GCM at-rest encryption.
 --
 -- See `backend/migrations/UPSTREAM_SYNC_LOG.md` for the full decision
--- record. See `MikeMigrate/notes/upstream-sync/mikeOssOrig-ba6f771.md`
+-- record. See `the migration tooling/internal notes`
 -- for the migration narrative.
 --
 -- Differences from upstream's shape (for the next-time-this-syncs reader):
@@ -38,7 +38,7 @@
 --      `backend/src/lib/config.ts` pattern: `KEY_VAULT_NAME` +
 --      `DefaultAzureCredential` + `SecretClient`). Env-var fallback for
 --      local dev only — never as the production path. See
---      `MIGRATION_KNOWLEDGE.md` §2.4 (Secrets handling).
+--      `internal design notes` §2.4 (Secrets handling).
 --
 -- The legacy plaintext columns on `user_profiles` (`claude_api_key`,
 -- `gemini_api_key`, `openai_api_key`, `azure_openai_endpoint`,
@@ -56,8 +56,14 @@ create table if not exists public.user_api_keys (
     -- owns the cascade-delete behaviour.
     user_id uuid not null,
     -- See header note 3 — dev's provider set is wider than upstream's.
+    -- openrouter/courtlistener added with upstream 44e868e; existing
+    -- databases get the widened check from 0008 (this CREATE only fires
+    -- on fresh installs).
     provider text not null check (
-        provider in ('claude', 'gemini', 'openai', 'azure_openai')
+        provider in (
+            'claude', 'gemini', 'openai', 'openrouter', 'courtlistener',
+            'azure_openai'
+        )
     ),
     -- Base64-encoded AES-256-GCM ciphertext. For `azure_openai` rows the
     -- plaintext is a JSON-encoded `{endpoint, key, version, deployment}`

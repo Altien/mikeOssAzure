@@ -6,8 +6,11 @@ import {
     buildMessages,
     enrichWithPriorEvents,
     buildWorkflowStore,
+    AssistantStreamError,
     extractAnnotations,
+    isAbortError,
     runLLMStream,
+    stripTransientAssistantEvents,
     type ChatMessage,
 } from "../lib/chatTools";
 import { completeText } from "../lib/llm";
@@ -15,6 +18,19 @@ import { getUserApiKeys, getUserModelSettings } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
 
 export const chatRouter = Router();
+
+// Adopted from upstream 44e868e (title normalization). The rest of
+// upstream's helper block in this region (devLog, AccessibleChat,
+// parseOptionalProjectId/parseChatMessages validation, getAccessibleChat)
+// remains rejected — dev's request validation and access checks live
+// inline and in lib/access.ts (earlier sync decisions).
+const TITLE_FALLBACK = "Misc. Query";
+
+function normalizeGeneratedTitle(raw: string): string {
+    const title = raw.trim().replace(/^["'`]+|["'`.,:;!?]+$/g, "").trim();
+    if (!title) return TITLE_FALLBACK;
+    return title.slice(0, 80);
+}
 
 // GET /chat
 // Visible chats = the user's own chats + every chat under a project the
@@ -110,11 +126,12 @@ chatRouter.get("/:chatId", requireAuth, async (req, res) => {
     res.json({ chat, messages: hydrated });
 });
 
-// Stored message annotations/events capture the `status` at the time the
-// assistant produced the edit (always "pending"). If the user later accepts
-// or rejects, `document_edits.status` is updated but the stored message
-// annotation is not. On chat load we merge the current DB status in so
-// EditCards render with the real state.
+// Stored doc_edited events capture the `status` at the time the assistant
+// produced the edit (always "pending"). If the user later accepts or rejects,
+// `document_edits.status` is updated but the stored event is not. On chat load
+// we merge the current DB status in so EditCards render with the real state.
+// Legacy rows may also have duplicate edit_data in top-level annotations, so
+// keep patching that path until old data no longer matters.
 async function hydrateEditStatuses(
     messages: Record<string, unknown>[],
     db: ReturnType<typeof createServerSupabase>,
@@ -307,13 +324,15 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
             db,
         );
         const titleText = await completeText({
+            // Dev routes title generation through fast_model (dev's
+            // analog of upstream's title_model — sync-log: 44e868e);
+            // prompt + normalization adopted from upstream.
             model: fast_model,
-            user: `Generate a concise title (3–6 words) for a chat in an AI Legal Platform that starts with this message. The title should describe the topic or document — do NOT include words like "Legal Assistant", "AI", "Chat", or any similar prefix. Return only the title, no quotes or punctuation.\n\nMessage: ${message.slice(0, 500)}`,
+            user: `Generate a concise title (3–6 words) for a chat in an AI Legal Platform that starts with this message. The title should describe the topic or document — do NOT include words like "Legal Assistant", "AI", "Chat", or any similar prefix. If there is not enough information to generate a title, return exactly "${TITLE_FALLBACK}". Return only the title, no quotes or punctuation.\n\nMessage: ${message.slice(0, 500)}`,
             maxTokens: 64,
             apiKeys: api_keys,
         });
-        const generated = titleText.trim();
-        if (generated) title = generated;
+        title = normalizeGeneratedTitle(titleText);
     } catch (err) {
         console.error("[generate-title] LLM call failed, using message-prefix fallback", err);
     }
@@ -462,13 +481,18 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     res.flushHeaders();
 
     const write = (line: string) => res.write(line);
+    const streamAbort = new AbortController();
+    let streamFinished = false;
+    res.on("close", () => {
+        if (!streamFinished) streamAbort.abort();
+    });
 
     const apiKeys = await getUserApiKeys(userId, db);
 
     try {
         write(`data: ${JSON.stringify({ type: "chat_id", chatId })}\n\n`);
 
-        const { fullText, events } = await runLLMStream({
+        const { fullText, events, annotations } = await runLLMStream({
             apiMessages,
             docStore,
             docIndex,
@@ -478,6 +502,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             workflowStore,
             model,
             apiKeys,
+            signal: streamAbort.signal,
             projectId: project_id ?? null,
         });
 
@@ -486,11 +511,11 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             eventCount: events?.length ?? 0,
         });
 
-        const annotations = extractAnnotations(fullText, docIndex, events);
+        const persistedEvents = stripTransientAssistantEvents(events);
         await db.from("chat_messages").insert({
             chat_id: chatId,
             role: "assistant",
-            content: events.length ? events : null,
+            content: persistedEvents.length ? persistedEvents : null,
             annotations: annotations.length ? annotations : null,
         });
 
@@ -501,16 +526,45 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                 .eq("id", chatId);
         }
     } catch (err) {
+        if (isAbortError(err)) {
+            devLog("[chat/stream] client aborted stream", { chatId });
+            return;
+        }
         console.error("[chat/stream] error:", err);
+        const message =
+            err instanceof Error && err.message ? err.message : "Stream error";
+        const errorEvents = err instanceof AssistantStreamError
+            ? stripTransientAssistantEvents(err.events)
+            : [{ type: "error" as const, message }];
+        const errorFullText =
+            err instanceof AssistantStreamError ? err.fullText : "";
+        try {
+            const annotations = extractAnnotations(
+                errorFullText,
+                docIndex,
+                errorEvents,
+            );
+            const { error: saveError } = await db.from("chat_messages").insert({
+                chat_id: chatId,
+                role: "assistant",
+                content: errorEvents.length ? errorEvents : null,
+                annotations: annotations.length ? annotations : null,
+            });
+            if (saveError)
+                console.error("[chat/stream] failed to save error", saveError);
+        } catch (saveErr) {
+            console.error("[chat/stream] failed to save error", saveErr);
+        }
         try {
             write(
-                `data: ${JSON.stringify({ type: "error", message: "Stream error" })}\n\n`,
+                `data: ${JSON.stringify({ type: "error", message })}\n\n`,
             );
             write("data: [DONE]\n\n");
         } catch {
             /* ignore */
         }
     } finally {
+        streamFinished = true;
         res.end();
     }
 });

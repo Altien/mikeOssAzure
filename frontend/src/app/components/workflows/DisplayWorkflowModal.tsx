@@ -12,18 +12,21 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { MikeDocument, MikeWorkflow } from "../shared/types";
+import type {
+    Document,
+    Workflow,
+} from "../shared/types";
 import { createTabularReview } from "@/app/lib/mikeApi";
 import { useRouter } from "next/navigation";
 import { formatIcon, formatLabel } from "../tabular/columnFormat";
 import { useDirectoryData } from "../shared/useDirectoryData";
 import { FileDirectory } from "../shared/FileDirectory";
-import type { MikeProject } from "../shared/types";
+import type { Project } from "../shared/types";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 
 interface Props {
-    workflows: MikeWorkflow[];
-    workflow: MikeWorkflow | null;
+    workflows: Workflow[];
+    workflow: Workflow | null;
     onClose: () => void;
 }
 
@@ -52,7 +55,7 @@ function SimpleProjectPicker({
     selectedId,
     onSelect,
 }: {
-    projects: MikeProject[];
+    projects: Project[];
     selectedId: string | null;
     onSelect: (id: string | null) => void;
 }) {
@@ -172,7 +175,7 @@ function MarkdownBody({ content }: { content: string }) {
 // ---------------------------------------------------------------------------
 // Right panel for assistant workflows (select screen)
 // ---------------------------------------------------------------------------
-function AssistantPanel({ workflow }: { workflow: MikeWorkflow }) {
+function AssistantPanel({ workflow }: { workflow: Workflow }) {
     return (
         <div className="flex-1 border-l border-t border-gray-200 flex flex-col overflow-hidden px-3 pb-3">
             <div className="py-3 shrink-0">
@@ -192,7 +195,7 @@ function AssistantPanel({ workflow }: { workflow: MikeWorkflow }) {
 // ---------------------------------------------------------------------------
 // Right panel for tabular workflows — accordion column list (select screen)
 // ---------------------------------------------------------------------------
-function TabularPanel({ workflow }: { workflow: MikeWorkflow }) {
+function TabularPanel({ workflow }: { workflow: Workflow }) {
     const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
     const columns = (workflow.columns_config ?? []).sort(
         (a, b) => a.index - b.index,
@@ -283,7 +286,7 @@ function TabularPanel({ workflow }: { workflow: MikeWorkflow }) {
 // ---------------------------------------------------------------------------
 export function DisplayWorkflowModal({ workflows, workflow, onClose }: Props) {
     const [screen, setScreen] = useState<"select" | "configure">("select");
-    const [selected, setSelected] = useState<MikeWorkflow | null>(workflow);
+    const [selected, setSelected] = useState<Workflow | null>(workflow);
     const [listSearch, setListSearch] = useState("");
     const selectedRowRef = useRef<HTMLButtonElement>(null);
 
@@ -352,13 +355,16 @@ export function DisplayWorkflowModal({ workflows, workflow, onClose }: Props) {
             const projectId = inProject ? selectedProjectId! : undefined;
             const chatId = await saveChat(projectId);
             if (!chatId) return;
-            const allDocs: MikeDocument[] = [
+            const allDocs: Document[] = [
                 ...standaloneDocuments,
                 ...projects.flatMap((p) => p.documents || []),
             ];
             const files = allDocs
                 .filter((d) => selectedDocIds.has(d.id))
-                .map((d) => ({ filename: d.filename, document_id: d.id }));
+                .map((d) => ({
+                    filename: d.filename,
+                    document_id: d.id,
+                }));
             const content = assistantPrompt.trim()
                 ? `implement workflow\n\n${assistantPrompt.trim()}`
                 : "implement workflow";
@@ -381,7 +387,7 @@ export function DisplayWorkflowModal({ workflows, workflow, onClose }: Props) {
     }
 
     async function handleCreateReview() {
-        const allDocs: MikeDocument[] = [
+        const allDocs: Document[] = [
             ...standaloneDocuments,
             ...projects.flatMap((p) => p.documents || []),
         ];
@@ -418,7 +424,9 @@ export function DisplayWorkflowModal({ workflows, workflow, onClose }: Props) {
     const projectDocs = selectedProject?.documents ?? [];
 
     const filteredProjectDocs = q
-        ? projectDocs.filter((d) => d.filename.toLowerCase().includes(q))
+        ? projectDocs.filter((d) =>
+              d.filename.toLowerCase().includes(q),
+          )
         : projectDocs;
 
     const filteredStandalone = q
@@ -431,7 +439,8 @@ export function DisplayWorkflowModal({ workflows, workflow, onClose }: Props) {
         .map((p) => ({
             ...p,
             documents: (p.documents || []).filter(
-                (d) => !q || d.filename.toLowerCase().includes(q),
+                (d) =>
+                    !q || d.filename.toLowerCase().includes(q),
             ),
         }))
         .filter(

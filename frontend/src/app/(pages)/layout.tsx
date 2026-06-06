@@ -79,13 +79,20 @@ export default function MikeLayout({
             <SidebarContext.Provider
                 value={{
                     setSidebarOpen: (open) => {
+                        const isSmall =
+                            typeof window !== "undefined" &&
+                            window.innerWidth < 768;
+                        if (isSmall) {
+                            if (!open) setIsSidebarOpen(false);
+                            return;
+                        }
                         setIsSidebarOpen(open);
                         setIsSidebarOpenDesktop(open);
                     },
                 }}
             >
-                <div className="h-dvh bg-white flex flex-col">
-                    <div className="flex-1 flex overflow-hidden">
+                <div className="h-dvh flex flex-col bg-gray-50/80">
+                    <div className="flex-1 flex min-w-0 overflow-visible">
                         <AppSidebar
                             isOpen={isSidebarOpen}
                             onToggle={handleSidebarToggle}

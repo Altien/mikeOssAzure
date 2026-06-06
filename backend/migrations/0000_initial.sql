@@ -31,6 +31,10 @@ create table if not exists public.user_profiles (
   tier text not null default 'Free',
   message_credits_used integer not null default 0,
   credits_reset_date timestamptz not null default (now() + interval '30 days'),
+  -- Upstream divergence (sync-log: 44e868e): upstream added title_model
+  -- and quote_model preference columns here. Dev's fast_model (0004)
+  -- covers the title/lightweight-task preference, and nothing in dev
+  -- reads quote_model, so neither column was adopted.
   tabular_model text not null default 'gemini-3-flash-preview',
   claude_api_key text,
   gemini_api_key text,
@@ -52,6 +56,8 @@ create index if not exists idx_user_profiles_user
 -- TODO(entraid): handle_new_user() function and on_auth_user_created trigger removed.
 --   On Supabase, this trigger auto-created a user_profiles row on signup.
 --   Replacement: upsertUserProfile() in the backend auth middleware.
+-- (user_api_keys lives in 0006_user_api_keys.sql — upstream inlines it
+-- here; dev keeps it in its own numbered migration.)
 
 -- ---------------------------------------------------------------------------
 -- Projects and documents
@@ -91,11 +97,6 @@ create table if not exists public.documents (
   id uuid primary key default gen_random_uuid(),
   project_id uuid references public.projects(id) on delete cascade,
   user_id text not null,
-  filename text not null,
-  file_type text,
-  size_bytes integer not null default 0,
-  page_count integer,
-  structure_tree jsonb,
   status text not null default 'pending',
   folder_id uuid references public.project_subfolders(id) on delete set null,
   created_at timestamptz not null default now(),
@@ -115,7 +116,10 @@ create table if not exists public.document_versions (
   pdf_storage_path text,
   source text not null default 'upload',
   version_number integer,
-  display_name text,
+  filename text,
+  file_type text,
+  size_bytes integer,
+  page_count integer,
   created_at timestamptz not null default now(),
   constraint document_versions_source_check
     check (source = any (array[
@@ -331,3 +335,42 @@ create table if not exists public.tabular_review_chat_messages (
 
 create index if not exists tabular_review_chat_messages_chat_idx
   on public.tabular_review_chat_messages(chat_id, created_at);
+
+-- ---------------------------------------------------------------------------
+-- CourtListener bulk-data indexes
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.courtlistener_citation_index (
+  id bigint primary key,
+  volume text not null,
+  reporter text not null,
+  page text not null,
+  type integer,
+  cluster_id bigint not null,
+  date_created timestamptz,
+  date_modified timestamptz
+);
+
+create index if not exists courtlistener_citation_lookup_idx
+  on public.courtlistener_citation_index(volume, reporter, page);
+
+create index if not exists courtlistener_citation_cluster_idx
+  on public.courtlistener_citation_index(cluster_id);
+
+create table if not exists public.courtlistener_opinion_cluster_index (
+  id bigint primary key,
+  case_name text,
+  case_name_short text,
+  case_name_full text,
+  slug text,
+  date_filed date,
+  citation_count integer,
+  precedential_status text,
+  filepath_pdf_harvard text,
+  filepath_json_harvard text,
+  docket_id bigint
+);
+
+-- (Upstream's "Direct client grant hardening" revoke section is omitted —
+-- dev's Azure Postgres has no Supabase anon/authenticated roles; see
+-- 0005_postgres_roles.sql for dev's role model.)

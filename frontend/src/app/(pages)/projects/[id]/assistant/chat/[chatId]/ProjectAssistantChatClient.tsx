@@ -47,11 +47,11 @@ import { useUserProfile } from "@/contexts/UserProfileContext";
 import { useSidebar } from "@/app/contexts/SidebarContext";
 import type {
     CitationQuote,
-    MikeCitationAnnotation,
-    MikeDocument,
-    MikeEditAnnotation,
-    MikeMessage,
-    MikeProject,
+    CitationAnnotation,
+    Document,
+    EditAnnotation,
+    Message,
+    Project,
 } from "@/app/components/shared/types";
 import { expandCitationToEntries } from "@/app/components/shared/types";
 
@@ -215,7 +215,7 @@ export default function ProjectAssistantChatClient() {
     const username =
         profile?.displayName?.trim() || user?.email?.split("@")[0] || "there";
 
-    const [project, setProject] = useState<MikeProject | null>(null);
+    const [project, setProject] = useState<Project | null>(null);
     const [chatTitle, setChatTitle] = useState<string | null>(null);
     const [chatOwnerId, setChatOwnerId] = useState<string | null>(null);
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
@@ -263,7 +263,7 @@ export default function ProjectAssistantChatClient() {
         chats,
         saveChat,
     } = useChatHistoryContext();
-    const [initialMessages] = useState<MikeMessage[]>(newChatMessages ?? []);
+    const [initialMessages] = useState<Message[]>(newChatMessages ?? []);
     const { messages, isResponseLoading, handleChat, setMessages, cancel } =
         useAssistantChat({ initialMessages, chatId, projectId });
 
@@ -482,7 +482,7 @@ export default function ProjectAssistantChatClient() {
 
     // ── Handlers ──────────────────────────────────────────────────────────────
     const handleSubmit = useCallback(
-        (message: MikeMessage) => {
+        (message: Message) => {
             if (!activeTab) return handleChat(message);
             return handleChat(message, {
                 displayedDoc: {
@@ -494,11 +494,11 @@ export default function ProjectAssistantChatClient() {
         [activeTab, handleChat],
     );
 
-    const handleDocClick = (doc: MikeDocument) => {
+    const handleDocClick = (doc: Document) => {
         openTab(doc.id, doc.filename);
     };
 
-    const handleCitationClick = (citation: MikeCitationAnnotation) => {
+    const handleCitationClick = (citation: CitationAnnotation) => {
         openTab(
             citation.document_id,
             citation.filename,
@@ -515,7 +515,7 @@ export default function ProjectAssistantChatClient() {
         openTab(args.documentId, args.filename, undefined, args.versionId);
     };
 
-    const handleEditViewClick = (ann: MikeEditAnnotation, filename: string) => {
+    const handleEditViewClick = (ann: EditAnnotation, filename: string) => {
         openTab(ann.document_id, filename, undefined, ann.version_id ?? null);
         setEditScrollTarget({
             key: `${ann.edit_id}-${Date.now()}`,

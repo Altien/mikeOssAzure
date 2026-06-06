@@ -43,13 +43,13 @@ import {
     uploadDocumentVersion,
     renameDocumentVersion,
     getProjectPeople,
-    type MikeDocumentVersion,
+    type DocumentVersion,
 } from "@/app/lib/mikeApi";
 import type {
-    MikeDocument,
-    MikeFolder,
-    MikeProject,
-    MikeChat,
+    Document,
+    Folder,
+    Project,
+    Chat,
     TabularReview,
 } from "@/app/components/shared/types";
 import { ToolbarTabs } from "@/app/components/shared/ToolbarTabs";
@@ -115,7 +115,7 @@ function DocVersionHistory({
     docId: string;
     filename: string;
     loading: boolean;
-    versions: MikeDocumentVersion[];
+    versions: DocumentVersion[];
     onDownloadVersion: (
         docId: string,
         versionId: string,
@@ -284,9 +284,9 @@ export function ProjectPage() {
     const rawId = match?.[1] ?? "";
     const projectId =
         rawId && rawId !== "_" ? decodeURIComponent(rawId) : "";
-    const [project, setProject] = useState<MikeProject | null>(null);
-    const [folders, setFolders] = useState<MikeFolder[]>([]);
-    const [chats, setChats] = useState<MikeChat[]>([]);
+    const [project, setProject] = useState<Project | null>(null);
+    const [folders, setFolders] = useState<Folder[]>([]);
+    const [chats, setChats] = useState<Chat[]>([]);
     const [projectReviews, setProjectReviews] = useState<TabularReview[]>([]);
     const [loading, setLoading] = useState(true);
     const searchParams = useSearchParams();
@@ -308,8 +308,8 @@ export function ProjectPage() {
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
     const { user } = useAuth();
     const [uploadVersionDoc, setUploadVersionDoc] =
-        useState<MikeDocument | null>(null);
-    const [viewingDoc, setViewingDoc] = useState<MikeDocument | null>(null);
+        useState<Document | null>(null);
+    const [viewingDoc, setViewingDoc] = useState<Document | null>(null);
     const [viewingDocVersion, setViewingDocVersion] = useState<{
         id: string;
         label: string;
@@ -331,7 +331,7 @@ export function ProjectPage() {
         Set<string>
     >(() => new Set());
     const [versionsByDocId, setVersionsByDocId] = useState<
-        Map<string, MikeDocumentVersion[]>
+        Map<string, DocumentVersion[]>
     >(() => new Map());
     const [loadingVersionDocIds, setLoadingVersionDocIds] = useState<
         Set<string>
@@ -394,12 +394,12 @@ export function ProjectPage() {
      * latest_version_number) and re-fetch the version list so the history
      * panel shows the new row.
      */
-    function handleUploadNewVersion(doc: MikeDocument) {
+    function handleUploadNewVersion(doc: Document) {
         setUploadVersionDoc(doc);
     }
 
     async function submitNewVersion(
-        doc: MikeDocument,
+        doc: Document,
         file: File,
         displayName: string,
     ) {
@@ -496,7 +496,7 @@ export function ProjectPage() {
         if (!projectId) return;
         Promise.all([
             getProject(projectId),
-            listProjectChats(projectId).catch(() => [] as MikeChat[]),
+            listProjectChats(projectId).catch(() => [] as Chat[]),
             listTabularReviews(projectId).catch(() => []),
         ])
             .then(([proj, projectChats, projectReviews]) => {
@@ -574,7 +574,7 @@ export function ProjectPage() {
         // Immediately hide the input and show an optimistic folder row
         setCreatingFolderIn(undefined);
         const tempId = `temp-${Date.now()}`;
-        const optimistic: MikeFolder = {
+        const optimistic: Folder = {
             id: tempId,
             project_id: projectId,
             user_id: "",
@@ -629,7 +629,7 @@ export function ProjectPage() {
 
     // ── Doc/chat/review handlers ──────────────────────────────────────────────
 
-    function handleDocsSelected(newDocs: MikeDocument[]) {
+    function handleDocsSelected(newDocs: Document[]) {
         setProject((prev) =>
             prev ? {
                 ...prev,
@@ -834,7 +834,7 @@ export function ProjectPage() {
 
     function wouldCreateCycle(movingId: string, targetId: string): boolean {
         // Returns true if targetId is movingId or a descendant of it
-        let cur: MikeFolder | undefined = folders.find((f) => f.id === targetId);
+        let cur: Folder | undefined = folders.find((f) => f.id === targetId);
         while (cur) {
             if (cur.id === movingId) return true;
             if (!cur.parent_folder_id) break;

@@ -13,7 +13,8 @@ interface TabDef {
 
 const TABS: TabDef[] = [
     { id: "general", label: "General", href: "/account" },
-    { id: "models", label: "Models & API Keys", href: "/account/models" },
+    { id: "models", label: "Model Preferences", href: "/account/models" },
+    { id: "api-keys", label: "API Keys", href: "/account/api-keys" },
 ];
 
 export default function AccountLayout({
@@ -33,7 +34,7 @@ export default function AccountLayout({
 
     if (authLoading) {
         return (
-            <div className="h-dvh bg-white flex items-center justify-center">
+            <div className="h-dvh flex items-center justify-center">
                 <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
             </div>
         );

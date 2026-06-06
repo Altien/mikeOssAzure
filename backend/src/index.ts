@@ -33,6 +33,7 @@ import { llmRouter } from "./routes/llm";
 import { diagnosticsRouter } from "./routes/diagnostics";
 import { installRouter } from "./routes/install";
 import { configRouter } from "./routes/config";
+import { caseLawRouter } from "./routes/caseLaw";
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
@@ -111,6 +112,12 @@ app.set("trust proxy", true);
 // stay disabled because dev serves a static-exported Next.js bundle from
 // the same origin and we don't want to re-derive the policy on every
 // frontend change. HSTS only in production.
+// Upstream divergence (sync-log: 44e868e): upstream switched to a strict
+// CSP (default-src/base-uri/frame-ancestors 'none'). That works for
+// upstream's API-only backend, but dev's backend serves the SPA shell +
+// assets from the same origin — a 'none' default-src would block every
+// script/style in the served frontend. Do not adopt without authoring a
+// real policy for the bundled frontend.
 app.use(
   helmet({
     contentSecurityPolicy: false,
@@ -215,6 +222,7 @@ app.use("/api/workflows", workflowsRouter);
 app.use("/api/user", userRouter);
 app.use("/api/users", userRouter);
 app.use("/api/download", downloadsRouter);
+app.use("/api/case-law", caseLawRouter);
 app.use("/api/auth", authRouter);
 app.use("/api/llm", llmRouter);
 app.use("/api/admin/diagnostics", diagnosticsRouter);

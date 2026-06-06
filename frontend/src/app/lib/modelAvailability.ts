@@ -1,7 +1,8 @@
-import { MODELS, type ModelOption } from "../components/assistant/ModelToggle";
+import { SETTINGS_MODELS, type ModelOption } from "../components/assistant/ModelToggle";
 
 export type ModelProvider = "claude" | "gemini" | "openai" | "azureOpenai";
 
+<<<<<<< HEAD
 // A provider is "available" if the user has pasted a personal key OR the
 // backend has a shared env-level key for it. The latter is exposed via
 // `globalApiKeys` on the user profile (booleans only — actual key values
@@ -29,12 +30,13 @@ export function getModelProvider(
     extraModels?: ModelOption[],
 ): ModelProvider | null {
     // AOAI deployments are discovered dynamically and arrive via
-    // `extraModels` rather than the static MODELS list. The id-prefix
+    // `extraModels` rather than the static model list. The id-prefix
     // shortcut keeps callers that only have the id (no model record)
-    // working.
+    // working. Static lookup uses SETTINGS_MODELS (upstream 44e868e) so
+    // low-tier ids resolve too; dev's extraModels handling is kept.
     if (modelId.startsWith("aoai:")) return "azureOpenai";
     const model =
-        MODELS.find((m) => m.id === modelId) ??
+        SETTINGS_MODELS.find((m) => m.id === modelId) ??
         extraModels?.find((m) => m.id === modelId);
     if (!model) return null;
     if (model.group === "Anthropic") return "claude";

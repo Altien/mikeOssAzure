@@ -2,7 +2,11 @@
 
 import { forwardRef, useImperativeHandle, useRef } from "react";
 import { Loader2, Plus, Table2, Upload } from "lucide-react";
-import type { ColumnConfig, MikeDocument, TabularCell } from "../shared/types";
+import type {
+    ColumnConfig,
+    Document,
+    TabularCell,
+} from "../shared/types";
 import { TabularCell as TabularCellComponent } from "./TabularCell";
 import { TREditColumnMenu } from "./TREditColumnMenu";
 
@@ -10,13 +14,12 @@ const SKELETON_COLS = 4;
 const SKELETON_ROWS = 5;
 
 const COL_W = "w-[300px] shrink-0";
-const CHECK_W = "w-8 shrink-0";
+const DOC_COL_W = "w-[332px] shrink-0";
 
 // Pixel widths matching the CSS constants above
-const CHECK_W_PX = 32; // w-8 = 2rem = 32px
-const DOC_COL_W_PX = 300;
+const DOC_COL_W_PX = 332;
 const DATA_COL_W_PX = 300;
-const STICKY_LEFT_PX = CHECK_W_PX + DOC_COL_W_PX; // 332px
+const STICKY_LEFT_PX = DOC_COL_W_PX;
 
 export interface TRTableHandle {
     scrollToCell: (colIdx: number, rowIdx: number) => void;
@@ -25,7 +28,7 @@ export interface TRTableHandle {
 interface Props {
     loading: boolean;
     columns: ColumnConfig[];
-    documents: MikeDocument[];
+    documents: Document[];
     cells: TabularCell[];
     savingColumn: boolean;
     savingColumnsConfig: boolean;
@@ -64,10 +67,11 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
     },
     ref,
 ) {
+    const stickyCellBg = "bg-[#fcfcfd]";
     const scrollContainerRef = useRef<HTMLDivElement>(null);
     const sortedColumns = [...columns].sort((a, b) => a.index - b.index);
     const totalContentWidth =
-        CHECK_W_PX + DOC_COL_W_PX + sortedColumns.length * DATA_COL_W_PX + 32;
+        DOC_COL_W_PX + sortedColumns.length * DATA_COL_W_PX + 32;
 
     useImperativeHandle(ref, () => ({
         scrollToCell(colIdx: number, rowIdx: number) {
@@ -130,12 +134,10 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                 {/* Header */}
                 <div className="flex border-b border-gray-200">
                     <div
-                        className={`${CHECK_W} border-r border-gray-200 p-2`}
-                    />
-                    <div
-                        className={`${COL_W} border-r border-gray-200 p-2 text-xs font-medium text-gray-500`}
+                        className={`${DOC_COL_W} flex items-center gap-4 border-r border-gray-200 py-2 pl-4 pr-2 text-xs font-medium text-gray-500`}
                     >
-                        Document
+                        <div className="h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse" />
+                        <span>Document</span>
                     </div>
                     {Array.from({ length: SKELETON_COLS }).map((_, i) => (
                         <div
@@ -151,10 +153,10 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                 {Array.from({ length: SKELETON_ROWS }).map((_, row) => (
                     <div
                         key={row}
-                        className={`flex border-b border-gray-50 ${row % 2 === 0 ? "bg-white" : "bg-gray-50/50"}`}
+                        className={`flex border-b border-gray-50 ${row % 2 === 0 ? "" : "bg-gray-50/50"}`}
                     >
-                        <div className={`${CHECK_W} p-2`} />
-                        <div className={`${COL_W} p-2`}>
+                        <div className={`${DOC_COL_W} flex items-center gap-4 py-2 pl-4 pr-2`}>
+                            <div className="h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse" />
                             <div className="h-4 w-32 rounded bg-gray-100 animate-pulse" />
                         </div>
                         {Array.from({ length: SKELETON_COLS }).map((_, col) => (
@@ -177,9 +179,8 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
         return (
             <div className="flex flex-1 flex-col overflow-hidden">
                 <div className="flex items-center border-b border-gray-200">
-                    <div className={`${CHECK_W} border-r border-gray-200`} />
                     <div
-                        className={`${COL_W} border-r border-gray-200 p-2 text-xs font-medium text-gray-500 select-none`}
+                        className={`${DOC_COL_W} border-r border-gray-200 py-2 pl-4 pr-2 text-xs font-medium text-gray-500 select-none`}
                     >
                         Document
                     </div>
@@ -225,11 +226,11 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
         >
             {/* Header */}
             <div
-                className="sticky top-0 z-20 flex bg-white h-8"
+                className={`sticky top-0 z-20 flex h-8 ${stickyCellBg}`}
                 style={{ minWidth: totalContentWidth }}
             >
                 <div
-                    className={`sticky left-0 z-30 ${CHECK_W} bg-white border-b border-r border-gray-200 flex justify-center items-center select-none`}
+                    className={`sticky left-0 z-30 ${DOC_COL_W} ${stickyCellBg} border-b border-r border-gray-200 flex items-center gap-4 py-2 pl-4 pr-2 text-left text-xs font-medium text-gray-500 select-none`}
                 >
                     <input
                         type="checkbox"
@@ -240,11 +241,7 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                         onChange={toggleAll}
                         className="h-2.5 w-2.5 rounded border-gray-200 cursor-pointer accent-black"
                     />
-                </div>
-                <div
-                    className={`sticky left-8 z-30 ${COL_W} bg-white border-b border-r border-gray-200 p-2 text-left text-xs font-medium text-gray-500 select-none`}
-                >
-                    Document
+                    <span>Document</span>
                 </div>
                 {columns.map((col) => (
                     <div
@@ -281,21 +278,17 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                 {uploadingFilenames.map((filename) => (
                     <div
                         key={`uploading-${filename}`}
-                        className="flex bg-white"
+                        className="flex"
                         style={{ minWidth: totalContentWidth }}
                     >
                         <div
-                            className={`sticky left-0 z-[60] ${CHECK_W} border-b border-r border-gray-200 p-2 flex items-center justify-center bg-white`}
+                            className={`sticky left-0 z-[60] ${DOC_COL_W} ${stickyCellBg} border-b border-r border-gray-200 py-2 pl-4 pr-2 text-xs text-gray-400 flex items-center gap-4`}
                         >
                             <input
                                 type="checkbox"
                                 disabled
                                 className="h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-default accent-black disabled:opacity-100"
                             />
-                        </div>
-                        <div
-                            className={`sticky left-8 z-[60] ${COL_W} border-b border-r border-gray-200 p-2 text-xs text-gray-400 flex items-center gap-2 bg-white`}
-                        >
                             <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
                             <span className="line-clamp-1" title={filename}>
                                 {filename}
@@ -314,7 +307,7 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                 ))}
                 {documents.map((doc, docIdx) => {
                     const baseRowBg =
-                        docIdx % 2 === 0 ? "bg-white" : "bg-gray-50";
+                        docIdx % 2 === 0 ? stickyCellBg : "bg-gray-50";
                     const rowBg = selectedDocIds.includes(doc.id)
                         ? "bg-gray-100"
                         : baseRowBg;
@@ -325,7 +318,7 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                             style={{ minWidth: totalContentWidth }}
                         >
                             <div
-                                className={`sticky left-0 z-[60] ${CHECK_W} border-b border-r border-gray-200 p-2 flex items-center justify-center ${rowBg}`}
+                                className={`sticky left-0 z-[60] ${DOC_COL_W} border-b border-r border-gray-200 py-2 pl-4 pr-2 text-xs text-gray-800 flex items-center gap-4 ${rowBg}`}
                             >
                                 <input
                                     type="checkbox"
@@ -333,10 +326,6 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                                     onChange={() => toggleDoc(doc.id)}
                                     className="h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black"
                                 />
-                            </div>
-                            <div
-                                className={`sticky left-8 z-[60] ${COL_W} border-b border-r border-gray-200 p-2 text-xs text-gray-800 flex items-center ${baseRowBg}`}
-                            >
                                 <span
                                     className="line-clamp-1"
                                     title={doc.filename}

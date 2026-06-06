@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-    Plus,
     Library,
     Table2,
     MessageSquare,
@@ -11,7 +10,6 @@ import {
     ChevronDown,
     Check,
 } from "lucide-react";
-import { HeaderSearchBtn } from "../shared/HeaderSearchBtn";
 import {
     listWorkflows,
     deleteWorkflow,
@@ -19,7 +17,7 @@ import {
     hideWorkflow,
     unhideWorkflow,
 } from "@/app/lib/mikeApi";
-import type { MikeWorkflow } from "../shared/types";
+import type { Workflow } from "../shared/types";
 import { BUILT_IN_WORKFLOWS, BUILT_IN_IDS } from "./builtinWorkflows";
 import { DisplayWorkflowModal } from "./DisplayWorkflowModal";
 import { NewWorkflowModal } from "./NewWorkflowModal";
@@ -27,11 +25,11 @@ import { ToolbarTabs } from "../shared/ToolbarTabs";
 import { RowActions } from "../shared/RowActions";
 import { MikeIcon } from "@/components/chat/mike-icon";
 import { useAuth } from "@/contexts/AuthContext";
+import { PageHeader } from "@/app/components/shared/PageHeader";
 
 type Tab = "all" | "builtin" | "custom" | "hidden";
 
-const CHECK_W = "w-8 shrink-0";
-const NAME_COL_W = "w-[300px] shrink-0";
+const NAME_COL_W = "w-[332px] shrink-0";
 
 const TABS: { id: Tab; label: string }[] = [
     { id: "all", label: "All" },
@@ -43,9 +41,10 @@ const TABS: { id: Tab; label: string }[] = [
 export function WorkflowList() {
     const router = useRouter();
     const { user } = useAuth();
-    const [custom, setCustom] = useState<MikeWorkflow[]>([]);
+    const stickyCellBg = "bg-[#fcfcfd]";
+    const [custom, setCustom] = useState<Workflow[]>([]);
     const [loading, setLoading] = useState(true);
-    const [selected, setSelected] = useState<MikeWorkflow | null>(null);
+    const [selected, setSelected] = useState<Workflow | null>(null);
     const [activeTab, setActiveTab] = useState<Tab>("all");
     const [newModalOpen, setNewModalOpen] = useState(false);
     const [hiddenBuiltinIds, setHiddenBuiltinIds] = useState<string[]>([]);
@@ -53,7 +52,7 @@ export function WorkflowList() {
     const [actionsOpen, setActionsOpen] = useState(false);
     const [practiceFilter, setPracticeFilter] = useState<string | null>(null);
     const [practiceFilterOpen, setPracticeFilterOpen] = useState(false);
-    const [typeFilter, setTypeFilter] = useState<MikeWorkflow["type"] | null>(
+    const [typeFilter, setTypeFilter] = useState<Workflow["type"] | null>(
         null,
     );
     const [typeFilterOpen, setTypeFilterOpen] = useState(false);
@@ -199,7 +198,7 @@ export function WorkflowList() {
         await Promise.all(ids.map((id) => unhideWorkflow(id).catch(() => {})));
     }
 
-    const getTypeMeta = (type: MikeWorkflow["type"]) =>
+    const getTypeMeta = (type: Workflow["type"]) =>
         type === "tabular"
             ? { label: "Tabular", Icon: Table2, className: "text-violet-700" }
             : {
@@ -358,26 +357,28 @@ export function WorkflowList() {
     );
 
     return (
-        <div className="flex flex-col flex-1 overflow-hidden bg-white">
+        <div className="flex flex-col flex-1 overflow-hidden">
             {/* Page header */}
-            <div className="mb-1 flex items-center justify-between px-4 py-3 md:px-10 shrink-0">
+            <PageHeader
+                shrink
+                actions={[
+                    {
+                        type: "search",
+                        value: search,
+                        onChange: setSearch,
+                        placeholder: "Search workflows…",
+                    },
+                    {
+                        type: "new",
+                        onClick: () => setNewModalOpen(true),
+                        title: "New workflow",
+                    },
+                ]}
+            >
                 <h1 className="text-2xl font-medium font-serif text-gray-900">
                     Workflows
                 </h1>
-                <div className="flex items-center gap-2">
-                    <HeaderSearchBtn
-                        value={search}
-                        onChange={setSearch}
-                        placeholder="Search workflows…"
-                    />
-                    <button
-                        onClick={() => setNewModalOpen(true)}
-                        className="flex items-center justify-center p-1.5 text-gray-500 hover:text-gray-900 transition-colors"
-                    >
-                        <Plus className="h-4 w-4" />
-                    </button>
-                </div>
-            </div>
+            </PageHeader>
 
             <ToolbarTabs
                 tabs={TABS}
@@ -391,8 +392,10 @@ export function WorkflowList() {
                 <div className="min-w-max">
                     {/* Column headers */}
                     <div className="flex items-center h-8 pr-3 md:pr-10 border-b border-gray-200 text-xs text-gray-500 font-medium select-none">
-                        <div className={`sticky left-0 z-[60] ${CHECK_W} relative bg-white flex items-center justify-center self-stretch before:absolute before:inset-x-0 before:bottom-0 before:h-px before:bg-white`}>
-                            {!loading && (
+                        <div className={`sticky left-0 z-[60] ${NAME_COL_W} ${stickyCellBg} flex items-center gap-4 self-stretch pl-4 pr-2 text-left`}>
+                            {loading ? (
+                                <div className="h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse" />
+                            ) : (
                                 <input
                                     type="checkbox"
                                     checked={allSelected}
@@ -403,9 +406,7 @@ export function WorkflowList() {
                                     className="h-2.5 w-2.5 rounded border-gray-200 cursor-pointer accent-black"
                                 />
                             )}
-                        </div>
-                        <div className={`sticky left-8 z-[60] ${NAME_COL_W} bg-white pl-2 text-left`}>
-                            Name
+                            <span>Name</span>
                         </div>
                         <div className="ml-auto w-28 shrink-0">Type</div>
                         <div className="w-40 shrink-0">Practice</div>
@@ -420,8 +421,8 @@ export function WorkflowList() {
                                     key={i}
                                     className="flex items-center h-10 pr-3 md:pr-10 border-b border-gray-50"
                                 >
-                                    <div className="w-8 shrink-0" />
-                                    <div className="flex-1 min-w-0 pl-3 pr-4">
+                                    <div className={`${NAME_COL_W} flex shrink-0 items-center gap-4 pl-4 pr-2`}>
+                                        <div className="h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse" />
                                         <div className="h-3.5 w-48 rounded bg-gray-100 animate-pulse" />
                                     </div>
                                     <div className="w-28 shrink-0">
@@ -486,28 +487,26 @@ export function WorkflowList() {
                         filtered.map((wf) => {
                             const rowBg = selectedIds.includes(wf.id)
                                 ? "bg-gray-50"
-                                : "bg-white";
+                                : stickyCellBg;
                             return (
                             <div
                                 key={wf.id}
                                 onClick={() => setSelected(wf)}
-                                className="group flex items-center h-10 pr-3 md:pr-10 border-b border-gray-50 hover:bg-gray-50 cursor-pointer transition-colors"
+                                className="group flex items-center h-10 pr-3 md:pr-10 border-b border-gray-50 hover:bg-gray-100 cursor-pointer transition-colors"
                             >
-                                <div
-                                    className={`sticky left-0 z-[60] ${CHECK_W} p-2 flex items-center justify-center ${rowBg} group-hover:bg-gray-50`}
-                                    onClick={(e) => e.stopPropagation()}
-                                >
-                                    <input
-                                        type="checkbox"
-                                        checked={selectedIds.includes(wf.id)}
-                                        onChange={() => toggleOne(wf.id)}
-                                        className="h-2.5 w-2.5 rounded border-gray-200 cursor-pointer accent-black"
-                                    />
-                                </div>
-                                <div className={`sticky left-8 z-[60] ${NAME_COL_W} p-2 ${rowBg} group-hover:bg-gray-50`}>
-                                    <span className="text-sm text-gray-800 truncate block">
-                                        {wf.title}
-                                    </span>
+                                <div className={`sticky left-0 z-[60] ${NAME_COL_W} py-2 pl-4 pr-2 ${rowBg} transition-colors group-hover:bg-gray-100`}>
+                                    <div className="flex min-w-0 items-center gap-4">
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedIds.includes(wf.id)}
+                                            onChange={() => toggleOne(wf.id)}
+                                            onClick={(e) => e.stopPropagation()}
+                                            className="h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black"
+                                        />
+                                        <span className="min-w-0 flex-1 truncate text-sm text-gray-800">
+                                            {wf.title}
+                                        </span>
+                                    </div>
                                 </div>
                                 <div className="ml-auto w-28 shrink-0">
                                     {(() => {

@@ -2,15 +2,15 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, FolderOpen, ChevronDown } from "lucide-react";
-import { HeaderSearchBtn } from "@/app/components/shared/HeaderSearchBtn";
+import { FolderOpen, ChevronDown } from "lucide-react";
 import { listProjects, updateProject, deleteProject } from "@/app/lib/mikeApi";
 import { OwnerOnlyModal } from "@/app/components/shared/OwnerOnlyModal";
 import { useAuth } from "@/contexts/AuthContext";
-import type { MikeProject } from "@/app/components/shared/types";
+import type { Project } from "@/app/components/shared/types";
 import { NewProjectModal } from "./NewProjectModal";
 import { ToolbarTabs } from "@/app/components/shared/ToolbarTabs";
 import { RowActions } from "@/app/components/shared/RowActions";
+import { PageHeader } from "@/app/components/shared/PageHeader";
 
 function formatDate(iso: string) {
     return new Date(iso).toLocaleDateString(undefined, {
@@ -22,11 +22,10 @@ function formatDate(iso: string) {
 
 type Tab = "all" | "mine" | "shared-with-me";
 
-const CHECK_W = "w-8 shrink-0";
-const NAME_COL_W = "w-[300px] shrink-0";
+const NAME_COL_W = "w-[332px] shrink-0";
 
 export function ProjectsOverview() {
-    const [projects, setProjects] = useState<MikeProject[]>([]);
+    const [projects, setProjects] = useState<Project[]>([]);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [modalOpen, setModalOpen] = useState(false);
@@ -42,6 +41,7 @@ export function ProjectsOverview() {
     const actionsRef = useRef<HTMLDivElement>(null);
     const router = useRouter();
     const { user, isAuthenticated, authLoading } = useAuth();
+    const stickyCellBg = "bg-[#fcfcfd]";
 
     useEffect(() => {
         if (authLoading) {
@@ -203,26 +203,27 @@ export function ProjectsOverview() {
     );
 
     return (
-        <div className="flex-1 overflow-y-auto bg-white">
+        <div className="flex-1 overflow-y-auto">
             {/* Page header */}
-            <div className="mb-1 flex items-center justify-between px-4 py-3 md:px-10">
+            <PageHeader
+                actions={[
+                    {
+                        type: "search",
+                        value: search,
+                        onChange: setSearch,
+                        placeholder: "Search projects…",
+                    },
+                    {
+                        type: "new",
+                        onClick: () => setModalOpen(true),
+                        title: "New project",
+                    },
+                ]}
+            >
                 <h1 className="text-2xl font-medium font-serif text-gray-900">
                     Projects
                 </h1>
-                <div className="flex items-center gap-2">
-                    <HeaderSearchBtn
-                        value={search}
-                        onChange={setSearch}
-                        placeholder="Search projects…"
-                    />
-                    <button
-                        onClick={() => setModalOpen(true)}
-                        className="flex items-center justify-center p-1.5 text-gray-500 hover:text-gray-900 transition-colors"
-                    >
-                        <Plus className="h-4 w-4" />
-                    </button>
-                </div>
-            </div>
+            </PageHeader>
 
             <ToolbarTabs
                 tabs={tabs}
@@ -236,8 +237,10 @@ export function ProjectsOverview() {
                 <div className="min-w-max">
                 {/* Column headers */}
                 <div className="flex items-center h-8 pr-3 md:pr-10 border-b border-gray-200 text-xs text-gray-500 font-medium select-none">
-                    <div className={`sticky left-0 z-[60] ${CHECK_W} relative bg-white flex items-center justify-center self-stretch before:absolute before:inset-x-0 before:bottom-0 before:h-px before:bg-white`}>
-                        {!loading && (
+                    <div className={`sticky left-0 z-[60] ${NAME_COL_W} ${stickyCellBg} flex items-center gap-4 self-stretch pl-4 pr-2 text-left`}>
+                        {loading ? (
+                            <div className="h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse" />
+                        ) : (
                             <input
                                 type="checkbox"
                                 checked={allSelected}
@@ -248,9 +251,7 @@ export function ProjectsOverview() {
                                 className="h-2.5 w-2.5 rounded border-gray-200 cursor-pointer accent-black"
                             />
                         )}
-                    </div>
-                    <div className={`sticky left-8 z-[60] ${NAME_COL_W} bg-white pl-2 text-left`}>
-                        Name
+                        <span>Name</span>
                     </div>
                     <div className="ml-auto w-32 shrink-0 text-left">CM</div>
                     <div className="w-24 shrink-0 text-left">Files</div>
@@ -269,8 +270,8 @@ export function ProjectsOverview() {
                                 key={i}
                                 className="flex items-center h-10 pr-3 md:pr-10 border-b border-gray-50"
                             >
-                                <div className="w-8 shrink-0" />
-                                <div className="flex-1 min-w-0 pl-3 pr-4">
+                                <div className={`${NAME_COL_W} flex shrink-0 items-center gap-4 pl-4 pr-2`}>
+                                    <div className="h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse" />
                                     <div className="h-3.5 w-48 rounded bg-gray-100 animate-pulse" />
                                 </div>
                                 <div className="w-32 shrink-0">
@@ -333,7 +334,7 @@ export function ProjectsOverview() {
                         {filtered.map((project) => {
                             const rowBg = selectedIds.includes(project.id)
                                 ? "bg-gray-50"
-                                : "bg-white";
+                                : stickyCellBg;
                             return (
                             <div
                                 key={project.id}
@@ -341,50 +342,47 @@ export function ProjectsOverview() {
                                     if (renamingId === project.id) return;
                                     router.push(`/projects/${project.id}`);
                                 }}
-                                className="group flex items-center h-10 pr-3 md:pr-10 border-b border-gray-50 hover:bg-gray-50 cursor-pointer transition-colors"
+                                className="group flex items-center h-10 pr-3 md:pr-10 border-b border-gray-50 hover:bg-gray-100 cursor-pointer transition-colors"
                             >
-                                <div
-                                    className={`sticky left-0 z-[60] ${CHECK_W} p-2 flex items-center justify-center ${rowBg} group-hover:bg-gray-50`}
-                                    onClick={(e) => e.stopPropagation()}
-                                >
-                                    <input
-                                        type="checkbox"
-                                        checked={selectedIds.includes(
-                                            project.id,
-                                        )}
-                                        onChange={() => toggleOne(project.id)}
-                                        className="h-2.5 w-2.5 rounded border-gray-200 cursor-pointer accent-black"
-                                    />
-                                </div>
-
                                 {/* Project Name */}
-                                <div className={`sticky left-8 z-[60] ${NAME_COL_W} bg-white p-2 group-hover:bg-gray-50`}>
-                                    {renamingId === project.id ? (
+                                <div className={`sticky left-0 z-[60] ${NAME_COL_W} ${rowBg} py-2 pl-4 pr-2 transition-colors group-hover:bg-gray-100`}>
+                                    <div className="flex min-w-0 items-center gap-4">
                                         <input
-                                            autoFocus
-                                            value={renameValue}
-                                            onChange={(e) =>
-                                                setRenameValue(e.target.value)
-                                            }
-                                            onKeyDown={(e) => {
-                                                if (e.key === "Enter")
-                                                    handleRenameSubmit(
-                                                        project.id,
-                                                    );
-                                                if (e.key === "Escape")
-                                                    setRenamingId(null);
-                                            }}
-                                            onBlur={() =>
-                                                handleRenameSubmit(project.id)
-                                            }
+                                            type="checkbox"
+                                            checked={selectedIds.includes(
+                                                project.id,
+                                            )}
+                                            onChange={() => toggleOne(project.id)}
                                             onClick={(e) => e.stopPropagation()}
-                                            className="w-full text-sm text-gray-800 bg-transparent outline-none"
+                                            className="h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black"
                                         />
-                                    ) : (
-                                        <span className="text-sm text-gray-800 truncate block">
-                                            {project.name}
-                                        </span>
-                                    )}
+                                        {renamingId === project.id ? (
+                                            <input
+                                                autoFocus
+                                                value={renameValue}
+                                                onChange={(e) =>
+                                                    setRenameValue(e.target.value)
+                                                }
+                                                onKeyDown={(e) => {
+                                                    if (e.key === "Enter")
+                                                        handleRenameSubmit(
+                                                            project.id,
+                                                        );
+                                                    if (e.key === "Escape")
+                                                        setRenamingId(null);
+                                                }}
+                                                onBlur={() =>
+                                                    handleRenameSubmit(project.id)
+                                                }
+                                                onClick={(e) => e.stopPropagation()}
+                                                className="min-w-0 flex-1 text-sm text-gray-800 bg-transparent outline-none"
+                                            />
+                                        ) : (
+                                            <span className="min-w-0 flex-1 truncate text-sm text-gray-800">
+                                                {project.name}
+                                            </span>
+                                        )}
+                                    </div>
                                 </div>
 
                                 <div

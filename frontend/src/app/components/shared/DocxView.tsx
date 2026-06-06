@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
-import { MikeIcon } from "@/components/chat/mike-icon";
+import { Loader2 } from "lucide-react";
 import { useFetchDocxBytes } from "@/app/hooks/useFetchDocxBytes";
 import { getBrowserAccessToken, bounceIfUnauthorized } from "@/lib/auth-token";
 import {
@@ -50,6 +50,8 @@ interface Props {
      * pagination the renderer can match against.
      */
     quotes?: CitationQuote[];
+    /** Changes when the parent wants the current quote re-focused. */
+    quoteFocusKey?: string | number;
     /**
      * Warning banner copy rendered in the top-left of the viewer. Used
      * for non-blocking errors (e.g. "Accept failed — reverted").
@@ -199,6 +201,7 @@ export function DocxView({
     highlightEdit,
     refetchKey,
     quotes,
+    quoteFocusKey,
     warning,
     onWarningDismiss,
     initialScrollTop,
@@ -345,13 +348,6 @@ export function DocxView({
         const scrollEl = scrollRef.current;
         const containerEl = containerRef.current;
 
-        console.log("[DocxView] render effect fired", {
-            documentId,
-            versionId,
-            refetchKey,
-            bytesLen: bytes.byteLength,
-        });
-
         // Remember scroll position across re-renders so Accept/Reject stays put.
         lastScrollTopRef.current = scrollEl.scrollTop;
         const thisRender = ++renderKeyRef.current;
@@ -445,7 +441,7 @@ export function DocxView({
             scrollRef.current,
             quotesRef.current,
         );
-    }, [quoteKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [quoteKey, quoteFocusKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Fire onScrollChange (rAF-throttled) so parents can persist scroll
     // per-tab. We still maintain lastScrollTopRef locally for same-mount
@@ -469,7 +465,7 @@ export function DocxView({
 
     return (
         <div
-            className={`relative flex flex-col flex-1 overflow-hidden ${bordered ? "border border-gray-200" : ""} ${rounded ? "rounded-xl" : ""}`}
+            className={`relative flex flex-col flex-1 overflow-hidden ${bordered ? "border border-gray-200" : ""} ${rounded ? "rounded-lg" : ""}`}
         >
             {warning && (
                 <div className="absolute top-2 left-2 z-10 flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800 shadow-sm">
@@ -492,7 +488,7 @@ export function DocxView({
             >
                 {loading && !bytes && (
                     <div className="flex h-full items-center justify-center">
-                        <MikeIcon spin mike size={28} />
+                        <Loader2 className="h-7 w-7 animate-spin text-gray-400" />
                     </div>
                 )}
                 {error && (

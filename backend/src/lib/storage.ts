@@ -3,6 +3,7 @@ import {
   PutObjectCommand,
   GetObjectCommand,
   DeleteObjectCommand,
+  ListObjectsV2Command,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl as awsGetSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { BlobServiceClient, ContainerClient } from "@azure/storage-blob";
@@ -18,6 +19,8 @@ import { DefaultAzureCredential } from "@azure/identity";
 export interface StorageProvider {
   upload(key: string, content: ArrayBuffer, contentType: string): Promise<void>;
   download(key: string): Promise<ArrayBuffer | null>;
+  /** All object keys under `prefix` (upstream 44e868e listFiles, relocated). */
+  list(prefix: string): Promise<string[]>;
   remove(key: string): Promise<void>;
   /** Direct browser URL, or null when the provider delegates to the backend download proxy. */
   signedUrl(
@@ -91,6 +94,25 @@ class R2Provider implements StorageProvider {
     } catch {
       return null;
     }
+  }
+
+  async list(prefix: string): Promise<string[]> {
+    const keys: string[] = [];
+    let ContinuationToken: string | undefined;
+    do {
+      const response = await this.client().send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket,
+          Prefix: prefix,
+          ContinuationToken,
+        }),
+      );
+      for (const item of response.Contents ?? []) {
+        if (item.Key) keys.push(item.Key);
+      }
+      ContinuationToken = response.NextContinuationToken;
+    } while (ContinuationToken);
+    return keys;
   }
 
   async remove(key: string): Promise<void> {
@@ -179,6 +201,14 @@ class AzureBlobProvider implements StorageProvider {
     }
   }
 
+  async list(prefix: string): Promise<string[]> {
+    const keys: string[] = [];
+    for await (const blob of this.container.listBlobsFlat({ prefix })) {
+      keys.push(blob.name);
+    }
+    return keys;
+  }
+
   async remove(key: string): Promise<void> {
     await this.container.getBlobClient(key).deleteIfExists();
   }
@@ -254,6 +284,12 @@ export async function uploadFile(
 
 export async function downloadFile(key: string): Promise<ArrayBuffer | null> {
   return _provider?.download(key) ?? null;
+}
+
+// Read operation — returns [] when storage is unconfigured, mirroring
+// upstream 44e868e's `if (!storageEnabled) return []`.
+export async function listFiles(prefix: string): Promise<string[]> {
+  return _provider?.list(prefix) ?? [];
 }
 
 export async function deleteFile(key: string): Promise<void> {

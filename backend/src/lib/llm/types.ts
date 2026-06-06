@@ -40,6 +40,8 @@ export type UserApiKeys = {
     claude?: string | null;
     gemini?: string | null;
     openai?: string | null;
+    openrouter?: string | null;
+    courtlistener?: string | null;
     azureOpenai?: AzureOpenaiSettings | null;
 };
 
@@ -70,6 +72,7 @@ export type StreamChatParams = {
      * one-shot completions should leave this off to save tokens and latency.
      */
     enableThinking?: boolean;
+    abortSignal?: AbortSignal;
 };
 
 export type StreamChatResult = {

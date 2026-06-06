@@ -88,6 +88,11 @@ userRouter.get("/profile", requireAuth, async (_req, res) => {
     claude_configured: !!apiKeys.claude,
     gemini_configured: !!apiKeys.gemini,
     openai_configured: !!apiKeys.openai,
+    // openrouter / courtlistener (upstream 44e868e). getUserApiKeys
+    // already folds in the org-level KV/env fallback for these two, so
+    // "configured" means "some credential source exists".
+    openrouter_configured: !!apiKeys.openrouter,
+    courtlistener_configured: !!apiKeys.courtlistener,
     azure_openai_configured: !!apiKeys.azureOpenai,
     // Tells the frontend "the server has a shared key for this provider".
     // Lets the model dropdown show models as available even when the user
@@ -105,6 +110,8 @@ userRouter.get("/profile", requireAuth, async (_req, res) => {
       claude: !!(await resolveSecret("anthropic-api-key")),
       gemini: !!(await resolveSecret("gemini-api-key")),
       openai: !!(await resolveSecret("openai-api-key")),
+      openrouter: !!(await resolveSecret("openrouter-api-key")),
+      courtlistener: !!(await resolveSecret("courtlistener-api-token")),
       azureOpenai:
         !!(await resolveSecret("azure-openai-endpoint")) &&
         !!(await resolveSecret("azure-openai-api-key")),
@@ -135,12 +142,21 @@ userRouter.patch("/profile", requireAuth, async (req, res) => {
   // rest). The request body shape is unchanged for backwards-compat;
   // we translate to setUserApiKey / deleteUserApiKey calls.
   const flatProviderFields: ReadonlyArray<{
-    field: "claude_api_key" | "gemini_api_key" | "openai_api_key";
-    provider: "claude" | "gemini" | "openai";
+    field:
+      | "claude_api_key"
+      | "gemini_api_key"
+      | "openai_api_key"
+      | "openrouter_api_key"
+      | "courtlistener_api_token";
+    provider: "claude" | "gemini" | "openai" | "openrouter" | "courtlistener";
   }> = [
     { field: "claude_api_key", provider: "claude" },
     { field: "gemini_api_key", provider: "gemini" },
     { field: "openai_api_key", provider: "openai" },
+    // upstream 44e868e — BYO keys for the CourtListener integration
+    // (and OpenRouter) ride the same encrypted user_api_keys path.
+    { field: "openrouter_api_key", provider: "openrouter" },
+    { field: "courtlistener_api_token", provider: "courtlistener" },
   ];
   const aoaiFields = [
     "azure_openai_endpoint",
@@ -150,7 +166,7 @@ userRouter.patch("/profile", requireAuth, async (req, res) => {
   ] as const;
 
   const flatKeyChanges = new Map<
-    "claude" | "gemini" | "openai",
+    "claude" | "gemini" | "openai" | "openrouter" | "courtlistener",
     string | null
   >();
   for (const { field, provider } of flatProviderFields) {
@@ -291,6 +307,8 @@ userRouter.patch("/profile", requireAuth, async (req, res) => {
     claude_configured: !!apiKeys.claude,
     gemini_configured: !!apiKeys.gemini,
     openai_configured: !!apiKeys.openai,
+    openrouter_configured: !!apiKeys.openrouter,
+    courtlistener_configured: !!apiKeys.courtlistener,
     azure_openai_configured: !!apiKeys.azureOpenai,
   });
 });

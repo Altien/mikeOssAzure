@@ -46,7 +46,6 @@ export async function getUserFromRequest(request: NextRequest): Promise<{
       return null;
     }
 
-    console.log(`[Auth] User authenticated: ${user.email}`);
     return {
       email: user.email,
       id: user.id
@@ -56,4 +55,3 @@ export async function getUserFromRequest(request: NextRequest): Promise<{
     return null;
   }
 }
-

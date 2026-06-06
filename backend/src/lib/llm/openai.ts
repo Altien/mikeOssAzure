@@ -18,6 +18,12 @@ import { resolveSecret } from "../envSecrets";
 // internal design notes §2.4). Upstream's hard fail on a missing key is
 // preserved here; its status-tagging of Responses-API fetch errors is N/A
 // (the SDK's APIError already carries `status`).
+// Upstream divergence (sync-log: 44e868e): upstream further reworked its
+// Responses-API adapter (abortSignal plumbing, raw-stream logging via
+// rawStreamLog, stream-failure message parsing, reasoning summaries).
+// Those changes target upstream's raw-fetch implementation and were not
+// ported onto dev's SDK adapter; abortSignal on StreamChatParams is
+// accepted but currently ignored here.
 async function apiKey(override?: string | null): Promise<string> {
     const key = override?.trim() || (await resolveSecret("openai-api-key"));
     if (!key) {
