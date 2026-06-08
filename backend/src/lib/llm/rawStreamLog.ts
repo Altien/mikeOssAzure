@@ -5,12 +5,7 @@ export function logRawLlmStream(args: {
     label: string;
     payload: unknown;
 }) {
-    if (
-        process.env.NODE_ENV === "production" &&
-        process.env.LOG_RAW_LLM_STREAM !== "true"
-    ) {
-        return;
-    }
+    if (process.env.LOG_RAW_LLM_STREAM !== "true") return;
 
     console.log(
         `[raw-llm-stream:${args.provider}:${args.model}:iter-${args.iteration}] ${args.label}`,

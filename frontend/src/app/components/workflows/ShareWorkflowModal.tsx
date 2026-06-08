@@ -34,6 +34,7 @@ export function ShareWorkflowModal({
     const [existingShares, setExistingShares] = useState<Share[]>([]);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [error, setError] = useState<string | null>(null);
     const { user } = useAuth();
     const ownEmail = user?.email?.trim().toLowerCase() ?? null;
 
@@ -55,13 +56,18 @@ export function ShareWorkflowModal({
             : pendingEmails;
         if (emails.length === 0) return;
         setSaving(true);
+        setError(null);
         try {
             await shareWorkflow(workflowId, { emails, allow_edit: allowEdit });
             const updated = await listWorkflowShares(workflowId);
             setExistingShares(updated);
             setPendingEmails([]);
-        } catch {
-            // ignore
+        } catch (err) {
+            setError(
+                err instanceof Error && err.message
+                    ? err.message
+                    : "Unable to share this workflow. Please try again.",
+            );
         } finally {
             setSaving(false);
         }
@@ -89,6 +95,12 @@ export function ShareWorkflowModal({
                     placeholder="Add people by email…"
                     autoFocus
                 />
+
+                {error ? (
+                    <div className="rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+                        {error}
+                    </div>
+                ) : null}
 
                 {/* Permission toggle */}
                 <div className="flex flex-col gap-2">

@@ -9,6 +9,7 @@ import {
 import { normalizeDocxZipPaths } from "../lib/convert";
 import {
     AssistantStreamError,
+    buildCancelledAssistantMessage,
     isAbortError,
     runLLMStream,
     stripTransientAssistantEvents,
@@ -502,8 +503,6 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
     const { reviewId } = req.params;
     const updates: Record<string, unknown> = {};
     if (req.body.title != null) updates.title = req.body.title;
-    if (req.body.columns_config != null)
-        updates.columns_config = req.body.columns_config;
     const projectIdUpdateProvided = req.body.project_id !== undefined;
     const projectIdUpdate =
         req.body.project_id === null
@@ -556,6 +555,14 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
     );
     if (!access.ok)
         return void res.status(404).json({ detail: "Review not found" });
+    if (req.body.columns_config != null) {
+        if (!access.isOwner) {
+            return void res.status(403).json({
+                detail: "Only the review owner can change columns",
+            });
+        }
+        updates.columns_config = req.body.columns_config;
+    }
     if (sharedWithUpdate !== undefined) {
         if (!access.isOwner)
             return void res
@@ -1396,8 +1403,9 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
         messages.filter((m) => m.role === "user").length === 1;
 
     if (chatId) {
-        // Either chat owner OR any project member of the parent review can
-        // continue the chat. We've already verified review access above.
+        // The chat must belong to this exact review and to the requester.
+        // Review access alone is not enough: otherwise a user could reuse one
+        // of their chats from a different review in this route.
         const { data: existing } = await db
             .from("tabular_review_chats")
             .select("id, title, review_id, user_id")
@@ -1405,7 +1413,8 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
             .single();
         const canUse =
             !!existing &&
-            (existing.review_id === reviewId || existing.user_id === userId);
+            existing.review_id === reviewId &&
+            existing.user_id === userId;
         if (!canUse || !existing) chatId = null;
         else chatTitle = existing.title;
     }
@@ -1510,6 +1519,34 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
     } catch (err) {
         if (isAbortError(err)) {
             console.log("[tabular/chat] client aborted stream", { chatId });
+            if (chatId && err instanceof AssistantStreamError) {
+                const partial = buildCancelledAssistantMessage({
+                    fullText: err.fullText,
+                    events: err.events,
+                    buildAnnotations: (fullText) =>
+                        extractTabularAnnotations(fullText, tabularStore),
+                });
+                const { error: saveError } = await db
+                    .from("tabular_review_chat_messages")
+                    .insert({
+                        chat_id: chatId,
+                        role: "assistant",
+                        content: partial.events.length ? partial.events : null,
+                        annotations: partial.annotations.length
+                            ? partial.annotations
+                            : null,
+                    });
+                if (saveError) {
+                    console.error(
+                        "[tabular/chat] failed to save aborted stream",
+                        saveError,
+                    );
+                }
+                await db
+                    .from("tabular_review_chats")
+                    .update({ updated_at: new Date().toISOString() })
+                    .eq("id", chatId);
+            }
             return;
         }
         console.error("[tabular/chat] error", err);

@@ -77,9 +77,9 @@ export function Modal({
         >
             <div
                 className={cn(
-                    "w-full rounded-2xl shadow-2xl flex h-[600px] flex-col",
+                    "w-full rounded-2xl flex h-[600px] flex-col",
                     sizeClassName[size],
-                    "border border-white/70 bg-white/80 shadow-[0_24px_80px_rgba(15,23,42,0.18)] backdrop-blur-2xl",
+                    "border border-white/70 bg-white/94 shadow-[0_12px_36px_rgba(15,23,42,0.1)] backdrop-blur-2xl",
                     className,
                 )}
                 onClick={(e) => e.stopPropagation()}
@@ -123,7 +123,7 @@ export function Modal({
                 {hasFooter && (
                     <div
                         className={cn(
-                            "flex items-center gap-3 px-4 py-3",
+                            "flex items-center gap-3 p-4",
                             secondaryAction || footerInfo
                                 ? "justify-between"
                                 : "justify-end",
@@ -181,14 +181,14 @@ function ModalActionButton({
     return (
         <button
             className={cn(
-                "inline-flex items-center justify-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                "inline-flex items-center justify-center gap-1.5 px-4 py-1.5 text-sm font-medium transition-all disabled:cursor-not-allowed disabled:opacity-40",
                 variant === "primary" &&
-                    "bg-gray-900 text-white hover:bg-gray-700",
-                variant === "secondary" && "text-gray-600 hover:bg-gray-100",
+                    "rounded-full border border-gray-700/40 bg-gray-950/88 text-white shadow-[0_3px_9px_rgba(15,23,42,0.16),inset_0_1px_0_rgba(255,255,255,0.22),inset_0_-4px_9px_rgba(15,23,42,0.2)] backdrop-blur-xl hover:bg-gray-900/90 active:scale-[0.98] disabled:active:scale-100",
+                variant === "secondary" && "text-gray-600 hover:text-gray-950",
                 fallbackVariant === "secondary" &&
-                    "border border-gray-200 hover:bg-gray-50",
+                    "rounded-full border border-gray-200/80 bg-gray-100/70 shadow-[0_1px_4px_rgba(15,23,42,0.045),inset_0_1px_0_rgba(255,255,255,0.78),inset_0_-3px_8px_rgba(148,163,184,0.14)] backdrop-blur-xl hover:bg-gray-100",
                 variant === "danger" &&
-                    "bg-red-600 text-white hover:bg-red-700",
+                    "rounded-full border border-red-700/35 bg-red-600/90 text-white shadow-[0_3px_9px_rgba(127,29,29,0.16),inset_0_1px_0_rgba(255,255,255,0.22),inset_0_-4px_9px_rgba(127,29,29,0.18)] backdrop-blur-xl hover:bg-red-600 active:scale-[0.98] disabled:active:scale-100",
             )}
             {...props}
         >

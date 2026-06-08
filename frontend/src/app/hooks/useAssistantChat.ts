@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   streamChat,
@@ -18,13 +18,6 @@ interface UseAssistantChatOptions {
   initialMessages?: Message[];
   chatId?: string;
   projectId?: string;
-}
-
-function findLastContentIndex(events: AssistantEvent[]): number {
-  for (let i = events.length - 1; i >= 0; i--) {
-    if (events[i].type === "content") return i;
-  }
-  return -1;
 }
 
 function readableStreamError(value: unknown): string {
@@ -161,20 +154,50 @@ export function useAssistantChat({
     });
   };
 
-  const cancel = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-      setIsResponseLoading(false);
-      setIsLoadingCitations(false);
-    }
-  };
-
   // Transient placeholder events (tool_call_start, thinking) fill the
   // latency gap between real SSE events so the wrapper doesn't look stuck.
   // Anytime a real event arrives, drop any streaming placeholder first.
   const isStreamingPlaceholder = (e: AssistantEvent) =>
     (e.type === "tool_call_start" || e.type === "thinking") && !!e.isStreaming;
+
+  const cancelStreamingEvents = (events: AssistantEvent[]) =>
+    events
+      .filter((event) => !isStreamingPlaceholder(event))
+      .map((event) => {
+        if (!("isStreaming" in event) || !event.isStreaming) return event;
+        const rest = { ...event };
+        delete (rest as { isStreaming?: boolean }).isStreaming;
+        return rest as AssistantEvent;
+      });
+
+  const appendCancellationEvent = (events: AssistantEvent[]) => {
+    const cancelledEvents = cancelStreamingEvents(events);
+    return [
+      ...cancelledEvents,
+      { type: "content" as const, text: "Cancelled by user." },
+    ];
+  };
+
+  const cancel = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      const snapshot = cancelStreamingEvents(eventsRef.current);
+      eventsRef.current = snapshot;
+      setMessages((prev) => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        if (last?.role === "assistant") {
+          updated[updated.length - 1] = {
+            ...last,
+            events: cancelStreamingEvents(last.events ?? snapshot),
+          };
+        }
+        return updated;
+      });
+      setIsResponseLoading(false);
+      setIsLoadingCitations(false);
+    }
+  };
 
   const clearStreamingPlaceholders = () => {
     const before = eventsRef.current;
@@ -284,10 +307,10 @@ export function useAssistantChat({
 
     eventsRef.current = [];
 
-    try {
-      const controller = new AbortController();
-      abortControllerRef.current = controller;
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
+    try {
       const apiMessages = newMessages.map((currentMessage) => ({
         role: currentMessage.role,
         content: currentMessage.content,
@@ -1114,43 +1137,29 @@ export function useAssistantChat({
     } catch (error: unknown) {
       if (error instanceof Error && error.name === "AbortError") {
         finalizeStreamingContent();
+        finalizeStreamingReasoning();
+        eventsRef.current = appendCancellationEvent(eventsRef.current);
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (last?.role === "assistant") {
             const updated = [...prev];
-            const events = last.events ?? [];
-            const idx = findLastContentIndex(events);
-            const cancelText = "Cancelled by user";
-            if (idx >= 0) {
-              const newEvents = [...events];
-              const existing = newEvents[idx] as {
-                type: "content";
-                text: string;
-              };
-              newEvents[idx] = {
-                type: "content",
-                text: existing.text
-                  ? `${existing.text}\n\nCancelled by user`
-                  : cancelText,
-              };
-              updated[updated.length - 1] = {
-                ...last,
-                events: newEvents,
-              };
-            } else {
-              updated[updated.length - 1] = {
-                ...last,
-                events: [...events, { type: "content", text: cancelText }],
-              };
-            }
+            const events = appendCancellationEvent(
+              last.events ?? eventsRef.current,
+            );
+            eventsRef.current = events;
+            updated[updated.length - 1] = {
+              ...last,
+              events,
+            };
             return updated;
           }
+          eventsRef.current = [{ type: "content", text: "Cancelled by user." }];
           return [
             ...prev,
             {
               role: "assistant",
               content: "",
-              events: [{ type: "content", text: "Cancelled by user" }],
+              events: [{ type: "content", text: "Cancelled by user." }],
             },
           ];
         });
@@ -1185,7 +1194,9 @@ export function useAssistantChat({
       setIsLoadingCitations(false);
       return null;
     } finally {
-      abortControllerRef.current = null;
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
     }
   };
 

@@ -36,6 +36,10 @@ export function WarningPopup({
 }: WarningPopupProps) {
     if (!open) return null;
 
+    const warningIcon = icon ?? (
+        <AlertCircle className="h-3 w-3 shrink-0 text-red-600" />
+    );
+
     return createPortal(
         <div className="pointer-events-none fixed left-1/2 top-5 z-[220] w-[min(92vw,520px)] -translate-x-1/2 px-4">
             <div
@@ -44,16 +48,21 @@ export function WarningPopup({
                     className,
                 )}
             >
-                {icon ?? (
-                    <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-600" />
-                )}
-                <div className="min-w-0 flex-1 self-center text-gray-900">
+                <div className="min-w-0 flex-1 self-center text-red-600">
                     {title && (
-                        <div className="font-medium text-gray-950">
+                        <div className="flex items-center gap-1.5 font-medium mb-1">
+                            {warningIcon}
                             {title}
                         </div>
                     )}
-                    {message && <div>{message}</div>}
+                    {message && (
+                        <div
+                            className={cn(!title && "flex items-start gap-1.5")}
+                        >
+                            {!title && warningIcon}
+                            <span className="min-w-0">{message}</span>
+                        </div>
+                    )}
                     {children}
                     {(primaryAction || secondaryAction) && (
                         <div className="mt-2 flex items-center gap-2">
@@ -72,7 +81,7 @@ export function WarningPopup({
                 <button
                     type="button"
                     onClick={onClose}
-                    className="shrink-0 text-gray-700 transition-colors hover:text-gray-950"
+                    className="shrink-0 text-red-700 transition-colors hover:text-red-500"
                     aria-label="Dismiss warning"
                 >
                     <X className="h-3.5 w-3.5" />

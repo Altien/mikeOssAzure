@@ -423,6 +423,15 @@ documentsRouter.post(
     const sourceAccess = await ensureDocAccess(sourceDoc, userId, userEmail, db);
     if (!sourceAccess.ok)
       return void res.status(404).json({ detail: "Source document not found" });
+    const willDeleteSource =
+      sourceDoc.project_id &&
+      targetDoc.project_id &&
+      sourceDoc.project_id === targetDoc.project_id;
+    if (willDeleteSource && !sourceAccess.isOwner) {
+      return void res.status(403).json({
+        detail: "Only the source document owner can move it into a version.",
+      });
+    }
 
     const targetActive = await loadActiveVersion(documentId, db);
     const targetType = targetActive?.file_type ?? "";
@@ -548,11 +557,7 @@ documentsRouter.post(
         .json({ detail: "Failed to update document current version." });
     }
 
-    if (
-      sourceDoc.project_id &&
-      targetDoc.project_id &&
-      sourceDoc.project_id === targetDoc.project_id
-    ) {
+    if (willDeleteSource) {
       const { error: deleteErr } = await deleteDocumentAndVersionFiles(
         db,
         sourceDocumentId,
@@ -721,12 +726,21 @@ documentsRouter.post(
         .json({ detail: "Failed to record new version." });
     }
 
-    await db
+    const { error: updateDocErr } = await db
       .from("documents")
       .update({
         current_version_id: versionRow.id,
       })
       .eq("id", documentId);
+    if (updateDocErr) {
+      console.error(
+        "[versions/upload] current version update failed",
+        updateDocErr,
+      );
+      return void res
+        .status(500)
+        .json({ detail: "Failed to update document current version." });
+    }
 
     res.status(201).json(versionRow);
   },

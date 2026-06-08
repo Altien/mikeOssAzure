@@ -214,7 +214,6 @@ export function ChatView({
                     url: citation.url ?? null,
                     dateFiled: citation.dateFiled ?? null,
                     pdfUrl: citation.pdfUrl ?? null,
-                    judges: citation.judges ?? null,
                     quotes: showQuotes ? citation.quotes : undefined,
                     opinions: undefined,
                 });
@@ -259,7 +258,6 @@ export function ChatView({
                 url: citation.url,
                 dateFiled: citation.dateFiled ?? null,
                 pdfUrl: citation.pdfUrl ?? null,
-                judges: citation.judges ?? null,
                 quotes: undefined,
                 opinions: citation.case?.opinions,
             });

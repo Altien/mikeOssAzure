@@ -44,7 +44,7 @@ caseLawRouter.post("/case-opinions", async (req, res) => {
             clusterId,
         });
         const db = createServerSupabase();
-        const fetchKey = String(clusterId);
+        const fetchKey = `${userId}:${clusterId}`;
         let fetchPromise = sidepanelOpinionFetches.get(fetchKey);
         if (fetchPromise) {
             devLog("[case-law/case-opinions] joining in-flight fetch", {

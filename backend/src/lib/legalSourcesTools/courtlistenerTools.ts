@@ -59,7 +59,6 @@ export type CaseCitationEvent = {
     url: string;
     pdfUrl?: string | null;
     dateFiled?: string | null;
-    judges?: string | null;
 };
 
 export const COURTLISTENER_TOOL_NAMES = {
@@ -72,10 +71,9 @@ export const COURTLISTENER_TOOL_NAMES = {
 
 export const COURTLISTENER_SYSTEM_PROMPT = `LEGAL RESEARCH QUERIES:
 - When a user asks a question on US law, you are required to cite relevant case law in your answer. Always verify US case citations using the courtlistener_verify_citations tool.
-- If the user gives case names or reporter citations, use courtlistener_verify_citations for those names/citations.
-- CourtListener keyword/issue search is not available. Do not attempt to search CourtListener for new candidate cases by legal issue or keywords. Work only from cases/citations supplied by the user, cases found in the provided documents, or citations already present in the conversation.
+- The courtlistener_verify_citations tool accepts only a citations array of clean reporter citations. Do not pass case names to this tool. Correct: {"citations":["467 U.S. 837","323 U.S. 134"]}. Incorrect: {"citations":["Chevron U.S.A. v. NRDC","Skidmore v. Swift"]}. If you only have case names and no reporter citations, do not call courtlistener_verify_citations for those names.
 - If any CourtListener tool call reports that a CourtListener rate limit was exceeded, or returns a 429/throttled/rate-limit error, do not make any further CourtListener API/search calls in that turn. Do not retry, verify more citations, fetch more cases, or run additional CourtListener searches; answer with the information already available and briefly state that CourtListener is rate limiting requests.
-- For cases you may cite or materially rely on, follow this sequence: first use courtlistener_verify_citations for case names/citations, then use courtlistener_get_cases to fetch/cache the relevant case clusters, then use courtlistener_find_in_case to search targeted keywords in the cached opinions, and only if those keyword snippets are insufficient use courtlistener_read_case to read selected opinion text.
+- For cases you may cite or materially rely on, follow this sequence when reporter citations are available: first use courtlistener_verify_citations with clean reporter citations, then use courtlistener_get_cases to fetch/cache the relevant case clusters, then use courtlistener_find_in_case to search targeted keywords in the cached opinions, and only if those keyword snippets are insufficient use courtlistener_read_case to read selected opinion text.
 - Only cite cases whose underlying opinion text, or at least the specific relevant opinion passages, has been supplied to you in this turn. courtlistener_get_cases only fetches and caches opinions; it does NOT place full opinion text in your context. It returns text-free opinion metadata so you can choose which opinion(s) matter. After courtlistener_get_cases, use courtlistener_find_in_case for targeted keyword or phrase lookup inside that cached case. If those snippets are not enough, use courtlistener_read_case to read only the specific already-fetched opinion(s) you need. courtlistener_find_in_case and courtlistener_read_case require the case to have been fetched first.
 - When a fetched case has multiple opinions, do not read all opinions by default. Choose the specific opinion_id or opinion_ids needed from the metadata or search hits. Prefer the lead/majority/controlling opinion when it is sufficient; read concurrences, dissents, or combined opinions only when they are necessary for the user's question.
 - When using courtlistener_find_in_case, search for terms that are 1-3 words long and actually likely to appear exactly as written in the opinion text. Do not use long sentence-like phrases. Run courtlistener_find_in_case no more than 3 times in a single assistant turn; if those searches are insufficient, read the smallest needed opinion text with courtlistener_read_case or answer with the available information.
@@ -175,22 +173,18 @@ export const COURTLISTENER_TOOLS = [
         function: {
             name: COURTLISTENER_TOOL_NAMES.verifyCitations,
             description:
-                "Verify legal case citations using CourtListener's citation lookup. Accepts raw text containing citations, or multiple citation strings. This returns citation metadata and clickable case refs; call courtlistener_get_cases only for matched cases that need full opinion text.",
+                "Verify legal case citations using CourtListener's citation lookup. Accepts only an array of clean reporter citations, not case names. Example: {\"citations\":[\"467 U.S. 837\",\"323 U.S. 134\"]}. This returns citation metadata and clickable case refs; call courtlistener_get_cases only for matched cases that need full opinion text.",
             parameters: {
                 type: "object",
                 properties: {
-                    text: {
-                        type: "string",
-                        description:
-                            "Raw text containing one or more legal citations. Max 64,000 characters sent to CourtListener.",
-                    },
                     citations: {
                         type: "array",
                         items: { type: "string" },
                         description:
-                            "Optional list of citation strings. Up to 250 will be joined into the request text field.",
+                            "Required list of clean reporter citations only. Put each reporter citation in its own array item, e.g. [\"467 U.S. 837\", \"323 U.S. 134\"]. Do not include case names. Up to 250 items.",
                     },
                 },
+                required: ["citations"],
             },
         },
     },

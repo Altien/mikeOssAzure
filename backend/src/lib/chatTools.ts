@@ -100,6 +100,9 @@ export type ChatMessage = {
 
 export const SYSTEM_PROMPT = `You are Mike, an AI legal assistant that helps lawyers and legal professionals analyze documents, answer legal questions, and draft legal documents.
 
+TOOL BUDGET:
+You have at most 10 tool-use rounds in a single response. Use tools deliberately, batch independent tool calls in the same round where possible, and reserve enough room to produce a final answer. Do not spend the final tool round gathering more information unless you can answer without another tool call afterward.
+
 DOCUMENT CITATION INSTRUCTIONS:
 When you reference specific content from an uploaded/generated document, place a numbered marker [1], [2], etc. inline in your prose at the point of reference.
 These numbered [N] markers and the <CITATIONS> block are for evidence passages that the UI can open. Uploaded/generated document citations use the document entry shape below. Research tools may define additional source-specific citation entry shapes in their own instructions.
@@ -1972,7 +1975,6 @@ type CourtlistenerCaseRecord = {
   url: string | null;
   pdfUrl: string | null;
   dateFiled: string | null;
-  judges: string | null;
   opinions?: unknown[];
 };
 
@@ -1984,7 +1986,6 @@ type CourtlistenerCaseInput = {
   url?: string | null;
   pdfUrl?: string | null;
   dateFiled?: string | null;
-  judges?: string | null;
   opinions?: unknown[];
 };
 
@@ -2015,7 +2016,6 @@ function upsertCourtlistenerCases(
         url: null,
         pdfUrl: null,
         dateFiled: null,
-        judges: null,
       };
     const nextCitations = [
       ...current.citations,
@@ -2031,7 +2031,6 @@ function upsertCourtlistenerCases(
       url: current.url ?? nonEmpty(input.url),
       pdfUrl: current.pdfUrl ?? nonEmpty(input.pdfUrl),
       dateFiled: current.dateFiled ?? nonEmpty(input.dateFiled),
-      judges: current.judges ?? nonEmpty(input.judges),
       opinions: current.opinions ?? input.opinions,
     };
     state.casesByClusterId.set(clusterId, record);
@@ -2052,7 +2051,6 @@ function caseCitationEventFromRecord(
     url: record.url,
     pdfUrl: record.pdfUrl,
     dateFiled: record.dateFiled,
-    judges: record.judges,
   };
 }
 
@@ -2104,7 +2102,6 @@ function courtlistenerCaseInputFromFetchedCase(
     url: stringField(record, "url"),
     pdfUrl: stringField(record, "pdfUrl"),
     dateFiled: stringField(record, "dateFiled"),
-    judges: stringField(record, "judges"),
     opinions: Array.isArray(record?.opinions) ? record.opinions : undefined,
   };
 }
@@ -2146,7 +2143,6 @@ function courtlistenerFetchedCaseMetadata(
     dateFiled: record.dateFiled,
     url: record.url,
     pdfUrl: record.pdfUrl,
-    judges: record.judges,
     opinion_count: opinionCount,
     opinions: (record.opinions ?? [])
       .map(courtlistenerOpinionMetadata)
@@ -2884,7 +2880,6 @@ export async function runToolCalls(
           citations: record.citations,
           url: record.url,
           dateFiled: record.dateFiled,
-          judges: record.judges,
           opinion_count: opinions.length,
           opinions: (record.opinions ?? [])
             .map(courtlistenerOpinionMetadata)
@@ -2933,7 +2928,6 @@ export async function runToolCalls(
           citations: record.citations,
           url: record.url,
           dateFiled: record.dateFiled,
-          judges: record.judges,
           opinion_count: opinions.length,
           returned_opinion_count: selectedOpinions.length,
           opinions: selectedOpinions,
@@ -2944,16 +2938,13 @@ export async function runToolCalls(
         ? args.citations.filter(
             (value): value is string => typeof value === "string",
           )
-        : undefined;
-      const citationCount =
-        citations?.length ??
-        (typeof args.text === "string" && args.text.trim() ? 1 : 0);
+        : [];
+      const citationCount = citations.length;
       write(
         `data: ${JSON.stringify({ type: "courtlistener_verify_citations_start", citation_count: citationCount })}\n\n`,
       );
       try {
         const result = (await verifyCourtlistenerCitations({
-          text: typeof args.text === "string" ? args.text : undefined,
           citations,
           db,
           apiToken: apiKeys?.courtlistener,
@@ -2964,7 +2955,6 @@ export async function runToolCalls(
             caseName?: string | null;
             dateFiled?: string | null;
             pdfUrl?: string | null;
-            judges?: string | null;
             url?: string | null;
             markdown?: string;
           }[];
@@ -2983,7 +2973,6 @@ export async function runToolCalls(
               url: link.url,
               pdfUrl: link.pdfUrl,
               dateFiled: link.dateFiled,
-              judges: link.judges,
             })),
           );
           const recordsByClusterId = new Map(
@@ -3712,7 +3701,6 @@ function createCitationAnnotation(
       url: caseRecord?.url ?? null,
       pdfUrl: caseRecord?.pdfUrl ?? null,
       dateFiled: caseRecord?.dateFiled ?? null,
-      judges: caseRecord?.judges ?? null,
       quotes: citation.quotes,
     };
   }
@@ -3809,6 +3797,13 @@ export class AssistantStreamError extends Error {
     this.name = "AssistantStreamError";
     this.fullText = fullText;
     this.events = events;
+  }
+}
+
+export class AssistantStreamAbortError extends AssistantStreamError {
+  constructor(fullText: string, events: AssistantEvent[]) {
+    super("Stream aborted.", fullText, events);
+    this.name = "AbortError";
   }
 }
 
@@ -3970,22 +3965,25 @@ export async function runLLMStream(params: {
     }
   };
 
-  const flushVisibleTail = () => {
+  const flushVisibleTail = (opts: { emit?: boolean } = {}) => {
+    const emit = opts.emit ?? true;
     if (citationsOpenSeen || !visibleTailBuffer) {
       visibleTailBuffer = "";
       return;
     }
     iterVisibleText += visibleTailBuffer;
-    write(
-      `data: ${JSON.stringify({ type: "content_delta", text: visibleTailBuffer })}\n\n`,
-    );
+    if (emit) {
+      write(
+        `data: ${JSON.stringify({ type: "content_delta", text: visibleTailBuffer })}\n\n`,
+      );
+    }
     visibleTailBuffer = "";
   };
 
-  const flushText = () => {
+  const flushText = (opts: { emit?: boolean } = {}) => {
     if (!iterText) return;
     fullText += iterText;
-    flushVisibleTail();
+    flushVisibleTail(opts);
     if (iterVisibleText) {
       events.push({ type: "content", text: iterVisibleText });
     }
@@ -3995,6 +3993,14 @@ export async function runLLMStream(params: {
     citationsOpenSeen = false;
     streamingCitationsBuffer = "";
     streamedCitationCount = 0;
+  };
+
+  const flushPartialTurn = (opts: { emit?: boolean } = {}) => {
+    flushText(opts);
+    if (iterReasoning) {
+      events.push({ type: "reasoning", text: iterReasoning });
+      iterReasoning = "";
+    }
   };
 
   const selectedModel = resolveModel(model, DEFAULT_MAIN_MODEL);
@@ -4161,8 +4167,11 @@ export async function runLLMStream(params: {
       },
     });
   } catch (err) {
-    if (isAbortError(err)) throw err;
-    flushText();
+    if (isAbortError(err)) {
+      flushPartialTurn({ emit: false });
+      throw new AssistantStreamAbortError(fullText, events);
+    }
+    flushPartialTurn();
     const message =
       err instanceof Error && err.message ? err.message : "Stream error";
     events.push({ type: "error", message });
@@ -4206,6 +4215,24 @@ export function extractAnnotations(
 
 export function stripTransientAssistantEvents(events: AssistantEvent[]) {
   return events.filter((event) => event.type !== "case_opinions");
+}
+
+export function appendCancelledAssistantEvent(events: AssistantEvent[]) {
+  return [...events, { type: "content" as const, text: "Cancelled by user." }];
+}
+
+export function buildCancelledAssistantMessage(args: {
+  fullText: string;
+  events: AssistantEvent[];
+  buildAnnotations: (fullText: string, events: AssistantEvent[]) => unknown[];
+}) {
+  const events = appendCancelledAssistantEvent(
+    stripTransientAssistantEvents(args.events),
+  );
+  return {
+    events,
+    annotations: args.buildAnnotations(args.fullText, events),
+  };
 }
 
 // ---------------------------------------------------------------------------

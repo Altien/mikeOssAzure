@@ -27,6 +27,37 @@ function normalizeDocumentFilename(nextName: unknown, currentName: string) {
   return `${trimmed}${ext}`;
 }
 
+async function deleteProjectDocumentsAndVersionFiles(
+  db: ReturnType<typeof createServerSupabase>,
+  projectId: string,
+  documentIds: string[],
+) {
+  if (documentIds.length === 0) return null;
+  const { data: versions, error: versionsError } = await db
+    .from("document_versions")
+    .select("storage_path, pdf_storage_path")
+    .in("document_id", documentIds);
+  if (versionsError) return versionsError;
+
+  const paths = new Set<string>();
+  for (const v of versions ?? []) {
+    if (typeof v.storage_path === "string" && v.storage_path.length > 0) {
+      paths.add(v.storage_path);
+    }
+    if (typeof v.pdf_storage_path === "string" && v.pdf_storage_path.length > 0) {
+      paths.add(v.pdf_storage_path);
+    }
+  }
+  await Promise.all([...paths].map((p) => deleteFile(p).catch(() => {})));
+
+  const { error } = await db
+    .from("documents")
+    .delete()
+    .eq("project_id", projectId)
+    .in("id", documentIds);
+  return error ?? null;
+}
+
 // GET /projects
 projectsRouter.get("/", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
@@ -770,11 +801,48 @@ projectsRouter.delete("/:projectId/folders/:folderId", requireAuth, async (req, 
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
   if (!access.ok) return void res.status(404).json({ detail: "Project not found" });
 
-  const folder = await loadProjectFolder(db, projectId, folderId);
-  if (!folder) return void res.status(404).json({ detail: "Folder not found" });
+  const { data: allFolders, error: foldersError } = await db
+    .from("project_subfolders")
+    .select("id, parent_folder_id")
+    .eq("project_id", projectId);
+  if (foldersError)
+    return void res.status(500).json({ detail: foldersError.message });
+  if (!(allFolders ?? []).some((f) => f.id === folderId))
+    return void res.status(404).json({ detail: "Folder not found" });
 
-  // Move direct documents to root before cascade-deleting subfolders
-  await db.from("documents").update({ folder_id: null }).eq("folder_id", folderId).eq("project_id", projectId);
+  const childrenByParent = new Map<string, string[]>();
+  for (const f of allFolders ?? []) {
+    const parentId = f.parent_folder_id as string | null;
+    if (!parentId) continue;
+    const children = childrenByParent.get(parentId) ?? [];
+    children.push(f.id as string);
+    childrenByParent.set(parentId, children);
+  }
+
+  const folderIds = new Set<string>();
+  const stack = [folderId];
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    if (folderIds.has(id)) continue;
+    folderIds.add(id);
+    stack.push(...(childrenByParent.get(id) ?? []));
+  }
+
+  const { data: docs, error: docsError } = await db
+    .from("documents")
+    .select("id")
+    .eq("project_id", projectId)
+    .in("folder_id", [...folderIds]);
+  if (docsError) return void res.status(500).json({ detail: docsError.message });
+
+  const docIds = (docs ?? []).map((d) => d.id as string);
+  const deleteDocsError = await deleteProjectDocumentsAndVersionFiles(
+    db,
+    projectId,
+    docIds,
+  );
+  if (deleteDocsError)
+    return void res.status(500).json({ detail: deleteDocsError.message });
 
   const { error } = await db.from("project_subfolders")
     .delete().eq("id", folderId).eq("project_id", projectId);

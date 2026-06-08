@@ -40,7 +40,6 @@ export type CaseTab = {
     url: string | null;
     dateFiled: string | null;
     pdfUrl: string | null;
-    judges: string | null;
     quotes?: CaseCitationQuote[];
     opinions?: CaseLawOpinion[];
 };
@@ -281,7 +280,6 @@ export function CaseLawPanel({
     const citation = tab.citation;
     const courtlistenerUrl = tab.url;
     const filedDate = formatCaseDate(tab.dateFiled);
-    const judges = tab.judges?.trim() || null;
     const orderedOpinions = orderOpinions(opinions);
     const activeOpinion = opinions.find(
         (opinion) => opinion.opinionId === activeOpinionId,
@@ -377,13 +375,9 @@ export function CaseLawPanel({
                             <span className="text-gray-500">, {citation}</span>
                         )}
                     </h2>
-                    {filedDate || judges ? (
+                    {filedDate ? (
                         <p className="mt-1 font-serif text-sm text-gray-600">
-                            {filedDate && <>Date: {filedDate}</>}
-                            {filedDate && judges && (
-                                <span className="mx-1.5 text-gray-300">|</span>
-                            )}
-                            {judges && <>Judges: {judges}</>}
+                            Date: {filedDate}
                         </p>
                     ) : null}
                 </div>

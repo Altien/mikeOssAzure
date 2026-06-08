@@ -207,7 +207,6 @@ export type AssistantEvent =
       url: string;
       pdfUrl?: string | null;
       dateFiled?: string | null;
-      judges?: string | null;
       case?: Extract<AssistantEvent, { type: "case_opinions" }>["case"];
     }
   | {
@@ -288,7 +287,6 @@ export type CaseCitationAnnotation = {
   url?: string | null;
   pdfUrl?: string | null;
   dateFiled?: string | null;
-  judges?: string | null;
   quotes: CaseCitationQuote[];
 };
 

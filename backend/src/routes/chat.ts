@@ -7,6 +7,7 @@ import {
     enrichWithPriorEvents,
     buildWorkflowStore,
     AssistantStreamError,
+    buildCancelledAssistantMessage,
     extractAnnotations,
     isAbortError,
     runLLMStream,
@@ -534,6 +535,28 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     } catch (err) {
         if (isAbortError(err)) {
             devLog("[chat/stream] client aborted stream", { chatId });
+            if (err instanceof AssistantStreamError) {
+                const partial = buildCancelledAssistantMessage({
+                    fullText: err.fullText,
+                    events: err.events,
+                    buildAnnotations: (fullText, events) =>
+                        extractAnnotations(fullText, docIndex, events),
+                });
+                const { error: saveError } = await db.from("chat_messages").insert({
+                    chat_id: chatId,
+                    role: "assistant",
+                    content: partial.events.length ? partial.events : null,
+                    annotations: partial.annotations.length
+                        ? partial.annotations
+                        : null,
+                });
+                if (saveError) {
+                    console.error(
+                        "[chat/stream] failed to save aborted stream",
+                        saveError,
+                    );
+                }
+            }
             return;
         }
         console.error("[chat/stream] error:", err);

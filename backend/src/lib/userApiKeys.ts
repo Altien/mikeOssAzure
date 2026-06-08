@@ -55,8 +55,14 @@ async function getEncryptionKey(): Promise<Buffer> {
                 );
             }
             // SHA-256 of the input yields a deterministic 32-byte key,
-            // matching the AES-256-GCM key size. Matches upstream's
-            // shape so a secret rotated between forks decrypts the same.
+            // matching the AES-256-GCM key size.
+            // Upstream divergence (sync-log: f32a194): upstream switched
+            // this derivation to scryptSync(secret, "mike-user-api-keys-v1", 32).
+            // Adopting that on dev would silently invalidate every
+            // already-encrypted user_api_keys row (decrypt() would fail
+            // and users would lose their stored keys). Do NOT switch the
+            // KDF without a re-encryption migration that decrypts under
+            // sha256 and re-encrypts under scrypt.
             return crypto.createHash("sha256").update(secret).digest();
         })();
     }

@@ -138,6 +138,21 @@ create index if not exists document_versions_document_id_idx
 create index if not exists document_versions_doc_vnum_idx
   on public.document_versions(document_id, version_number);
 
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'document_versions_doc_version_unique'
+      and conrelid = 'public.document_versions'::regclass
+  ) then
+    alter table public.document_versions
+      add constraint document_versions_doc_version_unique
+      unique (document_id, version_number);
+  end if;
+end;
+$$;
+
 alter table public.documents
   add column if not exists current_version_id uuid
   references public.document_versions(id) on delete set null;

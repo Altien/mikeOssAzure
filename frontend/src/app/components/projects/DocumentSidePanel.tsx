@@ -14,7 +14,6 @@ import {
 } from "lucide-react";
 import { ConfirmPopup } from "@/app/components/shared/ConfirmPopup";
 import { DocView } from "@/app/components/shared/DocView";
-import { DocFileIcon } from "@/app/components/shared/FileDirectory";
 import { WarningPopup } from "@/app/components/shared/WarningPopup";
 import type { Document } from "@/app/components/shared/types";
 import type { DocumentVersion } from "@/app/lib/mikeApi";
@@ -27,6 +26,10 @@ const MIN_DATA_COLUMN_WIDTH = 280;
 const DEFAULT_DATA_COLUMN_WIDTH = 340;
 const RESIZER_WIDTH = 6;
 const MAX_PANEL_WIDTH = 1180;
+const primaryGlassButtonClass =
+    "inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-gray-700/40 bg-gray-950/88 px-3 text-xs font-medium text-white shadow-[0_3px_9px_rgba(15,23,42,0.16),inset_0_1px_0_rgba(255,255,255,0.22),inset_0_-4px_9px_rgba(15,23,42,0.2)] backdrop-blur-xl transition-all hover:bg-gray-900/90 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100";
+const dangerGlassButtonClass =
+    "inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-red-700/35 bg-red-600/90 px-3 text-xs font-medium text-white shadow-[0_3px_9px_rgba(127,29,29,0.16),inset_0_1px_0_rgba(255,255,255,0.22),inset_0_-4px_9px_rgba(127,29,29,0.18)] backdrop-blur-xl transition-all hover:bg-red-600 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100";
 
 interface DocumentSidePanelProps {
     doc: Document | null;
@@ -48,10 +51,7 @@ interface DocumentSidePanelProps {
         versionId: string,
         filename: string,
     ) => Promise<void> | void;
-    onDeleteVersion: (
-        docId: string,
-        versionId: string,
-    ) => Promise<void> | void;
+    onDeleteVersion: (docId: string, versionId: string) => Promise<void> | void;
     onUploadNewVersion: (
         doc: Document,
         file: File,
@@ -69,7 +69,6 @@ export function DocumentSidePanel({
     onClose,
     onLoadVersions,
     onSelectVersion,
-    onDownloadDocument,
     onDownloadVersion,
     onRenameVersion,
     onDeleteVersion,
@@ -84,7 +83,9 @@ export function DocumentSidePanel({
     const [savingName, setSavingName] = useState(false);
     const [nameError, setNameError] = useState<string | null>(null);
     const [extensionWarningOpen, setExtensionWarningOpen] = useState(false);
-    const [deletingVersion, setDeletingVersion] = useState(false);
+    const [deletingVersionId, setDeletingVersionId] = useState<string | null>(
+        null,
+    );
     const [deletingDocument, setDeletingDocument] = useState(false);
     const [confirmDeleteDocumentOpen, setConfirmDeleteDocumentOpen] =
         useState(false);
@@ -142,8 +143,7 @@ export function DocumentSidePanel({
         orderedVersions[0] ??
         null;
     const selectedVersionId = selectedVersion?.id ?? versionId ?? null;
-    const selectedFilename =
-        selectedVersion?.filename?.trim() || doc.filename;
+    const selectedFilename = selectedVersion?.filename?.trim() || doc.filename;
     const selectedFileType =
         selectedVersion != null
             ? fileTypeForVersion(selectedVersion, doc.file_type)
@@ -207,15 +207,14 @@ export function DocumentSidePanel({
         }
     }
 
-    async function handleDeleteSelectedVersion() {
-        if (!selectedVersionId) return;
-        setDeletingVersion(true);
+    async function handleDeleteVersion(versionIdToDelete: string) {
+        setDeletingVersionId(versionIdToDelete);
         try {
-            await onDeleteVersion(documentId, selectedVersionId);
+            await onDeleteVersion(documentId, versionIdToDelete);
         } catch (err) {
             console.error("delete version failed", err);
         } finally {
-            setDeletingVersion(false);
+            setDeletingVersionId(null);
         }
     }
 
@@ -261,7 +260,8 @@ export function DocumentSidePanel({
                 panelWidth - MIN_DOC_COLUMN_WIDTH - RESIZER_WIDTH,
             );
             const nextWidth =
-                dragStartDataWidth.current + (dragStartX.current - event.clientX);
+                dragStartDataWidth.current +
+                (dragStartX.current - event.clientX);
             setDataColumnWidth(
                 Math.min(
                     maxDataWidth,
@@ -290,7 +290,8 @@ export function DocumentSidePanel({
 
         const handleMouseMove = (event: MouseEvent) => {
             const nextWidth =
-                dragStartPanelWidth.current + (dragStartX.current - event.clientX);
+                dragStartPanelWidth.current +
+                (dragStartX.current - event.clientX);
             setPanelWidth(clampPanelWidth(nextWidth, dataColumnWidth));
         };
 
@@ -383,13 +384,13 @@ export function DocumentSidePanel({
 
                 <aside
                     className={cn(
-                        "flex min-h-0 flex-col",
-                        "bg-white/25",
+                        "mb-3 ml-2 mr-3 flex min-h-0 flex-col overflow-hidden rounded-xl",
+                        "border border-white/70 bg-white/55 shadow-[0_3px_9px_rgba(15,23,42,0.06),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-4px_9px_rgba(255,255,255,0.08)] backdrop-blur-2xl",
                     )}
                 >
                     <div
                         className={cn(
-                            "shrink-0 px-4 pb-3 pt-0",
+                            "shrink-0 px-4 py-3",
                             "border-b border-white/60",
                         )}
                     >
@@ -400,28 +401,30 @@ export function DocumentSidePanel({
                             {editingName ? (
                                 <div className="space-y-1.5">
                                     <div className="flex min-h-6 items-center gap-2">
-                                    <input
-                                        value={nameDraft}
-                                        onChange={(e) => {
-                                            setNameDraft(e.target.value);
-                                            setNameError(null);
-                                        }}
-                                        onKeyDown={(e) => {
-                                            if (e.key === "Enter") {
-                                                e.preventDefault();
-                                                void handleSaveName();
-                                            }
-                                            if (e.key === "Escape") {
-                                                setEditingName(false);
+                                        <input
+                                            value={nameDraft}
+                                            onChange={(e) => {
+                                                setNameDraft(e.target.value);
                                                 setNameError(null);
-                                            }
-                                        }}
-                                        className="h-6 min-w-0 flex-1 border-0 border-b border-gray-300 bg-transparent px-0 text-xs leading-6 text-gray-900 outline-none transition-colors focus:border-gray-500"
-                                        autoFocus
-                                    />
+                                            }}
+                                            onKeyDown={(e) => {
+                                                if (e.key === "Enter") {
+                                                    e.preventDefault();
+                                                    void handleSaveName();
+                                                }
+                                                if (e.key === "Escape") {
+                                                    setEditingName(false);
+                                                    setNameError(null);
+                                                }
+                                            }}
+                                            className="h-6 min-w-0 flex-1 border-0 border-b border-gray-300 bg-transparent px-0 text-xs leading-6 text-gray-900 outline-none transition-colors focus:border-gray-500"
+                                            autoFocus
+                                        />
                                         <button
                                             type="button"
-                                            onClick={() => void handleSaveName()}
+                                            onClick={() =>
+                                                void handleSaveName()
+                                            }
                                             disabled={savingName}
                                             className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-white/65 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-40"
                                             title="Save name"
@@ -465,96 +468,57 @@ export function DocumentSidePanel({
                         <div className="mb-3 text-xs font-medium text-gray-900">
                             Document Data
                         </div>
-                        <div className="space-y-1.5">
-                            <DataRow label="Type" value={selectedFileType ?? "—"} />
-                            <DataRow
-                                label="Size"
-                                value={
-                                    selectedSizeBytes != null
-                                        ? formatBytes(selectedSizeBytes)
-                                        : "—"
-                                }
-                            />
-                            <DataRow
-                                label="Version"
-                                value={
-                                    selectedVersionNumber != null
-                                        ? String(selectedVersionNumber)
-                                        : "—"
-                                }
-                            />
-                            <DataRow
-                                label="Uploaded"
-                                value={
-                                    selectedUploadedAt
-                                        ? formatDate(selectedUploadedAt)
-                                        : "—"
-                                }
-                            />
-                            {selectedPageCount != null && (
+                        <div className="rounded-xl bg-gray-100/70 px-3 py-3">
+                            <div className="space-y-1.5">
                                 <DataRow
-                                    label="Pages"
-                                    value={String(selectedPageCount)}
+                                    label="Type"
+                                    value={selectedFileType ?? "—"}
                                 />
-                            )}
-                        </div>
-                        <div className="mt-4 flex items-center justify-between gap-2">
-                            <button
-                                type="button"
-                                onClick={() =>
-                                    void handleDeleteSelectedVersion()
-                                }
-                                disabled={
-                                    !selectedVersionId ||
-                                    versions.length <= 1 ||
-                                    deletingVersion
-                                }
-                                className={cn(
-                                    "inline-flex items-center gap-1.5 rounded-lg border border-gray-300/80 bg-white/65 px-3 py-2 text-xs font-medium text-red-600 transition-colors hover:border-red-200 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40",
+                                <DataRow
+                                    label="Size"
+                                    value={
+                                        selectedSizeBytes != null
+                                            ? formatBytes(selectedSizeBytes)
+                                            : "—"
+                                    }
+                                />
+                                <DataRow
+                                    label="Version"
+                                    value={
+                                        selectedVersionNumber != null
+                                            ? String(selectedVersionNumber)
+                                            : "—"
+                                    }
+                                />
+                                <DataRow
+                                    label="Uploaded"
+                                    value={
+                                        selectedUploadedAt
+                                            ? formatDate(selectedUploadedAt)
+                                            : "—"
+                                    }
+                                />
+                                {selectedPageCount != null && (
+                                    <DataRow
+                                        label="Pages"
+                                        value={String(selectedPageCount)}
+                                    />
                                 )}
-                            >
-                                {deletingVersion ? (
-                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                ) : (
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                )}
-                                Delete version
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() =>
-                                    selectedVersionId
-                                        ? void onDownloadVersion(
-                                              doc.id,
-                                              selectedVersionId,
-                                              selectedFilename,
-                                          )
-                                        : void onDownloadDocument(doc.id)
-                                }
-                                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300/80 bg-white/65 px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:border-gray-400 hover:bg-white hover:text-gray-900"
-                            >
-                                <Download className="h-3.5 w-3.5" />
-                                Download
-                            </button>
+                            </div>
                         </div>
                     </div>
 
                     <div className="flex min-h-0 flex-1 flex-col px-4 pb-3 pt-0">
+                        <div className="mb-2 text-xs font-medium text-gray-900">
+                            Versions
+                        </div>
                         <div
                             className={cn(
                                 "flex min-h-0 flex-1 flex-col overflow-visible rounded-xl",
-                                "border border-white/60 bg-white/35 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]",
+                                "bg-gray-100 px-2",
                             )}
                         >
-                            <div
-                                className={cn(
-                                    "shrink-0 py-2 text-xs font-medium text-gray-900",
-                                    "border-b border-white/60",
-                                )}
-                            >
-                                Versions
-                            </div>
-                            <div className="-mx-2 min-h-0 flex-1 overflow-y-auto px-2 py-2">
+                            <div className="min-h-0 flex-1 overflow-y-auto py-2">
                                 {versionsLoading && versions.length === 0 ? (
                                     <div className="flex items-center gap-2 py-2 text-xs text-gray-400">
                                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -565,59 +529,136 @@ export function DocumentSidePanel({
                                         No version history.
                                     </div>
                                 ) : (
-                                    <div className="space-y-1">
+                                    <div className="space-y-1.5">
                                         {orderedVersions.map((version) => {
                                             const title =
                                                 versionTitleFor(version);
                                             const filename =
                                                 versionFilenameFor(version);
                                             const selected =
-                                                selectedVersionId === version.id;
-                                            const fileType =
-                                                fileTypeForVersion(
-                                                    version,
-                                                    doc.file_type,
-                                                );
+                                                selectedVersionId ===
+                                                version.id;
+                                            const versionDeleting =
+                                                deletingVersionId ===
+                                                version.id;
+                                            const fileType = fileTypeForVersion(
+                                                version,
+                                                doc.file_type,
+                                            );
+                                            const typeLabel =
+                                                fileType === "pdf"
+                                                    ? "PDF"
+                                                    : "DOCX";
                                             return (
-                                                <button
+                                                <div
                                                     key={version.id}
-                                                    type="button"
+                                                    role="button"
+                                                    tabIndex={0}
                                                     onClick={() =>
                                                         onSelectVersion(
                                                             version.id,
                                                             filename,
                                                         )
                                                     }
-                                                    className={cn(
-                                                        "group -mx-2 flex w-[calc(100%+1rem)] items-center gap-2 rounded-lg px-2 py-2 text-left transition-colors",
-                                                        selected
-                                                            ? "bg-gray-100"
-                                                            : "hover:bg-white/55",
-                                                    )}
+                                                    onKeyDown={(event) => {
+                                                        if (
+                                                            event.key !==
+                                                                "Enter" &&
+                                                            event.key !== " "
+                                                        ) return;
+                                                        event.preventDefault();
+                                                        onSelectVersion(
+                                                            version.id,
+                                                            filename,
+                                                        );
+                                                    }}
+                                                    className="group relative flex w-full cursor-pointer flex-col overflow-hidden rounded-lg border border-white/70 bg-white px-3 py-2 shadow-[0_1px_4px_rgba(15,23,42,0.045),inset_0_1px_0_rgba(255,255,255,0.72)] backdrop-blur-xl transition-all hover:bg-white"
                                                 >
-                                                    <div className="min-w-0 flex-1">
-                                                        <div className="flex min-w-0 items-center gap-2">
-                                                            <DocFileIcon
-                                                                fileType={
-                                                                    fileType
-                                                                }
-                                                            />
-                                                            <div className="min-w-0 flex-1 truncate text-xs font-medium text-gray-800">
-                                                                {title}
-                                                            </div>
+                                                    {selected && (
+                                                        <span className="absolute inset-y-0 left-0 w-[3px] bg-blue-500" />
+                                                    )}
+                                                    <div className="flex min-w-0 items-center gap-2">
+                                                        <div
+                                                            className={cn(
+                                                                "min-w-0 flex-1 truncate text-xs font-medium text-gray-800",
+                                                            )}
+                                                        >
+                                                            {title}
                                                         </div>
-                                                        <div className="truncate pl-[22px] text-[11px] text-gray-400">
-                                                            {filename}
-                                                        </div>
-                                                        <div className="truncate pl-[22px] text-[11px] text-gray-400">
+                                                        <span
+                                                            className={cn(
+                                                                "shrink-0 text-[10px] font-semibold tracking-normal",
+                                                                typeLabel ===
+                                                                    "PDF"
+                                                                    ? "text-red-600"
+                                                                    : "text-blue-600",
+                                                            )}
+                                                        >
+                                                            {typeLabel}
+                                                        </span>
+                                                    </div>
+                                                    <div className="truncate text-[11px] text-gray-400">
+                                                        {filename}
+                                                    </div>
+                                                    <div className="flex min-w-0 items-center gap-2">
+                                                        <div className="min-w-0 flex-1 truncate text-[11px] text-gray-400">
                                                             {version.created_at
                                                                 ? new Date(
                                                                       version.created_at,
                                                                   ).toLocaleString()
                                                                 : "—"}
                                                         </div>
+                                                        <div
+                                                            className={cn(
+                                                                "flex h-5 shrink-0 items-center gap-0.5 transition-opacity",
+                                                                selected
+                                                                    ? "opacity-100"
+                                                                    : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+                                                            )}
+                                                        >
+                                                            <button
+                                                                type="button"
+                                                                onClick={(event) => {
+                                                                    event.stopPropagation();
+                                                                    void onDownloadVersion(
+                                                                        doc.id,
+                                                                        version.id,
+                                                                        filename,
+                                                                    );
+                                                                }}
+                                                                className="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900"
+                                                                aria-label={`Download ${title}`}
+                                                                title="Download version"
+                                                            >
+                                                                <Download className="h-3 w-3" />
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={(event) => {
+                                                                    event.stopPropagation();
+                                                                    void handleDeleteVersion(
+                                                                        version.id,
+                                                                    );
+                                                                }}
+                                                                disabled={
+                                                                    versions.length <=
+                                                                        1 ||
+                                                                    deletingVersionId !=
+                                                                        null
+                                                                }
+                                                                className="inline-flex h-5 w-5 items-center justify-center rounded-full text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40"
+                                                                aria-label={`Delete ${title}`}
+                                                                title="Delete version"
+                                                            >
+                                                                {versionDeleting ? (
+                                                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                                                ) : (
+                                                                    <Trash2 className="h-3 w-3" />
+                                                                )}
+                                                            </button>
+                                                        </div>
                                                     </div>
-                                                </button>
+                                                </div>
                                             );
                                         })}
                                     </div>
@@ -650,12 +691,12 @@ export function DocumentSidePanel({
                             type="button"
                             onClick={requestDeleteDocument}
                             disabled={deletingDocument}
-                            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-gray-300/80 bg-white/35 px-3 text-xs font-medium text-red-600 transition-colors hover:border-red-200 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            className={dangerGlassButtonClass}
                         >
                             {deletingDocument ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
                             ) : (
-                                <Trash2 className="h-3.5 w-3.5" />
+                                <Trash2 className="h-3.5 w-3.5 shrink-0" />
                             )}
                             Delete
                         </button>
@@ -663,12 +704,12 @@ export function DocumentSidePanel({
                             type="button"
                             onClick={() => fileInputRef.current?.click()}
                             disabled={uploading}
-                            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-gray-300/80 bg-white/35 px-3 text-xs font-medium text-gray-800 transition-colors hover:border-gray-400 hover:bg-white/60 disabled:cursor-not-allowed disabled:opacity-40"
+                            className={primaryGlassButtonClass}
                         >
                             {uploading ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
                             ) : (
-                                <Upload className="h-3.5 w-3.5" />
+                                <Upload className="h-3.5 w-3.5 shrink-0" />
                             )}
                             Upload new version
                         </button>
@@ -742,10 +783,7 @@ function versionFilenameFor(version: DocumentVersion) {
     return version.source === "upload" ? "Original" : "—";
 }
 
-function fileTypeForVersion(
-    version: DocumentVersion,
-    fallback: string | null,
-) {
+function fileTypeForVersion(version: DocumentVersion, fallback: string | null) {
     const name = version.filename?.trim().toLowerCase() ?? "";
     if (name.endsWith(".pdf")) return "pdf";
     if (name.endsWith(".doc") || name.endsWith(".docx")) return "docx";

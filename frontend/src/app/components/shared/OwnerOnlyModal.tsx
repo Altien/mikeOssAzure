@@ -44,8 +44,7 @@ export function OwnerOnlyModal({
             onClose={onClose}
             title={title}
             message={body}
-            icon={<Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-600" />}
-            primaryAction={{ label: "OK", onClick: onClose }}
+            icon={<Lock className="h-3.5 w-3.5 shrink-0 text-red-600" />}
         >
             {ownerEmail && (
                 <p className="mt-1 text-xs text-gray-600">

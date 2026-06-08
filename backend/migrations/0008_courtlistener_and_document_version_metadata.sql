@@ -142,6 +142,24 @@ begin
   end if;
 end $$;
 
+-- One row per (document_id, version_number) — upstream f32a194
+-- ("document safety updates"). NULL version_numbers (legacy rows)
+-- remain allowed; Postgres unique treats NULLs as distinct.
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'document_versions_doc_version_unique'
+      and conrelid = 'public.document_versions'::regclass
+  ) then
+    alter table public.document_versions
+      add constraint document_versions_doc_version_unique
+      unique (document_id, version_number);
+  end if;
+end;
+$$;
+
 -- ---------------------------------------------------------------------------
 -- CourtListener bulk-data indexes
 -- ---------------------------------------------------------------------------
