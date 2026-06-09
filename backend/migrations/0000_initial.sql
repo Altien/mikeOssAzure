@@ -35,6 +35,10 @@ create table if not exists public.user_profiles (
   -- and quote_model preference columns here. Dev's fast_model (0004)
   -- covers the title/lightweight-task preference, and nothing in dev
   -- reads quote_model, so neither column was adopted.
+  -- Upstream divergence (sync-log: 3a10943): upstream also added
+  -- mfa_on_login boolean (preference for its Supabase Auth app-level MFA
+  -- login gate). Dev did not adopt app-level Supabase MFA — Entra enforces
+  -- MFA at the IdP (Conditional Access) — so the column is skipped.
   tabular_model text not null default 'gemini-3-flash-preview',
   claude_api_key text,
   gemini_api_key text,

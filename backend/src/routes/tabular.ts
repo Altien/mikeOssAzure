@@ -32,6 +32,7 @@ import {
     filterAccessibleDocumentIds,
     listAccessibleProjectIds,
 } from "../lib/access";
+import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
 
 function formatPromptSuffix(format?: string, tags?: string[]): string {
     switch (format) {
@@ -1071,7 +1072,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                 } catch (err) {
                     console.error(
                         `[tabular/generate] queryTabularAllColumns error doc=${docId}`,
-                        err,
+                        safeErrorLog(err),
                     );
                 }
 
@@ -1094,10 +1095,10 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
 
         write("data: [DONE]\n\n");
     } catch (err) {
-        console.error("[tabular/generate] stream error", err);
+        console.error("[tabular/generate] stream error", safeErrorLog(err));
         try {
             write(
-                `data: ${JSON.stringify({ type: "error", message: String(err) })}\n\ndata: [DONE]\n\n`,
+                `data: ${JSON.stringify({ type: "error", message: safeErrorMessage(err, "Stream error") })}\n\ndata: [DONE]\n\n`,
             );
         } catch {
             /* ignore */
@@ -1549,9 +1550,8 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
             }
             return;
         }
-        console.error("[tabular/chat] error", err);
-        const message =
-            err instanceof Error && err.message ? err.message : "Stream error";
+        console.error("[tabular/chat] error", safeErrorLog(err));
+        const message = safeErrorMessage(err, "Stream error");
         const errorEvents = err instanceof AssistantStreamError
             ? stripTransientAssistantEvents(err.events)
             : [{ type: "error" as const, message }];
@@ -1664,7 +1664,7 @@ The "summary" field must contain only the extracted value with inline citations 
             apiKeys,
         });
     } catch (err) {
-        console.error("[queryTabularCell] completion failed", err);
+        console.error("[queryTabularCell] completion failed", safeErrorLog(err));
         return null;
     }
     try {
@@ -1875,7 +1875,7 @@ Rules:
             },
         });
     } catch (err) {
-        console.error("[queryTabularAllColumns] stream failed", err);
+        console.error("[queryTabularAllColumns] stream failed", safeErrorLog(err));
     }
 
     if (contentBuffer.trim()) pending.push(processLine(contentBuffer));

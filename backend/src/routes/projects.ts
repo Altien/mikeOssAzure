@@ -14,6 +14,7 @@ import {
 import { docxToPdf, convertedPdfKey } from "../lib/convert";
 import { checkProjectAccess } from "../lib/access";
 import { singleFileUpload } from "../lib/upload";
+import { deleteUserProjects } from "../lib/userDataCleanup";
 
 export const projectsRouter = Router();
 const ALLOWED_TYPES = new Set(["pdf", "docx", "doc"]);
@@ -405,13 +406,15 @@ projectsRouter.delete("/:projectId", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const { projectId } = req.params;
   const db = createServerSupabase();
-  const { error } = await db
-    .from("projects")
-    .delete()
-    .eq("id", projectId)
-    .eq("user_id", userId);
-  if (error) return void res.status(500).json({ detail: error.message });
-  res.status(204).send();
+  try {
+    const deletedCount = await deleteUserProjects(db, userId, [projectId]);
+    if (deletedCount === 0)
+      return void res.status(404).json({ detail: "Project not found" });
+    res.status(204).send();
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ detail });
+  }
 });
 
 // GET /projects/:projectId/documents

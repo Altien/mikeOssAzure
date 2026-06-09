@@ -96,6 +96,23 @@ const uploadLimiter = makeLimiter({
   message: "Too many upload requests. Please try again later.",
 });
 
+const exportLimiter = makeLimiter({
+  windowMs: hours(envInt("RATE_LIMIT_EXPORT_WINDOW_HOURS", 1)),
+  max: envInt("RATE_LIMIT_EXPORT_MAX", 10),
+  message: "Too many export requests. Please try again later.",
+});
+
+const dataDeleteLimiter = makeLimiter({
+  windowMs: hours(envInt("RATE_LIMIT_DATA_DELETE_WINDOW_HOURS", 1)),
+  max: envInt("RATE_LIMIT_DATA_DELETE_MAX", 20),
+  message: "Too many data deletion requests. Please try again later.",
+});
+
+// Upstream divergence (sync-log: 3a10943): upstream also added a
+// jsonLimitForPath() indirection around express.json; it returns a
+// constant "50mb" today, which is exactly dev's existing
+// express.json({ limit: "50mb" }) below — not adopted.
+
 // ───────────────────────────────────────────────────────────────────────────
 
 app.disable("x-powered-by");
@@ -212,6 +229,17 @@ app.post("/api/chat/:chatId/generate-title", chatCreateLimiter);
 app.post("/api/single-documents", uploadLimiter);
 app.post("/api/single-documents/:documentId/versions", uploadLimiter);
 app.post("/api/projects/:projectId/documents", uploadLimiter);
+// Export / data-deletion limiters (upstream 3a10943). Dev mounts the user
+// router at both /api/user and /api/users, so limit both aliases.
+for (const userBase of ["/api/user", "/api/users"]) {
+  app.get(`${userBase}/export`, exportLimiter);
+  app.get(`${userBase}/chats/export`, exportLimiter);
+  app.get(`${userBase}/tabular-reviews/export`, exportLimiter);
+  app.delete(`${userBase}/account`, dataDeleteLimiter);
+  app.delete(`${userBase}/chats`, dataDeleteLimiter);
+  app.delete(`${userBase}/projects`, dataDeleteLimiter);
+  app.delete(`${userBase}/tabular-reviews`, dataDeleteLimiter);
+}
 
 app.use("/api/chat", chatRouter);
 app.use("/api/projects", projectsRouter);

@@ -37,6 +37,7 @@ import {
   type LlmMessage,
   type OpenAIToolSchema,
 } from "./llm";
+import { safeErrorMessage } from "./safeError";
 
 const STANDARD_FONT_DATA_URL = (() => {
   try {
@@ -4172,8 +4173,7 @@ export async function runLLMStream(params: {
       throw new AssistantStreamAbortError(fullText, events);
     }
     flushPartialTurn();
-    const message =
-      err instanceof Error && err.message ? err.message : "Stream error";
+    const message = safeErrorMessage(err, "Stream error");
     events.push({ type: "error", message });
     throw new AssistantStreamError(message, fullText, events);
   }

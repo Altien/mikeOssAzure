@@ -430,7 +430,8 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                         {isDropdownOpen && (
                             <div
                                 className={cn(
-                                    "absolute bottom-full left-0 right-0 z-50 mb-1 p-1 whitespace-nowrap",
+                                    "absolute bottom-full left-0 z-50 mb-1 p-1 whitespace-nowrap",
+                                    isOpen ? "right-0" : "w-56",
                                     "bg-white/80 rounded-xl shadow-[0_6px_17px_rgba(15,23,42,0.1)] border border-white/70 backdrop-blur-xl",
                                 )}
                             >

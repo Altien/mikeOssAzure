@@ -8,8 +8,37 @@ import {
 } from "../lib/userApiKeys";
 import type { AzureOpenaiSettings } from "../lib/llm";
 import { resolveSecret } from "../lib/envSecrets";
+import {
+  deleteAllUserChats,
+  deleteAllUserTabularReviews,
+  deleteUserAccountData,
+  deleteUserProjects,
+} from "../lib/userDataCleanup";
+import {
+  buildUserAccountExport,
+  buildUserChatsExport,
+  buildUserTabularReviewsExport,
+  userExportFilename,
+} from "../lib/userDataExport";
 
 export const userRouter = Router();
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (error && typeof error === "object") {
+    const record = error as {
+      message?: unknown;
+      details?: unknown;
+      hint?: unknown;
+      code?: unknown;
+    };
+    return [record.message, record.details, record.hint, record.code]
+      .filter((value): value is string => typeof value === "string" && !!value)
+      .join(" ")
+      || JSON.stringify(error);
+  }
+  return String(error);
+}
 
 function normalizeCreditsResetDate(current: string | null): string {
   const now = new Date();
@@ -361,43 +390,152 @@ userRouter.delete("/account", requireAuth, async (_req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = (res.locals.userEmail as string | undefined)?.toLowerCase();
   const db = createServerSupabase();
+  try {
+    // Upstream divergence (sync-log: 3a10943): dev's previous inline
+    // deleteFrom() cascade moved into lib/userDataCleanup's
+    // deleteUserAccountData, which also removes the user's storage objects
+    // (document/version files + the user's storage prefix) — adopted from
+    // upstream.
+    await deleteUserAccountData(db, userId, userEmail);
 
-  // Order matters: delete from tables whose FKs point AT user-owned rows
-  // before deleting the rows themselves.  Tables with `on delete cascade`
-  // FKs are cleaned up automatically when their parent row is removed
-  // (chat_messages ← chats, document_versions/edits ← documents,
-  // tabular_cells/chats/messages ← tabular_reviews, project_subfolders ←
-  // projects, workflow_shares ← workflows).
-  async function deleteFrom(
-    table: string,
-    column: string,
-    value: string,
-  ): Promise<boolean> {
-    const { error } = await db.from(table).delete().eq(column, value);
-    if (error) {
-      res.status(500).json({
-        detail: `Failed to delete user data from ${table}: ${error.message}`,
-      });
-      return false;
+    // deleteUserAccountData stops short of identity-adjacent tables.
+    // Upstream relies on Supabase's auth.users ON DELETE CASCADE to clean
+    // these up; dev owns the rows, so remove them explicitly.
+    for (const table of ["user_api_keys", "user_profiles"] as const) {
+      const { error } = await db.from(table).delete().eq("user_id", userId);
+      if (error) {
+        return void res.status(500).json({
+          detail: `Failed to delete user data from ${table}: ${error.message}`,
+        });
+      }
     }
-    return true;
+
+    // Upstream calls db.auth.admin.deleteUser(userId) unconditionally. On
+    // dev that API only exists in supabase mode (local mode is stateless
+    // JWT with no identity table; entra never reaches this point — see the
+    // guard above).
+    if (provider === "supabase") {
+      const { error } = await db.auth.admin.deleteUser(userId);
+      if (error) return void res.status(500).json({ detail: error.message });
+    }
+
+    res.status(204).send();
+  } catch (err) {
+    const detail = errorMessage(err);
+    console.error("[user/account] delete failed", { userId, error: detail });
+    res.status(500).json({ detail });
   }
+});
 
-  if (!(await deleteFrom("tabular_review_chats", "user_id", userId))) return;
-  if (!(await deleteFrom("chats", "user_id", userId))) return;
-  if (!(await deleteFrom("tabular_reviews", "user_id", userId))) return;
-  if (!(await deleteFrom("documents", "user_id", userId))) return;
-  if (!(await deleteFrom("workflows", "user_id", userId))) return;
-  if (!(await deleteFrom("hidden_workflows", "user_id", userId))) return;
-  if (!(await deleteFrom("projects", "user_id", userId))) return;
-  if (!(await deleteFrom("user_profiles", "user_id", userId))) return;
+// Upstream divergence (sync-log: 3a10943): upstream guards the data
+// deletion/export routes below with requireMfaIfEnrolled (Supabase Auth
+// MFA). Dev did not adopt app-level Supabase MFA — Entra enforces MFA at
+// the IdP (Conditional Access) — so these routes use requireAuth only.
 
-  // Clear workflow shares where this user is the recipient (by email) so
-  // their email no longer grants access to anyone else's workflows.
-  if (userEmail) {
-    if (!(await deleteFrom("workflow_shares", "shared_with_email", userEmail)))
-      return;
+// DELETE /user/chats
+userRouter.delete("/chats", requireAuth, async (_req, res) => {
+  const userId = res.locals.userId as string;
+  const db = createServerSupabase();
+  try {
+    await deleteAllUserChats(db, userId);
+    res.status(204).send();
+  } catch (err) {
+    const detail = errorMessage(err);
+    console.error("[user/chats] delete failed", { userId, error: detail });
+    res.status(500).json({ detail });
   }
+});
 
-  res.status(204).send();
+// DELETE /user/projects
+userRouter.delete("/projects", requireAuth, async (_req, res) => {
+  const userId = res.locals.userId as string;
+  const db = createServerSupabase();
+  try {
+    await deleteUserProjects(db, userId);
+    res.status(204).send();
+  } catch (err) {
+    const detail = errorMessage(err);
+    console.error("[user/projects] delete failed", { userId, error: detail });
+    res.status(500).json({ detail });
+  }
+});
+
+// DELETE /user/tabular-reviews
+userRouter.delete("/tabular-reviews", requireAuth, async (_req, res) => {
+  const userId = res.locals.userId as string;
+  const db = createServerSupabase();
+  try {
+    await deleteAllUserTabularReviews(db, userId);
+    res.status(204).send();
+  } catch (err) {
+    const detail = errorMessage(err);
+    console.error("[user/tabular-reviews] delete failed", {
+      userId,
+      error: detail,
+    });
+    res.status(500).json({ detail });
+  }
+});
+
+// GET /user/export
+userRouter.get("/export", requireAuth, async (_req, res) => {
+  const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string | undefined;
+  const db = createServerSupabase();
+  try {
+    const data = await buildUserAccountExport(db, userId, userEmail);
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${userExportFilename("account", userId)}"`,
+    );
+    res.json(data);
+  } catch (err) {
+    const detail = errorMessage(err);
+    console.error("[user/export] failed", { userId, error: detail });
+    res.status(500).json({ detail });
+  }
+});
+
+// GET /user/chats/export
+userRouter.get("/chats/export", requireAuth, async (_req, res) => {
+  const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string | undefined;
+  const db = createServerSupabase();
+  try {
+    const data = await buildUserChatsExport(db, userId, userEmail);
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${userExportFilename("chats", userId)}"`,
+    );
+    res.json(data);
+  } catch (err) {
+    const detail = errorMessage(err);
+    console.error("[user/chats/export] failed", { userId, error: detail });
+    res.status(500).json({ detail });
+  }
+});
+
+// GET /user/tabular-reviews/export
+userRouter.get("/tabular-reviews/export", requireAuth, async (_req, res) => {
+  const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string | undefined;
+  const db = createServerSupabase();
+  try {
+    const data = await buildUserTabularReviewsExport(db, userId, userEmail);
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${userExportFilename("tabular-reviews", userId)}"`,
+    );
+    res.json(data);
+  } catch (err) {
+    const detail = errorMessage(err);
+    console.error("[user/tabular-reviews/export] failed", {
+      userId,
+      error: detail,
+    });
+    res.status(500).json({ detail });
+  }
 });

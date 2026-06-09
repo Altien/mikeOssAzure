@@ -36,6 +36,33 @@ interface ServerChatDetailOut {
 
 const API_BASE =
     (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") + "/api";
+const isDev = process.env.NODE_ENV !== "production";
+const devLog = (...args: Parameters<typeof console.log>) => {
+    if (isDev) console.log(...args);
+};
+
+export class MikeApiError extends Error {
+    status: number;
+    code: string | null;
+
+    constructor(args: { message: string; status: number; code?: string | null }) {
+        super(args.message);
+        this.name = "MikeApiError";
+        this.status = args.status;
+        this.code = args.code ?? null;
+    }
+}
+
+// Upstream divergence (sync-log: 3a10943): kept for API parity with
+// upstream, but dev's backend never emits mfa_verification_required —
+// app-level Supabase MFA was not adopted (Entra handles MFA at the IdP).
+export function isMfaRequiredError(error: unknown) {
+    return (
+        error instanceof MikeApiError &&
+        error.status === 403 &&
+        error.code === "mfa_verification_required"
+    );
+}
 
 async function getAuthHeader(): Promise<Record<string, string>> {
     const token = await getBrowserAccessToken();
@@ -62,8 +89,7 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
     bounceIfUnauthorized(response);
 
     if (!response.ok) {
-        const detail = await response.text();
-        throw new Error(detail || `API error: ${response.status}`);
+        throw await toApiError(response, path);
     }
 
     if (
@@ -74,6 +100,65 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
     }
 
     return (await response.json()) as T;
+}
+
+async function apiBlobRequest(path: string): Promise<{
+    blob: Blob;
+    filename: string | null;
+}> {
+    const authHeaders = await getAuthHeader();
+    const response = await fetch(`${API_BASE}${path}`, {
+        cache: "no-store",
+        headers: {
+            Accept: "application/json",
+            ...authHeaders,
+        },
+    });
+
+    if (!response.ok) {
+        throw await toApiError(response, path);
+    }
+
+    const disposition = response.headers.get("content-disposition") ?? "";
+    const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+    return {
+        blob: await response.blob(),
+        filename: filenameMatch?.[1] ?? null,
+    };
+}
+
+async function toApiError(response: Response, path: string) {
+    const text = await response.text();
+    try {
+        const parsed = JSON.parse(text) as {
+            detail?: unknown;
+            code?: unknown;
+        };
+        devLog("[mike-api] non-ok response", {
+            path,
+            status: response.status,
+            code: parsed.code,
+            detail: parsed.detail,
+        });
+        return new MikeApiError({
+            status: response.status,
+            code: typeof parsed.code === "string" ? parsed.code : null,
+            message:
+                typeof parsed.detail === "string" && parsed.detail
+                    ? parsed.detail
+                    : `API error: ${response.status}`,
+        });
+    } catch {
+        devLog("[mike-api] non-ok non-json response", {
+            path,
+            status: response.status,
+            bodyPreview: text.slice(0, 200),
+        });
+        return new MikeApiError({
+            status: response.status,
+            message: text || `API error: ${response.status}`,
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -100,6 +185,39 @@ export async function deleteAccount(): Promise<void> {
     return apiRequest<void>("/user/account", { method: "DELETE" });
 }
 
+export async function deleteAllChats(): Promise<void> {
+    return apiRequest<void>("/user/chats", { method: "DELETE" });
+}
+
+export async function deleteAllProjects(): Promise<void> {
+    return apiRequest<void>("/user/projects", { method: "DELETE" });
+}
+
+export async function deleteAllTabularReviews(): Promise<void> {
+    return apiRequest<void>("/user/tabular-reviews", { method: "DELETE" });
+}
+
+export async function exportAccountData(): Promise<{
+    blob: Blob;
+    filename: string | null;
+}> {
+    return apiBlobRequest("/user/export");
+}
+
+export async function exportChatData(): Promise<{
+    blob: Blob;
+    filename: string | null;
+}> {
+    return apiBlobRequest("/user/chats/export");
+}
+
+export async function exportTabularReviewsData(): Promise<{
+    blob: Blob;
+    filename: string | null;
+}> {
+    return apiBlobRequest("/user/tabular-reviews/export");
+}
+
 export interface UserProfile {
     displayName: string | null;
     organisation: string | null;
@@ -109,6 +227,7 @@ export interface UserProfile {
     tier: string;
     titleModel: string;
     tabularModel: string;
+    mfaOnLogin: boolean;
     apiKeyStatus: ApiKeyStatus;
 }
 
@@ -126,6 +245,16 @@ export async function updateUserProfile(payload: {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+    });
+}
+
+export async function updateUserMfaOnLogin(
+    enabled: boolean,
+): Promise<UserProfile> {
+    return apiRequest<UserProfile>("/user/security/mfa-login", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
     });
 }
 

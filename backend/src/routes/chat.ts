@@ -17,6 +17,7 @@ import {
 import { completeText } from "../lib/llm";
 import { getUserApiKeys, getUserModelSettings } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
+import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
 
 export const chatRouter = Router();
 
@@ -341,7 +342,14 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
         });
         title = normalizeGeneratedTitle(titleText);
     } catch (err) {
-        console.error("[generate-title] LLM call failed, using message-prefix fallback", err);
+        // Upstream divergence (sync-log: 3a10943): upstream returns 500 when
+        // the title LLM call fails; dev intentionally keeps the
+        // message-prefix fallback title instead. safeErrorLog adopted so the
+        // raw error (which can embed provider key material) never hits logs.
+        console.error(
+            "[generate-title] LLM call failed, using message-prefix fallback",
+            safeErrorLog(err),
+        );
     }
 
     // Upstream divergence (sync-log: ba6f771). The upstream version of this
@@ -559,9 +567,8 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             }
             return;
         }
-        console.error("[chat/stream] error:", err);
-        const message =
-            err instanceof Error && err.message ? err.message : "Stream error";
+        console.error("[chat/stream] error:", safeErrorLog(err));
+        const message = safeErrorMessage(err, "Stream error");
         const errorEvents = err instanceof AssistantStreamError
             ? stripTransientAssistantEvents(err.events)
             : [{ type: "error" as const, message }];

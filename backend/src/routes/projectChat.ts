@@ -17,6 +17,7 @@ import {
 } from "../lib/chatTools";
 import { getUserApiKeys } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
+import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
 
 const PROJECT_SYSTEM_PROMPT_EXTRA = `PROJECT CONTEXT:
 You are operating within a project folder that contains a collection of legal documents the user has organised for a single matter. The user's questions will usually refer to one or more documents in this project — your job is to find the relevant files to work on. Use list_documents to see what is available and fetch_documents / read_document to pull in any documents you need before answering.
@@ -224,9 +225,8 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             }
             return;
         }
-        console.error("[project-chat/stream] error:", err);
-        const message =
-            err instanceof Error && err.message ? err.message : "Stream error";
+        console.error("[project-chat/stream] error:", safeErrorLog(err));
+        const message = safeErrorMessage(err, "Stream error");
         const errorEvents = err instanceof AssistantStreamError
             ? stripTransientAssistantEvents(err.events)
             : [{ type: "error" as const, message }];

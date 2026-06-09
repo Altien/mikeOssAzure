@@ -10,6 +10,7 @@
 
 alter table public.user_profiles
   add column if not exists title_model text,
+  add column if not exists mfa_on_login boolean not null default false,
   add column if not exists quote_model text;
 
 -- ---------------------------------------------------------------------------
