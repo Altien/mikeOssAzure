@@ -89,6 +89,7 @@ const UserProfileContext = createContext<UserProfileContextType | undefined>(
 
 export function UserProfileProvider({ children }: { children: ReactNode }) {
     const { user, isAuthenticated, getAccessToken } = useAuth();
+    const userId = user?.id ?? null;
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [loading, setLoading] = useState(true);
     const [aoaiDeployments, setAoaiDeployments] = useState<AoaiDeployment[]>(
@@ -211,10 +212,13 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         }
     }, [authedFetch]);
 
+    // Depend on the stable userId (not the user object identity) so the
+    // profile is not refetched on every auth-context object churn —
+    // adopted from upstream 444d1d3.
     useEffect(() => {
-        if (isAuthenticated && user) {
+        if (isAuthenticated && userId) {
             setLoading(true);
-            loadProfile(user.id);
+            loadProfile(userId);
             loadAoaiDeployments();
         } else {
             setProfile(null);
@@ -222,7 +226,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             setAoaiDeployments([]);
             setAoaiDeploymentsError(null);
         }
-    }, [isAuthenticated, user, loadProfile, loadAoaiDeployments]);
+    }, [isAuthenticated, userId, loadProfile, loadAoaiDeployments]);
 
     const updateDisplayName = useCallback(
         async (displayName: string): Promise<boolean> => {
@@ -375,10 +379,10 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     );
 
     const reloadProfile = useCallback(async () => {
-        if (user) {
-            await loadProfile(user.id);
+        if (userId) {
+            await loadProfile(userId);
         }
-    }, [user, loadProfile]);
+    }, [userId, loadProfile]);
 
     const incrementMessageCredits = useCallback(async (): Promise<boolean> => {
         if (!user || !profile) {
