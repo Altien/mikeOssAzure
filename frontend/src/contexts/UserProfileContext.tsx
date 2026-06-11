@@ -21,6 +21,9 @@ interface UserProfile {
     titleModel: string;
     tabularModel: string;
     fastModel: string | null;
+    // Features > Legal Research > Jurisdiction > US toggle (upstream
+    // 1fa0554). Defaults to enabled.
+    legalResearchUs: boolean;
     claudeApiKey: string | null;
     geminiApiKey: string | null;
     openaiApiKey: string | null;
@@ -72,6 +75,7 @@ interface UserProfileContextType {
         field: "tabularModel" | "fastModel",
         value: string | null,
     ) => Promise<boolean>;
+    updateLegalResearchUs: (enabled: boolean) => Promise<boolean>;
     updateApiKey: (
         provider: "claude" | "gemini" | "openai",
         value: string | null,
@@ -135,6 +139,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 tier: data.tier || "Free",
                 tabularModel: data.tabular_model || "gemini-3-flash-preview",
                 fastModel: data.fast_model ?? null,
+                legalResearchUs: data.legal_research_us !== false,
                 claudeApiKey: data.claude_api_key ?? null,
                 geminiApiKey: data.gemini_api_key ?? null,
                 openaiApiKey: data.openai_api_key ?? null,
@@ -164,6 +169,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 titleModel: "gemini-3.1-flash-lite-preview",
                 tabularModel: "gemini-3-flash-preview",
                 fastModel: null,
+                legalResearchUs: true,
                 claudeApiKey: null,
                 geminiApiKey: null,
                 openaiApiKey: null,
@@ -283,6 +289,25 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 });
                 setProfile((prev) =>
                     prev ? { ...prev, [field]: value } : null,
+                );
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [user, authedFetch],
+    );
+
+    const updateLegalResearchUs = useCallback(
+        async (enabled: boolean): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                await authedFetch("/user/profile", {
+                    method: "PATCH",
+                    body: JSON.stringify({ legal_research_us: enabled }),
+                });
+                setProfile((prev) =>
+                    prev ? { ...prev, legalResearchUs: enabled } : null,
                 );
                 return true;
             } catch {
@@ -428,6 +453,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 updateDisplayName,
                 updateOrganisation,
                 updateModelPreference,
+                updateLegalResearchUs,
                 updateApiKey,
                 updateAzureOpenaiSettings,
                 reloadProfile,

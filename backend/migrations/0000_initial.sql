@@ -42,6 +42,9 @@ create table if not exists public.user_profiles (
   tabular_model text not null default 'gemini-3-flash-preview',
   claude_api_key text,
   gemini_api_key text,
+  -- Features > Legal Research > Jurisdiction > US toggle (upstream 1fa0554;
+  -- also in 0009 for existing databases).
+  legal_research_us boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -116,7 +119,7 @@ create index if not exists idx_documents_project_folder
 create table if not exists public.document_versions (
   id uuid primary key default gen_random_uuid(),
   document_id uuid not null references public.documents(id) on delete cascade,
-  storage_path text not null,
+  storage_path text,
   pdf_storage_path text,
   source text not null default 'upload',
   version_number integer,
@@ -124,6 +127,8 @@ create table if not exists public.document_versions (
   file_type text,
   size_bytes integer,
   page_count integer,
+  deleted_at timestamptz,
+  deleted_by uuid,
   created_at timestamptz not null default now(),
   constraint document_versions_source_check
     check (source = any (array[
@@ -138,6 +143,10 @@ create table if not exists public.document_versions (
 
 create index if not exists document_versions_document_id_idx
   on public.document_versions(document_id, created_at desc);
+
+create index if not exists document_versions_active_document_id_idx
+  on public.document_versions(document_id, created_at desc)
+  where deleted_at is null;
 
 create index if not exists document_versions_doc_vnum_idx
   on public.document_versions(document_id, version_number);

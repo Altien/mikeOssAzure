@@ -61,7 +61,7 @@ userRouter.get("/profile", requireAuth, async (_req, res) => {
     db
       .from("user_profiles")
       .select(
-        "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model, fast_model",
+        "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us",
       )
       .eq("user_id", userId)
       .single(),
@@ -98,6 +98,9 @@ userRouter.get("/profile", requireAuth, async (_req, res) => {
     tier: data.tier,
     tabular_model: data.tabular_model,
     fast_model: data.fast_model,
+    // Features > Legal Research > Jurisdiction > US toggle (upstream
+    // 1fa0554); defaults to enabled.
+    legal_research_us: data.legal_research_us !== false,
     // Backwards-compat: keep returning the plaintext provider keys so
     // the frontend's existing Account → Models form keeps working
     // through the migration. The frontend should switch to consuming
@@ -159,12 +162,24 @@ userRouter.patch("/profile", requireAuth, async (req, res) => {
     "tabular_model",
     "fast_model",
   ] as const;
-  const profileUpdates: Record<string, string | null> = {};
+  const profileUpdates: Record<string, string | boolean | null> = {};
   for (const field of profileFields) {
     if (field in req.body) {
       const value = req.body[field];
       profileUpdates[field] = typeof value === "string" ? value : value ?? null;
     }
+  }
+
+  // Features flag (upstream 1fa0554): boolean toggle for US legal research
+  // (CourtListener) tools in chat.
+  if ("legal_research_us" in req.body) {
+    const value = req.body.legal_research_us;
+    if (typeof value !== "boolean") {
+      return void res
+        .status(400)
+        .json({ detail: "legal_research_us must be a boolean" });
+    }
+    profileUpdates.legal_research_us = value;
   }
 
   // Provider key fields route through `userApiKeys` (encrypted at
@@ -308,7 +323,7 @@ userRouter.patch("/profile", requireAuth, async (req, res) => {
     db
       .from("user_profiles")
       .select(
-        "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model, fast_model",
+        "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us",
       )
       .eq("user_id", userId)
       .single(),

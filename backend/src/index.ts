@@ -228,6 +228,10 @@ app.post("/api/chat/create", chatCreateLimiter);
 app.post("/api/chat/:chatId/generate-title", chatCreateLimiter);
 app.post("/api/single-documents", uploadLimiter);
 app.post("/api/single-documents/:documentId/versions", uploadLimiter);
+app.put(
+  "/api/single-documents/:documentId/versions/:versionId/file",
+  uploadLimiter,
+);
 app.post("/api/projects/:projectId/documents", uploadLimiter);
 // Export / data-deletion limiters (upstream 3a10943). Dev mounts the user
 // router at both /api/user and /api/users, so limit both aliases.
