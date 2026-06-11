@@ -55,7 +55,7 @@ export default function TabularReviewsPage() {
     const actionsRef = useRef<HTMLDivElement>(null);
     const router = useRouter();
     const { user } = useAuth();
-    const stickyCellBg = "bg-[#fcfcfd]";
+    const stickyCellBg = "bg-[#fafbfc]";
 
     useEffect(() => {
         Promise.all([

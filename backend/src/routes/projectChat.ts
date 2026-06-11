@@ -16,8 +16,7 @@ import {
     type ChatMessage,
 } from "../lib/chatTools";
 import {
-    getLegalResearchUsEnabled,
-    getUserApiKeys,
+    getUserModelSettings,
 } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
 import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
@@ -144,7 +143,10 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         systemPromptExtra += `\n\nUSER-ATTACHED DOCUMENTS FOR THIS TURN:\nThe user has attached the following document(s) directly to their latest message. Treat these as the primary focus of the request unless their message clearly says otherwise.\n${lines.join("\n")}`;
     }
 
-    const legalResearchUs = await getLegalResearchUsEnabled(userId, db);
+    const {
+        api_keys: apiKeys,
+        legal_research_us: legalResearchUs,
+    } = await getUserModelSettings(userId, db);
     const apiMessages = buildMessages(
         messagesForLLM,
         docAvailability,
@@ -167,8 +169,6 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     res.on("close", () => {
         if (!streamFinished) streamAbort.abort();
     });
-
-    const apiKeys = await getUserApiKeys(userId, db);
 
     try {
         write(`data: ${JSON.stringify({ type: "chat_id", chatId })}\n\n`);

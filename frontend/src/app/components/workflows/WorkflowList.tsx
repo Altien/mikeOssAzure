@@ -26,6 +26,7 @@ import { RowActions } from "../shared/RowActions";
 import { MikeIcon } from "@/components/chat/mike-icon";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/app/components/shared/PageHeader";
+import { workflowDetailPath } from "./workflowRoutes";
 
 type Tab = "all" | "builtin" | "custom" | "hidden";
 
@@ -41,7 +42,7 @@ const TABS: { id: Tab; label: string }[] = [
 export function WorkflowList() {
     const router = useRouter();
     const { user } = useAuth();
-    const stickyCellBg = "bg-[#fcfcfd]";
+    const stickyCellBg = "bg-[#fafbfc]";
     const [custom, setCustom] = useState<Workflow[]>([]);
     const [loading, setLoading] = useState(true);
     const [selected, setSelected] = useState<Workflow | null>(null);
@@ -606,7 +607,7 @@ export function WorkflowList() {
                 onCreated={(wf) => {
                     setCustom((prev) => [wf, ...prev]);
                     setNewModalOpen(false);
-                    router.push(`/workflows/${wf.id}`);
+                    router.push(workflowDetailPath(wf));
                 }}
             />
         </div>

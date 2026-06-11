@@ -21,6 +21,7 @@ export function RenameableTitle({ value, onCommit, suffix }: Props) {
     const [draft, setDraft] = useState("");
     const caretPos = useRef<number | null>(null);
     const escaped = useRef(false);
+    const committed = useRef(false);
 
     function startEditing(e: React.MouseEvent) {
         const doc = document as CaretDocument;
@@ -32,15 +33,18 @@ export function RenameableTitle({ value, onCommit, suffix }: Props) {
               ? range.startOffset
               : null;
         escaped.current = false;
+        committed.current = false;
         setDraft(value);
         setEditing(true);
     }
 
     function commit() {
+        if (committed.current) return;
         if (escaped.current) {
             escaped.current = false;
             return;
         }
+        committed.current = true;
         setEditing(false);
         onCommit(draft.trim());
     }
@@ -58,9 +62,13 @@ export function RenameableTitle({ value, onCommit, suffix }: Props) {
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
-                    if (e.key === "Enter") commit();
+                    if (e.key === "Enter") {
+                        e.preventDefault();
+                        commit();
+                    }
                     if (e.key === "Escape") {
                         escaped.current = true;
+                        committed.current = true;
                         setEditing(false);
                     }
                 }}

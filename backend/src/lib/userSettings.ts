@@ -11,6 +11,7 @@ import { getUserApiKeys as readEncryptedApiKeys } from "./userApiKeys";
 export type UserModelSettings = {
     fast_model: string;
     tabular_model: string;
+    legal_research_us: boolean;
     api_keys: UserApiKeys;
 };
 
@@ -51,14 +52,13 @@ export async function getUserModelSettings(
     db?: ReturnType<typeof createServerSupabase>,
 ): Promise<UserModelSettings> {
     const client = db ?? createServerSupabase();
-
     // Provider keys come from `user_api_keys` (encrypted, see
     // `backend/src/lib/userApiKeys.ts`); model preferences still live on
     // `user_profiles`. Issued in parallel — they're independent rows.
     const [modelRow, api_keys] = await Promise.all([
         client
             .from("user_profiles")
-            .select("tabular_model, fast_model")
+            .select("tabular_model, fast_model, legal_research_us")
             .eq("user_id", userId)
             .single(),
         readEncryptedApiKeys(userId, client),
@@ -69,6 +69,13 @@ export async function getUserModelSettings(
             modelRow.data?.tabular_model,
             DEFAULT_TABULAR_MODEL,
         ),
+        // Upstream (3132e04) folded legal_research_us into
+        // getUserModelSettings (replacing the standalone
+        // getLegalResearchUsEnabled helper); same default-true semantics,
+        // applied in dev's parallel-query idiom.
+        legal_research_us:
+            (modelRow.data as { legal_research_us?: boolean | null } | null)
+                ?.legal_research_us !== false,
         api_keys,
     };
 }
@@ -142,33 +149,5 @@ export async function upsertUserProfile(
         .eq("user_id", userId);
     if (updateError) {
         throw new Error(`Failed to update user profile: ${updateError.message}`);
-    }
-}
-
-/**
- * Whether the user has US legal research (CourtListener) tools enabled in
- * chat. Controlled by the Features > Legal Research > Jurisdiction > US
- * toggle in account settings. Defaults to enabled — both when the user has
- * no profile row yet and when the column is missing (migration not applied),
- * so existing behaviour is preserved on partially-migrated deployments.
- */
-export async function getLegalResearchUsEnabled(
-    userId: string,
-    db?: ReturnType<typeof createServerSupabase>,
-): Promise<boolean> {
-    const client = db ?? createServerSupabase();
-    try {
-        const { data, error } = await client
-            .from("user_profiles")
-            .select("legal_research_us")
-            .eq("user_id", userId)
-            .maybeSingle();
-        if (error || !data) return true;
-        return (
-            (data as { legal_research_us?: boolean | null })
-                .legal_research_us !== false
-        );
-    } catch {
-        return true;
     }
 }

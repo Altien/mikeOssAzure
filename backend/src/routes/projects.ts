@@ -69,20 +69,6 @@ async function attachDocumentOwnerLabels(
     .filter((id, index, arr) => arr.indexOf(id) === index);
   if (ownerIds.length === 0) return;
 
-  const emailByUserId = new Map<string, string>();
-  const userResults = await Promise.allSettled(
-    ownerIds.map(async (id) => {
-      const { data, error } = await db.auth.admin.getUserById(id);
-      if (error) throw error;
-      return { id, email: data.user?.email ?? null };
-    }),
-  );
-  for (const result of userResults) {
-    if (result.status === "fulfilled" && result.value.email) {
-      emailByUserId.set(result.value.id, result.value.email);
-    }
-  }
-
   const displayNameByUserId = new Map<string, string>();
   const { data: profiles, error: profilesError } = await db
     .from("user_profiles")
@@ -107,7 +93,7 @@ async function attachDocumentOwnerLabels(
     owner_display_name?: string | null;
   })[]) {
     if (!doc.user_id) continue;
-    doc.owner_email = emailByUserId.get(doc.user_id) ?? null;
+    doc.owner_email = null;
     doc.owner_display_name = displayNameByUserId.get(doc.user_id) ?? null;
   }
 }

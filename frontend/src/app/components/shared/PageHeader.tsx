@@ -9,12 +9,13 @@ import {
     type ButtonHTMLAttributes,
     type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { ChevronLeft, Loader2, Plus, Search, Trash2 } from "lucide-react";
+import { usePageChrome } from "@/app/contexts/PageChromeContext";
 import { cn } from "@/lib/utils";
 
 export interface PageHeaderBreadcrumb {
     label?: ReactNode;
-    suffix?: ReactNode;
     onClick?: () => void;
     cursor?: "text";
     loading?: boolean;
@@ -31,6 +32,7 @@ type PageHeaderButtonAction = {
     title?: string;
     variant?: "default" | "danger";
     iconOnly?: boolean;
+    compact?: boolean;
     tooltip?: ReactNode;
 };
 
@@ -108,6 +110,7 @@ export function PageHeader({
     breadcrumbs,
     loading = false,
 }: PageHeaderProps) {
+    const { mobileActionsContainer } = usePageChrome();
     const headerContent = breadcrumbs?.length ? (
         <PageHeaderBreadcrumbs items={breadcrumbs} />
     ) : (
@@ -124,6 +127,7 @@ export function PageHeader({
             ? [{ actions: actionItems, gap: actionGap }]
             : [])
     );
+    const hasActions = groupedActionItems.length > 0;
 
     return (
         <div
@@ -131,36 +135,67 @@ export function PageHeader({
                 "flex justify-between",
                 align === "start" ? "items-start" : "items-center",
                 "px-4 md:px-10",
-                "pb-4 pt-5.5",
+                "min-h-[76px] pb-4 pt-5.5",
                 shrink && "shrink-0",
                 className,
             )}
         >
             {headerContent}
-            {groupedActionItems.length > 0 && (
-                <div className="ml-4 flex shrink-0 items-center gap-3">
-                    {groupedActionItems.map((group, groupIndex) => (
-                        <div
-                            key={groupIndex}
-                            className={cn(
-                                "flex shrink-0 items-center",
-                                actionGapClassName[group.gap],
-                                "rounded-full border border-white/70 bg-white px-1 py-1 shadow-[0_-1px_3px_rgba(15,23,42,0.03),0_2px_7px_rgba(15,23,42,0.08),inset_0_1px_0_rgba(255,255,255,0.82),inset_0_-3px_7px_rgba(255,255,255,0.13)] backdrop-blur-2xl",
-                            )}
-                        >
-                            {group.actions.map((action, index) => (
-                                <Fragment key={index}>
-                                    <PageHeaderActionRenderer
-                                        action={action}
-                                        disabled={actionsDisabled}
-                                    />
-                                </Fragment>
-                            ))}
-                        </div>
-                    ))}
+            {hasActions && (
+                <div className="ml-4 hidden shrink-0 items-center gap-3 md:flex">
+                    <PageHeaderActionGroups
+                        groupedActionItems={groupedActionItems}
+                        actionsDisabled={actionsDisabled}
+                    />
                 </div>
             )}
+            {hasActions &&
+                mobileActionsContainer &&
+                createPortal(
+                    <div className="flex min-w-0 items-center justify-end gap-3 overflow-visible py-2 -my-2">
+                        <PageHeaderActionGroups
+                            groupedActionItems={groupedActionItems}
+                            actionsDisabled={actionsDisabled}
+                        />
+                    </div>,
+                    mobileActionsContainer,
+                )}
         </div>
+    );
+}
+
+function PageHeaderActionGroups({
+    groupedActionItems,
+    actionsDisabled,
+}: {
+    groupedActionItems: {
+        actions: PageHeaderAction[];
+        gap: PageHeaderActionGap;
+    }[];
+    actionsDisabled: boolean;
+}) {
+    return (
+        <>
+            {groupedActionItems.map((group, groupIndex) => (
+                <div
+                    key={groupIndex}
+                    className={cn(
+                        "flex shrink-0 items-center",
+                        actionGapClassName[group.gap],
+                        "rounded-full border border-white/70 bg-white px-1 py-1 shadow-[0_8px_24px_rgba(15,23,42,0.06)] backdrop-blur-2xl",
+                    )}
+                >
+                    {group.actions.map((action, index) => (
+                        <Fragment key={index}>
+                            <PageHeaderActionRenderer
+                                action={action}
+                                disabled={actionsDisabled}
+                            />
+                        </Fragment>
+                    ))}
+                </div>
+            ))}
+        </>
     );
 }
 
@@ -264,6 +299,7 @@ function PageHeaderButtonActionControl({
                 aria-label={action.title}
                 variant={action.variant}
                 iconOnly={iconOnly}
+                compact={action.compact}
             >
                 {action.icon}
                 {action.label}
@@ -394,11 +430,13 @@ type PageHeaderActionButtonProps = Omit<
 > & {
     variant?: "default" | "danger";
     iconOnly?: boolean;
+    compact?: boolean;
 };
 
 type PageHeaderActionControlClassNameOptions = {
     variant?: "default" | "danger";
     iconOnly?: boolean;
+    compact?: boolean;
     disabled?: boolean;
     className?: string;
 };
@@ -406,12 +444,13 @@ type PageHeaderActionControlClassNameOptions = {
 function pageHeaderActionControlClassName({
     variant = "default",
     iconOnly = false,
+    compact = false,
     disabled = false,
     className,
 }: PageHeaderActionControlClassNameOptions = {}) {
     return cn(
         "flex h-7 items-center justify-center rounded-full text-sm transition-colors hover:bg-gray-100 active:bg-gray-100 disabled:cursor-default disabled:text-gray-300 disabled:hover:bg-transparent disabled:hover:text-gray-300",
-        iconOnly ? "w-7" : "gap-1.5 px-3",
+        iconOnly ? "w-7" : compact ? "gap-1.5 px-2" : "gap-1.5 px-3",
         disabled ? "cursor-default" : "cursor-pointer",
         "hover:bg-gray-100 active:bg-gray-100",
         variant === "danger"
@@ -425,6 +464,7 @@ function PageHeaderActionButton({
     children,
     variant = "default",
     iconOnly = false,
+    compact = false,
     disabled,
     ...props
 }: PageHeaderActionButtonProps) {
@@ -434,6 +474,7 @@ function PageHeaderActionButton({
             className={pageHeaderActionControlClassName({
                 variant,
                 iconOnly,
+                compact,
                 disabled,
             })}
             {...props}
@@ -444,7 +485,6 @@ function PageHeaderActionButton({
 }
 
 function PageHeaderBreadcrumbs({ items }: { items: PageHeaderBreadcrumb[] }) {
-    const current = items[items.length - 1];
     const parent = [...items]
         .slice(0, -1)
         .reverse()
@@ -462,20 +502,14 @@ function PageHeaderBreadcrumbs({ items }: { items: PageHeaderBreadcrumb[] }) {
                     <ChevronLeft className="h-5 w-5" />
                 </button>
             )}
-            <div className="hidden min-w-0 items-center gap-1.5 sm:flex">
+            <div className="flex min-w-0 items-center gap-1.5">
                 {items.map((item, index) => (
                     <BreadcrumbItem
                         key={index}
                         item={item}
                         current={index === items.length - 1}
-                        showSuffix
                     />
                 ))}
-            </div>
-            <div className="min-w-0 sm:hidden">
-                {current ? (
-                    <BreadcrumbItem item={current} current showSuffix={false} />
-                ) : null}
             </div>
         </div>
     );
@@ -484,11 +518,9 @@ function PageHeaderBreadcrumbs({ items }: { items: PageHeaderBreadcrumb[] }) {
 function BreadcrumbItem({
     item,
     current,
-    showSuffix,
 }: {
     item: PageHeaderBreadcrumb;
     current: boolean;
-    showSuffix: boolean;
 }) {
     const content = item.loading ? (
         <div
@@ -507,7 +539,6 @@ function BreadcrumbItem({
             >
                 {item.label}
             </span>
-            {showSuffix && item.suffix}
         </>
     );
 
@@ -520,9 +551,13 @@ function BreadcrumbItem({
               ? "text-gray-500 hover:text-gray-700"
               : "text-gray-500",
     );
+    const wrapperClassName = cn(
+        "min-w-0 items-center gap-1.5",
+        current ? "flex" : "hidden sm:flex",
+    );
 
     return (
-        <>
+        <span className={wrapperClassName}>
             {current ? (
                 <span className={className}>{content}</span>
             ) : item.onClick ? (
@@ -533,6 +568,6 @@ function BreadcrumbItem({
                 <span className={className}>{content}</span>
             )}
             {!current && <span className="shrink-0 text-gray-300">›</span>}
-        </>
+        </span>
     );
 }
