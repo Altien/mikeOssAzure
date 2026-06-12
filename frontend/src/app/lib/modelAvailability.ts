@@ -2,7 +2,6 @@ import { SETTINGS_MODELS, type ModelOption } from "../components/assistant/Model
 
 export type ModelProvider = "claude" | "gemini" | "openai" | "azureOpenai";
 
-<<<<<<< HEAD
 // A provider is "available" if the user has pasted a personal key OR the
 // backend has a shared env-level key for it. The latter is exposed via
 // `globalApiKeys` on the user profile (booleans only — actual key values
