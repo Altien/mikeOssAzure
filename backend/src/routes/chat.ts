@@ -19,11 +19,17 @@ import { checkProjectAccess } from "../lib/access";
 
 export const chatRouter = Router();
 
-// Adopted from upstream 44e868e (title normalization). The rest of
-// upstream's helper block in this region (devLog, AccessibleChat,
-// parseOptionalProjectId/parseChatMessages validation, getAccessibleChat)
-// remains rejected — dev's request validation and access checks live
-// inline and in lib/access.ts (earlier sync decisions).
+// Adopted from upstream 44e868e (title normalization + devLog, used by
+// the abort-aware stream error path). The rest of upstream's helper
+// block in this region (AccessibleChat, parseOptionalProjectId /
+// parseChatMessages validation, getAccessibleChat) remains rejected —
+// dev's request validation and access checks live inline and in
+// lib/access.ts (earlier sync decisions).
+const isDev = process.env.NODE_ENV !== "production";
+const devLog = (...args: Parameters<typeof console.log>) => {
+    if (isDev) console.log(...args);
+};
+
 const TITLE_FALLBACK = "Misc. Query";
 
 function normalizeGeneratedTitle(raw: string): string {
