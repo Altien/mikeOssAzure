@@ -22,6 +22,12 @@ interface ModalProps {
     breadcrumbs?: ReactNode[];
     title?: ReactNode;
     icon?: ReactNode;
+    // Optional control rendered in the header row, right of the
+    // breadcrumbs/title. Adopted from upstream 9a1277b's Modal (the only
+    // piece of upstream's table-primitive Modal refactor dev took — the MCP
+    // connectors modal needs it; the rest of that refactor was rejected,
+    // see internal notes).
+    headerAction?: ReactNode;
     size?: ModalSize;
     className?: string;
     footerInfo?: ReactNode;
@@ -45,6 +51,7 @@ export function Modal({
     breadcrumbs,
     title,
     icon,
+    headerAction,
     size = "lg",
     className,
     footerInfo,
@@ -87,25 +94,31 @@ export function Modal({
                 {hasHeader && (
                     <div className="flex items-start justify-between gap-3 px-4 py-4">
                         {breadcrumbs?.length ? (
-                            <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-gray-400">
-                                {breadcrumbs.map((segment, index) => (
-                                    <span
-                                        key={index}
-                                        className="flex items-center gap-1.5"
-                                    >
-                                        {index > 0 && <span>›</span>}
-                                        <span className="truncate">
-                                            {segment}
+                            <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+                                <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-gray-400">
+                                    {breadcrumbs.map((segment, index) => (
+                                        <span
+                                            key={index}
+                                            className="flex items-center gap-1.5"
+                                        >
+                                            {index > 0 && <span>›</span>}
+                                            <span className="truncate">
+                                                {segment}
+                                            </span>
                                         </span>
-                                    </span>
-                                ))}
+                                    ))}
+                                </div>
+                                {headerAction}
                             </div>
                         ) : (
-                            <div className="flex min-w-0 items-center gap-2">
-                                {icon}
-                                <h2 className="truncate text-base font-medium text-gray-900">
-                                    {title}
-                                </h2>
+                            <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+                                <div className="flex min-w-0 items-center gap-2">
+                                    {icon}
+                                    <h2 className="truncate text-base font-medium text-gray-900">
+                                        {title}
+                                    </h2>
+                                </div>
+                                {headerAction}
                             </div>
                         )}
                         <button

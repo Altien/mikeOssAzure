@@ -31,6 +31,11 @@ import {
   type CourtlistenerToolEvent,
 } from "./legalSourcesTools/courtlistenerTools";
 import {
+  buildUserMcpTools,
+  executeMcpToolCall,
+  type McpToolEvent,
+} from "./mcpConnectors";
+import {
   streamChatWithTools,
   resolveModel,
   DEFAULT_MAIN_MODEL,
@@ -2302,6 +2307,7 @@ export async function runToolCalls(
   docsEdited: DocEditedResult[];
   courtlistenerEvents: CourtlistenerToolEvent[];
   caseCitationEvents: CaseCitationEvent[];
+  mcpEvents: McpToolEvent[];
 }> {
   const toolResults: unknown[] = [];
   const docsRead: { filename: string; document_id?: string }[] = [];
@@ -2316,6 +2322,7 @@ export async function runToolCalls(
   const docsEdited: DocEditedResult[] = [];
   const courtlistenerEvents: CourtlistenerToolEvent[] = [];
   const caseCitationEvents: CaseCitationEvent[] = [];
+  const mcpEvents: McpToolEvent[] = [];
   const courtState: CourtlistenerTurnState =
     courtlistenerState ??
     {
@@ -2350,6 +2357,38 @@ export async function runToolCalls(
       args = JSON.parse(tc.function.arguments || "{}");
     } catch {
       /* ignore */
+    }
+
+    if (tc.function.name.startsWith("mcp_")) {
+      write(
+        `data: ${JSON.stringify({
+          type: "mcp_tool_start",
+          name: tc.function.name,
+        })}\n\n`,
+      );
+      const { content, event } = await executeMcpToolCall(
+        userId,
+        tc.function.name,
+        args,
+        db,
+      );
+      toolResults.push({
+        role: "tool",
+        tool_call_id: tc.id,
+        content,
+      });
+      mcpEvents.push(event);
+      write(
+        `data: ${JSON.stringify({
+          type: "mcp_tool_result",
+          name: tc.function.name,
+          connector_name: event.connector_name,
+          tool_name: event.tool_name,
+          status: event.status,
+          error: event.error,
+        })}\n\n`,
+      );
+      continue;
     }
 
     if (tc.function.name === "read_document") {
@@ -3619,6 +3658,7 @@ export async function runToolCalls(
     docsEdited,
     courtlistenerEvents,
     caseCitationEvents,
+    mcpEvents,
   };
 }
 
@@ -3843,6 +3883,7 @@ type AssistantEvent =
     }
   | CaseCitationEvent
   | CourtlistenerToolEvent
+  | McpToolEvent
   | { type: "case_opinions"; cluster_id: number; case: unknown }
   | { type: "content"; text: string }
   | { type: "error"; message: string };
@@ -3925,10 +3966,11 @@ export async function runLLMStream(params: {
     projectId,
   } = params;
   const researchTools = includeResearchTools ? COURTLISTENER_TOOLS : [];
+  const mcpTools = await buildUserMcpTools(userId, db);
   const baseTools = [...TOOLS, ...researchTools, ...WORKFLOW_TOOLS];
   const activeTools = extraTools?.length
-    ? [...baseTools, ...extraTools]
-    : baseTools;
+    ? [...baseTools, ...mcpTools, ...extraTools]
+    : [...baseTools, ...mcpTools];
 
   // Extract system prompt; pass remaining turns to the adapter as
   // plain user/assistant messages.
@@ -4131,6 +4173,7 @@ export async function runLLMStream(params: {
           docsEdited,
           courtlistenerEvents,
           caseCitationEvents,
+          mcpEvents,
         } = await runToolCalls(
           toolCalls,
           docStore,
@@ -4198,6 +4241,9 @@ export async function runLLMStream(params: {
           });
         }
         for (const event of courtlistenerEvents) {
+          events.push(event);
+        }
+        for (const event of mcpEvents) {
           events.push(event);
         }
         for (const event of caseCitationEvents) {

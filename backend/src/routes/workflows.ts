@@ -41,12 +41,15 @@ function withWorkflowAccess<T extends Record<string, unknown>>(
   };
 }
 
-// Upstream divergence (sync-log: a2368a7): upstream extracted a
-// `loadSharerNames` helper that falls back to `db.auth.admin.getUserById`
-// for sharer emails. Dev rejects it — Entra mode has no Supabase auth
-// admin API, and dev already reads both display_name AND email from
-// user_profiles (see the GET / handler below). Don't reintroduce an
-// auth.admin-based lookup here.
+// Upstream divergence (sync-log: a2368a7, reaffirmed 9a1277b): upstream
+// extracted a `loadSharerNames` helper that falls back to
+// `db.auth.admin.getUserById` for sharer emails. Dev rejects it — Entra
+// mode has no Supabase auth admin API, and dev resolves the sharer name
+// from user_profiles.display_name instead. In 9a1277b upstream moved the
+// list query into the `get_workflows_overview` RPC, which derives
+// `shared_by_name` from `user_profiles.display_name` (matching dev's
+// approach) — see backend/migrations/0015_workflows_overview_rpc.sql.
+// Don't reintroduce an auth.admin-based lookup here.
 async function resolveWorkflowAccess(
   workflowId: string,
   userId: string,
@@ -81,68 +84,26 @@ async function resolveWorkflowAccess(
 // GET /workflows
 workflowsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
-  const userEmail = res.locals.userEmail as string;
+  const userEmail = res.locals.userEmail as string | undefined;
   const { type } = req.query as { type?: string };
   const db = createServerSupabase();
 
-  // Own workflows
-  let ownQuery = db
-    .from("workflows")
-    .select("*")
-    .eq("user_id", userId)
-    .eq("is_system", false)
-    .order("created_at", { ascending: false });
-  if (type) ownQuery = ownQuery.eq("type", type);
-  const { data: own, error: ownErr } = await ownQuery;
-  if (ownErr) return void res.status(500).json({ detail: ownErr.message });
+  const { data, error } = await db.rpc("get_workflows_overview", {
+    p_user_id: userId,
+    p_user_email: userEmail ?? null,
+    p_type: typeof type === "string" && type ? type : null,
+  });
+  if (error) return void res.status(500).json({ detail: error.message });
 
-  // Shared workflows (where the current user's email appears in workflow_shares)
-  const normalizedUserEmail = userEmail.trim().toLowerCase();
-  const { data: shares } = await db
-    .from("workflow_shares")
-    .select("workflow_id, shared_by_user_id, allow_edit")
-    .eq("shared_with_email", normalizedUserEmail);
-
-  let sharedWorkflows: Record<string, unknown>[] = [];
-  if (shares && shares.length > 0) {
-    const sharedIds = shares.map((s) => s.workflow_id);
-    let sharedQuery = db.from("workflows").select("*").in("id", sharedIds);
-    if (type) sharedQuery = sharedQuery.eq("type", type);
-    const { data: wfs } = await sharedQuery;
-
-    if (wfs && wfs.length > 0) {
-      // Fetch sharer profiles — display_name and email both come from
-      // user_profiles now.  The previous implementation used auth.admin
-      // .listUsers as the email source, which only worked in supabase
-      // mode.  Sharers who haven't logged in since the email column was
-      // added will be missing email; their `shared_by_name` falls back
-      // to the user_id, matching the prior null fallback.
-      const sharerIds = [...new Set(shares.map((s) => s.shared_by_user_id).filter(Boolean))];
-      const { data: profiles } = sharerIds.length > 0
-        ? await db
-            .from("user_profiles")
-            .select("user_id, display_name, email")
-            .in("user_id", sharerIds)
-        : { data: [] as { user_id: string; display_name: string | null; email: string | null }[] };
-
-      sharedWorkflows = wfs.map((wf) => {
-        const share = shares.find((s) => s.workflow_id === wf.id);
-        const sharerId = share?.shared_by_user_id;
-        const profile = profiles?.find((p) => p.user_id === sharerId);
-        const shared_by_name = profile?.display_name || profile?.email || null;
-        return withWorkflowAccess(wf, {
-          allowEdit: !!share?.allow_edit,
-          isOwner: false,
-          sharedByName: shared_by_name,
-        });
-      });
-    }
-  }
-
-  const ownWithFlag = (own ?? []).map((wf) =>
-    withWorkflowAccess(wf, { allowEdit: true, isOwner: true }),
-  );
-  res.json([...ownWithFlag, ...sharedWorkflows]);
+  // Upstream sync 9a1277b: the workflows-overview read model moved into the
+  // `get_workflows_overview` RPC (see
+  // backend/migrations/0015_workflows_overview_rpc.sql, re-authored from
+  // upstream's 20260613_05 date-migration in dev's numbered style). The RPC
+  // unions owned + shared workflows and resolves `shared_by_name` from
+  // user_profiles.display_name — preserving dev's no-auth.admin divergence
+  // (see the resolveWorkflowAccess comment above). Dev's prior client-side
+  // shares/profiles join is therefore intentionally gone.
+  res.json(data ?? []);
 }));
 
 // POST /workflows

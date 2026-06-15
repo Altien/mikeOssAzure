@@ -98,90 +98,69 @@ async function attachDocumentOwnerLabels(
   }
 }
 
-// GET /projects
-projectsRouter.get("/", requireAuth, async (req, res) => {
-  const userId = res.locals.userId as string;
-  const userEmail = res.locals.userEmail as string;
-  const db = createServerSupabase();
+async function attachChatCreatorLabels(
+  db: ReturnType<typeof createServerSupabase>,
+  chats: { user_id?: string | null }[],
+) {
+  const creatorIds = chats
+    .map((chat) => chat.user_id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0)
+    .filter((id, index, arr) => arr.indexOf(id) === index);
+  if (creatorIds.length === 0) return;
 
-  const { data: ownProjects, error: ownError } = await db
-    .from("projects")
-    .select("*")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false });
-  if (ownError) return void res.status(500).json({ detail: ownError.message });
-
-  // shared_with is a JSONB array column.  supabase-js's `.contains([…])`
-  // with a JS array sends Postgres array-literal syntax (`cs.{x,y}`) —
-  // Postgres rejects that as "invalid input syntax for type json" on a
-  // JSONB column.  Passing a JSON-formatted string makes supabase-js
-  // forward `cs.<string>` verbatim, which PostgREST interprets as JSON
-  // containment (`@>`).  Same fix is in tabular.ts /:reviewId chats.
-  //
-  // Wrapped in try/catch + console.error rather than a bare `if (error)
-  // return 500`: the previous shape of this code surfaced raw Postgres
-  // error messages to the client and left no fingerprint in the backend
-  // logs, so failures like the one above were invisible until the user
-  // happened to look at a network response body.  Now any failure mode
-  // (PG syntax, network, transient) gets logged with context, and the
-  // route degrades to "no shared projects" rather than failing the
-  // whole request — the user's own projects still come through.
-  let sharedProjects: Array<Record<string, unknown>> = [];
-  if (userEmail) {
-    try {
-      const { data, error } = await db
-        .from("projects")
-        .select("*")
-        .contains("shared_with", JSON.stringify([userEmail]))
-        .neq("user_id", userId)
-        .order("created_at", { ascending: false });
-      if (error) {
-        console.error("[projects] shared_with query failed", {
-          userId,
-          userEmail,
-          message: error.message,
-          code: error.code,
-          details: error.details,
-        });
-      } else {
-        sharedProjects = (data ?? []) as Array<Record<string, unknown>>;
-      }
-    } catch (err) {
-      console.error("[projects] shared_with query threw", { userId, userEmail, err });
+  const displayNameByUserId = new Map<string, string>();
+  const { data: profiles, error: profilesError } = await db
+    .from("user_profiles")
+    .select("user_id, display_name")
+    .in("user_id", creatorIds);
+  if (profilesError) {
+    console.warn("[projects] failed to load chat creator profiles", profilesError);
+  }
+  for (const profile of profiles ?? []) {
+    const displayName =
+      typeof profile.display_name === "string"
+        ? profile.display_name.trim()
+        : "";
+    if (displayName) {
+      displayNameByUserId.set(profile.user_id as string, displayName);
     }
   }
 
-  const projects = [...(ownProjects ?? []), ...sharedProjects].sort(
-    (a, b) =>
-      new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-  );
+  for (const chat of chats as ({
+    user_id?: string | null;
+    creator_display_name?: string | null;
+  })[]) {
+    if (!chat.user_id) continue;
+    chat.creator_display_name = displayNameByUserId.get(chat.user_id) ?? null;
+  }
+}
 
-  const result = await Promise.all(
-    projects.map(async (p) => {
-      const [docs, chats, reviews] = await Promise.all([
-        db
-          .from("documents")
-          .select("id", { count: "exact", head: true })
-          .eq("project_id", p.id),
-        db
-          .from("chats")
-          .select("id", { count: "exact", head: true })
-          .eq("project_id", p.id),
-        db
-          .from("tabular_reviews")
-          .select("id", { count: "exact", head: true })
-          .eq("project_id", p.id),
-      ]);
-      return {
-        ...p,
-        is_owner: p.user_id === userId,
-        document_count: docs.count ?? 0,
-        chat_count: chats.count ?? 0,
-        review_count: reviews.count ?? 0,
-      };
-    }),
-  );
-  res.json(result);
+// GET /projects
+projectsRouter.get("/", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string | undefined;
+  const db = createServerSupabase();
+
+  // Upstream sync 9a1277b: the projects-overview read model moved into a
+  // single `get_projects_overview` Postgres RPC (see
+  // backend/migrations/0013_projects_overview_rpc.sql, re-authored from
+  // upstream's 20260613_02 date-migration in dev's numbered style).
+  //
+  // This replaces dev's prior hand-rolled approach (own + shared_with
+  // JSONB-containment query, then a per-project N+1 count pass). The RPC
+  // subsumes both concerns: it filters shared projects with
+  // `shared_with @> jsonb_build_array(p_user_email)` — the exact `@>`
+  // containment dev's old comment was working around supabase-js's
+  // `.contains()` array-literal bug to achieve — and computes
+  // document/chat/review counts in one round trip. The shared_with
+  // visibility and per-project counts now come straight from the RPC, so
+  // the old client-side merge/count code is intentionally gone.
+  const { data, error } = await db.rpc("get_projects_overview", {
+    p_user_id: userId,
+    p_user_email: userEmail ?? null,
+  });
+  if (error) return void res.status(500).json({ detail: error.message });
+  res.json(data ?? []);
 });
 
 // POST /projects
@@ -766,7 +745,9 @@ projectsRouter.get("/:projectId/chats", requireAuth, async (req, res) => {
     .eq("project_id", projectId)
     .order("created_at", { ascending: false });
   if (error) return void res.status(500).json({ detail: error.message });
-  res.json(data ?? []);
+  const chats = data ?? [];
+  await attachChatCreatorLabels(db, chats);
+  res.json(chats);
 });
 
 // ── Folder routes ─────────────────────────────────────────────────────────────

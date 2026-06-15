@@ -25,6 +25,7 @@
     "@azure/keyvault-secrets": "^4.11.2",
     "@azure/storage-blob": "^12.26.0",
     "@google/genai": "^1.50.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@supabase/supabase-js": "^2.105.3",
     "@types/pg": "^8.20.0",
     "applicationinsights": "^3.14.0",
@@ -44,7 +45,8 @@
     "node-pg-migrate": "^7.9.1",
     "openai": "^6.36.0",
     "pdfjs-dist": "^4.10.38",
-    "pg": "^8.20.0"
+    "pg": "^8.20.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.10",
