@@ -25,6 +25,13 @@ function runNodePgMigrate(databaseUrl: string): Promise<number> {
         "migrations",
         "--migration-file-language",
         "sql",
+        // The migrations dir also carries UPSTREAM_SYNC_LOG.md (sync provenance,
+        // written by the migration tooling). Without this, node-pg-migrate tries
+        // to load the .md as a migration module and crashes ("Invalid or
+        // unexpected token"), failing the whole migration job. Ignore non-SQL
+        // docs. Caught by the local-stack test before OSS promotion.
+        "--ignore-pattern",
+        ".*\\.md",
       ],
       {
         env: {
