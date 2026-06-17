@@ -1,5 +1,8 @@
 node_modules
 dist
+# Built frontend bundle copied in by `pnpm bundle` (and by the Dockerfile in
+# prod) — generated artifact, never committed.
+public
 .env*
 *.log
 *.raw-llm-stream.json
