@@ -123,7 +123,13 @@ app.disable("x-powered-by");
 // `req.protocol` reports "http" inside the container even when the user's
 // browser is on https://, which breaks request-derived OAuth redirect_uri
 // construction in routes/auth.ts (Microsoft rejects the http:// form).
-app.set("trust proxy", true);
+//
+// Use the exact hop count (CA ingress = 1 proxy), NOT `true`. `true` trusts
+// the whole X-Forwarded-For chain, so a client can spoof XFF to dodge the
+// IP-based rate limiters below — express-rate-limit@8 rejects it with
+// ERR_ERL_PERMISSIVE_TRUST_PROXY. `1` still honors X-Forwarded-Proto for the
+// OAuth redirect_uri and uses the ingress-stamped client IP for rate limiting.
+app.set("trust proxy", 1);
 
 // helmet (security headers) — taken from upstream ba6f771; CSP and COEP
 // stay disabled because dev serves a static-exported Next.js bundle from
