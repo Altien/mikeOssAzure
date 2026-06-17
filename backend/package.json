@@ -8,8 +8,11 @@
     "start": "node dist/index.js",
     "migrate": "node dist/scripts/runMigrations.js",
     "migrate:dev": "tsx src/scripts/runMigrations.ts",
-    "migrate:legacy": "node-pg-migrate up --migrations-dir migrations --migration-file-language sql",
-    "migrate:down": "node-pg-migrate down --migrations-dir migrations --migration-file-language sql",
+    "migrate:local": "tsx src/scripts/migrateLocal.ts",
+    "migrate:legacy": "node-pg-migrate up --migrations-dir migrations --migration-file-language sql --ignore-pattern \".*\\.md\"",
+    "migrate:down": "node-pg-migrate down --migrations-dir migrations --migration-file-language sql --ignore-pattern \".*\\.md\"",
+    "azurite:init": "tsx src/scripts/initAzurite.ts",
+    "setup:local": "node ../scripts/local-setup.mjs",
     "migrate:user-api-keys": "node dist/scripts/migrate-user-api-keys.js",
     "migrate:user-api-keys:dev": "tsx src/scripts/migrate-user-api-keys.ts",
     "preinstall": "npx only-allow pnpm"
