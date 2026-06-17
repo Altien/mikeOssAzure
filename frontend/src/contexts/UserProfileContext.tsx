@@ -137,6 +137,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 creditsResetDate: data.credits_reset_date,
                 creditsRemaining: monthlyCreditLimit - creditsUsed,
                 tier: data.tier || "Free",
+                titleModel: data.title_model || "gemini-3.1-flash-lite-preview",
                 tabularModel: data.tabular_model || "gemini-3-flash-preview",
                 fastModel: data.fast_model ?? null,
                 legalResearchUs: data.legal_research_us !== false,

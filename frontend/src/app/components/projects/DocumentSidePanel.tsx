@@ -18,7 +18,12 @@ import { WarningPopup } from "@/app/components/shared/WarningPopup";
 import type { Document } from "@/app/components/shared/types";
 import type { DocumentVersion } from "@/app/lib/mikeApi";
 import { cn } from "@/lib/utils";
-import { formatBytes } from "./ProjectPageParts";
+
+function formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 const MIN_DOC_COLUMN_WIDTH = 420;
 const DEFAULT_DOC_COLUMN_WIDTH = 620;

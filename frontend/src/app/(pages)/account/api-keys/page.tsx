@@ -4,7 +4,12 @@ import { useEffect, useState } from "react";
 import { Check, Eye, EyeOff, Save, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useUserProfile } from "@/contexts/UserProfileContext";
+import {
+    getApiKeyStatus,
+    saveApiKey,
+    type ApiKeyProvider,
+    type ApiKeyStatus,
+} from "@/app/lib/mikeApi";
 
 const MODEL_API_KEY_FIELDS = [
     {
@@ -40,7 +45,28 @@ const OTHER_API_KEY_FIELDS = [
 ] as const;
 
 export default function ApiKeysPage() {
-    const { profile, updateApiKey } = useUserProfile();
+    // API-key status comes from the dedicated /user/api-keys endpoint (covers
+    // all providers incl. openrouter/courtlistener), not the UserProfile —
+    // dev's profile only carries the three model-provider key fields.
+    const [status, setStatus] = useState<ApiKeyStatus | null>(null);
+
+    useEffect(() => {
+        getApiKeyStatus()
+            .then(setStatus)
+            .catch(() => {});
+    }, []);
+
+    const save = async (
+        provider: ApiKeyProvider,
+        key: string | null,
+    ): Promise<boolean> => {
+        try {
+            setStatus(await saveApiKey(provider, key));
+            return true;
+        } catch {
+            return false;
+        }
+    };
 
     return (
         <div>
@@ -59,15 +85,15 @@ export default function ApiKeysPage() {
                         label={field.label}
                         placeholder={field.placeholder}
                         hasSavedKey={
-                            !!profile?.apiKeys[field.provider].configured
+                            !!status?.[field.provider]
                         }
                         isServerConfigured={
-                            profile?.apiKeys[field.provider].source === "env"
+                            status?.sources?.[field.provider] === "env"
                         }
                         onSave={(value) =>
-                            updateApiKey(field.provider, value.trim() || null)
+                            save(field.provider, value.trim() || null)
                         }
-                        onRemove={() => updateApiKey(field.provider, null)}
+                        onRemove={() => save(field.provider, null)}
                     />
                 ))}
             </div>
@@ -80,15 +106,15 @@ export default function ApiKeysPage() {
                         description={field.description}
                         placeholder={field.placeholder}
                         hasSavedKey={
-                            !!profile?.apiKeys[field.provider].configured
+                            !!status?.[field.provider]
                         }
                         isServerConfigured={
-                            profile?.apiKeys[field.provider].source === "env"
+                            status?.sources?.[field.provider] === "env"
                         }
                         onSave={(value) =>
-                            updateApiKey(field.provider, value.trim() || null)
+                            save(field.provider, value.trim() || null)
                         }
-                        onRemove={() => updateApiKey(field.provider, null)}
+                        onRemove={() => save(field.provider, null)}
                     />
                 ))}
             </div>

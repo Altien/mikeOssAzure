@@ -12,7 +12,7 @@ import {
     ChevronDown,
     ChevronRight,
     Download,
-    Folder,
+    Folder as FolderIcon,
     FolderOpen,
     FolderPlus,
     MessageSquare,
@@ -178,7 +178,7 @@ function DocVersionHistory({
                         : v.source === "upload"
                           ? "Original"
                           : "—";
-                const displayLabel = v.display_name?.trim() || numberLabel;
+                const displayLabel = v.filename?.trim() || numberLabel;
                 const dt = new Date(v.created_at);
                 const dateLabel = Number.isNaN(dt.valueOf())
                     ? ""
@@ -232,7 +232,7 @@ function DocVersionHistory({
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         setEditingVersionId(v.id);
-                                        setEditingValue(v.display_name ?? "");
+                                        setEditingValue(v.filename ?? "");
                                     }}
                                     title="Rename version"
                                     className="shrink-0 rounded p-0.5 text-gray-400 opacity-0 group-hover:opacity-100 hover:text-gray-700 hover:bg-gray-200 transition"
@@ -1079,7 +1079,7 @@ export function ProjectPage() {
                                 <div className="flex items-center gap-1.5">
                                     {isExpanded
                                         ? <FolderOpen className="h-4 w-4 text-amber-500 shrink-0" />
-                                        : <Folder className="h-4 w-4 text-amber-500 shrink-0" />
+                                        : <FolderIcon className="h-4 w-4 text-amber-500 shrink-0" />
                                     }
                                     {isRenaming ? (
                                         <input

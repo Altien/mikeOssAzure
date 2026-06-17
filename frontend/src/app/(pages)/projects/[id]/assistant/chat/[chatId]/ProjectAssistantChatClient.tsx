@@ -499,6 +499,12 @@ export default function ProjectAssistantChatClient() {
     };
 
     const handleCitationClick = (citation: CitationAnnotation) => {
+        if (citation.kind === "case") {
+            // Case citations anchor to a CourtListener cluster, not a document
+            // tab — open the opinion in a new tab when a URL is available.
+            if (citation.url) window.open(citation.url, "_blank", "noopener");
+            return;
+        }
         openTab(
             citation.document_id,
             citation.filename,
