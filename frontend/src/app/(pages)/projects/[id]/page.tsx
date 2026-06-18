@@ -1,13 +1,12 @@
-import { ProjectPage } from "@/app/components/projects/ProjectPage";
+import { DocumentsSection } from "./DocumentsSection";
 
 export function generateStaticParams() {
     return [{ id: "_" }];
 }
 
-// We deliberately don't pass `id` from server-baked params — under
-// `output: "export"` it's always the placeholder `"_"` regardless of
-// the URL, because every browser nav resolves to the same prebaked
-// shell. ProjectPage reads the real id from useParams() at runtime.
+// Server stub: `output: "export"` needs one prebuilt shell per dynamic route.
+// The real id is read client-side from the URL (see DocumentsSection /
+// ProjectWorkspaceLayout) because server-baked params are always "_".
 export default function ProjectDetailPage() {
-    return <ProjectPage />;
+    return <DocumentsSection />;
 }
