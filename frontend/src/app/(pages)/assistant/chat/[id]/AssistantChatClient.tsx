@@ -9,7 +9,7 @@ import { getChat } from "@/app/lib/mikeApi";
 
 export default function AssistantChatClient() {
     // Read id from the live URL — useParams() reports the prerender's
-    // "_" placeholder under output: "export". See ProjectPage.tsx for
+    // "_" placeholder under output: "export". See ProjectWorkspace.tsx for
     // the full diagnosis.
     const pathname = usePathname() ?? "";
     const match = pathname.match(/^\/assistant\/chat\/([^/?#]+)/);

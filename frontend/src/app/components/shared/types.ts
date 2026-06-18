@@ -14,7 +14,6 @@ export interface Project {
   id: string;
   user_id: string;
   is_owner?: boolean;
-  // Populated by the get_projects_overview RPC (upstream sync 9a1277b).
   owner_display_name?: string | null;
   owner_email?: string | null;
   name: string;
@@ -97,7 +96,6 @@ export type AssistantEvent =
       isStreaming?: boolean;
     }
   | {
-      // MCP connector tool call (upstream sync 9a1277b — feat: mcp connectors).
       type: "mcp_tool_call";
       connector_id: string;
       connector_name: string;

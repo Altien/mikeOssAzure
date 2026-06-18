@@ -194,7 +194,7 @@ function Divider({ onDrag }: { onDrag: (dx: number) => void }) {
 export default function ProjectAssistantChatClient() {
     // Read both ids from the live URL — useParams() reports the
     // prerender's "_" placeholders under output: "export". See
-    // ProjectPage.tsx for the full diagnosis.
+    // ProjectWorkspace.tsx for the full diagnosis.
     const pathname = usePathname() ?? "";
     const match = pathname.match(
         /^\/projects\/([^/?#]+)\/assistant\/chat\/([^/?#]+)/,
