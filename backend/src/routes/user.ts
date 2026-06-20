@@ -6,6 +6,7 @@ import {
     getUserApiKeys,
     setUserApiKey,
     deleteUserApiKey,
+    getConfiguredProviders,
 } from "../lib/userApiKeys";
 import type { AzureOpenaiSettings } from "../lib/llm";
 import { resolveSecret } from "../lib/envSecrets";
@@ -390,6 +391,90 @@ userRouter.post("/profile/credits/increment", requireAuth, async (_req, res) => 
 
   if (updateError) return void res.status(500).json({ detail: updateError.message });
   res.json({ message_credits_used: nextValue });
+});
+
+// ---------------------------------------------------------------------------
+// Per-user provider API keys — the dedicated /user/api-keys endpoints the
+// Account → API Keys page calls. dev had carried the page across from upstream
+// but never wired these routes (provider-key WRITES were folded into
+// PATCH /profile for the model providers), which stranded the page — and with
+// it the ONLY UI for the OpenRouter and CourtListener keys. These thin routes
+// delegate to the existing encrypted-key helpers, restoring the page.
+//
+// Per-user scope: claude/gemini/openai/openrouter/courtlistener (Azure OpenAI
+// is structured and managed on the Model Preferences page, not here).
+const API_KEY_PROVIDERS = [
+  "claude",
+  "gemini",
+  "openai",
+  "openrouter",
+  "courtlistener",
+] as const;
+type ApiKeyRouteProvider = (typeof API_KEY_PROVIDERS)[number];
+
+// Org-level Key Vault / env secret name backing each provider (the shared
+// fallback used when a user hasn't set a personal key).
+const API_KEY_ORG_SECRET: Record<ApiKeyRouteProvider, string> = {
+  claude: "anthropic-api-key",
+  gemini: "gemini-api-key",
+  openai: "openai-api-key",
+  openrouter: "openrouter-api-key",
+  courtlistener: "courtlistener-api-token",
+};
+
+// Build the ApiKeyStatus the frontend expects: a per-provider `configured`
+// boolean plus a `sources` map ("user" = personal key, "env" = org-level
+// fallback exists, null = nothing configured). Never returns key material.
+async function buildApiKeyStatus(
+  userId: string,
+  db: ReturnType<typeof createServerSupabase>,
+): Promise<Record<string, boolean | Record<string, "user" | "env" | null>>> {
+  const configured = await getConfiguredProviders(userId, db);
+  const status: Record<string, boolean> = {};
+  const sources: Record<string, "user" | "env" | null> = {};
+  for (const provider of API_KEY_PROVIDERS) {
+    const userHas = !!configured[provider];
+    const envHas = userHas
+      ? false
+      : !!(await resolveSecret(API_KEY_ORG_SECRET[provider]));
+    status[provider] = userHas || envHas;
+    sources[provider] = userHas ? "user" : envHas ? "env" : null;
+  }
+  return { ...status, sources };
+}
+
+// GET /user/api-keys — which providers have a credential, and from where.
+userRouter.get("/api-keys", requireAuth, async (_req, res) => {
+  const userId = res.locals.userId as string;
+  res.json(await buildApiKeyStatus(userId, createServerSupabase()));
+});
+
+// PUT /user/api-keys/:provider — set (or, with an empty body, clear) the
+// caller's personal key for one provider. Stored AES-encrypted in
+// user_api_keys via setUserApiKey.
+userRouter.put("/api-keys/:provider", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as string;
+  const provider = req.params.provider as ApiKeyRouteProvider;
+  if (!API_KEY_PROVIDERS.includes(provider)) {
+    return void res
+      .status(400)
+      .json({ detail: `Unknown API key provider: ${req.params.provider}` });
+  }
+  const raw = (req.body?.api_key ?? null) as unknown;
+  const trimmed = typeof raw === "string" ? raw.trim() : "";
+  const db = createServerSupabase();
+  try {
+    if (!trimmed) {
+      await deleteUserApiKey(userId, provider, db);
+    } else {
+      await setUserApiKey(userId, provider, trimmed, db);
+    }
+  } catch (err) {
+    return void res.status(500).json({
+      detail: err instanceof Error ? err.message : "Failed to save API key",
+    });
+  }
+  res.json(await buildApiKeyStatus(userId, db));
 });
 
 // ---------------------------------------------------------------------------
