@@ -2,6 +2,45 @@
 
 Date: 2026-05-05
 
+## ⚠️ Corrections (2026-06-17) — read first
+
+Verified while running merged `main` locally. These override the older steps below:
+
+1. **Redirect URI needs `/api`.** The auth router is mounted at `/api/auth`, so
+   the callback is `http://localhost:3001/api/auth/openid-callback/microsoft`
+   (NOT `/auth/openid-callback/microsoft`). Set this in `ENTRA_REDIRECT_URI`
+   **and** register it on the *Web Login* app registration's **Web** platform.
+   The old no-`/api` value gives `Cannot GET /auth/openid-callback/microsoft`
+   then `AADSTS50011`. (You can also just delete `ENTRA_REDIRECT_URI` — the
+   backend defaults to `${BACKEND_PUBLIC_URL}/api/auth/openid-callback/microsoft`.)
+
+2. **Serve the frontend FROM the backend — do NOT use `next dev` or `serve`.**
+   The frontend is `output: "export"` with dynamic routes (`/assistant/chat/[id]`,
+   `/workflows/...`). `next dev` can't serve them ("missing param in
+   generateStaticParams") and a static server (`serve`) reloads on every chat
+   (it can't map the runtime id / RSC payload to the `_` shell). The backend's
+   `findShell()` does that mapping. So:
+   ```
+   cd frontend && pnpm install && pnpm build      # → frontend/out
+   # copy the export to where the backend serves it:
+   #   (PowerShell) Copy-Item -Recurse -Force frontend\out\* backend\public\
+   cd backend && pnpm dev                          # serves SPA + API on :3001
+   ```
+   Then open **http://localhost:3001** (single origin). Rebuild + recopy after
+   any frontend change.
+
+3. **In that mode, `FRONTEND_URL=http://localhost:3001`** (same origin) and
+   `BACKEND_PUBLIC_URL=http://localhost:3001`. There is no separate `:3000`
+   server.
+
+4. **Local data plane is `:4000`** (`SUPABASE_URL=http://localhost:4000`), and
+   `SUPABASE_SECRET_KEY` must be a service-role JWT signed with the **same**
+   secret PostgREST runs (`PGRST_JWT_SECRET`). If you change `JWT_SECRET`,
+   **recreate** PostgREST (`docker compose up -d --force-recreate postgrest`) —
+   a plain `docker restart` keeps the old secret and every request 401s.
+
+5. Use **pnpm**, not npm (the backend enforces it via `only-allow`).
+
 ## Purpose
 
 This runbook describes the exact Microsoft Entra ID configuration needed to run the local frontend on `localhost:3000`, the local Node backend on `localhost:3001`, authenticate with Microsoft, and call the backend with an Entra access token.
@@ -22,7 +61,7 @@ The local flow is:
 1. Browser opens `http://localhost:3000/login`.
 2. Frontend redirects to `http://localhost:3001/auth/select-provider`.
 3. Backend redirects to Microsoft authorize endpoint.
-4. Microsoft redirects back to `http://localhost:3001/auth/openid-callback/microsoft`.
+4. Microsoft redirects back to `http://localhost:3001/api/auth/openid-callback/microsoft`.
 5. Backend exchanges the authorization code for an access token.
 6. Backend redirects the browser to the frontend with the access token in the URL fragment.
 7. Frontend stores the token and sends it to the Node backend as `Authorization: Bearer <token>`.
@@ -35,7 +74,7 @@ The local flow is:
 - Local backend callback URI:
 
 ```text
-http://localhost:3001/auth/openid-callback/microsoft
+http://localhost:3001/api/auth/openid-callback/microsoft
 ```
 
 - Local frontend URL:
@@ -158,7 +197,7 @@ Web
 6. Enter URI:
 
 ```text
-http://localhost:3001/auth/openid-callback/microsoft
+http://localhost:3001/api/auth/openid-callback/microsoft
 ```
 
 7. Click **Register**.
@@ -232,7 +271,7 @@ ENTRA_BACKEND_CLIENT_ID=<backend-api-client-id>
 ENTRA_CLIENT_ID=<web-login-client-id>
 ENTRA_CLIENT_SECRET=<web-login-client-secret-value>
 ENTRA_BACKEND_SCOPE=api://<backend-api-client-id>/access_as_user
-ENTRA_REDIRECT_URI=http://localhost:3001/auth/openid-callback/microsoft
+ENTRA_REDIRECT_URI=http://localhost:3001/api/auth/openid-callback/microsoft
 AUTH_STATE_SECRET=<strong-random-local-string>
 ```
 
@@ -338,7 +377,7 @@ Check **Mike Local Web Login** -> **Authentication**.
 The redirect URI must be exactly:
 
 ```text
-http://localhost:3001/auth/openid-callback/microsoft
+http://localhost:3001/api/auth/openid-callback/microsoft
 ```
 
 The platform must be **Web**, because the backend performs the authorization-code exchange with a client secret.
