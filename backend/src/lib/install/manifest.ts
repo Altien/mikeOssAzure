@@ -259,6 +259,51 @@ const items: ManifestItem[] = [
         },
     },
     {
+        id: "ai-openrouter-key",
+        label: "OpenRouter API key",
+        section: "AI providers",
+        required: false,
+        check: () => checkKvSecret("openrouter-api-key", {
+            format: /^sk-or-/,
+            formatHint: "sk-or- prefix",
+            redacted: true,
+        }),
+        fixedBy: {
+            type: "in-app-form",
+            submitTo: "kv",
+            fields: [{
+                name: "openrouter-api-key",
+                label: "OpenRouter API key",
+                type: "password",
+                placeholder: "sk-or-…",
+                required: true,
+                pattern: "^sk-or-.+",
+                helpText: "Org-wide OpenRouter key used as a shared fallback when a user hasn't set their own. Get one at openrouter.ai → Keys.",
+            }],
+        },
+    },
+    {
+        id: "ai-courtlistener-token",
+        label: "CourtListener API token",
+        section: "AI providers",
+        required: false,
+        check: () => checkKvSecret("courtlistener-api-token", {
+            redacted: true,
+        }),
+        fixedBy: {
+            type: "in-app-form",
+            submitTo: "kv",
+            fields: [{
+                name: "courtlistener-api-token",
+                label: "CourtListener API token",
+                type: "password",
+                placeholder: "Token…",
+                required: true,
+                helpText: "Org-wide token for live CourtListener data in US legal research. Without it, Mike falls back to the hosted bulk data. Get one at courtlistener.com → Profile → API.",
+            }],
+        },
+    },
+    {
         id: "ai-aoai-config",
         label: "Azure OpenAI / AI Foundry",
         section: "AI providers",
