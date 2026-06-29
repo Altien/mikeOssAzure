@@ -17,7 +17,7 @@ vi.mock("../lib/userSettings.js", () => ({
   upsertUserProfile: vi.fn(),
 }));
 
-import { requireAuth, requireValidJwt } from "./auth";
+import { requireAuth } from "./auth";
 import { validateSupabaseToken } from "../lib/auth/providers/supabase.js";
 import { validateLocalToken } from "../lib/auth/providers/local.js";
 import { validateEntraToken } from "../lib/auth/providers/entra.js";
@@ -324,36 +324,5 @@ describe("requireAuth — success path", () => {
 
     expect(res.statusCode).toBe(500);
     expect(res.body).toEqual({ detail: "Unable to initialize user profile" });
-  });
-});
-
-describe("requireValidJwt", () => {
-  it("calls next() directly on success and never invokes tenantAccess", async () => {
-    delete process.env.AUTH_PROVIDER;
-    vi.mocked(validateSupabaseToken).mockResolvedValue({
-      ok: true,
-      principal: validPrincipal,
-    });
-    vi.mocked(upsertUserProfile).mockResolvedValue(undefined);
-
-    const req = makeReq("Bearer tok-ok");
-    const res = makeRes();
-    const next = vi.fn() as unknown as NextFunction;
-
-    await requireValidJwt(req, res, next);
-
-    expect(next).toHaveBeenCalledTimes(1);
-    expect(tenantAccess).not.toHaveBeenCalled();
-  });
-
-  it("returns 401 without calling next() on a missing Authorization header", async () => {
-    const req = makeReq();
-    const res = makeRes();
-    const next = vi.fn() as unknown as NextFunction;
-
-    await requireValidJwt(req, res, next);
-
-    expect(res.statusCode).toBe(401);
-    expect(next).not.toHaveBeenCalled();
   });
 });

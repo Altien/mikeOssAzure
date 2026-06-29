@@ -15,7 +15,10 @@
     "setup:local": "node ../scripts/local-setup.mjs",
     "migrate:user-api-keys": "node dist/scripts/migrate-user-api-keys.js",
     "migrate:user-api-keys:dev": "tsx src/scripts/migrate-user-api-keys.ts",
-    "preinstall": "npx only-allow pnpm"
+    "preinstall": "npx only-allow pnpm",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
@@ -46,7 +49,8 @@
     "openai": "^6.36.0",
     "pdfjs-dist": "^4.10.38",
     "pg": "^8.20.0",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "resend": "^4.5.1"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.10",
@@ -57,7 +61,12 @@
     "prettier": "^3.8.1",
     "tsx": "^4.19.3",
     "typescript": "^5.8.3",
-    "only-allow": "^1.2.1"
+    "only-allow": "^1.2.1",
+    "@types/supertest": "^7.2.0",
+    "@vitest/coverage-v8": "^4.1.6",
+    "supertest": "^7.2.2",
+    "vite-tsconfig-paths": "^6.1.1",
+    "vitest": "^4.1.6"
   },
   "license": "AGPL-3.0-only",
   "packageManager": "pnpm@11.1.2"

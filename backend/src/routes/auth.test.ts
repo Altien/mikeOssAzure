@@ -581,7 +581,7 @@ describe("GET /api/auth/openid-callback/:providerId", () => {
         body: expect.any(URLSearchParams),
       }),
     );
-    const body = (fetchFn.mock.calls[0]?.[1] as { body: URLSearchParams }).body;
+    const body = ((fetchFn.mock.calls[0] as unknown as unknown[])?.[1] as { body: URLSearchParams }).body;
     expect(body.get("client_id")).toBe("client-guid");
     expect(body.get("grant_type")).toBe("authorization_code");
     expect(body.get("code")).toBe("the-code");
