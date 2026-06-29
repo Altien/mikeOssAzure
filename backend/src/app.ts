@@ -11,6 +11,7 @@ import { libraryRouter } from "./routes/library";
 import { tabularRouter } from "./routes/tabular";
 import { workflowsRouter } from "./routes/workflows";
 import { userRouter } from "./routes/user";
+import { modelsRouter } from "./routes/models";
 import { downloadsRouter } from "./routes/downloads";
 import { caseLawRouter } from "./routes/caseLaw";
 import { manifestPublicKey } from "./lib/manifestSigning";
@@ -163,6 +164,7 @@ app.delete("/user/tabular-reviews", dataDeleteLimiter);
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 app.use("/chat", chatRouter);
+app.use("/models", modelsRouter);
 app.use("/projects", projectsRouter);
 app.use("/projects/:projectId/chat", projectChatRouter);
 app.use("/single-documents", documentsRouter);
