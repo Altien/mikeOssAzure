@@ -172,7 +172,7 @@ describe("getSecret — fallback chain (covered through sign+verify)", () => {
     expect(verifyDownload(token)).toBeNull();
   });
 
-  it("ignores DOWNLOAD_SIGNING_SECRET shorter than 16 chars and falls through to legacy", () => {
+  it("ignores DOWNLOAD_SIGNING_SECRET shorter than 16 chars and no longer honours SUPABASE_SECRET_KEY", () => {
     process.env[SECRET_ENV] = "too-short";
     process.env[LEGACY_ENV] = "legacy-key-thirty-two-chars-or-more-xxx";
 
@@ -180,10 +180,13 @@ describe("getSecret — fallback chain (covered through sign+verify)", () => {
 
     expect(verifyDownload(token)).toEqual({ path: "p", filename: "n" });
 
-    // Removing the legacy key now should break verification — we shouldn't
-    // be silently falling back to the dev secret in test mode.
+    // Promoted code (upstream ea48cde) removed the SUPABASE_SECRET_KEY legacy
+    // fallback entirely: a too-short DOWNLOAD_SIGNING_SECRET is ignored and,
+    // in non-production, signing/verification fall through to the dev secret
+    // regardless of SUPABASE_SECRET_KEY. So removing the legacy key has no
+    // effect — the token still round-trips via the dev fallback.
     delete process.env[LEGACY_ENV];
-    expect(verifyDownload(token)).toBeNull();
+    expect(verifyDownload(token)).toEqual({ path: "p", filename: "n" });
   });
 
   it("ignores SUPABASE_SECRET_KEY shorter than 32 chars", () => {

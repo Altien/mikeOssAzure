@@ -270,6 +270,11 @@ describe("getUserApiKeys — decryption + fallback", () => {
       claude: "sk-claude",
       gemini: "sk-gemini",
       openai: "sk-openai",
+      // openrouter / courtlistener (44e868e) have no decrypted row, so they
+      // fall back to the org-level secret via resolveSecret() → getConfig(),
+      // which the test mocks to return SECRET for every name.
+      openrouter: SECRET,
+      courtlistener: SECRET,
       azureOpenai: null,
     });
   });
@@ -580,6 +585,8 @@ describe("getConfiguredProviders", () => {
       claude: true,
       gemini: false,
       openai: false,
+      openrouter: false,
+      courtlistener: false,
       azure_openai: true,
     });
   });
@@ -606,6 +613,8 @@ describe("getConfiguredProviders", () => {
       claude: true,
       gemini: false,
       openai: true,
+      openrouter: false,
+      courtlistener: false,
       azure_openai: true,
     });
   });
@@ -622,6 +631,8 @@ describe("getConfiguredProviders", () => {
       claude: false,
       gemini: false,
       openai: false,
+      openrouter: false,
+      courtlistener: false,
       azure_openai: false,
     });
   });

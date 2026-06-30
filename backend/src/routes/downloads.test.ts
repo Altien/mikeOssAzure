@@ -106,6 +106,7 @@ function fakeDbWithVersionAndDoc(
       const builder: Record<string, unknown> = {};
       builder.select = () => builder;
       builder.eq = () => builder;
+      builder.is = () => builder;
       // First .from() call uses .maybeSingle() (lookup by storage_path);
       // second uses .single() (lookup by document_id).
       builder.maybeSingle = () => Promise.resolve({ data: version });

@@ -363,6 +363,10 @@ describe("GET /api/user/profile — wiring and shape", () => {
       claude: true,
       gemini: false,
       openai: true,
+      // openrouter / courtlistener added by upstream 44e868e; neither
+      // env var is set in this test, so both resolve to false.
+      openrouter: false,
+      courtlistener: false,
       azureOpenai: true,
     });
     const bodyStr = JSON.stringify(res.body);
@@ -798,10 +802,65 @@ describe("DELETE /api/user/account", () => {
     expect(createServerSupabaseMock).toHaveBeenCalledTimes(1);
   });
 
-  it("cascade-deletes user data in FK-safe order, then 204s on success", async () => {
-    const { db, calls } = makeDb({
-      deleteResults: Array(9).fill({ error: null }),
-    });
+  // The inline FK-safe cascade the older tests asserted on has moved into
+  // lib/userDataCleanup's deleteUserAccountData (sync-log 3a10943). That
+  // helper uses .in()/.filter() and parallel deletes the makeDb() fake
+  // above can't model, so account-deletion tests use this richer fake. It
+  // records every .delete() target table, lets a specific table's delete
+  // fail, and exposes the db.auth.admin.deleteUser the route now calls in
+  // supabase mode.
+  function makeAccountDb(opts: {
+    deleteError?: { table: string; message: string };
+    authDeleteError?: { message: string } | null;
+  } = {}) {
+    const deletes: string[] = [];
+    const authDeleteUser = vi.fn(async () => ({
+      error: opts.authDeleteError ?? null,
+    }));
+    const db = {
+      from: vi.fn((table: string) => {
+        const b: Record<string, unknown> = {};
+        let op: "select" | "delete" | "update" = "select";
+        b.select = () => {
+          op = "select";
+          return b;
+        };
+        b.update = () => {
+          op = "update";
+          return b;
+        };
+        b.delete = () => {
+          op = "delete";
+          return b;
+        };
+        const resolve = () => {
+          if (op === "delete") {
+            if (opts.deleteError && opts.deleteError.table === table) {
+              return Promise.resolve({
+                data: null,
+                error: { message: opts.deleteError.message },
+              });
+            }
+            deletes.push(table);
+            return Promise.resolve({ data: null, error: null });
+          }
+          // selects (and the rare merge update) return an empty result set,
+          // so the cleanup helper has no ids/rows to fan out to.
+          return Promise.resolve({ data: [], error: null });
+        };
+        // Every terminator the helper awaits resolves to a result.
+        b.eq = () => resolve();
+        b.in = () => resolve();
+        b.filter = () => resolve();
+        return b;
+      }),
+      auth: { admin: { deleteUser: authDeleteUser } },
+    };
+    return { db, deletes, authDeleteUser };
+  }
+
+  it("cascades through deleteUserAccountData, removes the identity tables, then 204s", async () => {
+    const { db, deletes, authDeleteUser } = makeAccountDb();
     createServerSupabaseMock.mockReturnValue(db);
 
     const res = await request(makeApp())
@@ -809,28 +868,18 @@ describe("DELETE /api/user/account", () => {
       .set("Authorization", "Bearer ok");
 
     expect(res.status).toBe(204);
-    const tablesInOrder = calls
-      .filter((c) => c.type === "from")
-      .map((c) => c.table);
-    expect(tablesInOrder).toEqual([
-      "tabular_review_chats",
-      "chats",
-      "tabular_reviews",
-      "documents",
-      "workflows",
-      "hidden_workflows",
-      "projects",
-      "user_profiles",
-      "workflow_shares",
-    ]);
+    // The route deletes the identity-adjacent tables itself after the
+    // cleanup helper runs, then removes the auth user (supabase mode).
+    expect(deletes).toContain("user_api_keys");
+    expect(deletes).toContain("user_profiles");
+    expect(authDeleteUser).toHaveBeenCalledWith("user-1");
   });
 
-  it("stops on the first failing delete and returns 500 with the table name", async () => {
-    const { db, calls } = makeDb({
-      deleteResults: [
-        { error: null }, // tabular_review_chats
-        { error: { message: "deadlock" } }, // chats — fails
-      ],
+  it("returns 500 with the table name when an identity-table delete fails", async () => {
+    // The route's own loop over [user_api_keys, user_profiles] still emits
+    // the "Failed to delete user data from <table>" message.
+    const { db, authDeleteUser } = makeAccountDb({
+      deleteError: { table: "user_profiles", message: "deadlock" },
     });
     createServerSupabaseMock.mockReturnValue(db);
 
@@ -840,19 +889,17 @@ describe("DELETE /api/user/account", () => {
 
     expect(res.status).toBe(500);
     expect(res.body.detail).toBe(
-      "Failed to delete user data from chats: deadlock",
+      "Failed to delete user data from user_profiles: deadlock",
     );
-    // No further from() calls should have happened past the failure.
-    const tables = calls.filter((c) => c.type === "from").map((c) => c.table);
-    expect(tables).toEqual(["tabular_review_chats", "chats"]);
+    // Bailed before removing the auth identity.
+    expect(authDeleteUser).not.toHaveBeenCalled();
   });
 
-  it("returns 500 when the workflow_shares email cleanup fails", async () => {
-    const { db } = makeDb({
-      deleteResults: [
-        ...Array(8).fill({ error: null }),
-        { error: { message: "permission denied" } }, // workflow_shares
-      ],
+  it("returns 500 when a delete inside the account-data cleanup fails", async () => {
+    // workflow_shares cleanup now lives inside deleteUserAccountData, which
+    // surfaces failures via the generic "Failed to delete account data" context.
+    const { db, authDeleteUser } = makeAccountDb({
+      deleteError: { table: "workflow_shares", message: "permission denied" },
     });
     createServerSupabaseMock.mockReturnValue(db);
 
@@ -862,18 +909,17 @@ describe("DELETE /api/user/account", () => {
 
     expect(res.status).toBe(500);
     expect(res.body.detail).toBe(
-      "Failed to delete user data from workflow_shares: permission denied",
+      "Failed to delete account data: permission denied",
     );
+    expect(authDeleteUser).not.toHaveBeenCalled();
   });
 
-  it("skips the workflow_shares cleanup when the principal has no email claim", async () => {
+  it("skips the email-based workflow_shares cleanup when the principal has no email claim", async () => {
     validateSupabaseTokenMock.mockResolvedValueOnce({
       ok: true,
       principal: { ...callerPrincipal, email: "" },
     });
-    const { db, calls } = makeDb({
-      deleteResults: Array(8).fill({ error: null }),
-    });
+    const { db, deletes } = makeAccountDb();
     createServerSupabaseMock.mockReturnValue(db);
 
     const res = await request(makeApp())
@@ -881,7 +927,10 @@ describe("DELETE /api/user/account", () => {
       .set("Authorization", "Bearer ok");
 
     expect(res.status).toBe(204);
-    const tables = calls.filter((c) => c.type === "from").map((c) => c.table);
-    expect(tables).not.toContain("workflow_shares");
+    // workflow_shares is still cleared once by shared_by_user_id, but the
+    // second, email-keyed delete (shared_with_email) is skipped — so the
+    // table is touched exactly once rather than twice.
+    const shareDeletes = deletes.filter((t) => t === "workflow_shares");
+    expect(shareDeletes).toHaveLength(1);
   });
 });

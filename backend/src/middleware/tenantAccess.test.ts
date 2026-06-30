@@ -40,9 +40,9 @@ function makeRes(principal?: Record<string, unknown> | null): FakeRes {
 
 /**
  * Build a chainable fake of the supabase client whose terminator
- * (`maybeSingle()` for selects, `insert()` for writes) resolves to the
- * provided result. Tracks calls so tests can assert on the table /
- * filter / payload.
+ * (`maybeSingle()` for selects, `upsert()` for onboarding writes)
+ * resolves to the provided result. Tracks calls so tests can assert on
+ * the table / filter / payload.
  */
 function makeAdmin(opts: {
   selectResult?: { data: unknown; error?: { message: string } | null };
@@ -52,7 +52,8 @@ function makeAdmin(opts: {
     from?: string;
     select?: string;
     eq?: [string, unknown];
-    insertPayload?: unknown;
+    upsertPayload?: unknown;
+    upsertOptions?: unknown;
   } = {};
   const builder: Record<string, unknown> = {};
   builder.select = vi.fn((cols: string) => {
@@ -68,8 +69,9 @@ function makeAdmin(opts: {
       opts.selectResult ?? { data: null, error: null },
     ),
   );
-  builder.insert = vi.fn((payload: unknown) => {
-    calls.insertPayload = payload;
+  builder.upsert = vi.fn((payload: unknown, options: unknown) => {
+    calls.upsertPayload = payload;
+    calls.upsertOptions = options;
     return Promise.resolve(opts.insertResult ?? { error: null });
   });
   const admin = {
@@ -238,9 +240,13 @@ describe("tenantAccess — entra path, tenant lookup", () => {
 
     await tenantAccess({} as Request, res, next);
 
-    expect(calls.insertPayload).toEqual({
+    expect(calls.upsertPayload).toEqual({
       tenant_id: "t-new",
       status: "active",
+    });
+    expect(calls.upsertOptions).toEqual({
+      onConflict: "tenant_id",
+      ignoreDuplicates: true,
     });
     expect(next).toHaveBeenCalledTimes(1);
     expect((res.locals.principal as typeof principal).roles).toEqual(["Member"]);
@@ -350,6 +356,12 @@ describe("tenantAccess — entra path, group → role mapping", () => {
 
   it("denies GROUP_NOT_WHITELISTED when the principal has no groups claim at all", async () => {
     process.env[ADMIN_GROUPS] = "admin-grp";
+    // A member-group allowlist must be configured: when it is empty the
+    // promoted resolveRoles grants Member to anyone whose tenant is
+    // already verified ("anyone in my tenant" default), so a missing
+    // groups claim would NOT be denied. With a non-empty allowlist, a
+    // principal with no groups matches nothing and is denied.
+    process.env[MEMBER_GROUPS] = "member-grp";
     const res = makeRes({ userId: "u1", tenantId: "t1" });
     const next = vi.fn() as unknown as NextFunction;
 

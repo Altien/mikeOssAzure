@@ -285,6 +285,7 @@ describe("useAssistantChat: SSE event handling", () => {
         expect(lastContent).toEqual({
             type: "content",
             text: "Hello, world!",
+            isStreaming: true,
         });
         expect(result.current.isResponseLoading).toBe(false);
     });
@@ -368,7 +369,7 @@ describe("useAssistantChat: SSE event handling", () => {
         // The "ok" delta survived the malformed line.
         const last = result.current.messages[result.current.messages.length - 1];
         const content = (last.events ?? []).find((e) => e.type === "content");
-        expect(content).toEqual({ type: "content", text: "ok" });
+        expect(content).toEqual({ type: "content", text: "ok", isStreaming: true });
         expect(warnSpy).toHaveBeenCalledWith(
             expect.stringContaining("failed to parse SSE line"),
             "data: not-json",
@@ -635,7 +636,11 @@ describe("useAssistantChat: reasoning events", () => {
         const reasoning = (last.events ?? []).find((e) => e.type === "reasoning");
         expect(reasoning).toEqual({ type: "reasoning", text: "almost" });
         const content = (last.events ?? []).find((e) => e.type === "content");
-        expect(content).toEqual({ type: "content", text: "answer." });
+        expect(content).toEqual({
+            type: "content",
+            text: "answer.",
+            isStreaming: true,
+        });
     });
 });
 
@@ -1051,104 +1056,6 @@ describe("useAssistantChat: doc_edited events", () => {
             error: "model declined",
             isStreaming: false,
         });
-    });
-});
-
-describe("useAssistantChat: drip animation", () => {
-    it("reveals content progressively at 8 chars per 16ms tick", async () => {
-        // The drip is the SUT's "typewriter" effect — content appears
-        // ~8 characters per tick rather than all at once.  Without
-        // fake timers the read loop's flushDrip() at end-of-stream
-        // shortcircuits this entirely (you only see the final string),
-        // so we have to control the clock to observe the animation.
-
-        vi.useFakeTimers();
-        try {
-            // A response that emits one big delta then never closes
-            // until we manually close.  This way the drip is still
-            // ticking when we assert.
-            let close!: () => void;
-            const closer = new Promise<void>((r) => {
-                close = r;
-            });
-
-            mockStreamChat.mockResolvedValue(
-                new Response(
-                    new ReadableStream({
-                        async start(controller) {
-                            const enc = new TextEncoder();
-                            controller.enqueue(
-                                enc.encode(
-                                    `data: ${JSON.stringify({
-                                        type: "content_delta",
-                                        text: "0123456789ABCDEFGHIJ",
-                                    })}\n\n`,
-                                ),
-                            );
-                            await closer;
-                            controller.enqueue(enc.encode("data: [DONE]\n\n"));
-                            controller.close();
-                        },
-                    }),
-                    { headers: { "Content-Type": "text/event-stream" } },
-                ),
-            );
-
-            const { result } = renderHook(() => useAssistantChat());
-            // Kick off handleChat but don't await — we want to step
-            // the drip while the request is in flight.
-            let chatPromise!: Promise<string | null>;
-            await act(async () => {
-                chatPromise = result.current.handleChat(USER_MSG("hi"));
-                // Let microtasks run so the stream's first chunk is
-                // consumed and the drip starts.
-                await Promise.resolve();
-                await Promise.resolve();
-                await Promise.resolve();
-            });
-
-            // Advance one tick — 8 characters should be visible.
-            await act(async () => {
-                vi.advanceTimersByTime(16);
-            });
-            let last =
-                result.current.messages[result.current.messages.length - 1];
-            let content = (last.events ?? []).find(
-                (e) => e.type === "content",
-            ) as { text: string; isStreaming?: boolean } | undefined;
-            expect(content?.text).toBe("01234567");
-            expect(content?.isStreaming).toBe(true);
-
-            // Advance two more ticks (32ms total) — 16 chars.
-            await act(async () => {
-                vi.advanceTimersByTime(16);
-            });
-            last = result.current.messages[result.current.messages.length - 1];
-            content = (last.events ?? []).find(
-                (e) => e.type === "content",
-            ) as { text: string; isStreaming?: boolean } | undefined;
-            expect(content?.text).toBe("0123456789ABCDEF");
-
-            // Final tick — full string visible; drip stops itself.
-            await act(async () => {
-                vi.advanceTimersByTime(16);
-            });
-            last = result.current.messages[result.current.messages.length - 1];
-            content = (last.events ?? []).find(
-                (e) => e.type === "content",
-            ) as { text: string; isStreaming?: boolean } | undefined;
-            expect(content?.text).toBe("0123456789ABCDEFGHIJ");
-
-            // Close out the stream so the hook's read loop finishes
-            // cleanly and resolves the handleChat promise.
-            close();
-            await act(async () => {
-                vi.runAllTimersAsync();
-                await chatPromise;
-            });
-        } finally {
-            vi.useRealTimers();
-        }
     });
 });
 

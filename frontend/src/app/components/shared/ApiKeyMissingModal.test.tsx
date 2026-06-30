@@ -58,9 +58,9 @@ describe("ApiKeyMissingModal", () => {
             />,
         );
 
-        expect(
-            screen.getByRole("heading", { name: "API key required" }),
-        ).toBeInTheDocument();
+        // Promoted code renders via WarningPopup: the title is a styled
+        // <div>, not a heading element, so match it by text.
+        expect(screen.getByText("API key required")).toBeInTheDocument();
         expect(
             screen.getByText(
                 /You haven't added a Claude API key yet\. Add one in your account settings to use this model\./,
@@ -99,7 +99,10 @@ describe("ApiKeyMissingModal", () => {
         expect(screen.queryByText(/OpenAI API key yet/)).not.toBeInTheDocument();
     });
 
-    it("Cancel button invokes onClose", async () => {
+    it("Dismiss ('X') button invokes onClose", async () => {
+        // Promoted code dropped the explicit "Cancel" button; the dismiss
+        // affordance is now the WarningPopup "Dismiss warning" (X) button,
+        // which still calls onClose.
         const onClose = vi.fn();
         render(
             <ApiKeyMissingModal
@@ -109,7 +112,9 @@ describe("ApiKeyMissingModal", () => {
             />,
         );
 
-        await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+        await userEvent.click(
+            screen.getByRole("button", { name: "Dismiss warning" }),
+        );
 
         expect(onClose).toHaveBeenCalledOnce();
     });
@@ -132,29 +137,14 @@ describe("ApiKeyMissingModal", () => {
         expect(mockPush).toHaveBeenCalledWith("/account/models");
     });
 
-    it("clicking the backdrop closes the modal", async () => {
-        const onClose = vi.fn();
-        render(
-            <ApiKeyMissingModal
-                open={true}
-                onClose={onClose}
-                provider="claude"
-            />,
-        );
+    // NOTE: The promoted code replaced the centered modal+backdrop with a
+    // top-anchored WarningPopup toast that has no click-to-dismiss backdrop,
+    // so the former "clicking the backdrop closes the modal" test no longer
+    // describes any real behavior and has been removed.
 
-        // The backdrop wraps the dialog and has the onClick that fires
-        // onClose; the inner card stops propagation.
-        const backdrop = screen.getByRole("heading").closest(".fixed");
-        expect(backdrop).not.toBeNull();
-        await userEvent.click(backdrop!);
-
-        expect(onClose).toHaveBeenCalledOnce();
-    });
-
-    it("clicking inside the dialog card does NOT close the modal", async () => {
-        // Important UX: clicking the body text or the heading must
-        // not dismiss the modal — only the backdrop or explicit
-        // buttons do.
+    it("clicking the popup title or body does NOT close it", async () => {
+        // Important UX: clicking the body text or the title must not
+        // dismiss the popup — only the explicit Dismiss / action buttons do.
         const onClose = vi.fn();
         render(
             <ApiKeyMissingModal
@@ -164,9 +154,7 @@ describe("ApiKeyMissingModal", () => {
             />,
         );
 
-        await userEvent.click(
-            screen.getByRole("heading", { name: "API key required" }),
-        );
+        await userEvent.click(screen.getByText("API key required"));
         await userEvent.click(
             screen.getByText(/You haven't added a OpenAI API key/),
         );

@@ -290,7 +290,17 @@ authRouter.get("/login-provider/:providerId", async (req, res) => {
     return;
   }
 
-  const state = await signState({ returnUrl: safeReturnUrl(req.query.returnUrl), createdAt: Date.now() });
+  // signState() throws in production when no auth-state-secret is configured.
+  // It is async (KV-backed), so Express 4 won't forward the rejection to an
+  // error handler — catch it here and return 500 rather than hang the request.
+  let state: string;
+  try {
+    state = await signState({ returnUrl: safeReturnUrl(req.query.returnUrl), createdAt: Date.now() });
+  } catch (err) {
+    console.error("OpenID login-provider failed to sign state:", err);
+    res.status(500).json({ detail: "OpenID login is not configured" });
+    return;
+  }
   const authorize = new URL(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize`);
   authorize.searchParams.set("client_id", clientId);
   authorize.searchParams.set("response_type", "code");

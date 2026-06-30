@@ -1094,7 +1094,7 @@ describe("mikeApi: smoke — single document versions", () => {
                 async ({ request }) => {
                     const form = await request.formData();
                     hasFile = form.has("file");
-                    const dn = form.get("display_name");
+                    const dn = form.get("filename");
                     if (typeof dn === "string") displayNameField = dn;
                     return HttpResponse.json({
                         id: "v",
@@ -1124,7 +1124,7 @@ describe("mikeApi: smoke — single document versions", () => {
                 "*/api/single-documents/:id/versions",
                 async ({ request }) => {
                     const form = await request.formData();
-                    displayNamePresent = form.has("display_name");
+                    displayNamePresent = form.has("filename");
                     return HttpResponse.json({
                         id: "v",
                         version_number: 1,
@@ -1157,7 +1157,7 @@ describe("mikeApi: smoke — single document versions", () => {
             ),
         );
         await renameDocumentVersion("d-1", "v-1", "Renamed");
-        expect(body).toEqual({ display_name: "Renamed" });
+        expect(body).toEqual({ filename: "Renamed" });
     });
 
     it("listStandaloneDocuments GETs /single-documents", async () => {

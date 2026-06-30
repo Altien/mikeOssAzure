@@ -49,11 +49,11 @@ describe("useSelectedModel: setter", () => {
         const { result } = renderHook(() => useSelectedModel());
 
         act(() => {
-            result.current[1]("gpt-5");
+            result.current[1]("gpt-5.5");
         });
 
-        expect(result.current[0]).toBe("gpt-5");
-        expect(window.localStorage.getItem(STORAGE_KEY)).toBe("gpt-5");
+        expect(result.current[0]).toBe("gpt-5.5");
+        expect(window.localStorage.getItem(STORAGE_KEY)).toBe("gpt-5.5");
     });
 
     it("normalises an invalid id to the default — both state and storage", () => {
