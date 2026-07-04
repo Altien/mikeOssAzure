@@ -34,6 +34,7 @@ import {
   buildUserTabularReviewsExport,
   userExportFilename,
 } from "../lib/userDataExport";
+import { findProfileUserByEmail } from "../lib/userLookup";
 
 export const userRouter = Router();
 

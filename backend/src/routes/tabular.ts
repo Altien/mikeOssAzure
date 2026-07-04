@@ -6,7 +6,14 @@ import {
     attachActiveVersionPaths,
     loadActiveVersion,
 } from "../lib/documentVersions";
-import { normalizeDocxZipPaths } from "../lib/convert";
+import { docxToPdf, normalizeDocxZipPaths } from "../lib/convert";
+import {
+    isPresentationDocumentType,
+    isSpreadsheetDocumentType,
+    isWordDocumentType,
+} from "../lib/documentTypes";
+import { extractPresentationText } from "../lib/officeText";
+import { spreadsheetToLLMText } from "../lib/spreadsheet";
 import {
     AssistantStreamError,
     buildCancelledAssistantMessage,
@@ -16,7 +23,7 @@ import {
     TABULAR_TOOLS,
     type ChatMessage,
     type TabularCellStore,
-} from "../lib/chatTools";
+} from "../lib/chat";
 import {
     completeText,
     providerForModel,
@@ -32,6 +39,10 @@ import {
     filterAccessibleDocumentIds,
 } from "../lib/access";
 import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
+import {
+    findMissingUserEmails,
+    loadProfileUsersByEmail,
+} from "../lib/userLookup";
 
 function formatPromptSuffix(format?: string, tags?: string[]): string {
     switch (format) {
@@ -455,6 +466,15 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
             return void res
                 .status(403)
                 .json({ detail: "Only the review owner can change sharing" });
+        const missingSharedUsers = await findMissingUserEmails(
+            db,
+            sharedWithUpdate,
+        );
+        if (missingSharedUsers.length > 0) {
+            return void res.status(400).json({
+                detail: `${missingSharedUsers[0]} does not belong to a Mike user.`,
+            });
+        }
         updates.shared_with = sharedWithUpdate;
     }
     if (projectIdUpdateProvided) {
@@ -740,10 +760,10 @@ tabularRouter.post(
             const buf = await downloadFile(docActive.storage_path);
             if (buf) {
                 try {
-                    markdown =
-                        docActive.file_type === "pdf"
-                            ? await extractPdfMarkdown(buf)
-                            : await extractDocxMarkdown(buf);
+                    markdown = await extractDocumentMarkdown(
+                        buf,
+                        docActive.file_type,
+                    );
                 } catch (err) {
                     console.error(
                         `[regenerate-cell] extraction error doc=${document_id}`,
@@ -889,10 +909,10 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                     const buf = await downloadFile(storagePath);
                     if (buf) {
                         try {
-                            markdown =
-                                fileType === "pdf"
-                                    ? await extractPdfMarkdown(buf)
-                                    : await extractDocxMarkdown(buf);
+                            markdown = await extractDocumentMarkdown(
+                                buf,
+                                fileType,
+                            );
                         } catch (err) {
                             console.error(
                                 `[tabular/generate] extraction error doc=${docId}`,
@@ -1410,17 +1430,18 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
                 const partial = buildCancelledAssistantMessage({
                     fullText: err.fullText,
                     events: err.events,
-                    buildAnnotations: (fullText) =>
+                    buildCitations: (fullText) =>
                         extractTabularAnnotations(fullText, tabularStore),
                 });
+                const annotations = partial.citations;
                 const { error: saveError } = await db
                     .from("tabular_review_chat_messages")
                     .insert({
                         chat_id: chatId,
                         role: "assistant",
                         content: partial.events.length ? partial.events : null,
-                        annotations: partial.annotations.length
-                            ? partial.annotations
+                        annotations: annotations.length
+                            ? annotations
                             : null,
                     });
                 if (saveError) {
@@ -1766,6 +1787,34 @@ Rules:
 
     if (contentBuffer.trim()) pending.push(processLine(contentBuffer));
     await Promise.all(pending);
+}
+
+async function extractDocumentMarkdown(
+    buf: ArrayBuffer,
+    fileType: string | null | undefined,
+): Promise<string> {
+    const normalizedType = (fileType ?? "").toLowerCase();
+    if (normalizedType === "pdf") return extractPdfMarkdown(buf);
+    if (normalizedType === "docx") return extractDocxMarkdown(buf);
+    if (isSpreadsheetDocumentType(normalizedType)) {
+        // SheetJS handles .xlsx/.xlsm/.xls directly, no PDF detour.
+        return spreadsheetToLLMText(Buffer.from(buf));
+    }
+    if (normalizedType === "pptx") {
+        return extractPresentationText(Buffer.from(buf));
+    }
+    if (
+        isPresentationDocumentType(normalizedType) ||
+        isWordDocumentType(normalizedType)
+    ) {
+        const pdfBuf = await docxToPdf(Buffer.from(buf));
+        const pdfArrayBuffer = pdfBuf.buffer.slice(
+            pdfBuf.byteOffset,
+            pdfBuf.byteOffset + pdfBuf.byteLength,
+        ) as ArrayBuffer;
+        return extractPdfMarkdown(pdfArrayBuffer);
+    }
+    return extractDocxMarkdown(buf);
 }
 
 async function extractPdfMarkdown(buf: ArrayBuffer): Promise<string> {

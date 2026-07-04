@@ -26,6 +26,19 @@ issue against this repository letting us know. That way we can:
 If you are unsure whether a change is upstream-eligible, file an
 issue here first and we will help you triage.
 
+## System Workflows
+
+System workflows live in `workflows/`. Update `metadata.json` for structured
+metadata like author, language, version, practice area, or jurisdictions,
+update `SKILL.md` for workflow instructions, and use `table-config.json` for
+tabular review columns.
+
+After changing system workflows, regenerate the app files:
+
+```bash
+node scripts/build-workflows.js
+```
+
 ## Reporting issues
 
 - **Security** — see [`SECURITY.md`](./SECURITY.md). Do not file public
