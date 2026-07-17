@@ -4,16 +4,7 @@ import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import { recordAudit } from "../lib/audit";
 import { sendInternalError } from "../lib/httpError";
-import { downloadFile } from "../lib/storage";
 import { attachActiveVersionPaths } from "../lib/documentVersions";
-import { docxToPdf, normalizeDocxZipPaths } from "../lib/convert";
-import {
-    isPresentationDocumentType,
-    isSpreadsheetDocumentType,
-    isWordDocumentType,
-} from "../lib/documentTypes";
-import { extractPresentationText } from "../lib/officeText";
-import { spreadsheetToLLMText } from "../lib/spreadsheet";
 import {
     AssistantStreamError,
     ASSISTANT_ERROR_MESSAGE,
@@ -27,27 +18,48 @@ import {
     parseOptionalModel,
     parseOptionalReasoning,
 } from "../lib/chat";
+import { completeText } from "../lib/llm";
 import {
-    completeText,
-    providerForModel,
-    resolveModel,
-    streamChatWithTools,
-    type Provider,
-    type UserApiKeys,
-} from "../lib/llm";
+    generateChatTitle,
+    queryTabularCell,
+} from "../lib/tabular/tabular.extract";
+import {
+    parseCellContent,
+    TABULAR_GENERATION_HEARTBEAT_MS,
+    TABULAR_GENERATION_LEASE_SECONDS,
+    validateSelectedModel,
+    type Column,
+} from "../lib/tabular/tabular.shared";
+import {
+    extractRowColumns,
+    finalizeCell,
+} from "../lib/tabular/tabular.extractRow";
+import {
+    loadTabularGenerateWork,
+    prepareTabularGenerate,
+} from "../lib/tabular/tabular.generate";
+import {
+    streamTabularGenerateAsync,
+    streamTabularRunView,
+} from "../lib/tabular/tabular.generateStream";
+import {
+    fetchSourceDocuments,
+    loadReviewRows,
+    loadRowDocumentText,
+    type ReviewRow,
+    type SourceDocument,
+} from "../lib/tabular/tabular.rows";
 import {
     getUserModelSettings,
     persistLastSelectedChatModel,
     persistLastSelectedReasoningLevel,
 } from "../lib/userSettings";
-import { resolveRequestedModel } from "../lib/routerModels";
 import {
     TABULAR_MODEL_REQUIRED_DETAIL,
     resolveEffectiveChatModel,
     resolveEffectiveReasoningLevel,
     titleModelForChat,
 } from "../lib/modelSelection";
-import { UserFacingError } from "../lib/userFacingError";
 import {
     checkProjectAccess,
     ensureReviewAccess,
@@ -66,57 +78,12 @@ import { parsePaginationQuery } from "../lib/pagination";
 import { normalizeSearchTerm } from "../lib/search";
 import { parseTabularReviewSort } from "../lib/sort";
 
-function formatPromptSuffix(format?: string, tags?: string[]): string {
-    switch (format) {
-        case "bulleted_list":
-            return ' The "summary" field in your JSON response must be a markdown bulleted list only — no prose. Format: each item on its own line, prefixed with "* " (asterisk + single space), e.g.\n* First item\n* Second item\n* Third item';
-        case "number":
-            return ' The "summary" field in your JSON response must be a single number only. No units or explanation.';
-        case "percentage":
-            return ' The "summary" field in your JSON response must be a single percentage value only (e.g. 42%). No explanation.';
-        case "monetary_amount":
-            return ' The "summary" field in your JSON response must be the monetary value only, including currency symbol (e.g. $1,234.56). No explanation.';
-        case "currency":
-            return ' The "summary" field in your JSON response must contain only the currency code(s). Wrap each code in double square brackets, e.g. [[USD]] or [[EUR]]. No other text.';
-        case "yes_no":
-            return ' The "summary" field in your JSON response must be [[Yes]] or [[No]] only. The "reasoning" field MUST include an inline citation [[document:SOURCE_DOCUMENT_ID||page:N||quote:verbatim excerpt ≤25 words]] pointing to the exact language in the document that supports the Yes/No answer.';
-        case "date":
-            return ' The "summary" field in your JSON response must be the date only in DD Month YYYY format (e.g. 1 January 2024). If a range, give both dates separated by an em dash. The "reasoning" field MUST include an inline citation [[document:SOURCE_DOCUMENT_ID||page:N||quote:verbatim excerpt ≤25 words]] pointing to the exact place in the document where the date is found.';
-        case "tag":
-            return tags?.length
-                ? ` The \"summary\" field in your JSON response must contain exactly one tag wrapped in double square brackets. Available tags: ${tags.map((t) => `[[${t}]]`).join(", ")}. No other text. The \"reasoning\" field MUST include an inline citation [[document:SOURCE_DOCUMENT_ID||page:N||quote:verbatim excerpt ≤25 words]] pointing to the exact language in the document that supports the chosen tag.`
-                : "";
-        default:
-            return "";
-    }
-}
-
 export const tabularRouter = Router();
 const TABULAR_GENERATION_CONCURRENCY = 3;
-const TABULAR_GENERATION_LEASE_SECONDS = 300;
-const TABULAR_GENERATION_HEARTBEAT_MS = 60_000;
+// The lease timings live in lib/tabular/tabular.shared.ts because the queue
+// workers hold the same lease on the async path and must agree on them.
 
 type DocumentGrouping = "document" | "folder";
-type ReviewRow = {
-    id: string;
-    review_id: string;
-    label: string;
-    row_type: "document" | "folder";
-    folder_id: string | null;
-    library_folder_id: string | null;
-    document_id: string | null;
-    sort_index: number;
-    source_document_ids?: string[];
-};
-type SourceDocument = {
-    id: string;
-    filename: string;
-    file_type: string | null;
-    current_version_id?: string | null;
-    project_id?: string | null;
-    folder_id?: string | null;
-    library_folder_id?: string | null;
-};
 type SupabaseDb = ReturnType<typeof createServerSupabase>;
 
 function isReviewGenerationRunning(review: Record<string, unknown>): boolean {
@@ -131,36 +98,6 @@ function isReviewGenerationRunning(review: Record<string, unknown>): boolean {
 
 function normalizeGrouping(value: unknown): DocumentGrouping {
     return value === "folder" ? "folder" : "document";
-}
-
-async function fetchSourceDocuments(
-    db: SupabaseDb,
-    documentIds: string[],
-): Promise<SourceDocument[]> {
-    if (documentIds.length === 0) return [];
-    const { data, error } = await db
-        .from("documents")
-        .select(
-            "id, current_version_id, project_id, folder_id, library_folder_id",
-        )
-        .in("id", documentIds);
-    if (error) throw new Error(error.message);
-    const docs = (data ?? []) as (Omit<
-        SourceDocument,
-        "filename" | "file_type"
-    > & {
-        filename?: string | null;
-        file_type?: string | null;
-    })[];
-    await attachActiveVersionPaths(db, docs);
-    const position = new Map(documentIds.map((id, index) => [id, index]));
-    return docs
-        .map((doc) => ({
-            ...doc,
-            filename: doc.filename?.trim() || "Untitled document",
-            file_type: doc.file_type ?? null,
-        }))
-        .sort((a, b) => (position.get(a.id) ?? 0) - (position.get(b.id) ?? 0));
 }
 
 function buildFolderPathMap(
@@ -430,161 +367,6 @@ async function syncCellsForReviewRows(
     }
 }
 
-async function loadReviewRows(
-    db: SupabaseDb,
-    reviewId: string,
-): Promise<ReviewRow[]> {
-    const { data, error } = await db
-        .from("tabular_review_rows")
-        .select("*")
-        .eq("review_id", reviewId)
-        .order("sort_index", { ascending: true });
-    if (error) throw new Error(error.message);
-    const rows = (data ?? []) as ReviewRow[];
-    if (!rows.length) return rows;
-    const { data: sources, error: sourceError } = await db
-        .from("tabular_review_row_sources")
-        .select("row_id, document_id")
-        .in(
-            "row_id",
-            rows.map((row) => row.id),
-        )
-        .order("sort_index", { ascending: true });
-    if (sourceError) throw new Error(sourceError.message);
-    const byRow = new Map<string, string[]>();
-    for (const source of sources ?? []) {
-        byRow.set(source.row_id, [
-            ...(byRow.get(source.row_id) ?? []),
-            source.document_id,
-        ]);
-    }
-    return rows.map((row) => ({
-        ...row,
-        source_document_ids:
-            byRow.get(row.id) ?? (row.document_id ? [row.document_id] : []),
-    }));
-}
-
-async function loadRowDocumentText(
-    db: SupabaseDb,
-    row: ReviewRow,
-): Promise<string> {
-    const sourceIds =
-        row.source_document_ids ?? (row.document_id ? [row.document_id] : []);
-    const docs = await fetchSourceDocuments(db, sourceIds);
-    const sections: string[] = [];
-    for (const doc of docs) {
-        const storagePath = (doc as SourceDocument & { storage_path?: string })
-            .storage_path;
-        let markdown = "";
-        if (storagePath) {
-            const buf = await downloadFile(storagePath);
-            if (buf) {
-                try {
-                    markdown = await extractDocumentMarkdown(
-                        buf,
-                        doc.file_type,
-                    );
-                } catch (error) {
-                    console.error(
-                        `[tabular] extraction error doc=${doc.id}`,
-                        error,
-                    );
-                }
-            }
-        }
-        sections.push(
-            `## Source document: ${doc.filename}\nSource document ID: ${doc.id}\n\n${markdown}`,
-        );
-    }
-    return sections.join("\n\n---\n\n");
-}
-
-function providerLabel(provider: Provider): string {
-    if (provider === "claude") return "Anthropic";
-    if (provider === "openai") return "OpenAI";
-    if (provider === "openrouter") return "OpenRouter";
-    if (provider === "vercel") return "Vercel AI Gateway";
-    if (provider === "opencode-go") return "OpenCode Go";
-    if (provider === "ollama") return "Local (Ollama)";
-    return "Gemini";
-}
-
-function missingModelApiKey(model: string, apiKeys: UserApiKeys) {
-    const provider = providerForModel(model);
-    if (provider === "ollama") return null; // local, no key
-    if (apiKeys[provider]?.trim()) return null;
-    return {
-        provider,
-        model,
-        detail: `${providerLabel(provider)} API key is required to use ${model}. Add an API key or select a different tabular review model.`,
-    };
-}
-
-async function validateSelectedModel(
-    model: unknown,
-    userId: string,
-    db: ReturnType<typeof createServerSupabase>,
-): Promise<
-    | { ok: true; model: string; apiKeys: UserApiKeys }
-    | {
-          ok: false;
-          status: 400 | 409 | 422;
-          body: Record<string, unknown>;
-      }
-> {
-    const requested = resolveModel(
-        typeof model === "string" ? model.trim() : "",
-        "",
-    );
-    if (!requested) {
-        return {
-            ok: false,
-            status: typeof model === "string" && model.trim() ? 400 : 409,
-            body: {
-                code:
-                    typeof model === "string" && model.trim()
-                        ? "model_unavailable"
-                        : "model_required",
-                detail:
-                    typeof model === "string" && model.trim()
-                        ? `Model "${model}" is not available. Select another model.`
-                        : TABULAR_MODEL_REQUIRED_DETAIL,
-            },
-        };
-    }
-
-    let selected: string;
-    try {
-        selected = await resolveRequestedModel(
-            requested,
-            "",
-            userId,
-            db,
-            "throw",
-        );
-    } catch (error) {
-        if (error instanceof UserFacingError) {
-            return {
-                ok: false,
-                status: 400,
-                body: { code: "model_unavailable", detail: error.message },
-            };
-        }
-        throw error;
-    }
-
-    const { api_keys: apiKeys } = await getUserModelSettings(userId, db);
-    const missingKey = missingModelApiKey(selected, apiKeys);
-    if (missingKey) {
-        return {
-            ok: false,
-            status: 422,
-            body: { code: "missing_api_key", ...missingKey },
-        };
-    }
-    return { ok: true, model: selected, apiKeys };
-}
 
 // GET /tabular-review
 tabularRouter.get("/", requireAuth, async (req, res) => {
@@ -1481,33 +1263,24 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     let renewingLease = false;
     req.on("aborted", () => generationAbort.abort());
 
-    const { data: review, error: reviewError } = await db
-        .from("tabular_reviews")
-        .select("*")
-        .eq("id", reviewId)
-        .single();
-    if (reviewError || !review)
-        return void res.status(404).json({ detail: "Review not found" });
-    const access = await ensureReviewAccess(review, userId, userEmail, db);
-    if (!access.ok)
-        return void res.status(404).json({ detail: "Review not found" });
-
-    const columns: {
-        index: number;
-        name: string;
-        prompt: string;
-        format?: string;
-        tags?: string[];
-    }[] = review.columns_config ?? [];
-    if (columns.length === 0)
-        return void res.status(400).json({ detail: "No columns configured" });
-
-    const selectedModel = await validateSelectedModel(review.model, userId, db);
-    if (!selectedModel.ok) {
-        return void res.status(selectedModel.status).json(selectedModel.body);
+    // Pre-lease guards only (review, access, columns, model policy). Row and
+    // cell state is deliberately NOT read here — see the note at the lease
+    // claim.
+    const prepared = await prepareTabularGenerate(db, {
+        reviewId,
+        userId,
+        userEmail,
+    });
+    if (!prepared.ok) {
+        if (prepared.kind === "not_found")
+            return void res.status(404).json({ detail: "Review not found" });
+        if (prepared.kind === "no_columns")
+            return void res
+                .status(400)
+                .json({ detail: "No columns configured" });
+        return void res.status(prepared.status).json(prepared.body);
     }
-    const tabular_model = selectedModel.model;
-    const api_keys = selectedModel.apiKeys;
+    const { columns, tabular_model, api_keys } = prepared.data;
 
     const expectedUpdatedAt = req.body?.expected_updated_at;
     if (
@@ -1557,8 +1330,13 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     // while another run is finishing, acquire the newly released lease, and
     // regenerate results that were completed after its stale snapshot.
     let rows: ReviewRow[] = [];
-    const cellMap = new Map<string, Record<string, unknown>>();
+    let cellMap = new Map<string, Record<string, unknown>>();
 
+    // The async path hands the lease to the queue workers (they renew it, and
+    // the last one out releases it) because the work outlives this request.
+    // While that is true this handler must neither release the lease nor end
+    // the response in its `finally`.
+    let leaseHandedOff = false;
     let streamFinished = false;
     res.on("close", () => {
         if (!streamFinished) generationAbort.abort();
@@ -1591,32 +1369,51 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
             })();
         }, TABULAR_GENERATION_HEARTBEAT_MS);
 
-        rows = await loadReviewRows(db, reviewId);
-        const { data: cells, error: cellsError } = await db
-            .from("tabular_cells")
-            .select("*")
-            .eq("review_id", reviewId);
-        if (cellsError) {
-            sendInternalError(res, cellsError);
+        const work = await loadTabularGenerateWork(db, {
+            reviewId,
+            userId,
+            userEmail,
+        });
+        if (!work.ok) {
+            sendInternalError(res, work.error);
             return;
         }
-        for (const cell of cells ?? []) {
-            cellMap.set(`${cell.row_id}:${cell.column_index}`, cell);
-        }
-
-        const sourceIds = [
-            ...new Set(rows.flatMap((row) => row.source_document_ids ?? [])),
-        ];
-        const allowedSourceIds = new Set(
-            await filterAccessibleDocumentIds(sourceIds, userId, userEmail, db),
-        );
-        rows = rows.filter((row) =>
-            (row.source_document_ids ?? []).every((id) =>
-                allowedSourceIds.has(id),
-            ),
-        );
+        rows = work.data.rows;
+        cellMap = work.data.cellMap;
 
         if (generationAbort.signal.aborted || res.destroyed) return;
+
+        // Async path: hand extraction to the durable BullMQ queue and turn this
+        // request into a reconnectable view that tails progress. The work
+        // survives a disconnect and retries on failure. Falls through to the
+        // historical inline path when the flag is off (no Redis required).
+        if (process.env.ASYNC_TABULAR_EXTRACTION === "true") {
+            // The workers renew the lease from here on, so stop our heartbeat
+            // before handing over — two renewers would just race each other.
+            if (leaseHeartbeat) {
+                clearInterval(leaseHeartbeat);
+                leaseHeartbeat = null;
+            }
+            leaseHandedOff = await streamTabularGenerateAsync({
+                res,
+                db,
+                reviewId,
+                userId,
+                generationId,
+                columns,
+                rows,
+                cellMap,
+                log: console,
+            });
+            void recordAudit(db, {
+                userId,
+                userEmail,
+                action: "tabular.generated",
+                surface: "tabular",
+                reviewId,
+            });
+            return;
+        }
 
         res.setHeader("Content-Type", "text/event-stream");
         res.setHeader("Cache-Control", "no-cache");
@@ -1625,106 +1422,62 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
         res.flushHeaders();
 
         let nextRowIndex = 0;
+        const cellFrame = (
+            rowId: string,
+            columnIndex: number,
+            content: unknown,
+            status: "generating" | "done" | "error" | "pending",
+        ): void => {
+            write(
+                `data: ${JSON.stringify({ type: "cell_update", row_id: rowId, column_index: columnIndex, content, status })}\n\n`,
+            );
+        };
+
         const processRow = async (row: ReviewRow) => {
-            if (generationAbort.signal.aborted) return;
-            const markdown = await loadRowDocumentText(db, row);
-            if (generationAbort.signal.aborted) return;
-
-            // Filter to only columns that need processing.
-            const columnsToProcess = columns.filter((col) => {
+            const existingByColumn = new Map<number, Record<string, unknown>>();
+            for (const col of columns) {
                 const cell = cellMap.get(`${row.id}:${col.index}`);
-                return !(cell?.status === "done" && cell?.content);
+                if (cell) existingByColumn.set(col.index, cell);
+            }
+
+            // Shared extraction core — the async worker runs this same
+            // function. It owns the generating/done DB writes (stamped with and
+            // guarded by this run's generation id) and announces each
+            // transition through the sink, which here writes SSE frames. It
+            // never decides the terminal state of a column the model skipped;
+            // it reports those in `missing`.
+            const { missing } = await extractRowColumns({
+                db,
+                reviewId,
+                row,
+                columns,
+                existingByColumn,
+                model: tabular_model,
+                apiKeys: api_keys,
+                generationId,
+                abortSignal: generationAbort.signal,
+                sink: {
+                    generating: (rowId, columnIndex) =>
+                        cellFrame(rowId, columnIndex, null, "generating"),
+                    done: (rowId, columnIndex, result) =>
+                        cellFrame(rowId, columnIndex, result, "done"),
+                },
             });
-            if (columnsToProcess.length === 0) return;
-
-            // Mark only rows that have actually started as generating. Rows
-            // still in the worker queue remain pending and can be resumed.
-            for (const col of columnsToProcess) {
-                write(
-                    `data: ${JSON.stringify({ type: "cell_update", row_id: row.id, column_index: col.index, content: null, status: "generating" })}\n\n`,
-                );
-                const existingCell = cellMap.get(`${row.id}:${col.index}`);
-                if (existingCell) {
-                    await db
-                        .from("tabular_cells")
-                        .update({
-                            status: "generating",
-                            content: null,
-                            generation_id: generationId,
-                        })
-                        .eq("id", existingCell.id);
-                } else {
-                    await db.from("tabular_cells").insert({
-                        review_id: reviewId,
-                        row_id: row.id,
-                        document_id: row.document_id,
-                        column_index: col.index,
-                        status: "generating",
-                        generation_id: generationId,
-                    });
-                }
-            }
-
-            // Single LLM call for all columns, streaming one JSON line per
-            // column. Aborting the request stops every active worker.
-            const receivedColumns = new Set<number>();
-            try {
-                await queryTabularAllColumns(
-                    tabular_model,
-                    row.label,
-                    markdown,
-                    columnsToProcess,
-                    async (columnIndex, result) => {
-                        receivedColumns.add(columnIndex);
-                        await db
-                            .from("tabular_cells")
-                            .update({
-                                content: JSON.stringify(result),
-                                status: "done",
-                                generation_id: null,
-                            })
-                            .eq("review_id", reviewId)
-                            .eq("row_id", row.id)
-                            .eq("column_index", columnIndex)
-                            .eq("generation_id", generationId);
-                        write(
-                            `data: ${JSON.stringify({ type: "cell_update", row_id: row.id, column_index: columnIndex, content: result, status: "done" })}\n\n`,
-                        );
-                    },
-                    api_keys,
-                    generationAbort.signal,
-                );
-            } catch (err) {
-                if (!generationAbort.signal.aborted) {
-                    console.error(
-                        `[tabular/generate] queryTabularAllColumns error row=${row.id}`,
-                        err,
-                    );
-                }
-            }
 
             // Stopped cells return to pending; genuine missing model output is
             // still an error. Completed cells remain untouched.
             const incompleteStatus = generationAbort.signal.aborted
                 ? "pending"
                 : "error";
-            for (const col of columnsToProcess) {
-                if (!receivedColumns.has(col.index)) {
-                    await db
-                        .from("tabular_cells")
-                        .update({
-                            status: incompleteStatus,
-                            content: null,
-                            generation_id: null,
-                        })
-                        .eq("review_id", reviewId)
-                        .eq("row_id", row.id)
-                        .eq("column_index", col.index)
-                        .eq("generation_id", generationId);
-                    write(
-                        `data: ${JSON.stringify({ type: "cell_update", row_id: row.id, column_index: col.index, content: null, status: incompleteStatus })}\n\n`,
-                    );
-                }
+            for (const columnIndex of missing) {
+                await finalizeCell(db, {
+                    reviewId,
+                    rowId: row.id,
+                    columnIndex,
+                    status: incompleteStatus,
+                    generationId,
+                });
+                cellFrame(row.id, columnIndex, null, incompleteStatus);
             }
         };
 
@@ -1778,21 +1531,79 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     } finally {
         streamFinished = true;
         if (leaseHeartbeat) clearInterval(leaseHeartbeat);
-        try {
-            const { error } = await db.rpc("finish_tabular_review_generation", {
-                target_review_id: reviewId,
-                target_generation_id: generationId,
-            });
-            if (error) throw error;
-        } catch (error) {
-            console.error(
-                "[tabular/generate] failed to release generation lease",
-                error,
-            );
+        // On the async path the lease now belongs to the workers and the SSE
+        // view is still tailing them, so neither is ours to close.
+        if (!leaseHandedOff) {
+            try {
+                const { error } = await db.rpc(
+                    "finish_tabular_review_generation",
+                    {
+                        target_review_id: reviewId,
+                        target_generation_id: generationId,
+                    },
+                );
+                if (error) throw error;
+            } catch (error) {
+                console.error(
+                    "[tabular/generate] failed to release generation lease",
+                    error,
+                );
+            }
+            if (!res.writableEnded) res.end();
         }
-        if (!res.writableEnded) res.end();
     }
 });
+
+// GET /tabular-review/:reviewId/generate/stream — reconnect to an in-flight (or
+// just-finished) generate run without re-triggering work. A client whose POST
+// /generate stream dropped can resume here and catch up on the remaining cells.
+// Pure observer: it never enqueues and takes NO generation lease, so watching a
+// run can never block it or make a legitimate POST 409. (Registered before the
+// /:reviewId/chats group; no path collision since the segments differ.)
+tabularRouter.get(
+    "/:reviewId/generate/stream",
+    requireAuth,
+    async (req, res) => {
+        const userId = res.locals.userId as string;
+        const userEmail = res.locals.userEmail as string | undefined;
+        const { reviewId } = req.params;
+        const db = createServerSupabase();
+
+        const prepared = await prepareTabularGenerate(db, {
+            reviewId,
+            userId,
+            userEmail,
+        });
+        if (!prepared.ok) {
+            if (prepared.kind === "not_found")
+                return void res
+                    .status(404)
+                    .json({ detail: "Review not found" });
+            if (prepared.kind === "no_columns")
+                return void res
+                    .status(400)
+                    .json({ detail: "No columns configured" });
+            return void res.status(prepared.status).json(prepared.body);
+        }
+
+        const work = await loadTabularGenerateWork(db, {
+            reviewId,
+            userId,
+            userEmail,
+        });
+        if (!work.ok) return void sendInternalError(res, work.error);
+
+        await streamTabularRunView({
+            res,
+            db,
+            reviewId,
+            columns: prepared.data.columns,
+            rows: work.data.rows,
+            cellMap: work.data.cellMap,
+            log: console,
+        });
+    },
+);
 
 // GET /tabular-review/:reviewId/chats — list chats (metadata only, no messages)
 tabularRouter.get("/:reviewId/chats", requireAuth, async (req, res) => {
@@ -2438,345 +2249,3 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
         res.end();
     }
 });
-
-function parseCellContent(
-    raw: unknown,
-): { summary: string; flag?: string; reasoning?: string } | null {
-    if (!raw) return null;
-    if (typeof raw === "object" && raw !== null && "summary" in raw) {
-        const c = raw as {
-            summary?: unknown;
-            flag?: unknown;
-            reasoning?: unknown;
-        };
-        return {
-            summary: String(c.summary ?? ""),
-            flag: (["green", "grey", "yellow", "red"] as const).includes(
-                c.flag as "green",
-            )
-                ? (c.flag as string)
-                : undefined,
-            reasoning: typeof c.reasoning === "string" ? c.reasoning : "",
-        };
-    }
-    if (typeof raw === "string") {
-        try {
-            const p = JSON.parse(raw) as {
-                summary?: unknown;
-                value?: unknown;
-                flag?: unknown;
-                reasoning?: unknown;
-            };
-            return {
-                summary: String(p.summary ?? p.value ?? "").trim(),
-                flag: (["green", "grey", "yellow", "red"] as const).includes(
-                    p.flag as "green",
-                )
-                    ? (p.flag as string)
-                    : undefined,
-                reasoning: typeof p.reasoning === "string" ? p.reasoning : "",
-            };
-        } catch {
-            return { summary: raw, flag: "grey", reasoning: "" };
-        }
-    }
-    return null;
-}
-
-async function queryTabularCell(
-    model: string,
-    filename: string,
-    documentText: string,
-    columnPrompt: string,
-    format?: string,
-    tags?: string[],
-    apiKeys?: import("../lib/llm").UserApiKeys,
-) {
-    const suffix = formatPromptSuffix(format as never, tags);
-    const fullPrompt = `${columnPrompt}${suffix} If not found, state "Not Found". Leave all reasoning and explanation in the "reasoning" field only.`;
-
-    const EXTRACTION_SYSTEM = `You are a legal document analyst. Return ONLY valid JSON:
-{"summary": string, "flag": "green"|"grey"|"yellow"|"red", "reasoning": string}
-
-The "summary" and "reasoning" field values may use markdown formatting (bullets, bold, italics, etc.) — the values are still plain JSON strings (escape newlines as \\n), but the text inside will be rendered as markdown in the UI.
-
-The "summary" field must contain only the extracted value with inline citations — no explanation or reasoning. Every factual claim in "summary" must be followed immediately by a citation in the format [[document:SOURCE_DOCUMENT_ID||page:N||quote:exact quoted text]], using the exact source document ID shown before the supporting document. For spreadsheets, use [[document:SOURCE_DOCUMENT_ID||sheet:SHEET_NAME||cell:A1||quote:exact cell text]]. The quote must be a short verbatim excerpt (≤ 25 words) narrowly scoped to the specific claim. Do not have multiple claims share the same long quote; if two different statements need different evidence, give each its own short, precise quote. All reasoning and explanation belongs in "reasoning" only, which may also contain citations.`;
-
-    let raw: string;
-    try {
-        raw = await completeText({
-            model,
-            systemPrompt: EXTRACTION_SYSTEM,
-            user: `Document: ${filename}\n\n${documentText}\n\n---\nInstruction: ${fullPrompt}`,
-            maxTokens: 2048,
-            apiKeys,
-        });
-    } catch (err) {
-        console.error("[queryTabularCell] completion failed", err);
-        return null;
-    }
-    try {
-        const parsed = JSON.parse(
-            raw
-                .replace(/^```(?:json)?\n?/i, "")
-                .replace(/\n?```$/, "")
-                .trim(),
-        ) as {
-            summary?: unknown;
-            value?: unknown;
-            flag?: unknown;
-            reasoning?: unknown;
-        };
-        return {
-            summary:
-                String(parsed.summary ?? parsed.value ?? "").trim() ||
-                "Not addressed",
-            flag: (["green", "grey", "yellow", "red"] as const).includes(
-                parsed.flag as "green",
-            )
-                ? (parsed.flag as "green")
-                : "grey",
-            reasoning: String(parsed.reasoning ?? ""),
-        };
-    } catch {
-        return raw.trim()
-            ? {
-                  summary: raw.trim().slice(0, 500),
-                  flag: "grey" as const,
-                  reasoning: "",
-              }
-            : null;
-    }
-}
-
-async function generateChatTitle(
-    model: string,
-    firstUserMessage: string,
-    context?: { reviewTitle?: string | null; projectName?: string | null },
-    apiKeys?: import("../lib/llm").UserApiKeys,
-): Promise<string | null> {
-    try {
-        const contextLines: string[] = [];
-        if (context?.projectName)
-            contextLines.push(`Project: ${context.projectName}`);
-        if (context?.reviewTitle)
-            contextLines.push(`Tabular review: ${context.reviewTitle}`);
-        const contextBlock = contextLines.length
-            ? `This chat is in the context of a tabular review.\n${contextLines.join("\n")}\n\n`
-            : "";
-
-        const raw = await completeText({
-            model,
-            user: `${contextBlock}Generate a short title (4-6 words) for a chat that starts with the message below. The title should reflect the user's specific question, not the review or project name. Return only the title, no punctuation, no quotes:\n\n${firstUserMessage}`,
-            maxTokens: 64,
-            apiKeys,
-        });
-        return raw.trim().slice(0, 80) || null;
-    } catch {
-        return null;
-    }
-}
-
-type CellResult = {
-    summary: string;
-    flag: "green" | "grey" | "yellow" | "red";
-    reasoning: string;
-};
-type Column = {
-    index: number;
-    name: string;
-    prompt: string;
-    format?: string;
-    tags?: string[];
-};
-
-async function queryTabularAllColumns(
-    model: string,
-    filename: string,
-    documentText: string,
-    columns: Column[],
-    onResult: (columnIndex: number, result: CellResult) => Promise<void>,
-    apiKeys?: import("../lib/llm").UserApiKeys,
-    abortSignal?: AbortSignal,
-): Promise<void> {
-    const columnsDesc = columns
-        .map((col) => {
-            const suffix = formatPromptSuffix(col.format as never, col.tags);
-            const fullPrompt = `${col.prompt}${suffix} If not found, state "Not Found".`;
-            return `Column ${col.index} — "${col.name}": ${fullPrompt}`;
-        })
-        .join("\n");
-
-    const SYSTEM = `You are a legal document analyst. Extract information for each column listed below.
-
-For each column, output exactly one minified JSON object on its own line (no line breaks inside the JSON), then a newline. Process columns in order and output each result as soon as you finish it.
-
-Line format:
-{"column_index": <N>, "summary": <string>, "flag": <"green"|"grey"|"yellow"|"red">, "reasoning": <string>}
-
-Rules:
-- "summary": the extracted value with inline citations [[document:SOURCE_DOCUMENT_ID||page:N||quote:verbatim excerpt ≤25 words]] after every factual claim, using the exact source document ID shown before the supporting document. For spreadsheets, use [[document:SOURCE_DOCUMENT_ID||sheet:SHEET_NAME||cell:A1||quote:exact cell text]]. No explanation or reasoning here. Quotes must be narrowly scoped to the specific claim — extract only the exact supporting words, not the full surrounding sentence. Do not reuse one long quote across multiple statements; give each claim its own short, precise quote.
-- "flag": green = standard/favorable, yellow = needs attention, red = problematic/unfavorable, grey = neutral/not found
-- "reasoning": brief explanation of the extraction
-- The "summary" and "reasoning" string VALUES may use markdown (bullets, bold, italics, etc.) — escape newlines as \\n inside the JSON string. This markdown is rendered in the UI.
-- Output ONLY the JSON lines themselves. Do NOT wrap the response in markdown code fences (e.g. \`\`\`json), and do not add any preamble or summary.`;
-
-    const USER = `Document: ${filename}\n\n${documentText}\n\n---\nColumns to extract:\n${columnsDesc}`;
-
-    let contentBuffer = "";
-    const pending: Promise<unknown>[] = [];
-
-    const processLine = async (line: string) => {
-        const trimmed = line.trim();
-        if (!trimmed) return;
-        try {
-            const parsed = JSON.parse(trimmed) as {
-                column_index?: unknown;
-                summary?: unknown;
-                flag?: unknown;
-                reasoning?: unknown;
-            };
-            if (typeof parsed.column_index !== "number") return;
-            const col = columns.find((c) => c.index === parsed.column_index);
-            if (!col) return;
-            await onResult(parsed.column_index, {
-                summary: String(parsed.summary ?? "").trim() || "Not addressed",
-                flag: (["green", "grey", "yellow", "red"] as const).includes(
-                    parsed.flag as "green",
-                )
-                    ? (parsed.flag as CellResult["flag"])
-                    : "grey",
-                reasoning: String(parsed.reasoning ?? ""),
-            });
-        } catch {
-            // malformed line — skip
-        }
-    };
-
-    let abortError: unknown;
-    try {
-        await streamChatWithTools({
-            model,
-            systemPrompt: SYSTEM,
-            messages: [{ role: "user", content: USER }],
-            tools: [],
-            apiKeys,
-            abortSignal,
-            callbacks: {
-                onContentDelta: (delta) => {
-                    contentBuffer += delta;
-                    let newlineIdx: number;
-                    while ((newlineIdx = contentBuffer.indexOf("\n")) !== -1) {
-                        const completedLine = contentBuffer.slice(
-                            0,
-                            newlineIdx,
-                        );
-                        contentBuffer = contentBuffer.slice(newlineIdx + 1);
-                        pending.push(processLine(completedLine));
-                    }
-                },
-            },
-        });
-    } catch (err) {
-        if (abortSignal?.aborted) {
-            abortError = err;
-        } else {
-            console.error("[queryTabularAllColumns] stream failed", err);
-        }
-    }
-
-    if (contentBuffer.trim()) pending.push(processLine(contentBuffer));
-    await Promise.all(pending);
-    if (abortError) throw abortError;
-}
-
-async function extractDocumentMarkdown(
-    buf: ArrayBuffer,
-    fileType: string | null | undefined,
-): Promise<string> {
-    const normalizedType = (fileType ?? "").toLowerCase();
-    if (normalizedType === "pdf") return extractPdfMarkdown(buf);
-    if (normalizedType === "docx") return extractDocxMarkdown(buf);
-    if (isSpreadsheetDocumentType(normalizedType)) {
-        // SheetJS handles .xlsx/.xlsm/.xls directly, no PDF detour.
-        return spreadsheetToLLMText(Buffer.from(buf));
-    }
-    if (normalizedType === "pptx") {
-        return extractPresentationText(Buffer.from(buf));
-    }
-    if (
-        isPresentationDocumentType(normalizedType) ||
-        isWordDocumentType(normalizedType)
-    ) {
-        const pdfBuf = await docxToPdf(Buffer.from(buf));
-        const pdfArrayBuffer = pdfBuf.buffer.slice(
-            pdfBuf.byteOffset,
-            pdfBuf.byteOffset + pdfBuf.byteLength,
-        ) as ArrayBuffer;
-        return extractPdfMarkdown(pdfArrayBuffer);
-    }
-    return extractDocxMarkdown(buf);
-}
-
-async function extractPdfMarkdown(buf: ArrayBuffer): Promise<string> {
-    try {
-        const pdfjsLib = await import(
-            "pdfjs-dist/legacy/build/pdf.mjs" as string
-        );
-        const pdf = await (
-            pdfjsLib as unknown as {
-                getDocument: (opts: unknown) => {
-                    promise: Promise<{
-                        numPages: number;
-                        getPage: (n: number) => Promise<{
-                            getTextContent: () => Promise<{
-                                items: { str?: string; hasEOL?: boolean }[];
-                            }>;
-                        }>;
-                    }>;
-                };
-            }
-        ).getDocument({ data: new Uint8Array(buf) }).promise;
-        const pages: string[] = [];
-        for (let i = 1; i <= pdf.numPages; i++) {
-            const page = await pdf.getPage(i);
-            const tc = await page.getTextContent();
-            const text = tc.items
-                .filter((it): it is { str: string } => "str" in it)
-                .map((it) => it.str)
-                .join(" ")
-                .trim();
-            if (text) pages.push(`## Page ${i}\n\n${text}`);
-        }
-        return pages.join("\n\n");
-    } catch {
-        return "";
-    }
-}
-
-async function extractDocxMarkdown(buf: ArrayBuffer): Promise<string> {
-    try {
-        const mammoth = await import("mammoth");
-        const normalized = await normalizeDocxZipPaths(Buffer.from(buf));
-        const { value: html } = await mammoth.convertToHtml({
-            buffer: normalized,
-        });
-        return html
-            .replace(
-                /<h([1-6])[^>]*>(.*?)<\/h\1>/gi,
-                (_, l, t) => "#".repeat(Number(l)) + " " + t + "\n\n",
-            )
-            .replace(/<strong[^>]*>(.*?)<\/strong>/gi, "**$1**")
-            .replace(/<li[^>]*>(.*?)<\/li>/gi, "- $1\n")
-            .replace(/<p[^>]*>(.*?)<\/p>/gi, "$1\n\n")
-            .replace(/<[^>]+>/g, "")
-            .replace(/&nbsp;/g, " ")
-            .replace(/&amp;/g, "&")
-            .replace(/&lt;/g, "<")
-            .replace(/&gt;/g, ">")
-            .replace(/\n{3,}/g, "\n\n")
-            .trim();
-    } catch {
-        return "";
-    }
-}
