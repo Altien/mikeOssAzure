@@ -20,6 +20,7 @@ import { initDownloadSigningSecret } from "./lib/downloadTokens";
 import { initManifestSigningKey, manifestPublicKey } from "./lib/manifestSigning";
 import { checkSchemaVersion } from "./lib/schemaCheck";
 import { initServerSessionKeys } from "./lib/serverSession";
+import { anyWorkerEnabled, startWorkers, stopWorkers } from "./workers";
 
 const PORT = process.env.PORT ?? 3001;
 
@@ -50,12 +51,35 @@ async function start(): Promise<void> {
     process.exit(1);
   }
 
-  buildApp().listen(PORT, () => {
+  const server = buildApp().listen(PORT, () => {
     console.log(`Mike backend running on port ${PORT}`);
+    if (anyWorkerEnabled()) startWorkers();
     // After listen, and never awaited: a schema report must not delay or
     // prevent serving traffic. Migrations stay a deliberate manual step.
     void checkSchemaVersion().catch(() => {});
   });
+
+  let shuttingDown = false;
+  async function shutdown(signal: string): Promise<void> {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    const forced = setTimeout(() => process.exit(1), 15_000);
+    forced.unref();
+    try {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => error ? reject(error) : resolve()),
+      );
+      await stopWorkers();
+      clearTimeout(forced);
+      console.log(`Graceful shutdown complete (${signal})`);
+      process.exit(0);
+    } catch (error) {
+      console.error("Graceful shutdown failed", error);
+      process.exit(1);
+    }
+  }
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
 }
 
 void start().catch((error) => {
