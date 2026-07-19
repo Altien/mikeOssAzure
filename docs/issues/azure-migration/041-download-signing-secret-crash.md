@@ -56,11 +56,18 @@ broken 1.0.9 env and asserts the process survives and keeps serving.
 
 ## Remediation for existing 1.0.9 installs
 
-Until they upgrade to an image containing this fix, affected installs can be
-unblocked without redeploying: set a `DOWNLOAD_SIGNING_SECRET` env var (32+
-random chars) directly on the backend Container App, or write the
-`download-signing-secret` KV secret and restart the revision (older images
-lack the boot warm-up, so the env var is the reliable route).
+Setting a `DOWNLOAD_SIGNING_SECRET` env var (32+ random chars) directly on
+the backend Container App stops the crash-loop — do this regardless, it's
+the stability fix. (Older images lack the boot warm-up, so the env var is
+the reliable route; writing KV alone won't help them.)
+
+It does NOT make Download actually work on 1.0.9: that image (built
+2026-05-22, commit `6824353`) predates `f5fb2f4` (2026-06-27), so the
+frontend still assigns the relative `/download/<token>` path straight to
+`a.href` — the request misses the `/api` prefix, falls through to the SPA
+shell fallback, and the browser saves the HTML shell under the document's
+filename (a "corrupt" download). In-app viewing (`/docx`, `/display`)
+works throughout. Working downloads require upgrading to 1.0.10+.
 
 ## Follow-ups considered and skipped
 
