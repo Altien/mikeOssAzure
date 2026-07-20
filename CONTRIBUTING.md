@@ -148,6 +148,23 @@ separator; delete it when it gets long. Set `DEV_LOG_FILE` to write
 elsewhere, or use `npm run dev:nolog --prefix backend` for the previous
 console-only behaviour.
 
+## Testing
+
+<!-- Upstream divergence (sync-log: 15b7b4c): upstream's Testing section also
+     lists a Playwright e2e suite, an evals harness, a Supabase-gated stack
+     suite and .github CI workflows; dev has none of those, so only the
+     applicable commands and policy are kept. -->
+
+```bash
+npm test --prefix backend            # backend unit + route integration tests (vitest)
+npm test --prefix frontend           # frontend component/hook tests (vitest + jsdom)
+```
+
+- New features and bug fixes should come with a test at the lowest layer that
+  can catch the regression: unit first, then route-level integration.
+- Tests that need a live service or an LLM key are env-gated and skip cleanly
+  when the environment is absent — a plain `npm test` should always be green.
+
 ## What gets refused without discussion
 
 To keep MikeOssAzure focused, the following kinds of contributions
