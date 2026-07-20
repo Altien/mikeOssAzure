@@ -27,6 +27,7 @@ interface ServerMessage {
     files?: { filename: string; document_id?: string }[] | null;
     workflow?: { id: string; title: string } | null;
     annotations?: CitationAnnotation[] | null;
+    citations?: CitationAnnotation[] | null;
     created_at: string;
 }
 interface ServerChatDetailOut {
@@ -776,7 +777,12 @@ export async function getChat(chatId: string): Promise<ChatDetailOut> {
                     ?.filter((e) => e.type === "content")
                     .map((e) => (e as { type: "content"; text: string }).text)
                     .join("") ?? "",
-            annotations: m.annotations ?? undefined,
+            // Upstream divergence (sync-log: 82dcaef): FULL CITATIONS-FIELD
+            // FRONTEND MIGRATION NOT SUPPORTED — the frozen frontend still
+            // consumes `annotations`, while migration 0018 renamed the server
+            // field to `citations`. Keep this compatibility alias during
+            // conflict resolution until the complete frontend migration lands.
+            annotations: m.annotations ?? m.citations ?? undefined,
             events,
         };
     });

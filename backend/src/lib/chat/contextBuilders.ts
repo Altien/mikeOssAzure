@@ -542,6 +542,21 @@ export async function buildWorkflowStore(
     store.set(wf.id, { title: wf.title, skill_md: wf.skill_md });
   }
 
+  // Upstream divergence (sync-log: fa21ac8): FULL WORKFLOW-ID MIGRATION NOT
+  // SUPPORTED — the workflow frontend was deliberately deferred and still
+  // sends these three legacy assistant IDs. Keep these aliases during conflict
+  // resolution; remove them only when the complete frontend workflow migration
+  // is intentionally adopted.
+  const legacySystemWorkflowIds = new Map([
+    ["builtin-cp-checklist", "builtin-draft-cp-checklist"],
+    ["builtin-credit-summary", "builtin-credit-agreement-review"],
+    ["builtin-sha-summary", "builtin-shareholder-agreement-review"],
+  ]);
+  for (const [legacyId, currentId] of legacySystemWorkflowIds) {
+    const workflow = store.get(currentId);
+    if (workflow) store.set(legacyId, workflow);
+  }
+
   // Then overlay user-owned assistant workflows.
   const { data: workflows } = await db
     .from("workflows")

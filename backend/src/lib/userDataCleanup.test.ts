@@ -181,6 +181,9 @@ describe("deleteUserAccountData", () => {
     ]) {
       expect(deletedTables).toContain(table);
     }
+    // Upstream a5fe6d6 also deleted from workflow_open_source_submissions,
+    // but that feature's schema/route/frontend unit is deliberately deferred.
+    expect(callsFor("workflow_open_source_submissions")).toEqual([]);
     // workflow_shares wiped both as sharer and (lowercased) recipient.
     const shareDeletes = callsFor("workflow_shares", "delete");
     expect(shareDeletes).toHaveLength(2);

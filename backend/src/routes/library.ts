@@ -76,8 +76,11 @@ async function deleteLibraryDocumentsAndVersionFiles(
       paths.add(version.pdf_storage_path);
     }
   }
-  await Promise.all([...paths].map((path) => deleteFile(path).catch(() => {})));
-
+  // Upstream divergence (sync-log: f0b90ab): UPSTREAM BUG — upstream deletes
+  // blobs first and swallows failures before deleting the document rows.
+  // KEEP DEV'S DB-FIRST ORDERING during conflict resolution; DO NOT restore
+  // upstream's blob-first ordering. If the later DB delete fails, upstream's
+  // version leaves live rows pointing at blobs that have already been removed.
   let deleteQuery = db
     .from("documents")
     .delete()
@@ -88,7 +91,24 @@ async function deleteLibraryDocumentsAndVersionFiles(
       ? deleteQuery.or("library_kind.eq.file,library_kind.is.null")
       : deleteQuery.eq("library_kind", kind);
   const { error } = await deleteQuery.in("id", documentIds);
-  return error ?? null;
+  if (error) return error;
+
+  // Blob cleanup only starts after the database no longer references the
+  // files. It remains best-effort because retrying orphan cleanup is safer
+  // than failing after the authoritative document rows are already gone.
+  const cleanupResults = await Promise.allSettled(
+    [...paths].map((path) => deleteFile(path)),
+  );
+  const failedCleanupCount = cleanupResults.filter(
+    (result) => result.status === "rejected",
+  ).length;
+  if (failedCleanupCount > 0) {
+    console.error("library.folder_blob_cleanup_failed", {
+      failedCount: failedCleanupCount,
+      totalCount: cleanupResults.length,
+    });
+  }
+  return null;
 }
 
 // GET /library/:kind

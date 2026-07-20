@@ -137,6 +137,13 @@ describe("buildUserAccountExport", () => {
     expect(
       noEmailCalls.filter((c) => c.filters.some(([m]) => m.startsWith("filter"))),
     ).toEqual([]);
+    // Do not query the deferred workflow-submissions table: it is absent from
+    // dev's numbered migrations until the complete feature is adopted.
+    expect(
+      noEmailCalls.filter(
+        (c) => c.table === "workflow_open_source_submissions",
+      ),
+    ).toEqual([]);
   });
 
   it("reports API keys as booleans only — never selects key material", async () => {

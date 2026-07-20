@@ -171,7 +171,6 @@ export async function buildUserAccountExport(
         projects,
         standaloneDocuments,
         workflows,
-        workflowOpenSourceSubmissions,
         hiddenWorkflows,
         workflowSharesByUser,
         workflowSharesWithUser,
@@ -195,11 +194,11 @@ export async function buildUserAccountExport(
         selectAll(db, "workflows", (query) =>
             query.eq("user_id", userId).order("created_at", { ascending: true }),
         ),
-        selectAll(db, "workflow_open_source_submissions", (query) =>
-            query
-                .eq("submitted_by_user_id", userId)
-                .order("submitted_at", { ascending: true }),
-        ),
+        // Upstream divergence (sync-log: a5fe6d6): NOT SUPPORTED — the
+        // workflow_open_source_submissions schema, route, and frontend were
+        // deliberately deferred. Keep dev's omission during conflict
+        // resolution; do not query the absent table until the whole feature is
+        // explicitly adopted.
         selectAll(db, "hidden_workflows", (query) =>
             query.eq("user_id", userId).order("created_at", { ascending: true }),
         ),
@@ -269,7 +268,6 @@ export async function buildUserAccountExport(
         document_versions: versions,
         document_edits: edits,
         workflows,
-        workflow_open_source_submissions: workflowOpenSourceSubmissions,
         hidden_workflows: hiddenWorkflows,
         workflow_shares_by_user: workflowSharesByUser,
         workflow_shares_with_user: workflowSharesWithUser,

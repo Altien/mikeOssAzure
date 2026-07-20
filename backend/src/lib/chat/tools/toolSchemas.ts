@@ -118,90 +118,12 @@ export const WORKFLOW_TOOLS = [
   },
 ];
 
+// Upstream divergence (sync-log: a5fe6d6): NOT SUPPORTED — ask_inputs
+// requires the AskInputPopup + response-request frontend that was deliberately
+// deferred in this sync. Keep dev's behaviour during conflict resolution: do
+// not register the upstream tool until the complete interaction is explicitly
+// adopted with its frontend and end-to-end tests.
 export const TOOLS = [
-  {
-    type: "function",
-    function: {
-      name: "ask_inputs",
-      description:
-        "Ask the user for one or more decisions, clarifications, or document uploads before continuing. Use this when guessing would materially affect the answer or when required documents have not been attached. Put all needed questions and document requests in one items array. After calling ask_inputs, do not continue the substantive task until the user responds in a later message.",
-      parameters: {
-        type: "object",
-        properties: {
-          items: {
-            type: "array",
-            minItems: 1,
-            maxItems: 12,
-            description:
-              "The list of user inputs needed before continuing. Use choice items for decisions/clarifications and documents items for required uploads.",
-            items: {
-              type: "object",
-              properties: {
-                id: {
-                  type: "string",
-                  description:
-                    "Stable short ID for this input, unique within this tool call.",
-                },
-                kind: {
-                  type: "string",
-                  enum: ["choice", "documents"],
-                },
-                question: {
-                  type: "string",
-                  description:
-                    "For choice items only: the concise question to show to the user.",
-                },
-                options: {
-                  type: "array",
-                  description:
-                    "For choice items only: selectable choices to show. Each choice has a single user-facing value, which is also sent back if selected.",
-                  minItems: 1,
-                  maxItems: 8,
-                  items: {
-                    type: "object",
-                    properties: {
-                      value: {
-                        type: "string",
-                        description: "The user-facing choice text.",
-                      },
-                    },
-                    required: ["value"],
-                  },
-                },
-                allow_other: {
-                  type: "boolean",
-                  description:
-                    "For choice items only: whether to show an Other option with a text field. Defaults to true.",
-                },
-                other_label: {
-                  type: "string",
-                  description:
-                    "For choice items only: label for the free-text option. Defaults to Other.",
-                },
-                document_types: {
-                  type: "array",
-                  description:
-                    "For documents items only: readable labels for the types of documents you need the user to attach.",
-                  minItems: 1,
-                  maxItems: 8,
-                  items: {
-                    type: "string",
-                  },
-                },
-                response_prefix: {
-                  type: "string",
-                  description:
-                    "Optional prefix the UI should include when sending this response back as the next message.",
-                },
-              },
-              required: ["id", "kind"],
-            },
-          },
-        },
-        required: ["items"],
-      },
-    },
-  },
   {
     type: "function",
     function: {
