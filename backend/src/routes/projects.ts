@@ -151,9 +151,16 @@ async function attachChatCreatorLabels(
 }
 
 // GET /projects
+// Pass ?include=documents to also receive each project's documents in the
+// same response. The directory pickers (useDirectoryData) previously fanned
+// out one GET /projects/:id per project to obtain those documents; with N
+// projects that burst — auth check plus several DB queries per request —
+// could overwhelm the Supabase gateway. Batching keeps it at one request
+// and a fixed number of queries regardless of project count.
 projectsRouter.get("/", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
+  const includeDocuments = req.query.include === "documents";
   const db = createServerSupabase();
 
   // Upstream sync 9a1277b: the projects-overview read model moved into a
@@ -175,7 +182,46 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
     p_user_email: userEmail ?? null,
   });
   if (error) return void res.status(500).json({ detail: error.message });
-  res.json(data ?? []);
+
+  const projects = (data ?? []) as { id: string }[];
+  if (!includeDocuments || projects.length === 0) {
+    return void res.json(projects);
+  }
+
+  const { data: docs, error: docsError } = await db
+    .from("documents")
+    .select("*")
+    .in(
+      "project_id",
+      projects.map((p) => p.id),
+    )
+    .order("created_at", { ascending: true });
+  if (docsError)
+    return void res.status(500).json({ detail: docsError.message });
+
+  const docsTyped = (docs ?? []) as unknown as {
+    id: string;
+    project_id?: string | null;
+    user_id?: string | null;
+    current_version_id?: string | null;
+  }[];
+  await attachLatestVersionNumbers(db, docsTyped);
+  await attachActiveVersionPaths(db, docsTyped);
+  await attachDocumentOwnerLabels(db, docsTyped);
+
+  const docsByProject = new Map<string, typeof docsTyped>();
+  for (const doc of docsTyped) {
+    if (!doc.project_id) continue;
+    const bucket = docsByProject.get(doc.project_id);
+    if (bucket) bucket.push(doc);
+    else docsByProject.set(doc.project_id, [doc]);
+  }
+  res.json(
+    projects.map((p) => ({
+      ...p,
+      documents: docsByProject.get(p.id) ?? [],
+    })),
+  );
 });
 
 // POST /projects

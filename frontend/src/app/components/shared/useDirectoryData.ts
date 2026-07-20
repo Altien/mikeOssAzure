@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getProject, listProjects, listStandaloneDocuments } from "@/app/lib/mikeApi";
+import { listProjects, listStandaloneDocuments } from "@/app/lib/mikeApi";
 import type { Document, Project } from "./types";
 
 const CACHE_TTL_MS = 30_000;
@@ -35,22 +35,24 @@ export function useDirectoryData(enabled: boolean) {
         }
 
         setLoading(true);
-        Promise.all([listProjects(), listStandaloneDocuments()])
+        // One batched request for projects + their documents. Fanning out
+        // getProject(id) per project caused an N+1 request burst on every
+        // directory-modal open (upstream 36cddb2).
+        Promise.all([
+            listProjects({ includeDocuments: true }),
+            listStandaloneDocuments(),
+        ])
             .then(([ps, ds]) => {
                 const sorted = [...ds].sort((a, b) =>
                     (b.created_at ?? "").localeCompare(a.created_at ?? ""),
                 );
-                return Promise.all(ps.map((p) => getProject(p.id))).then(
-                    (fullProjects) => {
-                        cache = {
-                            standaloneDocuments: sorted,
-                            projects: fullProjects,
-                            fetchedAt: Date.now(),
-                        };
-                        setStandaloneDocuments(sorted);
-                        setProjects(fullProjects);
-                    },
-                );
+                cache = {
+                    standaloneDocuments: sorted,
+                    projects: ps,
+                    fetchedAt: Date.now(),
+                };
+                setStandaloneDocuments(sorted);
+                setProjects(ps);
             })
             .catch(() => {
                 setStandaloneDocuments([]);
