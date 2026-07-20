@@ -92,6 +92,24 @@ Frontend tests use Testing Library and MSW. Components requiring runtime
 configuration or authentication should use `renderWithProviders` from
 `frontend/src/test/render.tsx`.
 
+The Express app itself is constructed in `backend/src/app.ts`
+(`buildApp()`, side-effect free); `index.ts` holds only entrypoint
+concerns (dotenv → telemetry → process guards → secret warm-up →
+listen). Route tests mount `buildApp()` via supertest — don't move app
+construction back into `index.ts`.
+
+## Tests
+
+Both packages run vitest: `pnpm test` (once), `pnpm test:watch`,
+`pnpm test:coverage` — in `backend/` (node env + supertest) and
+`frontend/` (jsdom + Testing Library + MSW; harness in
+`frontend/src/test/`, use `renderWithProviders` from `render.tsx` for
+components that need Config/Auth context). The suite was backported
+from the OSS mirror's test PRs (MikeOssAzure ddcfbdc) and adapted to
+this repo — when Tier B deliveries snapshot dev into the mirror, these
+tests travel with them. Run the affected package's suite before
+committing backend/ or frontend/ source changes.
+
 ### Pre-commit checks the agent should run
 
 Before committing changes that touch `.env*` files or env-var lookups:
