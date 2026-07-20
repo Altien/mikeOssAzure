@@ -28,15 +28,24 @@ issue here first and we will help you triage.
 
 ## System Workflows
 
-System workflows live in `mike-workflows/system/`. Put structured metadata in
-the YAML frontmatter at the top of `SKILL.md`, put workflow instructions in the
-body of `SKILL.md`, and use `table-config.yaml` for tabular review columns.
+The canonical workflow sources are not stored in this repository. They live in
+the separate upstream repository
+[`Open-Legal-Products/mike-workflows`](https://github.com/Open-Legal-Products/mike-workflows).
+The generator expects that repository to be checked out beside this one, at
+the exact relative path `../mike-workflows/`, with system workflow sources in
+`../mike-workflows/system/`.
 
-After changing system workflows, regenerate the app files:
+**Regeneration is not supported in this dev fork.** Do not run
+`scripts/build-workflows.js`, even after cloning the sibling repository: dev
+kept the older generator while the adopted upstream workflow content moved to
+a newer source format. The script now exits with an intentional hard stop.
 
-```bash
-node scripts/build-workflows.js
-```
+Do not reconstruct missing workflow sources from the generated TypeScript and
+do not treat this repository as their source of truth. During an upstream
+merge conflict, preserve the checked-in `backend/src/lib/systemWorkflows.ts`.
+Regeneration may be restored only by deliberately adopting the canonical
+workflow sources, their current generator/source schema, and the deferred
+workflow engine as one complete unit.
 
 ## Reporting issues
 
