@@ -12,6 +12,7 @@ import { chatRouter } from "./routes/chat";
 import { projectsRouter } from "./routes/projects";
 import { projectChatRouter } from "./routes/projectChat";
 import { documentsRouter } from "./routes/documents";
+import { libraryRouter } from "./routes/library";
 import { tabularRouter } from "./routes/tabular";
 import { workflowsRouter } from "./routes/workflows";
 import { userRouter } from "./routes/user";
@@ -230,6 +231,7 @@ export function buildApp(): express.Express {
   app.post("/api/chat/create", chatCreateLimiter);
   app.post("/api/chat/:chatId/generate-title", chatCreateLimiter);
   app.post("/api/single-documents", uploadLimiter);
+  app.post("/api/library/:kind/documents", uploadLimiter);
   app.post("/api/single-documents/:documentId/versions", uploadLimiter);
   app.put(
     "/api/single-documents/:documentId/versions/:versionId/file",
@@ -252,6 +254,7 @@ export function buildApp(): express.Express {
   app.use("/api/projects", projectsRouter);
   app.use("/api/projects/:projectId/chat", projectChatRouter);
   app.use("/api/single-documents", documentsRouter);
+  app.use("/api/library", libraryRouter);
   app.use("/api/tabular-review", tabularRouter);
   app.use("/api/workflows", workflowsRouter);
   app.use("/api/user", userRouter);

@@ -1064,6 +1064,29 @@ tabularRouter.delete(
     },
 );
 
+// PATCH /tabular-review/:reviewId/chats/:chatId — rename a chat
+tabularRouter.patch(
+    "/:reviewId/chats/:chatId",
+    requireAuth,
+    async (req, res) => {
+        const userId = res.locals.userId as string;
+        const { chatId } = req.params;
+        const title =
+            typeof req.body?.title === "string" ? req.body.title.trim() : "";
+        if (!title)
+            return void res.status(400).json({ detail: "Title is required" });
+        const db = createServerSupabase();
+        // Owner-only rename — mirrors the delete rule above.
+        const { error } = await db
+            .from("tabular_review_chats")
+            .update({ title: title.slice(0, 200) })
+            .eq("id", chatId)
+            .eq("user_id", userId);
+        if (error) return void res.status(500).json({ detail: error.message });
+        res.status(204).send();
+    },
+);
+
 // GET /tabular-review/:reviewId/chats/:chatId/messages — messages for a single chat
 tabularRouter.get(
     "/:reviewId/chats/:chatId/messages",

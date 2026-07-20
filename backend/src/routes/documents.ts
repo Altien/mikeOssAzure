@@ -65,6 +65,7 @@ documentsRouter.get("/", requireAuth, async (req, res) => {
     .select("*")
     .eq("user_id", userId)
     .is("project_id", null)
+    .or("library_kind.eq.file,library_kind.is.null")
     .order("created_at", { ascending: false });
   if (error) return void res.status(500).json({ detail: error.message });
   const docs = (data ?? []) as unknown as {
@@ -84,7 +85,9 @@ documentsRouter.post(
   async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
-    await handleDocumentUpload(req, res, userId, null, db);
+    await handleDocumentUpload(req, res, userId, null, db, {
+      libraryKind: "file",
+    });
   },
 );
 
@@ -426,9 +429,13 @@ documentsRouter.post(
     if (!sourceAccess.ok)
       return void res.status(404).json({ detail: "Source document not found" });
     const willDeleteSource =
-      sourceDoc.project_id &&
-      targetDoc.project_id &&
-      sourceDoc.project_id === targetDoc.project_id;
+      (sourceDoc.project_id &&
+        targetDoc.project_id &&
+        sourceDoc.project_id === targetDoc.project_id) ||
+      (!sourceDoc.project_id &&
+        !targetDoc.project_id &&
+        sourceDoc.user_id === userId &&
+        targetDoc.user_id === userId);
     if (willDeleteSource && !sourceAccess.isOwner) {
       return void res.status(403).json({
         detail: "Only the source document owner can move it into a version.",
@@ -1283,12 +1290,16 @@ documentsRouter.post(
   (req, res) => void handleEditResolution(req, res, "reject"),
 );
 
-async function handleDocumentUpload(
+export async function handleDocumentUpload(
   req: import("express").Request,
   res: import("express").Response,
   userId: string,
   projectId: string | null,
   db: ReturnType<typeof createServerSupabase>,
+  options: {
+    libraryKind?: "file" | "template";
+    libraryFolderId?: string | null;
+  } = {},
 ) {
   const file = req.file;
   if (!file) return void res.status(400).json({ detail: "file is required" });
@@ -1311,6 +1322,8 @@ async function handleDocumentUpload(
       project_id: projectId,
       user_id: userId,
       status: "processing",
+      library_kind: options.libraryKind ?? "file",
+      library_folder_id: options.libraryFolderId ?? null,
     })
     .select("*")
     .single();
@@ -1417,6 +1430,8 @@ async function handleDocumentUpload(
           filename,
           storage_path: key,
           pdf_storage_path: pdfStoragePath,
+          folder_id:
+            (updated.library_folder_id as string | null | undefined) ?? null,
           file_type: suffix,
           size_bytes: content.byteLength,
           page_count: pageCount,

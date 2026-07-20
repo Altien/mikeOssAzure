@@ -531,7 +531,11 @@ projectsRouter.post(
       // Standalone → assign project_id
       const { data: updated, error } = await db
         .from("documents")
-        .update({ project_id: projectId, updated_at: new Date().toISOString() })
+        .update({
+          project_id: projectId,
+          library_folder_id: null,
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", documentId)
         .select("*")
         .single();
