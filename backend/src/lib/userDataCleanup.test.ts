@@ -175,12 +175,16 @@ describe("deleteUserAccountData", () => {
       "tabular_reviews",
       "chats",
       "project_subfolders",
+      "library_folders",
       "hidden_workflows",
       "workflows",
       "projects",
     ]) {
       expect(deletedTables).toContain(table);
     }
+    expect(deletedTables.indexOf("documents")).toBeLessThan(
+      deletedTables.indexOf("library_folders"),
+    );
     // Upstream a5fe6d6 also deleted from workflow_open_source_submissions,
     // but that feature's schema/route/frontend unit is deliberately deferred.
     expect(callsFor("workflow_open_source_submissions")).toEqual([]);

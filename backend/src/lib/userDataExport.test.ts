@@ -107,6 +107,41 @@ describe("buildUserTabularReviewsExport", () => {
 });
 
 describe("buildUserAccountExport", () => {
+  it("exports the adopted Library folder hierarchy for the user", async () => {
+    const { db, callsFor } = makeFakeDb((call) =>
+      call.table === "library_folders"
+        ? {
+            data: [
+              {
+                id: "folder-1",
+                user_id: "u1",
+                name: "Authorities",
+                parent_folder_id: null,
+              },
+            ],
+          }
+        : {},
+    );
+
+    const out = await buildUserAccountExport(db as never, "u1", null);
+
+    expect(out.library_folders).toEqual([
+      {
+        id: "folder-1",
+        user_id: "u1",
+        name: "Authorities",
+        parent_folder_id: null,
+      },
+    ]);
+    const folderSelect = callsFor("library_folders", "select");
+    expect(folderSelect).toHaveLength(1);
+    expect(
+      folderSelect[0].filters.find(
+        ([method, column]) => method === "eq" && column === "user_id",
+      )?.[2],
+    ).toBe("u1");
+  });
+
   it("includes shares-with-me and shared-with-me scans only when an email is present", async () => {
     const { db: withEmailDb, calls: withEmailCalls } = makeFakeDb();
     await buildUserAccountExport(withEmailDb as never, "u1", "u@x.com");
