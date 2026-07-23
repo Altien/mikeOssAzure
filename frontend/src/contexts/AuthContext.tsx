@@ -17,6 +17,7 @@ interface AuthContextType {
   signInLocal: (email: string) => Promise<void>;
   signOut: () => Promise<void>; getAccessToken: () => Promise<string | null>;
 }
+// Exported for the test harness (src/test/render.tsx) to inject auth state.
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 function decodeJwtUser(token: string): User {

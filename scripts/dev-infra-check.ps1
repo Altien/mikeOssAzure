@@ -94,7 +94,6 @@ Write-Host ""
 Write-Host "Container checks" -ForegroundColor Cyan
 Check-Container "mike-postgres"
 Check-Container "mike-postgrest"
-Check-Container "mike-caddy"
 
 $azuriteExists = docker ps -a --format "{{.Names}}" | Where-Object { $_ -eq "mike-azurite" } | Select-Object -First 1
 if ($azuriteExists) {
@@ -128,13 +127,11 @@ try {
 }
 
 Check-Http "http://localhost:4000/" "PostgREST direct"
-Check-Http "http://localhost:8000/rest/v1/" "Caddy PostgREST proxy"
 
 Write-Host ""
 Write-Host "Expected local ports" -ForegroundColor Cyan
 Check-Port 5432 "Postgres"
 Check-Port 4000 "PostgREST"
-Check-Port 8000 "Caddy"
 Check-Port 10000 "Azurite blob"
 Check-Port 3001 "Backend API"
 Check-Port 3000 "Frontend"

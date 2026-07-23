@@ -81,9 +81,8 @@ async function reloadPostgrestSchemaCache(databaseUrl: string): Promise<void> {
 // Azure Postgres Flexible Server rejects non-TLS connections from outside
 // the server's own subnet with `no pg_hba.conf entry for host ..., no
 // encryption`. The entra-mode path below builds its own URL with
-// `?sslmode=require`; the env-var path inherits whatever the operator (or
-// the marketplace deploy seed) set in KV. We've seen `pgrst-db-uri` seeded
-// without sslmode in real installs (gap #22), so default-add it here.
+// `?sslmode=require`; the env-var path inherits whatever the operator set in
+// KV. Default-add it because real installs may omit sslmode.
 function ensureSslMode(url: string): string {
   if (/[?&]sslmode=/i.test(url)) return url;
   return url + (url.includes("?") ? "&" : "?") + "sslmode=require";
@@ -92,12 +91,12 @@ function ensureSslMode(url: string): string {
 async function getDatabaseUrl(): Promise<string> {
   // Migrate-job DB connection strategy is independent of AUTH_PROVIDER
   // (which is the app sign-in mode, consumed by routes/auth.ts).
-  // Conflating them blocked marketplace installs that legitimately want
+  // Conflating them blocks installs that legitimately want
   // Entra sign-in for users + password auth from the migrate job — see
-  // docs/issues/azure-migration/037-migrate-job-auth-decoupling.md.
+  // Keep migration authentication independent from request authentication.
   //
   // Preference order:
-  //   1. DATABASE_URL — works for marketplace (KV pgrst-db-uri),
+  //   1. DATABASE_URL — works with a KV-backed pgrst-db-uri,
   //      supabase, local, and any entra-with-password setup.
   //   2. MI-token path — for Entra-Postgres installs where the flex
   //      server has activeDirectoryAuth=Enabled and the UAMI is
@@ -129,7 +128,7 @@ async function getDatabaseUrl(): Promise<string> {
 }
 
 // Creates / refreshes the `authenticator` Postgres role that PostgREST
-// connects as in the marketplace flavour. The role has only LOGIN +
+// connects as. The role has only LOGIN +
 // NOINHERIT plus membership in web_anon / authenticated / service_role
 // — minimum privileges to SET ROLE at PostgREST's connection boundary,
 // nothing else. Replaces the previous pattern where PostgREST connected
@@ -146,9 +145,8 @@ async function getDatabaseUrl(): Promise<string> {
 // before interpolation. Throws on a non-conforming value rather than
 // risking SQL injection.
 //
-// Skipped (no-op) when the env var is unset — keeps legacy installs
-// working until they pick up the Bicep change that sets the var. See
-// gap #24 in docs/issues/azure-migration/036-marketplace-install-gaps.md.
+// Skipped (no-op) when the env var is unset so legacy installs continue
+// working until they configure the dedicated role.
 async function ensureAuthenticatorRole(databaseUrl: string): Promise<void> {
   const password = process.env.PGRST_AUTHENTICATOR_PASSWORD;
   if (!password) {

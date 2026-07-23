@@ -15,6 +15,7 @@ function Probe() {
     return (
         <div>
             <span data-testid="provider">{config.authProvider}</span>
+            <span data-testid="demo">{config.demoMode ? "demo" : "standard"}</span>
             <span data-testid="tenant">{config.entra.tenantId}</span>
             <span data-testid="client">{config.entra.clientId}</span>
             <span data-testid="loading">{loading ? "loading" : "ready"}</span>
@@ -74,6 +75,7 @@ describe("ConfigContext: /config fetch", () => {
             http.get("*/config", () =>
                 HttpResponse.json({
                     authProvider: "entra",
+                    demoMode: true,
                     entra: { tenantId: "tenant-xyz", clientId: "client-abc" },
                 }),
             ),
@@ -90,6 +92,7 @@ describe("ConfigContext: /config fetch", () => {
         );
 
         expect(screen.getByTestId("provider")).toHaveTextContent("entra");
+        expect(screen.getByTestId("demo")).toHaveTextContent("demo");
         expect(screen.getByTestId("tenant")).toHaveTextContent("tenant-xyz");
         expect(screen.getByTestId("client")).toHaveTextContent("client-abc");
         // The cache key is the same one auth-token.ts and the module-
@@ -182,6 +185,7 @@ describe("ConfigContext: cancelled-effect guard", () => {
                 await gate;
                 return HttpResponse.json({
                     authProvider: "entra",
+                    demoMode: false,
                     entra: { tenantId: "after-unmount", clientId: "after-unmount" },
                 });
             }),
@@ -226,6 +230,7 @@ describe("ConfigContext: module-level getCachedAuthProvider", () => {
             http.get("*/config", () =>
                 HttpResponse.json({
                     authProvider: "local",
+                    demoMode: false,
                     entra: { tenantId: "", clientId: "" },
                 }),
             ),

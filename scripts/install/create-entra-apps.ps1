@@ -6,8 +6,8 @@
   the resulting IDs and secrets into Key Vault.
 
 .DESCRIPTION
-  Single comprehensive script — issue 023 mandates we don't split Entra
-  setup across multiple operator runs. Idempotent: if app registrations
+  Single comprehensive script so Entra setup does not need to be split
+  across multiple operator runs. Idempotent: if app registrations
   with the configured display names already exist, the script reuses
   them and only patches the bits that drift (claims, redirect URIs,
   required permissions). On every run the script:
@@ -32,13 +32,13 @@
   list rather than replacing.
 
 .PARAMETER KeyVaultName
-  Name of the Key Vault, e.g. kv-mike-dev. Caller must already have
+  Name of the Key Vault, e.g. kv-mike-example. Caller must already have
   Key Vault Secrets Officer on the vault — Bicep grants this on greenfield
   deploy; for redeploys see /install's "Revoke installer access" item.
 
 .PARAMETER BackendFqdn
   Fully-qualified hostname of the backend Container App, e.g.
-  backend.victoriousmoss-XXX.uksouth.azurecontainerapps.io. Used to
+  my-app.example-hash.uksouth.azurecontainerapps.io. Used to
   derive the redirect URIs.
 
 .PARAMETER DisplayNamePrefix
@@ -58,7 +58,7 @@
   will report "info: Graph denied" until you grant access another way.
 
 .EXAMPLE
-  ./create-entra-apps.ps1 -KeyVaultName kv-mike-dev -BackendFqdn backend.victoriousmoss-XXX.uksouth.azurecontainerapps.io -ResourceGroup rg-mike-dev
+  ./create-entra-apps.ps1 -KeyVaultName kv-mike-example -BackendFqdn my-app.example-hash.uksouth.azurecontainerapps.io -ResourceGroup rg-mike-example
 #>
 
 [CmdletBinding()]

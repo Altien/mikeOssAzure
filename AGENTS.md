@@ -71,6 +71,27 @@ Rules to keep this honest:
   `FOO`; runtime-config field is `foo` in `RuntimeConfig`. No
   `NEXT_PUBLIC_FOO` companion.
 
+## Backend startup and tests
+
+`backend/src/index.ts` must load `dotenv/config` and `./telemetry` before
+instrumented modules. Application Insights patches modules at load time, so
+moving Express, HTTP, or database imports above telemetry silently disables
+automatic instrumentation.
+
+Express app construction lives in `backend/src/app.ts` as the side-effect-free
+`buildApp()` function. Keep process guards, secret warm-up, and `listen()` in
+`index.ts`; backend route tests mount `buildApp()` through supertest.
+
+Both packages use Vitest:
+
+- `pnpm test` runs the suite once.
+- `pnpm test:watch` runs in watch mode.
+- `pnpm test:coverage` collects coverage.
+
+Frontend tests use Testing Library and MSW. Components requiring runtime
+configuration or authentication should use `renderWithProviders` from
+`frontend/src/test/render.tsx`.
+
 ### Pre-commit checks the agent should run
 
 Before committing changes that touch `.env*` files or env-var lookups:

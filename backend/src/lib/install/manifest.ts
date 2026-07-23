@@ -1,6 +1,5 @@
-// v1 manifest catalog and evaluator. See issue 023 §"v1 manifest item
-// catalog" for the full target list — this catalog covers the bulk of v1
-// across all sections. Each item knows how to verify itself (`check`)
+// v1 manifest catalog and evaluator. This catalog covers the installation
+// requirements across all sections. Each item knows how to verify itself (`check`)
 // and how the operator fixes it when the check fails (`fixedBy`).
 
 import { getConfig } from "../config";
@@ -74,7 +73,6 @@ async function checkKvSecret(
         // what they expect without clicking Edit. Sensitive values
         // (client secrets, HMAC keys) pass `redacted: true` so the row
         // shows that something is set without revealing the secret.
-        // See gap #30 in 036-marketplace-install-gaps.md.
         const formatter = opts.displayValue ?? (opts.redacted ? redactedDisplay : defaultDisplay);
         return { status: "pass", detail: formatter(value) };
     } catch (err) {
@@ -395,8 +393,7 @@ const items: ManifestItem[] = [
     // — the script writes ALL FIVE secrets in one pass (tenant id,
     // backend app id, frontend app id, frontend client secret, plus a
     // backend-scope row that is no longer manifest-tracked because it's
-    // deterministic from the backend client id; see gap #4 in
-    // docs/issues/azure-migration/036-marketplace-install-gaps.md), so
+    // deterministic from the backend client id, so
     // showing the same command three times added no value and obscured
     // the independent paste paths.
     {
@@ -404,12 +401,12 @@ const items: ManifestItem[] = [
         label: "Microsoft tenant (your organization)",
         section: "Microsoft sign-in",
         required: true,
-        // Marketplace operators should run create-entra-apps.ps1 (offered
+        // Most operators should run create-entra-apps.ps1 (offered
         // via alsoAsScript below) — that single command writes tenant id,
         // both app reg ids, and the frontend client secret to KV in one
-        // pass. The paste form is retained for OSS deployments and
+        // pass. The paste form is retained for manual deployments and
         // operators who created the apps in the portal. Marked `advanced`
-        // so the UI de-emphasizes it. 036a Phase 6 (B6).
+        // so the UI de-emphasizes it.
         advanced: true,
         check: () => checkKvSecret("entra-tenant-id", {
             format: /^[0-9a-f-]{36}$/i,
@@ -440,8 +437,8 @@ const items: ManifestItem[] = [
         section: "Microsoft sign-in",
         required: true,
         requires: ["entra-tenant-id"],
-        // Same rationale as entra-tenant-id: marketplace path is the
-        // script. Paste form retained for OSS / portal-created apps.
+        // Same rationale as entra-tenant-id: the preferred path is the
+        // script. The paste form remains for portal-created apps.
         advanced: true,
         check: () => checkKvSecret("entra-backend-client-id", {
             format: /^[0-9a-f-]{36}$/i,
@@ -501,7 +498,7 @@ const items: ManifestItem[] = [
     // fully derivable at runtime in routes/auth.ts's entraScopes(). Tracking it as a separate
     // KV secret was the source of "all green except this row, with no fix path" failures.
     // create-entra-apps.ps1 still writes the KV secret for backward compatibility with older
-    // installs; no code consults it. Gap #4 in 036-marketplace-install-gaps.md.
+    // installs; no code consults it.
     {
         id: "entra-frontend-redirect-uris",
         label: "Sign-in callback URLs registered",
@@ -528,7 +525,7 @@ const items: ManifestItem[] = [
             format: /^[0-9a-f-]{36}/i,
             formatHint: "GUID (the secret may also include a display-name comment)",
         }),
-        // Picker only.  Issue 023 invariant: NEVER expose a GUID-paste
+        // Picker only: NEVER expose a GUID-paste
         // fallback — operators don't know GUIDs by heart, pasted GUIDs
         // are unverified, every other Azure picker is searchable.  Slice 8
         // wires the Graph-backed picker; until then this item is action-

@@ -7,7 +7,6 @@ export const authRouter = Router();
 // Reads runtime config from KV via getConfig() — env-first fallback
 // preserves existing env-wired installs while supporting KV-only
 // installs and live updates from /install (after flushConfigCache).
-// Gap #1 in docs/issues/azure-migration/036-marketplace-install-gaps.md.
 async function readAuthProvider(): Promise<string> {
   return (await getConfig("auth-provider").catch(() => "")) || "supabase";
 }
@@ -112,8 +111,7 @@ async function entraClientId(): Promise<string> {
 // scope is fully deterministic from the backend app reg's client id
 // (api://<guid>/access_as_user), so storing it as a separate KV secret /
 // env var was redundant — and a frequent source of "install all green but
-// scope missing" failures (gap #4 in
-// docs/issues/azure-migration/036-marketplace-install-gaps.md). The only
+// scope missing" failures. The only
 // override path that survives is ENTRA_AUTH_SCOPES, intended for
 // operators with non-standard scope sets (e.g. additional Graph
 // permissions). Plain ENTRA_BACKEND_SCOPE is no longer read.
@@ -129,7 +127,11 @@ async function entraRedirectUri(req: Request): Promise<string> {
   return process.env.ENTRA_REDIRECT_URI ?? `${await backendUrl(req)}/api/auth/openid-callback/microsoft`;
 }
 
-function appendTokenFragment(returnUrl: string, tokenResponse: OpenIdTokenResponse): string {
+// Only the access token (and its lifetime) is handed to the browser via the
+// URL fragment. The refresh token is deliberately NOT included here — it is
+// set as an httpOnly cookie by the callback so it never reaches JS. See
+// docs/entraId/token-lifecycle.md.
+export function appendTokenFragment(returnUrl: string, tokenResponse: OpenIdTokenResponse): string {
   const target = new URL(returnUrl);
   const fragment = new URLSearchParams();
   fragment.set("access_token", tokenResponse.access_token ?? "");
@@ -141,37 +143,104 @@ function appendTokenFragment(returnUrl: string, tokenResponse: OpenIdTokenRespon
   return target.toString();
 }
 
-async function exchangeEntraCode(code: string, redirectUri: string): Promise<OpenIdTokenResponse> {
+// httpOnly refresh-token cookie. Scoped to /api/auth so it is only ever sent
+// to the auth routes (callback sets it, /refresh consumes it, /logout clears
+// it). `secure` in production only, so it still works over http on localhost.
+// SameSite=Lax is fine because the frontend and backend are same-site in every
+// deployment (same origin when bundled; both `localhost` in dev).
+export const REFRESH_COOKIE = "mike_entra_rt";
+
+export function refreshCookieOptions() {
+  return {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax" as const,
+    path: "/api/auth",
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days; Entra caps actual validity
+  };
+}
+
+type EntraGrant =
+  | { grant_type: "authorization_code"; code: string; redirect_uri: string }
+  | { grant_type: "refresh_token"; refresh_token: string };
+
+// Pure: builds the token-endpoint form body for either grant type. Exported
+// for unit testing without hitting the network.
+export function buildEntraTokenForm(
+  creds: { clientId: string; clientSecret?: string; scopes: string },
+  grant: EntraGrant,
+): URLSearchParams {
+  const form = new URLSearchParams({
+    client_id: creds.clientId,
+    scope: creds.scopes,
+    ...grant,
+  });
+  if (creds.clientSecret) form.set("client_secret", creds.clientSecret);
+  return form;
+}
+
+async function loadEntraCreds(): Promise<{
+  tenantId: string;
+  clientId: string;
+  clientSecret: string;
+  scopes: string;
+}> {
   const [tenantId, clientId, clientSecret, scopes] = await Promise.all([
     getConfig("entra-tenant-id").catch(() => ""),
     entraClientId(),
     getConfig("entra-client-secret").catch(() => ""),
     entraScopes(),
   ]);
-
   if (!tenantId || !clientId || !scopes) {
     throw new Error("Missing Entra OpenID configuration");
   }
+  return { tenantId, clientId, clientSecret, scopes };
+}
 
-  const form = new URLSearchParams({
-    client_id: clientId,
-    grant_type: "authorization_code",
-    code,
-    redirect_uri: redirectUri,
-    scope: scopes,
-  });
-  if (clientSecret) form.set("client_secret", clientSecret);
-
-  const response = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: form,
-  });
+async function requestEntraToken(
+  tenantId: string,
+  form: URLSearchParams,
+): Promise<OpenIdTokenResponse> {
+  const response = await fetch(
+    `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form,
+    },
+  );
   const tokenResponse = (await response.json()) as OpenIdTokenResponse;
   if (!response.ok || !tokenResponse.access_token) {
-    throw new Error(tokenResponse.error_description ?? tokenResponse.error ?? "Failed to exchange Entra authorization code");
+    throw new Error(
+      tokenResponse.error_description ??
+        tokenResponse.error ??
+        "Entra token request failed",
+    );
   }
   return tokenResponse;
+}
+
+async function exchangeEntraCode(code: string, redirectUri: string): Promise<OpenIdTokenResponse> {
+  const creds = await loadEntraCreds();
+  return requestEntraToken(
+    creds.tenantId,
+    buildEntraTokenForm(creds, {
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: redirectUri,
+    }),
+  );
+}
+
+async function exchangeEntraRefreshToken(refreshToken: string): Promise<OpenIdTokenResponse> {
+  const creds = await loadEntraCreds();
+  return requestEntraToken(
+    creds.tenantId,
+    buildEntraTokenForm(creds, {
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+    }),
+  );
 }
 
 function localUserId(email: string): string {
@@ -237,6 +306,9 @@ authRouter.get("/providers", async (_req, res) => {
 authRouter.get("/logout", async (_req, res) => {
   const provider = (await readAuthProvider()).toLowerCase();
   const loginUrl = new URL("/login", frontendUrl()).toString();
+
+  // Drop the refresh token so a logged-out browser can't silently re-auth.
+  res.clearCookie(REFRESH_COOKIE, { path: "/api/auth" });
 
   if (provider !== "entra") {
     res.redirect(loginUrl);
@@ -327,7 +399,17 @@ authRouter.get("/openid-callback/:providerId", async (req, res) => {
   }
 
   const code = typeof req.query.code === "string" ? req.query.code : "";
-  const state = await verifyState(req.query.state);
+  // verifyState → stateSecret() can throw in production (see the
+  // login-provider handler above); an escaped rejection would hang the
+  // callback with no response.
+  let state: Awaited<ReturnType<typeof verifyState>>;
+  try {
+    state = await verifyState(req.query.state);
+  } catch (error) {
+    console.error("[auth/openid-callback] state verification failed:", error);
+    res.status(500).json({ detail: "OpenID login is not configured" });
+    return;
+  }
   if (!code || !state) {
     res.status(400).json({ detail: "Invalid OpenID callback" });
     return;
@@ -336,11 +418,52 @@ authRouter.get("/openid-callback/:providerId", async (req, res) => {
   try {
     const redirectUri = await entraRedirectUri(req);
     const tokenResponse = await exchangeEntraCode(code, redirectUri);
+    // Stash the refresh token in an httpOnly cookie so the browser can mint
+    // fresh access tokens via /api/auth/refresh without re-running login.
+    if (tokenResponse.refresh_token) {
+      res.cookie(REFRESH_COOKIE, tokenResponse.refresh_token, refreshCookieOptions());
+    }
     res.redirect(appendTokenFragment(state.returnUrl, tokenResponse));
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Failed to complete Entra login";
     const loginUrl = new URL("/login", frontendUrl());
     loginUrl.searchParams.set("error", detail);
     res.redirect(loginUrl.toString());
+  }
+});
+
+// Silent access-token refresh. The frontend calls this (with credentials, so
+// the httpOnly refresh cookie rides along) shortly before the access token
+// expires, or after a 401, to avoid bouncing the user to /login mid-session.
+// Returns a fresh access token; a 401 here means the refresh token itself is
+// gone/expired and the caller should fall back to interactive login.
+authRouter.post("/refresh", async (req, res) => {
+  if ((await readAuthProvider()) !== "entra") {
+    res.status(404).json({ detail: "Token refresh is only available when AUTH_PROVIDER=entra" });
+    return;
+  }
+
+  const refreshToken = req.cookies?.[REFRESH_COOKIE];
+  if (typeof refreshToken !== "string" || !refreshToken) {
+    res.status(401).json({ detail: "No refresh token" });
+    return;
+  }
+
+  try {
+    const tokenResponse = await exchangeEntraRefreshToken(refreshToken);
+    // Entra rotates refresh tokens on use — persist the replacement so the
+    // next refresh works; otherwise the old one is invalidated and the user
+    // would be logged out after a single cycle.
+    if (tokenResponse.refresh_token) {
+      res.cookie(REFRESH_COOKIE, tokenResponse.refresh_token, refreshCookieOptions());
+    }
+    res.json({
+      access_token: tokenResponse.access_token,
+      token_type: tokenResponse.token_type ?? "Bearer",
+      expires_in: tokenResponse.expires_in,
+    });
+  } catch {
+    res.clearCookie(REFRESH_COOKIE, { path: "/api/auth" });
+    res.status(401).json({ detail: "Token refresh failed" });
   }
 });

@@ -17,8 +17,7 @@ function deny(res: Response, tenantId: string | undefined, userId: string, reaso
 // TENANT_ONBOARDING_MODE env vars where they're set), then falls
 // back to KV. This lets operators change the value via /install and
 // have it take effect on the next request (after flushConfigCache),
-// without a Container App revision restart. See gap #1 in
-// docs/issues/azure-migration/036-marketplace-install-gaps.md.
+// without a Container App revision restart.
 async function readAuthProvider(): Promise<string> {
   return (await getConfig("auth-provider").catch(() => "")) || "supabase";
 }

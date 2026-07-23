@@ -20,11 +20,11 @@
 
   Idempotent: if the UAMI is already an owner, no change.
 
-  See gap #10 in
-  docs/issues/azure-migration/036-marketplace-install-gaps.md.
+  Use this recovery helper when the configurator cannot verify redirect
+  URIs through Microsoft Graph.
 
 .PARAMETER KeyVaultName
-  Name of the Key Vault, e.g. kv-mike-dev. The script reads
+  Name of the Key Vault, e.g. kv-mike-example. The script reads
   entra-client-id from KV to know which app reg to add ownership on.
 
 .PARAMETER ResourceGroup
@@ -32,7 +32,7 @@
   where <env> is the suffix after kv-mike-).
 
 .EXAMPLE
-  ./grant-uami-app-reg-ownership.ps1 -KeyVaultName kv-mike-dev -ResourceGroup rg-mike-dev
+  ./grant-uami-app-reg-ownership.ps1 -KeyVaultName kv-mike-example -ResourceGroup rg-mike-example
 #>
 
 [CmdletBinding()]

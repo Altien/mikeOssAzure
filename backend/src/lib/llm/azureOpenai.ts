@@ -25,9 +25,8 @@ const DEFAULT_API_VERSION = "2024-10-21";
 // (`aoai:<deployment>`) so the caller can pick any of the deployments
 // returned by deployment discovery, not just one default.
 //
-// KV path covers marketplace installs where the configurator writes
-// azure-openai-endpoint + azure-openai-api-key without any Bicep env
-// wiring. Closes 040 Entry 12 for AOAI.
+// The KV path covers installs where the configurator writes
+// azure-openai-endpoint + azure-openai-api-key without env wiring.
 async function resolveCredentials(
     override?: AzureOpenaiSettings | null,
 ): Promise<{ endpoint: string; apiKey: string; apiVersion: string }> {

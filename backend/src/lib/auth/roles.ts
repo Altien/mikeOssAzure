@@ -6,8 +6,6 @@
 // `# display-name` comments, matching the install configurator's
 // surface (see installAuth.ts:isInAdminGroup). The comment is stripped
 // before comparison so operators can self-document the KV value.
-//
-// Gap #1 in docs/issues/azure-migration/036-marketplace-install-gaps.md.
 
 import { getConfig } from "../config.js";
 

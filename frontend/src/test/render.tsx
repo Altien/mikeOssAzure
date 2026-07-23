@@ -39,6 +39,7 @@ export function renderWithProviders(ui: ReactElement, opts: Opts = {}) {
 
     const config: RuntimeConfig = {
         authProvider: "supabase",
+        demoMode: false,
         entra: { tenantId: "", clientId: "" },
         ...configOverride,
     };

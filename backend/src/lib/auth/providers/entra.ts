@@ -96,9 +96,9 @@ let configMissingLogged = false;
 
 export async function validateEntraToken(token: string): Promise<AuthValidationResult> {
   // getConfig() checks process.env first (uppercased, hyphens → underscores)
-  // and falls back to KV via the install backend's UAMI. Marketplace installs
-  // populate KV via create-entra-apps.ps1 or 039's deploy-time provisioning;
-  // OSS / dev deploys still work via ENTRA_TENANT_ID / ENTRA_BACKEND_CLIENT_ID
+  // and falls back to KV via the install backend's UAMI. Managed deployments
+  // can populate KV via create-entra-apps.ps1 or provisioning automation;
+  // other deployments still work via ENTRA_TENANT_ID / ENTRA_BACKEND_CLIENT_ID
   // env vars. Single call site, both sources, no further plumbing required.
   // Closes 040 Entry 11.
   const tenantId = await getConfig("entra-tenant-id").catch(() => "");

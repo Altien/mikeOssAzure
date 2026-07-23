@@ -49,7 +49,9 @@ describe("ApiKeyMissingModal", () => {
         expect(screen.queryByText(/API key required/)).not.toBeInTheDocument();
     });
 
-    it("renders the modal heading + a provider-specific default body when open", () => {
+    // Dev renders this as a WarningPopup toast (title text + dismiss X)
+    // rather than the mirror-era portal modal with heading/Cancel/backdrop.
+    it("renders the popup title + a provider-specific default body when open", () => {
         render(
             <ApiKeyMissingModal
                 open={true}
@@ -58,8 +60,6 @@ describe("ApiKeyMissingModal", () => {
             />,
         );
 
-        // Promoted code renders via WarningPopup: the title is a styled
-        // <div>, not a heading element, so match it by text.
         expect(screen.getByText("API key required")).toBeInTheDocument();
         expect(
             screen.getByText(
@@ -99,10 +99,7 @@ describe("ApiKeyMissingModal", () => {
         expect(screen.queryByText(/OpenAI API key yet/)).not.toBeInTheDocument();
     });
 
-    it("Dismiss ('X') button invokes onClose", async () => {
-        // Promoted code dropped the explicit "Cancel" button; the dismiss
-        // affordance is now the WarningPopup "Dismiss warning" (X) button,
-        // which still calls onClose.
+    it("the dismiss button invokes onClose", async () => {
         const onClose = vi.fn();
         render(
             <ApiKeyMissingModal
@@ -137,14 +134,7 @@ describe("ApiKeyMissingModal", () => {
         expect(mockPush).toHaveBeenCalledWith("/account/models");
     });
 
-    // NOTE: The promoted code replaced the centered modal+backdrop with a
-    // top-anchored WarningPopup toast that has no click-to-dismiss backdrop,
-    // so the former "clicking the backdrop closes the modal" test no longer
-    // describes any real behavior and has been removed.
-
-    it("clicking the popup title or body does NOT close it", async () => {
-        // Important UX: clicking the body text or the title must not
-        // dismiss the popup — only the explicit Dismiss / action buttons do.
+    it("clicking the popup body does NOT dismiss it — only the X or the actions do", async () => {
         const onClose = vi.fn();
         render(
             <ApiKeyMissingModal

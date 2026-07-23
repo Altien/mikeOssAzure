@@ -1,6 +1,6 @@
 # Deploying Mike to Azure — minimal self-host
 
-This guide stands Mike up in your Azure tenant in **about ten
+This guide stands Mike up in your Azure tenant in **about 30–60
 minutes** with the smallest set of resources that will run the
 application: 5 Azure resources, 1 Container App, no Bicep, no
 Key Vault, no VNet, no Managed Identity. Run schema migrations
@@ -59,7 +59,7 @@ bottom.
                                        └── Container Registry         (admin user)
 
                 Operator's laptop
-                  └── runs `npm run migrate` directly against Postgres
+                  └── runs `pnpm migrate:dev` directly against Postgres
                       (firewalled to your IP for the duration)
 ```
 
@@ -77,11 +77,11 @@ containers in it. Migrations run from your machine.
 
 - An Azure subscription with quota for: 1× PostgreSQL Flexible Server, 1× Container Apps Environment, 1× Container Registry, 1× Storage Account.
 - `az` CLI 2.55 or later. Verify with `az --version`.
-- **Node 18+ and `npm` on your laptop** — used to run schema migrations from local against the deployed Postgres.
+- **Node.js 22+, Corepack, and pnpm on your laptop** — used to run schema migrations against the deployed Postgres.
 - The Mike source cloned locally — the migration step uses the migration files in `backend/migrations/`.
 - Permission to create resources in your subscription. (If you want Entra ID sign-in in section 14, you'll also need permission to create Entra app registrations.)
 - A region that supports all of the above. Most major Azure regions do.
-- About 10 minutes of focused time.
+- About 30–60 minutes of focused time.
 
 ## 3. Set up your shell
 
@@ -258,16 +258,17 @@ that to run migrations directly from your local clone:
 ```sh
 cd path/to/cloned/mike/backend
 
-# First time: install the deps
-npm install
+# First time: activate the repository's pnpm version and install dependencies
+corepack enable
+pnpm install --frozen-lockfile
 
 # Run migrations.  Two details that matter against an Azure Postgres
 # Flexible Server: (a) `?sslmode=require` because Azure rejects non-SSL
-# connections by default; (b) `npm run migrate:dev` rather than `npm run
-# migrate` because the latter requires a prior `npm run build` of the
-# backend, while migrate:dev runs the TypeScript directly via tsx.
+# connections by default; (b) `pnpm migrate:dev` rather than `pnpm migrate`
+# because the latter requires a prior `pnpm build` of the backend, while
+# migrate:dev runs the TypeScript directly via tsx.
 DATABASE_URL="postgres://mikeadmin:$PG_PASSWORD@$PG_FQDN:5432/postgres?sslmode=require" \
-  npm run migrate:dev
+  pnpm migrate:dev
 ```
 
 You should see one log line per migration applied. The migrations
@@ -279,7 +280,7 @@ step (or run them from anywhere with Postgres reachability — your
 CI, a developer machine, etc.).
 
 > **Why not a Container Apps Job?** A separate Container Apps Job
-> running `npm run migrate` is the production pattern (it removes
+> running `pnpm migrate` is the production pattern (it removes
 > the local-machine dependency from operations). For a self-host
 > deployment, running it from local once per release is simpler:
 > one less resource, one less moving part. The Job approach is
@@ -421,7 +422,7 @@ echo "Bootstrap token: $BOOTSTRAP_TOKEN"
 
 ```sh
 # Health check (unauthenticated)
-curl -fsS "https://$BACKEND_FQDN/health"
+curl -fsS "https://$BACKEND_FQDN/api/health"
 # → {"ok":true}
 
 # Runtime config — confirms the bundle picks up the right values
@@ -445,6 +446,11 @@ section.
 
 Two Entra app registrations + nine env-var changes on the backend.
 The recommended auth mode for any deployment that has real users.
+
+The minimal deployment below intentionally has no Key Vault, so follow its
+Azure CLI commands. A hardened deployment that has added Key Vault can use
+[`scripts/install/create-entra-apps.ps1`](../scripts/install/create-entra-apps.ps1)
+from PowerShell 7 instead.
 
 ### 14a. Create the backend API app registration
 
@@ -484,7 +490,7 @@ az ad app update --id "$BACKEND_APP_ID" --set "api={
 az ad app create \
   --display-name "Mike Web Login" \
   --sign-in-audience AzureADMyOrg \
-  --web-redirect-uris "https://$BACKEND_FQDN/auth/openid-callback/microsoft"
+  --web-redirect-uris "https://$BACKEND_FQDN/api/auth/openid-callback/microsoft"
 
 export WEB_APP_ID=$(az ad app list \
   --display-name "Mike Web Login" --query '[0].appId' -o tsv)
@@ -540,7 +546,7 @@ az containerapp update \
     "ENTRA_BACKEND_CLIENT_ID=$BACKEND_APP_ID" \
     "ENTRA_BACKEND_SCOPE=api://$BACKEND_APP_ID/access_as_user" \
     "ENTRA_CLIENT_ID=$WEB_APP_ID" \
-    "ENTRA_REDIRECT_URI=https://$BACKEND_FQDN/auth/openid-callback/microsoft" \
+    "ENTRA_REDIRECT_URI=https://$BACKEND_FQDN/api/auth/openid-callback/microsoft" \
     "ENTRA_ADMIN_GROUP_IDS=<comma-separated-admin-group-oids>" \
     "ENTRA_MEMBER_GROUP_IDS=<comma-separated-member-group-oids>"
 
@@ -576,7 +582,7 @@ Smoke test:
 
 ```sh
 # Should redirect to login.microsoftonline.com
-curl -sI "https://$BACKEND_FQDN/auth/select-provider?returnUrl=https%3A%2F%2F$BACKEND_FQDN%2Fassistant&selectAccount=true" \
+curl -sI "https://$BACKEND_FQDN/api/auth/select-provider?returnUrl=https%3A%2F%2F$BACKEND_FQDN%2Fassistant&selectAccount=true" \
   | grep -i location
 ```
 
@@ -584,6 +590,9 @@ curl -sI "https://$BACKEND_FQDN/auth/select-provider?returnUrl=https%3A%2F%2F$BA
 
 Mike supports Azure OpenAI as an LLM provider alongside Anthropic,
 Gemini, and direct OpenAI.
+
+For a hardened deployment that uses Key Vault, the equivalent PowerShell
+helper is [`scripts/install/setup-aoai.ps1`](../scripts/install/setup-aoai.ps1).
 
 ### 15a. Connect to an existing AOAI resource
 
@@ -655,8 +664,8 @@ az acr build \
   .
 
 # If the new release ships schema migrations, re-run from local
-DATABASE_URL="postgres://mikeadmin:$PG_PASSWORD@$PG_FQDN:5432/postgres" \
-  npm run migrate --prefix backend
+DATABASE_URL="postgres://mikeadmin:$PG_PASSWORD@$PG_FQDN:5432/postgres?sslmode=require" \
+  pnpm -C backend migrate:dev
 
 # Promote the backend container to the new image
 az containerapp update -n backend -g "$RG" \
@@ -718,7 +727,7 @@ environments / deployments:
 
 ### 4. Schema migrations as a Container Apps Job
 
-Replace running `npm run migrate` from a laptop with a managed Job:
+Replace running `pnpm migrate` from a laptop with a managed Job:
 
 - `Microsoft.App/jobs` resource, manual trigger, same backend image.
 - Triggered by the deploy pipeline before the backend is promoted.
@@ -814,12 +823,12 @@ The first error in the boot sequence is the cause.
 ### Microsoft sign-in says "redirect URI does not match"
 
 The web login app registration's Web redirect URI must be exactly
-`https://$BACKEND_FQDN/auth/openid-callback/microsoft`. Update via
+`https://$BACKEND_FQDN/api/auth/openid-callback/microsoft`. Update via
 portal (App registrations → your app → Authentication) or:
 
 ```sh
 az ad app update --id "$WEB_APP_ID" \
-  --web-redirect-uris "https://$BACKEND_FQDN/auth/openid-callback/microsoft"
+  --web-redirect-uris "https://$BACKEND_FQDN/api/auth/openid-callback/microsoft"
 ```
 
 ### Backend returns `Invalid audience` after Microsoft sign-in
@@ -851,8 +860,6 @@ to flush immediately).
 
 - [`runbook-local-stack.md`](./runbook-local-stack.md) — local
   development without any Azure resources
-- [`runbook-entra-local-auth.md`](./runbook-entra-local-auth.md) —
-  validating Microsoft sign-in locally
 - `backend/src/lib/install/manifest.ts` — canonical list of
   expected Key Vault secret names (relevant when you graduate to KV)
 - `backend/.env.example` — complete env-var reference

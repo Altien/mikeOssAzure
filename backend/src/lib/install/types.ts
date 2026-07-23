@@ -1,4 +1,4 @@
-// Manifest model for the install configurator (issue 023 §"Manifest model").
+// Manifest model for the install configurator.
 //
 // The manifest is the source of truth for "what does this deployment need
 // to be operationally complete." Each item knows how to verify itself
@@ -97,10 +97,9 @@ export type ManifestItem = {
     requiresRevisionRestart?: boolean;
     /**
      * When true, the row is rendered de-emphasized — the fix path is
-     * intended for power users / OSS deployments rather than the
-     * marketplace happy path. The check still runs and the row still
-     * shows its status; only the "how to fix" UX is collapsed. See
-     * 036a Phase 6 (B6 — "hide, don't delete" interpretation).
+     * intended for power users rather than the primary scripted path.
+     * The check still runs and the row still shows its status; only the
+     * "how to fix" UX is collapsed.
      */
     advanced?: boolean;
 };

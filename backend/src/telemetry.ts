@@ -7,9 +7,7 @@
 // `appinsights-connection-string` secret (seeded by observability.bicep).
 // When unset — local dev, OSS deploys without App Insights — the SDK
 // silently no-ops, no telemetry is emitted, no errors thrown.
-//
-// See gap #29 / the observability wiring discussion in
-// docs/issues/azure-migration/036-marketplace-install-gaps.md.
+// The SDK is optional and remains disabled when no connection string is set.
 
 import * as appInsights from "applicationinsights";
 

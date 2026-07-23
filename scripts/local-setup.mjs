@@ -46,6 +46,6 @@ run("pnpm", ["bundle"], path.join(root, "frontend"));
 
 console.log(
   "\n✅ Local setup complete.\n" +
-    "   Configure backend/.env (Entra app regs — see docs/runbook-entra-local-auth.md),\n" +
+    "   Configure backend/.env (see docs/azure-prereqs.md for Entra settings),\n" +
     "   then:  cd backend && pnpm dev   →   open http://localhost:3001",
 );

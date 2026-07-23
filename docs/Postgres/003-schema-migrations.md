@@ -35,7 +35,7 @@ backend/
 A `Microsoft.App/jobs` resource named `db-migrate`:
 
 - **Image:** the same `<your-acr>.azurecr.io/backend:<sha>` used by the backend Container App.
-- **Command:** `npm run migrate`.
+- **Command:** `pnpm migrate`.
 - **Trigger:** Manual (`az containerapp job start -n db-migrate`); invoked by the deploy pipeline after the new image is published and before the backend Container App revision is promoted.
 - **Identity:** system-assigned MI, granted `Key Vault Secrets User` on the vault — same pattern as the backend.
 - **Connection target:** Postgres directly (port 5432), not via PgBouncer, because some DDL (`CREATE EXTENSION`, prepared-statement-style migrations) misbehaves under transaction-mode pooling.
@@ -65,7 +65,7 @@ Running migrations on backend startup is tempting and wrong. With multiple repli
 - **Migration files are append-only.** Existing files are never edited after they reach `main`. Corrections are forward-only migrations.
 - **Customer deploys run the same job.** The customer's deploy pipeline calls the same `az containerapp job start` step. They do not need any new tooling on their side; everything ships in the image.
 - **No automatic rollback.** `node-pg-migrate` supports `down` migrations, but in practice we treat database changes as forward-only. Rollback in production is a new migration that undoes the change, not a `down`.
-- **Local development.** Engineers run `npm run migrate` against a local Postgres (Docker Compose), same script as production. No environment drift between local and Azure.
+- **Local development.** Engineers run `pnpm migrate` against a local Postgres (Docker Compose), using the same script as production.
 
 ## Deferred to the EntraID work
 

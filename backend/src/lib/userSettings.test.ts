@@ -27,7 +27,7 @@ vi.mock("./llm", () => ({
     id && id !== "blocked-model" ? id : fallback,
   DEFAULT_TITLE_MODEL: "default-title-model",
   DEFAULT_TABULAR_MODEL: "default-tabular-model",
-  OPENAI_LOW_MODELS: ["gpt-5.4-lite"],
+  OPENAI_LOW_MODELS: ["mock-openai-low"],
 }));
 
 import {
@@ -168,7 +168,7 @@ describe("getUserModelSettings — fast model resolution chain", () => {
     expect(result.fast_model).toBe("default-title-model");
   });
 
-  it("falls back to the OpenAI low-tier model when only openai is configured", async () => {
+  it("falls back to the first OPENAI_LOW_MODELS entry when only openai is configured", async () => {
     readEncryptedApiKeysMock.mockResolvedValueOnce({
       ...emptyKeys,
       openai: "sk-oa",
@@ -179,7 +179,7 @@ describe("getUserModelSettings — fast model resolution chain", () => {
 
     const result = await getUserModelSettings("u1", client as never);
 
-    expect(result.fast_model).toBe("gpt-5.4-lite");
+    expect(result.fast_model).toBe("mock-openai-low");
   });
 
   it("falls back to claude-haiku-4-5 when only claude is configured", async () => {

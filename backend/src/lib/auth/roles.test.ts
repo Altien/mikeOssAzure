@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { resolveRoles } from "./roles";
 
+// Adapted from the OSS mirror suite to dev's current resolveRoles:
+// async (KV-aware via getConfig, env-first), case-INSENSITIVE group
+// matching, `# comment` stripping, and the 040 Entry 7 fix A semantics
+// where an empty member-group list means "anyone in the tenant".
+
 const ADMIN = "ENTRA_ADMIN_GROUP_IDS";
 const MEMBER = "ENTRA_MEMBER_GROUP_IDS";
 
@@ -19,17 +24,14 @@ afterEach(() => {
 });
 
 describe("resolveRoles", () => {
-  it("grants Member when no group lists are configured (tenant-membership default)", async () => {
-    // Promoted behavior: an empty member-group list means "no restriction
-    // beyond tenant membership", so any caller (tid already verified
-    // upstream) gets Member. See roles.ts "Closes 040 Entry 7 fix A".
+  it("grants Member when no groups are configured at all (tenant membership is the only gate)", async () => {
     delete process.env[ADMIN];
     delete process.env[MEMBER];
 
     expect(await resolveRoles(["any-group"])).toEqual(["Member"]);
   });
 
-  it("returns no roles when the user has no group claims", async () => {
+  it("returns no roles when groups are configured but the user has no group claims", async () => {
     process.env[ADMIN] = "admin-1";
     process.env[MEMBER] = "member-1";
 
@@ -60,19 +62,22 @@ describe("resolveRoles", () => {
     expect(await resolveRoles(["admin-1"])).toEqual(["TenantAdmin", "Member"]);
   });
 
-  it("trims whitespace and drops empty entries from the CSV env vars", async () => {
+  it("denies a non-member when a member allowlist IS configured", async () => {
+    process.env[ADMIN] = "admin-1";
+    process.env[MEMBER] = "member-1";
+
+    expect(await resolveRoles(["unrelated-group"])).toEqual([]);
+  });
+
+  it("trims whitespace and drops empty entries from the CSV values", async () => {
     process.env[ADMIN] = " admin-1 ,  ,admin-2 ";
     process.env[MEMBER] = "member-1";
 
     expect(await resolveRoles(["admin-2"])).toEqual(["TenantAdmin", "Member"]);
-    // No admin/member match, but the member list is non-empty so the
-    // tenant-membership default does not apply here.
     expect(await resolveRoles([""])).toEqual([]);
   });
 
-  it("is case-insensitive on group ids — GUID case mismatch still matches", async () => {
-    // Promoted code lowercases both the configured and the claimed group
-    // ids before comparison (GUIDs are canonically case-insensitive).
+  it("matches group ids case-insensitively (Entra GUIDs vary in casing across surfaces)", async () => {
     process.env[ADMIN] = "Admin-Group-Guid";
     process.env[MEMBER] = "member-group-guid";
 
@@ -81,6 +86,14 @@ describe("resolveRoles", () => {
       "Member",
     ]);
     expect(await resolveRoles(["MEMBER-GROUP-GUID"])).toEqual(["Member"]);
+  });
+
+  it("strips `# display-name` comments from configured values before comparing", async () => {
+    process.env[ADMIN] = "admin-1 # Mike Admins";
+    process.env[MEMBER] = "member-1 # Mike Users";
+
+    expect(await resolveRoles(["admin-1"])).toEqual(["TenantAdmin", "Member"]);
+    expect(await resolveRoles(["member-1"])).toEqual(["Member"]);
   });
 
   it("prefers admin when the user is in both admin and member groups", async () => {

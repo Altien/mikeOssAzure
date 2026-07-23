@@ -7,7 +7,7 @@
 -- fails every request with `role "web_anon" does not exist`, which
 -- supabase-js surfaces as an empty {} error (its body-parsing path
 -- doesn't pick up PostgREST's 400 cleanly), which surfaces in the app
--- as "Failed to read user profile: undefined." See issue 023.
+-- as "Failed to read user profile: undefined."
 --
 -- Idempotent: only creates roles that don't already exist; only adds
 -- grants and role memberships that aren't already in place. Safe to
