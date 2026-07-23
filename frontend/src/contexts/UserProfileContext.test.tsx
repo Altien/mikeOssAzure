@@ -48,6 +48,7 @@ const PROFILE_FIXTURE = {
         claude: false,
         gemini: true,
         openai: false,
+        kimi: true,
         azureOpenai: false,
     },
 };
@@ -205,6 +206,7 @@ describe("UserProfileContext: bootstrap fetch on mount", () => {
                 claude: false,
                 gemini: true,
                 openai: false,
+                kimi: true,
                 azureOpenai: false,
             },
         });
@@ -248,6 +250,7 @@ describe("UserProfileContext: bootstrap fetch on mount", () => {
             claude: false,
             gemini: false,
             openai: false,
+            kimi: false,
             azureOpenai: false,
         });
     });

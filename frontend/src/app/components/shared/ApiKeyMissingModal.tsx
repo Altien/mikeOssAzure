@@ -20,11 +20,12 @@ export function ApiKeyMissingModal({ open, onClose, provider, message }: Props) 
     const providerName = provider ? providerLabel(provider) : "this provider";
     const body =
         message ??
-        `You haven't added a ${providerName} API key yet. Add one in your account settings to use this model.`;
+        `${providerName} is not configured for this organisation. ` +
+            "Ask an administrator to open /install and configure the organisation credential.";
 
-    const handleGoToAccount = () => {
+    const handleOpenOrganisationSetup = () => {
         onClose();
-        router.push("/account/models");
+        router.push("/install");
     };
 
     return (
@@ -37,8 +38,8 @@ export function ApiKeyMissingModal({ open, onClose, provider, message }: Props) 
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-600" />
             }
             primaryAction={{
-                label: "Go to account settings",
-                onClick: handleGoToAccount,
+                label: "Open organisation setup",
+                onClick: handleOpenOrganisationSetup,
             }}
         />
     );

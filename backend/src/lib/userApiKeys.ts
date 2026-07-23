@@ -7,6 +7,7 @@
 //      not from `process.env.SUPABASE_SECRET_KEY` or similar fallbacks.
 //      `getConfig()` handles env-var override for local dev / tests so
 //      the secret can still be set inline when there's no KV reachable.
+//      Marketplace installs provision the durable Key Vault secret in Bicep.
 //
 //   2. Provider set is dev's full set: `claude | gemini | openai |
 //      azure_openai` (upstream supports only the first two). The
@@ -39,6 +40,55 @@ export type ApiKeyProvider =
     | "courtlistener"
     | "azure_openai";
 
+/**
+ * Resolve the deployment-wide provider credentials. MikeOssAzure installations
+ * are organisation-scoped: all users share these Key Vault-backed values and
+ * user-facing routes must never replace them with personal credentials.
+ */
+export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
+    const [
+        claude,
+        gemini,
+        openai,
+        kimi,
+        openrouter,
+        courtlistener,
+        azureEndpoint,
+        azureApiKey,
+        azureApiVersion,
+        azureDeployment,
+    ] = await Promise.all([
+        resolveSecret("anthropic-api-key"),
+        resolveSecret("gemini-api-key"),
+        resolveSecret("openai-api-key"),
+        resolveSecret("moonshot-api-key"),
+        resolveSecret("openrouter-api-key"),
+        resolveSecret("courtlistener-api-token"),
+        resolveSecret("azure-openai-endpoint"),
+        resolveSecret("azure-openai-api-key"),
+        resolveSecret("azure-openai-api-version"),
+        resolveSecret("azure-openai-deployment"),
+    ]);
+
+    return {
+        claude: claude || null,
+        gemini: gemini || null,
+        openai: openai || null,
+        kimi: kimi || null,
+        openrouter: openrouter || null,
+        courtlistener: courtlistener || null,
+        azureOpenai:
+            azureEndpoint && azureApiKey
+                ? {
+                      endpoint: azureEndpoint,
+                      apiKey: azureApiKey,
+                      apiVersion: azureApiVersion || null,
+                      deployment: azureDeployment || "",
+                  }
+                : null,
+    };
+}
+
 const ENCRYPTION_SECRET_NAME = "user-api-keys-encryption-key";
 
 let keyPromise: Promise<Buffer> | null = null;
@@ -46,7 +96,17 @@ let keyPromise: Promise<Buffer> | null = null;
 async function getEncryptionKey(): Promise<Buffer> {
     if (!keyPromise) {
         keyPromise = (async () => {
-            const secret = await getConfig(ENCRYPTION_SECRET_NAME);
+            let secret: string;
+            try {
+                secret = await getConfig(ENCRYPTION_SECRET_NAME);
+            } catch (err) {
+                const cause =
+                    err instanceof Error ? err.message : String(err);
+                throw new Error(
+                    `User API keys encryption secret (${ENCRYPTION_SECRET_NAME}) ` +
+                        `could not be loaded: ${cause}`,
+                );
+            }
             if (!secret) {
                 throw new Error(
                     `User API keys encryption secret (${ENCRYPTION_SECRET_NAME}) ` +

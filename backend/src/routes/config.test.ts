@@ -10,10 +10,10 @@ import { makeApp } from "../test/helpers/buildTestApp";
 
 const TOUCHED_ENV = [
   "AUTH_PROVIDER",
-  "DEMO_MODE",
   "ENTRA_TENANT_ID",
   "ENTRA_CLIENT_ID",
   "ENTRA_FRONTEND_CLIENT_ID",
+  "DEMO_MODE",
   "FRONTEND_URL",
   "NODE_ENV",
 ] as const;
@@ -95,18 +95,13 @@ describe("GET /config — authProvider field", () => {
 });
 
 describe("GET /config — demoMode field", () => {
-  it("defaults to false when DEMO_MODE is unset", async () => {
-    const res = await request(makeApp()).get("/config");
-
-    expect(res.body.demoMode).toBe(false);
-  });
-
-  it("returns true only when DEMO_MODE=true", async () => {
-    process.env.DEMO_MODE = "true";
-    expect((await request(makeApp()).get("/config")).body.demoMode).toBe(true);
+  it("defaults to false and is enabled only by DEMO_MODE=true", async () => {
+    const defaultResponse = await request(makeApp()).get("/config");
+    expect(defaultResponse.body.demoMode).toBe(false);
 
     process.env.DEMO_MODE = "TRUE";
-    expect((await request(makeApp()).get("/config")).body.demoMode).toBe(false);
+    const enabledResponse = await request(makeApp()).get("/config");
+    expect(enabledResponse.body.demoMode).toBe(true);
   });
 });
 
@@ -140,7 +135,7 @@ describe("GET /config — entra block", () => {
 });
 
 describe("GET /config — secret-leak guard", () => {
-  it("does NOT expose any of the server-only secrets — the body contains only documented public runtime config", async () => {
+  it("does NOT expose any of the server-only secrets — the body must contain only documented runtime fields", async () => {
     process.env.AUTH_PROVIDER = "entra";
     process.env.ENTRA_TENANT_ID = "tenant-guid";
     process.env.ENTRA_CLIENT_ID = "client-guid";

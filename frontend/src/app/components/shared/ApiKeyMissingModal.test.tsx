@@ -49,9 +49,7 @@ describe("ApiKeyMissingModal", () => {
         expect(screen.queryByText(/API key required/)).not.toBeInTheDocument();
     });
 
-    // Dev renders this as a WarningPopup toast (title text + dismiss X)
-    // rather than the mirror-era portal modal with heading/Cancel/backdrop.
-    it("renders the popup title + a provider-specific default body when open", () => {
+    it("tells the user that an administrator must configure the organisation key", () => {
         render(
             <ApiKeyMissingModal
                 open={true}
@@ -63,7 +61,7 @@ describe("ApiKeyMissingModal", () => {
         expect(screen.getByText("API key required")).toBeInTheDocument();
         expect(
             screen.getByText(
-                /You haven't added a Claude API key yet\. Add one in your account settings to use this model\./,
+                /Claude is not configured for this organisation.*administrator.*\/install/i,
             ),
         ).toBeInTheDocument();
     });
@@ -79,7 +77,7 @@ describe("ApiKeyMissingModal", () => {
 
         expect(
             screen.getByText(
-                /You haven't added a this provider API key yet/,
+                /this provider is not configured for this organisation/i,
             ),
         ).toBeInTheDocument();
     });
@@ -116,7 +114,7 @@ describe("ApiKeyMissingModal", () => {
         expect(onClose).toHaveBeenCalledOnce();
     });
 
-    it("'Go to account settings' invokes onClose AND routes to /account/models", async () => {
+    it("'Open organisation setup' invokes onClose AND routes to /install", async () => {
         const onClose = vi.fn();
         render(
             <ApiKeyMissingModal
@@ -127,11 +125,11 @@ describe("ApiKeyMissingModal", () => {
         );
 
         await userEvent.click(
-            screen.getByRole("button", { name: "Go to account settings" }),
+            screen.getByRole("button", { name: "Open organisation setup" }),
         );
 
         expect(onClose).toHaveBeenCalledOnce();
-        expect(mockPush).toHaveBeenCalledWith("/account/models");
+        expect(mockPush).toHaveBeenCalledWith("/install");
     });
 
     it("clicking the popup body does NOT dismiss it — only the X or the actions do", async () => {
@@ -146,7 +144,7 @@ describe("ApiKeyMissingModal", () => {
 
         await userEvent.click(screen.getByText("API key required"));
         await userEvent.click(
-            screen.getByText(/You haven't added a OpenAI API key/),
+            screen.getByText(/OpenAI is not configured for this organisation/),
         );
 
         expect(onClose).not.toHaveBeenCalled();

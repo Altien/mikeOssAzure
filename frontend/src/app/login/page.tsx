@@ -170,8 +170,8 @@ export default function LoginPage() {
                     </form>
                     )}
                 </div>
-                {/* Demo-mode banner: controlled by the server's runtime config. */}
-                {/* Self-hosted installations leave the flag unset. */}
+                {/* Set DEMO_MODE=true on the public demo backend.
+                    Self-hosted installs leave it unset and do not see this. */}
                 {config.demoMode && (
                     <p className="text-center text-xs text-gray-500 leading-relaxed px-2">
                         Mike hosted on MikeOSS.com is currently a demo service.

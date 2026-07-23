@@ -1,6 +1,7 @@
 import { streamClaude, completeClaudeText } from "./claude";
 import { streamGemini, completeGeminiText } from "./gemini";
 import { streamOpenAI, completeOpenAIText } from "./openai";
+import { streamKimi, completeKimiText } from "./kimi";
 import { streamAzureOpenAI, completeAzureOpenAIText } from "./azureOpenai";
 import { providerForModel } from "./models";
 import type { StreamChatParams, StreamChatResult, UserApiKeys } from "./types";
@@ -15,6 +16,7 @@ export async function streamChatWithTools(
     if (provider === "claude") return streamClaude(params);
     if (provider === "gemini") return streamGemini(params);
     if (provider === "openai") return streamOpenAI(params);
+    if (provider === "kimi") return streamKimi(params);
     return streamAzureOpenAI(params);
 }
 
@@ -29,5 +31,6 @@ export async function completeText(params: {
     if (provider === "claude") return completeClaudeText(params);
     if (provider === "gemini") return completeGeminiText(params);
     if (provider === "openai") return completeOpenAIText(params);
+    if (provider === "kimi") return completeKimiText(params);
     return completeAzureOpenAIText(params);
 }

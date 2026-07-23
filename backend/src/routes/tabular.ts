@@ -74,6 +74,7 @@ export const tabularRouter = Router();
 function providerLabel(provider: Provider): string {
     if (provider === "claude") return "Anthropic";
     if (provider === "openai") return "OpenAI";
+    if (provider === "kimi") return "Kimi K3";
     if (provider === "azureOpenai") return "Azure OpenAI";
     return "Gemini";
 }
@@ -85,6 +86,7 @@ const SERVER_KEY_SECRETS: Record<Exclude<Provider, "azureOpenai">, string> = {
     claude: "anthropic-api-key",
     gemini: "gemini-api-key",
     openai: "openai-api-key",
+    kimi: "moonshot-api-key",
 };
 
 // Upstream divergence (sync-log: f39f175): upstream returns the 422
@@ -107,7 +109,10 @@ async function missingModelApiKey(model: string, apiKeys: UserApiKeys) {
     return {
         provider,
         model,
-        detail: `${providerLabel(provider)} API key is required to use ${model}. Add an API key or select a different tabular review model.`,
+        detail:
+            `${providerLabel(provider)} is not configured for this organisation. ` +
+            `Ask an administrator to open /install and set the ${SERVER_KEY_SECRETS[provider]} ` +
+            "Key Vault secret, or select a different tabular review model.",
     };
 }
 

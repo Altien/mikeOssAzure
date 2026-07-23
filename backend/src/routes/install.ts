@@ -1581,7 +1581,11 @@ installRouter.get("/auth/microsoft/callback", async (req: Request, res: Response
     //     oid in KV, treat that user as a permanent recovery admin.
     // Either passing skips the group check.
     const oidClaim = typeof claims?.oid === "string" ? claims.oid : "";
-    const selfBootstrap = await isSelfBootstrapAllowed(tid, principal);
+    const selfBootstrap = await isSelfBootstrapAllowed(
+        tid,
+        principal,
+        oidClaim,
+    );
     const initialAdmin = await isInitialAdmin(oidClaim, principal);
 
     if (!selfBootstrap && !initialAdmin && !(await isInAdminGroup(groups))) {

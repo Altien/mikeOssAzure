@@ -38,7 +38,7 @@ function courtlistenerHeaders(apiToken?: string | null): HeadersInit {
         apiToken?.trim() || process.env.COURTLISTENER_API_TOKEN?.trim();
     if (!token) {
         throw new Error(
-            "COURTLISTENER_API_TOKEN must be set to use CourtListener tools.",
+            "CourtListener is not configured for this organisation. Ask an administrator to open /install and set the courtlistener-api-token Key Vault secret.",
         );
     }
     return {

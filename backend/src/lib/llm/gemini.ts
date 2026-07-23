@@ -40,7 +40,7 @@ async function apiKey(override?: string | null): Promise<string> {
     const key = override?.trim() || (await resolveSecret("gemini-api-key"));
     if (!key) {
         throw new Error(
-            "Gemini API key is not configured. Set the gemini-api-key Key Vault secret (or its env fallback) or add a user Gemini key.",
+            "Gemini is not configured for this organisation. Ask an administrator to open /install and set the gemini-api-key Key Vault secret.",
         );
     }
     return key;

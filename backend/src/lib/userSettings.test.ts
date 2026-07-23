@@ -13,7 +13,7 @@ const { readEncryptedApiKeysMock, createServerSupabaseMock } = vi.hoisted(() => 
 }));
 
 vi.mock("./userApiKeys", () => ({
-  getUserApiKeys: readEncryptedApiKeysMock,
+  getOrganisationApiKeys: readEncryptedApiKeysMock,
 }));
 
 vi.mock("./supabase", () => ({
@@ -52,6 +52,7 @@ type Action =
   | { type: "maybeSingle" }
   | { type: "single" }
   | { type: "insert"; row: unknown }
+  | { type: "upsert"; row: unknown; options: unknown }
   | { type: "update"; patch: unknown };
 
 function makeClient(opts: {
@@ -84,6 +85,10 @@ function makeClient(opts: {
         calls.push({ type: "insert", row });
         return Promise.resolve(opts.insert ?? { error: null });
       });
+      b.upsert = vi.fn((row: unknown, options: unknown) => {
+        calls.push({ type: "upsert", row, options });
+        return Promise.resolve(opts.insert ?? { error: null });
+      });
       // For update().eq() the eq is the terminator, so swap eq() behaviour
       // after update() is called.
       b.update = vi.fn((patch: unknown) => {
@@ -105,6 +110,7 @@ const emptyKeys = {
   claude: null,
   gemini: null,
   openai: null,
+  kimi: null,
   azureOpenai: null,
 };
 
@@ -194,6 +200,20 @@ describe("getUserModelSettings — fast model resolution chain", () => {
     const result = await getUserModelSettings("u1", client as never);
 
     expect(result.fast_model).toBe("claude-haiku-4-5");
+  });
+
+  it("falls back to kimi-k3 when Kimi is the only configured provider", async () => {
+    readEncryptedApiKeysMock.mockResolvedValueOnce({
+      ...emptyKeys,
+      kimi: "moonshot-key",
+    });
+    const { client } = makeClient({
+      selectSingle: { data: { fast_model: null, tabular_model: null } },
+    });
+
+    const result = await getUserModelSettings("u1", client as never);
+
+    expect(result.fast_model).toBe("kimi-k3");
   });
 
   it("falls back to aoai:<deployment> when only the user's azure_openai deployment is set", async () => {
@@ -312,8 +332,8 @@ describe("getUserModelSettings — tabular model & api_keys", () => {
   });
 });
 
-describe("getUserApiKeys — thin wrapper", () => {
-  it("delegates to userApiKeys.getUserApiKeys with the provided client", async () => {
+describe("getUserApiKeys — organisation credential compatibility wrapper", () => {
+  it("delegates to getOrganisationApiKeys and ignores the user database", async () => {
     const keys = { ...emptyKeys, claude: "sk-c" };
     readEncryptedApiKeysMock.mockResolvedValueOnce(keys);
     const { client } = makeClient({});
@@ -321,18 +341,18 @@ describe("getUserApiKeys — thin wrapper", () => {
     const result = await getUserApiKeys("u1", client as never);
 
     expect(result).toBe(keys);
-    expect(readEncryptedApiKeysMock).toHaveBeenCalledWith("u1", client);
+    expect(readEncryptedApiKeysMock).toHaveBeenCalledWith();
   });
 
-  it("creates a server client when none is passed", async () => {
+  it("does not create a database client when none is passed", async () => {
     readEncryptedApiKeysMock.mockResolvedValueOnce(emptyKeys);
     const { client } = makeClient({});
     createServerSupabaseMock.mockReturnValue(client);
 
     await getUserApiKeys("u1");
 
-    expect(createServerSupabaseMock).toHaveBeenCalled();
-    expect(readEncryptedApiKeysMock).toHaveBeenCalledWith("u1", client);
+    expect(createServerSupabaseMock).not.toHaveBeenCalled();
+    expect(readEncryptedApiKeysMock).toHaveBeenCalledWith();
   });
 });
 
@@ -351,7 +371,29 @@ describe("upsertUserProfile — defaults", () => {
 });
 
 describe("upsertUserProfile — new-user insert", () => {
-  it("INSERTs with lowercased email and trimmed display name when no row exists", async () => {
+  it("uses a conflict-safe user_id upsert for parallel first-page requests", async () => {
+    const { client, calls } = makeClient({
+      selectMaybeSingle: { data: null },
+      insert: { error: null },
+    });
+
+    await upsertUserProfile("u1", "x@y.z", "Ada", client as never);
+
+    expect(calls.find((c) => c.type === "upsert")).toEqual({
+      type: "upsert",
+      row: {
+        user_id: "u1",
+        email: "x@y.z",
+        display_name: "Ada",
+      },
+      options: {
+        onConflict: "user_id",
+        ignoreDuplicates: true,
+      },
+    });
+  });
+
+  it("upserts with lowercased email and trimmed display name when no row exists", async () => {
     const { client, calls } = makeClient({
       selectMaybeSingle: { data: null },
       insert: { error: null },
@@ -364,13 +406,17 @@ describe("upsertUserProfile — new-user insert", () => {
       client as never,
     );
 
-    const insertCall = calls.find((c) => c.type === "insert");
+    const insertCall = calls.find((c) => c.type === "upsert");
     expect(insertCall).toEqual({
-      type: "insert",
+      type: "upsert",
       row: {
         user_id: "u1",
         email: "caller@example.com",
         display_name: "Ada Lovelace",
+      },
+      options: {
+        onConflict: "user_id",
+        ignoreDuplicates: true,
       },
     });
   });
@@ -383,10 +429,14 @@ describe("upsertUserProfile — new-user insert", () => {
 
     await upsertUserProfile("u1", "   ", "   ", client as never);
 
-    const insertCall = calls.find((c) => c.type === "insert");
+    const insertCall = calls.find((c) => c.type === "upsert");
     expect(insertCall).toEqual({
-      type: "insert",
+      type: "upsert",
       row: { user_id: "u1", email: null, display_name: null },
+      options: {
+        onConflict: "user_id",
+        ignoreDuplicates: true,
+      },
     });
   });
 

@@ -105,6 +105,7 @@ const TOUCHED_ENV = [
   "ANTHROPIC_API_KEY",
   "GEMINI_API_KEY",
   "OPENAI_API_KEY",
+  "MOONSHOT_API_KEY",
   "AZURE_OPENAI_ENDPOINT",
   "AZURE_OPENAI_API_KEY",
   "ENTRA_MEMBER_GROUP_IDS",
@@ -246,7 +247,7 @@ describe("GET /api/user/profile — wiring and shape", () => {
     expect(createServerSupabaseMock).not.toHaveBeenCalled();
   });
 
-  it("returns the canonical profile shape with auth fields, plaintext keys, and global flags", async () => {
+  it("returns configured flags without exposing organisation credentials", async () => {
     const future = new Date(Date.now() + 86_400_000).toISOString();
     const { db } = makeDb({
       profile: {
@@ -285,11 +286,11 @@ describe("GET /api/user/profile — wiring and shape", () => {
       message_credits_used: 12,
       credits_reset_date: future,
       tier: "pro",
-      claude_api_key: "sk-c",
+      claude_api_key: null,
       gemini_api_key: null,
-      openai_api_key: "sk-o",
-      azure_openai_endpoint: "https://x.openai.azure.com",
-      azure_openai_deployment: "gpt-5",
+      openai_api_key: null,
+      azure_openai_endpoint: null,
+      azure_openai_deployment: null,
       claude_configured: true,
       gemini_configured: false,
       openai_configured: true,
@@ -389,6 +390,7 @@ describe("GET /api/user/profile — wiring and shape", () => {
     process.env.ANTHROPIC_API_KEY = "shared-claude-secret";
     process.env.GEMINI_API_KEY = "  ";
     process.env.OPENAI_API_KEY = "shared-openai-secret";
+    process.env.MOONSHOT_API_KEY = "shared-kimi-secret";
     process.env.AZURE_OPENAI_ENDPOINT = "https://x.openai.azure.com";
     process.env.AZURE_OPENAI_API_KEY = "shared-azure-secret";
     const { db } = makeDb({
@@ -416,11 +418,13 @@ describe("GET /api/user/profile — wiring and shape", () => {
       openrouter: false,
       courtlistener: false,
       openai: true,
+      kimi: true,
       azureOpenai: true,
     });
     const bodyStr = JSON.stringify(res.body);
     expect(bodyStr).not.toContain("shared-claude-secret");
     expect(bodyStr).not.toContain("shared-openai-secret");
+    expect(bodyStr).not.toContain("shared-kimi-secret");
     expect(bodyStr).not.toContain("shared-azure-secret");
   });
 
@@ -525,8 +529,8 @@ describe("PATCH /api/user/profile — profile-field updates", () => {
   });
 });
 
-describe("PATCH /api/user/profile — provider key updates", () => {
-  it("DELETES a flat provider key when the value is the empty string", async () => {
+describe("PATCH /api/user/profile — legacy provider key fields", () => {
+  it("rejects clearing a personal provider key", async () => {
     const { db } = makeDb({
       profile: {
         data: {
@@ -542,20 +546,18 @@ describe("PATCH /api/user/profile — provider key updates", () => {
     });
     createServerSupabaseMock.mockReturnValue(db);
 
-    await request(makeApp())
+    const res = await request(makeApp())
       .patch("/api/user/profile")
       .set("Authorization", "Bearer ok")
       .send({ claude_api_key: "" });
 
-    expect(deleteUserApiKeyMock).toHaveBeenCalledWith(
-      "user-1",
-      "claude",
-      expect.anything(),
-    );
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("organisation_api_key_required");
+    expect(deleteUserApiKeyMock).not.toHaveBeenCalled();
     expect(setUserApiKeyMock).not.toHaveBeenCalled();
   });
 
-  it("SETs a flat provider key when the value is non-empty", async () => {
+  it("rejects setting a personal provider key", async () => {
     const { db } = makeDb({
       profile: {
         data: {
@@ -571,21 +573,18 @@ describe("PATCH /api/user/profile — provider key updates", () => {
     });
     createServerSupabaseMock.mockReturnValue(db);
 
-    await request(makeApp())
+    const res = await request(makeApp())
       .patch("/api/user/profile")
       .set("Authorization", "Bearer ok")
       .send({ openai_api_key: "sk-new" });
 
-    expect(setUserApiKeyMock).toHaveBeenCalledWith(
-      "user-1",
-      "openai",
-      "sk-new",
-      expect.anything(),
-    );
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("organisation_api_key_required");
+    expect(setUserApiKeyMock).not.toHaveBeenCalled();
     expect(deleteUserApiKeyMock).not.toHaveBeenCalled();
   });
 
-  it("returns 500 when setUserApiKey throws", async () => {
+  it("rejects before legacy encryption storage is called", async () => {
     const { db } = makeDb({});
     createServerSupabaseMock.mockReturnValue(db);
     setUserApiKeyMock.mockRejectedValueOnce(new Error("encryption secret missing"));
@@ -595,13 +594,14 @@ describe("PATCH /api/user/profile — provider key updates", () => {
       .set("Authorization", "Bearer ok")
       .send({ claude_api_key: "sk" });
 
-    expect(res.status).toBe(500);
-    expect(res.body).toEqual({ detail: "encryption secret missing" });
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("organisation_api_key_required");
+    expect(setUserApiKeyMock).not.toHaveBeenCalled();
   });
 });
 
-describe("PATCH /api/user/profile — azure_openai compound", () => {
-  it("merges a partial PATCH against the existing config so the other three fields aren't blown away", async () => {
+describe("PATCH /api/user/profile — legacy Azure OpenAI fields", () => {
+  it("rejects a partial personal Azure OpenAI update", async () => {
     const { db } = makeDb({
       profile: {
         data: {
@@ -626,25 +626,17 @@ describe("PATCH /api/user/profile — azure_openai compound", () => {
       },
     });
 
-    await request(makeApp())
+    const res = await request(makeApp())
       .patch("/api/user/profile")
       .set("Authorization", "Bearer ok")
       .send({ azure_openai_deployment: "new-deploy" });
 
-    expect(setUserApiKeyMock).toHaveBeenCalledWith(
-      "user-1",
-      "azure_openai",
-      {
-        endpoint: "https://existing.openai.azure.com",
-        deployment: "new-deploy",
-        apiKey: "existing-key",
-        apiVersion: "2024-02-15-preview",
-      },
-      expect.anything(),
-    );
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("organisation_api_key_required");
+    expect(setUserApiKeyMock).not.toHaveBeenCalled();
   });
 
-  it("DELETES the azure_openai row when both endpoint AND deployment are cleared in the same request", async () => {
+  it("rejects clearing personal Azure OpenAI settings", async () => {
     const { db } = makeDb({
       profile: {
         data: {
@@ -669,7 +661,7 @@ describe("PATCH /api/user/profile — azure_openai compound", () => {
       },
     });
 
-    await request(makeApp())
+    const res = await request(makeApp())
       .patch("/api/user/profile")
       .set("Authorization", "Bearer ok")
       .send({
@@ -677,15 +669,13 @@ describe("PATCH /api/user/profile — azure_openai compound", () => {
         azure_openai_deployment: "",
       });
 
-    expect(deleteUserApiKeyMock).toHaveBeenCalledWith(
-      "user-1",
-      "azure_openai",
-      expect.anything(),
-    );
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("organisation_api_key_required");
+    expect(deleteUserApiKeyMock).not.toHaveBeenCalled();
     expect(setUserApiKeyMock).not.toHaveBeenCalled();
   });
 
-  it("returns 500 when the azure delete throws", async () => {
+  it("rejects before the legacy Azure delete path is called", async () => {
     const { db } = makeDb({});
     createServerSupabaseMock.mockReturnValue(db);
     getUserApiKeysMock.mockResolvedValue({
@@ -699,11 +689,12 @@ describe("PATCH /api/user/profile — azure_openai compound", () => {
       .set("Authorization", "Bearer ok")
       .send({ azure_openai_endpoint: "", azure_openai_deployment: "" });
 
-    expect(res.status).toBe(500);
-    expect(res.body).toEqual({ detail: "aoai delete failed" });
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("organisation_api_key_required");
+    expect(deleteUserApiKeyMock).not.toHaveBeenCalled();
   });
 
-  it("returns 500 when the azure set throws", async () => {
+  it("rejects before the legacy Azure set path is called", async () => {
     const { db } = makeDb({});
     createServerSupabaseMock.mockReturnValue(db);
     getUserApiKeysMock.mockResolvedValue(emptyKeys);
@@ -717,11 +708,12 @@ describe("PATCH /api/user/profile — azure_openai compound", () => {
         azure_openai_deployment: "dep",
       });
 
-    expect(res.status).toBe(500);
-    expect(res.body).toEqual({ detail: "encryption failed" });
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("organisation_api_key_required");
+    expect(setUserApiKeyMock).not.toHaveBeenCalled();
   });
 
-  it("returns 400 when only one of endpoint/deployment is cleared (incomplete config)", async () => {
+  it("rejects incomplete personal Azure settings with the organisation action", async () => {
     const { db } = makeDb({});
     createServerSupabaseMock.mockReturnValue(db);
     getUserApiKeysMock.mockResolvedValue({
@@ -739,16 +731,58 @@ describe("PATCH /api/user/profile — azure_openai compound", () => {
       .set("Authorization", "Bearer ok")
       .send({ azure_openai_endpoint: "" });
 
-    expect(res.status).toBe(400);
-    expect(res.body.detail).toMatch(
-      /Azure OpenAI requires both endpoint and deployment/,
-    );
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("organisation_api_key_required");
+    expect(res.body.detail).toMatch(/administrator.*\/install/i);
     expect(setUserApiKeyMock).not.toHaveBeenCalled();
     expect(deleteUserApiKeyMock).not.toHaveBeenCalled();
   });
 });
 
 // ── POST /api/user/profile/credits/increment ───────────────────────────
+
+describe("organisation-managed provider credentials", () => {
+  it.each([
+    ["claude", "anthropic-api-key"],
+    ["gemini", "gemini-api-key"],
+    ["openai", "openai-api-key"],
+    ["kimi", "moonshot-api-key"],
+    ["openrouter", "openrouter-api-key"],
+    ["courtlistener", "courtlistener-api-token"],
+    ["azure_openai", "azure-openai-endpoint"],
+  ])(
+    "rejects personal %s key writes and names the administrator action",
+    async (provider, secretName) => {
+      const res = await request(makeApp())
+        .put(`/api/user/api-keys/${provider}`)
+        .set("Authorization", "Bearer ok")
+        .send({ api_key: "not-a-real-key" });
+
+      expect(res.status).toBe(403);
+      expect(res.body).toMatchObject({
+        code: "organisation_api_key_required",
+      });
+      expect(res.body.detail).toMatch(/administrator.*\/install/i);
+      expect(res.body.detail).toContain(secretName);
+      expect(setUserApiKeyMock).not.toHaveBeenCalled();
+      expect(deleteUserApiKeyMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects legacy provider-key fields on PATCH /profile", async () => {
+    const res = await request(makeApp())
+      .patch("/api/user/profile")
+      .set("Authorization", "Bearer ok")
+      .send({ claude_api_key: "not-a-real-key" });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({
+      code: "organisation_api_key_required",
+    });
+    expect(res.body.detail).toContain("anthropic-api-key");
+    expect(setUserApiKeyMock).not.toHaveBeenCalled();
+  });
+});
 
 describe("POST /api/user/profile/credits/increment", () => {
   it("requires authentication", async () => {

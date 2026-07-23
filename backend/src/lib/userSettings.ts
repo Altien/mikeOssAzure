@@ -6,7 +6,7 @@ import {
     OPENAI_LOW_MODELS,
     type UserApiKeys,
 } from "./llm";
-import { getUserApiKeys as readEncryptedApiKeys } from "./userApiKeys";
+import { getOrganisationApiKeys } from "./userApiKeys";
 
 export type UserModelSettings = {
     fast_model: string;
@@ -22,7 +22,8 @@ export type UserModelSettings = {
 //   1. Gemini Flash Lite (cheapest)
 //   2. OpenAI low tier (OPENAI_LOW_MODELS[0])
 //   3. Claude Haiku
-//   4. Azure OpenAI default deployment (user's stored deployment, then
+//   4. Kimi K3
+//   5. Azure OpenAI default deployment (user's stored deployment, then
 //      env-level AZURE_OPENAI_DEPLOYMENT)
 // With nothing configured, falls back to the Gemini default — callers
 // must tolerate a "no provider available" LLM failure (chat.ts does
@@ -39,6 +40,7 @@ function resolveFastModel(
     if (apiKeys.gemini?.trim()) return DEFAULT_TITLE_MODEL;
     if (apiKeys.openai?.trim()) return OPENAI_LOW_MODELS[0];
     if (apiKeys.claude?.trim()) return "claude-haiku-4-5";
+    if (apiKeys.kimi?.trim()) return "kimi-k3";
     const aoaiDeployment =
         apiKeys.azureOpenai?.deployment?.trim() ||
         process.env.AZURE_OPENAI_DEPLOYMENT?.trim() ||
@@ -52,16 +54,15 @@ export async function getUserModelSettings(
     db?: ReturnType<typeof createServerSupabase>,
 ): Promise<UserModelSettings> {
     const client = db ?? createServerSupabase();
-    // Provider keys come from `user_api_keys` (encrypted, see
-    // `backend/src/lib/userApiKeys.ts`); model preferences still live on
-    // `user_profiles`. Issued in parallel — they're independent rows.
+    // Provider credentials are deployment-wide and Key Vault-backed; model
+    // preferences remain per-user on `user_profiles`.
     const [modelRow, api_keys] = await Promise.all([
         client
             .from("user_profiles")
             .select("tabular_model, fast_model, legal_research_us")
             .eq("user_id", userId)
             .single(),
-        readEncryptedApiKeys(userId, client),
+        getOrganisationApiKeys(),
     ]);
     return {
         fast_model: resolveFastModel(api_keys, modelRow.data?.fast_model),
@@ -81,10 +82,10 @@ export async function getUserModelSettings(
 }
 
 export async function getUserApiKeys(
-    userId: string,
-    db?: ReturnType<typeof createServerSupabase>,
+    _userId: string,
+    _db?: ReturnType<typeof createServerSupabase>,
 ): Promise<UserApiKeys> {
-    return readEncryptedApiKeys(userId, db ?? createServerSupabase());
+    return getOrganisationApiKeys();
 }
 
 
@@ -102,7 +103,10 @@ export async function upsertUserProfile(
     // a user has typed into their Account page:
     //   1. SELECT the existing row (if any) — we need to know whether
     //      display_name is currently null, which is the back-fill condition.
-    //   2a. New user → INSERT with email + display_name from the IdP.
+    //   2a. New user → conflict-safe INSERT with email + display_name from the
+    //       IdP. Several first-page requests run concurrently, so every caller
+    //       can observe the row as missing. Ignore a duplicate user_id here;
+    //       the winning request inserted the same authenticated principal.
     //   2b. Returning user → UPDATE email always (IdP is source of truth);
     //       only update display_name when the existing value is null.
     const { data: existing, error: selectError } = await client
@@ -117,11 +121,17 @@ export async function upsertUserProfile(
     if (!existing) {
         const { error: insertError } = await client
             .from("user_profiles")
-            .insert({
-                user_id: userId,
-                email: lowercaseEmail,
-                display_name: seedDisplayName,
-            });
+            .upsert(
+                {
+                    user_id: userId,
+                    email: lowercaseEmail,
+                    display_name: seedDisplayName,
+                },
+                {
+                    onConflict: "user_id",
+                    ignoreDuplicates: true,
+                },
+            );
         if (insertError) {
             throw new Error(
                 `Failed to create user profile: ${insertError.message}`,

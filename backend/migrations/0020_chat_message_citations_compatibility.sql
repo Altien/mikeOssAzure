@@ -1,15 +1,9 @@
--- 0018_chat_message_citations.sql
+-- 0020_chat_message_citations_compatibility.sql
 --
--- Adds chat_messages.citations while retaining the v0.3 annotations column.
---
--- Upstream renamed annotations -> citations. Dev deploys migrations before
--- swapping the backend image, so a hard rename breaks the still-running v0.3
--- revision and makes rollback unsafe. Keeping both columns gives old and new
--- revisions a compatible database interface throughout the rollout.
---
--- This migration is also repair-safe for environments where an earlier
--- revision already performed the rename: it restores whichever column is
--- missing and backfills both directions.
+-- Repair migration for environments that already recorded the earlier
+-- hard-rename version of 0018 as applied. Fresh upgrades get the same
+-- compatibility behavior directly from 0018; this file makes the correction
+-- reach databases whose migration ledger will not rerun that filename.
 
 alter table public.chat_messages
   add column if not exists annotations jsonb;
@@ -38,7 +32,6 @@ begin
     elsif new.annotations is null and new.citations is not null then
       new.annotations := new.citations;
     elsif new.annotations is distinct from new.citations then
-      -- citations is the canonical v0.4 field when a caller supplies both.
       new.annotations := new.citations;
     end if;
     return new;
