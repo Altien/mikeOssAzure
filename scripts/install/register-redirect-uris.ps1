@@ -25,7 +25,7 @@
   https:// and the route paths automatically.
 
 .EXAMPLE
-  ./register-redirect-uris.ps1 -KeyVaultName kv-mike-dev `
+  ./register-redirect-uris.ps1 -KeyVaultName kv-mike-example `
                                -BackendFqdn mike.example.com
 #>
 

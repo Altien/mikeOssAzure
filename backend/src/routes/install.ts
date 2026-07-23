@@ -1,5 +1,5 @@
 // /install — first-time setup + ongoing-reconfiguration tool.
-// See docs/issues/azure-migration/023-install-configurator.md.
+// First-time configuration and ongoing reconfiguration for an installation.
 //
 // Slice 4 (this file) ships:
 //   - GET  /install            — paste form OR placeholder checklist
@@ -95,9 +95,8 @@ function pageShell(title: string, body: string): string {
      informational tone that didn't draw enough attention — operator on
      rg-mike-mtest2 2026-05-20 explicitly asked for yellow here. */
   .item.info { background: #fff8c5; border-color: #f0d77a; }
-  /* Advanced items are still rendered (the fix path is needed for OSS
-     deployments / power users / break-glass), but visually de-emphasized
-     so the marketplace happy path is obvious. See 036a Phase 6. */
+  /* Advanced items remain available for power users and break-glass
+     recovery, but are visually de-emphasized beside the primary path. */
   .item.advanced { opacity: 0.65; border-style: dashed; background: #fafbfc; }
   .item.advanced:hover, .item.advanced:focus-within { opacity: 1; }
   .item.advanced .label::after { content: "advanced"; display: inline-block; margin-left: 0.5rem; padding: 0.1rem 0.45rem; border-radius: 999px; background: #eaeef2; color: #57606a; font-size: 0.65rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; vertical-align: middle; }
@@ -173,7 +172,7 @@ ${error ? `<div class="err">${escape(error)}</div>` : ""}
 // buyer who deployed has seen, so we don't gate this behind a paste
 // form — one-click through. Bootstrap-token paste stays available as
 // a disclosure for OSS / break-glass use. See
-// docs/issues/azure-migration/038-install-first-visit-bootstrap.md.
+// The first visit can bootstrap configuration before Entra is available.
 function renderFirstVisitEntry(): string {
     return pageShell(
         "Mike — Install",
@@ -277,7 +276,7 @@ function describeAction(
     allItems: EvaluatedItem[],
 ): string {
     const fixedBy = item.fixedBy;
-    // Group items are picker-only per issue 023. The picker requires a
+    // Group items are picker-only. The picker requires a
     // Graph access token, which only Entra-source sessions have — a
     // bootstrap-source session won't be able to drive the picker. Show
     // the operator the actual action they need ("Sign in with Microsoft
@@ -400,8 +399,7 @@ function describeScriptCommand(item: EvaluatedItem, ctx: InstallContext, allItem
     // In-app-form rows with alsoAsScript: render the script as the
     // primary affordance directly on the checklist row. Previously the
     // script offer was buried behind the "Set" button, so operators who
-    // didn't have a value to paste (the marketplace happy path) never
-    // discovered it. Closes 040 Entry 4 fix A.
+    // didn't have a value to paste never discovered it.
     //
     // Show the script regardless of THIS row's status — alsoAsScript
     // typically configures MULTIPLE rows (create-entra-apps.ps1 writes
@@ -452,8 +450,7 @@ function renderItem(item: EvaluatedItem, ctx: InstallContext, allItems: Evaluate
 }
 
 // Plain-English intro for each section, shown above the rows. Helps
-// non-engineer operators understand what they're configuring before
-// they look at each row. See gap #32 in 036-marketplace-install-gaps.md.
+// operators understand what they're configuring before they inspect rows.
 const SECTION_INTROS: Record<ManifestSection, string> = {
     "Core setup":
         "Required Azure plumbing — the bits that should already be in place when you arrive here. If anything is red, the install template didn't finish cleanly.",
@@ -560,7 +557,7 @@ function renderChecklist(
   </form>
 </div>
 ${progressBanner}
-${savedItem ? `<div class="flash ok">Saved <code>${escape(savedItem.id)}</code> to Key Vault.${savedItem.requiresRevisionRestart === false ? "" : " A Container App revision restart is required for the new value to be picked up by the backend (see issue 023's secret-ref caveat)."}</div>` : ""}
+${savedItem ? `<div class="flash ok">Saved <code>${escape(savedItem.id)}</code> to Key Vault.${savedItem.requiresRevisionRestart === false ? "" : " A Container App revision restart is required for the new value to be picked up by the backend."}</div>` : ""}
 <div class="cta-row" style="margin: 0 0 1.5rem 0; padding: 0.7rem 1rem; background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; font-size: 0.9rem; display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
   <span>Want users to reach Mike on a friendly hostname like <code>mike.your-company.com</code>?</span>
   <a class="btn secondary" href="/install/custom-domain">Custom domain walkthrough →</a>
@@ -1477,8 +1474,7 @@ installRouter.get("/auth/microsoft/start", async (req: Request, res: Response) =
     // the install flow specifically, the cost of re-entering credentials
     // is small (operator only signs in once or twice during setup), and
     // it eliminates an entire class of "I changed the config but the
-    // token still shows the old state" failure mode. See gap #18 in
-    // 036-marketplace-install-gaps.md.
+    // token still shows the old state" failure mode.
     authorize.searchParams.set("prompt", "login");
     res.redirect(authorize.toString());
 });
@@ -1574,27 +1570,23 @@ installRouter.get("/auth/microsoft/callback", async (req: Request, res: Response
     // it calls Microsoft Graph /me/memberOf using the access_token we
     // just received. Cached per (oid, iat) for 5 minutes. Returns []
     // on any failure — falls through to the admin gate which refuses.
-    // See 036a Phase 7 (B4 reinterpreted as additive).
     const groups = await resolveUserGroups(claims, tokenJson.access_token);
     const principal = (claims?.preferred_username as string) ?? (claims?.email as string) ?? "(unknown)";
     const tid = typeof claims?.tid === "string" ? claims.tid : "";
 
     // Two escape hatches sit beside the normal admin-group gate:
-    //   - selfBootstrap: when no admin group is configured yet (fresh
-    //     install), allow the first tenant user through. 036a Phase 5.
-    //   - initialAdmin: when the marketplace handshake (or deploy.ps1)
-    //     captured the buyer's oid in KV, treat that user as a
-    //     permanent admin — recovery from misconfigured-admin-group
-    //     lockouts. 036a Phase 8 / gap #8.
+    //   - selfBootstrap: when no admin group is configured yet, allow the
+    //     first tenant user through.
+    //   - initialAdmin: when deployment automation captured the operator's
+    //     oid in KV, treat that user as a permanent recovery admin.
     // Either passing skips the group check.
     const oidClaim = typeof claims?.oid === "string" ? claims.oid : "";
     const selfBootstrap = await isSelfBootstrapAllowed(tid, principal);
     const initialAdmin = await isInitialAdmin(oidClaim, principal);
 
     if (!selfBootstrap && !initialAdmin && !(await isInAdminGroup(groups))) {
-        // Enrich the 403 with diagnostic data so the operator can
-        // actually fix the situation rather than guessing.  See gap #7
-        // in 036-marketplace-install-gaps.md.
+        // Enrich the 403 with diagnostic data so the operator can fix the
+        // situation rather than guessing.
         const oid = typeof claims?.oid === "string" ? claims.oid : "(unknown)";
         const rawAdminIds = (await getConfig("entra-admin-group-ids").catch(() => "")).trim();
         const configuredAdminGuids = rawAdminIds
@@ -1694,8 +1686,7 @@ installRouter.get("/scripts/:name", (req: Request, res: Response) => {
         return void res.status(404).json({ detail: `Script not found: ${name}` });
     }
     // Surface script identity headers so operators can detect drift
-    // between a local copy and the running backend's version. See
-    // gap #11 in 036-marketplace-install-gaps.md.
+    // between a local copy and the running backend's version.
     const stat = fs.statSync(target);
     res.setHeader("Last-Modified", stat.mtime.toUTCString());
     const version = readScriptVersion(target);
@@ -1741,10 +1732,8 @@ export function getScriptMeta(scriptName: string): { version: string; lastModifi
 
 // ── Custom-domain walkthrough ─────────────────────────────────────────────
 //
-// Static step-by-step guide for wiring a custom hostname (e.g. mike.altien.com)
-// to the backend Container App. The full automated wizard from 036a Phase 11
-// would orchestrate each step via ARM calls; this is the design contract
-// it'd automate. For now operators copy commands from the page and run them
+// Static step-by-step guide for wiring a custom hostname to the backend
+// Container App. For now operators copy commands from the page and run them
 // locally — every command is pre-filled with the live values we can read
 // (KV name, frontend app reg id, backend FQDN, resource group, env).
 //
@@ -1753,9 +1742,6 @@ export function getScriptMeta(scriptName: string): { version: string; lastModifi
 // upstream IP via x-forwarded-for; if it's a Cloudflare range, surface the
 // orange-cloud caveat). Conservatively assumes "maybe Cloudflare" so the
 // guidance shows regardless.
-//
-// See gap #19 in docs/issues/azure-migration/036-marketplace-install-gaps.md.
-
 async function renderCustomDomainPage(
     session: InstallSession,
     backendHost: string,

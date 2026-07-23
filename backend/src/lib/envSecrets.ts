@@ -6,9 +6,8 @@
 //   - Azure rejects Container App revisions if a referenced KV secret is
 //     missing, so the secret must exist from the first provision.
 //   - KV rejects zero-length secret values.
-//   - ARM-TTK rejects whitespace-only literals in marketplace packages
-//     ("Template Should Not Contain Blanks"), so a single-space placeholder
-//     is not viable either.
+//   - Deployment validators reject whitespace-only literals, so a
+//     single-space placeholder is not viable either.
 //
 // `readSecretEnv()` is the synchronous point where the backend turns that
 // sentinel back into an empty string for code that runs OUTSIDE async
@@ -29,8 +28,7 @@ export function readSecretEnv(name: string): string {
     return trimmed;
 }
 
-// Resolve a secret uniformly across the two paths a marketplace install
-// can populate:
+// Resolve a secret uniformly across the two supported configuration paths:
 //   - Container App env (Bicep secretRef → KV at revision boot).
 //   - KV directly (install configurator's in-app form writes).
 //

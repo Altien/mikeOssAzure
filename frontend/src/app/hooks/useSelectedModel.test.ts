@@ -48,12 +48,14 @@ describe("useSelectedModel: setter", () => {
     it("updates state and persists to localStorage", () => {
         const { result } = renderHook(() => useSelectedModel());
 
+        // aoai:-prefixed ids are always allowed, so this stays valid as
+        // the static model list churns.
         act(() => {
-            result.current[1]("gpt-5.5");
+            result.current[1]("aoai:prod-east");
         });
 
-        expect(result.current[0]).toBe("gpt-5.5");
-        expect(window.localStorage.getItem(STORAGE_KEY)).toBe("gpt-5.5");
+        expect(result.current[0]).toBe("aoai:prod-east");
+        expect(window.localStorage.getItem(STORAGE_KEY)).toBe("aoai:prod-east");
     });
 
     it("normalises an invalid id to the default — both state and storage", () => {

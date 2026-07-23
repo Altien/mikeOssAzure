@@ -186,11 +186,11 @@ describe("UserProfileContext: bootstrap fetch on mount", () => {
             // monthlyCreditLimit (999999) - creditsUsed (5)
             creditsRemaining: 999994,
             tier: "Pro",
-            // title_model / legal_research_us omitted from the fixture, so the
-            // mapper falls back to its defaults.
-            titleModel: "gemini-3.1-flash-lite-preview",
             tabularModel: "gemini-2.5-flash",
             fastModel: "claude-sonnet-4-6",
+            // Dev additions vs the mirror suite: title-model preference and
+            // the case-law research toggle (default on).
+            titleModel: "gemini-3.1-flash-lite-preview",
             legalResearchUs: true,
             claudeApiKey: "sk-claude",
             geminiApiKey: null,

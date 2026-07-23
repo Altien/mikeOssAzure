@@ -13,6 +13,7 @@ export const handlers = [
     http.get("*/config", () =>
         HttpResponse.json({
             authProvider: "supabase",
+            demoMode: false,
             entra: { tenantId: "", clientId: "" },
         }),
     ),

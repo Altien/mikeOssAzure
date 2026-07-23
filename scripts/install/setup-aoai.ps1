@@ -65,13 +65,13 @@
   Provision mode: deployment capacity units. Default 30.
 
 .EXAMPLE
-  ./setup-aoai.ps1 -KeyVaultName kv-mike-dev -ConnectExisting `
+  ./setup-aoai.ps1 -KeyVaultName kv-mike-example -ConnectExisting `
                    -Endpoint https://my-aoai.openai.azure.com/ `
                    -ApiKey ABCD1234...
 
 .EXAMPLE
-  ./setup-aoai.ps1 -KeyVaultName kv-mike-dev -Provision `
-                   -ResourceGroup rg-mike-dev -Region uksouth `
+  ./setup-aoai.ps1 -KeyVaultName kv-mike-example -Provision `
+                   -ResourceGroup rg-mike-example -Region uksouth `
                    -Model gpt-4o-mini
 #>
 

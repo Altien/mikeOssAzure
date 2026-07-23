@@ -23,6 +23,7 @@ export type AuthProvider = "supabase" | "local" | "entra";
 
 export interface RuntimeConfig {
     authProvider: AuthProvider;
+    demoMode: boolean;
     entra: {
         tenantId: string;
         clientId: string;
@@ -31,11 +32,13 @@ export interface RuntimeConfig {
 
 const DEFAULT_CONFIG: RuntimeConfig = {
     authProvider: "supabase",
+    demoMode: false,
     entra: { tenantId: "", clientId: "" },
 };
 
 const CONFIG_PROVIDER_CACHE_KEY = "mike.config.authProvider";
 
+// Exported for the test harness (src/test/render.tsx) to inject config.
 export const ConfigContext = createContext<{ config: RuntimeConfig; loading: boolean }>(
     { config: DEFAULT_CONFIG, loading: true },
 );

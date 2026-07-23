@@ -170,11 +170,9 @@ export default function LoginPage() {
                     </form>
                     )}
                 </div>
-                {/* Demo-mode banner: only shown when NEXT_PUBLIC_DEMO_MODE=true */}
-                {/* (set on the MikeOSS.com public-demo deployment). Marketplace */}
-                {/* customer installs leave the flag unset and don't see this. */}
-                {/* Per docs/issues/azure-migration/040 Entry 10. */}
-                {process.env.NEXT_PUBLIC_DEMO_MODE === "true" && (
+                {/* Demo-mode banner: controlled by the server's runtime config. */}
+                {/* Self-hosted installations leave the flag unset. */}
+                {config.demoMode && (
                     <p className="text-center text-xs text-gray-500 leading-relaxed px-2">
                         Mike hosted on MikeOSS.com is currently a demo service.
                         Please do not upload, submit, or store sensitive,

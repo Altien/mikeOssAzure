@@ -99,7 +99,14 @@ beforeEach(() => {
   envSnapshot.NODE_ENV = process.env.NODE_ENV;
   process.env.NODE_ENV = "test";
   getConfigMock.mockReset();
-  getConfigMock.mockResolvedValue(SECRET);
+  // Name-aware: only the encryption key resolves. Dev's openrouter /
+  // courtlistener global fallbacks (resolveSecret → getConfig) must see
+  // "not configured", or every test would find phantom keys for them.
+  getConfigMock.mockImplementation((name: string) =>
+    name === "user-api-keys-encryption-key"
+      ? Promise.resolve(SECRET)
+      : Promise.reject(new Error(`no config for ${name} in tests`)),
+  );
   createServerSupabaseMock.mockReset();
   flushEncryptionKey();
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -270,11 +277,8 @@ describe("getUserApiKeys — decryption + fallback", () => {
       claude: "sk-claude",
       gemini: "sk-gemini",
       openai: "sk-openai",
-      // openrouter / courtlistener (44e868e) have no decrypted row, so they
-      // fall back to the org-level secret via resolveSecret() → getConfig(),
-      // which the test mocks to return SECRET for every name.
-      openrouter: SECRET,
-      courtlistener: SECRET,
+      openrouter: null,
+      courtlistener: null,
       azureOpenai: null,
     });
   });

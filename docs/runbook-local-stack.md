@@ -7,8 +7,7 @@ No reverse proxy, no hosted dependencies, no Azure account, no
 internet access required after the initial install.
 
 The schema is the same one Azure runs. The auth provider switches
-to a local HS256 mode (or Microsoft Entra ID — see
-[`runbook-entra-local-auth.md`](./runbook-entra-local-auth.md)).
+to a local HS256 mode for a fast, dependency-free development loop.
 
 ## What this gives you
 
@@ -17,7 +16,7 @@ to a local HS256 mode (or Microsoft Entra ID — see
 | Postgres 16 | `mike-postgres` | `postgres://mikeadmin:devpassword@localhost:5432/mike` |
 | PostgREST v12.2.3 | `mike-postgrest` | `http://localhost:4000` (backend hits this directly) |
 | Azurite (Blob) | `mike-azurite` | `http://localhost:10000/devstoreaccount1` |
-| Schema | `backend/migrations/0000_initial.sql` (via node-pg-migrate) | applied with `npm run migrate` from `backend/` |
+| Schema | `backend/migrations/0000_initial.sql` (via node-pg-migrate) | applied with `pnpm migrate:legacy` from `backend/` |
 | Roles | `authenticator`, `web_anon`, `authenticated`, `service_role` | created by `scripts/local-stack/00-init-roles.sql` on first init |
 | Backend auth | `AUTH_PROVIDER=local` (HS256 against `JWT_SECRET`) | `backend/src/lib/auth/providers/local.ts` |
 
@@ -25,20 +24,14 @@ to a local HS256 mode (or Microsoft Entra ID — see
 
 - **Local mode is not Entra.** This runbook uses `AUTH_PROVIDER=local`
   and HS256 tokens for the fastest Docker data-plane loop.
-- **Entra local login is documented separately.** The frontend/backend
-  can now run with `AUTH_PROVIDER=entra` and authenticate through
-  Microsoft using the backend-owned provider-selection flow. See
-  `docs/runbook-entra-local-auth.md`.
-- **Full authenticated data-flow validation is still a follow-up.**
-  Microsoft login was validated locally on 2026-05-05, but the broader
-  project/document workflows still need to be exercised against the
-  current local PostgREST/Azurite stack before calling the migration
-  complete.
+- **Local mode does not exercise Microsoft sign-in.** Use the Entra
+  section of [`azure-prereqs.md`](./azure-prereqs.md) when configuring
+  Microsoft authentication.
 
 ## Prerequisites
 
 - Docker Desktop (or Docker Engine + Compose v2).
-- Node 22 + npm — for `npm run migrate` and the JWT helper.
+- Node 22 + Corepack/pnpm — for migrations and the JWT helper.
 - `psql` on PATH (optional, but useful).
 - Repo cloned.
 
@@ -128,12 +121,10 @@ cd ..
 > **Run this step on first setup AND every time a new migration file is added to `backend/migrations/`.**
 > It is not a one-time action — any pull that adds a `.sql` file requires a re-run against your local DB.
 
-`npm run migrate` doesn't resolve the binary on Windows. Use `npx`:
-
 ```bash
 cd backend
 DATABASE_URL="postgres://mikeadmin:devpassword@localhost:5432/mike" \
-  npx node-pg-migrate up --migrations-dir migrations --migration-file-language sql
+  pnpm migrate:legacy
 cd ..
 ```
 
@@ -225,23 +216,23 @@ Then:
 
 ```bash
 cd backend
-npm install   # first time only
-npm run dev   # → listens on :3001
+pnpm install   # first time only
+pnpm dev       # → listens on :3001
 ```
 
 End-to-end smoke test (verified working 2026-05-05):
 
 ```bash
-# /health — unauthenticated
-curl -fsS http://localhost:3001/health
+# /api/health — unauthenticated
+curl -fsS http://localhost:3001/api/health
 # → {"ok":true}
 
 # GET /projects — authenticated, returns [] initially
-curl -s -H "Authorization: Bearer $TOKEN" http://localhost:3001/projects
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:3001/api/projects
 # → []
 
 # POST /projects — creates a row, returns the full object
-curl -s -X POST http://localhost:3001/projects \
+curl -s -X POST http://localhost:3001/api/projects \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name":"Smoke test"}' | head -c 200
@@ -265,8 +256,8 @@ cp frontend/.env.local.example frontend/.env.local
 # no NEXT_PUBLIC_AUTH_PROVIDER, no NEXT_PUBLIC_ENTRA_*.
 
 cd frontend
-npm install        # first time only
-npm run dev        # → listens on :3000
+pnpm install        # first time only
+pnpm dev            # → listens on :3000
 ```
 
 Open `http://localhost:3000`. The frontend fetches `/config` from
@@ -280,7 +271,7 @@ To validate the full vertical:
 ```bash
 # Sanity check /config from the backend
 curl -s http://localhost:3001/config
-# → {"authProvider":"local","entra":{"tenantId":"","clientId":""}}
+# → {"authProvider":"local","demoMode":false,"entra":{"tenantId":"","clientId":""}}
 ```
 
 ## Resetting
@@ -296,7 +287,7 @@ Re-run "Bring the stack up" + "Apply the schema" from scratch.
 ## Where this fits in the development loop
 
 ```
-write code  ──►  npm run dev (backend) ──►  curl localhost:3001/...
+write code  ──►  pnpm dev (backend) ──►  curl localhost:3001/...
                        │
                        ├─ data → supabase-js → fetch wrapper strips
                        │   /rest/v1 → http://localhost:4000 →
@@ -317,7 +308,7 @@ The stack stays up; iterate the code; commit + push when ready.
   server in ~200ms; the equivalent Azure round-trip (build +
   push + revision) is ~5 minutes.
 - **No subscription costs.** Everything runs on Docker.
-- **Offline development.** After the initial `npm install`, no
+- **Offline development.** After the initial `pnpm install`, no
   outbound traffic is required.
 
 ## What this does NOT give you
@@ -328,7 +319,7 @@ The stack stays up; iterate the code; commit + push when ready.
 - **Microsoft Entra sign-in by default.** This runbook uses
   `AUTH_PROVIDER=local`. To validate Entra sign-in locally
   without Azure infrastructure, see
-  [`runbook-entra-local-auth.md`](./runbook-entra-local-auth.md).
+  follow the Entra section in [`azure-prereqs.md`](./azure-prereqs.md).
 - **Azure-specific runtime concerns.** Managed Identity,
   Application Insights, Container Apps scaling — none of these
   exist in the local stack. They are validated against the deployed
@@ -343,7 +334,7 @@ For the full Azure deployment guide (no Bicep needed), see
 |---|---|---|
 | `mike-postgrest` keeps restarting | role bootstrap didn't run (existing volume) | `docker compose down -v` then `up -d` |
 | PostgREST returns 401 on every request | `JWT_SECRET` mismatch between compose env and forge-jwt | re-export `JWT_SECRET`, restart `mike-postgrest`, re-mint token |
-| `npm run migrate` says "relation pgmigrations already exists" | you're re-running against a non-clean DB | that's fine — it skips applied migrations |
+| `pnpm migrate:legacy` says "relation pgmigrations already exists" | you're re-running against a non-clean DB | that's fine — it skips applied migrations |
 | `permission denied for table X` after migration | migration ran as a role other than `mikeadmin` | always run migrations with `DATABASE_URL` user = `mikeadmin` so default privileges apply |
 | Port 5432 / 4000 in use | something else listening | edit the host-side ports in `docker-compose.dev.yml` |
 

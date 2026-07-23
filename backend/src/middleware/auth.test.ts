@@ -17,6 +17,8 @@ vi.mock("../lib/userSettings.js", () => ({
   upsertUserProfile: vi.fn(),
 }));
 
+// Dev exports only requireAuth — the mirror's requireValidJwt (auth
+// without tenantAccess) never landed here.
 import { requireAuth } from "./auth";
 import { validateSupabaseToken } from "../lib/auth/providers/supabase.js";
 import { validateLocalToken } from "../lib/auth/providers/local.js";

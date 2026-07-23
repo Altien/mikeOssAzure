@@ -1,10 +1,14 @@
 {
   "name": "mike-backend",
-  "version": "1.0.0",
+  "version": "0.3.0-azure.1",
   "private": true,
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "chat:inspect": "tsx src/scripts/inspect-chat.ts",
     "start": "node dist/index.js",
     "migrate": "node dist/scripts/runMigrations.js",
     "migrate:dev": "tsx src/scripts/runMigrations.ts",
@@ -15,10 +19,7 @@
     "setup:local": "node ../scripts/local-setup.mjs",
     "migrate:user-api-keys": "node dist/scripts/migrate-user-api-keys.js",
     "migrate:user-api-keys:dev": "tsx src/scripts/migrate-user-api-keys.ts",
-    "preinstall": "npx only-allow pnpm",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "preinstall": "npx only-allow pnpm"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
@@ -49,8 +50,7 @@
     "openai": "^6.36.0",
     "pdfjs-dist": "^4.10.38",
     "pg": "^8.20.0",
-    "zod": "^3.25.76",
-    "resend": "^4.5.1"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.10",
@@ -58,15 +58,15 @@
     "@types/express": "^4.17.21",
     "@types/multer": "^1.4.12",
     "@types/node": "^22.14.1",
+    "@types/supertest": "^7.2.1",
+    "@vitest/coverage-v8": "^4.1.10",
+    "only-allow": "^1.2.1",
     "prettier": "^3.8.1",
+    "supertest": "^7.2.2",
     "tsx": "^4.19.3",
     "typescript": "^5.8.3",
-    "only-allow": "^1.2.1",
-    "@types/supertest": "^7.2.0",
-    "@vitest/coverage-v8": "^4.1.6",
-    "supertest": "^7.2.2",
     "vite-tsconfig-paths": "^6.1.1",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.10"
   },
   "license": "AGPL-3.0-only",
   "packageManager": "pnpm@11.1.2"

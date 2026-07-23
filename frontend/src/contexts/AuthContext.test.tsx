@@ -30,6 +30,7 @@ vi.mock("@/lib/supabase", () => ({
 function makeConfig(authProvider: RuntimeConfig["authProvider"]): RuntimeConfig {
     return {
         authProvider,
+        demoMode: false,
         entra: { tenantId: "tenant-1", clientId: "client-1" },
     };
 }

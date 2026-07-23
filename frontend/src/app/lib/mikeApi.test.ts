@@ -872,10 +872,12 @@ describe("mikeApi: mapTRMessages (pure helper)", () => {
         ];
         const annotations = [
             {
-                type: "citation" as const,
-                cite_id: 1,
-                filename: "f.pdf",
-                document_id: "d-1",
+                type: "tabular_citation" as const,
+                ref: 1,
+                col_index: 0,
+                row_index: 0,
+                col_name: "Answer",
+                doc_name: "f.pdf",
                 quote: "...",
             },
         ];
@@ -1085,7 +1087,8 @@ describe("mikeApi: smoke — single document versions", () => {
         expect(path).toBe("/api/single-documents/d-1/versions");
     });
 
-    it("uploadDocumentVersion POSTs multipart with optional display_name field", async () => {
+    // Dev's API took the field name "filename" (mirror-era: display_name).
+    it("uploadDocumentVersion POSTs multipart with optional filename field", async () => {
         let hasFile = false;
         let displayNameField: string | null = null;
         server.use(
@@ -1117,7 +1120,7 @@ describe("mikeApi: smoke — single document versions", () => {
         expect(displayNameField).toBe("v1");
     });
 
-    it("uploadDocumentVersion omits display_name when undefined", async () => {
+    it("uploadDocumentVersion omits filename when undefined", async () => {
         let displayNamePresent = true;
         server.use(
             http.post(
@@ -1139,7 +1142,7 @@ describe("mikeApi: smoke — single document versions", () => {
         expect(displayNamePresent).toBe(false);
     });
 
-    it("renameDocumentVersion PATCHes /single-documents/:d/versions/:v with { display_name }", async () => {
+    it("renameDocumentVersion PATCHes /single-documents/:d/versions/:v with { filename }", async () => {
         let body: unknown;
         server.use(
             http.patch(

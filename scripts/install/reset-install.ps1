@@ -32,8 +32,8 @@
   and postgrest-jwt-secret alone.
 
 .EXAMPLE
-  ./reset-install.ps1 -KeyVaultName kv-mike-dev
-  ./reset-install.ps1 -KeyVaultName kv-mike-dev -WipeConfig
+  ./reset-install.ps1 -KeyVaultName kv-mike-example
+  ./reset-install.ps1 -KeyVaultName kv-mike-example -WipeConfig
 #>
 
 [CmdletBinding()]

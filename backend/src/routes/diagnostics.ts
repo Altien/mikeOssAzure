@@ -343,7 +343,7 @@ async function runDiagnostics(): Promise<TestResult[]> {
         });
     }
 
-    // ── J. config.ts → KV live read (issue 023 slice 1)
+    // ── J. config.ts → KV live read
     // Probe a KV secret through getConfig() to verify the foundation:
     //   - KEY_VAULT_NAME env var is set
     //   - DefaultAzureCredential resolves the UAMI (AZURE_CLIENT_ID)

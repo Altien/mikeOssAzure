@@ -581,7 +581,7 @@ describe("GET /api/auth/openid-callback/:providerId", () => {
         body: expect.any(URLSearchParams),
       }),
     );
-    const body = ((fetchFn.mock.calls[0] as unknown as unknown[])?.[1] as { body: URLSearchParams }).body;
+    const body = (fetchFn.mock.calls[0]?.[1] as { body: URLSearchParams }).body;
     expect(body.get("client_id")).toBe("client-guid");
     expect(body.get("grant_type")).toBe("authorization_code");
     expect(body.get("code")).toBe("the-code");
@@ -656,5 +656,75 @@ describe("GET /api/auth/openid-callback/:providerId", () => {
 
     expect(res.status).toBe(302);
     expect(res.headers.location).toContain("/login?error=");
+  });
+});
+
+// ── Pure-function tests (from dev's original node:test suite) ────────────
+
+import {
+  appendTokenFragment,
+  buildEntraTokenForm,
+  refreshCookieOptions,
+} from "./auth";
+
+describe("appendTokenFragment", () => {
+  it("forwards only the access token, never the refresh token", () => {
+    const url = appendTokenFragment("https://app.example.com/assistant", {
+      access_token: "ACCESS",
+      token_type: "Bearer",
+      expires_in: 3600,
+      refresh_token: "SECRET-REFRESH",
+    });
+    const frag = new URLSearchParams(new URL(url).hash.slice(1));
+    expect(frag.get("access_token")).toBe("ACCESS");
+    expect(frag.get("token_type")).toBe("Bearer");
+    expect(frag.get("expires_in")).toBe("3600");
+    expect(frag.get("refresh_token")).toBeNull();
+    expect(url.includes("SECRET-REFRESH")).toBe(false);
+  });
+});
+
+describe("buildEntraTokenForm", () => {
+  it("builds an authorization_code grant", () => {
+    const form = buildEntraTokenForm(
+      { clientId: "cid", clientSecret: "secret", scopes: "openid offline_access" },
+      { grant_type: "authorization_code", code: "abc", redirect_uri: "https://api/cb" },
+    );
+    expect(form.get("grant_type")).toBe("authorization_code");
+    expect(form.get("code")).toBe("abc");
+    expect(form.get("redirect_uri")).toBe("https://api/cb");
+    expect(form.get("client_id")).toBe("cid");
+    expect(form.get("client_secret")).toBe("secret");
+    expect(form.get("scope")).toBe("openid offline_access");
+    expect(form.get("refresh_token")).toBeNull();
+  });
+
+  it("builds a refresh_token grant", () => {
+    const form = buildEntraTokenForm(
+      { clientId: "cid", scopes: "openid offline_access" },
+      { grant_type: "refresh_token", refresh_token: "RT" },
+    );
+    expect(form.get("grant_type")).toBe("refresh_token");
+    expect(form.get("refresh_token")).toBe("RT");
+    expect(form.get("code")).toBeNull();
+    // No client secret provided -> not sent (public-client / PKCE path).
+    expect(form.get("client_secret")).toBeNull();
+  });
+});
+
+describe("refreshCookieOptions", () => {
+  it("keeps the refresh token httpOnly and auth-scoped", () => {
+    const opts = refreshCookieOptions();
+    expect(opts.httpOnly).toBe(true);
+    expect(opts.sameSite).toBe("lax");
+    expect(opts.path).toBe("/api/auth");
+    expect(opts.maxAge).toBeGreaterThan(0);
+  });
+
+  it("marks the cookie secure only in production", () => {
+    process.env.NODE_ENV = "production";
+    expect(refreshCookieOptions().secure).toBe(true);
+    process.env.NODE_ENV = "development";
+    expect(refreshCookieOptions().secure).toBe(false);
   });
 });

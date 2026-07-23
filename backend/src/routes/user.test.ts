@@ -17,16 +17,46 @@ const {
   getUserApiKeysMock,
   setUserApiKeyMock,
   deleteUserApiKeyMock,
-} = vi.hoisted(() => ({
-  validateSupabaseTokenMock: vi.fn(),
-  validateLocalTokenMock: vi.fn(),
-  validateEntraTokenMock: vi.fn(),
-  upsertUserProfileMock: vi.fn(),
-  createServerSupabaseMock: vi.fn(),
-  getUserApiKeysMock: vi.fn(),
-  setUserApiKeyMock: vi.fn(),
-  deleteUserApiKeyMock: vi.fn(),
-}));
+  deleteUserAccountDataMock,
+  listUserMcpConnectorsMock,
+  getUserMcpConnectorMock,
+  createUserMcpConnectorMock,
+  updateUserMcpConnectorMock,
+  deleteUserMcpConnectorMock,
+  startUserMcpConnectorOAuthMock,
+  completeUserMcpConnectorOAuthMock,
+  refreshUserMcpConnectorToolsMock,
+  setUserMcpToolEnabledMock,
+  FakeMcpOAuthRequiredError,
+} = vi.hoisted(() => {
+  // Mirrors lib/mcp/oauth's McpOAuthRequiredError closely enough for the
+  // route's instanceof check (the route imports the class from the SAME
+  // mocked module, so instanceof matches this fake, not the real one).
+  class FakeMcpOAuthRequiredError extends Error {
+    code = "oauth_required";
+  }
+  return {
+    validateSupabaseTokenMock: vi.fn(),
+    validateLocalTokenMock: vi.fn(),
+    validateEntraTokenMock: vi.fn(),
+    upsertUserProfileMock: vi.fn(),
+    createServerSupabaseMock: vi.fn(),
+    getUserApiKeysMock: vi.fn(),
+    setUserApiKeyMock: vi.fn(),
+    deleteUserApiKeyMock: vi.fn(),
+    deleteUserAccountDataMock: vi.fn(),
+    listUserMcpConnectorsMock: vi.fn(),
+    getUserMcpConnectorMock: vi.fn(),
+    createUserMcpConnectorMock: vi.fn(),
+    updateUserMcpConnectorMock: vi.fn(),
+    deleteUserMcpConnectorMock: vi.fn(),
+    startUserMcpConnectorOAuthMock: vi.fn(),
+    completeUserMcpConnectorOAuthMock: vi.fn(),
+    refreshUserMcpConnectorToolsMock: vi.fn(),
+    setUserMcpToolEnabledMock: vi.fn(),
+    FakeMcpOAuthRequiredError,
+  };
+});
 
 vi.mock("../lib/auth/providers/supabase.js", () => ({
   validateSupabaseToken: validateSupabaseTokenMock,
@@ -47,6 +77,25 @@ vi.mock("../lib/userApiKeys", () => ({
   getUserApiKeys: getUserApiKeysMock,
   setUserApiKey: setUserApiKeyMock,
   deleteUserApiKey: deleteUserApiKeyMock,
+}));
+// Partial mock: DELETE /account delegates its cascade (including storage
+// cleanup) to deleteUserAccountData; the other cleanup helpers stay real
+// for the per-resource DELETE routes.
+vi.mock(import("../lib/userDataCleanup"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  deleteUserAccountData: deleteUserAccountDataMock,
+}));
+vi.mock("../lib/mcpConnectors", () => ({
+  listUserMcpConnectors: listUserMcpConnectorsMock,
+  getUserMcpConnector: getUserMcpConnectorMock,
+  createUserMcpConnector: createUserMcpConnectorMock,
+  updateUserMcpConnector: updateUserMcpConnectorMock,
+  deleteUserMcpConnector: deleteUserMcpConnectorMock,
+  startUserMcpConnectorOAuth: startUserMcpConnectorOAuthMock,
+  completeUserMcpConnectorOAuth: completeUserMcpConnectorOAuthMock,
+  refreshUserMcpConnectorTools: refreshUserMcpConnectorToolsMock,
+  setUserMcpToolEnabled: setUserMcpToolEnabledMock,
+  McpOAuthRequiredError: FakeMcpOAuthRequiredError,
 }));
 
 import { makeApp } from "../test/helpers/buildTestApp";
@@ -108,6 +157,8 @@ beforeEach(() => {
   setUserApiKeyMock.mockReset();
   setUserApiKeyMock.mockResolvedValue(undefined);
   deleteUserApiKeyMock.mockReset();
+  deleteUserAccountDataMock.mockReset();
+  deleteUserAccountDataMock.mockResolvedValue(undefined);
   deleteUserApiKeyMock.mockResolvedValue(undefined);
 });
 
@@ -362,11 +413,9 @@ describe("GET /api/user/profile — wiring and shape", () => {
     expect(res.body.global_api_keys).toEqual({
       claude: true,
       gemini: false,
-      openai: true,
-      // openrouter / courtlistener added by upstream 44e868e; neither
-      // env var is set in this test, so both resolve to false.
       openrouter: false,
       courtlistener: false,
+      openai: true,
       azureOpenai: true,
     });
     const bodyStr = JSON.stringify(res.body);
@@ -802,65 +851,27 @@ describe("DELETE /api/user/account", () => {
     expect(createServerSupabaseMock).toHaveBeenCalledTimes(1);
   });
 
-  // The inline FK-safe cascade the older tests asserted on has moved into
-  // lib/userDataCleanup's deleteUserAccountData (sync-log 3a10943). That
-  // helper uses .in()/.filter() and parallel deletes the makeDb() fake
-  // above can't model, so account-deletion tests use this richer fake. It
-  // records every .delete() target table, lets a specific table's delete
-  // fail, and exposes the db.auth.admin.deleteUser the route now calls in
-  // supabase mode.
-  function makeAccountDb(opts: {
-    deleteError?: { table: string; message: string };
-    authDeleteError?: { message: string } | null;
-  } = {}) {
-    const deletes: string[] = [];
-    const authDeleteUser = vi.fn(async () => ({
-      error: opts.authDeleteError ?? null,
-    }));
-    const db = {
-      from: vi.fn((table: string) => {
-        const b: Record<string, unknown> = {};
-        let op: "select" | "delete" | "update" = "select";
-        b.select = () => {
-          op = "select";
-          return b;
-        };
-        b.update = () => {
-          op = "update";
-          return b;
-        };
-        b.delete = () => {
-          op = "delete";
-          return b;
-        };
-        const resolve = () => {
-          if (op === "delete") {
-            if (opts.deleteError && opts.deleteError.table === table) {
-              return Promise.resolve({
-                data: null,
-                error: { message: opts.deleteError.message },
-              });
-            }
-            deletes.push(table);
-            return Promise.resolve({ data: null, error: null });
-          }
-          // selects (and the rare merge update) return an empty result set,
-          // so the cleanup helper has no ids/rows to fan out to.
-          return Promise.resolve({ data: [], error: null });
-        };
-        // Every terminator the helper awaits resolves to a result.
-        b.eq = () => resolve();
-        b.in = () => resolve();
-        b.filter = () => resolve();
-        return b;
-      }),
-      auth: { admin: { deleteUser: authDeleteUser } },
+  // Dev's cascade (table rows + storage objects) lives in
+  // lib/userDataCleanup.deleteUserAccountData (upstream 3a10943); the
+  // route then removes the identity-adjacent tables it still owns and,
+  // in supabase mode, the auth user. These tests cover the route's
+  // orchestration; the cascade internals belong to userDataCleanup.
+
+  function withAuthAdmin(
+    db: Record<string, unknown>,
+    result: { error: { message: string } | null } = { error: null },
+  ) {
+    (db as { auth?: unknown }).auth = {
+      admin: { deleteUser: vi.fn(() => Promise.resolve(result)) },
     };
-    return { db, deletes, authDeleteUser };
+    return db;
   }
 
-  it("cascades through deleteUserAccountData, removes the identity tables, then 204s", async () => {
-    const { db, deletes, authDeleteUser } = makeAccountDb();
+  it("runs the cascade, deletes identity tables, deletes the auth user, then 204s", async () => {
+    const { db, calls } = makeDb({
+      deleteResults: Array(2).fill({ error: null }),
+    });
+    withAuthAdmin(db);
     createServerSupabaseMock.mockReturnValue(db);
 
     const res = await request(makeApp())
@@ -868,58 +879,28 @@ describe("DELETE /api/user/account", () => {
       .set("Authorization", "Bearer ok");
 
     expect(res.status).toBe(204);
-    // The route deletes the identity-adjacent tables itself after the
-    // cleanup helper runs, then removes the auth user (supabase mode).
-    expect(deletes).toContain("user_api_keys");
-    expect(deletes).toContain("user_profiles");
-    expect(authDeleteUser).toHaveBeenCalledWith("user-1");
-  });
-
-  it("returns 500 with the table name when an identity-table delete fails", async () => {
-    // The route's own loop over [user_api_keys, user_profiles] still emits
-    // the "Failed to delete user data from <table>" message.
-    const { db, authDeleteUser } = makeAccountDb({
-      deleteError: { table: "user_profiles", message: "deadlock" },
-    });
-    createServerSupabaseMock.mockReturnValue(db);
-
-    const res = await request(makeApp())
-      .delete("/api/user/account")
-      .set("Authorization", "Bearer ok");
-
-    expect(res.status).toBe(500);
-    expect(res.body.detail).toBe(
-      "Failed to delete user data from user_profiles: deadlock",
+    expect(deleteUserAccountDataMock).toHaveBeenCalledWith(
+      db,
+      "user-1",
+      "caller@example.com",
     );
-    // Bailed before removing the auth identity.
-    expect(authDeleteUser).not.toHaveBeenCalled();
+    const tablesInOrder = calls
+      .filter((c) => c.type === "from")
+      .map((c) => c.table);
+    expect(tablesInOrder).toEqual(["user_api_keys", "user_profiles"]);
+    expect(
+      (db as { auth: { admin: { deleteUser: ReturnType<typeof vi.fn> } } })
+        .auth.admin.deleteUser,
+    ).toHaveBeenCalledWith("user-1");
   });
 
-  it("returns 500 when a delete inside the account-data cleanup fails", async () => {
-    // workflow_shares cleanup now lives inside deleteUserAccountData, which
-    // surfaces failures via the generic "Failed to delete account data" context.
-    const { db, authDeleteUser } = makeAccountDb({
-      deleteError: { table: "workflow_shares", message: "permission denied" },
-    });
-    createServerSupabaseMock.mockReturnValue(db);
-
-    const res = await request(makeApp())
-      .delete("/api/user/account")
-      .set("Authorization", "Bearer ok");
-
-    expect(res.status).toBe(500);
-    expect(res.body.detail).toBe(
-      "Failed to delete account data: permission denied",
-    );
-    expect(authDeleteUser).not.toHaveBeenCalled();
-  });
-
-  it("skips the email-based workflow_shares cleanup when the principal has no email claim", async () => {
+  it("lowercases the principal email before handing it to the cascade", async () => {
     validateSupabaseTokenMock.mockResolvedValueOnce({
       ok: true,
-      principal: { ...callerPrincipal, email: "" },
+      principal: { ...callerPrincipal, email: "Caller@Example.COM" },
     });
-    const { db, deletes } = makeAccountDb();
+    const { db } = makeDb({ deleteResults: Array(2).fill({ error: null }) });
+    withAuthAdmin(db);
     createServerSupabaseMock.mockReturnValue(db);
 
     const res = await request(makeApp())
@@ -927,10 +908,193 @@ describe("DELETE /api/user/account", () => {
       .set("Authorization", "Bearer ok");
 
     expect(res.status).toBe(204);
-    // workflow_shares is still cleared once by shared_by_user_id, but the
-    // second, email-keyed delete (shared_with_email) is skipped — so the
-    // table is touched exactly once rather than twice.
-    const shareDeletes = deletes.filter((t) => t === "workflow_shares");
-    expect(shareDeletes).toHaveLength(1);
+    expect(deleteUserAccountDataMock).toHaveBeenCalledWith(
+      db,
+      "user-1",
+      "caller@example.com",
+    );
+  });
+
+  it("returns 500 with the thrown message when the cascade fails, and touches no identity tables", async () => {
+    deleteUserAccountDataMock.mockRejectedValueOnce(
+      new Error("Failed to delete user data from chats: deadlock"),
+    );
+    const { db, calls } = makeDb({});
+    withAuthAdmin(db);
+    createServerSupabaseMock.mockReturnValue(db);
+
+    const res = await request(makeApp())
+      .delete("/api/user/account")
+      .set("Authorization", "Bearer ok");
+
+    expect(res.status).toBe(500);
+    expect(res.body.detail).toBe(
+      "Failed to delete user data from chats: deadlock",
+    );
+    expect(calls.filter((c) => c.type === "from")).toEqual([]);
+  });
+
+  it("returns 500 naming the identity table when its delete fails, and never reaches the auth user", async () => {
+    const { db } = makeDb({
+      deleteResults: [{ error: { message: "permission denied" } }],
+    });
+    withAuthAdmin(db);
+    createServerSupabaseMock.mockReturnValue(db);
+
+    const res = await request(makeApp())
+      .delete("/api/user/account")
+      .set("Authorization", "Bearer ok");
+
+    expect(res.status).toBe(500);
+    expect(res.body.detail).toBe(
+      "Failed to delete user data from user_api_keys: permission denied",
+    );
+    expect(
+      (db as { auth: { admin: { deleteUser: ReturnType<typeof vi.fn> } } })
+        .auth.admin.deleteUser,
+    ).not.toHaveBeenCalled();
+  });
+});
+
+// ── MCP connector endpoints (new in 1.0.10) ──────────────────────────────
+
+describe("MCP connector routes", () => {
+  beforeEach(() => {
+    validateSupabaseTokenMock.mockResolvedValue({
+      ok: true,
+      principal: callerPrincipal,
+    });
+    createServerSupabaseMock.mockReturnValue({});
+    listUserMcpConnectorsMock.mockReset();
+    createUserMcpConnectorMock.mockReset();
+    startUserMcpConnectorOAuthMock.mockReset();
+    completeUserMcpConnectorOAuthMock.mockReset();
+    refreshUserMcpConnectorToolsMock.mockReset();
+  });
+
+  it("GET /api/user/mcp-connectors requires auth and returns the list", async () => {
+    const unauth = await request(makeApp()).get("/api/user/mcp-connectors");
+    expect(unauth.status).toBe(401);
+
+    listUserMcpConnectorsMock.mockResolvedValueOnce([
+      { id: "conn-1", name: "GitHub" },
+    ]);
+    const res = await request(makeApp())
+      .get("/api/user/mcp-connectors")
+      .set("Authorization", "Bearer ok");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([{ id: "conn-1", name: "GitHub" }]);
+    expect(listUserMcpConnectorsMock).toHaveBeenCalledWith(
+      "user-1",
+      expect.anything(),
+      { includeTools: false },
+    );
+  });
+
+  it("POST /api/user/mcp-connectors creates and 201s", async () => {
+    createUserMcpConnectorMock.mockResolvedValueOnce({ id: "conn-new" });
+
+    const res = await request(makeApp())
+      .post("/api/user/mcp-connectors")
+      .set("Authorization", "Bearer ok")
+      .send({ name: "GH", serverUrl: "https://mcp.example.com", bearerToken: "t" });
+
+    expect(res.status).toBe(201);
+    expect(createUserMcpConnectorMock).toHaveBeenCalledWith(
+      "user-1",
+      { name: "GH", serverUrl: "https://mcp.example.com", bearerToken: "t", headers: undefined },
+      expect.anything(),
+    );
+  });
+
+  it("POST create surfaces the missing-encryption-key error as a 400 detail (image-only-upgrade landmine)", async () => {
+    createUserMcpConnectorMock.mockRejectedValueOnce(
+      new Error(
+        "MCP connectors encryption secret (mcp-connectors-encryption-key) is not configured.",
+      ),
+    );
+
+    const res = await request(makeApp())
+      .post("/api/user/mcp-connectors")
+      .set("Authorization", "Bearer ok")
+      .send({ name: "GH", serverUrl: "https://mcp.example.com" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.detail).toMatch(/mcp-connectors-encryption-key/);
+  });
+
+  it("oauth/start builds the redirect_uri WITH the /api prefix (regression: 93bc48b)", async () => {
+    startUserMcpConnectorOAuthMock.mockResolvedValueOnce({
+      authorizationUrl: "https://provider/authorize",
+    });
+
+    const res = await request(makeApp())
+      .post("/api/user/mcp-connectors/conn-1/oauth/start")
+      .set("Authorization", "Bearer ok")
+      .set("X-Forwarded-Proto", "https");
+
+    expect(res.status).toBe(200);
+    const redirectUri = startUserMcpConnectorOAuthMock.mock.calls[0][2] as string;
+    // Without /api the provider's redirect misses the API router, falls
+    // through to the SPA catch-all, and bounces the popup to /login.
+    expect(redirectUri).toMatch(/\/api\/user\/mcp-connectors\/oauth\/callback$/);
+  });
+
+  it("oauth/callback success renders the popup with COOP unsafe-none so window.opener survives (regression: 38224fc)", async () => {
+    completeUserMcpConnectorOAuthMock.mockResolvedValueOnce({
+      connectorId: "conn-1",
+    });
+
+    const res = await request(makeApp()).get(
+      "/api/user/mcp-connectors/oauth/callback?state=st&code=co",
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/text\/html/);
+    // Helmet's global same-origin COOP would sever window.opener and the
+    // parent would only ever see "OAuth authorization window was closed".
+    expect(res.headers["cross-origin-opener-policy"]).toBe("unsafe-none");
+    expect(res.headers["content-security-policy"]).toContain("nonce-");
+    expect(res.text).toContain("mcp_oauth_result");
+    expect(res.text).toContain("conn-1");
+  });
+
+  it("oauth/callback failure still 400s as an opener-preserving HTML popup", async () => {
+    const res = await request(makeApp()).get(
+      "/api/user/mcp-connectors/oauth/callback?error=access_denied",
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.headers["cross-origin-opener-policy"]).toBe("unsafe-none");
+    expect(res.text).toContain("mcp_oauth_result");
+    expect(res.text).toContain("access_denied");
+  });
+
+  it("refresh-tools maps McpOAuthRequiredError to 428 + code — NOT 401 (would trigger a spurious logout)", async () => {
+    refreshUserMcpConnectorToolsMock.mockRejectedValueOnce(
+      new FakeMcpOAuthRequiredError("Provider requires OAuth"),
+    );
+
+    const res = await request(makeApp())
+      .post("/api/user/mcp-connectors/conn-1/refresh-tools")
+      .set("Authorization", "Bearer ok");
+
+    expect(res.status).toBe(428);
+    expect(res.body.code).toBe("oauth_required");
+    expect(res.body.detail).toMatch(/requires OAuth/);
+  });
+
+  it("refresh-tools maps other failures to 400", async () => {
+    refreshUserMcpConnectorToolsMock.mockRejectedValueOnce(
+      new Error("connection refused"),
+    );
+
+    const res = await request(makeApp())
+      .post("/api/user/mcp-connectors/conn-1/refresh-tools")
+      .set("Authorization", "Bearer ok");
+
+    expect(res.status).toBe(400);
+    expect(res.body.detail).toBe("connection refused");
   });
 });

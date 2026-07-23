@@ -3,13 +3,12 @@
 // columns once the encrypted rows are in. Idempotent — re-running sees
 // no rows to migrate.
 //
-// Trigger: `npm run migrate:user-api-keys` (or :dev). Run AFTER
+// Trigger: `pnpm migrate:user-api-keys` (or :dev). Run AFTER
 // `0006_user_api_keys.sql` has been applied; required BEFORE
 // `0007_drop_legacy_provider_keys.sql` lands.
 //
 // See `backend/migrations/UPSTREAM_SYNC_LOG.md` (ba6f771 entry) for the
-// surrounding sequence and `notes/upstream-sync/mikeOssOrig-ba6f771.md`
-// in MikeMigrate for full migration narrative.
+// surrounding sequence.
 
 import { createServerSupabase } from "../lib/supabase";
 import { setUserApiKey } from "../lib/userApiKeys";

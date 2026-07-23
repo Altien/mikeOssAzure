@@ -1,8 +1,7 @@
 // Resolves a user's Entra group memberships, with a Graph fallback for
 // the overage case where Entra has dropped the inline `groups` claim
 // from the id_token because the user is in too many groups to fit
-// (size budget, not strictly the documented 200-count limit — see
-// gap #6 in docs/issues/azure-migration/036-marketplace-install-gaps.md).
+// (size budget, not strictly the documented 200-count limit).
 //
 // Decision sequence:
 //   1. If `claims.groups` is a non-empty array → return as-is.
@@ -17,8 +16,7 @@
 //
 // This is the additive Graph-fallback path. The existing inline-claim
 // path stays intact — most users don't hit overage and the inline
-// claim is faster (no Graph hop). Per the no-strip-redundant-code
-// principle, both paths coexist. See 036a Phase 7 (B4 reinterpreted).
+// claim is faster (no Graph hop), so both paths coexist.
 
 type Claims = Record<string, unknown>;
 

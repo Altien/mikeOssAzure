@@ -23,7 +23,7 @@ const ARM_BASE = "https://management.azure.com";
 const ARM_SCOPE = "https://management.azure.com/.default";
 
 // Built-in role: Key Vault Secrets Officer. Identical id everywhere.
-const KV_SECRETS_OFFICER_ID = "b86a8fe4-44ce-4948-aee5-eccb2c155cd7";
+const KV_SECRETS_OFFICER_ID = "b86a8fe4-44ce-4948-aee5-eccb2c155cd7"; // gitleaks:allow — public Azure role ID
 
 interface RoleAssignment {
     name?: string;

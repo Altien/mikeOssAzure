@@ -765,7 +765,12 @@ userRouter.post(
         const userId = res.locals.userId as string;
         const db = createServerSupabase();
         try {
-            const redirectUri = `${backendPublicUrl(req)}/user/mcp-connectors/oauth/callback`;
+            // Must include the /api prefix: this router is mounted at
+            // /api/user (index.ts), so the callback lives at
+            // /api/user/mcp-connectors/oauth/callback. Without /api the
+            // provider redirects to a path that misses the API router, falls
+            // through to the SPA catch-all, and bounces to /login.
+            const redirectUri = `${backendPublicUrl(req)}/api/user/mcp-connectors/oauth/callback`;
             const result = await startUserMcpConnectorOAuth(
                 userId,
                 req.params.connectorId,
@@ -799,6 +804,12 @@ userRouter.get("/mcp-connectors/oauth/callback", async (req, res) => {
             throw new Error("OAuth callback is missing state or code.");
         const result = await completeUserMcpConnectorOAuth(state, code, db);
         res.set("Content-Security-Policy", mcpOAuthPopupCsp(nonce))
+            // Override helmet's global COOP (same-origin): this popup MUST keep
+            // window.opener to postMessage the result back to the app. When the
+            // frontend and backend are different origins (e.g. dev :3000/:3001),
+            // same-origin COOP severs the opener and the parent only sees the
+            // popup close ("OAuth authorization window was closed").
+            .set("Cross-Origin-Opener-Policy", "unsafe-none")
             .type("html")
             .send(
                 mcpOAuthPopupHtml(
@@ -825,6 +836,9 @@ userRouter.get("/mcp-connectors/oauth/callback", async (req, res) => {
         });
         res.status(400)
             .set("Content-Security-Policy", mcpOAuthPopupCsp(nonce))
+            // Same reason as the success branch: the failure popup also
+            // postMessages its result to the opener.
+            .set("Cross-Origin-Opener-Policy", "unsafe-none")
             .type("html")
             .send(mcpOAuthPopupHtml({ success: false, detail }, nonce));
     }
@@ -852,7 +866,13 @@ userRouter.post(
                 error: detail,
             });
             if (err instanceof McpOAuthRequiredError) {
-                return void res.status(401).json({
+                // 428 (not 401): this is the MCP *provider* needing OAuth, not
+                // the user's Mike session expiring. A 401 here would be caught
+                // by the frontend's bounceIfUnauthorized and force a spurious
+                // logout, swallowing the `oauth_required` code the connectors
+                // page needs to launch the OAuth popup. See docs/tests/
+                // 07-mcp-connectors.md and matches the MFA pattern (403 + code).
+                return void res.status(428).json({
                     code: err.code,
                     detail,
                 });

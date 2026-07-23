@@ -26,7 +26,7 @@
   identity (e.g. a CI service principal that bootstrapped the deploy).
 
 .EXAMPLE
-  ./revoke-installer-access.ps1 -KeyVaultName kv-mike-dev
+  ./revoke-installer-access.ps1 -KeyVaultName kv-mike-example
 #>
 
 [CmdletBinding()]

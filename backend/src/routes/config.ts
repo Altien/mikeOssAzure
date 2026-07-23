@@ -1,13 +1,14 @@
 // Public runtime-config endpoint.
 //
-// Returns the values the browser bundle needs at startup that today are
-// baked in via NEXT_PUBLIC_* env vars. Surfacing them through this
-// endpoint lets the same Docker image ship to any tenant: the bundle
-// is identical, and only the server's env / Key Vault values vary.
+// Returns the values the browser bundle needs at startup. Surfacing them
+// through this endpoint lets the same Docker image ship to any tenant:
+// the bundle is identical, and only the server's env / Key Vault values
+// vary.
 //
 // Unauthenticated by design — none of these values are secrets:
 //   - authProvider is the deployment-mode toggle, observable from the
 //     login UI flow anyway.
+//   - demoMode controls a public login-page notice.
 //   - entra.tenantId / entra.clientId end up in OAuth URLs the browser
 //     constructs and submits to login.microsoftonline.com.
 //
@@ -27,6 +28,7 @@ configRouter.get("/", (_req, res) => {
     res.set("Cache-Control", "public, max-age=60");
     res.json({
         authProvider,
+        demoMode: process.env.DEMO_MODE === "true",
         entra: {
             tenantId: process.env.ENTRA_TENANT_ID ?? "",
             clientId:

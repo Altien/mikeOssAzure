@@ -21,6 +21,7 @@ import { llmRouter } from "./routes/llm";
 import { diagnosticsRouter } from "./routes/diagnostics";
 import { installRouter } from "./routes/install";
 import { configRouter } from "./routes/config";
+import { caseLawRouter } from "./routes/caseLaw";
 import { diagRouter } from "./routes/diag";
 
 // ── Rate-limit configuration (from upstream ba6f771) ───────────────────────
@@ -58,6 +59,11 @@ function makeLimiter(options: {
   });
 }
 
+// Upstream divergence (sync-log: 3a10943): upstream also added a
+// jsonLimitForPath() indirection around express.json; it returns a
+// constant "50mb" today, which is exactly dev's existing
+// express.json({ limit: "50mb" }) below — not adopted.
+
 /**
  * Build the Express app. Pure construction — no `app.listen()`. Tests
  * mount the returned app via `supertest` without binding a port; the
@@ -94,6 +100,18 @@ export function buildApp(): express.Express {
     message: "Too many upload requests. Please try again later.",
   });
 
+  const exportLimiter = makeLimiter({
+    windowMs: hours(envInt("RATE_LIMIT_EXPORT_WINDOW_HOURS", 1)),
+    max: envInt("RATE_LIMIT_EXPORT_MAX", 10),
+    message: "Too many export requests. Please try again later.",
+  });
+
+  const dataDeleteLimiter = makeLimiter({
+    windowMs: hours(envInt("RATE_LIMIT_DATA_DELETE_WINDOW_HOURS", 1)),
+    max: envInt("RATE_LIMIT_DATA_DELETE_MAX", 20),
+    message: "Too many data deletion requests. Please try again later.",
+  });
+
   app.disable("x-powered-by");
 
   // Container Apps' ingress terminates TLS and rewrites the request to the
@@ -102,12 +120,24 @@ export function buildApp(): express.Express {
   // `req.protocol` reports "http" inside the container even when the user's
   // browser is on https://, which breaks request-derived OAuth redirect_uri
   // construction in routes/auth.ts (Microsoft rejects the http:// form).
-  app.set("trust proxy", true);
+  //
+  // Use the exact hop count (CA ingress = 1 proxy), NOT `true`. `true` trusts
+  // the whole X-Forwarded-For chain, so a client can spoof XFF to dodge the
+  // IP-based rate limiters below — express-rate-limit@8 rejects it with
+  // ERR_ERL_PERMISSIVE_TRUST_PROXY. `1` still honors X-Forwarded-Proto for the
+  // OAuth redirect_uri and uses the ingress-stamped client IP for rate limiting.
+  app.set("trust proxy", 1);
 
   // helmet (security headers) — taken from upstream ba6f771; CSP and COEP
   // stay disabled because dev serves a static-exported Next.js bundle from
   // the same origin and we don't want to re-derive the policy on every
   // frontend change. HSTS only in production.
+  // Upstream divergence (sync-log: 44e868e): upstream switched to a strict
+  // CSP (default-src/base-uri/frame-ancestors 'none'). That works for
+  // upstream's API-only backend, but dev's backend serves the SPA shell +
+  // assets from the same origin — a 'none' default-src would block every
+  // script/style in the served frontend. Do not adopt without authoring a
+  // real policy for the bundled frontend.
   app.use(
     helmet({
       contentSecurityPolicy: false,
@@ -201,7 +231,22 @@ export function buildApp(): express.Express {
   app.post("/api/chat/:chatId/generate-title", chatCreateLimiter);
   app.post("/api/single-documents", uploadLimiter);
   app.post("/api/single-documents/:documentId/versions", uploadLimiter);
+  app.put(
+    "/api/single-documents/:documentId/versions/:versionId/file",
+    uploadLimiter,
+  );
   app.post("/api/projects/:projectId/documents", uploadLimiter);
+  // Export / data-deletion limiters (upstream 3a10943). Dev mounts the user
+  // router at both /api/user and /api/users, so limit both aliases.
+  for (const userBase of ["/api/user", "/api/users"]) {
+    app.get(`${userBase}/export`, exportLimiter);
+    app.get(`${userBase}/chats/export`, exportLimiter);
+    app.get(`${userBase}/tabular-reviews/export`, exportLimiter);
+    app.delete(`${userBase}/account`, dataDeleteLimiter);
+    app.delete(`${userBase}/chats`, dataDeleteLimiter);
+    app.delete(`${userBase}/projects`, dataDeleteLimiter);
+    app.delete(`${userBase}/tabular-reviews`, dataDeleteLimiter);
+  }
 
   app.use("/api/chat", chatRouter);
   app.use("/api/projects", projectsRouter);
@@ -212,17 +257,14 @@ export function buildApp(): express.Express {
   app.use("/api/user", userRouter);
   app.use("/api/users", userRouter);
   app.use("/api/download", downloadsRouter);
+  app.use("/api/case-law", caseLawRouter);
   app.use("/api/auth", authRouter);
   app.use("/api/llm", llmRouter);
   app.use("/api/admin/diagnostics", diagnosticsRouter);
   app.use("/install", installRouter);
   app.use("/config", configRouter);
-  // /diag - operator config + auth diagnostic. Mounted at the top level so
-  // it sits outside the SPA fallback further down. /diag itself is a
-  // server-rendered HTML shell with no auth requirement; /diag/data is a
-  // JSON endpoint that optionally folds in the JWT principal if one is
-  // presented but works without auth too. The page is most useful BEFORE
-  // Entra is wired up, so it must NOT require sign-in.
+  // Keep the OSS operator diagnostic outside the SPA fallback so it remains
+  // available while authentication is being configured.
   app.use("/diag", diagRouter);
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
@@ -231,7 +273,7 @@ export function buildApp(): express.Express {
   // In production the Dockerfile copies the Next.js static export to
   // /app/public. When running from `dist/index.js`, __dirname is
   // /app/dist, so the public dir is one level up. The directory is
-  // optional — local backend dev (npm run dev) doesn't have it, and the
+  // optional — local backend development doesn't have it, and the
   // frontend's own dev server at :3000 calls this backend over CORS.
   //
   // Order: API routers above handle every `/api/*` request. Anything

@@ -10,6 +10,7 @@ import { makeApp } from "../test/helpers/buildTestApp";
 
 const TOUCHED_ENV = [
   "AUTH_PROVIDER",
+  "DEMO_MODE",
   "ENTRA_TENANT_ID",
   "ENTRA_CLIENT_ID",
   "ENTRA_FRONTEND_CLIENT_ID",
@@ -93,6 +94,22 @@ describe("GET /config — authProvider field", () => {
   });
 });
 
+describe("GET /config — demoMode field", () => {
+  it("defaults to false when DEMO_MODE is unset", async () => {
+    const res = await request(makeApp()).get("/config");
+
+    expect(res.body.demoMode).toBe(false);
+  });
+
+  it("returns true only when DEMO_MODE=true", async () => {
+    process.env.DEMO_MODE = "true";
+    expect((await request(makeApp()).get("/config")).body.demoMode).toBe(true);
+
+    process.env.DEMO_MODE = "TRUE";
+    expect((await request(makeApp()).get("/config")).body.demoMode).toBe(false);
+  });
+});
+
 describe("GET /config — entra block", () => {
   it("surfaces ENTRA_TENANT_ID and ENTRA_CLIENT_ID when both are set", async () => {
     process.env.AUTH_PROVIDER = "entra";
@@ -123,7 +140,7 @@ describe("GET /config — entra block", () => {
 });
 
 describe("GET /config — secret-leak guard", () => {
-  it("does NOT expose any of the server-only secrets — the body must contain only authProvider + entra.{tenantId,clientId}", async () => {
+  it("does NOT expose any of the server-only secrets — the body contains only documented public runtime config", async () => {
     process.env.AUTH_PROVIDER = "entra";
     process.env.ENTRA_TENANT_ID = "tenant-guid";
     process.env.ENTRA_CLIENT_ID = "client-guid";
@@ -140,7 +157,11 @@ describe("GET /config — secret-leak guard", () => {
     const bodyStr = JSON.stringify(res.body);
     expect(bodyStr).not.toContain("DO_NOT_LEAK");
     // Extra defensive: only the documented keys must be present.
-    expect(Object.keys(res.body).sort()).toEqual(["authProvider", "entra"]);
+    expect(Object.keys(res.body).sort()).toEqual([
+      "authProvider",
+      "demoMode",
+      "entra",
+    ]);
     expect(Object.keys(res.body.entra).sort()).toEqual([
       "clientId",
       "tenantId",

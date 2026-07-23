@@ -281,7 +281,7 @@ describe("useDocumentVersions: refetch triggers", () => {
 
         const { result, rerender } = renderHook(
             ({ id }: { id: string | null }) => useDocumentVersions(id),
-            { initialProps: { id: "doc-1" } },
+            { initialProps: { id: "doc-1" as string | null } },
         );
         await waitFor(() =>
             expect(result.current.versions.length).toBeGreaterThan(0),
