@@ -61,6 +61,8 @@ export default function TabularReviewsPage() {
     const [projects, setProjects] = useState<Project[]>([]);
     const [loading, setLoading] = useState(true);
     const [creating, setCreating] = useState(false);
+    const [page, setPage] = useState(0);
+    const [hasMore, setHasMore] = useState(true);
     const [newTROpen, setNewTROpen] = useState(false);
     const [activeScope, setActiveScope] = useState<ReviewScope>("all");
     const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -75,16 +77,23 @@ export default function TabularReviewsPage() {
     const { user } = useAuth();
 
     useEffect(() => {
-        Promise.all([
-            listTabularReviews().catch(() => []),
-            listProjects().catch(() => []),
-        ])
-            .then(([r, p]) => {
-                setReviews(r);
+        const loadPage = async () => {
+            setLoading(true);
+            try {
+                const [r, p] = await Promise.all([
+                    listTabularReviews(undefined, { limit: 20, offset: page * 20 }).catch(() => []),
+                    listProjects().catch(() => []),
+                ]);
+                setReviews((prev) => (page === 0 ? r : [...prev, ...r]));
+                setHasMore(r.length === 20);
                 setProjects(p);
-            })
-            .finally(() => setLoading(false));
-    }, []);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        void loadPage();
+    }, [page]);
 
     useEffect(() => {
         setSelectedIds([]);
