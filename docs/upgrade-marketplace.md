@@ -16,6 +16,8 @@ Prerequisites:
 - Azure CLI signed into the subscription containing the Mike installation.
 - Contributor (or equivalent) on the Mike resource group.
 - PowerShell 7.
+- An existing Marketplace backend on version `1.0.9` or `1.0.10`. The script
+  stops before changing Azure if it finds any other image or version.
 
 The command:
 
@@ -29,8 +31,11 @@ The command:
 6. Verifies backend health and the `Application Insights initialised` boot log.
 
 It never redeploys the complete Marketplace template or rewrites an existing
-durable customer secret. If post-promotion verification fails, it restores the
-previous backend image automatically.
+durable customer secret. If the upgrade fails after changing an image, it
+restores both the previous backend image and the previous migration-job image.
+The additive, backward-compatible database migrations and telemetry resources
+remain in place; a full database rollback would use Azure PostgreSQL
+point-in-time restore.
 
 ## Initial installer recovery
 

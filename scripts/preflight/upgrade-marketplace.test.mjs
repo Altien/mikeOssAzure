@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+    existsSync,
+    mkdtempSync,
+    readFileSync,
+    rmSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,8 +16,6 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const upgradeScript = join(repoRoot, "scripts/install/upgrade-marketplace.ps1");
 const workDir = mkdtempSync(join(tmpdir(), "mike-upgrade-contract-"));
 const fakeAz = join(workDir, "fake-az.ps1");
-const callLog = join(workDir, "az-calls.jsonl");
-const templateCapture = join(workDir, "telemetry-template.json");
 
 const fakeBackend = {
     location: "uksouth",
@@ -54,11 +58,17 @@ if ($command -match '^account show') {
   return
 }
 if ($command -match '^containerapp show') {
-  '${JSON.stringify(fakeBackend).replaceAll("'", "''")}'
+  $backend = '${JSON.stringify(fakeBackend).replaceAll("'", "''")}' | ConvertFrom-Json -Depth 100
+  if ($env:MIKE_FAKE_SOURCE_IMAGE) {
+    $backend.properties.template.containers[0].image = $env:MIKE_FAKE_SOURCE_IMAGE
+  }
+  $backend | ConvertTo-Json -Depth 100 -Compress
   return
 }
 if ($command -match '^containerapp job show') {
-  '{"name":"db-migrate"}'
+  $jobImage = if ($env:MIKE_FAKE_JOB_IMAGE) { $env:MIKE_FAKE_JOB_IMAGE } else { 'acrmikeoss.azurecr.io/backend:1.0.10' }
+  @{ name = 'db-migrate'; properties = @{ template = @{ containers = @(@{ name = 'migrate'; image = $jobImage }) } } } |
+    ConvertTo-Json -Depth 100 -Compress
   return
 }
 if ($command -match '^deployment group create') {
@@ -80,11 +90,16 @@ if ($command -match '^containerapp job start') {
   return
 }
 if ($command -match '^containerapp job execution show') {
-  '{"properties":{"status":"Succeeded"}}'
+  $status = if ($env:MIKE_FAKE_MIGRATION_STATUS) { $env:MIKE_FAKE_MIGRATION_STATUS } else { 'Succeeded' }
+  @{ properties = @{ status = $status } } | ConvertTo-Json -Compress
   return
 }
 if ($command -match '^containerapp logs show') {
-  '[telemetry] Application Insights initialised'
+  if ($env:MIKE_FAKE_TELEMETRY_READY -eq 'false') {
+    '[telemetry] disabled'
+  } else {
+    '[telemetry] Application Insights initialised'
+  }
   return
 }
 
@@ -104,7 +119,9 @@ function collectResources(value, output = []) {
     return output;
 }
 
-try {
+function runUpgrade(name, extraEnv = {}) {
+    const scenarioCallLog = join(workDir, `${name}-az-calls.jsonl`);
+    const scenarioTemplateCapture = join(workDir, `${name}-telemetry-template.json`);
     const result = spawnSync(
         "pwsh",
         [
@@ -126,11 +143,32 @@ try {
             encoding: "utf8",
             env: {
                 ...process.env,
-                MIKE_FAKE_AZ_LOG: callLog,
-                MIKE_TEMPLATE_CAPTURE: templateCapture,
+                MIKE_FAKE_AZ_LOG: scenarioCallLog,
+                MIKE_TEMPLATE_CAPTURE: scenarioTemplateCapture,
+                ...extraEnv,
             },
         },
     );
+
+    const calls = existsSync(scenarioCallLog)
+        ? readFileSync(scenarioCallLog, "utf8")
+              .trim()
+              .split(/\r?\n/)
+              .filter(Boolean)
+              .map((line) => JSON.parse(line))
+        : [];
+
+    return {
+        result,
+        calls,
+        renderedCalls: calls.map((args) => args.join(" ")),
+        templateCapture: scenarioTemplateCapture,
+    };
+}
+
+try {
+    const success = runUpgrade("success");
+    const { result } = success;
 
     if (result.status !== 0) {
         throw new Error(
@@ -138,12 +176,7 @@ try {
         );
     }
 
-    const calls = readFileSync(callLog, "utf8")
-        .trim()
-        .split(/\r?\n/)
-        .filter(Boolean)
-        .map((line) => JSON.parse(line));
-    const renderedCalls = calls.map((args) => args.join(" "));
+    const { renderedCalls } = success;
 
     const migrationStart = renderedCalls.findIndex((call) =>
         call.startsWith("containerapp job start"),
@@ -183,7 +216,7 @@ try {
         }
     }
 
-    const template = JSON.parse(readFileSync(templateCapture, "utf8"));
+    const template = JSON.parse(readFileSync(success.templateCapture, "utf8"));
     const resources = collectResources(template);
     const resourceTypes = resources.map((resource) => resource.type.toLowerCase());
     for (const required of [
@@ -209,6 +242,89 @@ try {
     console.log("[ok] upgrade provisions telemetry automatically");
     console.log("[ok] migrations finish before backend promotion");
     console.log("[ok] durable customer secrets are untouched");
+
+    const unsupported = runUpgrade("unsupported", {
+        MIKE_FAKE_SOURCE_IMAGE: "acrmikeoss.azurecr.io/backend:1.0.8",
+        MIKE_FAKE_JOB_IMAGE: "acrmikeoss.azurecr.io/backend:1.0.8",
+    });
+    if (unsupported.result.status === 0) {
+        throw new Error("Upgrade must reject unsupported starting versions.");
+    }
+    const unsupportedOutput = `${unsupported.result.stdout}\n${unsupported.result.stderr}`;
+    if (
+        !unsupportedOutput.includes("Supported starting versions: 1.0.9,") ||
+        !unsupportedOutput.includes("1.0.10. No Azure resources were changed.")
+    ) {
+        throw new Error(
+            `Unsupported-version error must list the supported starting versions.\n${unsupported.result.stdout}\n${unsupported.result.stderr}`,
+        );
+    }
+    if (
+        unsupported.renderedCalls.some(
+            (call) =>
+                call.startsWith("deployment group create") ||
+                call.startsWith("containerapp job show") ||
+                call.startsWith("containerapp update"),
+        )
+    ) {
+        throw new Error("Unsupported-version rejection must happen before any Azure mutation.");
+    }
+    console.log("[ok] unsupported starting versions stop before Azure mutation");
+
+    const verificationFailure = runUpgrade("verification-failure", {
+        MIKE_FAKE_TELEMETRY_READY: "false",
+    });
+    if (verificationFailure.result.status === 0) {
+        throw new Error("Upgrade must fail when telemetry verification fails.");
+    }
+    const rollbackBackend = verificationFailure.renderedCalls.find(
+        (call) =>
+            call.startsWith("containerapp update") &&
+            call.includes("--image acrmikeoss.azurecr.io/backend:1.0.10"),
+    );
+    const rollbackJob = verificationFailure.renderedCalls.find(
+        (call) =>
+            call.startsWith("containerapp job update") &&
+            call.includes("--image acrmikeoss.azurecr.io/backend:1.0.10"),
+    );
+    if (!rollbackBackend || !rollbackJob) {
+        throw new Error(
+            "Verification failure must restore both backend and migration-job images.",
+        );
+    }
+    const failureOutput = `${verificationFailure.result.stdout}\n${verificationFailure.result.stderr}`;
+    if (
+        !failureOutput.includes("Database migrations and additive telemetry resources are not removed automatically") ||
+        !failureOutput.includes("point-in-time restore")
+    ) {
+        throw new Error("Rollback output must state the database and telemetry boundary.");
+    }
+    console.log("[ok] verification failure restores both deployed image references");
+    console.log("[ok] rollback output states the database/telemetry boundary");
+
+    const migrationFailure = runUpgrade("migration-failure", {
+        MIKE_FAKE_MIGRATION_STATUS: "Failed",
+    });
+    if (migrationFailure.result.status === 0) {
+        throw new Error("Upgrade must fail when database migration fails.");
+    }
+    if (
+        migrationFailure.renderedCalls.some((call) =>
+            call.startsWith("containerapp update"),
+        )
+    ) {
+        throw new Error("Migration failure must not promote or roll back an unchanged backend.");
+    }
+    if (
+        !migrationFailure.renderedCalls.some(
+            (call) =>
+                call.startsWith("containerapp job update") &&
+                call.includes("--image acrmikeoss.azurecr.io/backend:1.0.10"),
+        )
+    ) {
+        throw new Error("Migration failure must restore the migration-job image.");
+    }
+    console.log("[ok] migration failure leaves backend untouched and restores the job image");
 } finally {
     rmSync(workDir, { recursive: true, force: true });
 }

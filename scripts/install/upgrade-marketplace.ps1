@@ -19,9 +19,8 @@ param(
     [Parameter(Mandatory)]
     [string]$ResourceGroup,
 
-    # Omit only when repairing an installation whose backend image has already
-    # been changed; the current image tag is then used as the target.
-    [string]$TargetVersion = "",
+    [Parameter(Mandatory)]
+    [string]$TargetVersion,
 
     [string]$BackendApp = "backend",
     [string]$MigrationJob = "db-migrate",
@@ -112,13 +111,22 @@ $keyVaultName = Get-ContainerEnvironmentValue -Container $container -Name "KEY_V
 $fqdn = [string]$backend.properties.configuration.ingress.fqdn
 $previousImage = [string]$container.image
 
-if (-not $TargetVersion) {
-    $TargetVersion = ($previousImage -split ":")[-1]
-}
 if ($TargetVersion -notmatch '^[A-Za-z0-9_.-]+$') {
     throw "TargetVersion '$TargetVersion' is not a valid container image tag."
 }
+
+$supportedSourceVersions = @("1.0.9", "1.0.10")
+$expectedImageRepository = "$PublisherRegistry/backend"
+$escapedImageRepository = [regex]::Escape($expectedImageRepository)
+if ($previousImage -notmatch "^$escapedImageRepository`:(?<tag>[A-Za-z0-9_.-]+)$") {
+    throw "Current backend image '$previousImage' is not a supported Marketplace image from '$expectedImageRepository'. Stop and contact Mike support."
+}
+$previousVersion = [string]$Matches.tag
+if ($previousVersion -notin $supportedSourceVersions) {
+    throw "Upgrade from backend version '$previousVersion' is not supported by this script. Supported starting versions: $($supportedSourceVersions -join ', '). No Azure resources were changed."
+}
 Write-Host "Target version : $TargetVersion"
+Write-Host "Current version: $previousVersion"
 
 if (-not $location -or -not $environmentName -or -not $keyVaultName) {
     throw "Could not discover location, Container Apps environment, or Key Vault from '$BackendApp'."
@@ -137,13 +145,19 @@ if (-not $identityId) {
     throw "Could not identify the backend's user-assigned managed identity."
 }
 
-Invoke-AzJson @(
+$migrationJobDefinition = Invoke-AzJson @(
     "containerapp", "job", "show",
     "--name", $MigrationJob,
     "--resource-group", $ResourceGroup,
     "--output", "json",
     "--only-show-errors"
-) | Out-Null
+)
+$migrationContainer = @($migrationJobDefinition.properties.template.containers) |
+    Select-Object -First 1
+$previousMigrationImage = [string]$migrationContainer.image
+if (-not $previousMigrationImage) {
+    throw "Migration job '$MigrationJob' has no container image to restore if the upgrade fails."
+}
 
 $workspaceName = "law-mike-$environmentSuffix"
 $appInsightsName = "appi-mike-$environmentSuffix"
@@ -203,125 +217,131 @@ $telemetryTemplate = [ordered]@{
 }
 
 $templatePath = Join-Path ([IO.Path]::GetTempPath()) "mike-telemetry-$([Guid]::NewGuid().ToString('N')).json"
+$migrationUpdateAttempted = $false
+$migrationStarted = $false
+$backendPromotionAttempted = $false
 try {
-    $telemetryTemplate |
-        ConvertTo-Json -Depth 100 |
-        Set-Content -LiteralPath $templatePath -Encoding utf8NoBOM
+    try {
+        $telemetryTemplate |
+            ConvertTo-Json -Depth 100 |
+            Set-Content -LiteralPath $templatePath -Encoding utf8NoBOM
 
-Write-Host "[1/6] Provisioning Application Insights and Log Analytics" -ForegroundColor Cyan
-    Invoke-AzJson @(
-        "deployment", "group", "create",
-        "--name", "mike-observability-upgrade",
-        "--resource-group", $ResourceGroup,
-        "--template-file", $templatePath,
-        "--parameters",
-        "location=$location",
-        "workspaceName=$workspaceName",
-        "appInsightsName=$appInsightsName",
-        "keyVaultName=$keyVaultName",
-        "--output", "json",
-        "--only-show-errors"
-    ) | Out-Null
-} finally {
-    Remove-Item -LiteralPath $templatePath -Force -ErrorAction SilentlyContinue
-}
-
-$workspace = Invoke-AzJson @(
-    "monitor", "log-analytics", "workspace", "show",
-    "--workspace-name", $workspaceName,
-    "--resource-group", $ResourceGroup,
-    "--output", "json",
-    "--only-show-errors"
-)
-$workspaceKeys = Invoke-AzJson @(
-    "monitor", "log-analytics", "workspace", "get-shared-keys",
-    "--workspace-name", $workspaceName,
-    "--resource-group", $ResourceGroup,
-    "--output", "json",
-    "--only-show-errors"
-)
-
-Write-Host "[2/6] Connecting Container Apps logs to Log Analytics" -ForegroundColor Cyan
-Invoke-AzJson @(
-    "containerapp", "env", "update",
-    "--name", $environmentName,
-    "--resource-group", $ResourceGroup,
-    "--logs-destination", "log-analytics",
-    "--logs-workspace-id", ([string]$workspace.customerId),
-    "--logs-workspace-key", ([string]$workspaceKeys.primarySharedKey),
-    "--output", "json",
-    "--only-show-errors"
-) | Out-Null
-
-$keyVaultSecretUri = "https://$keyVaultName.vault.azure.net/secrets/appinsights-connection-string"
-Write-Host "[3/6] Wiring backend telemetry through Key Vault" -ForegroundColor Cyan
-Invoke-AzJson @(
-    "containerapp", "secret", "set",
-    "--name", $BackendApp,
-    "--resource-group", $ResourceGroup,
-    "--secrets", "appinsights-cs=keyvaultref:$keyVaultSecretUri,identityref:$identityId",
-    "--output", "json",
-    "--only-show-errors"
-) | Out-Null
-
-Write-Host "[4/6] Running database migrations with $targetImage" -ForegroundColor Cyan
-Invoke-AzJson @(
-    "containerapp", "job", "update",
-    "--name", $MigrationJob,
-    "--resource-group", $ResourceGroup,
-    "--image", $targetImage,
-    "--output", "json",
-    "--only-show-errors"
-) | Out-Null
-$execution = Invoke-AzJson @(
-    "containerapp", "job", "start",
-    "--name", $MigrationJob,
-    "--resource-group", $ResourceGroup,
-    "--output", "json",
-    "--only-show-errors"
-)
-$executionName = [string]$execution.name
-if (-not $executionName) {
-    throw "Migration job did not return an execution name."
-}
-
-$deadline = (Get-Date).AddMinutes(10)
-do {
-    if ($PollIntervalSeconds -gt 0) {
-        Start-Sleep -Seconds $PollIntervalSeconds
+        Write-Host "[1/6] Provisioning Application Insights and Log Analytics" -ForegroundColor Cyan
+        Invoke-AzJson @(
+            "deployment", "group", "create",
+            "--name", "mike-observability-upgrade",
+            "--resource-group", $ResourceGroup,
+            "--template-file", $templatePath,
+            "--parameters",
+            "location=$location",
+            "workspaceName=$workspaceName",
+            "appInsightsName=$appInsightsName",
+            "keyVaultName=$keyVaultName",
+            "--output", "json",
+            "--only-show-errors"
+        ) | Out-Null
+    } finally {
+        Remove-Item -LiteralPath $templatePath -Force -ErrorAction SilentlyContinue
     }
-    $executionState = Invoke-AzJson @(
-        "containerapp", "job", "execution", "show",
-        "--name", $MigrationJob,
+
+    $workspace = Invoke-AzJson @(
+        "monitor", "log-analytics", "workspace", "show",
+        "--workspace-name", $workspaceName,
         "--resource-group", $ResourceGroup,
-        "--job-execution-name", $executionName,
         "--output", "json",
         "--only-show-errors"
     )
-    $migrationStatus = [string]$executionState.properties.status
-    Write-Host "  migration status: $migrationStatus"
-    if ($migrationStatus -eq "Succeeded") { break }
-    if ($migrationStatus -in @("Failed", "Degraded", "Stopped", "Cancelled")) {
-        throw "Migration execution '$executionName' ended with status '$migrationStatus'. Backend was not promoted."
-    }
-    if ((Get-Date) -gt $deadline) {
-        throw "Migration execution '$executionName' did not finish within 10 minutes."
-    }
-} while ($true)
+    $workspaceKeys = Invoke-AzJson @(
+        "monitor", "log-analytics", "workspace", "get-shared-keys",
+        "--workspace-name", $workspaceName,
+        "--resource-group", $ResourceGroup,
+        "--output", "json",
+        "--only-show-errors"
+    )
 
-Write-Host "[5/6] Promoting backend to $targetImage" -ForegroundColor Cyan
-Invoke-AzJson @(
-    "containerapp", "update",
-    "--name", $BackendApp,
-    "--resource-group", $ResourceGroup,
-    "--image", $targetImage,
-    "--set-env-vars", "APPLICATIONINSIGHTS_CONNECTION_STRING=secretref:appinsights-cs",
-    "--output", "json",
-    "--only-show-errors"
-) | Out-Null
+    Write-Host "[2/6] Connecting Container Apps logs to Log Analytics" -ForegroundColor Cyan
+    Invoke-AzJson @(
+        "containerapp", "env", "update",
+        "--name", $environmentName,
+        "--resource-group", $ResourceGroup,
+        "--logs-destination", "log-analytics",
+        "--logs-workspace-id", ([string]$workspace.customerId),
+        "--logs-workspace-key", ([string]$workspaceKeys.primarySharedKey),
+        "--output", "json",
+        "--only-show-errors"
+    ) | Out-Null
 
-Write-Host "[6/6] Verifying health and telemetry" -ForegroundColor Cyan
-try {
+    $keyVaultSecretUri = "https://$keyVaultName.vault.azure.net/secrets/appinsights-connection-string"
+    Write-Host "[3/6] Wiring backend telemetry through Key Vault" -ForegroundColor Cyan
+    Invoke-AzJson @(
+        "containerapp", "secret", "set",
+        "--name", $BackendApp,
+        "--resource-group", $ResourceGroup,
+        "--secrets", "appinsights-cs=keyvaultref:$keyVaultSecretUri,identityref:$identityId",
+        "--output", "json",
+        "--only-show-errors"
+    ) | Out-Null
+
+    Write-Host "[4/6] Running database migrations with $targetImage" -ForegroundColor Cyan
+    $migrationUpdateAttempted = $true
+    Invoke-AzJson @(
+        "containerapp", "job", "update",
+        "--name", $MigrationJob,
+        "--resource-group", $ResourceGroup,
+        "--image", $targetImage,
+        "--output", "json",
+        "--only-show-errors"
+    ) | Out-Null
+    $migrationStarted = $true
+    $execution = Invoke-AzJson @(
+        "containerapp", "job", "start",
+        "--name", $MigrationJob,
+        "--resource-group", $ResourceGroup,
+        "--output", "json",
+        "--only-show-errors"
+    )
+    $executionName = [string]$execution.name
+    if (-not $executionName) {
+        throw "Migration job did not return an execution name."
+    }
+
+    $deadline = (Get-Date).AddMinutes(10)
+    do {
+        if ($PollIntervalSeconds -gt 0) {
+            Start-Sleep -Seconds $PollIntervalSeconds
+        }
+        $executionState = Invoke-AzJson @(
+            "containerapp", "job", "execution", "show",
+            "--name", $MigrationJob,
+            "--resource-group", $ResourceGroup,
+            "--job-execution-name", $executionName,
+            "--output", "json",
+            "--only-show-errors"
+        )
+        $migrationStatus = [string]$executionState.properties.status
+        Write-Host "  migration status: $migrationStatus"
+        if ($migrationStatus -eq "Succeeded") { break }
+        if ($migrationStatus -in @("Failed", "Degraded", "Stopped", "Cancelled")) {
+            throw "Migration execution '$executionName' ended with status '$migrationStatus'. Backend was not promoted."
+        }
+        if ((Get-Date) -gt $deadline) {
+            throw "Migration execution '$executionName' did not finish within 10 minutes."
+        }
+    } while ($true)
+
+    Write-Host "[5/6] Promoting backend to $targetImage" -ForegroundColor Cyan
+    $backendPromotionAttempted = $true
+    Invoke-AzJson @(
+        "containerapp", "update",
+        "--name", $BackendApp,
+        "--resource-group", $ResourceGroup,
+        "--image", $targetImage,
+        "--set-env-vars", "APPLICATIONINSIGHTS_CONNECTION_STRING=secretref:appinsights-cs",
+        "--output", "json",
+        "--only-show-errors"
+    ) | Out-Null
+
+    Write-Host "[6/6] Verifying health and telemetry" -ForegroundColor Cyan
     if (-not $SkipHealthCheck) {
         $healthy = $false
         for ($attempt = 1; $attempt -le 6; $attempt++) {
@@ -361,16 +381,48 @@ try {
         throw "Backend is running but did not report Application Insights initialisation."
     }
 } catch {
-    Write-Warning "Verification failed. Restoring the previous backend image: $previousImage"
-    Invoke-AzJson @(
-        "containerapp", "update",
-        "--name", $BackendApp,
-        "--resource-group", $ResourceGroup,
-        "--image", $previousImage,
-        "--output", "json",
-        "--only-show-errors"
-    ) | Out-Null
-    throw
+    $upgradeError = $_
+    $rollbackErrors = [Collections.Generic.List[string]]::new()
+
+    if ($backendPromotionAttempted) {
+        Write-Warning "Upgrade failed. Restoring the previous backend image: $previousImage"
+        try {
+            Invoke-AzJson @(
+                "containerapp", "update",
+                "--name", $BackendApp,
+                "--resource-group", $ResourceGroup,
+                "--image", $previousImage,
+                "--output", "json",
+                "--only-show-errors"
+            ) | Out-Null
+        } catch {
+            $rollbackErrors.Add("backend image: $($_.Exception.Message)")
+        }
+    }
+
+    if ($migrationUpdateAttempted) {
+        Write-Warning "Restoring the migration job image: $previousMigrationImage"
+        try {
+            Invoke-AzJson @(
+                "containerapp", "job", "update",
+                "--name", $MigrationJob,
+                "--resource-group", $ResourceGroup,
+                "--image", $previousMigrationImage,
+                "--output", "json",
+                "--only-show-errors"
+            ) | Out-Null
+        } catch {
+            $rollbackErrors.Add("migration job image: $($_.Exception.Message)")
+        }
+    }
+
+    if ($migrationStarted) {
+        Write-Warning "Database migrations and additive telemetry resources are not removed automatically. The released migrations are backward-compatible; use Azure PostgreSQL point-in-time restore if a full database rollback is required."
+    }
+    if ($rollbackErrors.Count -gt 0) {
+        throw "Upgrade failed: $($upgradeError.Exception.Message)`nAutomatic rollback also failed for: $($rollbackErrors -join '; ')"
+    }
+    throw $upgradeError
 }
 
 Write-Host ""
