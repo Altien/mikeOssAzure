@@ -2,13 +2,7 @@ import crypto from "crypto";
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
-import {
-    getUserApiKeys,
-    setUserApiKey,
-    deleteUserApiKey,
-    getConfiguredProviders,
-} from "../lib/userApiKeys";
-import type { AzureOpenaiSettings } from "../lib/llm";
+import { getUserApiKeys } from "../lib/userApiKeys";
 import { resolveSecret } from "../lib/envSecrets";
 import {
   completeUserMcpConnectorOAuth,
@@ -34,8 +28,56 @@ import {
   buildUserTabularReviewsExport,
   userExportFilename,
 } from "../lib/userDataExport";
+import { findProfileUserByEmail } from "../lib/userLookup";
 
 export const userRouter = Router();
+
+const ORGANISATION_CREDENTIALS = {
+  claude: {
+    label: "Anthropic",
+    secretNames: ["anthropic-api-key"],
+  },
+  gemini: {
+    label: "Gemini",
+    secretNames: ["gemini-api-key"],
+  },
+  openai: {
+    label: "OpenAI",
+    secretNames: ["openai-api-key"],
+  },
+  kimi: {
+    label: "Kimi K3",
+    secretNames: ["moonshot-api-key"],
+  },
+  openrouter: {
+    label: "OpenRouter",
+    secretNames: ["openrouter-api-key"],
+  },
+  courtlistener: {
+    label: "CourtListener",
+    secretNames: ["courtlistener-api-token"],
+  },
+  azure_openai: {
+    label: "Azure OpenAI",
+    secretNames: ["azure-openai-endpoint", "azure-openai-api-key"],
+  },
+} as const;
+
+type OrganisationCredentialProvider = keyof typeof ORGANISATION_CREDENTIALS;
+
+function organisationCredentialRequired(
+  res: import("express").Response,
+  provider: OrganisationCredentialProvider,
+): void {
+  const credential = ORGANISATION_CREDENTIALS[provider];
+  res.status(403).json({
+    code: "organisation_api_key_required",
+    detail:
+      `${credential.label} credentials are managed once per organisation. ` +
+      "Ask an administrator to open /install and configure the organisation " +
+      `credential (Key Vault secret: ${credential.secretNames.join(" and ")}).`,
+  });
+}
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
@@ -115,25 +157,21 @@ userRouter.get("/profile", requireAuth, async (_req, res) => {
     // Features > Legal Research > Jurisdiction > US toggle (upstream
     // 1fa0554); defaults to enabled.
     legal_research_us: data.legal_research_us !== false,
-    // Backwards-compat: keep returning the plaintext provider keys so
-    // the frontend's existing Account → Models form keeps working
-    // through the migration. The frontend should switch to consuming
-    // the *_configured booleans below and stop displaying the
-    // plaintext values — at which point the plaintext fields can be
-    // removed from this response in a follow-up commit. Tracked in
-    // UPSTREAM_SYNC_LOG.md (ba6f771 entry).
-    claude_api_key: apiKeys.claude,
-    gemini_api_key: apiKeys.gemini,
-    openai_api_key: apiKeys.openai,
-    azure_openai_endpoint: apiKeys.azureOpenai?.endpoint ?? null,
-    azure_openai_api_key: apiKeys.azureOpenai?.apiKey ?? null,
-    azure_openai_api_version: apiKeys.azureOpenai?.apiVersion ?? null,
-    azure_openai_deployment: apiKeys.azureOpenai?.deployment ?? null,
+    // Compatibility fields remain in the shape, but organisation credentials
+    // never leave the backend. The frontend uses configured booleans.
+    claude_api_key: null,
+    gemini_api_key: null,
+    openai_api_key: null,
+    azure_openai_endpoint: null,
+    azure_openai_api_key: null,
+    azure_openai_api_version: null,
+    azure_openai_deployment: null,
     // Forward-compat: per-provider configured booleans the frontend
     // should prefer once the plaintext fields above are dropped.
     claude_configured: !!apiKeys.claude,
     gemini_configured: !!apiKeys.gemini,
     openai_configured: !!apiKeys.openai,
+    kimi_configured: !!apiKeys.kimi,
     // openrouter / courtlistener (upstream 44e868e). getUserApiKeys
     // already folds in the org-level KV/env fallback for these two, so
     // "configured" means "some credential source exists".
@@ -156,6 +194,7 @@ userRouter.get("/profile", requireAuth, async (_req, res) => {
       claude: !!(await resolveSecret("anthropic-api-key")),
       gemini: !!(await resolveSecret("gemini-api-key")),
       openai: !!(await resolveSecret("openai-api-key")),
+      kimi: !!(await resolveSecret("moonshot-api-key")),
       openrouter: !!(await resolveSecret("openrouter-api-key")),
       courtlistener: !!(await resolveSecret("courtlistener-api-token")),
       azureOpenai:
@@ -167,6 +206,32 @@ userRouter.get("/profile", requireAuth, async (_req, res) => {
 
 userRouter.patch("/profile", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
+
+  const credentialFields: ReadonlyArray<{
+    field: string;
+    provider: OrganisationCredentialProvider;
+  }> = [
+    { field: "claude_api_key", provider: "claude" },
+    { field: "gemini_api_key", provider: "gemini" },
+    { field: "openai_api_key", provider: "openai" },
+    { field: "kimi_api_key", provider: "kimi" },
+    { field: "openrouter_api_key", provider: "openrouter" },
+    { field: "courtlistener_api_token", provider: "courtlistener" },
+    { field: "azure_openai_endpoint", provider: "azure_openai" },
+    { field: "azure_openai_api_key", provider: "azure_openai" },
+    { field: "azure_openai_api_version", provider: "azure_openai" },
+    { field: "azure_openai_deployment", provider: "azure_openai" },
+  ];
+  const attemptedCredential = credentialFields.find(
+    ({ field }) => field in req.body,
+  );
+  if (attemptedCredential) {
+    return void organisationCredentialRequired(
+      res,
+      attemptedCredential.provider,
+    );
+  }
+
   const db = createServerSupabase();
 
   // Profile fields stay on `user_profiles`.
@@ -196,52 +261,7 @@ userRouter.patch("/profile", requireAuth, async (req, res) => {
     profileUpdates.legal_research_us = value;
   }
 
-  // Provider key fields route through `userApiKeys` (encrypted at
-  // rest). The request body shape is unchanged for backwards-compat;
-  // we translate to setUserApiKey / deleteUserApiKey calls.
-  const flatProviderFields: ReadonlyArray<{
-    field:
-      | "claude_api_key"
-      | "gemini_api_key"
-      | "openai_api_key"
-      | "openrouter_api_key"
-      | "courtlistener_api_token";
-    provider: "claude" | "gemini" | "openai" | "openrouter" | "courtlistener";
-  }> = [
-    { field: "claude_api_key", provider: "claude" },
-    { field: "gemini_api_key", provider: "gemini" },
-    { field: "openai_api_key", provider: "openai" },
-    // upstream 44e868e — BYO keys for the CourtListener integration
-    // (and OpenRouter) ride the same encrypted user_api_keys path.
-    { field: "openrouter_api_key", provider: "openrouter" },
-    { field: "courtlistener_api_token", provider: "courtlistener" },
-  ];
-  const aoaiFields = [
-    "azure_openai_endpoint",
-    "azure_openai_api_key",
-    "azure_openai_api_version",
-    "azure_openai_deployment",
-  ] as const;
-
-  const flatKeyChanges = new Map<
-    "claude" | "gemini" | "openai" | "openrouter" | "courtlistener",
-    string | null
-  >();
-  for (const { field, provider } of flatProviderFields) {
-    if (field in req.body) {
-      const value = req.body[field];
-      const normalised =
-        typeof value === "string" && value.trim() !== "" ? value : null;
-      flatKeyChanges.set(provider, normalised);
-    }
-  }
-  const aoaiTouched = aoaiFields.some((f) => f in req.body);
-
-  if (
-    Object.keys(profileUpdates).length === 0 &&
-    flatKeyChanges.size === 0 &&
-    !aoaiTouched
-  ) {
+  if (Object.keys(profileUpdates).length === 0) {
     return void res
       .status(400)
       .json({ detail: "No updatable profile fields provided" });
@@ -255,81 +275,6 @@ userRouter.patch("/profile", requireAuth, async (req, res) => {
       .update(profileUpdates)
       .eq("user_id", userId);
     if (error) return void res.status(500).json({ detail: error.message });
-  }
-
-  // 2. Flat provider keys (claude, gemini, openai)
-  try {
-    for (const [provider, value] of flatKeyChanges) {
-      if (value === null) {
-        await deleteUserApiKey(userId, provider, db);
-      } else {
-        await setUserApiKey(userId, provider, value, db);
-      }
-    }
-  } catch (err) {
-    return void res
-      .status(500)
-      .json({ detail: err instanceof Error ? err.message : String(err) });
-  }
-
-  // 3. Azure OpenAI compound shape — merge changes against existing
-  //    configuration so a partial PATCH (e.g., updating only the
-  //    deployment) doesn't blow away the other three fields.
-  if (aoaiTouched) {
-    const current = await getUserApiKeys(userId, db);
-    const merged: AzureOpenaiSettings = {
-      endpoint:
-        "azure_openai_endpoint" in req.body
-          ? typeof req.body.azure_openai_endpoint === "string"
-            ? req.body.azure_openai_endpoint
-            : ""
-          : current.azureOpenai?.endpoint ?? "",
-      apiKey:
-        "azure_openai_api_key" in req.body
-          ? typeof req.body.azure_openai_api_key === "string" &&
-            req.body.azure_openai_api_key.trim() !== ""
-            ? req.body.azure_openai_api_key
-            : null
-          : current.azureOpenai?.apiKey ?? null,
-      apiVersion:
-        "azure_openai_api_version" in req.body
-          ? typeof req.body.azure_openai_api_version === "string" &&
-            req.body.azure_openai_api_version.trim() !== ""
-            ? req.body.azure_openai_api_version
-            : null
-          : current.azureOpenai?.apiVersion ?? null,
-      deployment:
-        "azure_openai_deployment" in req.body
-          ? typeof req.body.azure_openai_deployment === "string"
-            ? req.body.azure_openai_deployment
-            : ""
-          : current.azureOpenai?.deployment ?? "",
-    };
-
-    if (!merged.endpoint && !merged.deployment) {
-      // Both required fields cleared — treat as explicit delete.
-      try {
-        await deleteUserApiKey(userId, "azure_openai", db);
-      } catch (err) {
-        return void res.status(500).json({
-          detail: err instanceof Error ? err.message : String(err),
-        });
-      }
-    } else if (merged.endpoint && merged.deployment) {
-      try {
-        await setUserApiKey(userId, "azure_openai", merged, db);
-      } catch (err) {
-        return void res.status(500).json({
-          detail: err instanceof Error ? err.message : String(err),
-        });
-      }
-    } else {
-      return void res.status(400).json({
-        detail:
-          "Azure OpenAI requires both endpoint and deployment to be set " +
-          "(or both cleared at the same time).",
-      });
-    }
   }
 
   // Re-fetch to return the canonical post-update view (same shape as GET).
@@ -355,16 +300,17 @@ userRouter.patch("/profile", requireAuth, async (req, res) => {
     tier: p.tier,
     tabular_model: p.tabular_model,
     fast_model: p.fast_model,
-    claude_api_key: apiKeys.claude,
-    gemini_api_key: apiKeys.gemini,
-    openai_api_key: apiKeys.openai,
-    azure_openai_endpoint: apiKeys.azureOpenai?.endpoint ?? null,
-    azure_openai_api_key: apiKeys.azureOpenai?.apiKey ?? null,
-    azure_openai_api_version: apiKeys.azureOpenai?.apiVersion ?? null,
-    azure_openai_deployment: apiKeys.azureOpenai?.deployment ?? null,
+    claude_api_key: null,
+    gemini_api_key: null,
+    openai_api_key: null,
+    azure_openai_endpoint: null,
+    azure_openai_api_key: null,
+    azure_openai_api_version: null,
+    azure_openai_deployment: null,
     claude_configured: !!apiKeys.claude,
     gemini_configured: !!apiKeys.gemini,
     openai_configured: !!apiKeys.openai,
+    kimi_configured: !!apiKeys.kimi,
     openrouter_configured: !!apiKeys.openrouter,
     courtlistener_configured: !!apiKeys.courtlistener,
     azure_openai_configured: !!apiKeys.azureOpenai,
@@ -394,51 +340,37 @@ userRouter.post("/profile/credits/increment", requireAuth, async (_req, res) => 
 });
 
 // ---------------------------------------------------------------------------
-// Per-user provider API keys — the dedicated /user/api-keys endpoints the
-// Account → API Keys page calls. dev had carried the page across from upstream
-// but never wired these routes (provider-key WRITES were folded into
-// PATCH /profile for the model providers), which stranded the page — and with
-// it the ONLY UI for the OpenRouter and CourtListener keys. These thin routes
-// delegate to the existing encrypted-key helpers, restoring the page.
-//
-// Per-user scope: claude/gemini/openai/openrouter/courtlistener (Azure OpenAI
-// is structured and managed on the Model Preferences page, not here).
+// Provider credentials are deployment-wide in MikeOssAzure. Every user shares
+// the same backend and the same Key Vault-backed integrations; ordinary users
+// may choose models/features but must never own or replace provider secrets.
 const API_KEY_PROVIDERS = [
   "claude",
   "gemini",
   "openai",
+  "kimi",
   "openrouter",
   "courtlistener",
+  "azure_openai",
 ] as const;
 type ApiKeyRouteProvider = (typeof API_KEY_PROVIDERS)[number];
 
-// Org-level Key Vault / env secret name backing each provider (the shared
-// fallback used when a user hasn't set a personal key).
-const API_KEY_ORG_SECRET: Record<ApiKeyRouteProvider, string> = {
-  claude: "anthropic-api-key",
-  gemini: "gemini-api-key",
-  openai: "openai-api-key",
-  openrouter: "openrouter-api-key",
-  courtlistener: "courtlistener-api-token",
-};
-
-// Build the ApiKeyStatus the frontend expects: a per-provider `configured`
-// boolean plus a `sources` map ("user" = personal key, "env" = org-level
-// fallback exists, null = nothing configured). Never returns key material.
+// Build the read-only organisation status the frontend expects. "env" is kept
+// as the wire value for compatibility, but means "organisation Key Vault/env
+// credential" rather than a literal .env file.
 async function buildApiKeyStatus(
-  userId: string,
-  db: ReturnType<typeof createServerSupabase>,
+  _userId: string,
+  _db: ReturnType<typeof createServerSupabase>,
 ): Promise<Record<string, boolean | Record<string, "user" | "env" | null>>> {
-  const configured = await getConfiguredProviders(userId, db);
   const status: Record<string, boolean> = {};
   const sources: Record<string, "user" | "env" | null> = {};
   for (const provider of API_KEY_PROVIDERS) {
-    const userHas = !!configured[provider];
-    const envHas = userHas
-      ? false
-      : !!(await resolveSecret(API_KEY_ORG_SECRET[provider]));
-    status[provider] = userHas || envHas;
-    sources[provider] = userHas ? "user" : envHas ? "env" : null;
+    const credential = ORGANISATION_CREDENTIALS[provider];
+    const values = await Promise.all(
+      credential.secretNames.map((name) => resolveSecret(name)),
+    );
+    const configured = values.every(Boolean);
+    status[provider] = configured;
+    sources[provider] = configured ? "env" : null;
   }
   return { ...status, sources };
 }
@@ -449,32 +381,16 @@ userRouter.get("/api-keys", requireAuth, async (_req, res) => {
   res.json(await buildApiKeyStatus(userId, createServerSupabase()));
 });
 
-// PUT /user/api-keys/:provider — set (or, with an empty body, clear) the
-// caller's personal key for one provider. Stored AES-encrypted in
-// user_api_keys via setUserApiKey.
+// PUT remains as an explicit compatibility failure for older frontends. It
+// must never silently accept a personal key in an organisation deployment.
 userRouter.put("/api-keys/:provider", requireAuth, async (req, res) => {
-  const userId = res.locals.userId as string;
   const provider = req.params.provider as ApiKeyRouteProvider;
   if (!API_KEY_PROVIDERS.includes(provider)) {
     return void res
       .status(400)
       .json({ detail: `Unknown API key provider: ${req.params.provider}` });
   }
-  const raw = (req.body?.api_key ?? null) as unknown;
-  const trimmed = typeof raw === "string" ? raw.trim() : "";
-  const db = createServerSupabase();
-  try {
-    if (!trimmed) {
-      await deleteUserApiKey(userId, provider, db);
-    } else {
-      await setUserApiKey(userId, provider, trimmed, db);
-    }
-  } catch (err) {
-    return void res.status(500).json({
-      detail: err instanceof Error ? err.message : "Failed to save API key",
-    });
-  }
-  res.json(await buildApiKeyStatus(userId, db));
+  organisationCredentialRequired(res, provider);
 });
 
 // ---------------------------------------------------------------------------

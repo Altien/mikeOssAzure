@@ -26,6 +26,27 @@ issue against this repository letting us know. That way we can:
 If you are unsure whether a change is upstream-eligible, file an
 issue here first and we will help you triage.
 
+## System Workflows
+
+The canonical workflow sources are not stored in this repository. They live in
+the separate upstream repository
+[`Open-Legal-Products/mike-workflows`](https://github.com/Open-Legal-Products/mike-workflows).
+The generator expects that repository to be checked out beside this one, at
+the exact relative path `../mike-workflows/`, with system workflow sources in
+`../mike-workflows/system/`.
+
+**Regeneration is not supported in this dev fork.** Do not run
+`scripts/build-workflows.js`, even after cloning the sibling repository: dev
+kept the older generator while the adopted upstream workflow content moved to
+a newer source format. The script now exits with an intentional hard stop.
+
+Do not reconstruct missing workflow sources from the generated TypeScript and
+do not treat this repository as their source of truth. During an upstream
+merge conflict, preserve the checked-in `backend/src/lib/systemWorkflows.ts`.
+Regeneration may be restored only by deliberately adopting the canonical
+workflow sources, their current generator/source schema, and the deferred
+workflow engine as one complete unit.
+
 ## Reporting issues
 
 - **Security** — see [`SECURITY.md`](./SECURITY.md). Do not file public

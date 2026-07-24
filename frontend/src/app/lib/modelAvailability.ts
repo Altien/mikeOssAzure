@@ -1,11 +1,16 @@
 import { SETTINGS_MODELS, type ModelOption } from "../components/assistant/ModelToggle";
 
-export type ModelProvider = "claude" | "gemini" | "openai" | "azureOpenai";
+export type ModelProvider =
+    | "claude"
+    | "gemini"
+    | "openai"
+    | "kimi"
+    | "azureOpenai";
 
-// A provider is "available" if the user has pasted a personal key OR the
-// backend has a shared env-level key for it. The latter is exposed via
-// `globalApiKeys` on the user profile (booleans only — actual key values
-// never reach the client).
+// MikeOssAzure providers are available when the backend reports an
+// organisation credential through `globalApiKeys` (booleans only — actual
+// values never reach the client). The personal fields remain in the type for
+// compatibility with upstream Mike, which supports user-supplied keys.
 //
 // Azure OpenAI is a special case: availability is per-deployment rather
 // than per-provider. The dropdown only shows deployments that came back
@@ -20,6 +25,7 @@ export type ApiKeyAvailability = {
         claude: boolean;
         gemini: boolean;
         openai: boolean;
+        kimi: boolean;
         azureOpenai: boolean;
     };
 };
@@ -41,6 +47,7 @@ export function getModelProvider(
     if (model.group === "Anthropic") return "claude";
     if (model.group === "Google") return "gemini";
     if (model.group === "OpenAI") return "openai";
+    if (model.group === "Kimi") return "kimi";
     if (model.group === "Azure OpenAI") return "azureOpenai";
     return null;
 }
@@ -79,6 +86,9 @@ export function isProviderAvailable(
             !!apiKeys.openaiApiKey?.trim() || !!apiKeys.globalApiKeys?.openai
         );
     }
+    if (provider === "kimi") {
+        return !!apiKeys.globalApiKeys?.kimi;
+    }
     // azureOpenai availability is per-deployment, decided in
     // isModelAvailable via the discovered list. This branch is retained
     // for callers that only know the provider name; it can't tell
@@ -91,6 +101,7 @@ export function providerLabel(provider: ModelProvider): string {
     if (provider === "claude") return "Anthropic (Claude)";
     if (provider === "gemini") return "Google (Gemini)";
     if (provider === "openai") return "OpenAI";
+    if (provider === "kimi") return "Kimi K3";
     return "Azure OpenAI";
 }
 
@@ -100,5 +111,6 @@ export function modelGroupToProvider(
     if (group === "Anthropic") return "claude";
     if (group === "Google") return "gemini";
     if (group === "OpenAI") return "openai";
+    if (group === "Kimi") return "kimi";
     return "azureOpenai";
 }

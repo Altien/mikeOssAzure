@@ -28,6 +28,7 @@ import {
   getConfiguredProviders,
   flushEncryptionKey,
   _readLegacyRowForMigration,
+  getOrganisationApiKeys,
 } from "./userApiKeys";
 
 /**
@@ -118,6 +119,16 @@ afterEach(() => {
 });
 
 describe("encryption key sourcing", () => {
+  it("identifies the required secret when config resolution fails", async () => {
+    getConfigMock.mockRejectedValueOnce(new Error("SecretNotFound"));
+    const { client } = makeClient({ upsert: { error: null } });
+
+    await expect(setUserApiKey("u1", "courtlistener", "token", client as never))
+      .rejects.toThrow(
+        /user-api-keys-encryption-key.*could not be loaded.*SecretNotFound/i,
+      );
+  });
+
   it("throws a descriptive error when getConfig returns an empty secret", async () => {
     getConfigMock.mockResolvedValueOnce("");
     const { client } = makeClient({ upsert: { error: null } });
@@ -144,6 +155,43 @@ describe("encryption key sourcing", () => {
     await setUserApiKey("u1", "gemini", "sk-2", client as never);
 
     expect(getConfigMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("organisation provider credentials", () => {
+  it("resolves every shared provider from its canonical Key Vault name", async () => {
+    const values: Record<string, string> = {
+      "anthropic-api-key": "org-anthropic",
+      "gemini-api-key": "org-gemini",
+      "openai-api-key": "org-openai",
+      "moonshot-api-key": "org-kimi",
+      "openrouter-api-key": "org-openrouter",
+      "courtlistener-api-token": "org-courtlistener",
+      "azure-openai-endpoint": "https://org.openai.azure.com",
+      "azure-openai-api-key": "org-azure",
+      "azure-openai-api-version": "2024-10-21",
+      "azure-openai-deployment": "org-deployment",
+    };
+    getConfigMock.mockImplementation((name: string) =>
+      values[name]
+        ? Promise.resolve(values[name])
+        : Promise.reject(new Error(`missing ${name}`)),
+    );
+
+    await expect(getOrganisationApiKeys()).resolves.toEqual({
+      claude: "org-anthropic",
+      gemini: "org-gemini",
+      openai: "org-openai",
+      kimi: "org-kimi",
+      openrouter: "org-openrouter",
+      courtlistener: "org-courtlistener",
+      azureOpenai: {
+        endpoint: "https://org.openai.azure.com",
+        apiKey: "org-azure",
+        apiVersion: "2024-10-21",
+        deployment: "org-deployment",
+      },
+    });
   });
 });
 

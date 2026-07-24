@@ -42,6 +42,7 @@ interface UserProfile {
         claude: boolean;
         gemini: boolean;
         openai: boolean;
+        kimi: boolean;
         azureOpenai: boolean;
     };
 }
@@ -154,6 +155,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                     claude: !!data.global_api_keys?.claude,
                     gemini: !!data.global_api_keys?.gemini,
                     openai: !!data.global_api_keys?.openai,
+                    kimi: !!data.global_api_keys?.kimi,
                     azureOpenai: !!data.global_api_keys?.azureOpenai,
                 },
             });
@@ -184,6 +186,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                     claude: false,
                     gemini: false,
                     openai: false,
+                    kimi: false,
                     azureOpenai: false,
                 },
             });

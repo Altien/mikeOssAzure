@@ -717,6 +717,33 @@ describe("mikeApi: getChat — server → client message mapping", () => {
         expect(m.content).toBe("Hello, world.");
     });
 
+    it("maps the renamed server citations field to the frozen UI annotations contract", async () => {
+        const citations = [
+            { ref: 1, doc_id: "doc-0", page: 2, quote: "Evidence" },
+        ];
+        server.use(
+            http.get("*/api/chat/:id", () =>
+                HttpResponse.json({
+                    chat: { id: "c-1", title: "t" },
+                    messages: [
+                        {
+                            id: "m2",
+                            chat_id: "c-1",
+                            role: "assistant",
+                            content: [{ type: "content", text: "Answer [1]" }],
+                            citations,
+                            created_at: "2026-01-01",
+                        },
+                    ],
+                }),
+            ),
+        );
+
+        const { messages } = await getChat("c-1");
+
+        expect(messages[0].annotations).toEqual(citations);
+    });
+
     it("assistant message with non-array content: content='' and events=undefined", async () => {
         // Defensive: a legacy row where `content` is a stringified
         // assistant reply (not an events array).  Map to empty

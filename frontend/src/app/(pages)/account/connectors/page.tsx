@@ -83,9 +83,15 @@ type McpOAuthPopupMessage = {
     detail?: string;
 };
 
-const mcpOAuthMessageOrigin = new URL(
-    process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001",
-).origin;
+function getMcpOAuthMessageOrigin(): string {
+    const configuredBase = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+    if (!configuredBase) return window.location.origin;
+    try {
+        return new URL(configuredBase, window.location.origin).origin;
+    } catch {
+        return window.location.origin;
+    }
+}
 
 function parseCustomHeaders(raw: string): Record<string, string> | undefined {
     const text = raw.trim();
@@ -293,6 +299,7 @@ export default function ConnectorsPage() {
             return null;
         }
         popup.location.href = authorizationUrl;
+        const mcpOAuthMessageOrigin = getMcpOAuthMessageOrigin();
 
         await new Promise<void>((resolve, reject) => {
             const timeout = window.setTimeout(() => {

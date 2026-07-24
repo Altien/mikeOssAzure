@@ -170,6 +170,7 @@ export async function buildUserAccountExport(
         apiKeys,
         projects,
         standaloneDocuments,
+        libraryFolders,
         workflows,
         hiddenWorkflows,
         workflowSharesByUser,
@@ -191,9 +192,22 @@ export async function buildUserAccountExport(
                 .is("project_id", null)
                 .order("created_at", { ascending: true }),
         ),
+        // Upstream divergence (sync-log: f0b90ab): UPSTREAM OMISSION — the
+        // adopted Library feature added library_folders but did not add them
+        // to account export. KEEP DEV'S EXPORT during conflict resolution;
+        // removing it produces an incomplete export whose document folder IDs
+        // cannot be reconstructed.
+        selectAll(db, "library_folders", (query) =>
+            query.eq("user_id", userId).order("created_at", { ascending: true }),
+        ),
         selectAll(db, "workflows", (query) =>
             query.eq("user_id", userId).order("created_at", { ascending: true }),
         ),
+        // Upstream divergence (sync-log: a5fe6d6): NOT SUPPORTED — the
+        // workflow_open_source_submissions schema, route, and frontend were
+        // deliberately deferred. Keep dev's omission during conflict
+        // resolution; do not query the absent table until the whole feature is
+        // explicitly adopted.
         selectAll(db, "hidden_workflows", (query) =>
             query.eq("user_id", userId).order("created_at", { ascending: true }),
         ),
@@ -259,6 +273,7 @@ export async function buildUserAccountExport(
         api_keys: apiKeys,
         projects,
         project_subfolders: folders,
+        library_folders: libraryFolders,
         documents,
         document_versions: versions,
         document_edits: edits,

@@ -73,7 +73,7 @@ async function apiKey(override?: string | null): Promise<string> {
   const key = override?.trim() || (await resolveSecret("openai-api-key"));
   if (!key) {
     throw new Error(
-      "OpenAI API key is not configured. Add a user OpenAI key or set the openai-api-key secret.",
+      "OpenAI is not configured for this organisation. Ask an administrator to open /install and set the openai-api-key Key Vault secret.",
     );
   }
   return key;

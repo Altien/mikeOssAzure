@@ -6,7 +6,14 @@ import {
     attachActiveVersionPaths,
     loadActiveVersion,
 } from "../lib/documentVersions";
-import { normalizeDocxZipPaths } from "../lib/convert";
+import { docxToPdf, normalizeDocxZipPaths } from "../lib/convert";
+import {
+    isPresentationDocumentType,
+    isSpreadsheetDocumentType,
+    isWordDocumentType,
+} from "../lib/documentTypes";
+import { extractPresentationText } from "../lib/officeText";
+import { spreadsheetToLLMText } from "../lib/spreadsheet";
 import {
     AssistantStreamError,
     buildCancelledAssistantMessage,
@@ -16,7 +23,7 @@ import {
     TABULAR_TOOLS,
     type ChatMessage,
     type TabularCellStore,
-} from "../lib/chatTools";
+} from "../lib/chat";
 import {
     completeText,
     providerForModel,
@@ -32,6 +39,10 @@ import {
     filterAccessibleDocumentIds,
 } from "../lib/access";
 import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
+import {
+    findMissingUserEmails,
+    loadProfileUsersByEmail,
+} from "../lib/userLookup";
 
 function formatPromptSuffix(format?: string, tags?: string[]): string {
     switch (format) {
@@ -63,6 +74,7 @@ export const tabularRouter = Router();
 function providerLabel(provider: Provider): string {
     if (provider === "claude") return "Anthropic";
     if (provider === "openai") return "OpenAI";
+    if (provider === "kimi") return "Kimi K3";
     if (provider === "azureOpenai") return "Azure OpenAI";
     return "Gemini";
 }
@@ -74,6 +86,7 @@ const SERVER_KEY_SECRETS: Record<Exclude<Provider, "azureOpenai">, string> = {
     claude: "anthropic-api-key",
     gemini: "gemini-api-key",
     openai: "openai-api-key",
+    kimi: "moonshot-api-key",
 };
 
 // Upstream divergence (sync-log: f39f175): upstream returns the 422
@@ -96,7 +109,10 @@ async function missingModelApiKey(model: string, apiKeys: UserApiKeys) {
     return {
         provider,
         model,
-        detail: `${providerLabel(provider)} API key is required to use ${model}. Add an API key or select a different tabular review model.`,
+        detail:
+            `${providerLabel(provider)} is not configured for this organisation. ` +
+            `Ask an administrator to open /install and set the ${SERVER_KEY_SECRETS[provider]} ` +
+            "Key Vault secret, or select a different tabular review model.",
     };
 }
 
@@ -455,6 +471,15 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
             return void res
                 .status(403)
                 .json({ detail: "Only the review owner can change sharing" });
+        const missingSharedUsers = await findMissingUserEmails(
+            db,
+            sharedWithUpdate,
+        );
+        if (missingSharedUsers.length > 0) {
+            return void res.status(400).json({
+                detail: `${missingSharedUsers[0]} does not belong to a Mike user.`,
+            });
+        }
         updates.shared_with = sharedWithUpdate;
     }
     if (projectIdUpdateProvided) {
@@ -740,10 +765,10 @@ tabularRouter.post(
             const buf = await downloadFile(docActive.storage_path);
             if (buf) {
                 try {
-                    markdown =
-                        docActive.file_type === "pdf"
-                            ? await extractPdfMarkdown(buf)
-                            : await extractDocxMarkdown(buf);
+                    markdown = await extractDocumentMarkdown(
+                        buf,
+                        docActive.file_type,
+                    );
                 } catch (err) {
                     console.error(
                         `[regenerate-cell] extraction error doc=${document_id}`,
@@ -889,10 +914,10 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                     const buf = await downloadFile(storagePath);
                     if (buf) {
                         try {
-                            markdown =
-                                fileType === "pdf"
-                                    ? await extractPdfMarkdown(buf)
-                                    : await extractDocxMarkdown(buf);
+                            markdown = await extractDocumentMarkdown(
+                                buf,
+                                fileType,
+                            );
                         } catch (err) {
                             console.error(
                                 `[tabular/generate] extraction error doc=${docId}`,
@@ -1037,6 +1062,29 @@ tabularRouter.delete(
         const { error } = await db
             .from("tabular_review_chats")
             .delete()
+            .eq("id", chatId)
+            .eq("user_id", userId);
+        if (error) return void res.status(500).json({ detail: error.message });
+        res.status(204).send();
+    },
+);
+
+// PATCH /tabular-review/:reviewId/chats/:chatId — rename a chat
+tabularRouter.patch(
+    "/:reviewId/chats/:chatId",
+    requireAuth,
+    async (req, res) => {
+        const userId = res.locals.userId as string;
+        const { chatId } = req.params;
+        const title =
+            typeof req.body?.title === "string" ? req.body.title.trim() : "";
+        if (!title)
+            return void res.status(400).json({ detail: "Title is required" });
+        const db = createServerSupabase();
+        // Owner-only rename — mirrors the delete rule above.
+        const { error } = await db
+            .from("tabular_review_chats")
+            .update({ title: title.slice(0, 200) })
             .eq("id", chatId)
             .eq("user_id", userId);
         if (error) return void res.status(500).json({ detail: error.message });
@@ -1410,17 +1458,18 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
                 const partial = buildCancelledAssistantMessage({
                     fullText: err.fullText,
                     events: err.events,
-                    buildAnnotations: (fullText) =>
+                    buildCitations: (fullText) =>
                         extractTabularAnnotations(fullText, tabularStore),
                 });
+                const annotations = partial.citations;
                 const { error: saveError } = await db
                     .from("tabular_review_chat_messages")
                     .insert({
                         chat_id: chatId,
                         role: "assistant",
                         content: partial.events.length ? partial.events : null,
-                        annotations: partial.annotations.length
-                            ? partial.annotations
+                        annotations: annotations.length
+                            ? annotations
                             : null,
                     });
                 if (saveError) {
@@ -1766,6 +1815,34 @@ Rules:
 
     if (contentBuffer.trim()) pending.push(processLine(contentBuffer));
     await Promise.all(pending);
+}
+
+async function extractDocumentMarkdown(
+    buf: ArrayBuffer,
+    fileType: string | null | undefined,
+): Promise<string> {
+    const normalizedType = (fileType ?? "").toLowerCase();
+    if (normalizedType === "pdf") return extractPdfMarkdown(buf);
+    if (normalizedType === "docx") return extractDocxMarkdown(buf);
+    if (isSpreadsheetDocumentType(normalizedType)) {
+        // SheetJS handles .xlsx/.xlsm/.xls directly, no PDF detour.
+        return spreadsheetToLLMText(Buffer.from(buf));
+    }
+    if (normalizedType === "pptx") {
+        return extractPresentationText(Buffer.from(buf));
+    }
+    if (
+        isPresentationDocumentType(normalizedType) ||
+        isWordDocumentType(normalizedType)
+    ) {
+        const pdfBuf = await docxToPdf(Buffer.from(buf));
+        const pdfArrayBuffer = pdfBuf.buffer.slice(
+            pdfBuf.byteOffset,
+            pdfBuf.byteOffset + pdfBuf.byteLength,
+        ) as ArrayBuffer;
+        return extractPdfMarkdown(pdfArrayBuffer);
+    }
+    return extractDocxMarkdown(buf);
 }
 
 async function extractPdfMarkdown(buf: ArrayBuffer): Promise<string> {

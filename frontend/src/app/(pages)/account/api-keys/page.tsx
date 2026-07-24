@@ -1,248 +1,133 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Eye, EyeOff, Save, Trash2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { AlertTriangle, CheckCircle2, ExternalLink } from "lucide-react";
 import {
     getApiKeyStatus,
-    saveApiKey,
     type ApiKeyProvider,
     type ApiKeyStatus,
 } from "@/app/lib/mikeApi";
 
-const MODEL_API_KEY_FIELDS = [
+const PROVIDERS: ReadonlyArray<{
+    provider: ApiKeyProvider;
+    label: string;
+    secret: string;
+}> = [
     {
         provider: "claude",
-        label: "Anthropic (Claude) API Key",
-        placeholder: "sk-ant-...",
+        label: "Anthropic (Claude)",
+        secret: "anthropic-api-key",
     },
     {
         provider: "gemini",
-        label: "Google (Gemini) API Key",
-        placeholder: "AI...",
+        label: "Google Gemini",
+        secret: "gemini-api-key",
     },
     {
         provider: "openai",
-        label: "OpenAI API Key",
-        placeholder: "sk-...",
+        label: "OpenAI",
+        secret: "openai-api-key",
+    },
+    {
+        provider: "kimi",
+        label: "Kimi K3",
+        secret: "moonshot-api-key",
     },
     {
         provider: "openrouter",
-        label: "OpenRouter API Key",
-        placeholder: "sk-or-...",
+        label: "OpenRouter",
+        secret: "openrouter-api-key",
     },
-] as const;
-
-const OTHER_API_KEY_FIELDS = [
     {
         provider: "courtlistener",
-        label: "CourtListener API Key",
-        placeholder: "Token...",
-        description:
-            "Add a CourtListener API key if you want the latest CourtListener data. Otherwise, Mike will use the bulk data hosted by us.",
+        label: "CourtListener",
+        secret: "courtlistener-api-token",
     },
-] as const;
+    {
+        provider: "azure_openai",
+        label: "Azure OpenAI",
+        secret: "azure-openai-endpoint + azure-openai-api-key",
+    },
+];
+
+const INSTALL_URL =
+    (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") +
+    "/install";
 
 export default function ApiKeysPage() {
-    // API-key status comes from the dedicated /user/api-keys endpoint (covers
-    // all providers incl. openrouter/courtlistener), not the UserProfile —
-    // dev's profile only carries the three model-provider key fields.
     const [status, setStatus] = useState<ApiKeyStatus | null>(null);
+    const [loadFailed, setLoadFailed] = useState(false);
 
     useEffect(() => {
         getApiKeyStatus()
             .then(setStatus)
-            .catch(() => {});
+            .catch(() => setLoadFailed(true));
     }, []);
-
-    const save = async (
-        provider: ApiKeyProvider,
-        key: string | null,
-    ): Promise<boolean> => {
-        try {
-            setStatus(await saveApiKey(provider, key));
-            return true;
-        } catch {
-            return false;
-        }
-    };
 
     return (
         <div>
             <h2 className="mb-3 text-2xl font-medium font-serif text-gray-900">
-                API Keys
+                External services
             </h2>
-            <p className="text-sm text-gray-500 mb-4">
-                You must provide your own API keys for the app to work or add
-                your API keys into the .env file if you are running your own
-                instance of Mike. All API keys are encrypted in storage.
+            <p className="mb-4 max-w-2xl text-sm text-gray-500">
+                Provider credentials are shared by everyone in this Mike
+                installation. They are stored once in Azure Key Vault and can
+                only be changed by an administrator through organisation
+                setup.
             </p>
-            <div className="overflow-hidden rounded-xl border border-gray-200 bg-white divide-y divide-gray-200">
-                {MODEL_API_KEY_FIELDS.map((field) => (
-                    <ApiKeyField
-                        key={field.provider}
-                        label={field.label}
-                        placeholder={field.placeholder}
-                        hasSavedKey={
-                            !!status?.[field.provider]
-                        }
-                        isServerConfigured={
-                            status?.sources?.[field.provider] === "env"
-                        }
-                        onSave={(value) =>
-                            save(field.provider, value.trim() || null)
-                        }
-                        onRemove={() => save(field.provider, null)}
-                    />
-                ))}
-            </div>
 
-            <div className="mt-8 overflow-hidden rounded-xl border border-gray-200 bg-white divide-y divide-gray-200">
-                {OTHER_API_KEY_FIELDS.map((field) => (
-                    <ApiKeyField
-                        key={field.provider}
-                        label={field.label}
-                        description={field.description}
-                        placeholder={field.placeholder}
-                        hasSavedKey={
-                            !!status?.[field.provider]
-                        }
-                        isServerConfigured={
-                            status?.sources?.[field.provider] === "env"
-                        }
-                        onSave={(value) =>
-                            save(field.provider, value.trim() || null)
-                        }
-                        onRemove={() => save(field.provider, null)}
-                    />
-                ))}
-            </div>
-        </div>
-    );
-}
-
-function ApiKeyField({
-    label,
-    description,
-    placeholder,
-    hasSavedKey,
-    isServerConfigured,
-    onSave,
-    onRemove,
-}: {
-    label: string;
-    description?: string;
-    placeholder: string;
-    hasSavedKey: boolean;
-    isServerConfigured: boolean;
-    onSave: (value: string) => Promise<boolean>;
-    onRemove: () => Promise<boolean>;
-}) {
-    const [value, setValue] = useState("");
-    const [reveal, setReveal] = useState(false);
-    const [isSaving, setIsSaving] = useState(false);
-    const [saved, setSaved] = useState(false);
-
-    useEffect(() => {
-        setValue("");
-    }, [hasSavedKey]);
-
-    const dirty = value.trim().length > 0;
-
-    const handleSave = async () => {
-        setIsSaving(true);
-        const ok = await onSave(value);
-        setIsSaving(false);
-        if (ok) {
-            setValue("");
-            setSaved(true);
-            setTimeout(() => setSaved(false), 2000);
-        } else {
-            alert(`Failed to save ${label}.`);
-        }
-    };
-
-    const handleRemove = async () => {
-        setIsSaving(true);
-        const ok = await onRemove();
-        setIsSaving(false);
-        if (!ok) alert(`Failed to remove ${label}.`);
-    };
-
-    return (
-        <div className="px-4 py-5">
-            <label className="text-sm font-medium text-gray-700 block mb-2">
-                {label}
-            </label>
-            {description && (
-                <p className="text-sm text-gray-500 mb-3">{description}</p>
+            {loadFailed && (
+                <p className="mb-4 text-sm text-red-600">
+                    Could not load organisation credential status.
+                </p>
             )}
-            <div className="flex gap-2">
-                <div className="relative flex-1">
-                    <Input
-                        type={reveal ? "text" : "password"}
-                        value={value}
-                        onChange={(e) => setValue(e.target.value)}
-                        placeholder={
-                            isServerConfigured
-                                ? "Server .env key configured"
-                                : hasSavedKey
-                                  ? "Saved key hidden"
-                                  : placeholder
-                        }
-                        className="bg-gray-50 pr-10 shadow-none disabled:text-gray-700 disabled:placeholder:text-gray-700"
-                        autoComplete="off"
-                        spellCheck={false}
-                        disabled={isServerConfigured}
-                    />
-                    <button
-                        type="button"
-                        onClick={() => setReveal((r) => !r)}
-                        disabled={isServerConfigured}
-                        className="absolute inset-y-0 right-2 flex items-center text-gray-400 hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40"
-                        aria-label={reveal ? "Hide key" : "Show key"}
-                    >
-                        {reveal ? (
-                            <EyeOff className="h-4 w-4" />
-                        ) : (
-                            <Eye className="h-4 w-4" />
-                        )}
-                    </button>
-                </div>
-                <Button
-                    onClick={handleSave}
-                    variant="outline"
-                    disabled={isServerConfigured || isSaving || !dirty || saved}
-                    className="h-9 min-w-[74px] gap-1.5 bg-white px-2.5 text-xs text-gray-700 shadow-none hover:bg-gray-50"
-                >
-                    {isSaving ? (
-                        "Saving..."
-                    ) : saved ? (
-                        <>
-                            <Check className="h-3.5 w-3.5" />
-                            Saved
-                        </>
-                    ) : (
-                        <>
-                            <Save className="h-3.5 w-3.5" />
-                            Save
-                        </>
-                    )}
-                </Button>
-                {hasSavedKey && !isServerConfigured && (
-                    <Button
-                        type="button"
-                        variant="outline"
-                        onClick={handleRemove}
-                        disabled={isSaving}
-                        className="h-9 gap-1.5 bg-white px-2.5 text-xs text-red-600 shadow-none hover:bg-red-50 hover:text-red-700"
-                    >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        Remove
-                    </Button>
-                )}
+
+            <div className="overflow-hidden rounded-xl border border-gray-200 bg-white divide-y divide-gray-200">
+                {PROVIDERS.map((provider) => {
+                    const configured = !!status?.[provider.provider];
+                    return (
+                        <div
+                            key={provider.provider}
+                            className="flex items-start justify-between gap-4 px-4 py-5"
+                        >
+                            <div className="min-w-0">
+                                <p className="text-sm font-medium text-gray-800">
+                                    {provider.label}
+                                </p>
+                                <p className="mt-1 text-xs text-gray-500">
+                                    Key Vault: {provider.secret}
+                                </p>
+                            </div>
+                            <div
+                                className={`flex shrink-0 items-center gap-1.5 text-xs font-medium ${
+                                    configured
+                                        ? "text-emerald-700"
+                                        : "text-amber-700"
+                                }`}
+                            >
+                                {configured ? (
+                                    <CheckCircle2 className="h-4 w-4" />
+                                ) : (
+                                    <AlertTriangle className="h-4 w-4" />
+                                )}
+                                {status === null
+                                    ? "Checking..."
+                                    : configured
+                                      ? "Configured for this organisation"
+                                      : "Administrator action required"}
+                            </div>
+                        </div>
+                    );
+                })}
             </div>
+
+            <a
+                href={INSTALL_URL}
+                className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-gray-700 underline underline-offset-4 hover:text-gray-950"
+            >
+                Open organisation setup
+                <ExternalLink className="h-3.5 w-3.5" />
+            </a>
         </div>
     );
 }

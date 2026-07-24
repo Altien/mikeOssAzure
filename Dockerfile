@@ -66,6 +66,9 @@ RUN pnpm run build
 # ── Runtime ──────────────────────────────────────────────────────────────────
 FROM node:22-slim AS runtime
 RUN corepack enable
+# Keep npm's bundled `tar` above the patched floor used by the migration job's
+# `npm run migrate` entrypoint (CVE-2026-59873).
+RUN npm install --global npm@12.0.1
 
 # libreoffice-convert requires LibreOffice at runtime for DOCX → PDF conversion.
 RUN apt-get update && apt-get install -y --no-install-recommends libreoffice \
@@ -74,7 +77,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends libreoffice \
 WORKDIR /app
 
 COPY backend/package.json backend/pnpm-lock.yaml backend/.npmrc backend/pnpm-workspace.yaml ./
-RUN pnpm install --frozen-lockfile --prod
+RUN pnpm install --frozen-lockfile --prod \
+ && corepack disable \
+ && rm -rf /usr/local/lib/node_modules/corepack
 
 COPY --from=backend-builder /app/dist ./dist
 # Frontend static output is served from /app/public via express.static.

@@ -234,6 +234,32 @@ const items: ManifestItem[] = [
         },
     },
     {
+        id: "ai-kimi-key",
+        label: "Kimi K3 API key",
+        section: "AI providers",
+        required: false,
+        check: () =>
+            checkKvSecret("moonshot-api-key", {
+                redacted: true,
+            }),
+        fixedBy: {
+            type: "in-app-form",
+            submitTo: "kv",
+            fields: [
+                {
+                    name: "moonshot-api-key",
+                    label: "Kimi API key",
+                    type: "password",
+                    placeholder: "Kimi API key",
+                    required: true,
+                    helpText:
+                        "Organisation-wide Moonshot AI key for Kimi K3. " +
+                        "Create or copy a key from the Kimi API Platform.",
+                },
+            ],
+        },
+    },
+    {
         id: "ai-gemini-key",
         label: "Google Gemini API key",
         section: "AI providers",
@@ -276,7 +302,7 @@ const items: ManifestItem[] = [
                 placeholder: "sk-or-…",
                 required: true,
                 pattern: "^sk-or-.+",
-                helpText: "Org-wide OpenRouter key used as a shared fallback when a user hasn't set their own. Get one at openrouter.ai → Keys.",
+                helpText: "Organisation-wide OpenRouter key shared by this Mike installation. Get one at openrouter.ai → Keys.",
             }],
         },
     },
@@ -628,23 +654,24 @@ const items: ManifestItem[] = [
         },
     },
 
-    // ── Optional ─────────────────────────────────────────────────────
     {
         id: "app-insights-connection",
         label: "Application Insights (telemetry / monitoring)",
-        section: "Optional",
-        required: false,
-        check: () => checkKvSecret("appinsights-connection-string", { redacted: true }),
+        section: "Core setup",
+        required: true,
+        check: async () => {
+            if (!process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
+                return {
+                    status: "fail",
+                    detail: "Backend telemetry is not wired into this Container App revision.",
+                };
+            }
+            return checkKvSecret("appinsights-connection-string", { redacted: true });
+        },
         fixedBy: {
-            type: "in-app-form",
-            submitTo: "kv",
-            fields: [{
-                name: "appinsights-connection-string",
-                label: "Application Insights connection string",
-                type: "password",
-                placeholder: "InstrumentationKey=…;IngestionEndpoint=…",
-                required: false,
-            }],
+            type: "external-script",
+            scriptName: "upgrade-marketplace.ps1",
+            argsTemplate: "-ResourceGroup <rg>",
         },
     },
 ];

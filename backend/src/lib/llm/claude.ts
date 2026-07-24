@@ -32,7 +32,7 @@ async function apiKey(override?: string | null): Promise<string> {
     const key = override?.trim() || (await resolveSecret("anthropic-api-key"));
     if (!key) {
         throw new Error(
-            "Anthropic API key is not configured. Set the anthropic-api-key Key Vault secret (or its env fallback) or add a user Anthropic key.",
+            "Anthropic is not configured for this organisation. Ask an administrator to open /install and set the anthropic-api-key Key Vault secret.",
         );
     }
     return key;

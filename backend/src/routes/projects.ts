@@ -15,9 +15,24 @@ import { docxToPdf, convertedPdfKey } from "../lib/convert";
 import { checkProjectAccess } from "../lib/access";
 import { singleFileUpload } from "../lib/upload";
 import { deleteUserProjects } from "../lib/userDataCleanup";
+import {
+  ALLOWED_DOCUMENT_TYPES,
+  ALLOWED_DOCUMENT_TYPES_LABEL,
+  contentTypeForDocumentType,
+  shouldConvertToPdf,
+} from "../lib/documentTypes";
+import {
+  findMissingUserEmails,
+  loadProfileUsersByEmail,
+} from "../lib/userLookup";
 
 export const projectsRouter = Router();
-const ALLOWED_TYPES = new Set(["pdf", "docx", "doc"]);
+
+function normalizeOptionalString(value: unknown) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
 
 function normalizeDocumentFilename(nextName: unknown, currentName: string) {
   if (typeof nextName !== "string") return null;
@@ -167,9 +182,10 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
 projectsRouter.post("/", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
-  const { name, cm_number, shared_with } = req.body as {
+  const { name, cm_number, practice, shared_with } = req.body as {
     name: string;
     cm_number?: string;
+    practice?: string;
     shared_with?: string[];
   };
   if (!name?.trim())
@@ -378,6 +394,9 @@ projectsRouter.patch("/:projectId", requireAuth, async (req, res) => {
   const updates: Record<string, unknown> = {};
   if (req.body.name != null) updates.name = req.body.name;
   if (req.body.cm_number != null) updates.cm_number = req.body.cm_number;
+  if ("practice" in req.body) {
+    updates.practice = normalizeOptionalString(req.body.practice);
+  }
   if (Array.isArray(req.body.shared_with)) {
     // Normalise: lowercase + dedupe + drop empties.
     const normalizedUserEmail = userEmail?.trim().toLowerCase();
@@ -399,6 +418,18 @@ projectsRouter.patch("/:projectId", requireAuth, async (req, res) => {
   }
 
   const db = createServerSupabase();
+  if (Array.isArray(updates.shared_with)) {
+    const missingSharedUsers = await findMissingUserEmails(
+      db,
+      updates.shared_with as string[],
+    );
+    if (missingSharedUsers.length > 0) {
+      return void res.status(400).json({
+        detail: `${missingSharedUsers[0]} does not belong to a Mike user.`,
+      });
+    }
+  }
+
   const { data, error } = await db
     .from("projects")
     .update({ ...updates, updated_at: new Date().toISOString() })
@@ -500,7 +531,11 @@ projectsRouter.post(
       // Standalone → assign project_id
       const { data: updated, error } = await db
         .from("documents")
-        .update({ project_id: projectId, updated_at: new Date().toISOString() })
+        .update({
+          project_id: projectId,
+          library_folder_id: null,
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", documentId)
         .select("*")
         .single();
@@ -563,10 +598,9 @@ projectsRouter.post(
       );
       let newPdfPath: string | null = null;
       try {
-        const contentType =
-          ((srcV.file_type as string | null) ?? doc.file_type) === "pdf"
-            ? "application/pdf"
-            : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        const contentType = contentTypeForDocumentType(
+          (srcV.file_type as string | null) ?? doc.file_type,
+        );
         await uploadFile(newKey, srcBytes, contentType);
 
         // PDFs share one object for source + display rendition. DOCX
@@ -929,11 +963,11 @@ export async function handleDocumentUpload(
   const suffix = filename.includes(".")
     ? filename.split(".").pop()!.toLowerCase()
     : "";
-  if (!ALLOWED_TYPES.has(suffix))
+  if (!ALLOWED_DOCUMENT_TYPES.has(suffix))
     return void res
       .status(400)
       .json({
-        detail: `Unsupported file type: ${suffix}. Allowed: pdf, docx, doc`,
+        detail: `Unsupported file type: ${suffix}. Allowed: ${ALLOWED_DOCUMENT_TYPES_LABEL}`,
       });
 
   const content = file.buffer;
@@ -955,10 +989,7 @@ export async function handleDocumentUpload(
   try {
     const docId = doc.id as string;
     const key = storageKey(userId, docId, filename);
-    const contentType =
-      suffix === "pdf"
-        ? "application/pdf"
-        : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    const contentType = contentTypeForDocumentType(suffix);
     await uploadFile(
       key,
       content.buffer.slice(
@@ -974,9 +1005,9 @@ export async function handleDocumentUpload(
     ) as ArrayBuffer;
     const pageCount = suffix === "pdf" ? await countPdfPages(rawBuf) : null;
 
-    // Convert DOCX/DOC → PDF for display. PDFs are their own rendition.
+    // Convert Office files → PDF for display. PDFs are their own rendition.
     let pdfStoragePath: string | null = null;
-    if (suffix === "docx" || suffix === "doc") {
+    if (shouldConvertToPdf(suffix)) {
       try {
         const pdfBuf = await docxToPdf(content);
         const pdfKey = convertedPdfKey(userId, docId);
@@ -991,7 +1022,7 @@ export async function handleDocumentUpload(
         pdfStoragePath = pdfKey;
       } catch (err) {
         console.error(
-          `[upload] DOCX→PDF conversion failed for ${filename}:`,
+          `[upload] Office→PDF conversion failed for ${filename}:`,
           err,
         );
       }

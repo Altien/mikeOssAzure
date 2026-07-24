@@ -6,14 +6,17 @@ import {
     buildMessages,
     enrichWithPriorEvents,
     buildWorkflowStore,
+    appendAskInputsResponseToLastAssistantMessage,
+    appendAssistantEventsToLastAssistantMessage,
     AssistantStreamError,
     buildCancelledAssistantMessage,
-    extractAnnotations,
+    extractCitations,
     isAbortError,
     runLLMStream,
     stripTransientAssistantEvents,
+    parseAskInputsResponsePayload,
     type ChatMessage,
-} from "../lib/chatTools";
+} from "../lib/chat";
 import { completeText } from "../lib/llm";
 import {
     getUserModelSettings,
@@ -121,8 +124,6 @@ chatRouter.get("/:chatId", requireAuth, async (req, res) => {
 // produced the edit (always "pending"). If the user later accepts or rejects,
 // `document_edits.status` is updated but the stored event is not. On chat load
 // we merge the current DB status in so EditCards render with the real state.
-// Legacy rows may also have duplicate edit_data in top-level annotations, so
-// keep patching that path until old data no longer matters.
 async function hydrateEditStatuses(
     messages: Record<string, unknown>[],
     db: ReturnType<typeof createServerSupabase>,
@@ -138,7 +139,6 @@ async function hydrateEditStatuses(
         }
     };
     for (const m of messages) {
-        collectFromAnnList(m.annotations);
         const content = m.content;
         if (Array.isArray(content)) {
             for (const ev of content as Record<string, unknown>[]) {
@@ -208,7 +208,6 @@ async function hydrateEditStatuses(
     };
     return messages.map((m) => {
         const next: Record<string, unknown> = { ...m };
-        next.annotations = patchAnnList(m.annotations);
         if (Array.isArray(m.content)) {
             next.content = (m.content as Record<string, unknown>[]).map(
                 (ev) => {
@@ -368,6 +367,14 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         project_id?: string;
         model?: string;
     };
+    // Upstream a5fe6d6 wrapped this handler's request parsing in the
+    // parseChatMessages/parseOptional* validation helpers. Dev keeps its
+    // standing rejection of those helpers (see the region comment above),
+    // but DOES adopt a5fe6d6's "ask inputs" response feature — parse it off
+    // the raw body so the streaming path below can replay it.
+    const askInputsResponse = parseAskInputsResponsePayload(
+        (req.body as { ask_inputs_response?: unknown }).ask_inputs_response,
+    );
 
     console.log("[chat/stream] incoming request", {
         userId,
@@ -436,7 +443,13 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     console.log("[chat/stream] resolved chatId", chatId);
 
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
-    if (lastUser) {
+    if (askInputsResponse) {
+        await appendAskInputsResponseToLastAssistantMessage(
+            db,
+            chatId,
+            askInputsResponse,
+        );
+    } else if (lastUser) {
         await db.from("chat_messages").insert({
             chat_id: chatId,
             role: "user",
@@ -498,7 +511,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     try {
         write(`data: ${JSON.stringify({ type: "chat_id", chatId })}\n\n`);
 
-        const { fullText, events, annotations } = await runLLMStream({
+        const { fullText, events, citations } = await runLLMStream({
             apiMessages,
             docStore,
             docIndex,
@@ -519,12 +532,21 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         });
 
         const persistedEvents = stripTransientAssistantEvents(events);
-        await db.from("chat_messages").insert({
-            chat_id: chatId,
-            role: "assistant",
-            content: persistedEvents.length ? persistedEvents : null,
-            annotations: annotations.length ? annotations : null,
-        });
+        if (askInputsResponse) {
+            await appendAssistantEventsToLastAssistantMessage(
+                db,
+                chatId,
+                persistedEvents,
+                citations,
+            );
+        } else {
+            await db.from("chat_messages").insert({
+                chat_id: chatId,
+                role: "assistant",
+                content: persistedEvents.length ? persistedEvents : null,
+                citations: citations.length ? citations : null,
+            });
+        }
 
         if (!chatTitle && lastUser?.content) {
             await db
@@ -539,17 +561,31 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                 const partial = buildCancelledAssistantMessage({
                     fullText: err.fullText,
                     events: err.events,
-                    buildAnnotations: (fullText, events) =>
-                        extractAnnotations(fullText, docIndex, events),
+                    buildCitations: (fullText, events) =>
+                        extractCitations(fullText, docIndex, events),
                 });
-                const { error: saveError } = await db.from("chat_messages").insert({
-                    chat_id: chatId,
-                    role: "assistant",
-                    content: partial.events.length ? partial.events : null,
-                    annotations: partial.annotations.length
-                        ? partial.annotations
-                        : null,
-                });
+                const saveError = askInputsResponse
+                    ? null
+                    : (
+                          await db.from("chat_messages").insert({
+                              chat_id: chatId,
+                              role: "assistant",
+                              content: partial.events.length
+                                  ? partial.events
+                                  : null,
+                              citations: partial.citations.length
+                                  ? partial.citations
+                                  : null,
+                          })
+                      ).error;
+                if (askInputsResponse) {
+                    await appendAssistantEventsToLastAssistantMessage(
+                        db,
+                        chatId,
+                        partial.events,
+                        partial.citations,
+                    );
+                }
                 if (saveError) {
                     console.error(
                         "[chat/stream] failed to save aborted stream",
@@ -567,17 +603,29 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         const errorFullText =
             err instanceof AssistantStreamError ? err.fullText : "";
         try {
-            const annotations = extractAnnotations(
+            const citations = extractCitations(
                 errorFullText,
                 docIndex,
                 errorEvents,
             );
-            const { error: saveError } = await db.from("chat_messages").insert({
-                chat_id: chatId,
-                role: "assistant",
-                content: errorEvents.length ? errorEvents : null,
-                annotations: annotations.length ? annotations : null,
-            });
+            const saveError = askInputsResponse
+                ? null
+                : (
+                      await db.from("chat_messages").insert({
+                          chat_id: chatId,
+                          role: "assistant",
+                          content: errorEvents.length ? errorEvents : null,
+                          citations: citations.length ? citations : null,
+                      })
+                  ).error;
+            if (askInputsResponse) {
+                await appendAssistantEventsToLastAssistantMessage(
+                    db,
+                    chatId,
+                    errorEvents,
+                    citations,
+                );
+            }
             if (saveError)
                 console.error("[chat/stream] failed to save error", saveError);
         } catch (saveErr) {

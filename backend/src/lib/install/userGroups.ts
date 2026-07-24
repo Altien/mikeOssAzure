@@ -4,12 +4,12 @@
 // (size budget, not strictly the documented 200-count limit).
 //
 // Decision sequence:
-//   1. If `claims.groups` is a non-empty array → return as-is.
-//   2. If `claims.hasgroups === "true"` OR `claims._claim_names` is
-//      present → overage. Call Microsoft Graph /me/memberOf using
-//      the provided access token. Cache per (oid, iat) for 5 minutes.
-//   3. Otherwise (no overage indicator, no inline groups) → user is
-//      genuinely in no groups for this app reg. Return [].
+//   1. Preserve any groups included inline in the id_token.
+//   2. When an access token is available, call Microsoft Graph
+//      /me/memberOf and merge the result. Entra can emit only groups
+//      assigned to the application even without an overage marker, so
+//      an inline claim is not necessarily the complete membership set.
+//   3. Without a Graph token, return the inline groups only.
 //
 // All failure paths return [] (fail-closed). The caller's isInAdminGroup
 // then refuses access, which is the safe default.
@@ -27,21 +27,6 @@ type CacheEntry = {
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const cache = new Map<string, CacheEntry>();
-
-function isOverage(claims: Claims): boolean {
-    // Implicit-flow form (we don't use it for /install, but check anyway
-    // — `hasgroups` can appear in either flow depending on token shape).
-    if (claims.hasgroups === true || claims.hasgroups === "true") return true;
-    // Auth-code-flow form: _claim_names: { groups: "src1" }, with
-    // _claim_sources pointing at the Graph endpoint. We don't read the
-    // endpoint pointer; just detect the indicator and call Graph
-    // ourselves with /me/memberOf for consistency.
-    if (typeof claims._claim_names === "object" && claims._claim_names !== null) {
-        const names = claims._claim_names as Record<string, unknown>;
-        if ("groups" in names) return true;
-    }
-    return false;
-}
 
 function extractInline(claims: Claims): string[] {
     if (!Array.isArray(claims.groups)) return [];
@@ -131,10 +116,7 @@ export async function resolveUserGroups(
     if (!claims) return [];
 
     const inline = extractInline(claims);
-    if (inline.length > 0) return inline;
-
-    if (!isOverage(claims)) return [];
-    if (!accessToken) return [];
+    if (!accessToken) return inline;
 
     const oid = typeof claims.oid === "string" ? claims.oid : "";
     const iat = typeof claims.iat === "number" ? claims.iat : 0;
@@ -148,7 +130,7 @@ export async function resolveUserGroups(
     if (cacheable) {
         const cached = cache.get(cacheKey);
         if (cached && now - cached.fetchedAt < CACHE_TTL_MS) {
-            return cached.groups;
+            return [...new Set([...inline, ...cached.groups])];
         }
     }
 
@@ -157,11 +139,11 @@ export async function resolveUserGroups(
         if (cacheable) {
             cache.set(cacheKey, { groups, fetchedAt: now });
         }
-        return groups;
+        return [...new Set([...inline, ...groups])];
     } catch (err) {
         console.warn("graph.memberOf_error", {
             error: err instanceof Error ? err.message : String(err),
         });
-        return [];
+        return inline;
     }
 }

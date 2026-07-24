@@ -41,12 +41,12 @@ async function resolveCredentials(
 
     if (!endpoint) {
         throw new Error(
-            "Azure OpenAI not configured: endpoint missing (set azure-openai-endpoint in KV via /install, AZURE_OPENAI_ENDPOINT env, or the user's azure_openai_endpoint).",
+            "Azure OpenAI is not configured for this organisation. Ask an administrator to open /install and set the azure-openai-endpoint Key Vault secret.",
         );
     }
     if (!apiKey) {
         throw new Error(
-            "Azure OpenAI not configured: apiKey missing. Managed-identity auth is not implemented yet.",
+            "Azure OpenAI is not configured for this organisation. Ask an administrator to open /install and set the azure-openai-api-key Key Vault secret.",
         );
     }
     return { endpoint, apiKey, apiVersion };
@@ -70,7 +70,7 @@ function deploymentFromModelId(
         "";
     if (!fallback) {
         throw new Error(
-            "Azure OpenAI deployment missing. Pick a specific deployment in the model picker, or set a default deployment in Account → Models.",
+            "Azure OpenAI deployment missing. Pick a specific deployment in the model picker; an administrator can configure the organisation connection through /install.",
         );
     }
     return fallback;

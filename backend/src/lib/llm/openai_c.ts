@@ -5,6 +5,7 @@ import type {
     StreamChatResult,
     NormalizedToolCall,
     NormalizedToolResult,
+    UserApiKeys,
 } from "./types";
 import { resolveSecret } from "../envSecrets";
 
@@ -24,18 +25,45 @@ import { resolveSecret } from "../envSecrets";
 // Those changes target upstream's raw-fetch implementation and were not
 // ported onto dev's SDK adapter; abortSignal on StreamChatParams is
 // accepted but currently ignored here.
-async function apiKey(override?: string | null): Promise<string> {
-    const key = override?.trim() || (await resolveSecret("openai-api-key"));
+export type OpenAICompatibleAdapterConfig = {
+    providerLabel: string;
+    secretName: string;
+    baseURL: string | (() => Promise<string | undefined>);
+    apiKeyOverride: (apiKeys?: UserApiKeys) => string | null | undefined;
+    logPrefix: string;
+    preserveReasoning?: boolean;
+};
+
+const OPENAI_CONFIG: OpenAICompatibleAdapterConfig = {
+    providerLabel: "OpenAI",
+    secretName: "openai-api-key",
+    baseURL: async () =>
+        (await resolveSecret("openai-base-url")) || undefined,
+    apiKeyOverride: (apiKeys) => apiKeys?.openai,
+    logPrefix: "openai",
+};
+
+async function apiKey(
+    config: OpenAICompatibleAdapterConfig,
+    override?: string | null,
+): Promise<string> {
+    const key =
+        override?.trim() || (await resolveSecret(config.secretName));
     if (!key) {
         throw new Error(
-            "OpenAI API key is not configured. Set the openai-api-key Key Vault secret (or its env fallback) or add a user OpenAI key.",
+            `${config.providerLabel} is not configured for this organisation. ` +
+                "Ask an administrator to open /install and set the " +
+                `${config.secretName} Key Vault secret.`,
         );
     }
     return key;
 }
 
-async function client(override?: string | null): Promise<OpenAI> {
-    const apiKeyValue = await apiKey(override);
+async function client(
+    config: OpenAICompatibleAdapterConfig,
+    override?: string | null,
+): Promise<OpenAI> {
+    const apiKeyValue = await apiKey(config, override);
     // Base URL must be resolved explicitly now that ANTHROPIC_API_KEY /
     // OPENAI_API_KEY env vars are no longer wired via Container App
     // secretRef (see infra/modules/containerapp-backend.bicep — the AI
@@ -43,7 +71,10 @@ async function client(override?: string | null): Promise<OpenAI> {
     // Entry 19). The OpenAI SDK used to auto-read OPENAI_BASE_URL; now
     // we pass it via the constructor. undefined leaves the SDK default
     // (api.openai.com).
-    const baseURL = (await resolveSecret("openai-base-url")) || undefined;
+    const baseURL =
+        typeof config.baseURL === "function"
+            ? await config.baseURL()
+            : config.baseURL;
     return new OpenAI({ apiKey: apiKeyValue, baseURL });
 }
 
@@ -69,8 +100,9 @@ type AccumulatedToolCall = {
     argsBuffer: string;
 };
 
-export async function streamOpenAI(
+export async function streamOpenAICompatible(
     params: StreamChatParams,
+    config: OpenAICompatibleAdapterConfig,
 ): Promise<StreamChatResult> {
     const {
         model,
@@ -81,7 +113,7 @@ export async function streamOpenAI(
         apiKeys,
     } = params;
     const maxIter = params.maxIterations ?? 10;
-    const openai = await client(apiKeys?.openai);
+    const openai = await client(config, config.apiKeyOverride(apiKeys));
 
     const messages = toNativeMessages(params.messages, systemPrompt);
     let fullText = "";
@@ -96,12 +128,20 @@ export async function streamOpenAI(
 
         const acc = new Map<number, AccumulatedToolCall>();
         let assistantText = "";
+        let assistantReasoning = "";
         let finishReason: string | null = null;
 
         for await (const chunk of stream) {
             const choice = chunk.choices[0];
             if (!choice) continue;
             const delta = choice.delta;
+            const reasoningDelta = (
+                delta as typeof delta & { reasoning_content?: string }
+            )?.reasoning_content;
+            if (config.preserveReasoning && reasoningDelta) {
+                assistantReasoning += reasoningDelta;
+                callbacks.onReasoningDelta?.(reasoningDelta);
+            }
             if (delta?.content) {
                 assistantText += delta.content;
                 callbacks.onContentDelta?.(delta.content);
@@ -124,6 +164,9 @@ export async function streamOpenAI(
             }
             if (choice.finish_reason) finishReason = choice.finish_reason;
         }
+        if (config.preserveReasoning && assistantReasoning) {
+            callbacks.onReasoningBlockEnd?.();
+        }
 
         fullText += assistantText;
 
@@ -137,11 +180,14 @@ export async function streamOpenAI(
                         unknown
                     >;
                 } catch (err) {
-                    console.error("[openai] failed to parse tool call args", {
-                        name: raw.name,
-                        argsBuffer: raw.argsBuffer,
-                        err,
-                    });
+                    console.error(
+                        `[${config.logPrefix}] failed to parse tool call args`,
+                        {
+                            name: raw.name,
+                            argsBuffer: raw.argsBuffer,
+                            err,
+                        },
+                    );
                 }
             }
             const call: NormalizedToolCall = {
@@ -162,7 +208,7 @@ export async function streamOpenAI(
         // Append the assistant turn that issued the tool_calls, then one
         // tool message per result (OpenAI requires a separate message per
         // tool result, keyed by tool_call_id).
-        messages.push({
+        const assistantMessage = {
             role: "assistant",
             content: assistantText || null,
             tool_calls: toolCalls.map((c) => ({
@@ -173,7 +219,11 @@ export async function streamOpenAI(
                     arguments: JSON.stringify(c.input),
                 },
             })),
-        });
+            ...(config.preserveReasoning && assistantReasoning
+                ? { reasoning_content: assistantReasoning }
+                : {}),
+        } as ChatCompletionMessageParam;
+        messages.push(assistantMessage);
         for (const r of results) {
             messages.push({
                 role: "tool",
@@ -186,14 +236,25 @@ export async function streamOpenAI(
     return { fullText };
 }
 
-export async function completeOpenAIText(params: {
+export function streamOpenAI(
+    params: StreamChatParams,
+): Promise<StreamChatResult> {
+    return streamOpenAICompatible(params, OPENAI_CONFIG);
+}
+
+export type OpenAICompatibleCompleteParams = {
     model: string;
     systemPrompt?: string;
     user: string;
     maxTokens?: number;
-    apiKeys?: { openai?: string | null };
-}): Promise<string> {
-    const openai = await client(params.apiKeys?.openai);
+    apiKeys?: UserApiKeys;
+};
+
+export async function completeOpenAICompatibleText(
+    params: OpenAICompatibleCompleteParams,
+    config: OpenAICompatibleAdapterConfig,
+): Promise<string> {
+    const openai = await client(config, config.apiKeyOverride(params.apiKeys));
     const messages: ChatCompletionMessageParam[] = [];
     if (params.systemPrompt) {
         messages.push({ role: "system", content: params.systemPrompt });
@@ -205,6 +266,12 @@ export async function completeOpenAIText(params: {
         max_completion_tokens: params.maxTokens ?? 512,
     });
     return resp.choices[0]?.message?.content ?? "";
+}
+
+export function completeOpenAIText(
+    params: OpenAICompatibleCompleteParams,
+): Promise<string> {
+    return completeOpenAICompatibleText(params, OPENAI_CONFIG);
 }
 
 export type { NormalizedToolResult };

@@ -18,7 +18,7 @@ import {
 export interface ModelOption {
     id: string;
     label: string;
-    group: "Anthropic" | "Google" | "OpenAI" | "Azure OpenAI";
+    group: "Anthropic" | "Google" | "OpenAI" | "Kimi" | "Azure OpenAI";
 }
 
 export const MODELS: ModelOption[] = [
@@ -31,6 +31,7 @@ export const MODELS: ModelOption[] = [
     { id: "gemini-3-flash-preview", label: "Gemini 3 Flash", group: "Google" },
     { id: "gpt-5.5", label: "GPT-5.5", group: "OpenAI" },
     { id: "gpt-5.4", label: "GPT-5.4", group: "OpenAI" },
+    { id: "kimi-k3", label: "Kimi K3", group: "Kimi" },
     // Azure OpenAI entries are appended dynamically at render time from
     // deployment discovery — see UserProfileContext.aoaiDeployments.
 ];
@@ -67,6 +68,7 @@ const GROUP_ORDER: ModelOption["group"][] = [
     "Anthropic",
     "Google",
     "OpenAI",
+    "Kimi",
     "Azure OpenAI",
 ];
 

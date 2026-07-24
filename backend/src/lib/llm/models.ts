@@ -16,6 +16,7 @@ export const GEMINI_MAIN_MODELS = [
     "gemini-3-flash-preview",
 ] as const;
 export const OPENAI_MAIN_MODELS = ["gpt-5.5", "gpt-5.4"] as const;
+export const KIMI_MAIN_MODELS = ["kimi-k3"] as const;
 
 // Mid-tier (used for tabular review) — user picks one in account settings.
 export const CLAUDE_MID_MODELS = ["claude-sonnet-4-6"] as const;
@@ -42,6 +43,7 @@ const ALL_MODELS = new Set<string>([
     ...CLAUDE_MAIN_MODELS,
     ...GEMINI_MAIN_MODELS,
     ...OPENAI_MAIN_MODELS,
+    ...KIMI_MAIN_MODELS,
     ...CLAUDE_MID_MODELS,
     ...GEMINI_MID_MODELS,
     ...OPENAI_MID_MODELS,
@@ -57,6 +59,7 @@ const ALL_MODELS = new Set<string>([
 export function providerForModel(model: string): Provider {
     if (model.startsWith("claude")) return "claude";
     if (model.startsWith("gemini")) return "gemini";
+    if (model.startsWith("kimi-")) return "kimi";
     if (model.startsWith(AZURE_OPENAI_PREFIX)) return "azureOpenai";
     if (model.startsWith("gpt-")) return "openai";
     throw new Error(`Unknown model id: ${model}`);

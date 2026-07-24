@@ -1,5 +1,6 @@
-// Install-flow session machinery for the bootstrap-to-Entra handover.
-// This file owns the cookie format and the middleware gate.
+// Install-flow session machinery. See issue 023 §"Bootstrap → Entra
+// handover sequence" for the broader state machine; this file owns the
+// cookie format and the middleware gate.
 //
 // Sessions are HMAC-signed JSON, NOT JWTs — JWT's signature/algorithm
 // negotiation is overkill for a single-issuer single-verifier flow,
@@ -186,8 +187,8 @@ export function readIdTokenClaims(idToken: string): Record<string, unknown> | nu
 
 // Compare the user's `groups` claim against the configured admin group
 // ID(s). The KV value may be a single GUID or a comma-separated list,
-// optionally followed by `# display name` comments — we strip everything
-// after the first `#` and ignore whitespace.
+// optionally followed by `# display name` comments per the issue 023
+// design — we strip everything after the first `#` and ignore whitespace.
 export async function isInAdminGroup(
     userGroups: string[] | undefined,
 ): Promise<boolean> {
@@ -209,11 +210,11 @@ export async function retireBootstrap(): Promise<void> {
 }
 
 // Initial-admin escape hatch. Checks whether the signing-in user's oid
-// matches the install-initial-admin-oid seeded by deployment automation.
-// When matched,
-// the user is granted admin access regardless of group membership —
-// permanent recovery path for "I misconfigured the admin group and
-// locked myself out" scenarios.
+// matches install-initial-admin-oid. The value may be provisioned during
+// deployment or claimed by the first successful self-bootstrap sign-in
+// below. When matched, the user is
+// granted admin access regardless of group membership — permanent recovery
+// from "I misconfigured the admin group and locked myself out" scenarios.
 //
 // Fail-closed: any KV read failure or empty-config returns false (the
 // caller falls back to the normal admin gate). When the match fires,
@@ -239,10 +240,11 @@ export async function isInitialAdmin(
 
 // Self-bootstrap fast-path. Closes the chicken-and-egg of a fresh
 // install where the operator hasn't yet configured the
-// admin group: when entra-admin-group-ids is empty in KV, allow the
-// first Entra user reaching /install to configure (so they can set
-// the admin group from inside the configurator without needing the
-// bootstrap token at all).
+// admin group: when entra-admin-group-ids is empty in KV, remember the
+// first Entra user's immutable oid and email, then allow them into /install
+// (so they can set the admin group without needing the bootstrap token).
+// The remembered oid remains an escape hatch if the saved group is wrong
+// or Entra does not return it in later membership claims.
 //
 // Per the no-strip-redundant-code principle, the bootstrap-token
 // path stays in source — OSS deployments and break-glass recovery
@@ -265,26 +267,34 @@ export async function isInitialAdmin(
 // /install, this fast-path stops firing.
 //
 // Threat model: any tenant-internal user who knows the install URL
-// could race the buyer and claim setup. Mitigations are (a) the URL is
-// an unguessable Container Apps subdomain only the buyer saw at deploy
-// output time, (b) every grant logs via console.warn for audit, and
-// (c) install-initial-admin-oid acts as a permanent escape hatch.
+// could race the operator and claim setup. Mitigations are (a) the URL is
+// an unguessable Container Apps subdomain, (b) every grant logs via
+// console.warn for audit, and (c) the provisioned
+// install-initial-admin-oid acts as a permanent escape hatch.
 //
 // Per the no-strip-redundant-code principle, the bootstrap-token paste
 // form remains in source for OSS / break-glass scenarios; this helper
 // just opens a parallel "open door" while the admin group is unset.
-//
-// Supports first-visit bootstrap before Entra configuration exists.
 export async function isFirstVisitEligible(): Promise<boolean> {
     const adminGroupIds = (await getConfig("entra-admin-group-ids").catch(() => "")).trim();
     return adminGroupIds === "";
 }
 
+function isMissingSecretError(error: unknown): boolean {
+    if (!error || typeof error !== "object") return false;
+    const candidate = error as { statusCode?: unknown; code?: unknown };
+    return (
+        candidate.statusCode === 404 ||
+        candidate.code === "SecretNotFound"
+    );
+}
+
 export async function isSelfBootstrapAllowed(
     tid: string | undefined,
     principal: string,
+    oid: string | undefined,
 ): Promise<boolean> {
-    if (!tid) return false;
+    if (!tid || !oid) return false;
 
     const adminGroupIds = (await getConfig("entra-admin-group-ids").catch(() => "")).trim();
     if (adminGroupIds) return false; // admin group already set — not a bootstrap scenario
@@ -295,9 +305,42 @@ export async function isSelfBootstrapAllowed(
     const tidMatches = tid.toLowerCase() === expectedTenantId.toLowerCase();
     if (!tidMatches) return false;
 
+    // Persist the first successfully authenticated setup user as the
+    // permanent initial-admin escape hatch before allowing them through.
+    // This prevents the operator from locking themselves out if they save
+    // an admin group that Entra later does not return for their account.
+    //
+    // Never replace an existing value: it may have been provisioned during
+    // deployment or claimed by an earlier setup user.
+    let existingOid: string;
+    try {
+        existingOid = (await getConfig("install-initial-admin-oid")).trim();
+    } catch (error) {
+        if (!isMissingSecretError(error)) return false;
+        existingOid = "";
+    }
+    if (existingOid) {
+        return existingOid.toLowerCase() === oid.toLowerCase();
+    }
+
+    try {
+        await setConfig("install-initial-admin-oid", oid);
+        await setConfig("install-initial-admin-email", principal);
+    } catch (error) {
+        console.error("install.initial_admin_persist_failed", {
+            principal,
+            oid,
+            error: error instanceof Error ? error.message : String(error),
+            timestamp: new Date().toISOString(),
+        });
+        return false;
+    }
+
     console.warn("install.self_bootstrap_granted", {
         principal,
         tid,
+        oid,
+        rememberedAsInitialAdmin: true,
         timestamp: new Date().toISOString(),
     });
     return true;
