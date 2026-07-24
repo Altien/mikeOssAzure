@@ -42,6 +42,7 @@ import {
     findMissingUserEmails,
     loadProfileUsersByEmail,
 } from "../lib/userLookup";
+import { parsePaginationQuery } from "../lib/pagination";
 
 function formatPromptSuffix(format?: string, tags?: string[]): string {
     switch (format) {
@@ -96,11 +97,14 @@ tabularRouter.get("/", requireAuth, async (req, res) => {
         typeof req.query.project_id === "string" && req.query.project_id
             ? (req.query.project_id as string)
             : null;
+    const pagination = parsePaginationQuery(req.query as Record<string, unknown>);
 
     const { data, error } = await db.rpc("get_tabular_reviews_overview", {
         p_user_id: userId,
         p_user_email: userEmail ?? null,
         p_project_id: projectIdFilter,
+        p_limit: pagination.limit,
+        p_offset: pagination.offset,
     });
     if (error) return void res.status(500).json({ detail: error.message });
 

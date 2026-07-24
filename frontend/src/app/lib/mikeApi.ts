@@ -1047,8 +1047,14 @@ export async function streamProjectChat(payload: {
 
 export async function listTabularReviews(
     projectId?: string,
+    pagination?: { limit?: number; offset?: number },
 ): Promise<TabularReview[]> {
-    const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
+    const params = new URLSearchParams();
+    if (projectId) params.set("project_id", projectId);
+    if (pagination?.limit) params.set("limit", String(pagination.limit));
+    if (pagination?.offset) params.set("offset", String(pagination.offset));
+
+    const qs = params.toString() ? `?${params.toString()}` : "";
     return apiRequest<TabularReview[]>(`/tabular-review${qs}`);
 }
 

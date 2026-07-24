@@ -697,7 +697,9 @@ create index if not exists idx_tabular_cells_review
 create or replace function public.get_tabular_reviews_overview(
   p_user_id text,
   p_user_email text default null,
-  p_project_id text default null
+  p_project_id text default null,
+  p_limit integer default 20,
+  p_offset integer default 0
 )
 returns table (
   id uuid,
@@ -783,7 +785,9 @@ as $$
   from visible_reviews vr
   left join cell_document_counts cdc
     on cdc.review_id = vr.id
-  order by vr.created_at desc;
+  order by vr.created_at desc
+  limit greatest(coalesce(p_limit, 20), 1)
+  offset greatest(coalesce(p_offset, 0), 0);
 $$;
 
 create table if not exists public.tabular_review_chats (
