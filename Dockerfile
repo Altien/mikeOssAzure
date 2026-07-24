@@ -66,6 +66,9 @@ RUN pnpm run build
 # ── Runtime ──────────────────────────────────────────────────────────────────
 FROM node:22-slim AS runtime
 RUN corepack enable
+# Keep npm's bundled `tar` above the patched floor used by the migration job's
+# `npm run migrate` entrypoint (CVE-2026-59873).
+RUN npm install --global npm@12.0.1
 
 # libreoffice-convert requires LibreOffice at runtime for DOCX → PDF conversion.
 RUN apt-get update && apt-get install -y --no-install-recommends libreoffice \
