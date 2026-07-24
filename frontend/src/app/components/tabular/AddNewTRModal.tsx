@@ -23,6 +23,7 @@ interface Props {
         projectId?: string,
         documentIds?: string[],
         columnsConfig?: Workflow["columns_config"],
+        documentGrouping?: "document" | "folder",
     ) => void;
     projects?: Project[];
     /** When provided, skip the project/directory picker and show only these docs */
@@ -60,6 +61,7 @@ export function AddNewTRModal({
     const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(
         new Set(),
     );
+    const [groupBySubfolder, setGroupBySubfolder] = useState(false);
     const [uploading, setUploading] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -125,6 +127,7 @@ export function AddNewTRModal({
         setStandaloneDocs([]);
         setDirectoryProjects([]);
         setSelectedDocIds(new Set());
+        setGroupBySubfolder(false);
         setSelectedWorkflowId(null);
         setWorkflowDropdownOpen(false);
         onClose();
@@ -142,6 +145,9 @@ export function AddNewTRModal({
             underProject ? selectedProjectId : undefined,
             selectedDocIds.size > 0 ? [...selectedDocIds] : undefined,
             selectedWorkflow?.columns_config ?? undefined,
+            groupBySubfolder && (isProjectMode || underProject)
+                ? "folder"
+                : "document",
         );
         handleClose();
     }
@@ -479,6 +485,19 @@ export function AddNewTRModal({
                                         }
                                     />
                                 </div>
+                                {(isProjectMode || underProject) && (
+                                    <label className="mt-4 flex items-center gap-2.5 text-sm text-gray-600">
+                                        <input
+                                            type="checkbox"
+                                            checked={groupBySubfolder}
+                                            onChange={(event) =>
+                                                setGroupBySubfolder(event.target.checked)
+                                            }
+                                            className="h-3.5 w-3.5 rounded border-gray-300 accent-gray-900"
+                                        />
+                                        Treat documents in the same project subfolder as one review row
+                                    </label>
+                                )}
                             </div>
                         )}
                 </div>

@@ -287,6 +287,7 @@ export function ProjectWorkspaceProvider({
         _projectId?: string,
         documentIds?: string[],
         columnsConfig?: ColumnConfig[] | null,
+        documentGrouping?: "document" | "folder",
     ) {
         setCreatingReview(true);
         try {
@@ -296,6 +297,7 @@ export function ProjectWorkspaceProvider({
                 title: title || undefined,
                 document_ids: documentIds ?? readyDocs.map((d) => d.id),
                 columns_config: columnsConfig ?? [],
+                document_grouping: documentGrouping,
                 project_id: projectId,
             });
             setProjectReviews((prev) => (prev ? [review, ...prev] : prev));

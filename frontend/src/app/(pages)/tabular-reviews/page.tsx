@@ -185,6 +185,7 @@ export default function TabularReviewsPage() {
         columnsConfig?:
             | import("@/app/components/shared/types").ColumnConfig[]
             | null,
+        documentGrouping?: "document" | "folder",
     ) => {
         setCreating(true);
         try {
@@ -192,6 +193,7 @@ export default function TabularReviewsPage() {
                 title,
                 document_ids: documentIds ?? [],
                 columns_config: columnsConfig ?? [],
+                document_grouping: documentGrouping,
                 ...(projectId && { project_id: projectId }),
             });
             router.push(
