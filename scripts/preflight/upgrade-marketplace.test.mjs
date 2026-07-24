@@ -74,6 +74,10 @@ if ($command -match '^containerapp job show') {
 if ($command -match '^deployment group create') {
   $templateIndex = [Array]::IndexOf($CliArgs, '--template-file')
   Copy-Item -LiteralPath $CliArgs[$templateIndex + 1] -Destination $env:MIKE_TEMPLATE_CAPTURE -Force
+  if ($env:MIKE_FAKE_MUTATION_OUTPUT -eq 'resource-id') {
+    '/subscriptions/sub/resourceGroups/rg-customer/providers/Microsoft.Resources/deployments/mike-observability-upgrade'
+    return
+  }
   '{"properties":{"provisioningState":"Succeeded"}}'
   return
 }
@@ -85,8 +89,11 @@ if ($command -match '^monitor log-analytics workspace get-shared-keys') {
   '{"primarySharedKey":"workspace-shared-key"}'
   return
 }
-if ($command -match '^containerapp secret set' -and $env:MIKE_FAKE_SECRET_SET_OUTPUT -eq 'resource-id') {
-  '/subscriptions/sub/resourceGroups/rg-customer/providers/Microsoft.App/containerApps/backend'
+if (
+  $env:MIKE_FAKE_MUTATION_OUTPUT -eq 'resource-id' -and
+  $command -match '^(containerapp env update|containerapp secret set|containerapp job update|containerapp update)'
+) {
+  '/subscriptions/sub/resourceGroups/rg-customer/providers/Microsoft.App/operations/result'
   return
 }
 if ($command -match '^containerapp job start') {
@@ -247,15 +254,32 @@ try {
     console.log("[ok] migrations finish before backend promotion");
     console.log("[ok] durable customer secrets are untouched");
 
-    const bareSecretSetOutput = runUpgrade("bare-secret-set-output", {
-        MIKE_FAKE_SECRET_SET_OUTPUT: "resource-id",
+    const bareMutationOutputs = runUpgrade("bare-mutation-outputs", {
+        MIKE_FAKE_MUTATION_OUTPUT: "resource-id",
     });
-    if (bareSecretSetOutput.result.status !== 0) {
+    if (bareMutationOutputs.result.status !== 0) {
         throw new Error(
-            `Upgrade must tolerate the bare resource ID emitted by az containerapp secret set.\n${bareSecretSetOutput.result.stdout}\n${bareSecretSetOutput.result.stderr}`,
+            `Upgrade must tolerate bare resource IDs emitted by Azure CLI mutation commands.\n${bareMutationOutputs.result.stdout}\n${bareMutationOutputs.result.stderr}`,
         );
     }
-    console.log("[ok] bare secret-set resource ID does not break the upgrade");
+    const bareMutationRollback = runUpgrade("bare-mutation-rollback", {
+        MIKE_FAKE_MUTATION_OUTPUT: "resource-id",
+        MIKE_FAKE_TELEMETRY_READY: "false",
+    });
+    const bareMutationRollbackOutput =
+        `${bareMutationRollback.result.stdout}\n${bareMutationRollback.result.stderr}`;
+    if (
+        bareMutationRollback.result.status === 0 ||
+        !bareMutationRollbackOutput.includes(
+            "Backend is running but did not report Application Insights initialisation.",
+        ) ||
+        bareMutationRollbackOutput.includes("Conversion from JSON failed")
+    ) {
+        throw new Error(
+            `Rollback must tolerate bare resource IDs and preserve the original failure.\n${bareMutationRollbackOutput}`,
+        );
+    }
+    console.log("[ok] bare mutation resource IDs do not break upgrade or rollback");
 
     const unsupported = runUpgrade("unsupported", {
         MIKE_FAKE_SOURCE_IMAGE: "acrmikeoss.azurecr.io/backend:1.0.8",

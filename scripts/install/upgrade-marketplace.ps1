@@ -227,7 +227,7 @@ try {
             Set-Content -LiteralPath $templatePath -Encoding utf8NoBOM
 
         Write-Host "[1/6] Provisioning Application Insights and Log Analytics" -ForegroundColor Cyan
-        Invoke-AzJson @(
+        Invoke-AzText @(
             "deployment", "group", "create",
             "--name", "mike-observability-upgrade",
             "--resource-group", $ResourceGroup,
@@ -237,7 +237,7 @@ try {
             "workspaceName=$workspaceName",
             "appInsightsName=$appInsightsName",
             "keyVaultName=$keyVaultName",
-            "--output", "json",
+            "--output", "none",
             "--only-show-errors"
         ) | Out-Null
     } finally {
@@ -260,14 +260,14 @@ try {
     )
 
     Write-Host "[2/6] Connecting Container Apps logs to Log Analytics" -ForegroundColor Cyan
-    Invoke-AzJson @(
+    Invoke-AzText @(
         "containerapp", "env", "update",
         "--name", $environmentName,
         "--resource-group", $ResourceGroup,
         "--logs-destination", "log-analytics",
         "--logs-workspace-id", ([string]$workspace.customerId),
         "--logs-workspace-key", ([string]$workspaceKeys.primarySharedKey),
-        "--output", "json",
+        "--output", "none",
         "--only-show-errors"
     ) | Out-Null
 
@@ -284,12 +284,12 @@ try {
 
     Write-Host "[4/6] Running database migrations with $targetImage" -ForegroundColor Cyan
     $migrationUpdateAttempted = $true
-    Invoke-AzJson @(
+    Invoke-AzText @(
         "containerapp", "job", "update",
         "--name", $MigrationJob,
         "--resource-group", $ResourceGroup,
         "--image", $targetImage,
-        "--output", "json",
+        "--output", "none",
         "--only-show-errors"
     ) | Out-Null
     $migrationStarted = $true
@@ -331,13 +331,13 @@ try {
 
     Write-Host "[5/6] Promoting backend to $targetImage" -ForegroundColor Cyan
     $backendPromotionAttempted = $true
-    Invoke-AzJson @(
+    Invoke-AzText @(
         "containerapp", "update",
         "--name", $BackendApp,
         "--resource-group", $ResourceGroup,
         "--image", $targetImage,
         "--set-env-vars", "APPLICATIONINSIGHTS_CONNECTION_STRING=secretref:appinsights-cs",
-        "--output", "json",
+        "--output", "none",
         "--only-show-errors"
     ) | Out-Null
 
@@ -387,12 +387,12 @@ try {
     if ($backendPromotionAttempted) {
         Write-Warning "Upgrade failed. Restoring the previous backend image: $previousImage"
         try {
-            Invoke-AzJson @(
+            Invoke-AzText @(
                 "containerapp", "update",
                 "--name", $BackendApp,
                 "--resource-group", $ResourceGroup,
                 "--image", $previousImage,
-                "--output", "json",
+                "--output", "none",
                 "--only-show-errors"
             ) | Out-Null
         } catch {
@@ -403,12 +403,12 @@ try {
     if ($migrationUpdateAttempted) {
         Write-Warning "Restoring the migration job image: $previousMigrationImage"
         try {
-            Invoke-AzJson @(
+            Invoke-AzText @(
                 "containerapp", "job", "update",
                 "--name", $MigrationJob,
                 "--resource-group", $ResourceGroup,
                 "--image", $previousMigrationImage,
-                "--output", "json",
+                "--output", "none",
                 "--only-show-errors"
             ) | Out-Null
         } catch {
