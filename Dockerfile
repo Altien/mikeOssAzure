@@ -77,7 +77,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends libreoffice \
 WORKDIR /app
 
 COPY backend/package.json backend/pnpm-lock.yaml backend/.npmrc backend/pnpm-workspace.yaml ./
-RUN pnpm install --frozen-lockfile --prod
+RUN pnpm install --frozen-lockfile --prod \
+ && corepack disable \
+ && rm -rf /usr/local/lib/node_modules/corepack
 
 COPY --from=backend-builder /app/dist ./dist
 # Frontend static output is served from /app/public via express.static.
