@@ -1320,11 +1320,11 @@ function citationSourceLabel(annotation: CitationAnnotation): string {
         if (caseName && citation) return `${caseName}, ${citation}`;
         return caseName || citation || `Case ${annotation.cluster_id}`;
     }
-    return annotation.filename;
+    return annotation.filename?.trim() || "Document citation";
 }
 
-function documentExtension(filename: string): string {
-    return filename.split(".").pop()?.toLowerCase() ?? "";
+function documentExtension(filename?: string | null): string {
+    return filename?.split(".").pop()?.toLowerCase() ?? "";
 }
 
 function CitationSourceIcon({
