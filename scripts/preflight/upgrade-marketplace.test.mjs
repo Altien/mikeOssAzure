@@ -85,6 +85,10 @@ if ($command -match '^monitor log-analytics workspace get-shared-keys') {
   '{"primarySharedKey":"workspace-shared-key"}'
   return
 }
+if ($command -match '^containerapp secret set' -and $env:MIKE_FAKE_SECRET_SET_OUTPUT -eq 'resource-id') {
+  '/subscriptions/sub/resourceGroups/rg-customer/providers/Microsoft.App/containerApps/backend'
+  return
+}
 if ($command -match '^containerapp job start') {
   '{"name":"execution-1"}'
   return
@@ -242,6 +246,16 @@ try {
     console.log("[ok] upgrade provisions telemetry automatically");
     console.log("[ok] migrations finish before backend promotion");
     console.log("[ok] durable customer secrets are untouched");
+
+    const bareSecretSetOutput = runUpgrade("bare-secret-set-output", {
+        MIKE_FAKE_SECRET_SET_OUTPUT: "resource-id",
+    });
+    if (bareSecretSetOutput.result.status !== 0) {
+        throw new Error(
+            `Upgrade must tolerate the bare resource ID emitted by az containerapp secret set.\n${bareSecretSetOutput.result.stdout}\n${bareSecretSetOutput.result.stderr}`,
+        );
+    }
+    console.log("[ok] bare secret-set resource ID does not break the upgrade");
 
     const unsupported = runUpgrade("unsupported", {
         MIKE_FAKE_SOURCE_IMAGE: "acrmikeoss.azurecr.io/backend:1.0.8",

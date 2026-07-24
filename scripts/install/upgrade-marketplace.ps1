@@ -273,12 +273,12 @@ try {
 
     $keyVaultSecretUri = "https://$keyVaultName.vault.azure.net/secrets/appinsights-connection-string"
     Write-Host "[3/6] Wiring backend telemetry through Key Vault" -ForegroundColor Cyan
-    Invoke-AzJson @(
+    Invoke-AzText @(
         "containerapp", "secret", "set",
         "--name", $BackendApp,
         "--resource-group", $ResourceGroup,
         "--secrets", "appinsights-cs=keyvaultref:$keyVaultSecretUri,identityref:$identityId",
-        "--output", "json",
+        "--output", "none",
         "--only-show-errors"
     ) | Out-Null
 
