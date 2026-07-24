@@ -178,6 +178,31 @@ describe("tabular.routes", () => {
                 data: { id: "r9", title: "Gamma", document_ids: ["d1"] },
                 error: null,
             };
+            supabaseState.tables.documents = {
+                data: [
+                    {
+                        id: "d1",
+                        filename: "Agreement.pdf",
+                        file_type: "pdf",
+                        folder_id: null,
+                    },
+                ],
+                error: null,
+            };
+            supabaseState.tables.tabular_review_rows = {
+                data: [
+                    {
+                        id: "row-1",
+                        review_id: "r9",
+                        label: "Agreement.pdf",
+                        row_type: "document",
+                        folder_id: null,
+                        document_id: "d1",
+                        sort_index: 0,
+                    },
+                ],
+                error: null,
+            };
             // d2 is not accessible — it must be filtered out of the insert.
             filterAccessibleDocumentIds.mockResolvedValue(["d1"]);
 
@@ -199,18 +224,118 @@ describe("tabular.routes", () => {
             expect(reviewInsert?.payload).toMatchObject({
                 document_ids: ["d1"],
             });
-            // Cells are created for accessible docs × columns only (1 × 1).
+            // Cells are created for accessible review rows × columns only (1 × 1).
             const cellInsert = supabaseState.inserts.find(
                 (i) => i.table === "tabular_cells",
             );
             expect(cellInsert?.payload).toEqual([
                 {
                     review_id: "r9",
+                    row_id: "row-1",
                     document_id: "d1",
                     column_index: 0,
                     status: "pending",
                 },
             ]);
+        });
+
+        it("groups project-folder documents into one review row", async () => {
+            supabaseState.tables.tabular_reviews = {
+                data: { id: "r10", title: "Grouped", document_ids: ["d1", "d2", "d3"] },
+                error: null,
+            };
+            supabaseState.tables.documents = {
+                data: [
+                    { id: "d1", filename: "A.pdf", file_type: "pdf", folder_id: "f1" },
+                    { id: "d2", filename: "B.pdf", file_type: "pdf", folder_id: "f1" },
+                    { id: "d3", filename: "Loose.pdf", file_type: "pdf", folder_id: null },
+                ],
+                error: null,
+            };
+            supabaseState.tables.project_subfolders = {
+                data: [{ id: "f1", name: "Contracts", parent_folder_id: null }],
+                error: null,
+            };
+            supabaseState.tables.tabular_review_rows = {
+                data: [
+                    {
+                        id: "row-folder",
+                        review_id: "r10",
+                        label: "Contracts",
+                        row_type: "folder",
+                        folder_id: "f1",
+                        document_id: null,
+                        sort_index: 0,
+                    },
+                    {
+                        id: "row-document",
+                        review_id: "r10",
+                        label: "Loose.pdf",
+                        row_type: "document",
+                        folder_id: null,
+                        document_id: "d3",
+                        sort_index: 1,
+                    },
+                ],
+                error: null,
+            };
+
+            const res = await request(app)
+                .post("/tabular-review")
+                .set(...AUTH)
+                .send({
+                    title: "Grouped",
+                    project_id: "p1",
+                    document_ids: ["d1", "d2", "d3"],
+                    document_grouping: "folder",
+                    columns_config: [{ index: 0, name: "Col", prompt: "p" }],
+                });
+
+            expect(res.status).toBe(201);
+            expect(supabaseState.inserts.find((i) => i.table === "tabular_reviews")?.payload)
+                .toMatchObject({ document_grouping: "folder" });
+            expect(supabaseState.inserts.find((i) => i.table === "tabular_review_rows")?.payload)
+                .toEqual([
+                    {
+                        review_id: "r10",
+                        label: "Contracts",
+                        row_type: "folder",
+                        folder_id: "f1",
+                        document_id: null,
+                        sort_index: 0,
+                    },
+                    {
+                        review_id: "r10",
+                        label: "Loose.pdf",
+                        row_type: "document",
+                        folder_id: null,
+                        document_id: "d3",
+                        sort_index: 1,
+                    },
+                ]);
+            expect(supabaseState.inserts.find((i) => i.table === "tabular_review_row_sources")?.payload)
+                .toEqual([
+                    { row_id: "row-folder", document_id: "d1", sort_index: 0 },
+                    { row_id: "row-folder", document_id: "d2", sort_index: 1 },
+                    { row_id: "row-document", document_id: "d3", sort_index: 0 },
+                ]);
+            expect(supabaseState.inserts.find((i) => i.table === "tabular_cells")?.payload)
+                .toEqual([
+                    {
+                        review_id: "r10",
+                        row_id: "row-folder",
+                        document_id: null,
+                        column_index: 0,
+                        status: "pending",
+                    },
+                    {
+                        review_id: "r10",
+                        row_id: "row-document",
+                        document_id: "d3",
+                        column_index: 0,
+                        status: "pending",
+                    },
+                ]);
         });
 
         it("returns 404 when project access is denied", async () => {

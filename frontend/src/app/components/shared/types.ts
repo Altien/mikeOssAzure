@@ -555,6 +555,7 @@ export interface TabularReview {
   title: string | null;
   columns_config: ColumnConfig[] | null;
   document_ids?: string[] | null;
+  document_grouping?: "document" | "folder";
   workflow_id: string | null;
   practice?: string | null;
   /** Per-review email list. Used so standalone (project_id null) reviews can be shared directly. */
@@ -569,7 +570,8 @@ export interface TabularReview {
 export interface TabularCell {
   id: string;
   review_id: string;
-  document_id: string;
+  row_id?: string | null;
+  document_id: string | null;
   column_index: number;
   content: {
     summary: string;
@@ -578,6 +580,17 @@ export interface TabularCell {
   } | null;
   status: "pending" | "generating" | "done" | "error";
   created_at: string;
+}
+
+export interface TabularReviewRow {
+  id: string;
+  review_id: string;
+  label: string;
+  row_type: "document" | "folder";
+  folder_id: string | null;
+  document_id: string | null;
+  sort_index: number;
+  source_document_ids: string[];
 }
 
 // Workflows
@@ -637,5 +650,6 @@ export interface ChatDetailOut {
 export interface TabularReviewDetailOut {
   review: TabularReview;
   cells: TabularCell[];
+  rows?: TabularReviewRow[];
   documents: Document[];
 }

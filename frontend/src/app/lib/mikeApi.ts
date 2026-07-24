@@ -1058,6 +1058,7 @@ export async function createTabularReview(payload: {
     columns_config: { index: number; name: string; prompt: string }[];
     workflow_id?: string;
     project_id?: string;
+    document_grouping?: "document" | "folder";
 }): Promise<TabularReview> {
     return apiRequest<TabularReview>("/tabular-review", {
         method: "POST",
@@ -1079,6 +1080,7 @@ export async function updateTabularReview(
         columns_config?: { index: number; name: string; prompt: string }[];
         document_ids?: string[];
         project_id?: string | null;
+        document_grouping?: "document" | "folder";
         shared_with?: string[];
     },
 ): Promise<TabularReview> {

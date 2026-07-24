@@ -70,6 +70,207 @@ function formatPromptSuffix(format?: string, tags?: string[]): string {
 
 export const tabularRouter = Router();
 
+type DocumentGrouping = "document" | "folder";
+type ReviewRow = {
+    id: string;
+    review_id: string;
+    label: string;
+    row_type: "document" | "folder";
+    folder_id: string | null;
+    document_id: string | null;
+    sort_index: number;
+    source_document_ids?: string[];
+};
+type SourceDocument = {
+    id: string;
+    filename: string;
+    file_type: string | null;
+    folder_id?: string | null;
+    created_at?: string | null;
+};
+type SupabaseDb = ReturnType<typeof createServerSupabase>;
+
+function normalizeGrouping(value: unknown): DocumentGrouping {
+    return value === "folder" ? "folder" : "document";
+}
+
+async function fetchSourceDocuments(
+    db: SupabaseDb,
+    documentIds: string[],
+): Promise<SourceDocument[]> {
+    if (documentIds.length === 0) return [];
+    const { data } = await db
+        .from("documents")
+        .select("id, filename, file_type, folder_id, created_at")
+        .in("id", documentIds);
+    const position = new Map(documentIds.map((id, index) => [id, index]));
+    return ((data ?? []) as SourceDocument[]).sort(
+        (a, b) => (position.get(a.id) ?? 0) - (position.get(b.id) ?? 0),
+    );
+}
+
+async function getFolderPathMap(
+    db: SupabaseDb,
+    projectId: string | null | undefined,
+): Promise<Map<string, string>> {
+    if (!projectId) return new Map();
+    const { data } = await db
+        .from("project_subfolders")
+        .select("id, name, parent_folder_id")
+        .eq("project_id", projectId);
+    const folders = (data ?? []) as {
+        id: string;
+        name: string;
+        parent_folder_id: string | null;
+    }[];
+    const byId = new Map(folders.map((folder) => [folder.id, folder]));
+    const paths = new Map<string, string>();
+    const resolve = (id: string): string => {
+        const existing = paths.get(id);
+        if (existing) return existing;
+        const folder = byId.get(id);
+        if (!folder) return "Unknown folder";
+        const path = folder.parent_folder_id
+            ? `${resolve(folder.parent_folder_id)} / ${folder.name}`
+            : folder.name;
+        paths.set(id, path);
+        return path;
+    };
+    for (const folder of folders) resolve(folder.id);
+    return paths;
+}
+
+async function createRowsForReview(
+    db: SupabaseDb,
+    reviewId: string,
+    projectId: string | null | undefined,
+    documentIds: string[],
+    columns: Column[],
+    grouping: DocumentGrouping,
+): Promise<ReviewRow[]> {
+    const docs = await fetchSourceDocuments(db, documentIds);
+    const folderPaths = await getFolderPathMap(db, projectId);
+    const inputs: {
+        label: string;
+        row_type: "document" | "folder";
+        folder_id: string | null;
+        document_id: string | null;
+        sourceIds: string[];
+    }[] = [];
+
+    if (grouping === "folder" && projectId) {
+        const byFolder = new Map<string, SourceDocument[]>();
+        for (const doc of docs) {
+            if (!doc.folder_id) {
+                inputs.push({
+                    label: doc.filename,
+                    row_type: "document",
+                    folder_id: null,
+                    document_id: doc.id,
+                    sourceIds: [doc.id],
+                });
+                continue;
+            }
+            byFolder.set(doc.folder_id, [...(byFolder.get(doc.folder_id) ?? []), doc]);
+        }
+        for (const [folderId, folderDocs] of byFolder) {
+            inputs.push({
+                label: folderPaths.get(folderId) ?? "Unknown folder",
+                row_type: "folder",
+                folder_id: folderId,
+                document_id: null,
+                sourceIds: folderDocs.map((doc) => doc.id),
+            });
+        }
+    } else {
+        for (const doc of docs) {
+            inputs.push({
+                label: doc.filename,
+                row_type: "document",
+                folder_id: null,
+                document_id: doc.id,
+                sourceIds: [doc.id],
+            });
+        }
+    }
+
+    inputs.sort((a, b) => a.label.localeCompare(b.label));
+    const { data, error } = await db
+        .from("tabular_review_rows")
+        .insert(
+            inputs.map((input, sort_index) => ({
+                review_id: reviewId,
+                label: input.label,
+                row_type: input.row_type,
+                folder_id: input.folder_id,
+                document_id: input.document_id,
+                sort_index,
+            })),
+        )
+        .select("*");
+    if (error) throw new Error(error.message);
+    const rows = ((data ?? []) as ReviewRow[]).sort(
+        (a, b) => a.sort_index - b.sort_index,
+    );
+    const sources = rows.flatMap((row) =>
+        (inputs[row.sort_index]?.sourceIds ?? []).map((document_id, sort_index) => ({
+            row_id: row.id,
+            document_id,
+            sort_index,
+        })),
+    );
+    if (sources.length) {
+        const { error: sourceError } = await db
+            .from("tabular_review_row_sources")
+            .insert(sources);
+        if (sourceError) throw new Error(sourceError.message);
+    }
+    const cells = rows.flatMap((row) =>
+        columns.map((column) => ({
+            review_id: reviewId,
+            row_id: row.id,
+            document_id: row.document_id,
+            column_index: column.index,
+            status: "pending",
+        })),
+    );
+    if (cells.length) {
+        const { error: cellError } = await db.from("tabular_cells").insert(cells);
+        if (cellError) throw new Error(cellError.message);
+    }
+    return rows;
+}
+
+async function loadReviewRows(
+    db: SupabaseDb,
+    reviewId: string,
+): Promise<ReviewRow[]> {
+    const { data } = await db
+        .from("tabular_review_rows")
+        .select("*")
+        .eq("review_id", reviewId)
+        .order("sort_index", { ascending: true });
+    const rows = (data ?? []) as ReviewRow[];
+    if (!rows.length) return rows;
+    const { data: sources } = await db
+        .from("tabular_review_row_sources")
+        .select("row_id, document_id")
+        .in("row_id", rows.map((row) => row.id))
+        .order("sort_index", { ascending: true });
+    const byRow = new Map<string, string[]>();
+    for (const source of sources ?? []) {
+        byRow.set(source.row_id, [
+            ...(byRow.get(source.row_id) ?? []),
+            source.document_id,
+        ]);
+    }
+    return rows.map((row) => ({
+        ...row,
+        source_document_ids:
+            byRow.get(row.id) ?? (row.document_id ? [row.document_id] : []),
+    }));
+}
+
 function providerLabel(provider: Provider): string {
     if (provider === "claude") return "Anthropic";
     if (provider === "openai") return "OpenAI";
@@ -111,13 +312,21 @@ tabularRouter.get("/", requireAuth, async (req, res) => {
 tabularRouter.post("/", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
-    const { title, document_ids, columns_config, workflow_id, project_id } =
+    const {
+        title,
+        document_ids,
+        columns_config,
+        workflow_id,
+        project_id,
+        document_grouping,
+    } =
         req.body as {
             title?: string;
             document_ids: string[];
             columns_config: { index: number; name: string; prompt: string }[];
             workflow_id?: string;
             project_id?: string;
+            document_grouping?: DocumentGrouping;
         };
 
     const db = createServerSupabase();
@@ -139,6 +348,7 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
               db,
           )
         : [];
+    const grouping = normalizeGrouping(document_grouping);
     const { data: review, error } = await db
         .from("tabular_reviews")
         .insert({
@@ -148,6 +358,7 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
             document_ids: allowedDocumentIds,
             project_id: project_id ?? null,
             workflow_id: workflow_id ?? null,
+            document_grouping: grouping,
         })
         .select("*")
         .single();
@@ -156,15 +367,21 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
             .status(500)
             .json({ detail: error?.message ?? "Failed to create review" });
 
-    const cells = allowedDocumentIds.flatMap((docId) =>
-        columns_config.map((col) => ({
-            review_id: review.id,
-            document_id: docId,
-            column_index: col.index,
-            status: "pending",
-        })),
-    );
-    if (cells.length) await db.from("tabular_cells").insert(cells);
+    try {
+        await createRowsForReview(
+            db,
+            review.id,
+            project_id ?? null,
+            allowedDocumentIds,
+            columns_config,
+            grouping,
+        );
+    } catch (error) {
+        await db.from("tabular_reviews").delete().eq("id", review.id);
+        return void res.status(500).json({
+            detail: error instanceof Error ? error.message : "Failed to create review rows",
+        });
+    }
 
     res.status(201).json(review);
 });
@@ -262,15 +479,20 @@ tabularRouter.get("/:reviewId", requireAuth, async (req, res) => {
         .from("tabular_cells")
         .select("*")
         .eq("review_id", reviewId);
+    const rows = await loadReviewRows(db, reviewId);
     const cellDocIds = [...new Set((cells ?? []).map((c) => c.document_id))];
+    const rowDocIds = rows.flatMap(
+        (row) => row.source_document_ids ?? [],
+    );
     const hasExplicitDocIds = Array.isArray(review.document_ids);
     const explicitDocIds = hasExplicitDocIds
         ? (review.document_ids as string[])
         : [];
-    const docIds =
-        hasExplicitDocIds
-            ? explicitDocIds
-            : cellDocIds;
+    const docIds = hasExplicitDocIds
+        ? explicitDocIds
+        : rowDocIds.length
+          ? rowDocIds
+          : cellDocIds;
     const docsResult =
         docIds.length > 0
             ? await db.from("documents").select("*").in("id", docIds)
@@ -287,6 +509,7 @@ tabularRouter.get("/:reviewId", requireAuth, async (req, res) => {
             ...cell,
             content: parseCellContent(cell.content),
         })),
+        rows,
         documents: docs,
     });
 });
