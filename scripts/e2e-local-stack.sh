@@ -2,10 +2,10 @@
 # Boot the full local e2e stack and run the Playwright suite.
 #
 # Local-machine mirror of .github/workflows/e2e.yml: starts the Supabase CLI
-# stack (Docker), loads backend/schema.sql + backend/migrations/ + the
-# service_role grants (schema.sql assumes a hosted project where service_role
-# is already privileged — see docs/e2e-ci.md), points backend/.env and
-# frontend/.env.local at the local stack, then runs `npx playwright test`.
+# stack (Docker), loads backend/schema.sql + backend/migrations/ (re-granting
+# service_role's narrowed privileges afterwards for migration-created tables —
+# see docs/e2e-ci.md), points backend/.env and frontend/.env.local at the
+# local stack, then runs `npx playwright test`.
 #
 # Usage, from the repo root:
 #   npm run test:e2e:local            # whole suite
@@ -62,11 +62,12 @@ for m in migrations/*.sql; do
     psql "$DB_URL" -q -f "$m" >/dev/null 2>&1 ||
         echo "warning: migration returned non-zero (already applied?): $m"
 done
+# schema.sql grants these itself, but only for tables that existed when it
+# ran — re-grant after migrations, with the same narrowed set (not ALL).
 psql "$DB_URL" -v ON_ERROR_STOP=1 -q <<'SQL'
 GRANT USAGE ON SCHEMA public TO service_role;
-GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
-GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO service_role;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO service_role;
 NOTIFY pgrst, 'reload schema';
 SQL
 
