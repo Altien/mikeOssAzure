@@ -8,3 +8,8 @@ public
 *.raw-llm-stream.json
 logs/
 .DS_Store
+
+# Stryker mutation-testing output
+reports/
+.stryker-tmp/
+stryker.log
