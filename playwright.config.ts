@@ -43,12 +43,17 @@ export default defineConfig({
         },
     ],
 
-    /* Start the backend and the Next.js dev server when running locally */
+    /* Start the backend and the Next.js dev server when running locally.
+       The backend command first runs the local-stack setup (Docker check,
+       supabase start, schema + migrations + grants, env wiring) so a plain
+       `npm run test:e2e` works against a ready local Supabase — see
+       scripts/e2e-local-stack.sh. Idempotent: a few seconds when already up. */
     webServer: process.env.CI
         ? undefined
         : [
               {
-                  command: "npm run dev",
+                  command:
+                      "bash ../scripts/e2e-local-stack.sh --setup-only && npm run dev",
                   cwd: "backend",
                   url: "http://localhost:3001/health",
                   reuseExistingServer: true,

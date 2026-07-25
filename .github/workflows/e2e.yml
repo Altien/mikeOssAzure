@@ -134,18 +134,17 @@ jobs:
             psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$m" >/dev/null 2>&1 \
               || echo "::warning::migration returned a non-zero status (already applied?): $m"
           done
-          # 3) schema.sql revokes client grants (anon/authenticated) on purpose, but
-          # assumes a HOSTED Supabase where service_role already holds full table
-          # access. On a fresh CLI stack loaded via psql, service_role gets no grants
-          # on the new public tables, so the backend — which queries exclusively as
-          # service_role (lib/supabase.ts) — 500s with "permission denied for table
-          # user_profiles" on the first write. Grant AFTER migrations so the tables
-          # they add are covered too.
+          # 3) schema.sql now grants service_role its narrowed data privileges
+          # itself, but those GRANT ... ON ALL statements only cover tables that
+          # exist when schema.sql runs — tables created by the migrations above
+          # are not covered, and the backend (which queries exclusively as
+          # service_role, lib/supabase.ts) 500s with "permission denied" on them.
+          # Re-grant AFTER migrations with the SAME privilege set as schema.sql —
+          # deliberately not ALL, so e2e cannot pass on a privilege prod lacks.
           psql "$DB_URL" -v ON_ERROR_STOP=1 <<'SQL'
           GRANT USAGE ON SCHEMA public TO service_role;
-          GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
-          GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
-          GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO service_role;
+          GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO service_role;
+          GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO service_role;
           SQL
           # 4) PostgREST cached its schema when `supabase start` booted it (before
           # the DDL above). Tell it to reload so the new tables/grants are visible.

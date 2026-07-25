@@ -32,6 +32,14 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
 
+      # Git's line-level merge can splice both sides of package(-lock).json
+      # into invalid JSON without a conflict (bit PR #233). npm's own error
+      # for an unparseable lockfile is the misleading "npm ci can only
+      # install with an existing package-lock.json" — fail fast with the real
+      # reason instead.
+      - name: Validate package.json and lockfile parse
+        run: node -e "for (const f of ['package.json','package-lock.json']) JSON.parse(require('fs').readFileSync(f, 'utf8'))"
+
       - run: npm ci
 
       # No-ops on a tree without a "test" script (e.g. before the vitest
@@ -54,6 +62,10 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
+      # Same silent-merge-corruption guard as the backend job.
+      - name: Validate package.json and lockfile parse
+        run: node -e "for (const f of ['package.json','package-lock.json']) JSON.parse(require('fs').readFileSync(f, 'utf8'))"
 
       - run: npm ci
 

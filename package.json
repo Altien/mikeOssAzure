@@ -3,6 +3,7 @@
     "private": true,
     "scripts": {
         "test:e2e": "playwright test",
+        "test:e2e:local": "bash scripts/e2e-local-stack.sh",
         "test:e2e:headed": "playwright test --headed",
         "test:e2e:ui": "playwright test --ui"
     },

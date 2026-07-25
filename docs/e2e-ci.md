@@ -17,10 +17,11 @@ and on manual `workflow_dispatch`, the `e2e / playwright` job:
    `backend/schema.sql`, then applies every dated migration in `backend/migrations/`
    on top. `schema.sql` is meant to be the latest shape but in practice lags the
    migrations (e.g. it is missing `workflow_open_source_submissions`, which
-   `GET /workflows/:id` queries — a 500 without the migrations). It also grants
-   `service_role` full access to the `public` tables afterward, because
-   `schema.sql` revokes client grants assuming a hosted Supabase where
-   `service_role` is already privileged;
+   `GET /workflows/:id` queries — a 500 without the migrations). After the
+   migrations it re-grants `service_role` the same narrowed data privileges
+   `schema.sql` grants (`SELECT/INSERT/UPDATE/DELETE` on tables, `USAGE/SELECT`
+   on sequences): the schema's own `GRANT ... ON ALL` statements only cover
+   tables that existed when the schema loaded, not ones the migrations create;
 4. writes `backend/.env` and `frontend/.env.local` from the live Supabase values;
 5. **builds** the web app (`next build`) and serves it with `next start` — a
    production build, not `next dev`, so there is no on-demand compilation (which
