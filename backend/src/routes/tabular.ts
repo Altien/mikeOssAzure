@@ -43,6 +43,8 @@ import {
     loadProfileUsersByEmail,
 } from "../lib/userLookup";
 import { parsePaginationQuery } from "../lib/pagination";
+import { normalizeSearchTerm } from "../lib/search";
+import { parseTabularReviewSort } from "../lib/sort";
 
 function formatPromptSuffix(format?: string, tags?: string[]): string {
     switch (format) {
@@ -98,6 +100,8 @@ tabularRouter.get("/", requireAuth, async (req, res) => {
             ? (req.query.project_id as string)
             : null;
     const pagination = parsePaginationQuery(req.query as Record<string, unknown>);
+    const searchTerm = normalizeSearchTerm(req.query.search);
+    const sort = parseTabularReviewSort(req.query as Record<string, unknown>);
 
     const { data, error } = await db.rpc("get_tabular_reviews_overview", {
         p_user_id: userId,
@@ -105,6 +109,9 @@ tabularRouter.get("/", requireAuth, async (req, res) => {
         p_project_id: projectIdFilter,
         p_limit: pagination.limit,
         p_offset: pagination.offset,
+        p_search_term: searchTerm,
+        p_sort_key: sort.key,
+        p_sort_direction: sort.direction,
     });
     if (error) return void res.status(500).json({ detail: error.message });
 

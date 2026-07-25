@@ -699,7 +699,10 @@ create or replace function public.get_tabular_reviews_overview(
   p_user_email text default null,
   p_project_id text default null,
   p_limit integer default 20,
-  p_offset integer default 0
+  p_offset integer default 0,
+  p_search_term text default null,
+  p_sort_key text default 'created',
+  p_sort_direction text default 'desc'
 )
 returns table (
   id uuid,
@@ -732,6 +735,11 @@ as $$
     select tr.*
     from public.tabular_reviews tr
     where (p_project_id is null or tr.project_id::text = p_project_id)
+      and (
+        p_search_term is null
+        or p_search_term = ''
+        or lower(coalesce(tr.title, '')) like '%' || lower(p_search_term) || '%'
+      )
       and (
         p_project_id is null
         or exists (
@@ -785,7 +793,40 @@ as $$
   from visible_reviews vr
   left join cell_document_counts cdc
     on cdc.review_id = vr.id
-  order by vr.created_at desc
+  order by
+    case
+      when p_sort_key = 'name' and p_sort_direction = 'asc' then lower(coalesce(vr.title, ''))
+      else null
+    end asc,
+    case
+      when p_sort_key = 'name' and p_sort_direction = 'desc' then lower(coalesce(vr.title, ''))
+      else null
+    end desc,
+    case
+      when p_sort_key = 'columns' and p_sort_direction = 'asc' then jsonb_array_length(coalesce(vr.columns_config, '[]'::jsonb))
+      else null
+    end asc,
+    case
+      when p_sort_key = 'columns' and p_sort_direction = 'desc' then jsonb_array_length(coalesce(vr.columns_config, '[]'::jsonb))
+      else null
+    end desc,
+    case
+      when p_sort_key = 'documents' and p_sort_direction = 'asc' then case when jsonb_typeof(vr.document_ids) = 'array' then (select count(distinct doc_id.value)::integer from jsonb_array_elements_text(vr.document_ids) as doc_id(value)) else coalesce(cdc.document_count, 0) end
+      else null
+    end asc,
+    case
+      when p_sort_key = 'documents' and p_sort_direction = 'desc' then case when jsonb_typeof(vr.document_ids) = 'array' then (select count(distinct doc_id.value)::integer from jsonb_array_elements_text(vr.document_ids) as doc_id(value)) else coalesce(cdc.document_count, 0) end
+      else null
+    end desc,
+    case
+      when p_sort_key = 'created' and p_sort_direction = 'asc' then vr.created_at
+      else null
+    end asc,
+    case
+      when p_sort_key = 'created' and p_sort_direction = 'desc' then vr.created_at
+      else null
+    end desc,
+    vr.created_at desc
   limit greatest(coalesce(p_limit, 20), 1)
   offset greatest(coalesce(p_offset, 0), 0);
 $$;

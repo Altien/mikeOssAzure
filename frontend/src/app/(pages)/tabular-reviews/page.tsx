@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useDebouncedValue } from "@/app/hooks/useDebouncedValue";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronDown, Loader2, Plus } from "lucide-react";
 import {
@@ -83,6 +84,7 @@ export default function TabularReviewsPage() {
         direction: TableSortDirection;
     } | null>(null);
     const [search, setSearch] = useState("");
+    const debouncedSearch = useDebouncedValue(search, 250);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [actionsOpen, setActionsOpen] = useState(false);
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
@@ -103,7 +105,13 @@ export default function TabularReviewsPage() {
             else setLoadingMore(true);
             try {
                 const [r, p] = await Promise.all([
-                    listTabularReviews(undefined, { limit: 20, offset: page * 20 }).catch(() => []),
+                    listTabularReviews(undefined, {
+                        limit: 20,
+                        offset: page * 20,
+                        search: debouncedSearch || undefined,
+                        sortKey: sort?.key,
+                        sortDirection: sort?.direction,
+                    }).catch(() => []),
                     page === 0 ? listProjects().catch(() => []) : null,
                 ]);
                 setReviews((prev) => (page === 0 ? r : [...prev, ...r]));
@@ -116,11 +124,17 @@ export default function TabularReviewsPage() {
         };
 
         void loadPage();
-    }, [page]);
+    }, [debouncedSearch, page]);
 
     function handleLoadMore() {
         setPage((prev) => prev + 1);
     }
+
+    useEffect(() => {
+        setPage(0);
+        setHasMore(true);
+        setReviews([]);
+    }, [debouncedSearch, sort]);
 
     useEffect(() => {
         setSelectedIds([]);
@@ -143,52 +157,13 @@ export default function TabularReviewsPage() {
         () => new Map(projects.map((project) => [project.id, project.name])),
         [projects],
     );
-    const q = search.toLowerCase();
     const filtered = useMemo(() => {
-        const rows = visibleReviews
-            .filter((r) => {
-                if (activeScope === "in-project") return !!r.project_id;
-                if (activeScope === "standalone") return !r.project_id;
-                return true;
-            })
-            .filter((r) => !projectFilter || r.project_id === projectFilter)
-            .filter((r) => !q || (r.title ?? "").toLowerCase().includes(q));
-
-        if (!sort) return rows;
-
-        return [...rows].sort((a, b) => {
-            const multiplier = sort.direction === "asc" ? 1 : -1;
-
-            if (sort.key === "columns") {
-                return (
-                    ((a.columns_config?.length ?? 0) -
-                        (b.columns_config?.length ?? 0)) *
-                    multiplier
-                );
-            }
-
-            if (sort.key === "documents") {
-                return (
-                    ((a.document_count ?? 0) - (b.document_count ?? 0)) *
-                    multiplier
-                );
-            }
-
-            if (sort.key === "created") {
-                return (
-                    (new Date(a.created_at).getTime() -
-                        new Date(b.created_at).getTime()) *
-                    multiplier
-                );
-            }
-
-            return (
-                (a.title ?? "Untitled Review").localeCompare(
-                    b.title ?? "Untitled Review",
-                ) * multiplier
-            );
-        });
-    }, [activeScope, projectFilter, q, sort, visibleReviews]);
+        return visibleReviews.filter((r) => {
+            if (activeScope === "in-project") return !!r.project_id;
+            if (activeScope === "standalone") return !r.project_id;
+            return true;
+        }).filter((r) => !projectFilter || r.project_id === projectFilter);
+    }, [activeScope, projectFilter, visibleReviews]);
 
     const allSelected =
         filtered.length > 0 &&
