@@ -56,6 +56,10 @@ function parseWwwAuthenticate(value: string | null): string | null {
  * more reach a forbidden host than the original request could.
  */
 async function fetchJson(url: string, init?: RequestInit) {
+    // Upstream divergence (sync-log: 22169c14): upstream routes this through
+    // guardedFetch (no redirects). Dev keeps the per-hop-validated redirect loop
+    // (RFC 8414 well-known paths are commonly served via 302); every hop still
+    // passes validateRemoteMcpUrl, so the SSRF guarantee is the same.
     let target = url;
     let response!: Response;
     for (let hop = 0; hop <= 3; hop += 1) {
@@ -82,12 +86,14 @@ async function fetchJson(url: string, init?: RequestInit) {
 }
 
 async function discoverProtectedResourceMetadataUrl(serverUrl: string) {
+    // The MCP server URL is attacker-influenced, so both discovery probes go
+    // through the shared guarded egress helper rather than raw fetch (previously
+    // an unvalidated SSRF sink).
     const attempts: Array<() => Promise<Response>> = [
-        () => fetch(serverUrl, { method: "GET", redirect: "manual" }),
+        () => guardedFetch(serverUrl, { method: "GET" }),
         () =>
-            fetch(serverUrl, {
+            guardedFetch(serverUrl, {
                 method: "POST",
-                redirect: "manual",
                 headers: {
                     Accept: "application/json, text/event-stream",
                     "Content-Type": "application/json",
@@ -213,10 +219,8 @@ async function registerOAuthClient(
     redirectUri: string,
 ) {
     if (!metadata.registrationEndpoint) return null;
-    await validateRemoteMcpUrl(metadata.registrationEndpoint);
-    const response = await fetch(metadata.registrationEndpoint, {
+    const response = await guardedFetch(metadata.registrationEndpoint, {
         method: "POST",
-        redirect: "manual",
         headers: {
             Accept: "application/json",
             "Content-Type": "application/json",
@@ -356,8 +360,7 @@ async function refreshOAuthAccessToken(row: OAuthTokenRow, db: Db) {
     });
     if (clientSecret) body.set("client_secret", clientSecret);
     if (row.resource) body.set("resource", row.resource);
-    await validateRemoteMcpUrl(row.token_endpoint);
-    const response = await fetch(row.token_endpoint, {
+    const response = await guardedFetch(row.token_endpoint, {
         method: "POST",
         headers: {
             Accept: "application/json",
