@@ -17,7 +17,6 @@ next-env.d.ts
 .DS_Store
 .vercel
 coverage
-<<<<<<< HEAD
 
 # Playwright artifacts and the bootstrapped e2e session (contains auth tokens)
 test-results/
@@ -27,6 +26,3 @@ e2e/.auth/
 # Local Supabase scaffold (supabase init output) — the local stack is a test
 # harness only; CI scaffolds its own fresh copy on every run
 backend/supabase/
-=======
-supabase
->>>>>>> 2dc8952 (Initial pagination implementation starting with tabular reviews)
