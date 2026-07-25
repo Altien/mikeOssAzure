@@ -3,11 +3,12 @@
 import { useCallback, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { PanelLeft } from "lucide-react";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth } from "@/app/contexts/AuthContext";
 import { ChatHistoryProvider } from "@/app/contexts/ChatHistoryContext";
 import { SidebarContext } from "@/app/contexts/SidebarContext";
 import { PageChromeContext } from "@/app/contexts/PageChromeContext";
 import { AppSidebar } from "@/app/components/shared/AppSidebar";
+import { FullScreenLoader } from "@/app/components/shared/FullScreenLoader";
 
 export default function MikeLayout({
     children,
@@ -75,11 +76,7 @@ export default function MikeLayout({
     }, [authLoading, isAuthenticated, router]);
 
     if (authLoading) {
-        return (
-            <div className="flex h-screen items-center justify-center">
-                <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-300 border-t-gray-700" />
-            </div>
-        );
+        return <FullScreenLoader />;
     }
 
     if (!isAuthenticated) return null;
@@ -102,7 +99,7 @@ export default function MikeLayout({
                         },
                     }}
                 >
-                    <div className="h-dvh flex flex-col bg-gray-50/80">
+                    <div className="h-dvh flex flex-col bg-app-background">
                         <div className="flex-1 flex min-w-0 overflow-visible">
                             <AppSidebar
                                 isOpen={isSidebarOpen}
@@ -113,7 +110,7 @@ export default function MikeLayout({
                                 <div className="relative z-20 flex md:hidden items-center gap-3 overflow-visible px-4 pt-3 pb-2 shrink-0">
                                     <button
                                         onClick={handleSidebarToggle}
-                                        className="flex h-9 w-9 items-center justify-center rounded-full bg-white/70 text-gray-700 shadow-[0_8px_24px_rgba(15,23,42,0.12)] ring-1 ring-white/70 backdrop-blur-md transition-all hover:bg-white/90 active:scale-95"
+                                        className="flex h-9 w-9 items-center justify-center rounded-full bg-app-surface text-gray-700 shadow-[0_8px_24px_rgba(15,23,42,0.12)] ring-1 ring-white/70 backdrop-blur-md transition-all hover:bg-app-floating active:scale-95"
                                         title="Open sidebar"
                                         aria-label="Open sidebar"
                                     >

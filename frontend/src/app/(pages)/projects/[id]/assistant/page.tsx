@@ -1,7 +1,7 @@
 "use client";
 
 import { use, useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronDown } from "lucide-react";
 import { deleteChat, renameChat } from "@/app/lib/mikeApi";
 import { ProjectAssistantTable } from "@/app/components/projects/ProjectAssistantTable";
@@ -10,7 +10,8 @@ import {
     useProjectWorkspace,
 } from "@/app/components/projects/ProjectWorkspace";
 import type { Chat } from "@/app/components/shared/types";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth } from "@/app/contexts/AuthContext";
+import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 
 interface Props {
     params: Promise<{ id: string }>;
@@ -31,13 +32,12 @@ function SelectedChatActions({
 
     return (
         <div className="relative">
-            <button
+            <TabPillButton
                 onClick={() => onOpenChange(!open)}
-                className="flex items-center gap-1 text-xs font-medium text-gray-700 transition-colors hover:text-gray-900"
             >
                 Actions
                 <ChevronDown className="h-3.5 w-3.5" />
-            </button>
+            </TabPillButton>
             {open && (
                 <div className="absolute right-0 top-full z-[120] mt-1 w-36 overflow-hidden rounded-lg border border-white/60 bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_12px_32px_rgba(15,23,42,0.14)] backdrop-blur-xl">
                     <button
@@ -56,7 +56,9 @@ export default function ProjectAssistantPage({ params }: Props) {
     use(params);
     const workspace = useProjectWorkspace();
     const router = useRouter();
+    const searchParams = useSearchParams();
     const { user } = useAuth();
+    const previewEmptyStates = searchParams.get("emptyStates") === "1";
     const {
         ensureProjectChats,
         projectChats,
@@ -70,7 +72,8 @@ export default function ProjectAssistantPage({ params }: Props) {
     const [renameChatValue, setRenameChatValue] = useState("");
     const [actionsOpen, setActionsOpen] = useState(false);
     const chats = useMemo(() => projectChats ?? [], [projectChats]);
-    const loading = projectChats === null;
+    const visibleChats = previewEmptyStates ? [] : chats;
+    const loading = projectChats === null && !previewEmptyStates;
 
     useEffect(() => {
         void ensureProjectChats();
@@ -78,8 +81,8 @@ export default function ProjectAssistantPage({ params }: Props) {
 
     const q = search.toLowerCase();
     const filteredChats = q
-        ? chats.filter((c) => (c.title ?? "").toLowerCase().includes(q))
-        : chats;
+        ? visibleChats.filter((c) => (c.title ?? "").toLowerCase().includes(q))
+        : visibleChats;
     const allChatsSelected =
         filteredChats.length > 0 &&
         filteredChats.every((c) => selectedChatIds.includes(c.id));
@@ -131,17 +134,17 @@ export default function ProjectAssistantPage({ params }: Props) {
     return (
         <>
             <ProjectSectionToolbar
-                actions={
+                actions={selectedChatIds.length > 0 ? (
                     <SelectedChatActions
                         selectedCount={selectedChatIds.length}
                         open={actionsOpen}
                         onOpenChange={setActionsOpen}
                         onDelete={() => void handleDeleteSelectedChats()}
                     />
-                }
+                ) : undefined}
             />
             <ProjectAssistantTable
-                chats={chats}
+                chats={visibleChats}
                 filteredChats={filteredChats}
                 selectedChatIds={selectedChatIds}
                 allChatsSelected={allChatsSelected}

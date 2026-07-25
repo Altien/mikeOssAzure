@@ -1,32 +1,74 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import {
     Check,
     ChevronDown,
-    Info,
+    Download,
+    Globe,
     Pencil,
+    Play,
     Plus,
     Trash2,
     Users,
     X,
 } from "lucide-react";
-import { deleteWorkflow, getWorkflow, updateWorkflow } from "@/app/lib/mikeApi";
-import { ShareWorkflowModal } from "@/app/components/workflows/ShareWorkflowModal";
+import {
+    deleteWorkflowShare,
+    deleteWorkflow,
+    getWorkflow,
+    listWorkflowShares,
+    lookupUserByEmail,
+    shareWorkflow,
+    updateWorkflow,
+    type ProjectPeople,
+} from "@/app/lib/mikeApi";
+import { UseWorkflowModal } from "@/app/components/workflows/UseWorkflowModal";
 import { WFEditColumnModal } from "@/app/components/workflows/WFEditColumnModal";
 import { WFColumnViewModal } from "@/app/components/workflows/WFColumnViewModal";
 import { AddColumnModal } from "@/app/components/tabular/AddColumnModal";
-import type { ColumnConfig, Workflow } from "@/app/components/shared/types";
-import { BUILT_IN_WORKFLOWS } from "@/app/components/workflows/builtinWorkflows";
-import { formatIcon, formatLabel } from "@/app/components/tabular/columnFormat";
-import { ConfirmPopup } from "@/app/components/shared/ConfirmPopup";
-import { HeaderActionsMenu } from "@/app/components/shared/HeaderActionsMenu";
+import type {
+    ColumnConfig,
+    Workflow,
+} from "@/app/components/shared/types";
+import {
+    formatIcon,
+    formatIconClassName,
+    formatLabel,
+} from "@/app/components/tabular/columnFormat";
+import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
+import {
+    HeaderActionsMenu,
+    type HeaderActionsMenuItem,
+} from "@/app/components/shared/HeaderActionsMenu";
+import { PeopleModal } from "@/app/components/modals/PeopleModal";
+import { OpenSourceWorkflowModal } from "@/app/components/workflows/OpenSourceWorkflowModal";
 import { PageHeader } from "@/app/components/shared/PageHeader";
-import { WorkflowDetailsModal } from "@/app/components/workflows/WorkflowDetailsModal";
-import { useAuth } from "@/contexts/AuthContext";
-import { useUserProfile } from "@/contexts/UserProfileContext";
+import { PillButton } from "@/app/components/ui/pill-button";
+import { TabPillButton } from "@/app/components/ui/tab-pill-button";
+import { LIQUID_TABLE_SURFACE_CLASS } from "@/app/components/ui/liquid-surface";
+import { NewWorkflowModal } from "@/app/components/workflows/NewWorkflowModal";
+import { TabularReviewSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
+import {
+    TABLE_CHECKBOX_CLASS,
+    SkeletonDot,
+    SkeletonLine,
+    TableBody,
+    TableCell,
+    TableEmptyState,
+    TableHeaderCell,
+    TableHeaderRow,
+    TablePrimaryCell,
+    TableRow,
+    TableScrollArea,
+    TableStickyCell,
+} from "@/app/components/shared/TablePrimitive";
+import { TableToolbar } from "@/app/components/shared/TableToolbar";
+import { useAuth } from "@/app/contexts/AuthContext";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import { downloadWorkflowZip } from "./workflowZipExport";
 // dynamic import keeps Tiptap (browser-only) out of the SSR bundle
 const WorkflowPromptEditor = dynamic(
     () =>
@@ -38,13 +80,16 @@ const WorkflowPromptEditor = dynamic(
 
 interface Props {
     id: string;
-    workflowType: Workflow["type"];
+    workflowType: Workflow["metadata"]["type"];
 }
 
 type SaveStatus = "idle" | "saving" | "saved";
 type DeleteStatus = "idle" | "loading" | "complete";
+type WorkflowShare = Awaited<ReturnType<typeof listWorkflowShares>>[number];
 
 const NAME_COL_W = "w-[332px] shrink-0";
+const WORKFLOW_CONTRIBUTIONS_ENABLED =
+    process.env.NEXT_PUBLIC_WORKFLOW_CONTRIBUTIONS_ENABLED === "true";
 
 // ---------------------------------------------------------------------------
 // Page
@@ -53,25 +98,25 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
     const router = useRouter();
     const { user } = useAuth();
     const { profile } = useUserProfile();
-    const stickyCellBg = "bg-[#fafbfc]";
-    const builtinWorkflow =
-        BUILT_IN_WORKFLOWS.find((w) => w.id === id && w.type === workflowType) ??
-        null;
-    const isBuiltin = builtinWorkflow !== null;
-
     const [workflow, setWorkflow] = useState<Workflow | null>(null);
     const [loading, setLoading] = useState(true);
     const [notFound, setNotFound] = useState(false);
 
     const readOnly =
-        isBuiltin ||
         (workflow?.is_system ?? false) ||
         workflow?.allow_edit === false;
     const canShare = !readOnly && (workflow?.is_owner ?? true);
+    const canOpenSource =
+        WORKFLOW_CONTRIBUTIONS_ENABLED &&
+        canShare &&
+        workflow?.is_system !== true;
 
     // Editor state
     const [promptMd, setPromptMd] = useState("");
     const [columns, setColumns] = useState<ColumnConfig[]>([]);
+    const searchParams = useSearchParams();
+    const previewEmptyStates = searchParams.get("emptyStates") === "1";
+    const visibleColumns = previewEmptyStates ? [] : columns;
 
     // Save status
     const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
@@ -85,11 +130,14 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
     const [editingColumn, setEditingColumn] = useState<ColumnConfig | null>(null);
     const [viewingColumn, setViewingColumn] = useState<ColumnConfig | null>(null);
 
-    // Share popover
+    // Share / use / details popovers
     const [shareOpen, setShareOpen] = useState(false);
+    const [workflowSharedWith, setWorkflowSharedWith] = useState<string[]>([]);
     const [detailsOpen, setDetailsOpen] = useState(false);
+    const [useOpen, setUseOpen] = useState(false);
     const [deleteOpen, setDeleteOpen] = useState(false);
     const [deleteStatus, setDeleteStatus] = useState<DeleteStatus>("idle");
+    const [openSourceOpen, setOpenSourceOpen] = useState(false);
 
     // Column actions dropdown
     const [colActionsOpen, setColActionsOpen] = useState(false);
@@ -109,27 +157,14 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
     // Load workflow
     // ---------------------------------------------------------------------------
     useEffect(() => {
-        if (isBuiltin) {
-            const wf = builtinWorkflow;
-            if (!wf) {
-                setNotFound(true);
-            } else {
-                setWorkflow(wf);
-                setPromptMd(wf.prompt_md ?? "");
-                setColumns(wf.columns_config ?? []);
-            }
-            setLoading(false);
-            return;
-        }
-
         getWorkflow(id)
             .then((wf) => {
-                if (wf.type !== workflowType) {
+                if (wf.metadata.type !== workflowType) {
                     setNotFound(true);
                     return;
                 }
                 setWorkflow(wf);
-                setPromptMd(wf.prompt_md ?? "");
+                setPromptMd(wf.skill_md ?? "");
                 setColumns(
                     (wf.columns_config ?? [])
                         .slice()
@@ -138,7 +173,83 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
             })
             .catch(() => setNotFound(true))
             .finally(() => setLoading(false));
-    }, [id, isBuiltin, builtinWorkflow, workflowType]);
+    }, [id, workflowType]);
+
+    const fetchWorkflowShares = useCallback(async () => {
+        const shares = await listWorkflowShares(id);
+        setWorkflowSharedWith(
+            shares.map((share) => share.shared_with_email.trim().toLowerCase()),
+        );
+        return shares;
+    }, [id]);
+
+    const fetchWorkflowPeople = useCallback(async (): Promise<ProjectPeople> => {
+        const shares = await fetchWorkflowShares();
+        const members = await Promise.all(
+            shares.map(async (share) => {
+                const email = share.shared_with_email.trim().toLowerCase();
+                const userResult = await lookupUserByEmail(email).catch(
+                    () => null,
+                );
+                return {
+                    email,
+                    display_name:
+                        userResult?.exists === true
+                            ? userResult.display_name
+                            : null,
+                };
+            }),
+        );
+        return {
+            owner: {
+                user_id: user?.id ?? workflow?.user_id ?? "",
+                email: user?.email ?? null,
+                display_name: profile?.displayName ?? null,
+            },
+            members,
+        };
+    }, [
+        fetchWorkflowShares,
+        profile?.displayName,
+        user?.email,
+        user?.id,
+        workflow?.user_id,
+    ]);
+
+    async function handleWorkflowSharedWithChange(nextSharedWith: string[]) {
+        const nextEmails = [
+            ...new Set(
+                nextSharedWith
+                    .map((email) => email.trim().toLowerCase())
+                    .filter(Boolean),
+            ),
+        ];
+        const currentShares = await listWorkflowShares(id);
+        const currentByEmail = new Map<string, WorkflowShare>();
+        for (const share of currentShares) {
+            currentByEmail.set(
+                share.shared_with_email.trim().toLowerCase(),
+                share,
+            );
+        }
+
+        const added = nextEmails.filter((email) => !currentByEmail.has(email));
+        const removed = currentShares.filter(
+            (share) =>
+                !nextEmails.includes(
+                    share.shared_with_email.trim().toLowerCase(),
+                ),
+        );
+
+        await Promise.all([
+            ...removed.map((share) => deleteWorkflowShare(id, share.id)),
+            ...(added.length > 0
+                ? [shareWorkflow(id, { emails: added, allow_edit: false })]
+                : []),
+        ]);
+
+        await fetchWorkflowShares();
+    }
 
     // ---------------------------------------------------------------------------
     // Debounced auto-save for prompt
@@ -150,7 +261,7 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
             setSaveStatus("saving");
             debounceRef.current = setTimeout(async () => {
                 try {
-                    await updateWorkflow(id, { prompt_md: newPromptMd });
+                    await updateWorkflow(id, { skill_md: newPromptMd });
                     setSaveStatus("saved");
                     setTimeout(() => setSaveStatus("idle"), 2000);
                 } catch {
@@ -160,17 +271,6 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
         },
         [id, readOnly],
     );
-
-    async function handleWorkflowDetailsSave(values: { title: string }) {
-        if (!workflow || readOnly || !values.title) return;
-        if (values.title === workflow.title) return;
-        const updated = await updateWorkflow(id, { title: values.title });
-        setWorkflow({
-            ...updated,
-            shared_by_name:
-                updated.shared_by_name ?? workflow.shared_by_name ?? null,
-        });
-    }
 
     async function handleDeleteWorkflow() {
         if (!workflow || readOnly || workflow.is_owner === false) return;
@@ -198,7 +298,13 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
         setSaveStatus("saving");
         try {
             const updated = await updateWorkflow(id, { columns_config: next });
-            setWorkflow(updated);
+            setWorkflow((current) => ({
+                ...updated,
+                open_source_submission:
+                    updated.open_source_submission ??
+                    current?.open_source_submission ??
+                    null,
+            }));
             setSaveStatus("saved");
             setTimeout(() => setSaveStatus("idle"), 2000);
         } catch {
@@ -214,6 +320,16 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
         setColumns(next);
         saveColumns(next);
         setAddColumnOpen(false);
+    }
+
+    function handleDeleteSelectedColumns() {
+        const next = columns
+            .filter((column) => !selectedColIndices.includes(column.index))
+            .map((column, index) => ({ ...column, index }));
+        setColumns(next);
+        saveColumns(next);
+        setSelectedColIndices([]);
+        setColActionsOpen(false);
     }
 
     function handleColumnSaved(updated: ColumnConfig) {
@@ -261,6 +377,44 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
         );
     }
 
+    const defaultContributorName =
+        profile?.displayName?.trim() || user?.email || "your account name";
+    const openSourcePending =
+        workflow.open_source_submission?.status === "pending";
+    const workflowActionItems: HeaderActionsMenuItem[] = [
+        {
+            label: "Download workflow",
+            icon: Download,
+            onSelect: () => downloadWorkflowZip(workflow, promptMd, columns),
+        },
+        {
+            label: "View and Edit details",
+            icon: Pencil,
+            onSelect: () => setDetailsOpen(true),
+        },
+    ];
+
+    if (!readOnly) {
+        if (canOpenSource) {
+            workflowActionItems.push({
+                label: "Open source this",
+                icon: Globe,
+                onSelect: () => setOpenSourceOpen(true),
+            });
+        }
+
+        workflowActionItems.push({
+            label: "Delete",
+            icon: Trash2,
+            variant: "danger",
+            disabled: workflow.is_owner === false,
+            onSelect: () => {
+                setDeleteStatus("idle");
+                setDeleteOpen(true);
+            },
+        });
+    }
+
     return (
         <div className="flex flex-col h-full">
             {/* Page header */}
@@ -275,91 +429,102 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
                     {
                         label: (
                             <span className="text-gray-900 truncate max-w-xs">
-                                {workflow.title}
+                                {workflow.metadata.title}
                             </span>
                         ),
                     },
                 ]}
-                actions={[
+                actionGroups={[
                     saveStatus !== "idle"
-                        ? {
-                              type: "custom",
-                              render: (
-                                  <span className="inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-sm text-gray-500">
-                                      {saveStatus === "saved" ? (
-                                          <Check className="h-3.5 w-3.5 text-green-600" />
-                                      ) : null}
-                                      {saveStatus === "saving"
-                                          ? "Saving…"
-                                          : "Saved"}
-                                  </span>
-                              ),
-                          }
-                        : null,
-                    canShare
-                        ? {
-                              onClick: () => setShareOpen(true),
-                              title: "Open workflow people",
-                              iconOnly: true,
-                              icon: <Users className="h-4 w-4" />,
-                          }
-                        : null,
-                    !readOnly
-                        ? {
-                              type: "custom",
-                              render: (
-                                  <HeaderActionsMenu
-                                      title="Workflow actions"
-                                      items={[
-                                          {
-                                              label: "Rename",
-                                              icon: Pencil,
-                                              onSelect: () =>
-                                                  setDetailsOpen(true),
-                                          },
-                                          {
-                                              label: "Workflow Details",
-                                              icon: Info,
-                                              onSelect: () =>
-                                                  setDetailsOpen(true),
-                                          },
-                                          {
-                                              label: "Delete",
-                                              icon: Trash2,
-                                              variant: "danger",
-                                              disabled:
-                                                  workflow.is_owner === false,
-                                              onSelect: () => {
-                                                  setDeleteStatus("idle");
-                                                  setDeleteOpen(true);
-                                              },
-                                          },
-                                      ]}
-                                  />
-                              ),
-                          }
-                        : null,
+                        ? [
+                              {
+                                  type: "custom",
+                                  render: (
+                                      <span className="inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-sm text-gray-500">
+                                          {saveStatus === "saved" ? (
+                                              <Check className="h-3.5 w-3.5 text-green-600" />
+                                          ) : null}
+                                          {saveStatus === "saving"
+                                              ? "Saving…"
+                                              : "Saved"}
+                                      </span>
+                                  ),
+                              },
+                          ]
+                        : [],
+                    [
+                        canShare
+                            ? {
+                                  onClick: () => setShareOpen(true),
+                                  title: "Open workflow people",
+                                  iconOnly: true,
+                                  icon: <Users className="h-4 w-4" />,
+                              }
+                            : null,
+                        {
+                            type: "custom",
+                            render: (
+                                <HeaderActionsMenu
+                                    title="Workflow actions"
+                                    items={workflowActionItems}
+                                />
+                            ),
+                        },
+                    ],
+                    [
+                        {
+                            label: "Use",
+                            icon: <Play className="h-3.5 w-3.5" />,
+                            onClick: () => setUseOpen(true),
+                        },
+                    ],
                 ]}
             />
-            <WorkflowDetailsModal
+            <UseWorkflowModal
+                workflows={[]}
+                workflow={useOpen ? workflow : null}
+                onClose={() => setUseOpen(false)}
+                skipSelect
+            />
+            <NewWorkflowModal
                 open={detailsOpen}
-                workflow={workflow}
-                canEdit={!readOnly}
-                canShare={canShare}
-                currentUserDisplayName={profile?.displayName}
-                currentUserEmail={user?.email}
+                editWorkflow={workflow}
+                readOnly={readOnly}
                 onClose={() => setDetailsOpen(false)}
-                onSave={handleWorkflowDetailsSave}
-                onShareWorkflow={() => {
+                onCreated={() => undefined}
+                onUpdated={(updated) => {
+                    setWorkflow((current) =>
+                        current
+                            ? {
+                                  ...current,
+                                  ...updated,
+                                  shared_by_name:
+                                      updated.shared_by_name ??
+                                      current.shared_by_name ??
+                                      null,
+                                  open_source_submission:
+                                      updated.open_source_submission ??
+                                      current.open_source_submission ??
+                                      null,
+                              }
+                            : updated,
+                    );
                     setDetailsOpen(false);
-                    setShareOpen(true);
                 }}
             />
             {shareOpen && (
-                <ShareWorkflowModal
-                    workflowId={id}
-                    workflowName={workflow.title}
+                <PeopleModal
+                    open={shareOpen}
                     onClose={() => setShareOpen(false)}
+                    resource={{ id, shared_with: workflowSharedWith }}
+                    fetchPeople={fetchWorkflowPeople}
+                    currentUserEmail={user?.email ?? null}
+                    breadcrumb={[
+                        "Workflows",
+                        workflow.metadata.title,
+                        "People",
+                    ]}
+                    onSharedWithChange={handleWorkflowSharedWithChange}
                 />
             )}
             <ConfirmPopup
@@ -375,12 +540,29 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
                     setDeleteStatus("idle");
                 }}
             />
+            <OpenSourceWorkflowModal
+                open={openSourceOpen}
+                onClose={() => setOpenSourceOpen(false)}
+                workflowId={id}
+                defaultContributorName={defaultContributorName}
+                pending={openSourcePending}
+                onSubmitted={(submission) =>
+                    setWorkflow((current) =>
+                        current
+                            ? {
+                                  ...current,
+                                  open_source_submission: submission,
+                              }
+                            : current,
+                    )
+                }
+            />
 
             {/* Body */}
             <div className="flex-1 min-h-0 flex flex-col">
-                {workflow.type === "assistant" ? (
+                {workflow.metadata.type === "assistant" ? (
                     /* ── Assistant: WYSIWYG editor ── */
-                    <div className="flex-1 min-h-0 px-4 pb-2 pt-0 md:px-10 md:pb-3">
+                    <div className="flex-1 min-h-0 px-4 pb-2 pt-4 md:px-6 md:pb-3">
                         <WorkflowPromptEditor
                             value={promptMd}
                             onChange={readOnly ? undefined : handlePromptChange}
@@ -389,47 +571,63 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
                     </div>
                 ) : (
                     /* ── Tabular: Column table ── */
-                    <div className="flex flex-col flex-1 min-h-0">
-                        {/* Toolbar */}
+                    <div className="flex flex-col flex-1 min-h-0 pt-2">
                         {!readOnly && (
-                            <div className="flex items-center justify-between px-4 md:px-10 h-10 border-b border-gray-200 shrink-0">
-                                <button
-                                    onClick={() => setAddColumnOpen(true)}
-                                    className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 transition-colors"
-                                >
-                                    <Plus className="h-3.5 w-3.5" />
-                                    Add Column
-                                </button>
-                                {selectedColIndices.length > 0 && (
-                                    <div ref={colActionsRef} className="relative">
-                                        <button
-                                            onClick={() => setColActionsOpen((v) => !v)}
-                                            className="flex items-center gap-1 text-xs font-medium text-gray-700 hover:text-gray-900 transition-colors"
+                            <TableToolbar
+                                actions={
+                                    <div className="flex items-center gap-2">
+                                        {visibleColumns.length > 0 &&
+                                            selectedColIndices.length > 0 && (
+                                                <>
+                                                    <div
+                                                        ref={colActionsRef}
+                                                        className="relative max-md:hidden"
+                                                    >
+                                                        <TabPillButton
+                                                            onClick={() =>
+                                                                setColActionsOpen(
+                                                                    (open) =>
+                                                                        !open,
+                                                                )
+                                                            }
+                                                        >
+                                                            Actions
+                                                            <ChevronDown className="h-3.5 w-3.5" />
+                                                        </TabPillButton>
+                                                        {colActionsOpen && (
+                                                            <div className="absolute top-full right-0 mt-1 w-36 rounded-lg border border-gray-100 bg-white shadow-lg z-50 overflow-hidden">
+                                                                <button
+                                                                    onClick={
+                                                                        handleDeleteSelectedColumns
+                                                                    }
+                                                                    className="w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 transition-colors"
+                                                                >
+                                                                    Delete
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    <TabPillButton
+                                                        onClick={
+                                                            handleDeleteSelectedColumns
+                                                        }
+                                                        className="text-red-600 md:hidden"
+                                                    >
+                                                        Delete
+                                                    </TabPillButton>
+                                                </>
+                                            )}
+                                        <TabPillButton
+                                            onClick={() =>
+                                                setAddColumnOpen(true)
+                                            }
                                         >
-                                            Actions
-                                            <ChevronDown className="h-3.5 w-3.5" />
-                                        </button>
-                                        {colActionsOpen && (
-                                            <div className="absolute top-full right-0 mt-1 w-36 rounded-lg border border-gray-100 bg-white shadow-lg z-50 overflow-hidden">
-                                                <button
-                                                    onClick={() => {
-                                                        const next = columns
-                                                            .filter((c) => !selectedColIndices.includes(c.index))
-                                                            .map((c, i) => ({ ...c, index: i }));
-                                                        setColumns(next);
-                                                        saveColumns(next);
-                                                        setSelectedColIndices([]);
-                                                        setColActionsOpen(false);
-                                                    }}
-                                                    className="w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 transition-colors"
-                                                >
-                                                    Delete
-                                                </button>
-                                            </div>
-                                        )}
+                                            <Plus className="h-3.5 w-3.5" />
+                                            Add Column
+                                        </TabPillButton>
                                     </div>
-                                )}
-                            </div>
+                                }
+                            />
                         )}
                         {readOnly && (
                             <div className="flex h-10 shrink-0 items-center bg-gray-50 px-4 md:px-10">
@@ -439,32 +637,64 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
                             </div>
                         )}
 
-                        <div className="flex-1 min-h-0 overflow-auto">
-                        <div className="min-w-max flex min-h-full flex-col">
-                        {/* Table header */}
-                        <div className={`flex items-center h-8 pr-3 md:pr-10 border-b border-gray-200 text-xs text-gray-500 font-medium shrink-0 select-none ${readOnly ? "border-t" : ""}`}>
-                            <div className={`sticky left-0 z-[60] ${NAME_COL_W} ${stickyCellBg} flex items-center gap-4 self-stretch pl-4 pr-2 text-left`}>
-                                {columns.length > 0 && (
-                                    <input
-                                        type="checkbox"
-                                        checked={columns.length > 0 && selectedColIndices.length === columns.length}
-                                        ref={(el) => { if (el) el.indeterminate = selectedColIndices.length > 0 && selectedColIndices.length < columns.length; }}
-                                        onChange={() => setSelectedColIndices(selectedColIndices.length === columns.length ? [] : columns.map((c) => c.index))}
-                                        className="h-2.5 w-2.5 rounded border-gray-200 cursor-pointer accent-black"
-                                    />
-                                )}
-                                <span>Column Title</span>
-                            </div>
-                            <div className="ml-auto w-36 shrink-0">Format</div>
-                            <div className="flex-1 min-w-0">Prompt</div>
-                            {!readOnly && <div className="w-8 shrink-0" />}
-                        </div>
-
-                        {/* Rows */}
-                        <div className="flex-1">
-                            {columns.length === 0 ? (
-                                <div className="flex flex-col items-start py-24 w-full max-w-xs mx-auto">
-                                    <Plus className="h-8 w-8 text-gray-300 mb-4" />
+                        <TableScrollArea
+                            header={
+                                <TableHeaderRow className="md:pr-10">
+                                    <TableStickyCell
+                                        header
+                                        widthClassName={NAME_COL_W}
+                                    >
+                                        {visibleColumns.length > 0 ? (
+                                            <input
+                                                type="checkbox"
+                                                checked={
+                                                    selectedColIndices.length ===
+                                                    visibleColumns.length
+                                                }
+                                                ref={(el) => {
+                                                    if (el)
+                                                        el.indeterminate =
+                                                            selectedColIndices.length >
+                                                                0 &&
+                                                            selectedColIndices.length <
+                                                                visibleColumns.length;
+                                                }}
+                                                onChange={() =>
+                                                    setSelectedColIndices(
+                                                        selectedColIndices.length ===
+                                                            visibleColumns.length
+                                                            ? []
+                                                            : visibleColumns.map(
+                                                                  (column) =>
+                                                                      column.index,
+                                                              ),
+                                                    )
+                                                }
+                                                className={TABLE_CHECKBOX_CLASS}
+                                            />
+                                        ) : (
+                                            <span
+                                                className="mr-4 h-2.5 w-2.5 shrink-0"
+                                                aria-hidden="true"
+                                            />
+                                        )}
+                                        <span>Column Title</span>
+                                    </TableStickyCell>
+                                    <TableHeaderCell className="ml-auto w-36">
+                                        Format
+                                    </TableHeaderCell>
+                                    <TableHeaderCell className="min-w-[240px] flex-1">
+                                        Prompt
+                                    </TableHeaderCell>
+                                    {!readOnly && (
+                                        <TableHeaderCell className="w-8" />
+                                    )}
+                                </TableHeaderRow>
+                            }
+                        >
+                            {visibleColumns.length === 0 ? (
+                                <TableEmptyState>
+                                    <TabularReviewSkeuoIcon className="mb-4 h-8 w-8" />
                                     <p className="text-2xl font-medium font-serif text-gray-900">
                                         Columns
                                     </p>
@@ -472,73 +702,110 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
                                         Add columns to define what this tabular review workflow extracts from each document.
                                     </p>
                                     {!readOnly && (
-                                        <button
+                                        <PillButton
+                                            tone="black"
+                                            size="sm"
                                             onClick={() => setAddColumnOpen(true)}
-                                            className="mt-4 inline-flex items-center gap-1 rounded-full bg-gray-900 px-3 py-1 text-xs font-medium text-white hover:bg-gray-700 transition-colors shadow-md"
+                                            className="mt-4 px-3"
                                         >
-                                            + Add Column
-                                        </button>
+                                            <Plus className="h-3.5 w-3.5" />
+                                            Add Column
+                                        </PillButton>
                                     )}
-                                </div>
+                                </TableEmptyState>
                             ) : (
-                                columns.map((col) => {
-                                    const FormatIcon = formatIcon(col.format ?? "text");
-                                    const isChecked = selectedColIndices.includes(col.index);
-                                    return (
-                                        <div
-                                            key={col.index}
-                                            onClick={() => readOnly ? setViewingColumn(col) : setEditingColumn(col)}
-                                            className="group flex items-center h-10 pr-3 md:pr-10 border-b border-gray-50 hover:bg-gray-100 cursor-pointer transition-colors"
-                                        >
-                                            <div className={`sticky left-0 z-[60] ${NAME_COL_W} py-2 pl-4 pr-2 ${isChecked ? "bg-gray-50" : stickyCellBg} transition-colors group-hover:bg-gray-100`}>
-                                                <div className="flex min-w-0 items-center gap-4">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={isChecked}
-                                                        onChange={() => setSelectedColIndices((prev) => prev.includes(col.index) ? prev.filter((i) => i !== col.index) : [...prev, col.index])}
-                                                        onClick={(e) => e.stopPropagation()}
-                                                        className="h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black"
-                                                    />
-                                                    <span className="min-w-0 flex-1 truncate text-sm text-gray-800">
-                                                        {col.name}
+                                <TableBody>
+                                    {visibleColumns.map((col) => {
+                                        const FormatIcon = formatIcon(
+                                            col.format ?? "text",
+                                        );
+                                        const isChecked =
+                                            selectedColIndices.includes(
+                                                col.index,
+                                            );
+                                        return (
+                                            <TableRow
+                                                key={col.index}
+                                                selected={isChecked}
+                                                onClick={() =>
+                                                    readOnly
+                                                        ? setViewingColumn(col)
+                                                        : setEditingColumn(col)
+                                                }
+                                                className="md:pr-10"
+                                            >
+                                                <TablePrimaryCell
+                                                    widthClassName={NAME_COL_W}
+                                                    selected={isChecked}
+                                                    onSelectionChange={() =>
+                                                        setSelectedColIndices(
+                                                            (previous) =>
+                                                                previous.includes(
+                                                                    col.index,
+                                                                )
+                                                                    ? previous.filter(
+                                                                          (index) =>
+                                                                              index !==
+                                                                              col.index,
+                                                                      )
+                                                                    : [
+                                                                          ...previous,
+                                                                          col.index,
+                                                                      ],
+                                                        )
+                                                    }
+                                                    label={col.name}
+                                                />
+                                                <TableCell className="ml-auto w-36">
+                                                    <span className="inline-flex items-center gap-1.5 text-xs text-gray-600">
+                                                        <FormatIcon
+                                                            className={`h-3.5 w-3.5 ${formatIconClassName(col.format ?? "text")}`}
+                                                        />
+                                                        {formatLabel(
+                                                            col.format ??
+                                                                "text",
+                                                        )}
                                                     </span>
-                                                </div>
-                                            </div>
-                                            <div className="ml-auto w-36 shrink-0">
-                                                <span className="inline-flex items-center gap-1.5 text-xs text-gray-600">
-                                                    <FormatIcon className="h-3.5 w-3.5 text-gray-400" />
-                                                    {formatLabel(col.format ?? "text")}
-                                                </span>
-                                            </div>
-                                            <div className="flex-1 min-w-0 pr-4">
-                                                <span className="text-xs text-gray-500 truncate block">
+                                                </TableCell>
+                                                <TableCell className="min-w-[240px] flex-1 pr-4 text-xs">
                                                     {col.prompt}
-                                                </span>
-                                            </div>
-                                            {!readOnly && (
-                                                <div className="w-8 shrink-0 flex justify-end">
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            const next = columns
-                                                                .filter((c) => c.index !== col.index)
-                                                                .map((c, i) => ({ ...c, index: i }));
-                                                            setColumns(next);
-                                                            saveColumns(next);
-                                                        }}
-                                                        className="p-1 text-gray-300 hover:text-red-500 transition-colors"
-                                                    >
-                                                        <X className="h-3.5 w-3.5" />
-                                                    </button>
-                                                </div>
-                                            )}
-                                        </div>
-                                    );
-                                })
+                                                </TableCell>
+                                                {!readOnly && (
+                                                    <div className="w-8 shrink-0 flex justify-end">
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                const next =
+                                                                    columns
+                                                                        .filter(
+                                                                            (column) =>
+                                                                                column.index !==
+                                                                                col.index,
+                                                                        )
+                                                                        .map(
+                                                                            (
+                                                                                column,
+                                                                                index,
+                                                                            ) => ({
+                                                                                ...column,
+                                                                                index,
+                                                                            }),
+                                                                        );
+                                                                setColumns(next);
+                                                                saveColumns(next);
+                                                            }}
+                                                            className="p-1 text-gray-300 hover:text-red-500 transition-colors"
+                                                        >
+                                                            <X className="h-3.5 w-3.5" />
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </TableRow>
+                                        );
+                                    })}
+                                </TableBody>
                             )}
-                        </div>
-                        </div>
-                        </div>
+                        </TableScrollArea>
                     </div>
                 )}
             </div>
@@ -578,8 +845,10 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
 
 function AssistantWorkflowEditorSkeleton() {
     return (
-        <div className="min-h-0 flex-1 px-4 pb-2 pt-0 md:px-10 md:pb-3">
-            <div className="h-full rounded-md border border-gray-200 bg-gray-50 px-5 py-4">
+        <div className="min-h-0 flex-1 px-4 pb-2 pt-4 md:px-6 md:pb-3">
+            <div
+                className={`h-full px-5 py-4 ${LIQUID_TABLE_SURFACE_CLASS}`}
+            >
                 <div className="space-y-3">
                     <div className="h-3 w-24 animate-pulse rounded bg-gray-100" />
                     <div className="h-3 w-5/6 animate-pulse rounded bg-gray-100" />
@@ -603,56 +872,68 @@ function AssistantWorkflowEditorSkeleton() {
 }
 
 function TabularWorkflowEditorSkeleton() {
+    const titleWidths = ["w-36", "w-44", "w-40", "w-52", "w-48"];
+    const promptWidths = ["w-64", "w-80", "w-72", "w-96", "w-60"];
+
     return (
-        <>
-            <div className="flex h-10 shrink-0 items-center border-b border-gray-200 px-4 md:px-10">
-                <div className="h-3 w-20 animate-pulse rounded bg-gray-100" />
-            </div>
-
-            <div className="flex h-8 shrink-0 items-center border-b border-gray-200 pr-3 md:pr-10">
-                <div
-                    className={`${NAME_COL_W} flex shrink-0 items-center gap-4 self-stretch pl-4 pr-2`}
-                >
-                    <div className="h-2.5 w-2.5 animate-pulse rounded bg-gray-100" />
-                    <div className="h-2.5 w-20 animate-pulse rounded bg-gray-100" />
-                </div>
-                <div className="w-36 shrink-0">
-                    <div className="h-2.5 w-14 animate-pulse rounded bg-gray-100" />
-                </div>
-                <div className="flex-1">
-                    <div className="h-2.5 w-12 animate-pulse rounded bg-gray-100" />
-                </div>
-                <div className="w-8 shrink-0" />
-            </div>
-
-            <div className="flex-1 overflow-hidden">
-                {[1, 2, 3, 4, 5].map((i) => (
-                    <div
-                        key={i}
-                        className="flex h-10 items-center border-b border-gray-50 pr-3 md:pr-10"
-                    >
-                        <div
-                            className={`${NAME_COL_W} flex shrink-0 items-center gap-4 pl-4 pr-2`}
+        <div className="flex min-h-0 flex-1 flex-col pt-2">
+            <TableToolbar
+                actions={
+                    <SkeletonLine className="h-7 w-24 rounded-full" />
+                }
+            />
+            <TableScrollArea
+                header={
+                    <TableHeaderRow className="md:pr-10">
+                        <TableStickyCell
+                            header
+                            hover={false}
+                            widthClassName={NAME_COL_W}
                         >
-                            <div className="h-2.5 w-2.5 shrink-0 animate-pulse rounded bg-gray-100" />
-                            <div
-                                className="h-3 animate-pulse rounded bg-gray-100"
-                                style={{ width: `${40 + (i * 13) % 35}%` }}
-                            />
-                        </div>
-                        <div className="w-36 shrink-0">
-                            <div className="h-3 w-16 animate-pulse rounded bg-gray-100" />
-                        </div>
-                        <div className="flex-1 pr-4">
-                            <div
-                                className="h-3 animate-pulse rounded bg-gray-100"
-                                style={{ width: `${50 + (i * 17) % 35}%` }}
-                            />
-                        </div>
-                        <div className="w-8 shrink-0" />
-                    </div>
-                ))}
-            </div>
-        </>
+                            <SkeletonDot className="mr-4" />
+                            <SkeletonLine className="h-2.5 w-20" />
+                        </TableStickyCell>
+                        <TableHeaderCell className="ml-auto w-36">
+                            <SkeletonLine className="h-2.5 w-14" />
+                        </TableHeaderCell>
+                        <TableHeaderCell className="min-w-[240px] flex-1">
+                            <SkeletonLine className="h-2.5 w-12" />
+                        </TableHeaderCell>
+                        <TableHeaderCell className="w-8" />
+                    </TableHeaderRow>
+                }
+            >
+                <TableBody>
+                    {[1, 2, 3, 4, 5].map((i) => (
+                        <TableRow
+                            key={i}
+                            interactive={false}
+                            className="md:pr-10"
+                        >
+                            <TableStickyCell
+                                hover={false}
+                                widthClassName={NAME_COL_W}
+                            >
+                                <div className="flex min-w-0 flex-1 items-center">
+                                    <SkeletonDot className="mr-4" />
+                                    <SkeletonLine
+                                        className={`h-3 ${titleWidths[i - 1]}`}
+                                    />
+                                </div>
+                            </TableStickyCell>
+                            <TableCell className="ml-auto w-36">
+                                <SkeletonLine className="w-16" />
+                            </TableCell>
+                            <TableCell className="min-w-[240px] flex-1 pr-4">
+                                <SkeletonLine
+                                    className={promptWidths[i - 1]}
+                                />
+                            </TableCell>
+                            <TableCell className="w-8" />
+                        </TableRow>
+                    ))}
+                </TableBody>
+            </TableScrollArea>
+        </div>
     );
 }
