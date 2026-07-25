@@ -2267,6 +2267,39 @@ export function AssistantMessage({
                 />
             );
         }
+        if (event.type === "authority_trace_extraction") {
+            const label = event.isStreaming
+                ? "Extracting verification document"
+                : event.outcome === "fatal"
+                  ? "Verification extraction failed"
+                  : "Verification document extracted";
+            const detail = event.isStreaming
+                ? undefined
+                : event.error
+                  ? event.error
+                  : [
+                        event.filename,
+                        event.document_handle,
+                        ...(event.warnings ?? []).map((warning) =>
+                            warning.replaceAll("_", " "),
+                        ),
+                    ]
+                        .filter(Boolean)
+                        .join(" · ");
+            return (
+                <CourtListenerBlock
+                    key={globalIdx}
+                    label={label}
+                    detail={detail}
+                    isStreaming={!!event.isStreaming}
+                    hasError={
+                        event.outcome === "fatal" ||
+                        (event.warnings?.includes("ocr_required") ?? false)
+                    }
+                    showConnector={showConnector}
+                />
+            );
+        }
         if (event.type === "authority_trace_verification") {
             const label = event.isStreaming
                 ? "Verifying citation sources"

@@ -29,6 +29,35 @@ describe("AssistantMessage citations", () => {
 });
 
 describe("AssistantMessage Authority Trace", () => {
+    it("renders a stable extraction result and its warnings", () => {
+        renderWithProviders(
+            <AssistantMessage
+                content=""
+                events={[
+                    {
+                        type: "authority_trace_extraction",
+                        outcome: "success",
+                        document_id: "doc-id",
+                        version_id: "version-id",
+                        document_handle: "doc-3",
+                        filename: "opinion.verification.md",
+                        page_count: 4,
+                        warnings: ["ocr_required"],
+                    },
+                ]}
+            />,
+        );
+
+        expect(
+            screen.getByText("Verification document extracted"),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByText(
+                "opinion.verification.md · doc-3 · ocr required",
+            ),
+        ).toBeInTheDocument();
+    });
+
     it("renders a compact completed verification summary", () => {
         renderWithProviders(
             <AssistantMessage

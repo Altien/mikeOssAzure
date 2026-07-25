@@ -13,9 +13,6 @@ import {
   verifyResolvedProposal,
   type ResolvedDocument,
 } from "./verify";
-import { extractPdfText } from "../chat/tools/documentOps";
-import { extractDocxBodyText } from "../docxTrackedChanges";
-import { docxToPdf } from "../convert";
 
 type Db = ReturnType<typeof createServerSupabase>;
 
@@ -125,26 +122,9 @@ async function downloadResolvedDocument(
   }
   const bytes = new Uint8Array(content);
   const fileType = version.file_type?.trim().toLowerCase() ?? "";
-  let text: string | undefined;
-  if (fileType === "pdf") {
-    text = await extractPdfText(content);
-  } else if (fileType === "docx") {
-    text = await extractDocxBodyText(Buffer.from(bytes));
-    if (!text) {
-      const mammoth = await import("mammoth");
-      text = (
-        await mammoth.extractRawText({
-          buffer: Buffer.from(bytes),
-        })
-      ).value;
-    }
-  } else if (fileType === "doc") {
-    const pdf = await docxToPdf(Buffer.from(bytes));
-    text = await extractPdfText(
-      pdf.buffer.slice(
-        pdf.byteOffset,
-        pdf.byteOffset + pdf.byteLength,
-      ) as ArrayBuffer,
+  if (fileType === "pdf" || fileType === "docx" || fileType === "doc") {
+    throw new Error(
+      `Document ${documentId}/${version.id} must be converted with extract_document_for_verification before citation verification`,
     );
   }
   return {
@@ -152,7 +132,6 @@ async function downloadResolvedDocument(
     versionId: version.id,
     filename: version.filename?.trim() || "Untitled document",
     bytes,
-    ...(text !== undefined ? { text } : {}),
   };
 }
 

@@ -1,16 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeFakeDb, type DbCall } from "../../test/helpers/fakeDb";
 
-const { downloadFileMock, extractPdfTextMock } = vi.hoisted(() => ({
+const { downloadFileMock } = vi.hoisted(() => ({
   downloadFileMock: vi.fn(),
-  extractPdfTextMock: vi.fn(),
 }));
 
 vi.mock("../storage", () => ({
   downloadFile: downloadFileMock,
-}));
-vi.mock("../chat/tools/documentOps", () => ({
-  extractPdfText: extractPdfTextMock,
 }));
 
 import { verifyCitationSources } from "./service";
@@ -104,9 +100,6 @@ function database(overrides?: {
 
 beforeEach(() => {
   downloadFileMock.mockReset();
-  extractPdfTextMock
-    .mockReset()
-    .mockResolvedValue("Example v Example confirms this.");
   downloadFileMock.mockImplementation(async (path: string) =>
     path === "memo/path"
       ? arrayBuffer("Example v Example confirms this.")
@@ -169,7 +162,7 @@ describe("verifyCitationSources", () => {
     const input = proposal();
     input.sources.authority.document_id =
       "courtlistener:cluster:123:opinion:456";
-    const { db, calls } = database({ memoFileType: "pdf" });
+    const { db, calls } = database();
 
     const result = await verifyCitationSources(
       {
@@ -208,12 +201,32 @@ describe("verifyCitationSources", () => {
     expect(downloadFileMock.mock.calls.map(([path]) => path)).toEqual([
       "memo/path",
     ]);
-    expect(extractPdfTextMock).toHaveBeenCalledOnce();
     expect(calls.map((call) => `${call.table}:${call.op}`)).toEqual([
       "documents:select",
       "document_versions:select",
       "citation_verification_runs:insert",
     ]);
+  });
+
+  it("requires DOCX and PDF inputs to use the stable extraction tool", async () => {
+    const { db, callsFor } = database({ memoFileType: "pdf" });
+
+    await expect(
+      verifyCitationSources(
+        {
+          projectId: "project-1",
+          userId: "user-1",
+          proposal: proposal(),
+          docIndex: {
+            "doc-0": { document_id: "memo-id", filename: "memo.pdf" },
+            "doc-1": { document_id: "source-id", filename: "authority.md" },
+          },
+        },
+        db as never,
+      ),
+    ).rejects.toThrow(/extract_document_for_verification/i);
+
+    expect(callsFor("citation_verification_runs", "insert")).toHaveLength(0);
   });
 
   it("fails explicitly when a requested artifact version does not match turn state", async () => {

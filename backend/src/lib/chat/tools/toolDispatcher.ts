@@ -20,6 +20,7 @@ import type {
   VerificationArtifact,
   VerificationArtifactStore,
 } from "../../citationVerification/service";
+import { extractDocumentForVerification } from "../../citationVerification/extractionService";
 import {
   executeMcpToolCall,
   type McpToolEvent,
@@ -1049,6 +1050,88 @@ export async function runToolCalls(
         tool_call_id: tc.id,
         content: lines.join("\n") || "No cells found.",
       });
+    } else if (
+      tc.function.name === AUTHORITY_TRACE_TOOL_NAMES.extractDocument
+    ) {
+      write(
+        `data: ${JSON.stringify({
+          type: "authority_trace_extraction_start",
+          document_id:
+            typeof args.document_id === "string"
+              ? args.document_id
+              : undefined,
+        })}\n\n`,
+      );
+      try {
+        if (!projectId || !docIndex) {
+          throw new Error(
+            "Document extraction requires an active project context",
+          );
+        }
+        if (typeof args.document_id !== "string") {
+          throw new Error("document_id is required");
+        }
+        const result = await extractDocumentForVerification(
+          {
+            projectId,
+            userId,
+            documentId: args.document_id,
+            ...(typeof args.version_id === "string"
+              ? { versionId: args.version_id }
+              : {}),
+            ...(typeof args.first_page === "number"
+              ? { firstPage: args.first_page }
+              : {}),
+            docIndex,
+          },
+          db,
+        );
+        let nextIndex = Object.keys(docIndex).length;
+        let documentHandle = `doc-${nextIndex}`;
+        while (Object.hasOwn(docIndex, documentHandle)) {
+          nextIndex += 1;
+          documentHandle = `doc-${nextIndex}`;
+        }
+        docIndex[documentHandle] = {
+          document_id: result.extracted_document_id,
+          filename: result.filename,
+        };
+        const event: AuthorityTraceEvent = {
+          type: "authority_trace_extraction",
+          outcome: "success",
+          document_id: result.extracted_document_id,
+          version_id: result.extracted_version_id,
+          document_handle: documentHandle,
+          filename: result.filename,
+          page_count: result.page_count,
+          warnings: result.warnings,
+        };
+        authorityTraceEvents.push(event);
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({
+            ...result,
+            document_handle: documentHandle,
+          }),
+        });
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Document extraction failed";
+        const event: AuthorityTraceEvent = {
+          type: "authority_trace_extraction",
+          outcome: "fatal",
+          error: message,
+        };
+        authorityTraceEvents.push(event);
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({ outcome: "fatal", error: message }),
+        });
+      }
     } else if (
       tc.function.name === AUTHORITY_TRACE_TOOL_NAMES.verifyCitationSources
     ) {

@@ -719,6 +719,51 @@ describe("useAssistantChat: doc_read events", () => {
 });
 
 describe("useAssistantChat: Authority Trace events", () => {
+  it("replaces an extraction placeholder with immutable document metadata", async () => {
+    mockStreamProjectChat.mockResolvedValue(
+      sseResponse([
+        {
+          type: "authority_trace_extraction_start",
+          document_id: "doc-0",
+        },
+        {
+          type: "authority_trace_extraction",
+          outcome: "success",
+          document_id: "extracted-id",
+          version_id: "extracted-v1",
+          document_handle: "doc-3",
+          filename: "opinion.verification.md",
+          page_count: 2,
+          warnings: ["revisions_present"],
+        },
+      ]),
+    );
+    const { result } = renderHook(() =>
+      useAssistantChat({ projectId: "project-1" }),
+    );
+
+    await act(async () => {
+      await result.current.handleChat(USER_MSG("extract source"));
+    });
+
+    const events = (result.current.messages.at(-1)?.events ?? []).filter(
+      (event) => event.type === "authority_trace_extraction",
+    );
+    expect(events).toEqual([
+      {
+        type: "authority_trace_extraction",
+        outcome: "success",
+        document_id: "extracted-id",
+        version_id: "extracted-v1",
+        document_handle: "doc-3",
+        filename: "opinion.verification.md",
+        page_count: 2,
+        warnings: ["revisions_present"],
+        isStreaming: false,
+      },
+    ]);
+  });
+
   it("replaces the streaming placeholder with the final safe summary", async () => {
     mockStreamProjectChat.mockResolvedValue(
       sseResponse([

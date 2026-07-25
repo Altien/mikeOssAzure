@@ -1,8 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { executeMcpToolCallMock, verifyCitationSourcesMock } = vi.hoisted(() => ({
+const {
+  executeMcpToolCallMock,
+  verifyCitationSourcesMock,
+  extractDocumentForVerificationMock,
+} = vi.hoisted(() => ({
   executeMcpToolCallMock: vi.fn(),
   verifyCitationSourcesMock: vi.fn(),
+  extractDocumentForVerificationMock: vi.fn(),
 }));
 
 vi.mock("../../citationVerification/service", () => ({
@@ -14,6 +19,9 @@ vi.mock("../../citationVerification/service", () => ({
     return artifact.artifactId;
   },
   verifyCitationSources: verifyCitationSourcesMock,
+}));
+vi.mock("../../citationVerification/extractionService", () => ({
+  extractDocumentForVerification: extractDocumentForVerificationMock,
 }));
 vi.mock("../../mcpConnectors", () => ({
   executeMcpToolCall: executeMcpToolCallMock,
@@ -56,16 +64,94 @@ const proposal = {
 beforeEach(() => {
   executeMcpToolCallMock.mockReset();
   verifyCitationSourcesMock.mockReset();
+  extractDocumentForVerificationMock.mockReset();
 });
 
 describe("Authority Trace tool dispatch", () => {
   it("is registered as a general project tool", () => {
     expect(
       AUTHORITY_TRACE_TOOLS.map((tool) => tool.function.name),
-    ).toContain(AUTHORITY_TRACE_TOOL_NAMES.verifyCitationSources);
+    ).toEqual(
+      expect.arrayContaining([
+        AUTHORITY_TRACE_TOOL_NAMES.extractDocument,
+        AUTHORITY_TRACE_TOOL_NAMES.verifyCitationSources,
+      ]),
+    );
     expect(JSON.stringify(AUTHORITY_TRACE_TOOLS)).not.toMatch(
       /connector|skill|diffduff|dingduff/i,
     );
+  });
+
+  it("extracts a project document and makes the immutable result available this turn", async () => {
+    extractDocumentForVerificationMock.mockResolvedValue({
+      source_document_id: "source-id",
+      source_version_id: "source-v1",
+      extracted_document_id: "extracted-id",
+      extracted_version_id: "extracted-v1",
+      filename: "source.verification.md",
+      media_type: "text/markdown",
+      source_media_type: "application/pdf",
+      page_count: 2,
+      sha256: "a".repeat(64),
+      source_sha256: "b".repeat(64),
+      bytes: 100,
+      warnings: [],
+    });
+    const docIndex = {
+      "doc-0": { document_id: "source-id", filename: "source.pdf" },
+    };
+
+    const result = await runToolCalls(
+      [
+        {
+          id: "extract-1",
+          function: {
+            name: AUTHORITY_TRACE_TOOL_NAMES.extractDocument,
+            arguments: JSON.stringify({
+              document_id: "doc-0",
+              first_page: 7,
+            }),
+          },
+        },
+      ],
+      new Map(),
+      "user-1",
+      {} as never,
+      () => {},
+      undefined,
+      undefined,
+      docIndex,
+      undefined,
+      undefined,
+      "project-1",
+    );
+
+    expect(extractDocumentForVerificationMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "project-1",
+        userId: "user-1",
+        documentId: "doc-0",
+        firstPage: 7,
+      }),
+      {},
+    );
+    expect(docIndex).toHaveProperty("doc-1", {
+      document_id: "extracted-id",
+      filename: "source.verification.md",
+    });
+    expect(result.authorityTraceEvents).toEqual([
+      expect.objectContaining({
+        type: "authority_trace_extraction",
+        outcome: "success",
+        document_handle: "doc-1",
+        document_id: "extracted-id",
+        version_id: "extracted-v1",
+      }),
+    ]);
+    expect(JSON.parse(String(result.toolResults[0].content))).toMatchObject({
+      document_handle: "doc-1",
+      extracted_document_id: "extracted-id",
+    });
   });
 
   it("makes flexible LLM source discovery and deterministic verification explicit", () => {

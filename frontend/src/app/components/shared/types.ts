@@ -215,6 +215,18 @@ export type AssistantEvent =
       isStreaming?: boolean;
     }
   | {
+      type: "authority_trace_extraction";
+      outcome?: "success" | "fatal";
+      document_id?: string;
+      version_id?: string;
+      document_handle?: string;
+      filename?: string;
+      page_count?: number | null;
+      warnings?: string[];
+      error?: string;
+      isStreaming?: boolean;
+    }
+  | {
       type: "authority_trace_verification";
       run_id?: string;
       outcome?: "success" | "completed_with_failures" | "fatal";
