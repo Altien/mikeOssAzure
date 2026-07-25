@@ -330,7 +330,8 @@ function courtlistenerOpinionMetadata(
     joined_by_str: stringField(opinion, "joined_by_str"),
     url: stringField(opinion, "url"),
     char_count: cached?.source.text.length ?? text?.length ?? 0,
-    external_source_id: cached?.source.id ?? null,
+    external_source_id:
+      cached?.cacheRecordId ?? cached?.source.id ?? null,
     summary: cached?.summary?.text ?? null,
     summary_status: cached?.summary?.status ?? "pending",
     summary_model: cached?.summary?.model ?? null,
@@ -424,10 +425,18 @@ function registerCourtlistenerOpinionArtifact(
   state: CourtlistenerTurnState,
   record: CourtlistenerCaseRecord,
   opinion: CachedCaseOpinionText,
+  externalSources?: ExternalSourceCache,
 ): string | null {
   if (opinion.opinion_id === null) return null;
   const artifactId =
     courtlistenerExternalSourceId(record.clusterId, opinion.opinion_id);
+  const cached = externalSources?.get(artifactId);
+  if (cached) {
+    return registerExternalSourceArtifact(
+      state.verificationArtifacts,
+      cached,
+    );
+  }
   const artifact: VerificationArtifact = {
     artifactId,
     provider: "courtlistener",
@@ -448,7 +457,7 @@ function registerExternalSourceArtifact(
   cached: CachedExternalSource,
 ): string {
   return registerVerificationArtifact(store, {
-    artifactId: cached.source.id,
+    artifactId: cached.cacheRecordId ?? cached.source.id,
     provider: cached.source.provider,
     externalId: cached.source.externalId,
     versionId: cached.source.versionId,
@@ -733,7 +742,7 @@ export async function runToolCalls(
         typeof args.external_source_id === "string"
           ? args.external_source_id
           : "";
-      const cached = externalSources.get(sourceId);
+      const cached = await externalSources.resolve(sourceId);
       if (!cached) {
         toolResults.push({
           role: "tool",
@@ -742,7 +751,7 @@ export async function runToolCalls(
             ok: false,
             external_source_id: sourceId,
             error:
-              "External source is unavailable in this assistant turn. Call its retrieval or download tool first.",
+              "External source is unavailable or unauthorized. Call its retrieval or download tool first.",
           }),
         });
         continue;
@@ -826,7 +835,19 @@ export async function runToolCalls(
         typeof args.verification_source_id === "string"
           ? args.verification_source_id
           : "";
-      const artifact = courtState.verificationArtifacts.get(artifactId);
+      let artifact = courtState.verificationArtifacts.get(artifactId);
+      if (!artifact) {
+        const cached = await externalSources.resolve(artifactId);
+        if (cached) {
+          registerExternalSourceArtifact(
+            courtState.verificationArtifacts,
+            cached,
+          );
+          artifact = courtState.verificationArtifacts.get(
+            cached.cacheRecordId ?? cached.source.id,
+          );
+        }
+      }
       toolResults.push({
         role: "tool",
         tool_call_id: tc.id,
@@ -843,7 +864,7 @@ export async function runToolCalls(
           : JSON.stringify({
               ok: false,
               error:
-                "Verification source is unavailable in this assistant turn.",
+                "Verification source is unavailable or unauthorized.",
             }),
       });
     } else if (tc.function.name === "ask_inputs") {
@@ -1585,6 +1606,7 @@ export async function runToolCalls(
               courtState,
               record,
               opinion,
+              externalSources,
             ),
           })),
         );
@@ -1737,6 +1759,7 @@ export async function runToolCalls(
               courtState,
               record,
               opinion,
+              externalSources,
             ),
           })),
         }),

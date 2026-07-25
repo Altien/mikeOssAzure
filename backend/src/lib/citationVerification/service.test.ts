@@ -206,6 +206,11 @@ describe("verifyCitationSources", () => {
       "document_versions:select",
       "citation_verification_runs:insert",
     ]);
+    expect(
+      calls.find(
+        (call) => call.table === "citation_verification_runs",
+      )?.payload,
+    ).not.toHaveProperty("source_snapshots");
   });
 
   it("requires DOCX and PDF inputs to use the stable extraction tool", async () => {

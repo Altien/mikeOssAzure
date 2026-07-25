@@ -44,6 +44,7 @@ import {
 } from "./tools/documentOps";
 import type { AuthorityTraceEvent } from "./tools/authorityTraceTools";
 import {
+  createDatabaseExternalSourcePersistence,
   createFastModelExternalSourceSummarizer,
   ExternalSourceCache,
 } from "./externalSourceCache";
@@ -240,15 +241,22 @@ export async function runLLMStream(params: {
     fatal: false,
   };
   const externalSourceCache = new ExternalSourceCache(
-    fastModel
-      ? {
+    {
+      persistence: createDatabaseExternalSourcePersistence({
+        userId,
+        projectId,
+        db,
+      }),
+      ...(fastModel
+        ? {
           summarizer: createFastModelExternalSourceSummarizer({
             model: fastModel,
             apiKeys,
           }),
           summaryModel: fastModel,
         }
-      : {},
+        : {}),
+    },
   );
   let fullText = "";
   let iterText = "";

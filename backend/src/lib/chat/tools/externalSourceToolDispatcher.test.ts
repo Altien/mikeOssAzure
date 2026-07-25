@@ -54,12 +54,22 @@ describe("external source tool dispatch", () => {
       casesByClusterId: new Map(),
       verificationArtifacts: new Map(),
     };
+    const persistence = {
+      storeSource: vi.fn().mockResolvedValue({
+        id: "cache-row-1",
+        summary: null,
+      }),
+      storeSummary: vi.fn().mockResolvedValue(undefined),
+      findSource: vi.fn().mockResolvedValue(null),
+    };
     const externalSources = new ExternalSourceCache({
       summarizer,
       summaryModel: "cheap-fast-model",
+      persistence,
     });
 
-    const sourceId = "courtlistener:cluster:123:opinion:456";
+    const providerSourceId = "courtlistener:cluster:123:opinion:456";
+    const sourceId = "cache-row-1";
     const result = await runToolCalls(
       [
         {
@@ -113,6 +123,11 @@ describe("external source tool dispatch", () => {
       }),
     );
     expect(summarizer).toHaveBeenCalledTimes(1);
+    expect(persistence.storeSource).toHaveBeenCalledWith(
+      expect.objectContaining({ id: providerSourceId, text: fullText }),
+      expect.stringMatching(/^[a-f0-9]{64}$/),
+    );
+    expect(persistence.storeSummary).toHaveBeenCalledTimes(1);
 
     const getPayload = JSON.parse(
       String((result.toolResults[0] as { content: string }).content),
@@ -128,7 +143,7 @@ describe("external source tool dispatch", () => {
       "Use search_external_source to search it",
     );
 
-    expect(externalSources.get(sourceId)?.source.text).toBe(fullText);
+    expect(externalSources.get(providerSourceId)?.source.text).toBe(fullText);
 
     const findPayload = JSON.parse(
       String((result.toolResults[1] as { content: string }).content),

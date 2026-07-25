@@ -12,7 +12,7 @@ export const EXTERNAL_SOURCE_TOOLS = [
     function: {
       name: EXTERNAL_SOURCE_TOOL_NAMES.search,
       description:
-        "Search the complete server-cached text of an external source downloaded in this assistant turn. Use the external_source_id returned by the retrieval tool. Returns exact passages with surrounding context.",
+        "Search the complete, durable server-cached text of an authorized external source. Use the external_source_id returned by its retrieval tool. Returns exact passages with surrounding context.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -20,7 +20,7 @@ export const EXTERNAL_SOURCE_TOOLS = [
           external_source_id: {
             type: "string",
             description:
-              "Server-issued external_source_id returned by a retrieval or download tool in this turn.",
+              "Server-issued external_source_id returned by a retrieval or download tool.",
           },
           query: {
             type: "string",
@@ -46,7 +46,7 @@ export const EXTERNAL_SOURCE_TOOLS = [
     function: {
       name: EXTERNAL_SOURCE_TOOL_NAMES.read,
       description:
-        "Read a bounded range from the complete server-cached text of an external source downloaded in this assistant turn. Use search_external_source first when the source is long.",
+        "Read a bounded range from the complete, durable server-cached text of an authorized external source. Use search_external_source first when the source is long.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -54,7 +54,7 @@ export const EXTERNAL_SOURCE_TOOLS = [
           external_source_id: {
             type: "string",
             description:
-              "Server-issued external_source_id returned by a retrieval or download tool in this turn.",
+              "Server-issued external_source_id returned by a retrieval or download tool.",
           },
           start: {
             type: "integer",

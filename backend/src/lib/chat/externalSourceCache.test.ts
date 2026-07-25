@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   ExternalSourceCache,
+  type CachedExternalSource,
   type ExternalSourceDocument,
+  type ExternalSourceSummary,
 } from "./externalSourceCache";
 
 const source: ExternalSourceDocument = {
@@ -77,5 +79,49 @@ describe("ExternalSourceCache", () => {
     expect(cached.summary?.text).toContain(
       "Use courtlistener_find_in_case to search it",
     );
+  });
+
+  it("persists exact text before the summary and resolves it in later turns", async () => {
+    const stored = new Map<string, CachedExternalSource>();
+    const calls: string[] = [];
+    const persistence = {
+      async storeSource(document: ExternalSourceDocument, hash: string) {
+        calls.push("source");
+        const cached = {
+          cacheRecordId: "cache-row-1",
+          source: document,
+          contentHash: hash,
+          summary: null,
+        };
+        stored.set("cache-row-1", cached);
+        return { id: "cache-row-1", summary: null };
+      },
+      async storeSummary(
+        id: string,
+        summary: ExternalSourceSummary,
+      ) {
+        calls.push("summary");
+        const cached = stored.get(id);
+        if (cached) stored.set(id, { ...cached, summary });
+      },
+      async findSource(id: string) {
+        calls.push("resolve");
+        return stored.get(id) ?? null;
+      },
+    };
+    const firstTurn = new ExternalSourceCache({
+      persistence,
+      summarizer: vi.fn().mockResolvedValue("Durable orientation."),
+    });
+
+    const cached = await firstTurn.cache(source);
+    expect(cached.cacheRecordId).toBe("cache-row-1");
+    expect(calls.slice(0, 2)).toEqual(["source", "summary"]);
+
+    const laterTurn = new ExternalSourceCache({ persistence });
+    const resolved = await laterTurn.resolve("cache-row-1");
+    expect(resolved?.source.text).toBe(source.text);
+    expect(resolved?.summary?.text).toContain("Durable orientation.");
+    expect(calls.at(-1)).toBe("resolve");
   });
 });
