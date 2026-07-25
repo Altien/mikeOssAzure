@@ -111,6 +111,12 @@ export function AuthorityTracePanel({ runId }: { runId: string }) {
     const currentReview = selected
         ? workspace?.current_reviews[selected.id]
         : undefined;
+    const staleReviews = selected
+        ? (workspace?.reviews ?? []).filter(
+              (review) =>
+                  review.citation_id === selected.id && review.stale,
+          )
+        : [];
 
     useEffect(() => {
         setNote(currentReview?.note ?? "");
@@ -246,6 +252,25 @@ export function AuthorityTracePanel({ runId }: { runId: string }) {
                         {error}
                     </p>
                 ) : null}
+                {!workspace.integrity.ok ? (
+                    <div
+                        className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800"
+                        role="alert"
+                    >
+                        <p className="font-semibold">
+                            Integrity check failed
+                        </p>
+                        <ul className="mt-1 list-disc pl-4">
+                            {workspace.integrity.warnings.map(
+                                (warning, index) => (
+                                    <li key={`${warning.scope}-${warning.source ?? "memo"}-${index}`}>
+                                        {warning.message}
+                                    </li>
+                                ),
+                            )}
+                        </ul>
+                    </div>
+                ) : null}
             </div>
 
             <div className="grid min-h-0 flex-1 grid-cols-[minmax(190px,0.7fr)_minmax(0,2.3fr)]">
@@ -366,6 +391,29 @@ export function AuthorityTracePanel({ runId }: { runId: string }) {
                                 </span>
                             ) : null}
                         </div>
+                        {staleReviews.length > 0 ? (
+                            <details className="mt-2 text-[11px] text-slate-500">
+                                <summary className="cursor-pointer">
+                                    {staleReviews.length} stale{" "}
+                                    {staleReviews.length === 1
+                                        ? "review"
+                                        : "reviews"}
+                                </summary>
+                                <ul className="mt-1 space-y-1 border-l border-slate-200 pl-2">
+                                    {staleReviews.map((review) => (
+                                        <li key={review.id}>
+                                            {review.verdict.replaceAll(
+                                                "_",
+                                                " ",
+                                            )}
+                                            {review.note
+                                                ? ` — ${review.note}`
+                                                : ""}
+                                        </li>
+                                    ))}
+                                </ul>
+                            </details>
+                        ) : null}
                     </div>
                 </main>
             </div>

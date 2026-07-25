@@ -241,4 +241,59 @@ describe("verifyResolvedProposal", () => {
 
     expect(() => verifyResolvedProposal(value)).toThrow(/utf-8/i);
   });
+
+  it("binds reviews to every canonical citation field", () => {
+    const baseline = verifyResolvedProposal(input()).record.citations[0].binds_to;
+    const changedBindings: string[] = [];
+
+    const sourceIdentity = input();
+    sourceIdentity.proposal.sources.authority.document_id = "source-id-2";
+    sourceIdentity.proposal.sources.authority.version_id = "source-v2";
+    sourceIdentity.sources.authority.documentId = "source-id-2";
+    sourceIdentity.sources.authority.versionId = "source-v2";
+    changedBindings.push(
+      verifyResolvedProposal(sourceIdentity).record.citations[0].binds_to,
+    );
+
+    const citeText = input({
+      memo: "The rule applies. Example v Example (2026) confirms this.",
+    });
+    citeText.proposal.citations[0].cite_text = "Example v Example (2026)";
+    changedBindings.push(
+      verifyResolvedProposal(citeText).record.citations[0].binds_to,
+    );
+
+    const proposition = input();
+    proposition.proposal.citations[0].proposition = "A different proposition.";
+    changedBindings.push(
+      verifyResolvedProposal(proposition).record.citations[0].binds_to,
+    );
+
+    const supportType = input();
+    supportType.proposal.citations[0].support_type = "paraphrase";
+    changedBindings.push(
+      verifyResolvedProposal(supportType).record.citations[0].binds_to,
+    );
+
+    const pin = input();
+    pin.proposal.citations[0].pin = "p. 42";
+    changedBindings.push(
+      verifyResolvedProposal(pin).record.citations[0].binds_to,
+    );
+
+    const quote = input({
+      source:
+        "Background.\nThe court adopted the rule.\nThe court explained why.\nEnd.",
+    });
+    quote.proposal.citations[0].anchors_proposed[0].quote =
+      "The court explained why.";
+    changedBindings.push(
+      verifyResolvedProposal(quote).record.citations[0].binds_to,
+    );
+
+    expect(changedBindings).toHaveLength(6);
+    for (const changed of changedBindings) {
+      expect(changed).not.toBe(baseline);
+    }
+  });
 });

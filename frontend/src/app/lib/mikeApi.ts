@@ -937,6 +937,7 @@ export type AuthorityTraceWorkspace = {
         version_id: string;
         filename: string;
         available: boolean;
+        integrity: "ok" | "changed" | "missing";
         segments: AuthorityTraceSegment[];
     };
     sources: Record<
@@ -948,11 +949,21 @@ export type AuthorityTraceWorkspace = {
             title: string;
             kind: string;
             available: boolean;
+            integrity: "ok" | "changed" | "missing";
             segments: AuthorityTraceSegment[];
         }
     >;
     reviews: AuthorityTraceReview[];
     current_reviews: Record<string, AuthorityTraceReview>;
+    integrity: {
+        ok: boolean;
+        warnings: Array<{
+            scope: "memo" | "source";
+            source?: string;
+            status: "changed" | "missing";
+            message: string;
+        }>;
+    };
 };
 
 export async function getAuthorityTraceRun(

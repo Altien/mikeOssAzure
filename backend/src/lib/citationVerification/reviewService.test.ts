@@ -65,12 +65,19 @@ function verified() {
 function database(options?: {
   reviews?: unknown[];
   externalSource?: boolean;
+  missingSourceVersion?: boolean;
+  projectRunIds?: string[];
 }) {
   const result = verified();
   const respond = (call: DbCall) => {
     if (call.table === "citation_verification_runs") {
       if (call.columns === "verified_record") {
         return { data: [{ verified_record: result.record }] };
+      }
+      if (call.columns === "id") {
+        return {
+          data: (options?.projectRunIds ?? ["run-1"]).map((id) => ({ id })),
+        };
       }
       return {
         data: [
@@ -84,6 +91,11 @@ function database(options?: {
         ],
       };
     }
+    if (call.table === "documents") {
+      return {
+        data: [{ id: "memo-id" }, { id: "source-id" }],
+      };
+    }
     if (call.table === "document_versions") {
       return {
         data: [
@@ -93,7 +105,7 @@ function database(options?: {
             storage_path: "memo/path",
             filename: "memo.md",
           },
-          ...(options?.externalSource
+          ...(options?.externalSource || options?.missingSourceVersion
             ? []
             : [
                 {
@@ -116,6 +128,8 @@ function database(options?: {
                 version_id: "source-v1",
                 title: "Authority",
                 content_text: sourceText,
+                content_hash: result.record.sources.authority.sha256,
+                content_bytes: result.record.sources.authority.bytes,
               },
             ]
           : [],
@@ -204,6 +218,7 @@ describe("getAuthorityTraceWorkspace", () => {
     expect(workspace?.reviews.find((review) => review.id === "review-stale"))
       .toMatchObject({ stale: true });
     expect(reviewDb.result.record.citations[0].status).toBe("anchored");
+    expect(workspace?.integrity).toEqual({ ok: true, warnings: [] });
   });
 
   it("loads an external source from the durable scoped cache", async () => {
@@ -217,6 +232,85 @@ describe("getAuthorityTraceWorkspace", () => {
         .join(""),
     ).toBe(sourceText);
     expect(callsFor("external_source_cache", "select")).toHaveLength(1);
+  });
+
+  it("suppresses highlights and reports source drift", async () => {
+    downloadFileMock.mockImplementation(async (path: string) =>
+      encoder.encode(
+        path === "memo/path" ? memoText : `${sourceText} changed`,
+      ).buffer,
+    );
+    const { db } = database();
+
+    const workspace = await getAuthorityTraceWorkspace("run-1", db as never);
+
+    expect(workspace?.sources.authority.integrity).toBe("changed");
+    expect(
+      workspace?.sources.authority.segments.flatMap(
+        (segment) => segment.highlights,
+      ),
+    ).toEqual([]);
+    expect(workspace?.integrity.warnings[0]).toMatchObject({
+      scope: "source",
+      source: "authority",
+      status: "changed",
+    });
+  });
+
+  it("represents a missing source without loading an unscoped cache row", async () => {
+    const { db, callsFor } = database({ missingSourceVersion: true });
+
+    const workspace = await getAuthorityTraceWorkspace("run-1", db as never);
+
+    expect(workspace?.sources.authority).toMatchObject({
+      available: false,
+      integrity: "missing",
+      segments: [{ text: "", highlights: [] }],
+    });
+    expect(callsFor("external_source_cache", "select")[0]?.filters).toContainEqual(
+      ["eq", "project_id", "project-1"],
+    );
+    expect(downloadFileMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses the latest matching verdict across reruns deterministically", async () => {
+    const binding = verified().record.citations[0].binds_to;
+    const { db } = database({
+      projectRunIds: ["run-old", "run-1"],
+      reviews: [
+        {
+          id: "review-a",
+          run_id: "run-old",
+          citation_id: "c009",
+          binds_to: binding,
+          verdict: "verified",
+          note: "first",
+          reviewer_user_id: "user-1",
+          reviewer_email: null,
+          created_at: "2026-07-25T11:00:00.000Z",
+        },
+        {
+          id: "review-b",
+          run_id: "run-1",
+          citation_id: "c001",
+          binds_to: binding,
+          verdict: "needs_attention",
+          note: "concurrent winner",
+          reviewer_user_id: "user-2",
+          reviewer_email: null,
+          created_at: "2026-07-25T11:00:00.000Z",
+        },
+      ],
+    });
+
+    const workspace = await getAuthorityTraceWorkspace("run-1", db as never);
+
+    expect(workspace?.reviews).toHaveLength(2);
+    expect(workspace?.current_reviews.c001).toMatchObject({
+      id: "review-b",
+      verdict: "needs_attention",
+      stale: false,
+    });
   });
 });
 

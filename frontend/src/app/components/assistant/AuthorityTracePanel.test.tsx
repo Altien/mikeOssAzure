@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "@/test/render";
+import type { AuthorityTraceWorkspace } from "@/app/lib/mikeApi";
 
 const { getRunMock, saveReviewMock } = vi.hoisted(() => ({
     getRunMock: vi.fn(),
@@ -42,7 +43,7 @@ const citation = {
     ],
 };
 
-function workspace() {
+function workspace(): AuthorityTraceWorkspace {
     return {
         id: "run-1",
         project_id: "project-1",
@@ -84,6 +85,7 @@ function workspace() {
             version_id: "memo-v1",
             filename: "memo.md",
             available: true,
+            integrity: "ok" as const,
             segments: [
                 { text: "Example v Example", highlights: ["c001"] },
                 { text: " context", highlights: [] },
@@ -97,6 +99,7 @@ function workspace() {
                 title: "Authority",
                 kind: "case",
                 available: true,
+                integrity: "ok" as const,
                 segments: [
                     { text: "The rule applies.", highlights: ["c001"] },
                     { text: " More.", highlights: [] },
@@ -105,6 +108,10 @@ function workspace() {
         },
         reviews: [],
         current_reviews: {},
+        integrity: {
+            ok: true,
+            warnings: [],
+        },
     };
 }
 
@@ -167,5 +174,62 @@ describe("AuthorityTracePanel", () => {
                 note: "Checked against source",
             }),
         );
+    });
+
+    it("shows integrity drift and renders only server-supplied unhighlighted segments", async () => {
+        const drifted = workspace();
+        drifted.sources.authority.integrity = "changed";
+        drifted.sources.authority.segments = [
+            { text: "Changed source text.", highlights: [] },
+        ];
+        drifted.integrity = {
+            ok: false,
+            warnings: [
+                {
+                    scope: "source",
+                    source: "authority",
+                    status: "changed",
+                    message:
+                        "Authority no longer matches this run; highlights are suppressed.",
+                },
+            ],
+        };
+        getRunMock.mockResolvedValue(drifted);
+
+        renderWithProviders(<AuthorityTracePanel runId="run-1" />);
+
+        expect(
+            await screen.findByText("Integrity check failed"),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByText("Changed source text.").tagName,
+        ).toBe("SPAN");
+    });
+
+    it("keeps a changed citation's former verdict visible as stale history", async () => {
+        const rerun = workspace();
+        rerun.reviews = [
+            {
+                id: "review-old",
+                run_id: "run-old",
+                citation_id: "c001",
+                binds_to: "f".repeat(64),
+                verdict: "verified",
+                note: "Checked before the citation changed",
+                reviewer_user_id: "user-1",
+                reviewer_email: "reviewer@example.com",
+                created_at: "2026-07-25T10:00:00.000Z",
+                stale: true,
+            },
+        ];
+        getRunMock.mockResolvedValue(rerun);
+
+        renderWithProviders(<AuthorityTracePanel runId="run-1" />);
+
+        expect(await screen.findByText("1 stale review")).toBeInTheDocument();
+        fireEvent.click(screen.getByText("1 stale review"));
+        expect(
+            screen.getByText(/Checked before the citation changed/),
+        ).toBeInTheDocument();
     });
 });
