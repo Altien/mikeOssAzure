@@ -106,7 +106,6 @@ function mockSupabase() {
 
 vi.mock("../../lib/supabase", () => ({
     createServerSupabase: vi.fn(() => mockSupabase()),
-    getUserIdFromRequest: vi.fn(async () => "u1"),
 }));
 
 // requireAuth always authenticates u1. requireMfaIfEnrolled is a reconfigurable
