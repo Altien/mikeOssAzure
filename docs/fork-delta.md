@@ -30,6 +30,25 @@ changes can be reviewed and integrated incrementally.
 - Preserves PostgREST-shaped access where practical to reduce divergence from
   upstream code.
 
+## Authority Trace
+
+- Adds an additive, provider-neutral citation verification subsystem
+  (`backend/src/lib/citationVerification/`) with deterministic extraction,
+  normalization, anchoring, integrity checks, review, and self-contained
+  export modules.
+- Adds a durable, access-scoped external source cache
+  (`backend/src/lib/chat/externalSourceCache.ts`) and general first-party tool
+  schemas that do not depend on connectors or imported skills.
+- Adds thin orchestration hooks in the chat streaming and tool dispatcher
+  code, plus authenticated run, review, and export routes
+  (`backend/src/routes/authorityTrace.ts`).
+- Adds migrations `0021` through `0024` for immutable verification runs,
+  external sources, and append-only human verdict history.
+- Adds the Authority Trace review panel and client calls in the frontend
+  assistant components and `mikeApi.ts`.
+- Release verification evidence is in
+  [`tests/09-authority-trace.md`](tests/09-authority-trace.md).
+
 ## Models and integrations
 
 - Adds Azure OpenAI with per-user endpoint, key, deployment, and model

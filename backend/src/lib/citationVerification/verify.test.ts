@@ -197,6 +197,31 @@ describe("verifyResolvedProposal", () => {
     );
   });
 
+  it("keeps repeated short-form citations as independent instances", () => {
+    const value = input({
+      memo:
+        "First context: Example v Example. Second context: Example v Example.",
+    });
+    value.proposal.citations[0].memo_context =
+      "First context: Example v Example.";
+    value.proposal.citations.push({
+      ...structuredClone(value.proposal.citations[0]),
+      id: "c002",
+      memo_context: "Second context: Example v Example.",
+    });
+
+    const result = verifyResolvedProposal(value);
+
+    expect(result.record.citations).toHaveLength(2);
+    expect(result.record.citations.map((citation) => citation.status)).toEqual([
+      "anchored",
+      "anchored",
+    ]);
+    expect(result.record.citations[0].memo_anchor?.start).not.toBe(
+      result.record.citations[1].memo_anchor?.start,
+    );
+  });
+
   it("retains a citation that claims no source quote", () => {
     const value = input();
     value.proposal.citations[0].anchors_proposed = [];
@@ -295,5 +320,11 @@ describe("verifyResolvedProposal", () => {
     for (const changed of changedBindings) {
       expect(changed).not.toBe(baseline);
     }
+  });
+
+  it("emits identical verified records for identical resolved inputs", () => {
+    expect(verifyResolvedProposal(input())).toEqual(
+      verifyResolvedProposal(input()),
+    );
   });
 });
