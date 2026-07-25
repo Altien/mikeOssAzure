@@ -38,7 +38,6 @@ function mockSupabase() {
 
 vi.mock("../../lib/supabase", () => ({
     createServerSupabase: vi.fn(() => mockSupabase()),
-    getUserIdFromRequest: vi.fn(async () => "u1"),
 }));
 
 vi.mock("../../middleware/auth", () => ({

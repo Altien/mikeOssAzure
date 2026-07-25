@@ -41,7 +41,6 @@ function mockSupabase() {
 
 vi.mock("../../lib/supabase", () => ({
     createServerSupabase: vi.fn(() => mockSupabase()),
-    getUserIdFromRequest: vi.fn(async () => "u1"),
 }));
 
 // Authenticate every request as user "u1" without exercising the real Supabase
