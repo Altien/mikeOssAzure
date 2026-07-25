@@ -11,6 +11,12 @@ const nextConfig: NextConfig = {
     // demand generateStaticParams; `next build`/`pnpm bundle` still export.
     output: process.env.NODE_ENV === "production" ? "export" : undefined,
     reactCompiler: true,
+    turbopack: {
+        root: __dirname,
+    },
+    // Upstream divergence (sync-log: 4728fd19): the sitemap `rewrites()` in
+    // upstream's config is intentionally NOT carried -- dev is a static
+    // export (rewrites are unsupported) and has no /api/sitemap route.
     skipTrailingSlashRedirect: true,
 };
 
