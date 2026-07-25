@@ -645,7 +645,7 @@ export default function TabularReviewsPage() {
                         })}
                     </TableBody>
                 )}
-                {!effectiveLoading && hasMore && visibleReviews.length > 0 && (
+                {!effectiveLoading && hasMore && filtered.length > 0 && (
                     <div className="flex justify-center py-3">
                         <button
                             onClick={handleLoadMore}
