@@ -54,3 +54,22 @@ Frontend:
 ```bash
 npm run build --prefix frontend
 ```
+
+## Testing
+
+```bash
+npm test --prefix backend            # backend unit + route integration tests (vitest)
+npm test --prefix frontend           # frontend component/hook tests (vitest + jsdom)
+npm run test:e2e                     # Playwright end-to-end suite — see docs/e2e-ci.md
+node evals/run.mjs --threshold 1.0   # offline eval harness (no network, no API keys)
+npm run test:stack --prefix backend  # gated: real-Supabase auth/access tests (run `supabase start` first)
+```
+
+- New features and bug fixes should come with a test at the lowest layer that
+  can catch the regression: unit first, then route-level integration, then
+  end-to-end only for flows a browser is genuinely needed to prove.
+- CI runs the build, unit/integration tests, and the eval harness on every PR
+  (`.github/workflows/ci.yml`), and the Playwright suite in a full local stack
+  (`.github/workflows/e2e.yml`).
+- Tests that need a live Supabase or an LLM key are env-gated and skip cleanly
+  when the environment is absent — a plain `npm test` should always be green.
