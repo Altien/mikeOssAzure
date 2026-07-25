@@ -87,6 +87,11 @@
     "vite-tsconfig-paths": "^6.1.1",
     "vitest": "^4.1.10"
   },
+  "pnpm": {
+    "overrides": {
+      "tmp": "^0.2.6"
+    }
+  },
   "license": "AGPL-3.0-only",
   "packageManager": "pnpm@11.1.2"
 }
