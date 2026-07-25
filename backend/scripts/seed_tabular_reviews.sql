@@ -6,10 +6,14 @@
 -- Edit the settings below, then run the whole file. Rows are titled with the
 -- prefix so they're easy to spot and to remove later with
 -- drop_seed_tabular_reviews.sql.
+--
+-- Leave seed_email null to seed against the first user created in this
+-- database (handy for a fresh local/dev instance) — set it to target a
+-- specific login instead.
 
 with settings as (
   select
-    'you@example.com'::text as seed_email,   -- your login email
+    null::text as seed_email,               -- your login email, or null for the first user in the db
     60 as seed_count,                        -- how many reviews to create
     '[SEED]'::text as seed_prefix,           -- title prefix, must match the cleanup script
     null::uuid as seed_project_id            -- optional: attach reviews to one project
@@ -17,7 +21,10 @@ with settings as (
 target_user as (
   select up.user_id
   from public.user_profiles up
-  join settings s on lower(up.email) = lower(s.seed_email)
+  cross join settings s
+  where s.seed_email is null or lower(up.email) = lower(s.seed_email)
+  order by up.created_at
+  limit 1
 ),
 seed_rows as (
   select generate_series(1, (select seed_count from settings)) as n
@@ -49,6 +56,7 @@ cross join target_user tu
 cross join settings s
 cross join sample_columns sc;
 
--- If the result says "INSERT 0 0" instead of "INSERT 0 <seed_count>", the
--- seed_email in settings didn't match any row in user_profiles — fix the
--- email above and re-run.
+-- If the result says "INSERT 0 0" instead of "INSERT 0 <seed_count>", either
+-- the seed_email in settings didn't match any row in user_profiles, or the
+-- table has no users at all yet — fix the email (or create a user) and
+-- re-run.

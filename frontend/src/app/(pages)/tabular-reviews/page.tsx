@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { ChevronDown, Table2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ChevronDown, Loader2, Table2 } from "lucide-react";
 import {
     RowActionMenuItems,
     RowActions,
@@ -60,6 +60,7 @@ export default function TabularReviewsPage() {
     const [reviews, setReviews] = useState<TabularReview[]>([]);
     const [projects, setProjects] = useState<Project[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
     const [creating, setCreating] = useState(false);
     const [page, setPage] = useState(0);
     const [hasMore, setHasMore] = useState(true);
@@ -78,22 +79,28 @@ export default function TabularReviewsPage() {
 
     useEffect(() => {
         const loadPage = async () => {
-            setLoading(true);
+            if (page === 0) setLoading(true);
+            else setLoadingMore(true);
             try {
                 const [r, p] = await Promise.all([
                     listTabularReviews(undefined, { limit: 20, offset: page * 20 }).catch(() => []),
-                    listProjects().catch(() => []),
+                    page === 0 ? listProjects().catch(() => []) : null,
                 ]);
                 setReviews((prev) => (page === 0 ? r : [...prev, ...r]));
                 setHasMore(r.length === 20);
-                setProjects(p);
+                if (p) setProjects(p);
             } finally {
                 setLoading(false);
+                setLoadingMore(false);
             }
         };
 
         void loadPage();
     }, [page]);
+
+    function handleLoadMore() {
+        setPage((prev) => prev + 1);
+    }
 
     useEffect(() => {
         setSelectedIds([]);
@@ -513,6 +520,20 @@ export default function TabularReviewsPage() {
                             );
                         })}
                     </TableBody>
+                )}
+                {!effectiveLoading && hasMore && visibleReviews.length > 0 && (
+                    <div className="flex justify-center py-3">
+                        <button
+                            onClick={handleLoadMore}
+                            disabled={loadingMore}
+                            className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-gray-500 transition-colors hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                            {loadingMore && (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                            )}
+                            {loadingMore ? "Loading…" : "Load more"}
+                        </button>
+                    </div>
                 )}
             </TableScrollArea>
 
