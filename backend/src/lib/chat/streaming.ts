@@ -26,6 +26,7 @@ import {
   type AskInputsEvent,
   type EditAnnotation,
   devLog,
+  resolveDocLabel,
 } from "./types";
 import { TOOLS, WORKFLOW_TOOLS } from "./tools/toolSchemas";
 import {
@@ -39,6 +40,7 @@ import {
   type CourtlistenerTurnState,
 } from "./tools/toolDispatcher";
 import {
+  readDocumentContent,
   type TurnEditState,
   type TurnReadState,
 } from "./tools/documentOps";
@@ -48,6 +50,7 @@ import {
   createFastModelExternalSourceSummarizer,
   ExternalSourceCache,
 } from "../../altien/externalSources/cache";
+import { verifyDocumentCitations } from "./verifyCitations";
 
 
 export type AssistantEvent =
@@ -592,15 +595,39 @@ export async function runLLMStream(params: {
   // Parse and emit citations from <CITATIONS> block
   const { citations: parsedCitations, diagnostics: citationDiagnostics } =
     parseCitationsWithDiagnostics(fullText);
-  const citations = buildCitations
-    ? buildCitations(fullText)
-    : parsedCitations.map((c) =>
-        createCitation(
-          c,
-          docIndex,
-          courtlistenerTurnState.casesByClusterId,
-        ),
-      );
+  let citations: unknown[];
+  if (buildCitations) {
+    // Custom builders (tabular) bypass verification; annotations carry no
+    // verification_status and the UI treats a missing status as untrusted.
+    citations = buildCitations(fullText);
+  } else {
+    const rawCitations = parsedCitations.map((c) =>
+      createCitation(
+        c,
+        docIndex,
+        courtlistenerTurnState.casesByClusterId,
+      ),
+    );
+    // Server-side document-quote verification. Fetch each document's extracted
+    // source text at most once per turn (memoized by doc_id), reading only the
+    // bytes already in storage with emitEvents:false so no new events fire and
+    // the air-gap guarantee holds. Case citations pass through untouched.
+    const sourceTextByDocId = new Map<string, Promise<string>>();
+    const getSourceText = (docId: string): Promise<string> => {
+      let pending = sourceTextByDocId.get(docId);
+      if (!pending) {
+        const label = resolveDocLabel(docId, docStore, docIndex);
+        pending = label
+          ? readDocumentContent(label, docStore, () => {}, docIndex, db, {
+              emitEvents: false,
+            })
+          : Promise.resolve("");
+        sourceTextByDocId.set(docId, pending);
+      }
+      return pending;
+    };
+    citations = await verifyDocumentCitations(rawCitations, getSourceText);
+  }
   devLog("[chat/stream] final citations", {
     hasCitationsBlock: citationDiagnostics.hasBlock,
     citationsBlockLength: citationDiagnostics.rawLength,
