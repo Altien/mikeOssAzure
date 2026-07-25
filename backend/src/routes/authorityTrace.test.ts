@@ -7,12 +7,16 @@ const {
   upsertUserProfileMock,
   createServerSupabaseMock,
   getCitationVerificationRunMock,
+  getAuthorityTraceWorkspaceMock,
+  createCitationVerificationReviewMock,
   checkProjectAccessMock,
 } = vi.hoisted(() => ({
   validateSupabaseTokenMock: vi.fn(),
   upsertUserProfileMock: vi.fn(),
   createServerSupabaseMock: vi.fn(),
   getCitationVerificationRunMock: vi.fn(),
+  getAuthorityTraceWorkspaceMock: vi.fn(),
+  createCitationVerificationReviewMock: vi.fn(),
   checkProjectAccessMock: vi.fn(),
 }));
 
@@ -28,6 +32,14 @@ vi.mock("../lib/supabase", () => ({
 vi.mock("../lib/citationVerification/service", () => ({
   getCitationVerificationRun: getCitationVerificationRunMock,
 }));
+vi.mock("../lib/citationVerification/reviewService", async () => {
+  class ReviewBindingChangedError extends Error {}
+  return {
+    getAuthorityTraceWorkspace: getAuthorityTraceWorkspaceMock,
+    createCitationVerificationReview: createCitationVerificationReviewMock,
+    ReviewBindingChangedError,
+  };
+});
 vi.mock("../lib/access", () => ({
   checkProjectAccess: checkProjectAccessMock,
 }));
@@ -56,6 +68,8 @@ beforeEach(() => {
   upsertUserProfileMock.mockReset().mockResolvedValue(undefined);
   createServerSupabaseMock.mockReset().mockReturnValue({});
   getCitationVerificationRunMock.mockReset();
+  getAuthorityTraceWorkspaceMock.mockReset();
+  createCitationVerificationReviewMock.mockReset();
   checkProjectAccessMock.mockReset();
 });
 
@@ -96,6 +110,13 @@ describe("GET /api/authority-trace/runs/:runId", () => {
       created_at: "2026-07-25T12:00:00.000Z",
     };
     getCitationVerificationRunMock.mockResolvedValue(run);
+    getAuthorityTraceWorkspaceMock.mockResolvedValue({
+      ...run,
+      memo: { available: true, segments: [] },
+      sources: {},
+      reviews: [],
+      current_reviews: {},
+    });
     checkProjectAccessMock.mockResolvedValue({
       ok: true,
       isOwner: false,
@@ -111,12 +132,81 @@ describe("GET /api/authority-trace/runs/:runId", () => {
       .set("Authorization", "Bearer valid-token");
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual(run);
+    expect(response.body).toMatchObject({
+      id: "run-1",
+      project_id: "project-1",
+      memo: { available: true },
+      sources: {},
+      reviews: [],
+    });
     expect(checkProjectAccessMock).toHaveBeenCalledWith(
       "project-1",
       "user-1",
       "user@example.com",
       {},
     );
+  });
+});
+
+describe("POST /api/authority-trace/runs/:runId/reviews", () => {
+  it("appends an authenticated reviewer verdict", async () => {
+    getCitationVerificationRunMock.mockResolvedValue({
+      id: "run-1",
+      project_id: "project-1",
+    });
+    checkProjectAccessMock.mockResolvedValue({ ok: true });
+    createCitationVerificationReviewMock.mockResolvedValue({
+      id: "review-1",
+      run_id: "run-1",
+      citation_id: "c001",
+      binds_to: "a".repeat(64),
+      verdict: "verified",
+      note: "Checked",
+      reviewer_user_id: "user-1",
+      reviewer_email: "user@example.com",
+      created_at: "2026-07-25T13:00:00.000Z",
+      stale: false,
+    });
+
+    const response = await request(makeApp())
+      .post("/api/authority-trace/runs/run-1/reviews")
+      .set("Authorization", "Bearer valid-token")
+      .send({
+        citation_id: "c001",
+        binds_to: "a".repeat(64),
+        verdict: "verified",
+        note: "Checked",
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body).toMatchObject({
+      id: "review-1",
+      reviewer_user_id: "user-1",
+      reviewer_email: "user@example.com",
+    });
+    expect(createCitationVerificationReviewMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-1",
+        reviewerUserId: "user-1",
+        reviewerEmail: "user@example.com",
+      }),
+      {},
+    );
+  });
+
+  it("does not reveal an inaccessible run", async () => {
+    getCitationVerificationRunMock.mockResolvedValue({
+      id: "run-1",
+      project_id: "project-2",
+    });
+    checkProjectAccessMock.mockResolvedValue({ ok: false });
+
+    const response = await request(makeApp())
+      .post("/api/authority-trace/runs/run-1/reviews")
+      .set("Authorization", "Bearer valid-token")
+      .send({});
+
+    expect(response.status).toBe(404);
+    expect(createCitationVerificationReviewMock).not.toHaveBeenCalled();
   });
 });

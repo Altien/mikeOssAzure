@@ -1,5 +1,5 @@
-import { screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "@/test/render";
 import type { CitationAnnotation } from "../shared/types";
 import { AssistantMessage } from "./AssistantMessage";
@@ -59,9 +59,11 @@ describe("AssistantMessage Authority Trace", () => {
     });
 
     it("renders a compact completed verification summary", () => {
+        const onOpen = vi.fn();
         renderWithProviders(
             <AssistantMessage
                 content=""
+                onAuthorityTraceOpen={onOpen}
                 events={[
                     {
                         type: "authority_trace_verification",
@@ -88,6 +90,12 @@ describe("AssistantMessage Authority Trace", () => {
                 "1 exact · 1 formatting differs · 1 failed · 1 warnings · c003: ambiguous in memo",
             ),
         ).toBeInTheDocument();
+        fireEvent.click(
+            screen.getByRole("button", {
+                name: /Authority Trace completed with failures/,
+            }),
+        );
+        expect(onOpen).toHaveBeenCalledWith("run-1");
     });
 
     it("renders fatal verification errors without claiming a completed run", () => {

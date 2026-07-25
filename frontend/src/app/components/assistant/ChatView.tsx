@@ -168,15 +168,21 @@ export function ChatView({
         (tab: AssistantSidePanelTab) => {
             setTabs((prev) => {
                 const idx = prev.findIndex((t) =>
-                    tab.kind === "case"
-                        ? t.kind === "case" && t.id === tab.id
-                        : t.kind !== "case" && t.documentId === tab.documentId,
+                    tab.kind === "case" ||
+                    tab.kind === "authority_trace"
+                        ? t.kind === tab.kind && t.id === tab.id
+                        : t.kind !== "case" &&
+                          t.kind !== "authority_trace" &&
+                          t.documentId === tab.documentId,
                 );
                 if (idx >= 0) {
                     const existing = prev[idx];
                     const copy = prev.slice();
                     copy[idx] =
-                        tab.kind === "case" || existing.kind === "case"
+                        tab.kind === "case" ||
+                        tab.kind === "authority_trace" ||
+                        existing.kind === "case" ||
+                        existing.kind === "authority_trace"
                             ? tab
                             : {
                                   ...tab,
@@ -192,6 +198,18 @@ export function ChatView({
             showPanel();
         },
         [showPanel],
+    );
+
+    const openAuthorityTrace = useCallback(
+        (runId: string) => {
+            upsertTab({
+                kind: "authority_trace",
+                id: `authority-trace:${runId}`,
+                runId,
+                title: "Authority Trace",
+            });
+        },
+        [upsertTab],
     );
 
     /**
@@ -391,7 +409,12 @@ export function ChatView({
             setTabs((prev) => {
                 const idx = prev.findIndex((t) => t.id === tabId);
                 if (idx < 0) return prev;
-                if (prev[idx].kind === "case") return prev;
+                if (
+                    prev[idx].kind === "case" ||
+                    prev[idx].kind === "authority_trace"
+                ) {
+                    return prev;
+                }
                 const copy = prev.slice();
                 copy[idx] = { ...copy[idx], ...patch };
                 return copy;
@@ -410,7 +433,9 @@ export function ChatView({
             // Surface the warning on every tab tied to this document.
             setTabs((prev) =>
                 prev.map((t) =>
-                    t.kind !== "case" && t.documentId === args.documentId
+                    t.kind !== "case" &&
+                    t.kind !== "authority_trace" &&
+                    t.documentId === args.documentId
                         ? { ...t, warning: args.message }
                         : t,
                 ),
@@ -658,6 +683,9 @@ export function ChatView({
                                                 }
                                                 onCaseClick={(citation) =>
                                                     openCase(citation)
+                                                }
+                                                onAuthorityTraceOpen={
+                                                    openAuthorityTrace
                                                 }
                                                 minHeight={
                                                     i === lastAssistantIndex

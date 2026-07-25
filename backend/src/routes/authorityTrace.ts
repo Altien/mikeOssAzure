@@ -4,7 +4,13 @@ import { checkProjectAccess } from "../lib/access";
 import {
   getCitationVerificationRun,
 } from "../lib/citationVerification/service";
+import {
+  createCitationVerificationReview,
+  getAuthorityTraceWorkspace,
+  ReviewBindingChangedError,
+} from "../lib/citationVerification/reviewService";
 import { createServerSupabase } from "../lib/supabase";
+import { ZodError } from "zod";
 
 export const authorityTraceRouter = Router();
 
@@ -28,10 +34,57 @@ authorityTraceRouter.get("/runs/:runId", async (req, res) => {
       return res.status(404).json({ detail: "Verification run not found" });
     }
 
-    return res.json(run);
+    const workspace = await getAuthorityTraceWorkspace(run.id, db);
+    if (!workspace) {
+      return res.status(404).json({ detail: "Verification run not found" });
+    }
+    return res.json(workspace);
   } catch (err) {
     const detail =
       err instanceof Error ? err.message : "Failed to load verification run";
+    return res.status(500).json({ detail });
+  }
+});
+
+authorityTraceRouter.post("/runs/:runId/reviews", async (req, res) => {
+  try {
+    const db = createServerSupabase();
+    const run = await getCitationVerificationRun(req.params.runId, db);
+    if (!run) {
+      return res.status(404).json({ detail: "Verification run not found" });
+    }
+    const access = await checkProjectAccess(
+      run.project_id,
+      String(res.locals.userId ?? ""),
+      res.locals.userEmail as string | undefined,
+      db,
+    );
+    if (!access.ok) {
+      return res.status(404).json({ detail: "Verification run not found" });
+    }
+
+    const review = await createCitationVerificationReview(
+      {
+        runId: run.id,
+        body: req.body,
+        reviewerUserId: String(res.locals.userId ?? ""),
+        reviewerEmail: (res.locals.userEmail as string | undefined) ?? null,
+      },
+      db,
+    );
+    return res.status(201).json(review);
+  } catch (err) {
+    if (err instanceof ZodError) {
+      return res.status(400).json({
+        detail: "Invalid review",
+        issues: err.issues,
+      });
+    }
+    if (err instanceof ReviewBindingChangedError) {
+      return res.status(409).json({ detail: err.message });
+    }
+    const detail =
+      err instanceof Error ? err.message : "Failed to save citation review";
     return res.status(500).json({ detail });
   }
 });

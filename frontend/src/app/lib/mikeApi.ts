@@ -866,6 +866,122 @@ export async function getCourtlistenerOpinions(
     return result.opinions;
 }
 
+export type AuthorityTraceVerdict =
+    | "verified"
+    | "needs_attention"
+    | "rejected";
+
+export type AuthorityTraceSegment = {
+    text: string;
+    highlights: string[];
+};
+
+export type AuthorityTraceReview = {
+    id: string;
+    run_id: string;
+    citation_id: string;
+    binds_to: string;
+    verdict: AuthorityTraceVerdict;
+    note: string | null;
+    reviewer_user_id: string;
+    reviewer_email: string | null;
+    created_at: string;
+    stale: boolean;
+};
+
+export type AuthorityTraceCitation = {
+    id: string;
+    source_candidates: string[];
+    cite_text: string;
+    proposition: string;
+    support_type: "quotation" | "paraphrase";
+    status: "anchored" | "no_quote_claimed" | "anchor_failed";
+    failure_reason?: string;
+    binds_to: string;
+    warnings: string[];
+    memo_anchor: {
+        start: number;
+        end: number;
+        quote: string;
+        match: "exact" | "normalized" | "hyphenless";
+        warnings: string[];
+    } | null;
+    anchors: Array<{
+        source: string;
+        quote: string;
+        start: number;
+        end: number;
+        match: "exact" | "normalized" | "hyphenless";
+        warnings: string[];
+    }>;
+};
+
+export type AuthorityTraceWorkspace = {
+    id: string;
+    project_id: string;
+    created_at: string;
+    verified_record: {
+        citations: AuthorityTraceCitation[];
+    };
+    report: {
+        outcome: "success" | "completed_with_failures";
+        total: number;
+        anchored: number;
+        failed: number;
+        no_quote_claimed: number;
+        exact: number;
+        formatting_different: number;
+    };
+    memo: {
+        document_id: string;
+        version_id: string;
+        filename: string;
+        available: boolean;
+        segments: AuthorityTraceSegment[];
+    };
+    sources: Record<
+        string,
+        {
+            document_id: string;
+            version_id: string;
+            filename: string;
+            title: string;
+            kind: string;
+            available: boolean;
+            segments: AuthorityTraceSegment[];
+        }
+    >;
+    reviews: AuthorityTraceReview[];
+    current_reviews: Record<string, AuthorityTraceReview>;
+};
+
+export async function getAuthorityTraceRun(
+    runId: string,
+): Promise<AuthorityTraceWorkspace> {
+    return apiRequest<AuthorityTraceWorkspace>(
+        `/authority-trace/runs/${encodeURIComponent(runId)}`,
+    );
+}
+
+export async function saveAuthorityTraceReview(
+    runId: string,
+    payload: {
+        citation_id: string;
+        binds_to: string;
+        verdict: AuthorityTraceVerdict;
+        note?: string | null;
+    },
+): Promise<AuthorityTraceReview> {
+    return apiRequest<AuthorityTraceReview>(
+        `/authority-trace/runs/${encodeURIComponent(runId)}/reviews`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        },
+    );
+}
+
 export async function streamChat(payload: {
     messages: {
         role: string;

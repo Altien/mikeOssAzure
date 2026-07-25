@@ -880,6 +880,7 @@ function CourtListenerBlock({
     hasError,
     showConnector,
     items,
+    onClick,
 }: {
     label: string;
     detail?: string;
@@ -887,6 +888,7 @@ function CourtListenerBlock({
     hasError?: boolean;
     showConnector?: boolean;
     items?: CourtListenerBlockItem[];
+    onClick?: () => void;
 }) {
     const [isOpen, setIsOpen] = useState(false);
     const hasItems = !!items && items.length > 0;
@@ -916,6 +918,15 @@ function CourtListenerBlock({
                                 size={10}
                                 className={`relative top-px ml-1 transition-transform duration-200 ${isOpen ? "" : "-rotate-90"}`}
                             />
+                        </button>
+                    ) : onClick ? (
+                        <button
+                            type="button"
+                            onClick={onClick}
+                            className="text-left hover:text-gray-700 transition-colors"
+                        >
+                            <span className="font-medium">{label}</span>
+                            {detail ? <span> {detail}</span> : null}
                         </button>
                     ) : (
                         <>
@@ -1579,6 +1590,7 @@ interface Props {
     onCaseClick?: (
         citation: Extract<AssistantEvent, { type: "case_citation" }>,
     ) => void;
+    onAuthorityTraceOpen?: (runId: string) => void;
     minHeight?: string;
     onWorkflowClick?: (workflowId: string) => void;
     onEditViewClick?: (ann: EditAnnotation, filename: string) => void;
@@ -1644,6 +1656,7 @@ export function AssistantMessage({
     onCitationClick,
     onOpenCitationSource,
     onCaseClick,
+    onAuthorityTraceOpen,
     minHeight = "0px",
     onWorkflowClick,
     onEditViewClick,
@@ -2338,6 +2351,14 @@ export function AssistantMessage({
                         event.outcome === "fatal" || event.failed > 0
                     }
                     showConnector={showConnector}
+                    onClick={
+                        !event.isStreaming &&
+                        event.outcome !== "fatal" &&
+                        event.run_id &&
+                        onAuthorityTraceOpen
+                            ? () => onAuthorityTraceOpen(event.run_id!)
+                            : undefined
+                    }
                 />
             );
         }

@@ -17,6 +17,7 @@ import {
     CaseLawPanel,
     type CaseTab,
 } from "./CaseLawPanel";
+import { AuthorityTracePanel } from "./AuthorityTracePanel";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -53,11 +54,19 @@ export type EditTab = CommonTab & {
     edit: EditAnnotation;
 };
 
+export type AuthorityTraceTab = {
+    kind: "authority_trace";
+    id: string;
+    runId: string;
+    title: string;
+};
+
 export type AssistantSidePanelTab =
     | DocumentTab
     | CitationTab
     | EditTab
-    | CaseTab;
+    | CaseTab
+    | AuthorityTraceTab;
 
 interface Props {
     tabs: AssistantSidePanelTab[];
@@ -115,6 +124,7 @@ function tabTitle(tab: AssistantSidePanelTab): string {
     if (tab.kind === "case") {
         return tab.caseName || tab.citation || "Case";
     }
+    if (tab.kind === "authority_trace") return tab.title;
     return tab.filename;
 }
 
@@ -223,6 +233,7 @@ export function AssistantSidePanel({
                         const isActive = tab.id === active.id;
                         const showVersionBadge =
                             tab.kind !== "case" &&
+                            tab.kind !== "authority_trace" &&
                             typeof tab.versionNumber === "number" &&
                             Number.isFinite(tab.versionNumber) &&
                             tab.versionNumber > 1;
@@ -294,6 +305,17 @@ export function AssistantSidePanel({
                                     tab={tab}
                                     compactActions={panelWidth < 600}
                                 />
+                            </div>
+                        );
+                    }
+                    if (tab.kind === "authority_trace") {
+                        return (
+                            <div
+                                key={tab.id}
+                                className={`absolute inset-0 flex flex-col ${isActive ? "" : "invisible pointer-events-none"}`}
+                                aria-hidden={!isActive}
+                            >
+                                <AuthorityTracePanel runId={tab.runId} />
                             </div>
                         );
                     }
