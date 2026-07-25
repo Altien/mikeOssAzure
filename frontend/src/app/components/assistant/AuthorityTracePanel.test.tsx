@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "@/test/render";
 import type { AuthorityTraceWorkspace } from "@/app/lib/mikeApi";
 
-const { getRunMock, saveReviewMock } = vi.hoisted(() => ({
+const { downloadExportMock, getRunMock, saveReviewMock } = vi.hoisted(() => ({
+    downloadExportMock: vi.fn(),
     getRunMock: vi.fn(),
     saveReviewMock: vi.fn(),
 }));
 vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
     ...(await importOriginal<typeof import("@/app/lib/mikeApi")>()),
+    downloadAuthorityTraceExport: downloadExportMock,
     getAuthorityTraceRun: getRunMock,
     saveAuthorityTraceReview: saveReviewMock,
 }));
@@ -121,6 +123,7 @@ beforeEach(() => {
         id: "review-1",
         verdict: "verified",
     });
+    downloadExportMock.mockReset().mockResolvedValue(undefined);
 });
 
 describe("AuthorityTracePanel", () => {
@@ -231,5 +234,35 @@ describe("AuthorityTracePanel", () => {
         expect(
             screen.getByText(/Checked before the citation changed/),
         ).toBeInTheDocument();
+    });
+
+    it("requires an explicit degraded export when integrity failed", async () => {
+        const drifted = workspace();
+        drifted.integrity = {
+            ok: false,
+            warnings: [
+                {
+                    scope: "memo",
+                    status: "changed",
+                    message: "Memo changed.",
+                },
+            ],
+        };
+        getRunMock.mockResolvedValue(drifted);
+        renderWithProviders(<AuthorityTracePanel runId="run-1" />);
+
+        fireEvent.click(
+            await screen.findByRole("button", {
+                name: "Export degraded audit",
+            }),
+        );
+
+        await waitFor(() =>
+            expect(downloadExportMock).toHaveBeenCalledWith(
+                "run-1",
+                "audit",
+                { forceDegraded: true },
+            ),
+        );
     });
 });

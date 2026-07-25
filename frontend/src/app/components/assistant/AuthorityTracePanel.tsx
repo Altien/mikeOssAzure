@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+    downloadAuthorityTraceExport,
     getAuthorityTraceRun,
     saveAuthorityTraceReview,
     type AuthorityTraceCitation,
@@ -84,6 +85,9 @@ export function AuthorityTracePanel({ runId }: { runId: string }) {
     const [note, setNote] = useState("");
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [exporting, setExporting] = useState<"review" | "audit" | null>(
+        null,
+    );
     const [error, setError] = useState<string | null>(null);
 
     const load = useCallback(async () => {
@@ -173,6 +177,28 @@ export function AuthorityTracePanel({ runId }: { runId: string }) {
         [load, note, runId, saving, selected],
     );
 
+    const downloadExport = useCallback(
+        async (kind: "review" | "audit") => {
+            if (!workspace || exporting) return;
+            setExporting(kind);
+            setError(null);
+            try {
+                await downloadAuthorityTraceExport(runId, kind, {
+                    forceDegraded: !workspace.integrity.ok,
+                });
+            } catch (reason) {
+                setError(
+                    reason instanceof Error
+                        ? reason.message
+                        : "Failed to export Authority Trace",
+                );
+            } finally {
+                setExporting(null);
+            }
+        },
+        [exporting, runId, workspace],
+    );
+
     useEffect(() => {
         const onKeyDown = (event: KeyboardEvent) => {
             const target = event.target;
@@ -246,6 +272,21 @@ export function AuthorityTracePanel({ runId }: { runId: string }) {
                     >
                         {selectedIndex + 1} / {citations.length}
                     </span>
+                </div>
+                <div className="mt-2 flex gap-2">
+                    {(["review", "audit"] as const).map((kind) => (
+                        <button
+                            key={kind}
+                            type="button"
+                            disabled={exporting !== null}
+                            onClick={() => void downloadExport(kind)}
+                            className="rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                        >
+                            {exporting === kind
+                                ? "Exporting…"
+                                : `${workspace.integrity.ok ? "Export" : "Export degraded"} ${kind}`}
+                        </button>
+                    ))}
                 </div>
                 {error ? (
                     <p className="mt-2 text-xs text-red-700" role="alert">

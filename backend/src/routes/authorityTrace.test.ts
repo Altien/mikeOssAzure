@@ -53,6 +53,49 @@ function makeApp() {
   return app;
 }
 
+function exportWorkspace(integrityOk = true) {
+  return {
+    id: "run-1",
+    project_id: "project-1",
+    created_at: "2026-07-25T12:00:00.000Z",
+    verified_record: {
+      citations: [],
+    },
+    report: {
+      outcome: "success",
+      total: 0,
+      anchored: 0,
+      failed: 0,
+      no_quote_claimed: 0,
+      exact: 0,
+      formatting_different: 0,
+    },
+    memo: {
+      document_id: "memo-id",
+      version_id: "memo-v1",
+      filename: "memo.md",
+      available: true,
+      integrity: integrityOk ? "ok" : "changed",
+      segments: [{ text: "Memo", highlights: [] }],
+    },
+    sources: {},
+    reviews: [],
+    current_reviews: {},
+    integrity: {
+      ok: integrityOk,
+      warnings: integrityOk
+        ? []
+        : [
+            {
+              scope: "memo",
+              status: "changed",
+              message: "Memo changed; highlights are suppressed.",
+            },
+          ],
+    },
+  };
+}
+
 beforeEach(() => {
   process.env.AUTH_PROVIDER = "supabase";
   validateSupabaseTokenMock.mockReset().mockResolvedValue({
@@ -208,5 +251,67 @@ describe("POST /api/authority-trace/runs/:runId/reviews", () => {
 
     expect(response.status).toBe(404);
     expect(createCitationVerificationReviewMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("Authority Trace HTML exports", () => {
+  it.each(["review", "audit"])(
+    "does not reveal an inaccessible run through the %s export",
+    async (kind) => {
+      getCitationVerificationRunMock.mockResolvedValue({
+        id: "run-1",
+        project_id: "project-2",
+      });
+      checkProjectAccessMock.mockResolvedValue({ ok: false });
+
+      const response = await request(makeApp())
+        .get(`/api/authority-trace/runs/run-1/${kind}.html`)
+        .set("Authorization", "Bearer valid-token");
+
+      expect(response.status).toBe(404);
+      expect(getAuthorityTraceWorkspaceMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("fails closed on drift unless a degraded review is explicit", async () => {
+    getCitationVerificationRunMock.mockResolvedValue({
+      id: "run-1",
+      project_id: "project-1",
+    });
+    checkProjectAccessMock.mockResolvedValue({ ok: true });
+    getAuthorityTraceWorkspaceMock.mockResolvedValue(exportWorkspace(false));
+
+    const blocked = await request(makeApp())
+      .get("/api/authority-trace/runs/run-1/review.html")
+      .set("Authorization", "Bearer valid-token");
+    expect(blocked.status).toBe(409);
+
+    const forced = await request(makeApp())
+      .get(
+        "/api/authority-trace/runs/run-1/review.html?force_degraded=true",
+      )
+      .set("Authorization", "Bearer valid-token");
+    expect(forced.status).toBe(200);
+    expect(forced.headers["content-disposition"]).toContain(
+      "authority-trace-run-1-review.html",
+    );
+    expect(forced.text).toContain("DEGRADED EXPORT");
+  });
+
+  it("returns a printable landscape audit with zero reviews", async () => {
+    getCitationVerificationRunMock.mockResolvedValue({
+      id: "run-1",
+      project_id: "project-1",
+    });
+    checkProjectAccessMock.mockResolvedValue({ ok: true });
+    getAuthorityTraceWorkspaceMock.mockResolvedValue(exportWorkspace());
+
+    const response = await request(makeApp())
+      .get("/api/authority-trace/runs/run-1/audit.html")
+      .set("Authorization", "Bearer valid-token");
+
+    expect(response.status).toBe(200);
+    expect(response.headers["content-type"]).toContain("text/html");
+    expect(response.text).toContain("@page { size: letter landscape;");
   });
 });

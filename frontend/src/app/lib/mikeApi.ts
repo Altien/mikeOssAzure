@@ -993,6 +993,35 @@ export async function saveAuthorityTraceReview(
     );
 }
 
+export async function downloadAuthorityTraceExport(
+    runId: string,
+    kind: "review" | "audit",
+    options: { forceDegraded?: boolean } = {},
+): Promise<void> {
+    const authHeaders = await getAuthHeader();
+    const query = options.forceDegraded ? "?force_degraded=true" : "";
+    const response = await fetch(
+        `${API_BASE}/authority-trace/runs/${encodeURIComponent(runId)}/${kind}.html${query}`,
+        { headers: authHeaders },
+    );
+    bounceIfUnauthorized(response);
+    if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as {
+            detail?: string;
+        } | null;
+        throw new MikeApiError({
+            message: payload?.detail ?? `Export failed: ${response.status}`,
+            status: response.status,
+        });
+    }
+    const blobUrl = URL.createObjectURL(await response.blob());
+    const anchor = document.createElement("a");
+    anchor.href = blobUrl;
+    anchor.download = `authority-trace-${runId}-${kind}.html`;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+}
+
 export async function streamChat(payload: {
     messages: {
         role: string;

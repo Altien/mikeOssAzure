@@ -9,6 +9,10 @@ import {
   getAuthorityTraceWorkspace,
   ReviewBindingChangedError,
 } from "../lib/citationVerification/reviewService";
+import {
+  buildAuditHtml,
+  buildReviewHtml,
+} from "../lib/citationVerification/exports";
 import { createServerSupabase } from "../lib/supabase";
 import { ZodError } from "zod";
 
@@ -45,6 +49,69 @@ authorityTraceRouter.get("/runs/:runId", async (req, res) => {
     return res.status(500).json({ detail });
   }
 });
+
+for (const exportType of ["review", "audit"] as const) {
+  authorityTraceRouter.get(
+    `/runs/:runId/${exportType}.html`,
+    async (req, res) => {
+      try {
+        const db = createServerSupabase();
+        const run = await getCitationVerificationRun(req.params.runId, db);
+        if (!run) {
+          return res
+            .status(404)
+            .json({ detail: "Verification run not found" });
+        }
+        const access = await checkProjectAccess(
+          run.project_id,
+          String(res.locals.userId ?? ""),
+          res.locals.userEmail as string | undefined,
+          db,
+        );
+        if (!access.ok) {
+          return res
+            .status(404)
+            .json({ detail: "Verification run not found" });
+        }
+        const workspace = await getAuthorityTraceWorkspace(run.id, db);
+        if (!workspace) {
+          return res
+            .status(404)
+            .json({ detail: "Verification run not found" });
+        }
+        const forced =
+          req.query.force_degraded === "true" ||
+          req.query.force_degraded === "1";
+        if (!workspace.integrity.ok && !forced) {
+          return res.status(409).json({
+            detail:
+              "Export blocked because memo or source integrity checks failed",
+            integrity: workspace.integrity,
+          });
+        }
+        const originalsRequested =
+          req.query.include_originals === "true" ||
+          req.query.include_originals === "1";
+        const html =
+          exportType === "review"
+            ? buildReviewHtml(workspace, { originalsRequested })
+            : buildAuditHtml(workspace, { originalsRequested });
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="authority-trace-${run.id}-${exportType}.html"`,
+        );
+        return res.send(html);
+      } catch (err) {
+        const detail =
+          err instanceof Error
+            ? err.message
+            : `Failed to build ${exportType} export`;
+        return res.status(500).json({ detail });
+      }
+    },
+  );
+}
 
 authorityTraceRouter.post("/runs/:runId/reviews", async (req, res) => {
   try {
