@@ -85,6 +85,16 @@ describe("verificationProposalSchema", () => {
       /not a candidate/i,
     );
   });
+
+  it("accepts occurrence context, a pin, and an explicit no-quote claim", () => {
+    const input = proposal();
+    input.citations[0].memo_context =
+      "The discussion in Example v Example controls.";
+    input.citations[0].pin = "at 42";
+    input.citations[0].anchors_proposed = [];
+
+    expect(verificationProposalSchema.parse(input)).toEqual(input);
+  });
 });
 
 describe("verifiedRecordSchema", () => {
@@ -124,8 +134,13 @@ describe("verifiedRecordSchema", () => {
               start: 10,
               end: 11,
               match: "exact",
+              proposal_index: 0,
+              segment_index: 0,
+              warnings: [],
             },
           ],
+          anchor_diagnostics: [],
+          warnings: [],
           status: "anchored",
           binds_to: "c".repeat(64),
         },

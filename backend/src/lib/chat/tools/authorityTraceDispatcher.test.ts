@@ -88,6 +88,10 @@ describe("Authority Trace tool dispatch", () => {
         total: 1,
         anchored: 1,
         failed: 0,
+        exact: 1,
+        formatting_different: 0,
+        no_quote_claimed: 0,
+        warnings: [],
         failures: [],
       },
     });
@@ -134,6 +138,11 @@ describe("Authority Trace tool dispatch", () => {
         total: 1,
         anchored: 1,
         failed: 0,
+        exact: 1,
+        formatting_different: 0,
+        no_quote_claimed: 0,
+        warning_count: 0,
+        diagnostics: [],
       },
     ]);
     expect(writes.join("")).toContain(

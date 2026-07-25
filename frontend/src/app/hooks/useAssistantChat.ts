@@ -625,6 +625,28 @@ export function useAssistantChat({
                     typeof data.failed === "number"
                       ? (data.failed as number)
                       : 0,
+                  exact:
+                    typeof data.exact === "number"
+                      ? (data.exact as number)
+                      : undefined,
+                  formatting_different:
+                    typeof data.formatting_different === "number"
+                      ? (data.formatting_different as number)
+                      : undefined,
+                  no_quote_claimed:
+                    typeof data.no_quote_claimed === "number"
+                      ? (data.no_quote_claimed as number)
+                      : undefined,
+                  warning_count:
+                    typeof data.warning_count === "number"
+                      ? (data.warning_count as number)
+                      : undefined,
+                  diagnostics: Array.isArray(data.diagnostics)
+                    ? data.diagnostics.filter(
+                        (value: unknown): value is string =>
+                          typeof value === "string",
+                      )
+                    : undefined,
                   error:
                     typeof data.error === "string"
                       ? (data.error as string)

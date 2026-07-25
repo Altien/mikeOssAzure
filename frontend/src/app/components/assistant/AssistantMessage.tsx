@@ -2279,7 +2279,22 @@ export function AssistantMessage({
                 ? `${event.total} ${event.total === 1 ? "citation" : "citations"}`
                 : event.error
                   ? event.error
-                  : `${event.anchored} anchored · ${event.failed} failed`;
+                  : [
+                        `${event.exact ?? event.anchored} exact`,
+                        event.formatting_different
+                            ? `${event.formatting_different} formatting differs`
+                            : null,
+                        `${event.failed} failed`,
+                        event.no_quote_claimed
+                            ? `${event.no_quote_claimed} no quote`
+                            : null,
+                        event.warning_count
+                            ? `${event.warning_count} warnings`
+                            : null,
+                        ...(event.diagnostics ?? []),
+                    ]
+                        .filter(Boolean)
+                        .join(" · ");
             return (
                 <CourtListenerBlock
                     key={globalIdx}

@@ -1084,6 +1084,20 @@ export async function runToolCalls(
           total: result.report.total,
           anchored: result.report.anchored,
           failed: result.report.failed,
+          exact: result.report.exact,
+          formatting_different: result.report.formatting_different,
+          no_quote_claimed: result.report.no_quote_claimed,
+          warning_count: result.report.warnings?.length ?? 0,
+          diagnostics: [
+            ...result.report.failures.map(
+              (failure) =>
+                `${failure.citation_id}: ${failure.reason.replaceAll("_", " ")}`,
+            ),
+            ...(result.report.warnings ?? []).map(
+              (warning) =>
+                `${warning.citation_id}: ${warning.warning.replaceAll("_", " ")}`,
+            ),
+          ],
         };
         authorityTraceEvents.push(event);
         write(`data: ${JSON.stringify(event)}\n\n`);

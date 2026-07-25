@@ -221,6 +221,11 @@ export type AssistantEvent =
       total: number;
       anchored: number;
       failed: number;
+      exact?: number;
+      formatting_different?: number;
+      no_quote_claimed?: number;
+      warning_count?: number;
+      diagnostics?: string[];
       error?: string;
       isStreaming?: boolean;
     }

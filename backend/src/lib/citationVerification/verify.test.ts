@@ -68,6 +68,9 @@ describe("verifyResolvedProposal", () => {
       total: 1,
       anchored: 1,
       failed: 0,
+      exact: 1,
+      formatting_different: 0,
+      no_quote_claimed: 0,
     });
     expect(citation.status).toBe("anchored");
     expect(citation.anchors).toHaveLength(1);
@@ -128,7 +131,7 @@ describe("verifyResolvedProposal", () => {
     });
     expect(result.record.citations[0]).toMatchObject({
       status: "anchor_failed",
-      failure_reason: "source_passage_not_found",
+      failure_reason: "not_found",
       anchors: [],
     });
 
@@ -137,11 +140,99 @@ describe("verifyResolvedProposal", () => {
     );
     expect(missingMemoCitation.record.citations[0]).toMatchObject({
       status: "anchor_failed",
-      failure_reason: "memo_citation_not_found",
+      failure_reason: "not_found",
     });
     expect(missingMemoCitation.report.failures[0].reason).toBe(
-      "memo_citation_not_found",
+      "not_found",
     );
+  });
+
+  it("records normalized and hyphenless matches with exact raw spans", () => {
+    const normalized = verifyResolvedProposal(
+      input({
+        memo: "Example v Example confirms this.",
+        source: "The court “adopted”\r\nthe rule.",
+        quote: 'The court "adopted" the rule.',
+      }),
+    );
+    const anchor = normalized.record.citations[0].anchors[0];
+    expect(anchor).toMatchObject({
+      match: "normalized",
+      quote: "The court “adopted”\r\nthe rule.",
+    });
+    expect(normalized.report.formatting_different).toBe(1);
+
+    const withoutHyphen = verifyResolvedProposal(
+      input({
+        source: "The court adopted the long-term rule.",
+        quote: "The court adopted the longterm rule.",
+      }),
+    );
+    expect(withoutHyphen.record.citations[0].anchors[0]).toMatchObject({
+      match: "hyphenless",
+      quote: "The court adopted the long-term rule.",
+    });
+  });
+
+  it("requires unique context for repeated memo citations", () => {
+    const repeated = input({
+      memo: "First Example v Example. Second Example v Example.",
+    });
+    let result = verifyResolvedProposal(repeated);
+    expect(result.record.citations[0]).toMatchObject({
+      status: "anchor_failed",
+      failure_reason: "ambiguous_in_memo",
+    });
+
+    repeated.proposal.citations[0].memo_context =
+      "Second Example v Example.";
+    result = verifyResolvedProposal(repeated);
+    expect(result.record.citations[0].status).toBe("anchored");
+    expect(result.record.citations[0].memo_anchor?.quote).toBe(
+      "Example v Example",
+    );
+    expect(result.record.citations[0].memo_anchor?.start).toBe(
+      repeated.memo.bytes.length -
+        new TextEncoder().encode("Example v Example.").length,
+    );
+  });
+
+  it("retains a citation that claims no source quote", () => {
+    const value = input();
+    value.proposal.citations[0].anchors_proposed = [];
+
+    const result = verifyResolvedProposal(value);
+
+    expect(result.record.citations[0]).toMatchObject({
+      status: "no_quote_claimed",
+      anchors: [],
+      anchor_diagnostics: [],
+    });
+    expect(result.report).toMatchObject({
+      outcome: "success",
+      anchored: 0,
+      failed: 0,
+      no_quote_claimed: 1,
+    });
+  });
+
+  it("reports warnings and source diagnostics without hiding the citation", () => {
+    const result = verifyResolvedProposal(
+      input({
+        source:
+          "The court adopted the rule.\n\nLater, The court adopted the rule.",
+      }),
+    );
+
+    expect(result.record.citations[0].warnings).toEqual(
+      expect.arrayContaining(["multiple_matches", "source_header_match"]),
+    );
+    expect(result.record.citations[0].anchor_diagnostics[0]).toMatchObject({
+      status: "anchored",
+      match: "exact",
+      anchor_count: 1,
+    });
+    expect(result.report.warnings.length).toBeGreaterThan(0);
   });
 
   it("rejects invalid UTF-8 rather than hashing replacement text", () => {

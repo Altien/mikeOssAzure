@@ -41,6 +41,11 @@ describe("AssistantMessage Authority Trace", () => {
                         total: 3,
                         anchored: 2,
                         failed: 1,
+                        exact: 1,
+                        formatting_different: 1,
+                        no_quote_claimed: 0,
+                        warning_count: 1,
+                        diagnostics: ["c003: ambiguous in memo"],
                     },
                 ]}
             />,
@@ -49,7 +54,11 @@ describe("AssistantMessage Authority Trace", () => {
         expect(
             screen.getByText("Authority Trace completed with failures"),
         ).toBeInTheDocument();
-        expect(screen.getByText("2 anchored · 1 failed")).toBeInTheDocument();
+        expect(
+            screen.getByText(
+                "1 exact · 1 formatting differs · 1 failed · 1 warnings · c003: ambiguous in memo",
+            ),
+        ).toBeInTheDocument();
     });
 
     it("renders fatal verification errors without claiming a completed run", () => {

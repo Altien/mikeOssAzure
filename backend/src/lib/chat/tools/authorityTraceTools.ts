@@ -10,6 +10,11 @@ export type AuthorityTraceEvent = {
   total: number;
   anchored: number;
   failed: number;
+  exact?: number;
+  formatting_different?: number;
+  no_quote_claimed?: number;
+  warning_count?: number;
+  diagnostics?: string[];
   error?: string;
 };
 
@@ -18,7 +23,7 @@ Citation verification is a hybrid task. You are responsible for discovering cand
 
 Backend research/read results that supply canonical source text may include a verification_source_id. A search result, snippet, summary, or generated analysis without that id is discovery evidence only and cannot be used as a verification source. Before using a verification_source_id, call read_verification_source and copy proposed passages from the exact verification text it returns. Before calling verify_citation_sources, every selected source must be either an authorized project document or a trusted verification_source_id returned by a backend tool in this turn, and must be included in the sources map. Never invent a document id or verification source id. Include all plausible source keys in source_candidates, and bind every proposed exact quote to the source key it came from. The TypeScript verifier will resolve the trusted backend source, confirm exact textual presence, calculate offsets and hashes, and persist the result. It does not replace your judgment about source selection, legal validity, or whether the passage substantively supports the proposition.
 
-After verify_citation_sources returns, always give the user a final synthesis. Clearly distinguish memo-citation failures, source-passage failures, and fatal source/version errors.`;
+After verify_citation_sources returns, always give the user a final synthesis. Name formatting-different matches, citations with no proposed quote, every warning, every memo-citation failure, every source-passage failure, and any fatal source/version error.`;
 
 export const AUTHORITY_TRACE_TOOLS = [
   {
@@ -133,6 +138,16 @@ export const AUTHORITY_TRACE_TOOLS = [
                   description:
                     "The citation text exactly as it appears in the memo.",
                 },
+                memo_context: {
+                  type: "string",
+                  description:
+                    "Surrounding memo text that uniquely identifies this occurrence when cite_text appears more than once.",
+                },
+                pin: {
+                  type: "string",
+                  description:
+                    "Optional source locator supplied with the citation.",
+                },
                 proposition: {
                   type: "string",
                   description:
@@ -144,7 +159,7 @@ export const AUTHORITY_TRACE_TOOLS = [
                 },
                 anchors_proposed: {
                   type: "array",
-                  minItems: 1,
+                  minItems: 0,
                   maxItems: 3,
                   items: {
                     type: "object",
@@ -164,7 +179,7 @@ export const AUTHORITY_TRACE_TOOLS = [
                     required: ["source", "quote"],
                   },
                   description:
-                    "Exact passages, each bound to the source document it came from.",
+                    "Passages copied from source documents and bound to their source keys. Use an empty array only when the citation claims no supporting quote.",
                 },
               },
               required: [
