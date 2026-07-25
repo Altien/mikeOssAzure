@@ -18,6 +18,7 @@ import type {
   StreamChatResult,
 } from "./types";
 import { createRawLlmStreamRecorder, logRawLlmStream } from "./rawStreamLog";
+import { toolLoopTurns } from "./toolLoop";
 import { resolveSecret } from "../envSecrets";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
@@ -245,7 +246,9 @@ export async function streamOpenAI(
   });
 
   try {
-    for (let iter = 0; iter < maxIter; iter++) {
+    // maxIterations counts tool-enabled turns. Reserve one additional
+    // tool-disabled pass so a final-turn tool result is always synthesized.
+    for (const { iteration: iter, toolsEnabled } of toolLoopTurns(maxIter)) {
       throwIfAborted(params.abortSignal);
       const response = await createResponse({
         model,
@@ -254,7 +257,7 @@ export async function streamOpenAI(
           needsCourtlistenerCitationReminder,
         ),
         input,
-        tools: responseTools,
+        tools: toolsEnabled ? responseTools : [],
         stream: true,
         previousResponseId,
         reasoningSummary: !!enableThinking,
@@ -356,7 +359,7 @@ export async function streamOpenAI(
       if (sawReasoning) callbacks.onReasoningBlockEnd?.();
       throwIfAborted(params.abortSignal);
 
-      if (!toolCalls.length || !runTools) {
+      if (!toolsEnabled || !toolCalls.length || !runTools) {
         break;
       }
 

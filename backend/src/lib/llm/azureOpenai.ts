@@ -7,6 +7,7 @@ import type {
     AzureOpenaiSettings,
 } from "./types";
 import { resolveSecret } from "../envSecrets";
+import { toolLoopTurns } from "./toolLoop";
 
 // Azure OpenAI is the same chat-completions API as classic OpenAI but
 // with extra connection parameters: endpoint, apiVersion, and deployment
@@ -125,14 +126,16 @@ export async function streamAzureOpenAI(
     const messages = toNativeMessages(params.messages, systemPrompt);
     let fullText = "";
 
-    for (let iter = 0; iter < maxIter; iter++) {
+    // maxIterations counts tool-enabled turns. Reserve one additional
+    // tool-disabled pass so a final-turn tool result is always synthesized.
+    for (const { iteration: iter, toolsEnabled } of toolLoopTurns(maxIter)) {
         // For AzureOpenAI clients constructed with `deployment`, the
         // `model` field on the request is overridden by the deployment
         // route — we still pass it as the deployment name for clarity.
         const stream = await aoai.chat.completions.create({
             model: deployment,
             messages,
-            tools: tools.length ? tools : undefined,
+            tools: toolsEnabled && tools.length ? tools : undefined,
             stream: true,
         });
 
@@ -194,7 +197,12 @@ export async function streamAzureOpenAI(
             toolCalls.push(call);
         }
 
-        if (finishReason !== "tool_calls" || !toolCalls.length || !runTools) {
+        if (
+            !toolsEnabled ||
+            finishReason !== "tool_calls" ||
+            !toolCalls.length ||
+            !runTools
+        ) {
             break;
         }
 

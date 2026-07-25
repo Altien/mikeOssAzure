@@ -163,6 +163,12 @@ describe("Authority Trace tool dispatch", () => {
     expect(AUTHORITY_TRACE_SYSTEM_PROMPT).toMatch(
       /snippet, summary, or generated analysis.*discovery evidence only/i,
     );
+    expect(AUTHORITY_TRACE_SYSTEM_PROMPT).toMatch(
+      /retry actionable anchoring failures at most twice/i,
+    );
+    expect(AUTHORITY_TRACE_SYSTEM_PROMPT).toMatch(
+      /always give the user a final synthesis/i,
+    );
   });
 
   it("emits a safe persisted-run summary after successful verification", async () => {
@@ -239,6 +245,11 @@ describe("Authority Trace tool dispatch", () => {
 
   it("emits a fatal event and no run id when verification rejects", async () => {
     verifyCitationSourcesMock.mockRejectedValue(new Error("Invalid proposal"));
+    const state = {
+      verificationAttempts: 0,
+      terminal: false,
+      fatal: false,
+    };
 
     const result = await runToolCalls(
       [
@@ -263,6 +274,10 @@ describe("Authority Trace tool dispatch", () => {
       undefined,
       undefined,
       "project-1",
+      undefined,
+      undefined,
+      undefined,
+      state,
     );
 
     expect(result.authorityTraceEvents).toEqual([
@@ -275,6 +290,125 @@ describe("Authority Trace tool dispatch", () => {
         error: "Invalid proposal",
       },
     ]);
+    expect(state.fatal).toBe(true);
+    expect(result.authorityTraceEvents[0]).not.toHaveProperty("run_id");
+
+    await runToolCalls(
+      [
+        {
+          id: "call-2",
+          function: {
+            name: AUTHORITY_TRACE_TOOL_NAMES.verifyCitationSources,
+            arguments: JSON.stringify(proposal),
+          },
+        },
+      ],
+      new Map(),
+      "user-1",
+      {} as never,
+      () => {},
+      undefined,
+      undefined,
+      {
+        "doc-0": { document_id: "memo-id", filename: "memo.md" },
+        "doc-1": { document_id: "source-id", filename: "source.md" },
+      },
+      undefined,
+      undefined,
+      "project-1",
+      undefined,
+      undefined,
+      undefined,
+      state,
+    );
+    expect(verifyCitationSourcesMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("enforces two retries across tool batches and returns residual failures", async () => {
+    let runNumber = 0;
+    verifyCitationSourcesMock.mockImplementation(async () => {
+      runNumber += 1;
+      return {
+        runId: `run-${runNumber}`,
+        record: { schema_version: 1 },
+        report: {
+          outcome: "completed_with_failures",
+          total: 1,
+          anchored: 0,
+          failed: 1,
+          exact: 0,
+          formatting_different: 0,
+          no_quote_claimed: 0,
+          warnings: [],
+          failures: [
+            {
+              citation_id: "c001",
+              scope: "source",
+              source: "authority",
+              reason: "not_found",
+              hint: "Copy the passage again.",
+            },
+          ],
+        },
+      };
+    });
+    const state = {
+      verificationAttempts: 0,
+      terminal: false,
+      fatal: false,
+    };
+    const invoke = () =>
+      runToolCalls(
+        [
+          {
+            id: `verify-${state.verificationAttempts + 1}`,
+            function: {
+              name: AUTHORITY_TRACE_TOOL_NAMES.verifyCitationSources,
+              arguments: JSON.stringify(proposal),
+            },
+          },
+        ],
+        new Map(),
+        "user-1",
+        {} as never,
+        () => {},
+        undefined,
+        undefined,
+        {
+          "doc-0": { document_id: "memo-id", filename: "memo.md" },
+          "doc-1": { document_id: "source-id", filename: "source.md" },
+        },
+        undefined,
+        undefined,
+        "project-1",
+        undefined,
+        undefined,
+        undefined,
+        state,
+      );
+
+    const first = await invoke();
+    const second = await invoke();
+    const third = await invoke();
+    const blocked = await invoke();
+
+    expect(verifyCitationSourcesMock).toHaveBeenCalledTimes(3);
+    expect(state.verificationAttempts).toBe(3);
+    expect(JSON.parse(String(first.toolResults[0].content))).toMatchObject({
+      retries_remaining: 2,
+    });
+    expect(JSON.parse(String(second.toolResults[0].content))).toMatchObject({
+      retries_remaining: 1,
+    });
+    expect(JSON.parse(String(third.toolResults[0].content))).toMatchObject({
+      retries_remaining: 0,
+      instruction: expect.stringMatching(/residual failure/i),
+    });
+    expect(JSON.parse(String(blocked.toolResults[0].content))).toMatchObject({
+      outcome: "retry_limit_reached",
+      retries_remaining: 0,
+    });
+    expect(blocked.authorityTraceEvents).toEqual([]);
   });
 
   it("registers a read CourtListener opinion and passes it to Authority Trace", async () => {

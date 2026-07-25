@@ -38,7 +38,7 @@ Backend research/read results that supply canonical source text may include a ve
 
 When a selected project source is DOCX or PDF, call extract_document_for_verification before proposing passages. Use the returned document_handle as the verification source. The extraction is a stable Markdown snapshot; an ocr_required warning means the PDF text layer is inadequate and no OCR content was invented.
 
-After verify_citation_sources returns, always give the user a final synthesis. Name formatting-different matches, citations with no proposed quote, every warning, every memo-citation failure, every source-passage failure, and any fatal source/version error.`;
+After verify_citation_sources returns, retry actionable anchoring failures at most twice (three verifier calls total). Never retry a fatal result. When retries_remaining is zero, do not call the verifier again. Always give the user a final synthesis. Name formatting-different matches, citations with no proposed quote, every warning, every memo-citation failure, every source-passage failure, and any fatal source/version error.`;
 
 export const AUTHORITY_TRACE_TOOLS = [
   {

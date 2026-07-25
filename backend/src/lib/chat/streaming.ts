@@ -234,6 +234,11 @@ export async function runLLMStream(params: {
       casesByClusterId: new Map(),
       verificationArtifacts: new Map(),
     };
+  const authorityTraceTurnState = {
+    verificationAttempts: 0,
+    terminal: false,
+    fatal: false,
+  };
   const externalSourceCache = new ExternalSourceCache(
     fastModel
       ? {
@@ -442,6 +447,7 @@ export async function runLLMStream(params: {
           courtlistenerTurnState,
           apiKeys,
           externalSourceCache,
+          authorityTraceTurnState,
         );
         throwIfAborted(signal);
         for (const r of docsRead) {

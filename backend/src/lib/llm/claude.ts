@@ -9,6 +9,7 @@ import type {
 import { toClaudeTools } from "./tools";
 import { resolveSecret } from "../envSecrets";
 import { createRawLlmStreamRecorder, logRawLlmStream } from "./rawStreamLog";
+import { toolLoopTurns } from "./toolLoop";
 
 type ContentBlock =
   | { type: "text"; text: string }
@@ -131,13 +132,15 @@ export async function streamClaude(
   });
 
   try {
-    for (let iter = 0; iter < maxIter; iter++) {
+    // maxIterations counts tool-enabled turns. Reserve one additional
+    // tool-disabled pass so a final-turn tool result is always synthesized.
+    for (const { iteration: iter, toolsEnabled } of toolLoopTurns(maxIter)) {
       throwIfAborted(params.abortSignal);
       const stream = anthropic.messages.stream({
         model,
         system: systemPrompt,
         messages: messages as Anthropic.MessageParam[],
-        tools: claudeTools.length
+        tools: toolsEnabled && claudeTools.length
           ? (claudeTools as unknown as Tool[])
           : undefined,
         max_tokens: MAX_TOKENS,
@@ -242,7 +245,12 @@ export async function streamClaude(
         }
       }
 
-      if (stopReason !== "tool_use" || !toolCalls.length || !runTools) {
+      if (
+        !toolsEnabled ||
+        stopReason !== "tool_use" ||
+        !toolCalls.length ||
+        !runTools
+      ) {
         break;
       }
 

@@ -7,6 +7,7 @@ import type {
     NormalizedToolResult,
     UserApiKeys,
 } from "./types";
+import { toolLoopTurns } from "./toolLoop";
 import { resolveSecret } from "../envSecrets";
 
 // OpenAI's tool-call schema is what the rest of the codebase calls
@@ -121,8 +122,7 @@ export async function streamOpenAICompatible(
     // `maxIterations` limits tool-enabled model turns. If the model spends
     // the final permitted turn on a tool call, make one additional request
     // without tools so the user still receives a synthesis of that result.
-    for (let iter = 0; iter <= maxIter; iter++) {
-        const toolsEnabled = iter < maxIter;
+    for (const { iteration: iter, toolsEnabled } of toolLoopTurns(maxIter)) {
         const stream = await openai.chat.completions.create({
             model,
             messages,

@@ -527,6 +527,12 @@ function cachedCaseNotFetchedResult(clusterId: number | null) {
   };
 }
 
+export type AuthorityTraceTurnState = {
+  verificationAttempts: number;
+  terminal: boolean;
+  fatal: boolean;
+};
+
 export async function runToolCalls(
   toolCalls: ToolCall[],
   docStore: DocStore,
@@ -542,6 +548,7 @@ export async function runToolCalls(
   courtlistenerState?: CourtlistenerTurnState,
   apiKeys?: import("../../llm").UserApiKeys,
   externalSourceCache?: ExternalSourceCache,
+  authorityTraceState?: AuthorityTraceTurnState,
 ): Promise<{
   toolResults: unknown[];
   docsRead: { filename: string; document_id?: string }[];
@@ -1135,9 +1142,32 @@ export async function runToolCalls(
     } else if (
       tc.function.name === AUTHORITY_TRACE_TOOL_NAMES.verifyCitationSources
     ) {
+      const traceState =
+        authorityTraceState ??
+        ({
+          verificationAttempts: 0,
+          terminal: false,
+          fatal: false,
+        } satisfies AuthorityTraceTurnState);
       const citationCount = Array.isArray(args.citations)
         ? args.citations.length
         : 0;
+      if (traceState.terminal || traceState.verificationAttempts >= 3) {
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({
+            outcome: traceState.terminal
+              ? "already_completed"
+              : "retry_limit_reached",
+            retries_remaining: 0,
+            instruction: traceState.terminal
+              ? "Do not call verify_citation_sources again; summarize the completed run."
+              : "Do not call verify_citation_sources again; summarize every residual failure and warning.",
+          }),
+        });
+        continue;
+      }
       write(
         `data: ${JSON.stringify({
           type: "authority_trace_verification_start",
@@ -1145,11 +1175,17 @@ export async function runToolCalls(
         })}\n\n`,
       );
       try {
+        if (traceState.fatal) {
+          throw new Error(
+            "Authority Trace stopped after a fatal error in this assistant turn",
+          );
+        }
         if (!projectId || !docIndex) {
           throw new Error(
             "Citation verification requires an active project context",
           );
         }
+        traceState.verificationAttempts += 1;
         const result = await verifyCitationSources(
           {
             projectId,
@@ -1159,6 +1195,13 @@ export async function runToolCalls(
             sourceArtifacts: courtState.verificationArtifacts,
           },
           db,
+        );
+        if (result.report.outcome === "success") {
+          traceState.terminal = true;
+        }
+        const retriesRemaining = Math.max(
+          0,
+          3 - traceState.verificationAttempts,
         );
         const event: AuthorityTraceEvent = {
           type: "authority_trace_verification",
@@ -1190,9 +1233,16 @@ export async function runToolCalls(
           content: JSON.stringify({
             run_id: result.runId,
             ...result.report,
+            retries_remaining: retriesRemaining,
+            instruction:
+              result.report.outcome === "completed_with_failures" &&
+              retriesRemaining === 0
+                ? "Retry limit reached. Summarize every residual failure and warning."
+                : undefined,
           }),
         });
       } catch (err) {
+        traceState.fatal = true;
         const message =
           err instanceof Error ? err.message : "Citation verification failed";
         const event: AuthorityTraceEvent = {

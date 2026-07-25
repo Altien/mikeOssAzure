@@ -7,6 +7,7 @@ import type {
 import { toGeminiTools } from "./tools";
 import { resolveSecret } from "../envSecrets";
 import { createRawLlmStreamRecorder, logRawLlmStream } from "./rawStreamLog";
+import { toolLoopTurns } from "./toolLoop";
 
 type GeminiPart = {
   text?: string;
@@ -180,7 +181,9 @@ export async function streamGemini(
   });
 
   try {
-    for (let iter = 0; iter < maxIter; iter++) {
+    // maxIterations counts tool-enabled turns. Reserve one additional
+    // tool-disabled pass so a final-turn tool result is always synthesized.
+    for (const { iteration: iter, toolsEnabled } of toolLoopTurns(maxIter)) {
       throwIfAborted(params.abortSignal);
       let stream: AsyncIterable<unknown>;
       try {
@@ -189,7 +192,7 @@ export async function streamGemini(
           contents: contents as never,
           config: {
             systemInstruction: systemPrompt,
-            tools: functionDeclarations.length
+            tools: toolsEnabled && functionDeclarations.length
               ? [{ functionDeclarations } as never]
               : undefined,
             // When enabled, ask Gemini to surface thought summaries.
@@ -288,7 +291,7 @@ export async function streamGemini(
 
       fullText += textParts.join("");
 
-      if (!toolCalls.length || !runTools) {
+      if (!toolsEnabled || !toolCalls.length || !runTools) {
         break;
       }
 
