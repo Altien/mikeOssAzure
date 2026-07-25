@@ -11,6 +11,7 @@ import {
     AssistantStreamError,
     buildCancelledAssistantMessage,
     extractCitations,
+    generateSpotlightNonce,
     isAbortError,
     runLLMStream,
     stripTransientAssistantEvents,
@@ -373,12 +374,17 @@ without pretending to have the skill's instructions or resources.`;
         fast_model: fastModel,
         legal_research_us: legalResearchUs,
     } = await getUserModelSettings(userId, db);
+    // Per-request spotlighting nonce: the same nonce fences the untrusted
+    // content in the system prompt (filenames, workflow titles) and the
+    // document bodies returned by tools during the stream.
+    const nonce = generateSpotlightNonce();
     const apiMessages = buildMessages(
         messagesForLLM,
         docAvailability,
         systemPromptExtra,
         undefined,
         legalResearchUs,
+        nonce,
     );
 
     const workflowStore = await buildWorkflowStore(userId, userEmail, db);
@@ -418,6 +424,7 @@ without pretending to have the skill's instructions or resources.`;
             apiKeys,
             signal: streamAbort.signal,
             projectId,
+            nonce,
         });
 
         const persistedEvents = stripTransientAssistantEvents(events);
