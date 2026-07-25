@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useDebouncedValue } from "@/app/hooks/useDebouncedValue";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronDown, Loader2, Table2 } from "lucide-react";
 import {
@@ -70,6 +71,7 @@ export default function TabularReviewsPage() {
     const [renameValue, setRenameValue] = useState("");
     const [projectFilter, setProjectFilter] = useState<string | null>(null);
     const [search, setSearch] = useState("");
+    const debouncedSearch = useDebouncedValue(search, 250);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [actionsOpen, setActionsOpen] = useState(false);
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
@@ -83,7 +85,11 @@ export default function TabularReviewsPage() {
             else setLoadingMore(true);
             try {
                 const [r, p] = await Promise.all([
-                    listTabularReviews(undefined, { limit: 20, offset: page * 20 }).catch(() => []),
+                    listTabularReviews(undefined, {
+                        limit: 20,
+                        offset: page * 20,
+                        search: debouncedSearch || undefined,
+                    }).catch(() => []),
                     page === 0 ? listProjects().catch(() => []) : null,
                 ]);
                 setReviews((prev) => (page === 0 ? r : [...prev, ...r]));
@@ -96,11 +102,17 @@ export default function TabularReviewsPage() {
         };
 
         void loadPage();
-    }, [page]);
+    }, [debouncedSearch, page]);
 
     function handleLoadMore() {
         setPage((prev) => prev + 1);
     }
+
+    useEffect(() => {
+        setPage(0);
+        setHasMore(true);
+        setReviews([]);
+    }, [debouncedSearch]);
 
     useEffect(() => {
         setSelectedIds([]);
@@ -119,15 +131,15 @@ export default function TabularReviewsPage() {
         return () => document.removeEventListener("mousedown", handleClick);
     }, [actionsOpen]);
 
-    const q = search.toLowerCase();
+    // Title search is server-side (debouncedSearch -> listTabularReviews).
+    // Dev has no column sort, so upstream's sort/visibleReviews plumbing is not carried.
     const filtered = reviews
         .filter((r) => {
             if (activeScope === "in-project") return !!r.project_id;
             if (activeScope === "standalone") return !r.project_id;
             return true;
         })
-        .filter((r) => !projectFilter || r.project_id === projectFilter)
-        .filter((r) => !q || (r.title ?? "").toLowerCase().includes(q));
+        .filter((r) => !projectFilter || r.project_id === projectFilter);
 
     const allSelected =
         filtered.length > 0 &&
