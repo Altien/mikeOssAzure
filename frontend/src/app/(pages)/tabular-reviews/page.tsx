@@ -328,6 +328,7 @@ export default function TabularReviewsPage() {
                                 }}
                                 onChange={toggleAll}
                                 className={TABLE_CHECKBOX_CLASS}
+                                aria-label="Select all reviews"
                             />
                         )}
                         <span>Name</span>

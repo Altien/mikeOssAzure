@@ -273,6 +273,7 @@ export function ProjectsOverview() {
                                 }}
                                 onChange={toggleAll}
                                 className={TABLE_CHECKBOX_CLASS}
+                                aria-label="Select all projects"
                             />
                         )}
                         <span>Name</span>
