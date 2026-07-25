@@ -38,8 +38,8 @@ job:
 the local Supabase admin API, so no login secret is needed — the credentials
 baked into that file are the single source of truth.
 
-A keyless run is expected to end **23 passed / 4 skipped / 0 failed** — the
-suite has 27 specs, 4 of them LLM-gated (see "Confirm the specs ran" below).
+A keyless run is expected to end **27 passed / 4 skipped / 0 failed** — the
+suite has 31 specs, 4 of them LLM-gated (see "Confirm the specs ran" below).
 Typical run: **~7 minutes**.
 
 ## Accessibility scans
@@ -66,7 +66,7 @@ screenshots, and step-by-step traces of what the browser did.
 
 | Secret | What it unlocks | Without it |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | The 4 LLM-dependent specs (chat rename/delete/submit, critical-path "ask a question") send a message and assert a **streamed** answer. With the key set they run and are enforced. | Those 4 specs **skip** (see `e2e/llm.ts`) instead of hanging, so the run is still green on the other 23 specs. |
+| `ANTHROPIC_API_KEY` | The 4 LLM-dependent specs (chat rename/delete/submit, critical-path "ask a question") send a message and assert a **streamed** answer. With the key set they run and are enforced. | Those 4 specs **skip** (see `e2e/llm.ts`) instead of hanging, so the run is still green on the other 27 specs. |
 
 The suite is green **without** any secret — the LLM specs skip themselves via
 `test.skip(!process.env.ANTHROPIC_API_KEY, …)`, which keeps keyless runs (local,
@@ -123,10 +123,10 @@ few cents per run — negligible next to the CI minutes.
 
 Open the **Run Playwright** step in the Actions log:
 
-- **Keyless run:** the summary ends with `4 skipped` / `23 passed`, and each
+- **Keyless run:** the summary ends with `4 skipped` / `27 passed`, and each
   skipped spec carries the reason
   `requires a model key — set the ANTHROPIC_API_KEY secret to run LLM-dependent specs`.
-- **With the secret:** the summary shows `27 passed` and **no `skipped` line**;
+- **With the secret:** the summary shows `31 passed` and **no `skipped` line**;
   searching the log for `requires a model key` finds nothing.
 
 The uploaded `playwright-report` artifact shows the same per-spec statuses.
@@ -141,9 +141,10 @@ carries the fix (commit `test(e2e): select a real Claude model in LLM-gated
 specs`): the specs' `selectClaudeModel` helper picks **Claude Sonnet 4.6** in
 the ModelToggle whenever the key is set, and the critical-path response
 assertion checks for a nonempty streamed assistant answer instead of the
-fork's canned demo reply. The **23 passed / 4 skipped** keyless and
-**27 passed / 0 skipped** with-key figures come from that commit's own
-verification against a full local stack (backend, prod-build frontend, local
+fork's canned demo reply. That commit measured **23 passed / 4 skipped**
+keyless and **27 passed / 0 skipped** with the key (the 4 accessibility specs
+this branch adds raise those totals to 27 and 31); the figures come from its
+own verification against a full local stack (backend, prod-build frontend, local
 Supabase + MinIO — see its commit message); they have not been re-measured
 since this branch was rebased onto current `main`. The secret setup above is
 all that is needed.
