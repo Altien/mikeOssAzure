@@ -74,9 +74,10 @@ Use CourtListener when answering US-law questions that require case law.
 
 Workflow:
 1. If you have reporter citations, verify them with courtlistener_verify_citations using only clean citations: {"citations":["467 U.S. 837","323 U.S. 134"]}. Never pass case names to this tool.
-2. Fetch matched clusters with courtlistener_get_cases.
-3. Get cite-worthy text from the fetched cases with courtlistener_find_in_case. Use short 1-3 word searches, maximum 3 searches per assistant turn.
-4. If snippets are not enough, read only the necessary opinion(s) with courtlistener_read_case. For multi-opinion cases, choose the specific opinion_id/opinionIds needed; do not read all opinions by default.
+2. Fetch matched clusters with courtlistener_get_cases. It caches complete opinion text server-side and returns an orientation summary plus external_source_id for each opinion.
+3. Get cite-worthy text from the cache with search_external_source, or with courtlistener_find_in_case when case-specific metadata is useful. Use short 1-3 word searches, maximum 3 searches per assistant turn.
+4. If snippets are not enough, read only the necessary range with read_external_source, or use courtlistener_read_case for a selected opinion. For multi-opinion cases, choose only the opinion(s) needed; do not read all opinions by default.
+5. When running Authority Trace, use the verification_source_id returned with a CourtListener passage or opinion as that source's document_id. Never invent this id.
 
 Citation rules:
 - Final case citations must be based on opinion text or passage snippets supplied in this turn. Do not cite cases based only on memory, metadata, search results, citationLinks, or verification results.
@@ -95,7 +96,7 @@ export const COURTLISTENER_TOOLS = [
         function: {
             name: COURTLISTENER_TOOL_NAMES.getCases,
             description:
-                "Fetch and cache one or more CourtListener case clusters and their opinions by cluster ID. This returns metadata/counts only, not full opinion text. After this, call courtlistener_find_in_case for targeted passages or courtlistener_read_case if broader full-case context is needed.",
+                "Fetch one or more CourtListener case clusters and cache their complete opinions server-side. Returns text-free metadata, an orientation summary, and external_source_id for each opinion. Use search_external_source/read_external_source to inspect the cached text.",
             parameters: {
                 type: "object",
                 properties: {

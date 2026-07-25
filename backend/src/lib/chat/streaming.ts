@@ -16,6 +16,7 @@ import {
   type CaseCitationEvent,
   type CourtlistenerToolEvent,
 } from "./tools/courtlistenerTools";
+import { EXTERNAL_SOURCE_TOOLS } from "./tools/externalSourceTools";
 import {
   type DocStore,
   type DocIndex,
@@ -41,6 +42,11 @@ import {
   type TurnEditState,
   type TurnReadState,
 } from "./tools/documentOps";
+import type { AuthorityTraceEvent } from "./tools/authorityTraceTools";
+import {
+  createFastModelExternalSourceSummarizer,
+  ExternalSourceCache,
+} from "./externalSourceCache";
 
 
 export type AssistantEvent =
@@ -98,6 +104,7 @@ export type AssistantEvent =
   | CaseCitationEvent
   | CourtlistenerToolEvent
   | McpToolEvent
+  | AuthorityTraceEvent
   | { type: "case_opinions"; cluster_id: number; case: unknown }
   | { type: "content"; text: string }
   | { type: "error"; message: string };
@@ -156,6 +163,7 @@ export async function runLLMStream(params: {
   tabularStore?: TabularCellStore;
   buildCitations?: (fullText: string) => unknown[];
   model?: string;
+  fastModel?: string;
   apiKeys?: import("../llm").UserApiKeys;
   signal?: AbortSignal;
   /**
@@ -182,13 +190,19 @@ export async function runLLMStream(params: {
     tabularStore,
     buildCitations,
     model,
+    fastModel,
     apiKeys,
     signal,
     projectId,
   } = params;
   const researchTools = includeResearchTools ? COURTLISTENER_TOOLS : [];
   const mcpTools = await buildUserMcpTools(userId, db);
-  const baseTools = [...TOOLS, ...researchTools, ...WORKFLOW_TOOLS];
+  const baseTools = [
+    ...TOOLS,
+    ...researchTools,
+    ...EXTERNAL_SOURCE_TOOLS,
+    ...WORKFLOW_TOOLS,
+  ];
   const activeTools = extraTools?.length
     ? [...baseTools, ...mcpTools, ...extraTools]
     : [...baseTools, ...mcpTools];
@@ -218,7 +232,19 @@ export async function runLLMStream(params: {
   const turnReadState: TurnReadState = new Map();
   const courtlistenerTurnState: CourtlistenerTurnState = {
       casesByClusterId: new Map(),
+      verificationArtifacts: new Map(),
     };
+  const externalSourceCache = new ExternalSourceCache(
+    fastModel
+      ? {
+          summarizer: createFastModelExternalSourceSummarizer({
+            model: fastModel,
+            apiKeys,
+          }),
+          summaryModel: fastModel,
+        }
+      : {},
+  );
   let fullText = "";
   let iterText = "";
   let iterVisibleText = "";
@@ -400,6 +426,7 @@ export async function runLLMStream(params: {
           courtlistenerEvents,
           caseCitationEvents,
           mcpEvents,
+          authorityTraceEvents,
         } = await runToolCalls(
           toolCalls,
           docStore,
@@ -414,6 +441,7 @@ export async function runLLMStream(params: {
           projectId,
           courtlistenerTurnState,
           apiKeys,
+          externalSourceCache,
         );
         throwIfAborted(signal);
         for (const r of docsRead) {
@@ -478,6 +506,9 @@ export async function runLLMStream(params: {
           events.push(event);
         }
         for (const event of caseCitationEvents) {
+          events.push(event);
+        }
+        for (const event of authorityTraceEvents) {
           events.push(event);
         }
 

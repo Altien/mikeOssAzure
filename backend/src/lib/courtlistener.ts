@@ -1121,7 +1121,12 @@ export async function getCourtlistenerCaseOpinions(args: {
         return { error: "clusterId is required." };
     }
     const clusterId = Math.floor(args.clusterId);
-    const maxChars = Math.max(1000, Math.min(50000, args.maxChars ?? 12000));
+    // Full-text callers cache the source server-side and must receive the
+    // complete opinion. maxChars is a preview budget only; applying it here
+    // silently turns a partial excerpt into an apparently complete source.
+    const maxChars = args.includeFullText
+        ? Number.MAX_SAFE_INTEGER
+        : Math.max(1000, Math.min(50000, args.maxChars ?? 12000));
     const bulk = await getBulkCourtlistenerCaseOpinions({
         db: args.db,
         clusterId,

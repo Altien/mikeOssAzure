@@ -718,6 +718,50 @@ describe("useAssistantChat: doc_read events", () => {
   });
 });
 
+describe("useAssistantChat: Authority Trace events", () => {
+  it("replaces the streaming placeholder with the final safe summary", async () => {
+    mockStreamProjectChat.mockResolvedValue(
+      sseResponse([
+        {
+          type: "authority_trace_verification_start",
+          citation_count: 2,
+        },
+        {
+          type: "authority_trace_verification",
+          run_id: "run-1",
+          outcome: "completed_with_failures",
+          total: 2,
+          anchored: 1,
+          failed: 1,
+        },
+      ]),
+    );
+    const { result } = renderHook(() =>
+      useAssistantChat({ projectId: "project-1" }),
+    );
+
+    await act(async () => {
+      await result.current.handleChat(USER_MSG("verify citations"));
+    });
+
+    const last = result.current.messages.at(-1);
+    const events = (last?.events ?? []).filter(
+      (event) => event.type === "authority_trace_verification",
+    );
+    expect(events).toEqual([
+      {
+        type: "authority_trace_verification",
+        run_id: "run-1",
+        outcome: "completed_with_failures",
+        total: 2,
+        anchored: 1,
+        failed: 1,
+        isStreaming: false,
+      },
+    ]);
+  });
+});
+
 describe("useAssistantChat: doc_find events", () => {
   it("doc_find_start pushes a streaming doc_find with total_matches=0; doc_find finalises with the real count", async () => {
     mockStreamChat.mockResolvedValue(

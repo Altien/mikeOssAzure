@@ -1,4 +1,7 @@
+import { AUTHORITY_TRACE_TOOLS } from "./authorityTraceTools";
+
 export const PROJECT_EXTRA_TOOLS = [
+  ...AUTHORITY_TRACE_TOOLS,
   {
     type: "function",
     function: {

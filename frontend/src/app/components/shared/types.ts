@@ -215,6 +215,16 @@ export type AssistantEvent =
       isStreaming?: boolean;
     }
   | {
+      type: "authority_trace_verification";
+      run_id?: string;
+      outcome?: "success" | "completed_with_failures" | "fatal";
+      total: number;
+      anchored: number;
+      failed: number;
+      error?: string;
+      isStreaming?: boolean;
+    }
+  | {
       type: "case_citation";
       cluster_id: number | null;
       case_name: string | null;

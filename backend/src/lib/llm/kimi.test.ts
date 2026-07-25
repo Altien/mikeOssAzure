@@ -149,4 +149,78 @@ describe("Kimi K3 API adapter", () => {
             ]),
         );
     });
+
+    it("reserves a no-tool synthesis pass after the final tool iteration", async () => {
+        createMock
+            .mockResolvedValueOnce(
+                asyncChunks([
+                    {
+                        choices: [
+                            {
+                                delta: {
+                                    tool_calls: [
+                                        {
+                                            index: 0,
+                                            id: "verify-1",
+                                            function: {
+                                                name: "verify_citation_sources",
+                                                arguments: "{}",
+                                            },
+                                        },
+                                    ],
+                                },
+                                finish_reason: "tool_calls",
+                            },
+                        ],
+                    },
+                ]),
+            )
+            .mockResolvedValueOnce(
+                asyncChunks([
+                    {
+                        choices: [
+                            {
+                                delta: {
+                                    content: "Verification finished: 1 anchored.",
+                                },
+                                finish_reason: "stop",
+                            },
+                        ],
+                    },
+                ]),
+            );
+        const runTools = vi.fn().mockResolvedValue([
+            {
+                tool_use_id: "verify-1",
+                content: '{"anchored":1,"failed":0}',
+            },
+        ]);
+
+        await expect(
+            streamKimi({
+                model: "kimi-k3",
+                systemPrompt: "",
+                messages: [{ role: "user", content: "Verify this" }],
+                tools: [
+                    {
+                        type: "function",
+                        function: {
+                            name: "verify_citation_sources",
+                            description: "Verify citations",
+                            parameters: { type: "object" },
+                        },
+                    },
+                ],
+                maxIterations: 1,
+                runTools,
+                apiKeys: { kimi: "org-kimi-key" },
+            }),
+        ).resolves.toEqual({
+            fullText: "Verification finished: 1 anchored.",
+        });
+
+        expect(runTools).toHaveBeenCalledTimes(1);
+        expect(createMock).toHaveBeenCalledTimes(2);
+        expect(createMock.mock.calls[1][0].tools).toBeUndefined();
+    });
 });

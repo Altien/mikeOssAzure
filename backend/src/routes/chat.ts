@@ -450,13 +450,20 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             askInputsResponse,
         );
     } else if (lastUser) {
-        await db.from("chat_messages").insert({
-            chat_id: chatId,
-            role: "user",
-            content: lastUser.content,
-            files: lastUser.files ?? null,
-            workflow: lastUser.workflow ?? null,
-        });
+        const { error: userMessageError } = await db
+            .from("chat_messages")
+            .insert({
+                chat_id: chatId,
+                role: "user",
+                content: lastUser.content,
+                files: lastUser.files ?? null,
+                workflow: lastUser.workflow ?? null,
+            });
+        if (userMessageError) {
+            return void res.status(500).json({
+                detail: "Failed to persist user message",
+            });
+        }
     }
 
     const { docIndex, docStore } = await buildDocContext(
@@ -477,6 +484,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     );
     const {
         api_keys: apiKeys,
+        fast_model: fastModel,
         legal_research_us: legalResearchUs,
     } = await getUserModelSettings(userId, db);
     const apiMessages = buildMessages(
@@ -521,6 +529,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             workflowStore,
             includeResearchTools: legalResearchUs,
             model,
+            fastModel,
             apiKeys,
             signal: streamAbort.signal,
             projectId: project_id ?? null,

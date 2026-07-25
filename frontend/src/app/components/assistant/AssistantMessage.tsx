@@ -49,6 +49,8 @@ function toolCallLabel(name: string): string {
     if (name === "courtlistener_read_case") return "Reading case...";
     if (name === "courtlistener_verify_citations")
         return "Verifying citations...";
+    if (name === "verify_citation_sources")
+        return "Verifying citation sources...";
     if (name.startsWith("mcp_")) return "Using connector...";
     return name ? `Running ${name}...` : "Working...";
 }
@@ -2262,6 +2264,32 @@ export function AssistantMessage({
                     hasError={!!event.error}
                     showConnector={showConnector}
                     items={items.length > 0 ? items : undefined}
+                />
+            );
+        }
+        if (event.type === "authority_trace_verification") {
+            const label = event.isStreaming
+                ? "Verifying citation sources"
+                : event.outcome === "fatal"
+                  ? "Authority Trace failed"
+                  : event.outcome === "completed_with_failures"
+                    ? "Authority Trace completed with failures"
+                    : "Authority Trace completed";
+            const detail = event.isStreaming
+                ? `${event.total} ${event.total === 1 ? "citation" : "citations"}`
+                : event.error
+                  ? event.error
+                  : `${event.anchored} anchored · ${event.failed} failed`;
+            return (
+                <CourtListenerBlock
+                    key={globalIdx}
+                    label={label}
+                    detail={detail}
+                    isStreaming={!!event.isStreaming}
+                    hasError={
+                        event.outcome === "fatal" || event.failed > 0
+                    }
+                    showConnector={showConnector}
                 />
             );
         }

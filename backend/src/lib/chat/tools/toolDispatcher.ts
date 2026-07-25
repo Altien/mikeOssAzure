@@ -9,6 +9,18 @@ import {
   type CourtlistenerToolEvent,
 } from "./courtlistenerTools";
 import {
+  AUTHORITY_TRACE_TOOL_NAMES,
+  type AuthorityTraceEvent,
+} from "./authorityTraceTools";
+import {
+  registerVerificationArtifact,
+  verifyCitationSources,
+} from "../../citationVerification/service";
+import type {
+  VerificationArtifact,
+  VerificationArtifactStore,
+} from "../../citationVerification/service";
+import {
   executeMcpToolCall,
   type McpToolEvent,
 } from "../../mcpConnectors";
@@ -55,6 +67,11 @@ import {
   type DocReplicatedResult,
   type TextMatch,
 } from "./documentOps";
+import {
+  ExternalSourceCache,
+  type CachedExternalSource,
+} from "../externalSourceCache";
+import { EXTERNAL_SOURCE_TOOL_NAMES } from "./externalSourceTools";
 
 
 type CourtlistenerCaseRecord = {
@@ -80,6 +97,7 @@ type CourtlistenerCaseInput = {
 
 export type CourtlistenerTurnState = {
   casesByClusterId: Map<number, CourtlistenerCaseRecord>;
+  verificationArtifacts: VerificationArtifactStore;
 };
 
 function nonEmpty(value: unknown): string | null {
@@ -196,7 +214,7 @@ function upsertCourtlistenerCases(
       url: current.url ?? nonEmpty(input.url),
       pdfUrl: current.pdfUrl ?? nonEmpty(input.pdfUrl),
       dateFiled: current.dateFiled ?? nonEmpty(input.dateFiled),
-      opinions: current.opinions ?? input.opinions,
+      opinions: input.opinions ?? current.opinions,
     };
     state.casesByClusterId.set(clusterId, record);
     records.push(record);
@@ -276,29 +294,52 @@ function courtlistenerOpinionCount(fetchedCase: unknown): number {
   return Array.isArray(record?.opinions) ? record.opinions.length : 0;
 }
 
-function courtlistenerOpinionMetadata(raw: unknown) {
+function courtlistenerExternalSourceId(
+  clusterId: number,
+  opinionId: number,
+): string {
+  return `courtlistener:cluster:${clusterId}:opinion:${opinionId}`;
+}
+
+function courtlistenerOpinionMetadata(
+  clusterId: number,
+  raw: unknown,
+  externalSources?: ExternalSourceCache,
+) {
   const opinion = recordFromUnknown(raw);
   if (!opinion) return null;
+  const opinionId =
+    numberField(opinion, "opinionId") ?? numberField(opinion, "id");
   const text =
     stringField(opinion, "text") ??
     (stringField(opinion, "html")
       ? stripCaseOpinionHtml(stringField(opinion, "html")!)
       : null);
+  const cached =
+    typeof opinionId === "number"
+      ? externalSources?.get(
+          courtlistenerExternalSourceId(clusterId, opinionId),
+        )
+      : undefined;
   return {
-    opinion_id:
-      numberField(opinion, "opinionId") ?? numberField(opinion, "id"),
+    opinion_id: opinionId,
     type: stringField(opinion, "type"),
     author: stringField(opinion, "author"),
     per_curiam: stringField(opinion, "per_curiam"),
     joined_by_str: stringField(opinion, "joined_by_str"),
     url: stringField(opinion, "url"),
-    char_count: text?.length ?? 0,
+    char_count: cached?.source.text.length ?? text?.length ?? 0,
+    external_source_id: cached?.source.id ?? null,
+    summary: cached?.summary?.text ?? null,
+    summary_status: cached?.summary?.status ?? "pending",
+    summary_model: cached?.summary?.model ?? null,
   };
 }
 
 function courtlistenerFetchedCaseMetadata(
   record: CourtlistenerCaseRecord,
   opinionCount: number,
+  externalSources?: ExternalSourceCache,
 ) {
   return {
     cluster_id: record.clusterId,
@@ -310,7 +351,13 @@ function courtlistenerFetchedCaseMetadata(
     pdfUrl: record.pdfUrl,
     opinion_count: opinionCount,
     opinions: (record.opinions ?? [])
-      .map(courtlistenerOpinionMetadata)
+      .map((opinion) =>
+        courtlistenerOpinionMetadata(
+          record.clusterId,
+          opinion,
+          externalSources,
+        ),
+      )
       .filter((opinion): opinion is NonNullable<typeof opinion> => !!opinion),
   };
 }
@@ -340,20 +387,29 @@ type CachedCaseOpinionText = {
 
 function cachedCaseOpinionTexts(
   record: CourtlistenerCaseRecord,
+  externalSources?: ExternalSourceCache,
 ): CachedCaseOpinionText[] {
   return (record.opinions ?? [])
     .map((raw) => {
       const opinion = recordFromUnknown(raw);
       if (!opinion) return null;
+      const opinionId =
+        numberField(opinion, "opinionId") ?? numberField(opinion, "id");
+      const cached =
+        typeof opinionId === "number"
+          ? externalSources?.get(
+              courtlistenerExternalSourceId(record.clusterId, opinionId),
+            )
+          : undefined;
       const text =
+        cached?.source.text ??
         stringField(opinion, "text") ??
         (stringField(opinion, "html")
           ? stripCaseOpinionHtml(stringField(opinion, "html")!)
           : null);
       if (!text) return null;
       return {
-        opinion_id:
-          numberField(opinion, "opinionId") ?? numberField(opinion, "id"),
+        opinion_id: opinionId,
         type: stringField(opinion, "type"),
         author: stringField(opinion, "author"),
         url: stringField(opinion, "url"),
@@ -361,6 +417,44 @@ function cachedCaseOpinionTexts(
       };
     })
     .filter((opinion): opinion is CachedCaseOpinionText => !!opinion);
+}
+
+function registerCourtlistenerOpinionArtifact(
+  state: CourtlistenerTurnState,
+  record: CourtlistenerCaseRecord,
+  opinion: CachedCaseOpinionText,
+): string | null {
+  if (opinion.opinion_id === null) return null;
+  const artifactId =
+    courtlistenerExternalSourceId(record.clusterId, opinion.opinion_id);
+  const artifact: VerificationArtifact = {
+    artifactId,
+    provider: "courtlistener",
+    externalId: String(opinion.opinion_id),
+    versionId: `opinion-${opinion.opinion_id}`,
+    filename: `${record.caseName || `case-${record.clusterId}`}-opinion-${opinion.opinion_id}.txt`,
+    text: opinion.text,
+    originUrl: opinion.url ?? record.url ?? undefined,
+  };
+  return registerVerificationArtifact(
+    state.verificationArtifacts,
+    artifact,
+  );
+}
+
+function registerExternalSourceArtifact(
+  store: VerificationArtifactStore,
+  cached: CachedExternalSource,
+): string {
+  return registerVerificationArtifact(store, {
+    artifactId: cached.source.id,
+    provider: cached.source.provider,
+    externalId: cached.source.externalId,
+    versionId: cached.source.versionId,
+    filename: `${cached.source.title}.txt`,
+    text: cached.source.text,
+    originUrl: cached.source.originUrl,
+  });
 }
 
 function requestedCourtlistenerOpinionIds(args: Record<string, unknown>) {
@@ -446,6 +540,7 @@ export async function runToolCalls(
   projectId?: string | null,
   courtlistenerState?: CourtlistenerTurnState,
   apiKeys?: import("../../llm").UserApiKeys,
+  externalSourceCache?: ExternalSourceCache,
 ): Promise<{
   toolResults: unknown[];
   docsRead: { filename: string; document_id?: string }[];
@@ -458,6 +553,7 @@ export async function runToolCalls(
   courtlistenerEvents: CourtlistenerToolEvent[];
   caseCitationEvents: CaseCitationEvent[];
   mcpEvents: McpToolEvent[];
+  authorityTraceEvents: AuthorityTraceEvent[];
 }> {
   const toolResults: unknown[] = [];
   const docsRead: { filename: string; document_id?: string }[] = [];
@@ -474,11 +570,15 @@ export async function runToolCalls(
   const courtlistenerEvents: CourtlistenerToolEvent[] = [];
   const caseCitationEvents: CaseCitationEvent[] = [];
   const mcpEvents: McpToolEvent[] = [];
+  const authorityTraceEvents: AuthorityTraceEvent[] = [];
   const courtState: CourtlistenerTurnState =
     courtlistenerState ??
     {
       casesByClusterId: new Map(),
+      verificationArtifacts: new Map(),
     };
+  const externalSources =
+    externalSourceCache ?? new ExternalSourceCache();
   const groupedFindInCaseSearches = toolCalls
     .filter((tc) => tc.function.name === COURTLISTENER_TOOL_NAMES.findInCase)
     .map((tc) => {
@@ -617,7 +717,128 @@ export async function runToolCalls(
       continue;
     }
 
-    if (tc.function.name === "ask_inputs") {
+    if (
+      tc.function.name === EXTERNAL_SOURCE_TOOL_NAMES.search ||
+      tc.function.name === EXTERNAL_SOURCE_TOOL_NAMES.read
+    ) {
+      const sourceId =
+        typeof args.external_source_id === "string"
+          ? args.external_source_id
+          : "";
+      const cached = externalSources.get(sourceId);
+      if (!cached) {
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({
+            ok: false,
+            external_source_id: sourceId,
+            error:
+              "External source is unavailable in this assistant turn. Call its retrieval or download tool first.",
+          }),
+        });
+        continue;
+      }
+
+      const verificationSourceId = registerExternalSourceArtifact(
+        courtState.verificationArtifacts,
+        cached,
+      );
+      if (tc.function.name === EXTERNAL_SOURCE_TOOL_NAMES.search) {
+        const query = typeof args.query === "string" ? args.query.trim() : "";
+        const maxResults =
+          typeof args.max_results === "number"
+            ? Math.max(1, Math.min(50, Math.floor(args.max_results)))
+            : 20;
+        const contextChars =
+          typeof args.context_chars === "number"
+            ? Math.max(40, Math.min(2_000, Math.floor(args.context_chars)))
+            : 240;
+        const matches = findTextMatches({
+          text: cached.source.text,
+          query,
+          maxResults,
+          contextChars,
+        });
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({
+            ok: true,
+            external_source_id: sourceId,
+            verification_source_id: verificationSourceId,
+            title: cached.source.title,
+            query,
+            total_matches: matches.totalMatches,
+            returned: matches.hits.length,
+            truncated: matches.totalMatches > matches.hits.length,
+            hits: matches.hits,
+          }),
+        });
+      } else {
+        const start =
+          typeof args.start === "number"
+            ? Math.max(
+                0,
+                Math.min(
+                  cached.source.text.length,
+                  Math.floor(args.start),
+                ),
+              )
+            : 0;
+        const maxChars =
+          typeof args.max_chars === "number"
+            ? Math.max(500, Math.min(50_000, Math.floor(args.max_chars)))
+            : 12_000;
+        const end = Math.min(cached.source.text.length, start + maxChars);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({
+            ok: true,
+            external_source_id: sourceId,
+            verification_source_id: verificationSourceId,
+            title: cached.source.title,
+            start,
+            end,
+            total_chars: cached.source.text.length,
+            truncated: end < cached.source.text.length,
+            text: cached.source.text.slice(start, end),
+          }),
+        });
+      }
+      continue;
+    }
+
+    if (
+      tc.function.name ===
+      AUTHORITY_TRACE_TOOL_NAMES.readVerificationSource
+    ) {
+      const artifactId =
+        typeof args.verification_source_id === "string"
+          ? args.verification_source_id
+          : "";
+      const artifact = courtState.verificationArtifacts.get(artifactId);
+      toolResults.push({
+        role: "tool",
+        tool_call_id: tc.id,
+        content: artifact
+          ? JSON.stringify({
+              ok: true,
+              verification_source_id: artifact.artifactId,
+              provider: artifact.provider,
+              version_id: artifact.versionId,
+              filename: artifact.filename,
+              origin_url: artifact.originUrl,
+              text: artifact.text,
+            })
+          : JSON.stringify({
+              ok: false,
+              error:
+                "Verification source is unavailable in this assistant turn.",
+            }),
+      });
+    } else if (tc.function.name === "ask_inputs") {
       const event = normalizeAskInputsEvent(args);
       if (event.items.length > 0) askInputsEvents.push(event);
       continue;
@@ -828,6 +1049,71 @@ export async function runToolCalls(
         tool_call_id: tc.id,
         content: lines.join("\n") || "No cells found.",
       });
+    } else if (
+      tc.function.name === AUTHORITY_TRACE_TOOL_NAMES.verifyCitationSources
+    ) {
+      const citationCount = Array.isArray(args.citations)
+        ? args.citations.length
+        : 0;
+      write(
+        `data: ${JSON.stringify({
+          type: "authority_trace_verification_start",
+          citation_count: citationCount,
+        })}\n\n`,
+      );
+      try {
+        if (!projectId || !docIndex) {
+          throw new Error(
+            "Citation verification requires an active project context",
+          );
+        }
+        const result = await verifyCitationSources(
+          {
+            projectId,
+            userId,
+            proposal: args,
+            docIndex,
+            sourceArtifacts: courtState.verificationArtifacts,
+          },
+          db,
+        );
+        const event: AuthorityTraceEvent = {
+          type: "authority_trace_verification",
+          run_id: result.runId,
+          outcome: result.report.outcome,
+          total: result.report.total,
+          anchored: result.report.anchored,
+          failed: result.report.failed,
+        };
+        authorityTraceEvents.push(event);
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({
+            run_id: result.runId,
+            ...result.report,
+          }),
+        });
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Citation verification failed";
+        const event: AuthorityTraceEvent = {
+          type: "authority_trace_verification",
+          outcome: "fatal",
+          total: 0,
+          anchored: 0,
+          failed: 0,
+          error: message,
+        };
+        authorityTraceEvents.push(event);
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({ outcome: "fatal", error: message }),
+        });
+      }
     } else if (tc.function.name === COURTLISTENER_TOOL_NAMES.searchCaseLaw) {
       const query = typeof args.query === "string" ? args.query : "";
       write(
@@ -912,6 +1198,7 @@ export async function runToolCalls(
       try {
         const result = await getCourtlistenerCases({
           clusterIds,
+          includeFullText: true,
           db,
           apiToken: apiKeys?.courtlistener,
         });
@@ -939,6 +1226,36 @@ export async function runToolCalls(
             courtlistenerCaseInputFromFetchedCase(
               clusterIds[index] ?? 0,
               fetchedCase,
+            ),
+          ),
+        );
+        await Promise.all(
+          caseRecords.flatMap((record) =>
+            cachedCaseOpinionTexts(record).map((opinion) =>
+              externalSources.cache({
+                id:
+                  opinion.opinion_id === null
+                    ? `courtlistener:cluster:${record.clusterId}:opinion:unknown`
+                    : courtlistenerExternalSourceId(
+                        record.clusterId,
+                        opinion.opinion_id,
+                      ),
+                provider: "CourtListener",
+                externalId: String(
+                  opinion.opinion_id ?? `cluster-${record.clusterId}`,
+                ),
+                versionId:
+                  opinion.opinion_id === null
+                    ? `cluster-${record.clusterId}`
+                    : `opinion-${opinion.opinion_id}`,
+                title: record.caseName || `Case ${record.clusterId}`,
+                text: opinion.text,
+                ...(opinion.url ?? record.url
+                  ? { originUrl: opinion.url ?? record.url ?? undefined }
+                  : {}),
+                searchTool: EXTERNAL_SOURCE_TOOL_NAMES.search,
+                readTool: EXTERNAL_SOURCE_TOOL_NAMES.read,
+              }),
             ),
           ),
         );
@@ -1005,14 +1322,15 @@ export async function runToolCalls(
               courtlistenerFetchedCaseMetadata(
                 record,
                 caseOpinionCountByClusterId.get(record.clusterId) ?? 0,
+                externalSources,
               ),
             ),
             ...(resultError || errors.length
               ? { error: resultError ?? errors.join("; ") }
               : {}),
             next_required_action: hasMultipleOpinionCase
-              ? "Opinion text is cached server-side only. Use courtlistener_find_in_case with short 1-3 word keyword probes for relevant passages. At least one fetched case has multiple opinions; if snippets are insufficient, choose the needed opinion_id(s) from the text-free opinion metadata and call courtlistener_read_case with only those IDs. Do not read all opinions unless the question requires it."
-              : "Opinion text is cached server-side only. Use courtlistener_find_in_case with short 1-3 word keyword probes for relevant passages, or courtlistener_read_case if snippets are insufficient.",
+              ? "Complete opinion text is cached server-side. Treat each summary as orientation only. Use search_external_source with the relevant external_source_id, then read_external_source for needed ranges. At least one fetched case has multiple opinions, so choose only the opinion source(s) relevant to the question."
+              : "Complete opinion text is cached server-side. Treat the summary as orientation only. Use search_external_source with external_source_id for relevant passages, then read_external_source if broader context is needed.",
           }),
         });
       } catch (err) {
@@ -1085,13 +1403,17 @@ export async function runToolCalls(
         continue;
       }
 
-      const opinions = cachedCaseOpinionTexts(record);
+      const opinions = cachedCaseOpinionTexts(
+        record,
+        externalSources,
+      );
       const hits: Array<
         TextMatch & {
           opinion_id: number | null;
           type: string | null;
           author: string | null;
           url: string | null;
+          verification_source_id: string | null;
         }
       > = [];
       let totalMatches = 0;
@@ -1112,6 +1434,11 @@ export async function runToolCalls(
             type: opinion.type,
             author: opinion.author,
             url: opinion.url,
+            verification_source_id: registerCourtlistenerOpinionArtifact(
+              courtState,
+              record,
+              opinion,
+            ),
           })),
         );
       }
@@ -1177,7 +1504,10 @@ export async function runToolCalls(
         continue;
       }
 
-      const opinions = cachedCaseOpinionTexts(record);
+      const opinions = cachedCaseOpinionTexts(
+        record,
+        externalSources,
+      );
       const requestedOpinionIds = requestedCourtlistenerOpinionIds(args);
       const selectedOpinions =
         requestedOpinionIds.length > 0
@@ -1200,7 +1530,13 @@ export async function runToolCalls(
           dateFiled: record.dateFiled,
           opinion_count: opinions.length,
           opinions: (record.opinions ?? [])
-            .map(courtlistenerOpinionMetadata)
+            .map((opinion) =>
+              courtlistenerOpinionMetadata(
+                record.clusterId,
+                opinion,
+                externalSources,
+              ),
+            )
             .filter(
               (opinion): opinion is NonNullable<typeof opinion> =>
                 !!opinion,
@@ -1248,7 +1584,14 @@ export async function runToolCalls(
           dateFiled: record.dateFiled,
           opinion_count: opinions.length,
           returned_opinion_count: selectedOpinions.length,
-          opinions: selectedOpinions,
+          opinions: selectedOpinions.map((opinion) => ({
+            ...opinion,
+            verification_source_id: registerCourtlistenerOpinionArtifact(
+              courtState,
+              record,
+              opinion,
+            ),
+          })),
         }),
       });
     } else if (tc.function.name === COURTLISTENER_TOOL_NAMES.verifyCitations) {
@@ -1892,5 +2235,6 @@ export async function runToolCalls(
     courtlistenerEvents,
     caseCitationEvents,
     mcpEvents,
+    authorityTraceEvents,
   };
 }

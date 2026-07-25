@@ -582,6 +582,60 @@ export function useAssistantChat({
               continue;
             }
 
+            if (data.type === "authority_trace_verification_start") {
+              pushEvent({
+                type: "authority_trace_verification",
+                total:
+                  typeof data.citation_count === "number"
+                    ? (data.citation_count as number)
+                    : 0,
+                anchored: 0,
+                failed: 0,
+                isStreaming: true,
+              });
+              continue;
+            }
+
+            if (data.type === "authority_trace_verification") {
+              updateMatchingEvent(
+                (event) =>
+                  event.type === "authority_trace_verification" &&
+                  !!event.isStreaming,
+                () => ({
+                  type: "authority_trace_verification",
+                  run_id:
+                    typeof data.run_id === "string"
+                      ? (data.run_id as string)
+                      : undefined,
+                  outcome:
+                    data.outcome === "success" ||
+                    data.outcome === "completed_with_failures" ||
+                    data.outcome === "fatal"
+                      ? data.outcome
+                      : "fatal",
+                  total:
+                    typeof data.total === "number"
+                      ? (data.total as number)
+                      : 0,
+                  anchored:
+                    typeof data.anchored === "number"
+                      ? (data.anchored as number)
+                      : 0,
+                  failed:
+                    typeof data.failed === "number"
+                      ? (data.failed as number)
+                      : 0,
+                  error:
+                    typeof data.error === "string"
+                      ? (data.error as string)
+                      : undefined,
+                  isStreaming: false,
+                }),
+              );
+              pushThinkingPlaceholder();
+              continue;
+            }
+
             if (data.type === "case_citation") {
               pushEvent({
                 type: "case_citation",

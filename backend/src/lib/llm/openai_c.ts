@@ -118,11 +118,15 @@ export async function streamOpenAICompatible(
     const messages = toNativeMessages(params.messages, systemPrompt);
     let fullText = "";
 
-    for (let iter = 0; iter < maxIter; iter++) {
+    // `maxIterations` limits tool-enabled model turns. If the model spends
+    // the final permitted turn on a tool call, make one additional request
+    // without tools so the user still receives a synthesis of that result.
+    for (let iter = 0; iter <= maxIter; iter++) {
+        const toolsEnabled = iter < maxIter;
         const stream = await openai.chat.completions.create({
             model,
             messages,
-            tools: tools.length ? tools : undefined,
+            tools: toolsEnabled && tools.length ? tools : undefined,
             stream: true,
         });
 
@@ -199,7 +203,12 @@ export async function streamOpenAICompatible(
             toolCalls.push(call);
         }
 
-        if (finishReason !== "tool_calls" || !toolCalls.length || !runTools) {
+        if (
+            !toolsEnabled ||
+            finishReason !== "tool_calls" ||
+            !toolCalls.length ||
+            !runTools
+        ) {
             break;
         }
 

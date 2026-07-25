@@ -25,6 +25,7 @@ import { configRouter } from "./routes/config";
 import { caseLawRouter } from "./routes/caseLaw";
 import { helpRouter } from "./routes/help";
 import { diagRouter } from "./routes/diag";
+import { authorityTraceRouter } from "./routes/authorityTrace";
 
 // ── Rate-limit configuration (from upstream ba6f771) ───────────────────────
 
@@ -263,6 +264,7 @@ export function buildApp(): express.Express {
   app.use("/api/download", downloadsRouter);
   app.use("/api/case-law", caseLawRouter);
   app.use("/api/help", helpRouter);
+  app.use("/api/authority-trace", authorityTraceRouter);
   app.use("/api/auth", authRouter);
   app.use("/api/llm", llmRouter);
   app.use("/api/admin/diagnostics", diagnosticsRouter);

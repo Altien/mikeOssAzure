@@ -10,7 +10,8 @@
  *
  * Supported chains: from(t).select(cols)[.eq/.neq/.in/.is/.filter/.order/
  * .range]* awaited directly or via .single()/.maybeSingle(),
- * from(t).delete().eq/.in, from(t).update(payload).eq.
+ * from(t).insert(payload).select(...), from(t).delete().eq/.in,
+ * from(t).update(payload).eq.
  *
  * A call is recorded only when it is actually awaited (in `then`), so
  * `calls` reflects executed queries in await order — Promise.all batches
@@ -19,7 +20,7 @@
 
 export type DbCall = {
   table: string;
-  op: "select" | "delete" | "update";
+  op: "select" | "insert" | "delete" | "update";
   /** [method, column, value] tuples in chain order, e.g. ["eq","user_id","u1"] */
   filters: Array<[string, string, unknown]>;
   payload?: unknown;
@@ -50,8 +51,13 @@ export function makeFakeDb(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const builder: any = {
         select(columns?: string) {
-          call.op = "select";
+          if (call.op !== "insert") call.op = "select";
           call.columns = columns;
+          return builder;
+        },
+        insert(payload: unknown) {
+          call.op = "insert";
+          call.payload = payload;
           return builder;
         },
         delete() {

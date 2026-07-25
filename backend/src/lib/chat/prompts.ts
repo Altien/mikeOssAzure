@@ -1,4 +1,5 @@
 import { COURTLISTENER_SYSTEM_PROMPT } from "./tools/courtlistenerTools";
+import { EXTERNAL_SOURCE_SYSTEM_PROMPT } from "./tools/externalSourceTools";
 
 // Upstream divergence (sync-log: a5fe6d6): NOT SUPPORTED — the model must not
 // be instructed to call ask_inputs while its required frontend interaction is
@@ -84,8 +85,8 @@ GENERAL GUIDANCE:
  */
 export function buildSystemPrompt(includeResearchTools = true): string {
   return includeResearchTools
-    ? `${SYSTEM_PROMPT_BEFORE_RESEARCH}\n\n${COURTLISTENER_SYSTEM_PROMPT}\n${SYSTEM_PROMPT_AFTER_RESEARCH}`
-    : `${SYSTEM_PROMPT_BEFORE_RESEARCH}\n\n${SYSTEM_PROMPT_AFTER_RESEARCH}`;
+    ? `${SYSTEM_PROMPT_BEFORE_RESEARCH}\n\n${COURTLISTENER_SYSTEM_PROMPT}\n\n${EXTERNAL_SOURCE_SYSTEM_PROMPT}\n${SYSTEM_PROMPT_AFTER_RESEARCH}`
+    : `${SYSTEM_PROMPT_BEFORE_RESEARCH}\n\n${EXTERNAL_SOURCE_SYSTEM_PROMPT}\n${SYSTEM_PROMPT_AFTER_RESEARCH}`;
 }
 
 export const SYSTEM_PROMPT = buildSystemPrompt(true);
