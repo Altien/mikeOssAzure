@@ -17,6 +17,10 @@ import {
   inspectMcpToolCatalogue,
   resolveCapabilityContractWithLlm,
 } from "./capabilities";
+import {
+  dependencyBindings,
+  resolvedDependencyBindings,
+} from "./dependencies";
 
 type Db = ReturnType<typeof createServerSupabase>;
 
@@ -371,12 +375,14 @@ export async function postSkillReviewMessage(args: {
     );
   }
   const settings = await getUserModelSettings(args.userId, db);
+  const skillDependencies = await dependencyBindings(args.versionId, db);
   const contract = await resolveCapabilityContractWithLlm({
     analysis: context.version.generated_analysis as never,
     catalogue: [
       ...firstPartyToolCatalogue(),
       ...(await inspectMcpToolCatalogue(args.userId, db)),
     ],
+    skillDependencies,
     model: settings.fast_model,
     apiKeys: settings.api_keys,
   });
@@ -436,6 +442,7 @@ export async function getSkillReview(args: {
     version: context.version,
     deterministicAnalysis: context.version.deterministic_analysis ?? {},
     generatedAnalysis: context.version.generated_analysis ?? {},
+    dependencies: await dependencyBindings(args.versionId, db),
     messages: messages.data ?? [],
   };
 }
@@ -452,6 +459,7 @@ export async function createSkillRun(args: {
   if (context.version.state !== "enabled") {
     throw new Error("Only an enabled skill version can start a new run.");
   }
+  const dependencies = await resolvedDependencyBindings(args.versionId, db);
   const chat = requireResult<{ id: string }>(
     await db
       .from("chats")
@@ -472,7 +480,7 @@ export async function createSkillRun(args: {
     root_skill_id: context.skill.id,
     root_version_id: args.versionId,
     bound_by: args.userId,
-    dependency_versions: [],
+    dependency_versions: dependencies,
   });
   if (binding.error) throw new Error(binding.error.message);
   return {
@@ -483,6 +491,7 @@ export async function createSkillRun(args: {
       name: context.skill.display_name,
       versionId: args.versionId,
       contentHash: context.version.original_content_hash,
+      dependencies,
     },
   };
 }

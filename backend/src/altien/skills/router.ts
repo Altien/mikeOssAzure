@@ -31,6 +31,7 @@ import {
   acquireGitHubSkill,
   GitHubSkillImportError,
 } from "./github";
+import { setSkillDependency } from "./dependencies";
 
 const zipUpload = multer({
   storage: multer.memoryStorage(),
@@ -282,6 +283,40 @@ skillsRouter.get(
       res
         .status(404)
         .json({ detail: safeErrorMessage(error, "Skill package not found") });
+    }
+  },
+);
+
+skillsRouter.post(
+  "/versions/:versionId/dependencies",
+  requireAuth,
+  requireRole("TenantAdmin"),
+  async (req, res) => {
+    const tenant = tenantId(res);
+    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+    const dependencyVersionId =
+      typeof req.body?.dependencyVersionId === "string"
+        ? req.body.dependencyVersionId.trim()
+        : "";
+    if (!dependencyVersionId || typeof req.body?.required !== "boolean") {
+      return void res.status(400).json({
+        detail: "dependencyVersionId and boolean required are required.",
+      });
+    }
+    try {
+      res.json(
+        await setSkillDependency({
+          tenantId: tenant,
+          versionId: req.params.versionId,
+          dependencyVersionId,
+          required: req.body.required,
+          approvedBy: String(res.locals.userId),
+        }),
+      );
+    } catch (error) {
+      res.status(409).json({
+        detail: safeErrorMessage(error, "Skill dependency could not be set"),
+      });
     }
   },
 );

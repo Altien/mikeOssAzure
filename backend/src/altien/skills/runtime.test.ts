@@ -112,4 +112,95 @@ describe("loadSkillChatRuntimeContext", () => {
       }),
     ).resolves.toBeNull();
   });
+
+  it("loads exact dependency instructions, tools, and namespaced resources", async () => {
+    downloadFileMock.mockImplementation(async (path: string) =>
+      new TextEncoder().encode(
+        path.includes("dependency")
+          ? "---\nname: Helper\n---\nUse the helper method."
+          : "---\nname: Root\n---\nFollow the root method.",
+      ).buffer,
+    );
+    const fake = makeFakeDb((call) => {
+      const id = call.filters.find((filter) => filter[1] === "id")?.[2];
+      if (call.table === "altien_chat_skill_bindings") {
+        return {
+          data: [{
+            root_skill_id: "skill-root",
+            root_version_id: "version-root",
+            dependency_versions: [{
+              skillId: "skill-dependency",
+              canonicalName: "helper",
+              displayName: "Helper",
+              versionId: "version-dependency",
+              contentHash: "hash-dependency",
+              executionContract: { approvedToolNames: ["find_in_document"] },
+            }],
+          }],
+          error: null,
+        };
+      }
+      if (call.table === "altien_skill_versions") {
+        const dependency = id === "version-dependency";
+        return {
+          data: [{
+            id,
+            snapshot_id: dependency ? "snapshot-dependency" : "snapshot-root",
+            entrypoint_path: "SKILL.md",
+            original_content_hash: dependency ? "hash-dependency" : "hash-root",
+            approved_execution_contract: dependency
+              ? { approvedToolNames: ["find_in_document"] }
+              : { projectRead: false, approvedToolNames: [] },
+          }],
+          error: null,
+        };
+      }
+      if (call.table === "altien_skills") {
+        return { data: [{ id: "skill-root", display_name: "Root" }], error: null };
+      }
+      if (call.table === "altien_skill_import_snapshots") {
+        const dependency = id === "snapshot-dependency";
+        return {
+          data: [{
+            manifest: {
+              files: [{
+                path: "SKILL.md",
+                document_version_id: dependency ? "doc-dependency" : "doc-root",
+                inspection_class: "text",
+              }],
+            },
+          }],
+          error: null,
+        };
+      }
+      if (call.table === "document_versions") {
+        return {
+          data: [{
+            storage_path:
+              id === "doc-dependency"
+                ? "skills/dependency.md"
+                : "skills/root.md",
+          }],
+          error: null,
+        };
+      }
+      return { data: [], error: null };
+    });
+
+    const result = await loadSkillChatRuntimeContext({
+      chatId: "chat-1",
+      projectId: "project-1",
+      db: fake.db as never,
+    });
+
+    expect(result?.systemPrompt).toContain("Follow the root method.");
+    expect(result?.systemPrompt).toContain("Use the helper method.");
+    expect(result?.systemPrompt).toContain("subordinate to the root skill");
+    expect(result?.allowedToolNames).toContain("find_in_document");
+    expect(result?.resourceStore.list()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "dependencies/helper/SKILL.md" }),
+      ]),
+    );
+  });
 });

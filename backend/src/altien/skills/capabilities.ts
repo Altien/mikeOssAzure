@@ -28,6 +28,13 @@ export type ToolCatalogueItem = {
   available: boolean;
 };
 
+export type ApprovedSkillDependency = {
+  canonicalName: string;
+  displayName: string;
+  versionId: string;
+  contentHash: string;
+};
+
 function catalogueItem(
   schema: unknown,
   source: ToolCatalogueItem["source"],
@@ -125,6 +132,7 @@ function vague(requirement: SkillCapabilityRequirement) {
 export function resolveCapabilityContract(args: {
   analysis: GeneratedSkillAnalysis;
   catalogue: ToolCatalogueItem[];
+  skillDependencies?: ApprovedSkillDependency[];
 }) {
   const mappings = args.analysis.capabilityRequirements.map((requirement) => {
     if (requirement.kind === "project_read") {
@@ -152,6 +160,34 @@ export function resolveCapabilityContract(args: {
         mappedToolNames: [],
         comparison: { purpose: requirement.rationale },
       };
+    }
+    if (requirement.kind === "skill") {
+      const dependency = (args.skillDependencies ?? []).find(
+        (candidate) =>
+          normalize(candidate.canonicalName) === normalize(requirement.name) ||
+          normalize(candidate.displayName) === normalize(requirement.name),
+      );
+      return dependency
+        ? {
+            requirement,
+            status: "dependency_compatible" as const,
+            mappedToolNames: [],
+            comparison: {
+              purpose: "exact approved skill-version dependency",
+              dependencyName: dependency.displayName,
+              versionId: dependency.versionId,
+              contentHash: dependency.contentHash,
+            },
+          }
+        : {
+            requirement,
+            status: "dependency_required" as const,
+            mappedToolNames: [],
+            comparison: {
+              purpose:
+                "A named skill requirement must be bound to an exact enabled skill version.",
+            },
+          };
     }
     if (vague(requirement)) {
       return {
@@ -203,6 +239,7 @@ export function resolveCapabilityContract(args: {
         "compatible",
         "connection_required",
         "model_requirement",
+        "dependency_compatible",
       ].includes(mapping.status),
   );
   const approvedToolNames = Array.from(
@@ -274,6 +311,7 @@ function parseFallbackAssessments(raw: string) {
 export async function resolveCapabilityContractWithLlm(args: {
   analysis: GeneratedSkillAnalysis;
   catalogue: ToolCatalogueItem[];
+  skillDependencies?: ApprovedSkillDependency[];
   model: string;
   apiKeys?: UserApiKeys;
   complete?: typeof completeText;

@@ -149,4 +149,51 @@ describe("skill capability resolution", () => {
       model: "gpt-5.4-lite",
     });
   });
+
+  it("requires named skills to be exact approved version dependencies", async () => {
+    let modelCalled = false;
+    const base = {
+      analysis: {
+        summary: "Uses another skill.",
+        risks: [],
+        unresolvedReferences: [],
+        capabilityRequirements: [
+          {
+            name: "Citation Reader",
+            kind: "skill" as const,
+            required: true,
+            rationale: "Read cited material.",
+          },
+        ],
+      },
+      catalogue: firstPartyToolCatalogue(),
+      model: "gpt-5.4-lite",
+      complete: async () => {
+        modelCalled = true;
+        return '{"assessments":[]}';
+      },
+    };
+    const missing = await resolveCapabilityContractWithLlm(base);
+    expect(missing.blockers).toHaveLength(1);
+    expect(missing.mappings[0].status).toBe("dependency_required");
+    expect(modelCalled).toBe(false);
+
+    const bound = await resolveCapabilityContractWithLlm({
+      ...base,
+      skillDependencies: [
+        {
+          canonicalName: "citation-reader",
+          displayName: "Citation Reader",
+          versionId: "version-7",
+          contentHash: "hash-7",
+        },
+      ],
+    });
+    expect(bound.blockers).toEqual([]);
+    expect(bound.mappings[0]).toMatchObject({
+      status: "dependency_compatible",
+      comparison: { versionId: "version-7", contentHash: "hash-7" },
+    });
+    expect(bound.approvedToolNames).toEqual([]);
+  });
 });
