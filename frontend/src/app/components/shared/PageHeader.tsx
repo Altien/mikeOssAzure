@@ -377,7 +377,6 @@ function PageHeaderSearchActionControl({
                     <Search className="h-3.5 w-3.5 text-gray-400 shrink-0" />
                     <input
                         autoFocus={open}
-                        disabled={disabled}
                         type="text"
                         placeholder={placeholder}
                         value={action.value}
