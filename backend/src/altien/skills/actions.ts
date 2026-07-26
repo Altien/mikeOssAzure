@@ -47,6 +47,12 @@ export function createEnableAction(args: {
   analysisInputHash: string;
   executionContract: Record<string, unknown>;
   /**
+   * References the fast model could not resolve in the package text. They
+   * grant nothing, but the administrator approves them as reviewed facts, so
+   * a re-analysis that changes them invalidates the hash.
+   */
+  unresolvedReferences?: readonly string[];
+  /**
    * Set when this action replaces an amended one. The hash therefore covers
    * the amendment lineage as well as the amended contract.
    */
@@ -56,6 +62,9 @@ export function createEnableAction(args: {
     versionId: args.versionId,
     analysisInputHash: args.analysisInputHash,
     executionContract: args.executionContract,
+    ...(args.unresolvedReferences?.length
+      ? { unresolvedReferences: [...args.unresolvedReferences] }
+      : {}),
     ...(args.amendedFromActionId
       ? { amendedFromActionId: args.amendedFromActionId }
       : {}),

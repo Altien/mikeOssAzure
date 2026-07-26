@@ -987,12 +987,17 @@ export async function postSkillReviewMessage(args: {
   const generated = context.version.generated_analysis as
     | { unresolvedReferences?: unknown[] }
     | undefined;
-  if (
-    Array.isArray(generated?.unresolvedReferences) &&
-    generated.unresolvedReferences.length > 0
-  ) {
+  const unresolvedReferences = Array.isArray(generated?.unresolvedReferences)
+    ? generated.unresolvedReferences.map((value) => String(value)).filter(Boolean)
+    : [];
+  // A rename rewrites references deterministically and the fast model flags
+  // what it could not rewrite, so promotion of an *adapted* version stays
+  // blocked until those are cleared. On a first import the same list is only
+  // an observation about the package; blocking on it would leave the
+  // administrator no way forward, so it is reviewed as part of the payload.
+  if (unresolvedReferences.length && context.version.adapted_content_hash) {
     throw new Error(
-      "Unresolved identity references must be reviewed before enablement.",
+      `Unresolved references to the previous identity must be cleared before this adapted version can be enabled: ${unresolvedReferences.join("; ")}.`,
     );
   }
   // A declared `github.com` dependency URL is evidence, not an instruction:
@@ -1074,10 +1079,16 @@ export async function postSkillReviewMessage(args: {
       versionId: args.versionId,
       analysisInputHash: String(context.version.analysis_input_hash),
       executionContract: contract,
+      unresolvedReferences,
     }),
     content: [
       "Pending action: enable this exact reviewed version for project-bound runs.",
       `Approved tools: ${contract.approvedToolNames.length ? contract.approvedToolNames.join(", ") : "none"}.`,
+      ...(unresolvedReferences.length
+        ? [
+            `The analysis could not resolve: ${unresolvedReferences.join("; ")}. These grant nothing and are part of what you are approving.`,
+          ]
+        : []),
       ...contract.mappings
         .filter((mapping) =>
           ["needs_admin_selection", "proposed"].includes(mapping.status),

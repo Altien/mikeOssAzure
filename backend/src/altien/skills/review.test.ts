@@ -371,6 +371,8 @@ function enableDb(
     pending?: Record<string, unknown>;
     declaredMetadata?: Record<string, string>;
     acquisitions?: Array<Record<string, unknown>>;
+    unresolvedReferences?: string[];
+    adaptedContentHash?: string;
   } = {},
 ) {
   return makeFakeDb((call) => {
@@ -387,8 +389,16 @@ function enableDb(
             analysis_input_hash: "analysis-hash",
             original_content_hash: "content-hash",
             declared_metadata: options.declaredMetadata ?? {},
+            ...(options.adaptedContentHash
+              ? { adapted_content_hash: options.adaptedContentHash }
+              : {}),
             deterministic_analysis: { warnings: [] },
-            generated_analysis: generatedAnalysis,
+            generated_analysis: options.unresolvedReferences
+              ? {
+                  ...generatedAnalysis,
+                  unresolvedReferences: options.unresolvedReferences,
+                }
+              : generatedAnalysis,
           },
         ],
         error: null,
@@ -491,6 +501,53 @@ function pendingRow(
     expires_at: new Date(Date.now() + 3_600_000).toISOString(),
   };
 }
+
+describe("unresolved analysis references", () => {
+  it("reviews them in the payload instead of dead-ending a first import", async () => {
+    const fake = enableDb({
+      unresolvedReferences: ["reference/house-format.md is not shown"],
+    });
+    const result = await postSkillReviewMessage({
+      tenantId: "tenant-1",
+      versionId: "version-1",
+      userId: "admin-1",
+      message: "enable",
+      db: fake.db as never,
+      settings: fastModelSettings,
+    });
+    expect(result).toMatchObject({
+      outcome: "proposed",
+      action: { actionType: "enable_version" },
+    });
+    // Approving covers them, so a re-analysis that changes them breaks the hash.
+    expect(result.action?.payload).toMatchObject({
+      unresolvedReferences: ["reference/house-format.md is not shown"],
+    });
+    const conversation = fake
+      .callsFor("altien_skill_import_messages", "insert")
+      .map((call) => String((call.payload as { content: string }).content))
+      .join("\n");
+    expect(conversation).toContain("could not resolve");
+    expect(conversation).toContain("house-format.md");
+  });
+
+  it("still blocks promotion of an adapted version with leftover references", async () => {
+    const fake = enableDb({
+      unresolvedReferences: ["still calls itself “reader”"],
+      adaptedContentHash: "adapted-hash",
+    });
+    await expect(
+      postSkillReviewMessage({
+        tenantId: "tenant-1",
+        versionId: "version-1",
+        userId: "admin-1",
+        message: "enable",
+        db: fake.db as never,
+        settings: fastModelSettings,
+      }),
+    ).rejects.toThrow(/previous identity/i);
+  });
+});
 
 describe("pending action amendment", () => {
   it("advertises the amendment syntax on the enable proposal", async () => {
