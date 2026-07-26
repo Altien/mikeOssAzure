@@ -90,11 +90,11 @@ describe("AssistantMessage Authority Trace", () => {
                 "1 exact · 1 formatting differs · 1 failed · 1 warnings · c003: ambiguous in memo",
             ),
         ).toBeInTheDocument();
-        fireEvent.click(
-            screen.getByRole("button", {
-                name: /Authority Trace completed with failures/,
-            }),
-        );
+        const openReview = screen.getByRole("button", {
+            name: /Authority Trace completed with failures.*Open review/,
+        });
+        expect(openReview).toHaveClass("cursor-pointer");
+        fireEvent.click(openReview);
         expect(onOpen).toHaveBeenCalledWith("run-1");
     });
 

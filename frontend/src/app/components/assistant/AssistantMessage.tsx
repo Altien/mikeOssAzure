@@ -10,6 +10,7 @@ import {
     Copy,
     Check,
     ChevronDown,
+    ChevronRight,
     Download,
     File,
     FileText,
@@ -923,10 +924,19 @@ function CourtListenerBlock({
                         <button
                             type="button"
                             onClick={onClick}
-                            className="text-left hover:text-gray-700 transition-colors"
+                            className="group flex w-full cursor-pointer items-center gap-2 rounded-md border border-emerald-200/70 bg-emerald-50/50 px-2 py-1.5 text-left text-gray-600 transition-colors hover:bg-emerald-50 hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
                         >
-                            <span className="font-medium">{label}</span>
-                            {detail ? <span> {detail}</span> : null}
+                            <span className="min-w-0 flex-1">
+                                <span className="font-medium">{label}</span>
+                                {detail ? <span> {detail}</span> : null}
+                            </span>
+                            <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-emerald-700 group-hover:text-emerald-800">
+                                Open review
+                                <ChevronRight
+                                    size={13}
+                                    aria-hidden="true"
+                                />
+                            </span>
                         </button>
                     ) : (
                         <>
