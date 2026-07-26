@@ -18,7 +18,7 @@ async function enabledTenantVersion(args: {
   if (skill.error || !skill.data) throw new Error("Skill not found.");
   const version = await args.db
     .from("altien_skill_versions")
-    .select("id, skill_id, state, original_content_hash")
+    .select("id, skill_id, state, original_content_hash, adapted_content_hash")
     .eq("id", args.versionId)
     .eq("skill_id", args.skillId)
     .single();
@@ -105,7 +105,9 @@ export async function setProjectSkillPin(args: {
     skillId: args.skillId,
     skillName: String(target.skill.display_name),
     versionId: args.versionId,
-    contentHash: String(target.version.original_content_hash),
+    contentHash: String(
+      target.version.adapted_content_hash ??
+        target.version.original_content_hash,
+    ),
   };
 }
-

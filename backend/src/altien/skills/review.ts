@@ -74,10 +74,11 @@ async function loadVersionContext(args: {
 }
 
 function manifestFile(
+  version: Record<string, unknown>,
   snapshot: Record<string, unknown>,
   relativePath: string,
 ) {
-  const manifest = snapshot.manifest as
+  const manifest = (version.adapted_manifest ?? snapshot.manifest) as
     | { files?: Array<Record<string, unknown>> }
     | undefined;
   const file = manifest?.files?.find((item) => item.path === relativePath);
@@ -163,7 +164,7 @@ export async function analyseSkillVersion(args: {
   if (running.error) throw new Error(running.error.message);
   try {
     const entrypointPath = String(context.version.entrypoint_path);
-    const file = manifestFile(context.snapshot, entrypointPath);
+    const file = manifestFile(context.version, context.snapshot, entrypointPath);
     const documentVersion = requireResult<Record<string, unknown>>(
       await db
         .from("document_versions")
@@ -505,7 +506,9 @@ export async function createSkillRun(args: {
       id: context.skill.id,
       name: context.skill.display_name,
       versionId: resolvedVersionId,
-      contentHash: context.version.original_content_hash,
+      contentHash:
+        context.version.adapted_content_hash ??
+        context.version.original_content_hash,
       pinned: !!pin,
       dependencies,
     },

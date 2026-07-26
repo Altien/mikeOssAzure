@@ -20,6 +20,7 @@ import {
 import {
   buildMikeSkillPackage,
   buildOriginalSkillPackage,
+  buildDeveloperSkillPackage,
   getSkillPackageInfo,
 } from "./packages";
 import { buildContentDisposition } from "../../lib/storage";
@@ -37,6 +38,10 @@ import {
   setProjectSkillPin,
 } from "./pins";
 import { disableSkill } from "./lifecycle";
+import {
+  createCleanRoomDeveloperArtifact,
+  persistSkillRename,
+} from "./artifacts";
 
 const zipUpload = multer({
   storage: multer.memoryStorage(),
@@ -256,7 +261,11 @@ skillsRouter.get(
   async (req, res) => {
     const tenant = tenantId(res);
     if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
-    if (req.params.kind !== "original" && req.params.kind !== "mike") {
+    if (
+      req.params.kind !== "original" &&
+      req.params.kind !== "mike" &&
+      req.params.kind !== "developer"
+    ) {
       return void res.status(404).json({ detail: "Unknown package kind." });
     }
     try {
@@ -268,13 +277,17 @@ skillsRouter.get(
       if (info.state !== "enabled" && !roles.includes("TenantAdmin")) {
         return void res.status(404).json({ detail: "Skill version not found." });
       }
-      const result =
-        req.params.kind === "original"
-          ? await buildOriginalSkillPackage({
+      const result = req.params.kind === "original"
+        ? await buildOriginalSkillPackage({
+            tenantId: tenant,
+            versionId: req.params.versionId,
+          })
+        : req.params.kind === "mike"
+          ? await buildMikeSkillPackage({
               tenantId: tenant,
               versionId: req.params.versionId,
             })
-          : await buildMikeSkillPackage({
+          : await buildDeveloperSkillPackage({
               tenantId: tenant,
               versionId: req.params.versionId,
             });
@@ -288,6 +301,86 @@ skillsRouter.get(
       res
         .status(404)
         .json({ detail: safeErrorMessage(error, "Skill package not found") });
+    }
+  },
+);
+
+skillsRouter.post(
+  "/versions/:versionId/adapt/rename",
+  requireAuth,
+  requireRole("TenantAdmin"),
+  async (req, res) => {
+    const tenant = tenantId(res);
+    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+    const newDisplayName =
+      typeof req.body?.newDisplayName === "string"
+        ? req.body.newDisplayName.trim()
+        : "";
+    if (!newDisplayName || newDisplayName.length > 128) {
+      return void res.status(400).json({
+        detail: "newDisplayName of at most 128 characters is required.",
+      });
+    }
+    try {
+      res.json(
+        await persistSkillRename({
+          tenantId: tenant,
+          versionId: req.params.versionId,
+          newDisplayName,
+          adaptedBy: String(res.locals.userId),
+        }),
+      );
+    } catch (error) {
+      res.status(409).json({
+        detail: safeErrorMessage(error, "Skill rename could not be applied"),
+      });
+    }
+  },
+);
+
+skillsRouter.post(
+  "/versions/:versionId/developer-artifacts",
+  requireAuth,
+  requireRole("TenantAdmin"),
+  async (req, res) => {
+    const tenant = tenantId(res);
+    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+    const requirementName =
+      typeof req.body?.requirementName === "string"
+        ? req.body.requirementName.trim()
+        : "";
+    const sourcePaths = Array.isArray(req.body?.sourcePaths)
+      ? req.body.sourcePaths.filter(
+          (value: unknown): value is string =>
+            typeof value === "string" && !!value.trim(),
+        )
+      : undefined;
+    if (
+      !requirementName ||
+      requirementName.length > 128 ||
+      (sourcePaths && sourcePaths.length > 50)
+    ) {
+      return void res.status(400).json({
+        detail: "A valid requirementName and at most 50 sourcePaths are required.",
+      });
+    }
+    try {
+      res.status(201).json(
+        await createCleanRoomDeveloperArtifact({
+          tenantId: tenant,
+          versionId: req.params.versionId,
+          requirementName,
+          sourcePaths,
+          createdBy: String(res.locals.userId),
+        }),
+      );
+    } catch (error) {
+      res.status(422).json({
+        detail: safeErrorMessage(
+          error,
+          "Clean-room developer artifact could not be created",
+        ),
+      });
     }
   },
 );

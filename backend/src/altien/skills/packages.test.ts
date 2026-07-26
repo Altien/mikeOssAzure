@@ -16,7 +16,7 @@ import {
   getSkillPackageInfo,
 } from "./packages";
 
-function packageDb() {
+function packageDb(adapted = false) {
   return makeFakeDb((call) => {
     if (call.table === "altien_skill_versions") {
       return {
@@ -30,6 +30,32 @@ function packageDb() {
             state: "enabled",
             declared_version: "1.0",
             approved_execution_contract: { projectRead: true },
+            ...(adapted
+              ? {
+                  entrypoint_path: "renamed/SKILL.md",
+                  adapted_content_hash: "adapted-content-hash",
+                  adapted_manifest: {
+                    tree_hash: "adapted-tree-hash",
+                    licence_paths: ["renamed/LICENSE"],
+                    files: [
+                      {
+                        path: "renamed/SKILL.md",
+                        document_version_id: "adapted-skill-version",
+                        sha256: "adapted-skill-hash",
+                        bytes: 12,
+                        media_type: "text/plain",
+                      },
+                      {
+                        path: "renamed/LICENSE",
+                        document_version_id: "adapted-licence-version",
+                        sha256: "adapted-licence-hash",
+                        bytes: 7,
+                        media_type: "text/plain",
+                      },
+                    ],
+                  },
+                }
+              : {}),
           },
         ],
         error: null,
@@ -150,5 +176,42 @@ describe("skill packages", () => {
       originalAvailable: true,
       mikePackageAvailable: true,
     });
+  });
+
+  it("uses the adapted DMS tree for Mike packages but preserves the original ZIP", async () => {
+    downloadFileMock.mockImplementation(async (path: string) =>
+      path === "blob/source-version"
+        ? new Uint8Array([9, 8, 7]).buffer
+        : new TextEncoder().encode("adapted").buffer,
+    );
+    const db = packageDb(true).db as never;
+    const mike = await buildMikeSkillPackage({
+      tenantId: "tenant-1",
+      versionId: "version-1",
+      db,
+    });
+    const zip = await JSZip.loadAsync(mike.bytes);
+    expect(zip.file("renamed/SKILL.md")).not.toBeNull();
+    expect(zip.file("reader/SKILL.md")).toBeNull();
+    const manifest = JSON.parse(
+      await zip.file(".mike/skill-manifest.json")!.async("text"),
+    );
+    expect(manifest).toMatchObject({
+      skill: {
+        entrypoint: "renamed/SKILL.md",
+        contentHash: "adapted-content-hash",
+      },
+      provenance: {
+        adapted: true,
+        originalTreeHash: "tree-hash",
+        activeTreeHash: "adapted-tree-hash",
+      },
+    });
+    const original = await buildOriginalSkillPackage({
+      tenantId: "tenant-1",
+      versionId: "version-1",
+      db,
+    });
+    expect([...new Uint8Array(original.bytes)]).toEqual([9, 8, 7]);
   });
 });

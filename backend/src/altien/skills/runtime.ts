@@ -44,7 +44,7 @@ export async function getSkillChatBindingMetadata(args: {
   if (!binding.data) return null;
   const version = await args.db
     .from("altien_skill_versions")
-    .select("id, original_content_hash")
+    .select("id, original_content_hash, adapted_content_hash")
     .eq("id", binding.data.root_version_id)
     .single();
   const skill = await args.db
@@ -59,7 +59,9 @@ export async function getSkillChatBindingMetadata(args: {
     skillId: String(skill.data.id),
     versionId: String(version.data.id),
     displayName: String(skill.data.display_name),
-    contentHash: String(version.data.original_content_hash),
+    contentHash: String(
+      version.data.adapted_content_hash ?? version.data.original_content_hash,
+    ),
     dependencyVersions: Array.isArray(binding.data.dependency_versions)
       ? binding.data.dependency_versions
       : [],
@@ -95,7 +97,8 @@ async function loadStoredVersion(args: {
   if (snapshotResult.error || !snapshotResult.data) {
     throw new Error("Bound skill snapshot is unavailable.");
   }
-  const manifest = snapshotResult.data.manifest as {
+  const manifest = (version.adapted_manifest ??
+    snapshotResult.data.manifest) as {
     files?: Array<Record<string, unknown>>;
   };
   const entrypoint = manifest.files?.find(
@@ -211,7 +214,9 @@ export async function loadSkillChatRuntimeContext(args: {
   }
   const displayName = String(skillResult.data.display_name);
   const versionId = String(version.id);
-  const contentHash = String(version.original_content_hash);
+  const contentHash = String(
+    version.adapted_content_hash ?? version.original_content_hash,
+  );
   return {
     skillId: String(skillResult.data.id),
     versionId,

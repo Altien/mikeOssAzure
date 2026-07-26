@@ -157,7 +157,7 @@ export async function dependencyBindings(versionId: string, db: Db) {
   for (const row of rows) {
     const version = await db
       .from("altien_skill_versions")
-      .select("id, skill_id, original_content_hash, approved_execution_contract")
+      .select("id, skill_id, original_content_hash, adapted_content_hash, approved_execution_contract")
       .eq("id", row.dependency_version_id)
       .single();
     const skill = version.data
@@ -176,7 +176,10 @@ export async function dependencyBindings(versionId: string, db: Db) {
       canonicalName: String(skill.data.canonical_name),
       displayName: String(skill.data.display_name),
       versionId: String(version.data.id),
-      contentHash: String(version.data.original_content_hash),
+      contentHash: String(
+        version.data.adapted_content_hash ??
+          version.data.original_content_hash,
+      ),
       required: row.required,
       executionContract: version.data.approved_execution_contract ?? {},
     });
@@ -196,7 +199,7 @@ export async function resolvedDependencyBindings(
   for (const versionId of versionIds) {
     const version = await db
       .from("altien_skill_versions")
-      .select("id, skill_id, original_content_hash, approved_execution_contract")
+      .select("id, skill_id, original_content_hash, adapted_content_hash, approved_execution_contract")
       .eq("id", versionId)
       .single();
     const skill = version.data
@@ -214,7 +217,10 @@ export async function resolvedDependencyBindings(
       canonicalName: String(skill.data.canonical_name),
       displayName: String(skill.data.display_name),
       versionId: String(version.data.id),
-      contentHash: String(version.data.original_content_hash),
+      contentHash: String(
+        version.data.adapted_content_hash ??
+          version.data.original_content_hash,
+      ),
       executionContract: version.data.approved_execution_contract ?? {},
     });
   }

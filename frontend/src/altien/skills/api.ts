@@ -115,6 +115,8 @@ export type SkillPackageInfo = {
     state: string;
     originalAvailable: boolean;
     mikePackageAvailable: boolean;
+    developerPackageAvailable: boolean;
+    developerArtifactCount: number;
     licencePaths: string[];
     fileCount: number;
     treeHash: string;
@@ -128,7 +130,7 @@ export function getSkillPackageInfo(versionId: string) {
 
 export async function downloadSkillPackage(
     versionId: string,
-    kind: "original" | "mike",
+    kind: "original" | "mike" | "developer",
 ) {
     const auth = await getAuthHeader();
     const response = await fetch(
@@ -146,6 +148,42 @@ export async function downloadSkillPackage(
             ? decodeURIComponent(utf8Name)
             : simpleName || `${kind}-skill.zip`,
     };
+}
+
+export function adaptSkillName(versionId: string, newDisplayName: string) {
+    return apiRequest<{
+        skillId: string;
+        versionId: string;
+        displayName: string;
+        canonicalName: string;
+        treeHash: string;
+    }>(
+        `/altien/skills/versions/${encodeURIComponent(versionId)}/adapt/rename`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ newDisplayName }),
+        },
+    );
+}
+
+export function createCleanRoomDeveloperArtifact(
+    versionId: string,
+    requirementName: string,
+) {
+    return apiRequest<{
+        id: string;
+        requirementName: string;
+        state: "draft";
+        filename: string;
+    }>(
+        `/altien/skills/versions/${encodeURIComponent(versionId)}/developer-artifacts`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ requirementName }),
+        },
+    );
 }
 
 export type GitHubSkillImportPolicy = {

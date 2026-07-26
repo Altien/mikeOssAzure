@@ -6,7 +6,9 @@ import { Download, Upload, PackageOpen, Play, ScanSearch } from "lucide-react";
 import { listProjects } from "@/app/lib/mikeApi";
 import type { Project } from "@/app/components/shared/types";
 import {
+    adaptSkillName,
     analyseSkillVersion,
+    createCleanRoomDeveloperArtifact,
     downloadSkillPackage,
     disableSkill,
     getGitHubSkillImportPolicy,
@@ -41,6 +43,9 @@ export function SkillsLibrary() {
     const [githubPolicy, setGithubPolicy] =
         useState<GitHubSkillImportPolicy | null>(null);
     const [githubUrl, setGithubUrl] = useState("");
+    const [renameByVersion, setRenameByVersion] = useState<Record<string, string>>({});
+    const [developerRequirementByVersion, setDeveloperRequirementByVersion] =
+        useState<Record<string, string>>({});
     const fileInput = useRef<HTMLInputElement>(null);
 
     const refresh = useCallback(async () => {
@@ -178,7 +183,10 @@ export function SkillsLibrary() {
         }
     }
 
-    async function downloadPackage(versionId: string, kind: "original" | "mike") {
+    async function downloadPackage(
+        versionId: string,
+        kind: "original" | "mike" | "developer",
+    ) {
         setBusyVersion(versionId);
         setError(null);
         try {
@@ -189,6 +197,48 @@ export function SkillsLibrary() {
             anchor.download = result.filename;
             anchor.click();
             URL.revokeObjectURL(url);
+        } catch (caught) {
+            setError(messageFrom(caught));
+        } finally {
+            setBusyVersion(null);
+        }
+    }
+
+    async function rename(skill: SkillListItem) {
+        const newDisplayName = renameByVersion[skill.version.id]?.trim();
+        if (!newDisplayName) return;
+        setBusyVersion(skill.version.id);
+        setError(null);
+        try {
+            await adaptSkillName(skill.version.id, newDisplayName);
+            setRenameByVersion((current) => ({
+                ...current,
+                [skill.version.id]: "",
+            }));
+            await refresh();
+        } catch (caught) {
+            setError(messageFrom(caught));
+        } finally {
+            setBusyVersion(null);
+        }
+    }
+
+    async function createDeveloperArtifact(skill: SkillListItem) {
+        const requirement =
+            developerRequirementByVersion[skill.version.id]?.trim();
+        if (!requirement) return;
+        setBusyVersion(skill.version.id);
+        setError(null);
+        try {
+            await createCleanRoomDeveloperArtifact(
+                skill.version.id,
+                requirement,
+            );
+            setDeveloperRequirementByVersion((current) => ({
+                ...current,
+                [skill.version.id]: "",
+            }));
+            await showPackages(skill.version.id);
         } catch (caught) {
             setError(messageFrom(caught));
         } finally {
@@ -343,6 +393,85 @@ export function SkillsLibrary() {
                                                 </button>
                                             </div>
                                         ))}
+                                    {skill.version.state === "draft" && (
+                                        <div className="mt-3 flex flex-wrap gap-2">
+                                            <input
+                                                value={
+                                                    renameByVersion[
+                                                        skill.version.id
+                                                    ] ?? ""
+                                                }
+                                                onChange={(event) =>
+                                                    setRenameByVersion(
+                                                        (current) => ({
+                                                            ...current,
+                                                            [skill.version.id]:
+                                                                event.target.value,
+                                                        }),
+                                                    )
+                                                }
+                                                placeholder="Import as…"
+                                                aria-label={`Rename ${skill.displayName}`}
+                                                className="min-w-48 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                                            />
+                                            <button
+                                                type="button"
+                                                disabled={
+                                                    busyVersion ===
+                                                        skill.version.id ||
+                                                    !renameByVersion[
+                                                        skill.version.id
+                                                    ]?.trim()
+                                                }
+                                                onClick={() => void rename(skill)}
+                                                className="rounded-md border border-slate-300 px-3 py-2 text-sm disabled:opacity-50"
+                                            >
+                                                Apply to adapted copy
+                                            </button>
+                                        </div>
+                                    )}
+                                    {skill.version.analysisState ===
+                                        "succeeded" && (
+                                        <div className="mt-3 flex flex-wrap gap-2">
+                                            <input
+                                                value={
+                                                    developerRequirementByVersion[
+                                                        skill.version.id
+                                                    ] ?? ""
+                                                }
+                                                onChange={(event) =>
+                                                    setDeveloperRequirementByVersion(
+                                                        (current) => ({
+                                                            ...current,
+                                                            [skill.version.id]:
+                                                                event.target.value,
+                                                        }),
+                                                    )
+                                                }
+                                                placeholder="Missing executable or local MCP"
+                                                aria-label={`Clean-room requirement for ${skill.displayName}`}
+                                                className="min-w-64 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                                            />
+                                            <button
+                                                type="button"
+                                                disabled={
+                                                    busyVersion ===
+                                                        skill.version.id ||
+                                                    !developerRequirementByVersion[
+                                                        skill.version.id
+                                                    ]?.trim()
+                                                }
+                                                onClick={() =>
+                                                    void createDeveloperArtifact(
+                                                        skill,
+                                                    )
+                                                }
+                                                className="rounded-md border border-slate-300 px-3 py-2 text-sm disabled:opacity-50"
+                                            >
+                                                Generate clean-room brief
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                             )}
                             {skill.version.state === "enabled" && (
@@ -443,6 +572,22 @@ export function SkillsLibrary() {
                                                 <Download className="h-4 w-4" />
                                                 Mike package
                                             </button>
+                                            {packageInfo[skill.version.id]
+                                                .developerPackageAvailable && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                        void downloadPackage(
+                                                            skill.version.id,
+                                                            "developer",
+                                                        )
+                                                    }
+                                                    className="inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2"
+                                                >
+                                                    <Download className="h-4 w-4" />
+                                                    Developer package
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
                                 )}

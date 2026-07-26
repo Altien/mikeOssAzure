@@ -564,7 +564,9 @@ export async function listTenantSkills(
             current.declared_version == null
               ? undefined
               : String(current.declared_version),
-          contentHash: String(current.original_content_hash),
+          contentHash: String(
+            current.adapted_content_hash ?? current.original_content_hash,
+          ),
         },
       };
     })

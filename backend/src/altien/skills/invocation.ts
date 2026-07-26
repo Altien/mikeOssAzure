@@ -68,7 +68,7 @@ export async function bindExplicitSkillInvocation(args: {
   if (!versionId) throw new Error(`Skill '${requestedName}' is not enabled.`);
   const version = await db
     .from("altien_skill_versions")
-    .select("id, skill_id, state, original_content_hash")
+    .select("id, skill_id, state, original_content_hash, adapted_content_hash")
     .eq("id", versionId)
     .eq("skill_id", skill.id)
     .single();
@@ -90,9 +90,10 @@ export async function bindExplicitSkillInvocation(args: {
     skillId: String(skill.id),
     displayName: String(skill.display_name),
     versionId,
-    contentHash: String(version.data.original_content_hash),
+    contentHash: String(
+      version.data.adapted_content_hash ?? version.data.original_content_hash,
+    ),
     pinned: !!pin,
     dependencies,
   };
 }
-
