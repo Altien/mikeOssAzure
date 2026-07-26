@@ -9,7 +9,7 @@
  * cascades like userDataCleanup).
  *
  * Supported chains: from(t).select(cols)[.eq/.neq/.in/.is/.filter/.order/
- * .range]* awaited directly or via .single()/.maybeSingle(),
+ * .limit/.range]* awaited directly or via .single()/.maybeSingle(),
  * from(t).insert(payload).select(...), from(t).delete().eq/.in,
  * from(t).update(payload).eq.
  *
@@ -90,6 +90,9 @@ export function makeFakeDb(
           return builder;
         },
         order() {
+          return builder;
+        },
+        limit() {
           return builder;
         },
         range(from: number, to: number) {

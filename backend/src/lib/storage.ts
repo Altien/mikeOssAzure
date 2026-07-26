@@ -339,6 +339,14 @@ export function versionStorageKey(
   return `documents/${userId}/${docId}/versions/${versionSlug}${storageExtension(filename, ".bin")}`;
 }
 
+export function externalSourceStorageKey(
+  userId: string,
+  docId: string,
+  versionId: string,
+): string {
+  return `documents/${userId}/${docId}/versions/${versionId}.txt`;
+}
+
 function storageExtension(filename: string, fallback: string): string {
   const lastDot = filename.lastIndexOf(".");
   if (lastDot < 0) return fallback;

@@ -97,6 +97,24 @@ function database(options?: {
       };
     }
     if (call.table === "document_versions") {
+      const requestedIds = call.filters.find(
+        ([method, column]) => method === "in" && column === "id",
+      )?.[2];
+      if (
+        Array.isArray(requestedIds) &&
+        requestedIds.includes("external-dms-v1")
+      ) {
+        return {
+          data: [
+            {
+              id: "external-dms-v1",
+              document_id: "external-dms-id",
+              storage_path: "external/path",
+              filename: "authority.txt",
+            },
+          ],
+        };
+      }
       return {
         data: [
           {
@@ -127,9 +145,11 @@ function database(options?: {
                 project_id: "project-1",
                 version_id: "source-v1",
                 title: "Authority",
-                content_text: sourceText,
+                content_text: null,
                 content_hash: result.record.sources.authority.sha256,
                 content_bytes: result.record.sources.authority.bytes,
+                document_id: "external-dms-id",
+                document_version_id: "external-dms-v1",
               },
             ]
           : [],
@@ -161,11 +181,13 @@ function database(options?: {
 }
 
 beforeEach(() => {
-  downloadFileMock.mockReset().mockImplementation(async (path: string) =>
-    path === "memo/path"
-      ? encoder.encode(memoText).buffer
-      : encoder.encode(sourceText).buffer,
-  );
+  downloadFileMock
+    .mockReset()
+    .mockImplementation(async (path: string) =>
+      path === "memo/path"
+        ? encoder.encode(memoText).buffer
+        : encoder.encode(sourceText).buffer,
+    );
 });
 
 describe("getAuthorityTraceWorkspace", () => {
@@ -203,8 +225,9 @@ describe("getAuthorityTraceWorkspace", () => {
       reviewDb.db as never,
     );
 
-    expect(workspace?.memo.segments.map((segment) => segment.text).join(""))
-      .toBe(memoText);
+    expect(
+      workspace?.memo.segments.map((segment) => segment.text).join(""),
+    ).toBe(memoText);
     expect(
       workspace?.sources.authority.segments
         .map((segment) => segment.text)
@@ -215,8 +238,9 @@ describe("getAuthorityTraceWorkspace", () => {
       verdict: "verified",
       stale: false,
     });
-    expect(workspace?.reviews.find((review) => review.id === "review-stale"))
-      .toMatchObject({ stale: true });
+    expect(
+      workspace?.reviews.find((review) => review.id === "review-stale"),
+    ).toMatchObject({ stale: true });
     expect(reviewDb.result.record.citations[0].status).toBe("anchored");
     expect(workspace?.integrity).toEqual({ ok: true, warnings: [] });
   });
@@ -235,10 +259,11 @@ describe("getAuthorityTraceWorkspace", () => {
   });
 
   it("suppresses highlights and reports source drift", async () => {
-    downloadFileMock.mockImplementation(async (path: string) =>
-      encoder.encode(
-        path === "memo/path" ? memoText : `${sourceText} changed`,
-      ).buffer,
+    downloadFileMock.mockImplementation(
+      async (path: string) =>
+        encoder.encode(
+          path === "memo/path" ? memoText : `${sourceText} changed`,
+        ).buffer,
     );
     const { db } = database();
 
@@ -267,9 +292,9 @@ describe("getAuthorityTraceWorkspace", () => {
       integrity: "missing",
       segments: [{ text: "", highlights: [] }],
     });
-    expect(callsFor("external_source_cache", "select")[0]?.filters).toContainEqual(
-      ["eq", "project_id", "project-1"],
-    );
+    expect(
+      callsFor("external_source_cache", "select")[0]?.filters,
+    ).toContainEqual(["eq", "project_id", "project-1"]);
     expect(downloadFileMock).toHaveBeenCalledTimes(1);
   });
 

@@ -56,9 +56,11 @@ type ExternalSourceRow = {
   project_id: string | null;
   version_id: string;
   title: string;
-  content_text: string;
+  content_text: string | null;
   content_hash: string;
   content_bytes: number;
+  document_id: string | null;
+  document_version_id: string | null;
 };
 
 export type IntegrityStatus = "ok" | "changed" | "missing";
@@ -156,9 +158,7 @@ export async function getAuthorityTraceWorkspace(
 ): Promise<AuthorityTraceWorkspace | null> {
   const { data: runData, error: runError } = await db
     .from("citation_verification_runs")
-    .select(
-      "id, project_id, verified_record, report, created_at",
-    )
+    .select("id, project_id, verified_record, report, created_at")
     .eq("id", runId)
     .maybeSingle();
   if (runError) throw new Error(runError.message);
@@ -172,7 +172,9 @@ export async function getAuthorityTraceWorkspace(
     .select("id")
     .in(
       "id",
-      Array.from(new Set(allReferences.map((reference) => reference.document_id))),
+      Array.from(
+        new Set(allReferences.map((reference) => reference.document_id)),
+      ),
     )
     .eq("project_id", String(runData.project_id));
   if (documentError) throw new Error(documentError.message);
@@ -204,20 +206,43 @@ export async function getAuthorityTraceWorkspace(
         .map((source) => source.document_id),
     ),
   );
-  const { data: externalData, error: externalError } = externalDocumentIds.length
-    ? await db
-        .from("external_source_cache")
-        .select(
-          "id, project_id, version_id, title, content_text, content_hash, content_bytes",
-        )
-        .in("id", externalDocumentIds)
-        .eq("project_id", String(runData.project_id))
-    : { data: [], error: null };
+  const { data: externalData, error: externalError } =
+    externalDocumentIds.length
+      ? await db
+          .from("external_source_cache")
+          .select(
+            "id, project_id, version_id, title, content_text, content_hash, content_bytes, document_id, document_version_id",
+          )
+          .in("id", externalDocumentIds)
+          .eq("project_id", String(runData.project_id))
+      : { data: [], error: null };
   if (externalError) throw new Error(externalError.message);
   const externalById = new Map(
     ((externalData ?? []) as ExternalSourceRow[]).map((source) => [
       source.id,
       source,
+    ]),
+  );
+  const externalVersionIds = Array.from(
+    new Set(
+      [...externalById.values()].flatMap((source) =>
+        source.document_version_id ? [source.document_version_id] : [],
+      ),
+    ),
+  );
+  const { data: externalVersionData, error: externalVersionError } =
+    externalVersionIds.length
+      ? await db
+          .from("document_versions")
+          .select("id, document_id, storage_path, filename")
+          .in("id", externalVersionIds)
+          .is("deleted_at", null)
+      : { data: [], error: null };
+  if (externalVersionError) throw new Error(externalVersionError.message);
+  const externalVersionById = new Map(
+    ((externalVersionData ?? []) as VersionRow[]).map((version) => [
+      version.id,
+      version,
     ]),
   );
   const textByVersion = new Map<string, string>();
@@ -237,14 +262,48 @@ export async function getAuthorityTraceWorkspace(
     }
     const content = await downloadFile(version.storage_path);
     if (!content) continue;
-    identityByVersion.set(
-      version.id,
-      byteIdentity(new Uint8Array(content)),
-    );
+    identityByVersion.set(version.id, byteIdentity(new Uint8Array(content)));
     textByVersion.set(
       version.id,
       decodeUtf8(content, `${reference.document_id}/${reference.version_id}`),
     );
+  }
+  const externalTextById = new Map<string, string>();
+  const externalIdentityById = new Map<
+    string,
+    { sha256: string; bytes: number }
+  >();
+  for (const source of externalById.values()) {
+    if (source.document_id && source.document_version_id) {
+      const version = externalVersionById.get(source.document_version_id);
+      if (
+        !version ||
+        version.document_id !== source.document_id ||
+        !version.storage_path
+      ) {
+        continue;
+      }
+      const content = await downloadFile(version.storage_path);
+      if (!content) continue;
+      externalIdentityById.set(
+        source.id,
+        byteIdentity(new Uint8Array(content)),
+      );
+      externalTextById.set(
+        source.id,
+        decodeUtf8(
+          content,
+          `${source.document_id}/${source.document_version_id}`,
+        ),
+      );
+      continue;
+    }
+    // Compatibility for pre-0024 rows; normal cache reads migrate these into
+    // DMS documents and clear content_text.
+    if (source.content_text !== null) {
+      externalTextById.set(source.id, source.content_text);
+      externalIdentityById.set(source.id, contentIdentity(source.content_text));
+    }
   }
 
   const { data: projectRunData, error: projectRunError } = await db
@@ -274,9 +333,7 @@ export async function getAuthorityTraceWorkspace(
   const currentReviews = Object.fromEntries(
     record.citations.flatMap((citation) => {
       const current = latestReview(
-        reviews.filter(
-          (review) => review.binds_to === citation.binds_to,
-        ),
+        reviews.filter((review) => review.binds_to === citation.binds_to),
       );
       return current ? [[citation.id, current]] : [];
     }),
@@ -304,13 +361,13 @@ export async function getAuthorityTraceWorkspace(
       const external = externalById.get(source.document_id);
       const text =
         external?.version_id === source.version_id
-          ? external.content_text
+          ? externalTextById.get(external.id)
           : textByVersion.get(source.version_id);
       const sourceIntegrity = integrityStatus(
         text,
         source,
         external
-          ? contentIdentity(external.content_text)
+          ? externalIdentityById.get(external.id)
           : identityByVersion.get(source.version_id),
       );
       const highlights = record.citations.flatMap((citation) =>
@@ -340,7 +397,8 @@ export async function getAuthorityTraceWorkspace(
       ];
     }),
   );
-  const integrityWarnings: AuthorityTraceWorkspace["integrity"]["warnings"] = [];
+  const integrityWarnings: AuthorityTraceWorkspace["integrity"]["warnings"] =
+    [];
   if (memoIntegrity !== "ok") {
     integrityWarnings.push({
       scope: "memo",

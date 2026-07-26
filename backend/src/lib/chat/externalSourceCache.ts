@@ -1,6 +1,12 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { completeText, type UserApiKeys } from "../llm";
 import { createServerSupabase } from "../supabase";
+import {
+  deleteFile,
+  downloadFile,
+  externalSourceStorageKey,
+  uploadFile,
+} from "../storage";
 
 export type ExternalSourceDocument = {
   id: string;
@@ -36,10 +42,7 @@ export type ExternalSourcePersistence = {
     source: ExternalSourceDocument,
     hash: string,
   ): Promise<{ id: string; summary: ExternalSourceSummary | null }>;
-  storeSummary(
-    id: string,
-    summary: ExternalSourceSummary,
-  ): Promise<void>;
+  storeSummary(id: string, summary: ExternalSourceSummary): Promise<void>;
   findSource(id: string): Promise<CachedExternalSource | null>;
 };
 
@@ -53,8 +56,11 @@ type ExternalSourceRow = {
   origin_url: string | null;
   search_tool: string;
   read_tool: string;
-  content_text: string;
+  content_text: string | null;
   content_hash: string;
+  content_bytes: number;
+  document_id: string | null;
+  document_version_id: string | null;
   summary_text: string | null;
   summary_status: "pending" | "generated" | "fallback";
   summary_model: string | null;
@@ -64,7 +70,10 @@ function contentHash(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
-function fromStoredRow(row: ExternalSourceRow): CachedExternalSource {
+function fromStoredRow(
+  row: ExternalSourceRow,
+  text: string,
+): CachedExternalSource {
   return {
     cacheRecordId: row.id,
     source: {
@@ -73,7 +82,7 @@ function fromStoredRow(row: ExternalSourceRow): CachedExternalSource {
       externalId: row.external_id,
       versionId: row.version_id,
       title: row.title,
-      text: row.content_text,
+      text,
       ...(row.origin_url ? { originUrl: row.origin_url } : {}),
       searchTool: row.search_tool,
       readTool: row.read_tool,
@@ -90,6 +99,33 @@ function fromStoredRow(row: ExternalSourceRow): CachedExternalSource {
   };
 }
 
+function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  ) as ArrayBuffer;
+}
+
+function safeFilename(title: string): string {
+  const stem =
+    title
+      .trim()
+      .replace(/[\x00-\x1f\x7f/\\]/g, "_")
+      .slice(0, 180) || "external-source";
+  return `${stem}.txt`;
+}
+
+function provenanceKey(provider: string): string {
+  return (
+    provider
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 80) || "external"
+  );
+}
+
 export function createDatabaseExternalSourcePersistence(args: {
   userId: string;
   projectId?: string | null;
@@ -100,7 +136,220 @@ export function createDatabaseExternalSourcePersistence(args: {
     ? `project:${args.projectId}`
     : `user:${args.userId}`;
   const select =
-    "id, source_key, provider, external_id, version_id, title, origin_url, search_tool, read_tool, content_text, content_hash, summary_text, summary_status, summary_model";
+    "id, source_key, provider, external_id, version_id, title, origin_url, search_tool, read_tool, content_text, content_hash, content_bytes, document_id, document_version_id, summary_text, summary_status, summary_model";
+
+  async function findRow(id: string): Promise<ExternalSourceRow | null> {
+    const base = () =>
+      db
+        .from("external_source_cache")
+        .select(select)
+        .eq("cache_scope", cacheScope);
+    const byId = await base().eq("id", id).maybeSingle();
+    if (byId.error) throw new Error(byId.error.message);
+    if (byId.data) return byId.data as ExternalSourceRow;
+
+    const byKey = await base()
+      .eq("source_key", id)
+      .order("retrieved_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (byKey.error) throw new Error(byKey.error.message);
+    return (byKey.data as ExternalSourceRow | null) ?? null;
+  }
+
+  async function findReusableRow(
+    source: ExternalSourceDocument,
+    hash: string,
+  ): Promise<ExternalSourceRow | null> {
+    const { data, error } = await db
+      .from("external_source_cache")
+      .select(select)
+      .eq("owner_user_id", args.userId)
+      .eq("source_key", source.id)
+      .eq("version_id", source.versionId)
+      .eq("content_hash", hash)
+      .order("retrieved_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return (data as ExternalSourceRow | null) ?? null;
+  }
+
+  async function ensureProvenanceProject(provider: string): Promise<string> {
+    const key = provenanceKey(provider);
+    const find = () =>
+      db
+        .from("projects")
+        .select("id")
+        .eq("user_id", args.userId)
+        .eq("project_kind", "external_provenance")
+        .eq("provenance_key", key)
+        .maybeSingle();
+    const existing = await find();
+    if (existing.error) throw new Error(existing.error.message);
+    if (existing.data?.id) return String(existing.data.id);
+
+    const { data, error } = await db
+      .from("projects")
+      .insert({
+        user_id: args.userId,
+        name: `${provider.trim() || "External"} sources`,
+        visibility: "private",
+        project_kind: "external_provenance",
+        provenance_key: key,
+      })
+      .select("id")
+      .single();
+    if (!error && data?.id) return String(data.id);
+
+    // A concurrent request may have won the unique-key race.
+    const concurrent = await find();
+    if (concurrent.error || !concurrent.data?.id) {
+      throw new Error(
+        error?.message ??
+          concurrent.error?.message ??
+          "Failed to create provenance project",
+      );
+    }
+    return String(concurrent.data.id);
+  }
+
+  async function createDmsDocument(source: ExternalSourceDocument): Promise<{
+    documentId: string;
+    documentVersionId: string;
+    storagePath: string;
+  }> {
+    const provenanceProjectId = await ensureProvenanceProject(source.provider);
+    const documentId = randomUUID();
+    const documentVersionId = randomUUID();
+    const bytes = new TextEncoder().encode(source.text);
+    const storagePath = externalSourceStorageKey(
+      args.userId,
+      documentId,
+      documentVersionId,
+    );
+    await uploadFile(
+      storagePath,
+      exactArrayBuffer(bytes),
+      "text/plain; charset=utf-8",
+    );
+
+    let documentInserted = false;
+    try {
+      const { error: documentError } = await db.from("documents").insert({
+        id: documentId,
+        project_id: provenanceProjectId,
+        user_id: args.userId,
+        status: "processing",
+      });
+      if (documentError) throw new Error(documentError.message);
+      documentInserted = true;
+
+      const { error: versionError } = await db
+        .from("document_versions")
+        .insert({
+          id: documentVersionId,
+          document_id: documentId,
+          storage_path: storagePath,
+          pdf_storage_path: null,
+          source: "external_retrieval",
+          version_number: 1,
+          filename: safeFilename(source.title),
+          file_type: "txt",
+          size_bytes: bytes.byteLength,
+        });
+      if (versionError) throw new Error(versionError.message);
+
+      const { error: readyError } = await db
+        .from("documents")
+        .update({
+          current_version_id: documentVersionId,
+          status: "ready",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", documentId);
+      if (readyError) throw new Error(readyError.message);
+      return { documentId, documentVersionId, storagePath };
+    } catch (error) {
+      if (documentInserted) {
+        await db.from("documents").delete().eq("id", documentId);
+      }
+      await deleteFile(storagePath).catch(() => {});
+      throw error;
+    }
+  }
+
+  async function removeDmsDocument(documentId: string, storagePath: string) {
+    await db.from("documents").delete().eq("id", documentId);
+    await deleteFile(storagePath).catch(() => {});
+  }
+
+  async function materializeLegacyRow(
+    row: ExternalSourceRow,
+  ): Promise<ExternalSourceRow> {
+    if (row.document_id && row.document_version_id) return row;
+    if (row.content_text === null) {
+      throw new Error(
+        `External source ${row.id} has no stored document content`,
+      );
+    }
+    const source: ExternalSourceDocument = {
+      id: row.source_key,
+      provider: row.provider,
+      externalId: row.external_id,
+      versionId: row.version_id,
+      title: row.title,
+      text: row.content_text,
+      ...(row.origin_url ? { originUrl: row.origin_url } : {}),
+      searchTool: row.search_tool,
+      readTool: row.read_tool,
+    };
+    const dms = await createDmsDocument(source);
+    const { error } = await db
+      .from("external_source_cache")
+      .update({
+        document_id: dms.documentId,
+        document_version_id: dms.documentVersionId,
+        content_text: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", row.id)
+      .eq("owner_user_id", args.userId);
+    if (error) {
+      await removeDmsDocument(dms.documentId, dms.storagePath);
+      throw new Error(error.message);
+    }
+    return {
+      ...row,
+      document_id: dms.documentId,
+      document_version_id: dms.documentVersionId,
+      content_text: null,
+    };
+  }
+
+  async function readRowText(row: ExternalSourceRow): Promise<string> {
+    const materialized = await materializeLegacyRow(row);
+    const { data, error } = await db
+      .from("document_versions")
+      .select("id, document_id, storage_path")
+      .eq("id", materialized.document_version_id!)
+      .eq("document_id", materialized.document_id!)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data?.storage_path) {
+      throw new Error(`External source document is unavailable: ${row.id}`);
+    }
+    const raw = await downloadFile(String(data.storage_path));
+    if (!raw) {
+      throw new Error(`External source blob is unavailable: ${row.id}`);
+    }
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(raw);
+    if (contentHash(text) !== row.content_hash) {
+      throw new Error(`External source integrity check failed: ${row.id}`);
+    }
+    return text;
+  }
 
   return {
     async storeSource(source, hash) {
@@ -115,10 +364,17 @@ export function createDatabaseExternalSourcePersistence(args: {
         .maybeSingle();
       if (findError) throw new Error(findError.message);
       if (existing) {
-        const cached = fromStoredRow(existing as ExternalSourceRow);
+        const row = await materializeLegacyRow(existing as ExternalSourceRow);
+        const cached = fromStoredRow(row, source.text);
         return { id: cached.cacheRecordId!, summary: cached.summary };
       }
 
+      const reusable = await findReusableRow(source, hash);
+      const reusedRow = reusable ? await materializeLegacyRow(reusable) : null;
+      const createdDms = reusedRow ? null : await createDmsDocument(source);
+      const documentId = reusedRow?.document_id ?? createdDms!.documentId;
+      const documentVersionId =
+        reusedRow?.document_version_id ?? createdDms!.documentVersionId;
       const { data, error } = await db
         .from("external_source_cache")
         .insert({
@@ -133,17 +389,55 @@ export function createDatabaseExternalSourcePersistence(args: {
           origin_url: source.originUrl ?? null,
           search_tool: source.searchTool,
           read_tool: source.readTool,
-          content_text: source.text,
+          content_text: null,
           content_hash: hash,
           content_bytes: contentBytes,
-          summary_status: "pending",
+          document_id: documentId,
+          document_version_id: documentVersionId,
+          summary_text: reusedRow?.summary_text ?? null,
+          summary_status: reusedRow?.summary_status ?? "pending",
+          summary_model: reusedRow?.summary_model ?? null,
         })
         .select("id")
         .single();
       if (error || !data?.id) {
+        if (createdDms) {
+          await removeDmsDocument(
+            createdDms.documentId,
+            createdDms.storagePath,
+          );
+        }
+        const concurrent = await findRow(source.id);
+        if (
+          concurrent?.version_id === source.versionId &&
+          concurrent.content_hash === hash
+        ) {
+          return {
+            id: concurrent.id,
+            summary:
+              concurrent.summary_status === "pending" ||
+              !concurrent.summary_text
+                ? null
+                : {
+                    text: concurrent.summary_text,
+                    status: concurrent.summary_status,
+                    model: concurrent.summary_model,
+                  },
+          };
+        }
         throw new Error(error?.message ?? "Failed to cache external source");
       }
-      return { id: String(data.id), summary: null };
+      return {
+        id: String(data.id),
+        summary:
+          reusedRow?.summary_status === "pending" || !reusedRow?.summary_text
+            ? null
+            : {
+                text: reusedRow.summary_text,
+                status: reusedRow.summary_status,
+                model: reusedRow.summary_model,
+              },
+      };
     },
 
     async storeSummary(id, summary) {
@@ -161,24 +455,9 @@ export function createDatabaseExternalSourcePersistence(args: {
     },
 
     async findSource(id) {
-      const base = () =>
-        db
-          .from("external_source_cache")
-          .select(select)
-          .eq("cache_scope", cacheScope);
-      const byId = await base().eq("id", id).maybeSingle();
-      if (byId.error) throw new Error(byId.error.message);
-      if (byId.data) return fromStoredRow(byId.data as ExternalSourceRow);
-
-      const byKey = await base()
-        .eq("source_key", id)
-        .order("retrieved_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (byKey.error) throw new Error(byKey.error.message);
-      return byKey.data
-        ? fromStoredRow(byKey.data as ExternalSourceRow)
-        : null;
+      const row = await findRow(id);
+      if (!row) return null;
+      return fromStoredRow(row, await readRowText(row));
     },
   };
 }
