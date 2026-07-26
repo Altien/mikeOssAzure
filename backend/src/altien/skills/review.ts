@@ -12,6 +12,7 @@ import {
   createEnableAction,
   createLinkPriorSkillAction,
   createRenameSkillAction,
+  hashActionPayload,
   isAffirmativeAuthorization,
   isRejection,
   parseSkillActionAmendments,
@@ -214,6 +215,19 @@ type PossibleSkillIdentityMatch = {
   displayName: string;
   matchedOn: string;
 };
+
+/**
+ * Identity of the findings a contract was reviewed against. Re-analysing the
+ * same package — with a different model, or the same one on a different day —
+ * changes this, so a pending action built from the old findings stops
+ * matching even though the package text is unchanged.
+ */
+function analysisOutputHash(version: Record<string, unknown>): string {
+  return hashActionPayload({
+    model: String(version.analysis_model ?? ""),
+    generated: (version.generated_analysis ?? null) as never,
+  });
+}
 
 function possibleIdentityMatch(
   version: Record<string, unknown>,
@@ -540,6 +554,7 @@ async function amendPendingAction(args: {
   }
   const payload = args.pending.payload as {
     analysisInputHash?: string;
+    analysisOutputHash?: string;
     executionContract?: Record<string, unknown>;
   };
   let action: PendingSkillAction;
@@ -568,6 +583,7 @@ async function amendPendingAction(args: {
     action = createEnableAction({
       versionId: args.versionId,
       analysisInputHash: String(payload.analysisInputHash ?? ""),
+      analysisOutputHash: String(payload.analysisOutputHash ?? ""),
       executionContract: amended.contract,
       amendedFromActionId: String(args.pending.id),
     });
@@ -878,7 +894,9 @@ export async function postSkillReviewMessage(args: {
       pending.action_type !== "enable_version" ||
       context.version.analysis_state !== "succeeded" ||
       (pending.payload as Record<string, unknown>).analysisInputHash !==
-        context.version.analysis_input_hash
+        context.version.analysis_input_hash ||
+      (pending.payload as Record<string, unknown>).analysisOutputHash !==
+        analysisOutputHash(context.version)
     ) {
       throw new Error("The pending action no longer matches this analysis.");
     }
@@ -1078,6 +1096,7 @@ export async function postSkillReviewMessage(args: {
     action: createEnableAction({
       versionId: args.versionId,
       analysisInputHash: String(context.version.analysis_input_hash),
+      analysisOutputHash: analysisOutputHash(context.version),
       executionContract: contract,
       unresolvedReferences,
     }),

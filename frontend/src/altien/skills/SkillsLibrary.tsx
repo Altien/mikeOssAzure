@@ -154,12 +154,6 @@ export function SkillsLibrary() {
             },
         );
 
-    const analyse = (versionId: string) =>
-        void runForVersion(versionId, async () => {
-            await analyseSkillVersion(versionId);
-            await refresh();
-        });
-
     const setPendingAction = (
         versionId: string,
         action: SkillPendingAction | undefined,
@@ -168,6 +162,15 @@ export function SkillsLibrary() {
             ...current,
             [versionId]: action,
         }));
+
+    const analyse = (versionId: string) =>
+        void runForVersion(versionId, async () => {
+            await analyseSkillVersion(versionId);
+            // The server refuses a pending action reviewed against the old
+            // findings, so drop it here rather than showing a dead one.
+            setPendingAction(versionId, undefined);
+            await refresh();
+        });
 
     const proposeEnable = (versionId: string) =>
         void runForVersion(versionId, async () => {

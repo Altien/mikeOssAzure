@@ -45,6 +45,13 @@ export function hashActionPayload(payload: Record<string, unknown>): string {
 export function createEnableAction(args: {
   versionId: string;
   analysisInputHash: string;
+  /**
+   * Hash of the generated analysis this contract was derived from. The input
+   * hash covers only the package text, so it is identical across a re-analysis
+   * with a different model; without this a contract reviewed under one model
+   * would still pass integrity against another model's findings.
+   */
+  analysisOutputHash: string;
   executionContract: Record<string, unknown>;
   /**
    * References the fast model could not resolve in the package text. They
@@ -61,6 +68,7 @@ export function createEnableAction(args: {
   const payload = {
     versionId: args.versionId,
     analysisInputHash: args.analysisInputHash,
+    analysisOutputHash: args.analysisOutputHash,
     executionContract: args.executionContract,
     ...(args.unresolvedReferences?.length
       ? { unresolvedReferences: [...args.unresolvedReferences] }

@@ -531,6 +531,27 @@ describe("unresolved analysis references", () => {
     expect(conversation).toContain("house-format.md");
   });
 
+  it("refuses an action reviewed against a superseded analysis", async () => {
+    // The input hash covers only the package text, so re-analysing the same
+    // package with another model leaves it unchanged; the output hash is what
+    // stops the old model's contract being approved against new findings.
+    const pending = await proposeEnable(enableDb());
+    const reanalysed = enableDb({
+      pending,
+      unresolvedReferences: ["a finding the previous model never made"],
+    });
+    await expect(
+      postSkillReviewMessage({
+        tenantId: "tenant-1",
+        versionId: "version-1",
+        userId: "admin-1",
+        message: "yes",
+        db: reanalysed.db as never,
+        settings: fastModelSettings,
+      }),
+    ).rejects.toThrow(/no longer matches this analysis/i);
+  });
+
   it("still blocks promotion of an adapted version with leftover references", async () => {
     const fake = enableDb({
       unresolvedReferences: ["still calls itself “reader”"],

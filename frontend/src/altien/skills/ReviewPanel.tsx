@@ -150,20 +150,28 @@ export function ReviewPanel({
                     ? ` · ${skill.version.analysisModel}`
                     : ""}
             </p>
-            {skill.version.state === "draft" &&
-                skill.version.analysisState !== "succeeded" && (
-                    <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => onAnalyse(skill.version.id)}
-                        className="mt-3 inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-                    >
-                        <ScanSearch className="h-4 w-4" />
-                        {skill.version.analysisState === "failed"
-                            ? "Retry analysis"
-                            : "Analyse"}
-                    </button>
-                )}
+            {skill.version.state === "draft" && (
+                <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onAnalyse(skill.version.id)}
+                    className="mt-3 inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                    // Re-analysing discards any pending action, because the
+                    // contract was reviewed against the previous findings.
+                    title={
+                        skill.version.analysisState === "succeeded"
+                            ? "Analyse again with the currently configured model. Any pending action is discarded."
+                            : undefined
+                    }
+                >
+                    <ScanSearch className="h-4 w-4" />
+                    {skill.version.analysisState === "succeeded"
+                        ? "Re-analyse"
+                        : skill.version.analysisState === "failed"
+                          ? "Retry analysis"
+                          : "Analyse"}
+                </button>
+            )}
             {skill.version.state === "draft" &&
                 skill.version.analysisState === "succeeded" &&
                 (!pendingAction ? (
