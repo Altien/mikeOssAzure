@@ -15,6 +15,10 @@ const {
   getGitHubSkillImportPolicyMock,
   setGitHubSkillImportPolicyMock,
   acquireGitHubSkillMock,
+  setProjectSkillPinMock,
+  listProjectSkillPinsMock,
+  disableSkillMock,
+  setSkillDependencyMock,
 } = vi.hoisted(() => ({
   authState: {
     roles: ["TenantAdmin"] as string[],
@@ -31,6 +35,10 @@ const {
   getGitHubSkillImportPolicyMock: vi.fn(),
   setGitHubSkillImportPolicyMock: vi.fn(),
   acquireGitHubSkillMock: vi.fn(),
+  setProjectSkillPinMock: vi.fn(),
+  listProjectSkillPinsMock: vi.fn(),
+  disableSkillMock: vi.fn(),
+  setSkillDependencyMock: vi.fn(),
 }));
 
 vi.mock("../../middleware/auth", () => ({
@@ -84,6 +92,19 @@ vi.mock("./github", async (importOriginal) => ({
   acquireGitHubSkill: acquireGitHubSkillMock,
 }));
 
+vi.mock("./pins", () => ({
+  setProjectSkillPin: setProjectSkillPinMock,
+  listProjectSkillPins: listProjectSkillPinsMock,
+}));
+
+vi.mock("./lifecycle", () => ({
+  disableSkill: disableSkillMock,
+}));
+
+vi.mock("./dependencies", () => ({
+  setSkillDependency: setSkillDependencyMock,
+}));
+
 import { skillsRouter } from "./router";
 
 function makeApp() {
@@ -108,6 +129,10 @@ describe("Skills routes", () => {
     getGitHubSkillImportPolicyMock.mockReset();
     setGitHubSkillImportPolicyMock.mockReset();
     acquireGitHubSkillMock.mockReset();
+    setProjectSkillPinMock.mockReset();
+    listProjectSkillPinsMock.mockReset();
+    disableSkillMock.mockReset();
+    setSkillDependencyMock.mockReset();
     getGitHubSkillImportPolicyMock.mockResolvedValue({
       deploymentAllowed: false,
       tenantEnabled: false,
@@ -165,6 +190,48 @@ describe("Skills routes", () => {
       .post("/api/altien/skills/versions/version-1/run")
       .send({ projectId: "other-project" })
       .expect(404);
+  });
+
+  it("allows only a project owner to set an exact version pin", async () => {
+    setProjectSkillPinMock.mockResolvedValue({
+      projectId: "project-1",
+      skillId: "skill-1",
+      versionId: "version-1",
+    });
+    checkProjectAccessMock.mockResolvedValue({ ok: true, isOwner: false });
+    await request(makeApp())
+      .post("/api/altien/skills/projects/project-1/pins/skill-1")
+      .send({ versionId: "version-1" })
+      .expect(403, { detail: "PROJECT_OWNER_REQUIRED" });
+    expect(setProjectSkillPinMock).not.toHaveBeenCalled();
+
+    checkProjectAccessMock.mockResolvedValue({ ok: true, isOwner: true });
+    await request(makeApp())
+      .post("/api/altien/skills/projects/project-1/pins/skill-1")
+      .send({ versionId: "version-1" })
+      .expect(200);
+    expect(setProjectSkillPinMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: "tenant-1",
+        projectId: "project-1",
+        skillId: "skill-1",
+        versionId: "version-1",
+      }),
+    );
+  });
+
+  it("keeps skill disablement TenantAdmin-only", async () => {
+    disableSkillMock.mockResolvedValue({
+      skillId: "skill-1",
+      disabledVersionId: "version-1",
+    });
+    await request(makeApp())
+      .post("/api/altien/skills/skill-1/disable")
+      .expect(200);
+    authState.roles = ["Member"];
+    await request(makeApp())
+      .post("/api/altien/skills/skill-1/disable")
+      .expect(403);
   });
 
   it("enforces both GitHub import gates before acquisition", async () => {

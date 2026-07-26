@@ -32,6 +32,11 @@ import {
   GitHubSkillImportError,
 } from "./github";
 import { setSkillDependency } from "./dependencies";
+import {
+  listProjectSkillPins,
+  setProjectSkillPin,
+} from "./pins";
+import { disableSkill } from "./lifecycle";
 
 const zipUpload = multer({
   storage: multer.memoryStorage(),
@@ -283,6 +288,105 @@ skillsRouter.get(
       res
         .status(404)
         .json({ detail: safeErrorMessage(error, "Skill package not found") });
+    }
+  },
+);
+
+skillsRouter.post(
+  "/projects/:projectId/pins/:skillId",
+  requireAuth,
+  async (req, res) => {
+    const tenant = tenantId(res);
+    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+    const versionId =
+      typeof req.body?.versionId === "string" ? req.body.versionId.trim() : "";
+    if (!versionId) {
+      return void res.status(400).json({ detail: "versionId is required." });
+    }
+    const db = createServerSupabase();
+    const access = await checkProjectAccess(
+      req.params.projectId,
+      String(res.locals.userId),
+      res.locals.userEmail as string | undefined,
+      db,
+    );
+    if (!access.ok) {
+      return void res.status(404).json({ detail: "Project not found" });
+    }
+    if (!access.isOwner) {
+      return void res.status(403).json({ detail: "PROJECT_OWNER_REQUIRED" });
+    }
+    try {
+      res.json(
+        await setProjectSkillPin({
+          tenantId: tenant,
+          projectId: req.params.projectId,
+          skillId: req.params.skillId,
+          versionId,
+          pinnedBy: String(res.locals.userId),
+          db,
+        }),
+      );
+    } catch (error) {
+      res.status(409).json({
+        detail: safeErrorMessage(error, "Project skill pin could not be set"),
+      });
+    }
+  },
+);
+
+skillsRouter.get(
+  "/projects/:projectId/pins",
+  requireAuth,
+  async (req, res) => {
+    const tenant = tenantId(res);
+    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+    const db = createServerSupabase();
+    const access = await checkProjectAccess(
+      req.params.projectId,
+      String(res.locals.userId),
+      res.locals.userEmail as string | undefined,
+      db,
+    );
+    if (!access.ok) {
+      return void res.status(404).json({ detail: "Project not found" });
+    }
+    try {
+      res.json({
+        pins: await listProjectSkillPins({
+          tenantId: tenant,
+          projectId: req.params.projectId,
+          db,
+        }),
+        canManage: access.isOwner,
+      });
+    } catch (error) {
+      res.status(500).json({
+        detail: safeErrorMessage(error, "Project skill pins could not be read"),
+      });
+    }
+  },
+);
+
+skillsRouter.post(
+  "/:skillId/disable",
+  requireAuth,
+  requireRole("TenantAdmin"),
+  async (req, res) => {
+    const tenant = tenantId(res);
+    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+    try {
+      res.json(
+        await disableSkill({
+          tenantId: tenant,
+          skillId: req.params.skillId,
+          disabledBy: String(res.locals.userId),
+        }),
+      );
+    } catch (error) {
+      res.status(409).json({
+        detail: safeErrorMessage(error, "Skill could not be disabled"),
+      });
     }
   },
 );

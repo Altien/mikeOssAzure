@@ -26,6 +26,10 @@ import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
 import { AUTHORITY_TRACE_SYSTEM_PROMPT } from "../altien/authorityTrace/chatTools";
 import { loadSkillChatRuntimeContext } from "../altien/skills/runtime";
 import { SKILL_RESOURCE_TOOLS } from "../altien/skills/resources";
+import {
+    bindExplicitSkillInvocation,
+    parseExplicitSkillInvocation,
+} from "../altien/skills/invocation";
 
 const PROJECT_SYSTEM_PROMPT_EXTRA = `PROJECT CONTEXT:
 You are operating within a project folder that contains a collection of legal documents the user has organised for a single matter. The user's questions will usually refer to one or more documents in this project — your job is to find the relevant files to work on. Use list_documents to see what is available and fetch_documents / read_document to pull in any documents you need before answering.
@@ -104,13 +108,54 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         chatTitle = newChat.title;
     }
 
-    const skillRuntime = await loadSkillChatRuntimeContext({
-        chatId,
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    const lastUserText =
+        typeof lastUser?.content === "string" ? lastUser.content : "";
+    let skillRuntime = await loadSkillChatRuntimeContext({
+        chatId: chatId!,
         projectId,
         db,
     });
-
-    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    const explicitSkillName = lastUserText
+        ? parseExplicitSkillInvocation(lastUserText)
+        : null;
+    if (explicitSkillName && skillRuntime) {
+        if (
+            explicitSkillName.trim().toLocaleLowerCase() !==
+            skillRuntime.displayName.trim().toLocaleLowerCase()
+        ) {
+            return void res.status(409).json({
+                detail: `This chat is already bound to ${skillRuntime.displayName}. Start a new chat to use another skill.`,
+            });
+        }
+    } else if (explicitSkillName && lastUser) {
+        const tenantId = res.locals.principal?.tenantId;
+        if (typeof tenantId !== "string" || !tenantId) {
+            return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+        }
+        try {
+            await bindExplicitSkillInvocation({
+                tenantId,
+                projectId,
+                chatId: chatId!,
+                userId,
+                message: lastUserText,
+                db,
+            });
+            skillRuntime = await loadSkillChatRuntimeContext({
+                chatId: chatId!,
+                projectId,
+                db,
+            });
+        } catch (error) {
+            return void res.status(409).json({
+                detail: safeErrorMessage(
+                    error,
+                    "Explicit skill invocation failed",
+                ),
+            });
+        }
+    }
     if (askInputsResponse) {
         await appendAskInputsResponseToLastAssistantMessage(
             db,

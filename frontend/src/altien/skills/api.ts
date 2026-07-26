@@ -82,6 +82,33 @@ export function runSkillVersion(versionId: string, projectId: string) {
     });
 }
 
+export function setProjectSkillPin(
+    projectId: string,
+    skillId: string,
+    versionId: string,
+) {
+    return apiRequest<{
+        projectId: string;
+        skillId: string;
+        versionId: string;
+        contentHash: string;
+    }>(
+        `/altien/skills/projects/${encodeURIComponent(projectId)}/pins/${encodeURIComponent(skillId)}`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ versionId }),
+        },
+    );
+}
+
+export function disableSkill(skillId: string) {
+    return apiRequest<{ skillId: string; disabledVersionId: string | null }>(
+        `/altien/skills/${encodeURIComponent(skillId)}/disable`,
+        { method: "POST" },
+    );
+}
+
 export type SkillPackageInfo = {
     versionId: string;
     skillName: string;

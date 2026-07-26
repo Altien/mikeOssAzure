@@ -8,6 +8,7 @@ import type { Project } from "@/app/components/shared/types";
 import {
     analyseSkillVersion,
     downloadSkillPackage,
+    disableSkill,
     getGitHubSkillImportPolicy,
     getSkillPackageInfo,
     importSkillZip,
@@ -15,6 +16,7 @@ import {
     listSkills,
     postSkillReviewMessage,
     runSkillVersion,
+    setProjectSkillPin,
     type SkillListItem,
     type SkillPackageInfo,
     type GitHubSkillImportPolicy,
@@ -129,6 +131,36 @@ export function SkillsLibrary() {
             router.push(`/projects/${encodeURIComponent(projectId)}/assistant/chat/${encodeURIComponent(result.chatId)}`);
         } catch (caught) {
             setError(messageFrom(caught));
+            setBusyVersion(null);
+        }
+    }
+
+    async function pin(skill: SkillListItem) {
+        const projectId = projectByVersion[skill.version.id];
+        if (!projectId) {
+            setError("Select a project before pinning a skill version.");
+            return;
+        }
+        setBusyVersion(skill.version.id);
+        setError(null);
+        try {
+            await setProjectSkillPin(projectId, skill.id, skill.version.id);
+        } catch (caught) {
+            setError(messageFrom(caught));
+        } finally {
+            setBusyVersion(null);
+        }
+    }
+
+    async function disable(skill: SkillListItem) {
+        setBusyVersion(skill.version.id);
+        setError(null);
+        try {
+            await disableSkill(skill.id);
+            await refresh();
+        } catch (caught) {
+            setError(messageFrom(caught));
+        } finally {
             setBusyVersion(null);
         }
     }
@@ -342,6 +374,27 @@ export function SkillsLibrary() {
                                         <Play className="h-4 w-4" />
                                         Run skill
                                     </button>
+                                    <button
+                                        type="button"
+                                        disabled={
+                                            busyVersion === skill.version.id ||
+                                            !projectByVersion[skill.version.id]
+                                        }
+                                        onClick={() => void pin(skill)}
+                                        className="rounded-md border border-slate-300 px-3 py-2 text-sm disabled:opacity-50"
+                                    >
+                                        Pin this version
+                                    </button>
+                                    {canManage && (
+                                        <button
+                                            type="button"
+                                            disabled={busyVersion === skill.version.id}
+                                            onClick={() => void disable(skill)}
+                                            className="rounded-md border border-red-200 px-3 py-2 text-sm text-red-700 disabled:opacity-50"
+                                        >
+                                            Disable
+                                        </button>
+                                    )}
                                 </div>
                             )}
                             <div className="mt-4 border-t border-slate-100 pt-4">

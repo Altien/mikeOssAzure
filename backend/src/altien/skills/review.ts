@@ -21,6 +21,7 @@ import {
   dependencyBindings,
   resolvedDependencyBindings,
 } from "./dependencies";
+import { getProjectSkillPin } from "./pins";
 
 type Db = ReturnType<typeof createServerSupabase>;
 
@@ -455,11 +456,25 @@ export async function createSkillRun(args: {
   db?: Db;
 }) {
   const db = args.db ?? createServerSupabase();
-  const context = await loadVersionContext({ ...args, db });
+  let context = await loadVersionContext({ ...args, db });
+  const pin = await getProjectSkillPin({
+    tenantId: args.tenantId,
+    projectId: args.projectId,
+    skillId: String(context.skill.id),
+    db,
+  });
+  const resolvedVersionId = pin?.versionId ?? args.versionId;
+  if (resolvedVersionId !== args.versionId) {
+    context = await loadVersionContext({
+      tenantId: args.tenantId,
+      versionId: resolvedVersionId,
+      db,
+    });
+  }
   if (context.version.state !== "enabled") {
     throw new Error("Only an enabled skill version can start a new run.");
   }
-  const dependencies = await resolvedDependencyBindings(args.versionId, db);
+  const dependencies = await resolvedDependencyBindings(resolvedVersionId, db);
   const chat = requireResult<{ id: string }>(
     await db
       .from("chats")
@@ -478,7 +493,7 @@ export async function createSkillRun(args: {
     tenant_id: args.tenantId,
     project_id: args.projectId,
     root_skill_id: context.skill.id,
-    root_version_id: args.versionId,
+    root_version_id: resolvedVersionId,
     bound_by: args.userId,
     dependency_versions: dependencies,
   });
@@ -489,8 +504,9 @@ export async function createSkillRun(args: {
     skill: {
       id: context.skill.id,
       name: context.skill.display_name,
-      versionId: args.versionId,
+      versionId: resolvedVersionId,
       contentHash: context.version.original_content_hash,
+      pinned: !!pin,
       dependencies,
     },
   };
