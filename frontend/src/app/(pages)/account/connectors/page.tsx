@@ -48,6 +48,7 @@ import {
     startGitHubSkillOAuth,
     type GitHubSkillImportPolicy,
 } from "@/altien/skills/api";
+import { openOAuthPopup, type OAuthPopupMessage } from "./oauthPopup";
 
 type PendingMfaAction =
     | { type: "create" }
@@ -83,28 +84,9 @@ const emptyAddDraft: AddDraft = {
     customHeaders: "",
 };
 
-type McpOAuthPopupMessage = {
-    type?: string;
-    success?: boolean;
+type McpOAuthPopupMessage = OAuthPopupMessage & {
     connectorId?: string;
-    detail?: string;
 };
-
-type GitHubOAuthPopupMessage = {
-    type?: string;
-    success?: boolean;
-    detail?: string;
-};
-
-function getMcpOAuthMessageOrigin(): string {
-    const configuredBase = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-    if (!configuredBase) return window.location.origin;
-    try {
-        return new URL(configuredBase, window.location.origin).origin;
-    } catch {
-        return window.location.origin;
-    }
-}
 
 function parseCustomHeaders(raw: string): Record<string, string> | undefined {
     const text = raw.trim();
@@ -298,73 +280,34 @@ export default function ConnectorsPage() {
     const connectConnectorOAuth = async (
         connectorId: string,
     ): Promise<McpConnectorSummary | null> => {
-        const popup = window.open(
-            "about:blank",
+        const popup = openOAuthPopup(
             "mike_mcp_oauth",
             "popup,width=560,height=720,menubar=no,toolbar=no,location=no,status=no",
         );
         const { authorizationUrl, alreadyAuthorized } =
             await startMcpConnectorOAuth(connectorId);
         if (alreadyAuthorized) {
-            popup?.close();
+            popup.close();
             const refreshed = await refreshMcpConnectorTools(connectorId);
             replaceConnector(refreshed);
             return refreshed;
         }
         if (!authorizationUrl) {
-            popup?.close();
+            popup.close();
             throw new Error("OAuth authorization URL was not returned.");
         }
-        if (!popup) {
-            window.location.assign(authorizationUrl);
-            return null;
-        }
-        popup.location.href = authorizationUrl;
-        const mcpOAuthMessageOrigin = getMcpOAuthMessageOrigin();
 
-        await new Promise<void>((resolve, reject) => {
-            const timeout = window.setTimeout(() => {
-                cleanup();
-                reject(new Error("OAuth authorization timed out."));
-            }, 5 * 60 * 1000);
-            const poll = window.setInterval(() => {
-                if (popup.closed) {
-                    cleanup();
-                    reject(new Error("OAuth authorization window was closed."));
-                }
-            }, 700);
-            const cleanup = () => {
-                window.clearTimeout(timeout);
-                window.clearInterval(poll);
-                window.removeEventListener("message", onMessage);
-            };
-            const onMessage = (event: MessageEvent<McpOAuthPopupMessage>) => {
-                if (event.origin !== mcpOAuthMessageOrigin) return;
-                if (event.data?.type !== "mcp_oauth_result") return;
-                if (
-                    event.data.connectorId &&
-                    event.data.connectorId !== connectorId
-                ) {
-                    return;
-                }
-                const sourceWindow = event.source as Window | null;
-                sourceWindow?.postMessage(
-                    { type: "mcp_oauth_result_ack" },
-                    event.origin,
-                );
-                cleanup();
-                if (event.data.success) {
-                    resolve();
-                    return;
-                }
-                reject(
-                    new Error(
-                        event.data.detail || "OAuth authorization failed.",
-                    ),
-                );
-            };
-            window.addEventListener("message", onMessage);
+        const outcome = await popup.wait<McpOAuthPopupMessage>({
+            authorizationUrl,
+            messageType: "mcp_oauth_result",
+            acknowledgeType: "mcp_oauth_result_ack",
+            accept: (data) =>
+                !data.connectorId || data.connectorId === connectorId,
+            timedOutMessage: "OAuth authorization timed out.",
+            closedMessage: "OAuth authorization window was closed.",
+            failedMessage: "OAuth authorization failed.",
         });
+        if (outcome === "redirected") return null;
 
         const refreshed = await refreshMcpConnectorTools(connectorId);
         replaceConnector(refreshed);
@@ -372,8 +315,7 @@ export default function ConnectorsPage() {
     };
 
     const connectGitHubOAuth = async () => {
-        const popup = window.open(
-            "about:blank",
+        const popup = openOAuthPopup(
             "mike_github_skill_oauth",
             "popup,width=680,height=760,menubar=no,toolbar=no,location=yes,status=no",
         );
@@ -382,55 +324,17 @@ export default function ConnectorsPage() {
             if (!authorizationUrl) {
                 throw new Error("GitHub OAuth authorization URL was not returned.");
             }
-            if (!popup) {
-                window.location.assign(authorizationUrl);
-                return;
-            }
-            popup.location.href = authorizationUrl;
-            const expectedOrigin = getMcpOAuthMessageOrigin();
-            await new Promise<void>((resolve, reject) => {
-                const timeout = window.setTimeout(() => {
-                    cleanup();
-                    reject(new Error("GitHub authorization timed out."));
-                }, 5 * 60 * 1000);
-                const poll = window.setInterval(() => {
-                    if (popup.closed) {
-                        cleanup();
-                        reject(
-                            new Error("GitHub authorization window was closed."),
-                        );
-                    }
-                }, 700);
-                const cleanup = () => {
-                    window.clearTimeout(timeout);
-                    window.clearInterval(poll);
-                    window.removeEventListener("message", onMessage);
-                };
-                const onMessage = (
-                    event: MessageEvent<GitHubOAuthPopupMessage>,
-                ) => {
-                    if (event.origin !== expectedOrigin) return;
-                    if (
-                        event.data?.type !== "github_skill_oauth_result"
-                    ) {
-                        return;
-                    }
-                    cleanup();
-                    if (event.data.success) resolve();
-                    else {
-                        reject(
-                            new Error(
-                                event.data.detail ||
-                                    "GitHub authorization failed.",
-                            ),
-                        );
-                    }
-                };
-                window.addEventListener("message", onMessage);
+            const outcome = await popup.wait({
+                authorizationUrl,
+                messageType: "github_skill_oauth_result",
+                timedOutMessage: "GitHub authorization timed out.",
+                closedMessage: "GitHub authorization window was closed.",
+                failedMessage: "GitHub authorization failed.",
             });
+            if (outcome === "redirected") return;
             setGithubPolicy(await getGitHubSkillImportPolicy());
         } catch (err) {
-            popup?.close();
+            popup.close();
             throw err;
         }
     };

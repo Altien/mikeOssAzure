@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Download, Upload, PackageOpen, Play, ScanSearch } from "lucide-react";
+import { PackageOpen } from "lucide-react";
 import { listProjects } from "@/app/lib/mikeApi";
 import type { Project } from "@/app/components/shared/types";
 import {
@@ -26,9 +26,21 @@ import {
     type SkillPackageInfo,
     type GitHubSkillImportPolicy,
 } from "./api";
+import { messageFrom, useBusyAction } from "./useBusyAction";
+import { ImportPanel } from "./ImportPanel";
+import { ReviewPanel } from "./ReviewPanel";
+import { AdaptationPanel, type DraftArtifact } from "./AdaptationPanel";
+import { RunAndPinPanel } from "./RunAndPinPanel";
+import { PackagesPanel, type SkillPackageKind } from "./PackagesPanel";
 
-function messageFrom(error: unknown) {
-    return error instanceof Error ? error.message : "The request failed.";
+/** Triggers a browser download for an in-memory blob. */
+function downloadBlob(name: string, blob: Blob) {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = name;
+    anchor.click();
+    URL.revokeObjectURL(url);
 }
 
 export function SkillsLibrary() {
@@ -36,12 +48,10 @@ export function SkillsLibrary() {
     const [skills, setSkills] = useState<SkillListItem[]>([]);
     const [canManage, setCanManage] = useState(false);
     const [loading, setLoading] = useState(true);
-    const [importing, setImporting] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [projects, setProjects] = useState<Project[]>([]);
     const [projectByVersion, setProjectByVersion] = useState<Record<string, string>>({});
     const [pendingEnable, setPendingEnable] = useState<Record<string, boolean>>({});
-    const [busyVersion, setBusyVersion] = useState<string | null>(null);
     const [packageInfo, setPackageInfo] = useState<Record<string, SkillPackageInfo>>({});
     const [githubPolicy, setGithubPolicy] =
         useState<GitHubSkillImportPolicy | null>(null);
@@ -53,9 +63,13 @@ export function SkillsLibrary() {
         Record<string, string>
     >({});
     const [draftArtifactByVersion, setDraftArtifactByVersion] = useState<
-        Record<string, { id: string; filename: string } | undefined>
+        Record<string, DraftArtifact | undefined>
     >({});
     const fileInput = useRef<HTMLInputElement>(null);
+
+    const [busyVersion, runForVersion] = useBusyAction<string>(setError);
+    const [importKey, runImport] = useBusyAction<"import">(setError);
+    const importing = importKey !== null;
 
     const refresh = useCallback(async () => {
         setError(null);
@@ -78,167 +92,110 @@ export function SkillsLibrary() {
             .catch(() => setGithubPolicy(null));
     }, [refresh]);
 
-    async function importFile(file: File) {
-        setImporting(true);
-        setError(null);
-        try {
-            await importSkillZip(file);
-            await refresh();
-        } catch (caught) {
-            setError(messageFrom(caught));
-        } finally {
-            setImporting(false);
-            if (fileInput.current) fileInput.current.value = "";
-        }
-    }
+    const importFile = (file: File) =>
+        void runImport(
+            "import",
+            async () => {
+                await importSkillZip(file);
+                await refresh();
+            },
+            {
+                onSettled: () => {
+                    if (fileInput.current) fileInput.current.value = "";
+                },
+            },
+        );
 
-    async function analyse(versionId: string) {
-        setBusyVersion(versionId);
-        setError(null);
-        try {
+    const analyse = (versionId: string) =>
+        void runForVersion(versionId, async () => {
             await analyseSkillVersion(versionId);
             await refresh();
-        } catch (caught) {
-            setError(messageFrom(caught));
-        } finally {
-            setBusyVersion(null);
-        }
-    }
+        });
 
-    async function proposeEnable(versionId: string) {
-        setBusyVersion(versionId);
-        setError(null);
-        try {
+    const proposeEnable = (versionId: string) =>
+        void runForVersion(versionId, async () => {
             const result = await postSkillReviewMessage(versionId, "enable");
-            setPendingEnable((current) => ({ ...current, [versionId]: result.outcome === "proposed" }));
-        } catch (caught) {
-            setError(messageFrom(caught));
-        } finally {
-            setBusyVersion(null);
-        }
-    }
+            setPendingEnable((current) => ({
+                ...current,
+                [versionId]: result.outcome === "proposed",
+            }));
+        });
 
-    async function confirmEnable(versionId: string) {
-        setBusyVersion(versionId);
-        setError(null);
-        try {
+    const confirmEnable = (versionId: string) =>
+        void runForVersion(versionId, async () => {
             await postSkillReviewMessage(versionId, "yes");
             setPendingEnable((current) => ({ ...current, [versionId]: false }));
             await refresh();
-        } catch (caught) {
-            setError(messageFrom(caught));
-        } finally {
-            setBusyVersion(null);
-        }
-    }
+        });
 
-    async function run(skill: SkillListItem) {
+    const run = (skill: SkillListItem) => {
         const projectId = projectByVersion[skill.version.id];
         if (!projectId) {
             setError("Select a project before running a skill.");
             return;
         }
-        setBusyVersion(skill.version.id);
-        setError(null);
-        try {
-            const result = await runSkillVersion(skill.version.id, projectId);
-            router.push(`/projects/${encodeURIComponent(projectId)}/assistant/chat/${encodeURIComponent(result.chatId)}`);
-        } catch (caught) {
-            setError(messageFrom(caught));
-            setBusyVersion(null);
-        }
-    }
+        void runForVersion(
+            skill.version.id,
+            async () => {
+                const result = await runSkillVersion(
+                    skill.version.id,
+                    projectId,
+                );
+                router.push(
+                    `/projects/${encodeURIComponent(projectId)}/assistant/chat/${encodeURIComponent(result.chatId)}`,
+                );
+            },
+            { keepBusyOnSuccess: true },
+        );
+    };
 
-    async function pin(skill: SkillListItem) {
+    const pin = (skill: SkillListItem) => {
         const projectId = projectByVersion[skill.version.id];
         if (!projectId) {
             setError("Select a project before pinning a skill version.");
             return;
         }
-        setBusyVersion(skill.version.id);
-        setError(null);
-        try {
+        void runForVersion(skill.version.id, async () => {
             await setProjectSkillPin(projectId, skill.id, skill.version.id);
-        } catch (caught) {
-            setError(messageFrom(caught));
-        } finally {
-            setBusyVersion(null);
-        }
-    }
+        });
+    };
 
-    async function disable(skill: SkillListItem) {
-        setBusyVersion(skill.version.id);
-        setError(null);
-        try {
+    const disable = (skill: SkillListItem) =>
+        void runForVersion(skill.version.id, async () => {
             await disableSkill(skill.id);
             await refresh();
-        } catch (caught) {
-            setError(messageFrom(caught));
-        } finally {
-            setBusyVersion(null);
-        }
-    }
+        });
 
-    async function showPackages(versionId: string) {
-        setBusyVersion(versionId);
-        setError(null);
-        try {
+    const showPackages = (versionId: string) =>
+        runForVersion(versionId, async () => {
             const info = await getSkillPackageInfo(versionId);
             setPackageInfo((current) => ({ ...current, [versionId]: info }));
-        } catch (caught) {
-            setError(messageFrom(caught));
-        } finally {
-            setBusyVersion(null);
-        }
-    }
+        });
 
-    async function downloadPackage(
-        versionId: string,
-        kind: "original" | "mike" | "developer",
-    ) {
-        setBusyVersion(versionId);
-        setError(null);
-        try {
+    const downloadPackage = (versionId: string, kind: SkillPackageKind) =>
+        void runForVersion(versionId, async () => {
             const result = await downloadSkillPackage(versionId, kind);
-            const url = URL.createObjectURL(result.blob);
-            const anchor = document.createElement("a");
-            anchor.href = url;
-            anchor.download = result.filename;
-            anchor.click();
-            URL.revokeObjectURL(url);
-        } catch (caught) {
-            setError(messageFrom(caught));
-        } finally {
-            setBusyVersion(null);
-        }
-    }
+            downloadBlob(result.filename, result.blob);
+        });
 
-    async function rename(skill: SkillListItem) {
+    const rename = (skill: SkillListItem) => {
         const newDisplayName = renameByVersion[skill.version.id]?.trim();
         if (!newDisplayName) return;
-        setBusyVersion(skill.version.id);
-        setError(null);
-        try {
+        void runForVersion(skill.version.id, async () => {
             await adaptSkillName(skill.version.id, newDisplayName);
             setRenameByVersion((current) => ({
                 ...current,
                 [skill.version.id]: "",
             }));
             await refresh();
-        } catch (caught) {
-            setError(messageFrom(caught));
-        } finally {
-            setBusyVersion(null);
-        }
-    }
+        });
+    };
 
-    async function createDeveloperArtifact(skill: SkillListItem) {
+    const createDeveloperArtifact = (skill: SkillListItem) => {
         const requirement =
             developerRequirementByVersion[skill.version.id]?.trim();
         if (!requirement) return;
-        setBusyVersion(skill.version.id);
-        setError(null);
-        try {
+        void runForVersion(skill.version.id, async () => {
             const artifact = await createCleanRoomDeveloperArtifact(
                 skill.version.id,
                 requirement,
@@ -255,58 +212,29 @@ export function SkillsLibrary() {
                 [skill.version.id]: "",
             }));
             await showPackages(skill.version.id);
-        } catch (caught) {
-            setError(messageFrom(caught));
-        } finally {
-            setBusyVersion(null);
-        }
-    }
+        });
+    };
 
-    async function reviewArtifact(
-        versionId: string,
-        artifact: { id: string; filename: string },
-    ) {
-        setBusyVersion(versionId);
-        setError(null);
-        try {
-            const result = await downloadCleanRoomDeveloperArtifact(artifact.id);
-            const url = URL.createObjectURL(result.blob);
-            const anchor = document.createElement("a");
-            anchor.href = url;
-            anchor.download = result.filename;
-            anchor.click();
-            URL.revokeObjectURL(url);
-        } catch (caught) {
-            setError(messageFrom(caught));
-        } finally {
-            setBusyVersion(null);
-        }
-    }
+    const reviewArtifact = (versionId: string, artifact: DraftArtifact) =>
+        void runForVersion(versionId, async () => {
+            const result = await downloadCleanRoomDeveloperArtifact(
+                artifact.id,
+            );
+            downloadBlob(result.filename, result.blob);
+        });
 
-    async function approveArtifact(
-        versionId: string,
-        artifact: { id: string; filename: string },
-    ) {
-        setBusyVersion(versionId);
-        setError(null);
-        try {
+    const approveArtifact = (versionId: string, artifact: DraftArtifact) =>
+        void runForVersion(versionId, async () => {
             await approveCleanRoomDeveloperArtifact(artifact.id);
             setDraftArtifactByVersion((current) => ({
                 ...current,
                 [versionId]: undefined,
             }));
             await showPackages(versionId);
-        } catch (caught) {
-            setError(messageFrom(caught));
-        } finally {
-            setBusyVersion(null);
-        }
-    }
+        });
 
-    async function checkUpdate(skill: SkillListItem) {
-        setBusyVersion(skill.version.id);
-        setError(null);
-        try {
+    const checkUpdate = (skill: SkillListItem) =>
+        void runForVersion(skill.version.id, async () => {
             const result = await checkGitHubSkillUpdate(skill.version.id);
             setUpdateByVersion((current) => ({
                 ...current,
@@ -314,75 +242,29 @@ export function SkillsLibrary() {
                     ? `Update available at ${result.currentCommitSha.slice(0, 12)}. Import the GitHub URL to create a new draft version.`
                     : "Tracked GitHub ref is unchanged.",
             }));
-        } catch (caught) {
-            setError(messageFrom(caught));
-        } finally {
-            setBusyVersion(null);
-        }
-    }
+        });
 
-    async function importGitHub() {
+    const importGitHub = () => {
         if (!githubUrl.trim()) return;
-        setImporting(true);
-        setError(null);
-        try {
+        void runImport("import", async () => {
             await importSkillFromGitHub(githubUrl.trim());
             setGithubUrl("");
             await refresh();
-        } catch (caught) {
-            setError(messageFrom(caught));
-        } finally {
-            setImporting(false);
-        }
-    }
+        });
+    };
 
     return (
         <main className="mx-auto w-full max-w-6xl px-6 py-8">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                    <h1 className="font-serif text-3xl text-slate-950">Skills</h1>
-                    <p className="mt-2 max-w-2xl text-sm text-slate-600">
-                        Reusable instruction packages available to project chats.
-                    </p>
-                </div>
-                {canManage && (
-                    <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-slate-950 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">
-                        <Upload className="h-4 w-4" />
-                        {importing ? "Importing…" : "Import ZIP"}
-                        <input
-                            ref={fileInput}
-                            className="sr-only"
-                            type="file"
-                            accept=".zip,application/zip"
-                            disabled={importing}
-                            onChange={(event) => {
-                                const file = event.target.files?.[0];
-                                if (file) void importFile(file);
-                            }}
-                        />
-                    </label>
-                )}
-            </div>
-
-            {canManage && githubPolicy?.effectiveEnabled && (
-                <div className="mt-6 flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-4">
-                    <input
-                        value={githubUrl}
-                        onChange={(event) => setGithubUrl(event.target.value)}
-                        placeholder="https://github.com/owner/repository/tree/ref/path"
-                        aria-label="GitHub skill URL"
-                        className="min-w-72 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
-                    />
-                    <button
-                        type="button"
-                        disabled={importing || !githubUrl.trim()}
-                        onClick={() => void importGitHub()}
-                        className="rounded-md border border-slate-300 px-4 py-2 text-sm disabled:opacity-50"
-                    >
-                        Import from GitHub
-                    </button>
-                </div>
-            )}
+            <ImportPanel
+                canManage={canManage}
+                importing={importing}
+                fileInput={fileInput}
+                onImportFile={importFile}
+                githubPolicy={githubPolicy}
+                githubUrl={githubUrl}
+                onGithubUrlChange={setGithubUrl}
+                onImportGitHub={importGitHub}
+            />
 
             {error && (
                 <div role="alert" className="mt-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
@@ -426,322 +308,89 @@ export function SkillsLibrary() {
                             </p>
                             {canManage && (
                                 <div className="mt-4 border-t border-slate-100 pt-4">
-                                    <p className="text-xs text-slate-500">
-                                        Analysis: {skill.version.analysisState}
-                                        {skill.version.analysisModel
-                                            ? ` · ${skill.version.analysisModel}`
-                                            : ""}
-                                    </p>
-                                    {skill.version.state === "draft" &&
-                                        skill.version.analysisState !== "succeeded" && (
-                                            <button
-                                                type="button"
-                                                disabled={busyVersion === skill.version.id}
-                                                onClick={() => void analyse(skill.version.id)}
-                                                className="mt-3 inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-                                            >
-                                                <ScanSearch className="h-4 w-4" />
-                                                {skill.version.analysisState === "failed"
-                                                    ? "Retry analysis"
-                                                    : "Analyse"}
-                                            </button>
-                                        )}
-                                    {skill.version.state === "draft" &&
-                                        skill.version.analysisState === "succeeded" &&
-                                        (!pendingEnable[skill.version.id] ? (
-                                            <button
-                                                type="button"
-                                                disabled={busyVersion === skill.version.id}
-                                                onClick={() => void proposeEnable(skill.version.id)}
-                                                className="mt-3 rounded-md border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-                                            >
-                                                Propose enable
-                                            </button>
-                                        ) : (
-                                            <div className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
-                                                <p>Confirm the exact pending enable action.</p>
-                                                <button
-                                                    type="button"
-                                                    disabled={busyVersion === skill.version.id}
-                                                    onClick={() => void confirmEnable(skill.version.id)}
-                                                    className="mt-2 rounded-md bg-slate-950 px-3 py-2 text-white disabled:opacity-50"
-                                                >
-                                                    Confirm enable
-                                                </button>
-                                            </div>
-                                        ))}
-                                    {skill.version.state === "draft" && (
-                                        <div className="mt-3 flex flex-wrap gap-2">
-                                            <input
-                                                value={
-                                                    renameByVersion[
-                                                        skill.version.id
-                                                    ] ?? ""
-                                                }
-                                                onChange={(event) =>
-                                                    setRenameByVersion(
-                                                        (current) => ({
-                                                            ...current,
-                                                            [skill.version.id]:
-                                                                event.target.value,
-                                                        }),
-                                                    )
-                                                }
-                                                placeholder={
-                                                    skill.isUpdate
-                                                        ? "Import update as…"
-                                                        : "Rename as…"
-                                                }
-                                                aria-label={`Rename ${skill.displayName}`}
-                                                className="min-w-48 rounded-md border border-slate-300 px-3 py-2 text-sm"
-                                            />
-                                            <button
-                                                type="button"
-                                                disabled={
-                                                    busyVersion ===
-                                                        skill.version.id ||
-                                                    !renameByVersion[
-                                                        skill.version.id
-                                                    ]?.trim()
-                                                }
-                                                onClick={() => void rename(skill)}
-                                                className="rounded-md border border-slate-300 px-3 py-2 text-sm disabled:opacity-50"
-                                            >
-                                                Apply to adapted copy
-                                            </button>
-                                        </div>
-                                    )}
-                                    {skill.version.analysisState ===
-                                        "succeeded" && (
-                                        <div className="mt-3 flex flex-wrap gap-2">
-                                            <input
-                                                value={
-                                                    developerRequirementByVersion[
-                                                        skill.version.id
-                                                    ] ?? ""
-                                                }
-                                                onChange={(event) =>
-                                                    setDeveloperRequirementByVersion(
-                                                        (current) => ({
-                                                            ...current,
-                                                            [skill.version.id]:
-                                                                event.target.value,
-                                                        }),
-                                                    )
-                                                }
-                                                placeholder="Missing executable or local MCP"
-                                                aria-label={`Clean-room requirement for ${skill.displayName}`}
-                                                className="min-w-64 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
-                                            />
-                                            <button
-                                                type="button"
-                                                disabled={
-                                                    busyVersion ===
-                                                        skill.version.id ||
-                                                    !developerRequirementByVersion[
-                                                        skill.version.id
-                                                    ]?.trim()
-                                                }
-                                                onClick={() =>
-                                                    void createDeveloperArtifact(
-                                                        skill,
-                                                    )
-                                                }
-                                                className="rounded-md border border-slate-300 px-3 py-2 text-sm disabled:opacity-50"
-                                            >
-                                                Generate clean-room brief
-                                            </button>
-                                        </div>
-                                    )}
-                                    {skill.version.sourceKind === "github" && (
-                                        <div className="mt-3">
-                                            <button
-                                                type="button"
-                                                disabled={
-                                                    busyVersion ===
-                                                    skill.version.id
-                                                }
-                                                onClick={() =>
-                                                    void checkUpdate(skill)
-                                                }
-                                                className="rounded-md border border-slate-300 px-3 py-2 text-sm disabled:opacity-50"
-                                            >
-                                                Check GitHub update
-                                            </button>
-                                            {updateByVersion[
+                                    <ReviewPanel
+                                        skill={skill}
+                                        busy={busyVersion === skill.version.id}
+                                        pendingEnable={
+                                            !!pendingEnable[skill.version.id]
+                                        }
+                                        onAnalyse={analyse}
+                                        onProposeEnable={proposeEnable}
+                                        onConfirmEnable={confirmEnable}
+                                    />
+                                    <AdaptationPanel
+                                        skill={skill}
+                                        busy={busyVersion === skill.version.id}
+                                        renameValue={
+                                            renameByVersion[skill.version.id] ??
+                                            ""
+                                        }
+                                        onRenameChange={(value) =>
+                                            setRenameByVersion((current) => ({
+                                                ...current,
+                                                [skill.version.id]: value,
+                                            }))
+                                        }
+                                        onRename={rename}
+                                        requirementValue={
+                                            developerRequirementByVersion[
                                                 skill.version.id
-                                            ] && (
-                                                <p className="mt-2 text-xs text-slate-600">
-                                                    {
-                                                        updateByVersion[
-                                                            skill.version.id
-                                                        ]
-                                                    }
-                                                </p>
-                                            )}
-                                        </div>
-                                    )}
-                                    {draftArtifactByVersion[
-                                        skill.version.id
-                                    ] && (
-                                        <div className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
-                                            <p>
-                                                Review the downloaded clean-room
-                                                brief before approving it for the
-                                                developer package.
-                                            </p>
-                                            <div className="mt-2 flex gap-2">
-                                                <button
-                                                    type="button"
-                                                    onClick={() =>
-                                                        void reviewArtifact(
-                                                            skill.version.id,
-                                                            draftArtifactByVersion[
-                                                                skill.version.id
-                                                            ]!,
-                                                        )
-                                                    }
-                                                    className="rounded-md border border-amber-300 px-3 py-2"
-                                                >
-                                                    Download draft
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() =>
-                                                        void approveArtifact(
-                                                            skill.version.id,
-                                                            draftArtifactByVersion[
-                                                                skill.version.id
-                                                            ]!,
-                                                        )
-                                                    }
-                                                    className="rounded-md bg-slate-950 px-3 py-2 text-white"
-                                                >
-                                                    Approve reviewed brief
-                                                </button>
-                                            </div>
-                                        </div>
-                                    )}
+                                            ] ?? ""
+                                        }
+                                        onRequirementChange={(value) =>
+                                            setDeveloperRequirementByVersion(
+                                                (current) => ({
+                                                    ...current,
+                                                    [skill.version.id]: value,
+                                                }),
+                                            )
+                                        }
+                                        onCreateDeveloperArtifact={
+                                            createDeveloperArtifact
+                                        }
+                                        updateMessage={
+                                            updateByVersion[skill.version.id]
+                                        }
+                                        onCheckUpdate={checkUpdate}
+                                        draftArtifact={
+                                            draftArtifactByVersion[
+                                                skill.version.id
+                                            ]
+                                        }
+                                        onReviewArtifact={reviewArtifact}
+                                        onApproveArtifact={approveArtifact}
+                                    />
                                 </div>
                             )}
                             {skill.version.state === "enabled" && (
-                                <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4">
-                                    <select
-                                        aria-label={`Project for ${skill.displayName}`}
-                                        value={projectByVersion[skill.version.id] ?? ""}
-                                        onChange={(event) =>
-                                            setProjectByVersion((current) => ({
-                                                ...current,
-                                                [skill.version.id]: event.target.value,
-                                            }))
-                                        }
-                                        className="min-w-44 rounded-md border border-slate-300 px-3 py-2 text-sm"
-                                    >
-                                        <option value="">Select project…</option>
-                                        {projects.map((project) => (
-                                            <option key={project.id} value={project.id}>
-                                                {project.name}
-                                            </option>
-                                        ))}
-                                    </select>
-                                    <button
-                                        type="button"
-                                        disabled={busyVersion === skill.version.id}
-                                        onClick={() => void run(skill)}
-                                        className="inline-flex items-center gap-2 rounded-md bg-slate-950 px-3 py-2 text-sm text-white disabled:opacity-50"
-                                    >
-                                        <Play className="h-4 w-4" />
-                                        Run skill
-                                    </button>
-                                    <button
-                                        type="button"
-                                        disabled={
-                                            busyVersion === skill.version.id ||
-                                            !projectByVersion[skill.version.id]
-                                        }
-                                        onClick={() => void pin(skill)}
-                                        className="rounded-md border border-slate-300 px-3 py-2 text-sm disabled:opacity-50"
-                                    >
-                                        Pin this version
-                                    </button>
-                                    {canManage && (
-                                        <button
-                                            type="button"
-                                            disabled={busyVersion === skill.version.id}
-                                            onClick={() => void disable(skill)}
-                                            className="rounded-md border border-red-200 px-3 py-2 text-sm text-red-700 disabled:opacity-50"
-                                        >
-                                            Disable
-                                        </button>
-                                    )}
-                                </div>
+                                <RunAndPinPanel
+                                    skill={skill}
+                                    busy={busyVersion === skill.version.id}
+                                    canManage={canManage}
+                                    projects={projects}
+                                    selectedProjectId={
+                                        projectByVersion[skill.version.id] ?? ""
+                                    }
+                                    onProjectChange={(projectId) =>
+                                        setProjectByVersion((current) => ({
+                                            ...current,
+                                            [skill.version.id]: projectId,
+                                        }))
+                                    }
+                                    onRun={run}
+                                    onPin={pin}
+                                    onDisable={disable}
+                                />
                             )}
-                            <div className="mt-4 border-t border-slate-100 pt-4">
-                                {!packageInfo[skill.version.id] ? (
-                                    <button
-                                        type="button"
-                                        disabled={busyVersion === skill.version.id}
-                                        onClick={() => void showPackages(skill.version.id)}
-                                        className="text-sm text-slate-600 underline-offset-4 hover:underline"
-                                    >
-                                        Package downloads
-                                    </button>
-                                ) : (
-                                    <div className="text-sm text-slate-600">
-                                        <p>
-                                            {packageInfo[skill.version.id].licencePaths.length
-                                                ? `Includes licence files: ${packageInfo[
-                                                      skill.version.id
-                                                  ].licencePaths.join(", ")}`
-                                                : "No licence file was identified in the package."}
-                                        </p>
-                                        <div className="mt-3 flex flex-wrap gap-2">
-                                            <button
-                                                type="button"
-                                                onClick={() =>
-                                                    void downloadPackage(
-                                                        skill.version.id,
-                                                        "original",
-                                                    )
-                                                }
-                                                className="inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2"
-                                            >
-                                                <Download className="h-4 w-4" />
-                                                Original ZIP
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() =>
-                                                    void downloadPackage(
-                                                        skill.version.id,
-                                                        "mike",
-                                                    )
-                                                }
-                                                className="inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2"
-                                            >
-                                                <Download className="h-4 w-4" />
-                                                Mike package
-                                            </button>
-                                            {packageInfo[skill.version.id]
-                                                .developerPackageAvailable && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() =>
-                                                        void downloadPackage(
-                                                            skill.version.id,
-                                                            "developer",
-                                                        )
-                                                    }
-                                                    className="inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2"
-                                                >
-                                                    <Download className="h-4 w-4" />
-                                                    Developer package
-                                                </button>
-                                            )}
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
+                            <PackagesPanel
+                                skill={skill}
+                                busy={busyVersion === skill.version.id}
+                                packageInfo={packageInfo[skill.version.id]}
+                                onShowPackages={(versionId) =>
+                                    void showPackages(versionId)
+                                }
+                                onDownloadPackage={downloadPackage}
+                            />
                         </li>
                     ))}
                 </ul>
