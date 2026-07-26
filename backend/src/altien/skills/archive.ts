@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import JSZip from "jszip";
+import {
+  detectMcpRequirements,
+  type DetectedMcpRequirement,
+} from "./mcpRequirements";
 
 export const SKILL_IMPORT_LIMITS = {
   compressedBytes: 1 * 1024 * 1024,
@@ -38,6 +42,7 @@ export type ValidatedSkillSnapshot = {
   expandedBytes: number;
   licencePaths: string[];
   warnings: string[];
+  mcpRequirements?: DetectedMcpRequirement[];
 };
 
 export class SkillArchiveValidationError extends Error {
@@ -440,5 +445,6 @@ export async function validateSkillZip(
     expandedBytes,
     licencePaths,
     warnings: [],
+    mcpRequirements: detectMcpRequirements(files),
   };
 }

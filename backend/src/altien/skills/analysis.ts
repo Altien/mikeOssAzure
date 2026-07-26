@@ -131,6 +131,7 @@ export async function analyseSkillInstructions(args: {
   description: string;
   instructions: string;
   deterministicFindings: unknown;
+  toolCatalogue?: unknown;
   model: string;
   apiKeys?: UserApiKeys;
   complete?: typeof completeText;
@@ -140,6 +141,7 @@ export async function analyseSkillInstructions(args: {
     description: args.description,
     instructions: args.instructions,
     deterministicFindings: args.deterministicFindings,
+    availableToolSchemas: args.toolCatalogue ?? [],
   });
   const inputHash = createHash("sha256").update(input).digest("hex");
   const call = args.complete ?? completeText;

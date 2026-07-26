@@ -387,6 +387,7 @@ export async function storeZipSkillSnapshot(args: {
         entrypoints: args.snapshot.skills.map((skill) => skill.entrypointPath),
         licence_paths: args.snapshot.licencePaths,
         warnings: args.snapshot.warnings,
+        mcp_requirements: args.snapshot.mcpRequirements ?? [],
       },
       tree_hash: args.snapshot.treeHash,
       expanded_bytes: args.snapshot.expandedBytes,
@@ -437,6 +438,7 @@ export async function storeZipSkillSnapshot(args: {
         deterministic_analysis: {
           licence_paths: skill.licencePaths,
           warnings: args.snapshot.warnings,
+          mcp_requirements: args.snapshot.mcpRequirements ?? [],
         },
       });
       throwOnDbError(versionRow, "Failed to create imported skill version.");

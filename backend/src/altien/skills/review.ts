@@ -12,6 +12,11 @@ import {
   isAffirmativeAuthorization,
   isRejection,
 } from "./actions";
+import {
+  firstPartyToolCatalogue,
+  inspectMcpToolCatalogue,
+  resolveCapabilityContractWithLlm,
+} from "./capabilities";
 
 type Db = ReturnType<typeof createServerSupabase>;
 
@@ -138,6 +143,7 @@ export async function analyseSkillVersion(args: {
     description: string;
     instructions: string;
     deterministicFindings: unknown;
+    toolCatalogue?: unknown;
     model: string;
     apiKeys?: Awaited<ReturnType<typeof getUserModelSettings>>["api_keys"];
   }) => Promise<SkillAnalysisArtifact>;
@@ -168,12 +174,17 @@ export async function analyseSkillVersion(args: {
     );
     const settingsLoader = args.settings ?? getUserModelSettings;
     const settings = await settingsLoader(args.userId, db);
+    const toolCatalogue = [
+      ...firstPartyToolCatalogue(),
+      ...(await inspectMcpToolCatalogue(args.userId, db)),
+    ];
     const analyser = args.analyse ?? analyseSkillInstructions;
     const artifact = await analyser({
       name: String(context.skill.display_name),
       description: String(context.skill.description),
       instructions,
       deterministicFindings: context.version.deterministic_analysis ?? {},
+      toolCatalogue,
       model: settings.fast_model,
       apiKeys: settings.api_keys,
     });
@@ -216,26 +227,6 @@ export async function analyseSkillVersion(args: {
       .eq("id", String(context.snapshot.id));
     throw error;
   }
-}
-
-function executionContract(version: Record<string, unknown>) {
-  const analysis = (version.generated_analysis ?? {}) as {
-    capabilityRequirements?: Array<Record<string, unknown>>;
-  };
-  const requirements = analysis.capabilityRequirements ?? [];
-  return {
-    projectRequired: true,
-    projectRead: requirements.some(
-      (item) => item.kind === "project_read" && item.required === true,
-    ),
-    approvedToolNames: requirements
-      .filter(
-        (item) =>
-          item.kind === "first_party_tool" && item.required === true,
-      )
-      .map((item) => String(item.name)),
-    approvedAt: null,
-  };
 }
 
 export async function postSkillReviewMessage(args: {
@@ -379,10 +370,27 @@ export async function postSkillReviewMessage(args: {
       "Unresolved identity references must be reviewed before enablement.",
     );
   }
+  const settings = await getUserModelSettings(args.userId, db);
+  const contract = await resolveCapabilityContractWithLlm({
+    analysis: context.version.generated_analysis as never,
+    catalogue: [
+      ...firstPartyToolCatalogue(),
+      ...(await inspectMcpToolCatalogue(args.userId, db)),
+    ],
+    model: settings.fast_model,
+    apiKeys: settings.api_keys,
+  });
+  if (contract.blockers.length > 0) {
+    throw new Error(
+      `Required capabilities are missing or unavailable: ${contract.blockers
+        .map((blocker) => blocker.requirement.name)
+        .join(", ")}.`,
+    );
+  }
   const action = createEnableAction({
     versionId: args.versionId,
     analysisInputHash: String(context.version.analysis_input_hash),
-    executionContract: executionContract(context.version),
+    executionContract: contract,
   });
   const actionMessageId = await addMessage({
     conversationId,
