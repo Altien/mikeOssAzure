@@ -31,6 +31,11 @@ import {
     moveDocumentToFolder,
     moveSubfolderToFolder,
 } from "@/app/lib/mikeApi";
+import {
+    getChatSkillBinding,
+    upgradeChatSkill,
+    type ChatSkillBinding,
+} from "@/altien/skillRuntime/api";
 import { useAssistantChat } from "@/app/hooks/useAssistantChat";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { UserMessage } from "@/app/components/assistant/UserMessage";
@@ -223,6 +228,16 @@ export default function ProjectAssistantChatClient() {
     const [skillBinding, setSkillBinding] = useState<
         ChatDetailOut["skillBinding"]
     >(null);
+    // The bound skill's upgrade state. Mike never applies an upgrade on its
+    // own: this only records that a newer enabled version exists so the member
+    // can choose it.
+    const [skillUpgrade, setSkillUpgrade] = useState<
+        ChatSkillBinding["availableUpgrade"]
+    >(null);
+    const [upgradingSkill, setUpgradingSkill] = useState(false);
+    const [skillUpgradeError, setSkillUpgradeError] = useState<string | null>(
+        null,
+    );
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
     const [chatLoaded, setChatLoaded] = useState(false);
     const [creatingChat, setCreatingChat] = useState(false);
@@ -365,6 +380,52 @@ export default function ProjectAssistantChatClient() {
             .catch(() => router.replace(`/projects/${projectId}?tab=assistant`))
             .finally(() => setChatLoaded(true));
     }, [chatId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Only a bound chat asks whether a newer enabled version exists.
+    useEffect(() => {
+        if (!projectId || !chatId || !skillBinding) return;
+        let cancelled = false;
+        getChatSkillBinding(projectId, chatId)
+            .then(({ binding }) => {
+                if (!cancelled)
+                    setSkillUpgrade(binding?.availableUpgrade ?? null);
+            })
+            .catch(() => {});
+        return () => {
+            cancelled = true;
+        };
+    }, [projectId, chatId, skillBinding]);
+
+    const handleUpgradeSkill = useCallback(async () => {
+        if (!projectId || !chatId || !skillUpgrade) return;
+        setUpgradingSkill(true);
+        setSkillUpgradeError(null);
+        try {
+            const upgraded = await upgradeChatSkill(
+                projectId,
+                chatId,
+                skillUpgrade.versionId,
+            );
+            setSkillBinding((current) =>
+                current
+                    ? {
+                          ...current,
+                          versionId: upgraded.versionId,
+                          contentHash: upgraded.contentHash,
+                      }
+                    : current,
+            );
+            setSkillUpgrade(null);
+        } catch (error) {
+            setSkillUpgradeError(
+                error instanceof Error
+                    ? error.message
+                    : "The skill could not be upgraded.",
+            );
+        } finally {
+            setUpgradingSkill(false);
+        }
+    }, [projectId, chatId, skillUpgrade]);
 
     useEffect(() => {
         const match = chats?.find((c) => c.id === chatId);
@@ -882,6 +943,34 @@ export default function ProjectAssistantChatClient() {
                     </button>
                 </div>
             </div>
+
+            {/* Explicit, visible skill upgrade. Never automatic. */}
+            {skillBinding && skillUpgrade && (
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-violet-100 bg-violet-50 px-4 py-2 text-xs text-violet-800">
+                    <span>
+                        <strong>{skillBinding.displayName}</strong> has a newer
+                        approved version. This chat keeps running version{" "}
+                        {skillBinding.contentHash.slice(0, 8)} until you upgrade
+                        it.
+                        {skillUpgradeError && (
+                            <span className="ml-2 text-red-600">
+                                {skillUpgradeError}
+                            </span>
+                        )}
+                    </span>
+                    <button
+                        onClick={handleUpgradeSkill}
+                        disabled={upgradingSkill}
+                        title={`Upgrade this chat to version ${skillUpgrade.versionId} (content ${skillUpgrade.contentHash})`}
+                        className="flex items-center gap-1 rounded-full bg-violet-600 px-3 py-1 text-xs text-white hover:bg-violet-700 transition-colors disabled:opacity-40"
+                    >
+                        {upgradingSkill && (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                        )}
+                        Upgrade
+                    </button>
+                </div>
+            )}
 
             {/* Three-panel body */}
             <div className="flex flex-1 min-h-0 border-t border-gray-200 overflow-hidden">

@@ -310,6 +310,58 @@ describe("createCleanRoomDeveloperArtifact", () => {
     expect(result.reviewPayloadHash).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  // Spec: clean-room analysis may follow explicit github.com links through the
+  // gated acquisition service. With the gate closed the brief is still
+  // produced, and the skip is recorded in the artifact's provenance rather
+  // than failing or being silently dropped.
+  it("records a skipped GitHub source link when acquisition is gated off", async () => {
+    delete process.env.ALLOW_GITHUB_SKILL_IMPORTS;
+    uploadFileMock.mockReset();
+    uploadFileMock.mockResolvedValue(undefined);
+    downloadFileMock.mockImplementation(async (path: string) =>
+      new TextEncoder().encode(
+        path === "blob/unreviewed-version"
+          ? hiddenSource
+          : "ported from https://github.com/example/upstream/tree/main/tools",
+      ).buffer,
+    );
+    getUserModelSettingsMock.mockResolvedValue({
+      fast_model: "gpt-5.4-lite",
+      api_keys: {},
+    });
+    generateCleanRoomBriefMock.mockResolvedValue({
+      markdown: "# Brief\n\nAccepts a query and returns bounded records.\n",
+      provenance: { provider: "openai", model: "gpt-5.4-lite", schemaVersion: 1 },
+    });
+    const fake = developerArtifactDb();
+
+    const result = await createCleanRoomDeveloperArtifact({
+      tenantId: "tenant-1",
+      versionId: "version-1",
+      requirementName: "lookup_records",
+      sourcePaths: ["tool/reviewed.ts"],
+      createdBy: "admin-1",
+      db: fake.db as never,
+    });
+
+    expect(result.state).toBe("draft");
+    expect(result.generatorProvenance).toMatchObject({
+      linkedGitHubSources: [
+        {
+          url: "https://github.com/example/upstream/tree/main/tools",
+          status: "skipped_gate_denied",
+        },
+      ],
+    });
+    expect(
+      fake.callsFor("altien_skill_developer_artifacts", "insert")[0].payload,
+    ).toMatchObject({
+      generator_provenance: {
+        linkedGitHubSources: [{ status: "skipped_gate_denied" }],
+      },
+    });
+  });
+
   it("leaves no DMS rows behind when the tree cannot be written", async () => {
     uploadFileMock.mockReset();
     deleteFileMock.mockReset();

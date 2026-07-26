@@ -9,7 +9,10 @@ vi.mock("../../lib/storage", () => ({
   downloadFile: downloadFileMock,
 }));
 
-import { loadSkillChatRuntimeContext } from "./runtime";
+import {
+  getSkillChatBindingMetadata,
+  loadSkillChatRuntimeContext,
+} from "./runtime";
 
 describe("loadSkillChatRuntimeContext", () => {
   it("loads the exact bound version even after later disablement", async () => {
@@ -100,6 +103,67 @@ describe("loadSkillChatRuntimeContext", () => {
     });
     expect(result?.systemPrompt).toContain("Read the selected document.");
     expect(result?.systemPrompt).not.toContain("name: Reader");
+  });
+
+  it("reports the documents the run was scoped to", async () => {
+    downloadFileMock.mockResolvedValue(
+      new TextEncoder().encode(
+        "---\nname: Reader\n---\nRead the selected document.",
+      ).buffer,
+    );
+    const fake = makeFakeDb((call) => {
+      if (call.table === "altien_chat_skill_bindings") {
+        return {
+          data: [{
+            root_skill_id: "skill-1",
+            root_version_id: "version-1",
+            selected_document_ids: ["doc-a", "doc-b", 7],
+          }],
+          error: null,
+        };
+      }
+      if (call.table === "altien_skill_versions") {
+        return {
+          data: [{
+            id: "version-1",
+            snapshot_id: "snapshot-1",
+            entrypoint_path: "SKILL.md",
+            original_content_hash: "content-hash",
+            approved_execution_contract: { projectRead: true },
+          }],
+          error: null,
+        };
+      }
+      if (call.table === "altien_skills") {
+        return {
+          data: [{ id: "skill-1", display_name: "Reader" }],
+          error: null,
+        };
+      }
+      if (call.table === "altien_skill_import_snapshots") {
+        return {
+          data: [{
+            manifest: {
+              files: [{ path: "SKILL.md", document_version_id: "dv-1" }],
+            },
+          }],
+          error: null,
+        };
+      }
+      if (call.table === "document_versions") {
+        return { data: [{ storage_path: "skills/version-1.md" }], error: null };
+      }
+      return { data: [], error: null };
+    });
+
+    const result = await loadSkillChatRuntimeContext({
+      chatId: "chat-scoped",
+      projectId: "project-1",
+      db: fake.db as never,
+    });
+
+    expect(result?.selectedDocumentIds).toEqual(["doc-a", "doc-b"]);
+    expect(result?.systemPrompt).toContain("Project reads are scoped to the 2");
   });
 
   it("returns null for an ordinary unbound chat", async () => {
@@ -314,5 +378,88 @@ describe("loadSkillChatRuntimeContext", () => {
         db: fake.db as never,
       }),
     ).rejects.toThrow("content hash changed");
+  });
+});
+
+describe("getSkillChatBindingMetadata", () => {
+  function makeBindingDb(options: {
+    currentVersionId: string;
+    targetState?: string;
+  }) {
+    return makeFakeDb((call) => {
+      const id = call.filters.find((filter) => filter[1] === "id")?.[2];
+      if (call.table === "altien_chat_skill_bindings") {
+        return {
+          data: [{
+            chat_id: "chat-1",
+            tenant_id: "tenant-1",
+            project_id: "project-1",
+            root_skill_id: "skill-1",
+            root_version_id: "version-1",
+            dependency_versions: [],
+            selected_document_ids: ["doc-a"],
+          }],
+          error: null,
+        };
+      }
+      if (call.table === "altien_skills") {
+        return {
+          data: [{
+            id: "skill-1",
+            display_name: "Reader",
+            current_version_id: options.currentVersionId,
+          }],
+          error: null,
+        };
+      }
+      if (call.table === "altien_project_skill_pins") {
+        return { data: [], error: null };
+      }
+      if (call.table === "altien_skill_versions") {
+        return {
+          data: [{
+            id,
+            skill_id: "skill-1",
+            state: id === "version-1" ? "enabled" : (options.targetState ?? "enabled"),
+            original_content_hash: `hash-${String(id)}`,
+          }],
+          error: null,
+        };
+      }
+      return { data: [], error: null };
+    });
+  }
+
+  it("surfaces a newer enabled version without changing the binding", async () => {
+    const fake = makeBindingDb({ currentVersionId: "version-2" });
+    const metadata = await getSkillChatBindingMetadata({
+      chatId: "chat-1",
+      db: fake.db as never,
+    });
+
+    expect(metadata).toMatchObject({
+      versionId: "version-1",
+      contentHash: "hash-version-1",
+      selectedDocumentIds: ["doc-a"],
+      availableUpgrade: { versionId: "version-2", contentHash: "hash-version-2" },
+    });
+    expect(fake.callsFor("altien_chat_skill_bindings", "update")).toHaveLength(0);
+  });
+
+  it("offers no upgrade when the chat already runs the current version", async () => {
+    const fake = makeBindingDb({ currentVersionId: "version-1" });
+    await expect(
+      getSkillChatBindingMetadata({ chatId: "chat-1", db: fake.db as never }),
+    ).resolves.toMatchObject({ availableUpgrade: null });
+  });
+
+  it("offers no upgrade when the newer version is not enabled", async () => {
+    const fake = makeBindingDb({
+      currentVersionId: "version-2",
+      targetState: "draft",
+    });
+    await expect(
+      getSkillChatBindingMetadata({ chatId: "chat-1", db: fake.db as never }),
+    ).resolves.toMatchObject({ availableUpgrade: null });
   });
 });

@@ -24,11 +24,15 @@ import {
 import { checkProjectAccess } from "../lib/access";
 import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
 import { AUTHORITY_TRACE_SYSTEM_PROMPT } from "../altien/authorityTrace/chatTools";
-import { loadSkillChatRuntimeContext } from "../altien/skills/runtime";
+import {
+    getSkillChatBindingMetadata,
+    loadSkillChatRuntimeContext,
+} from "../altien/skills/runtime";
 import { SKILL_RESOURCE_TOOLS } from "../altien/skills/resources";
 import {
     bindExplicitSkillInvocation,
     parseExplicitSkillInvocation,
+    upgradeChatSkillBinding,
 } from "../altien/skills/invocation";
 
 const PROJECT_SYSTEM_PROMPT_EXTRA = `PROJECT CONTEXT:
@@ -43,6 +47,90 @@ ${AUTHORITY_TRACE_SYSTEM_PROMPT}`;
 
 export const projectChatRouter = Router({ mergeParams: true });
 
+/**
+ * GET /projects/:projectId/chat/:chatId/skill — the skill this chat is bound
+ * to, the documents its run was scoped to, and whether a newer enabled version
+ * exists. Reporting an available upgrade never applies it; see the sibling
+ * POST route.
+ */
+projectChatRouter.get("/:chatId/skill", requireAuth, async (req, res) => {
+    const { projectId, chatId } = req.params;
+    const db = createServerSupabase();
+    const access = await checkProjectAccess(
+        projectId,
+        res.locals.userId as string,
+        res.locals.userEmail as string | undefined,
+        db,
+    );
+    if (!access.ok)
+        return void res.status(404).json({ detail: "Project not found" });
+    const { data: chat } = await db
+        .from("chats")
+        .select("id, project_id")
+        .eq("id", chatId)
+        .single();
+    if (!chat || chat.project_id !== projectId)
+        return void res.status(404).json({ detail: "Chat not found" });
+    try {
+        res.json({ binding: await getSkillChatBindingMetadata({ chatId, db }) });
+    } catch (error) {
+        res.status(409).json({
+            detail: safeErrorMessage(error, "Skill binding is unavailable"),
+        });
+    }
+});
+
+/**
+ * POST /projects/:projectId/chat/:chatId/skill/upgrade — the only way a bound
+ * chat ever changes version. The member must name the exact version they were
+ * offered; the bind-time checks run again before the rebind is written.
+ */
+projectChatRouter.post(
+    "/:chatId/skill/upgrade",
+    requireAuth,
+    async (req, res) => {
+        const { projectId, chatId } = req.params;
+        const toVersionId =
+            typeof req.body?.toVersionId === "string"
+                ? req.body.toVersionId.trim()
+                : "";
+        if (!toVersionId) {
+            return void res
+                .status(400)
+                .json({ detail: "toVersionId is required." });
+        }
+        const tenantId = res.locals.principal?.tenantId;
+        if (typeof tenantId !== "string" || !tenantId) {
+            return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+        }
+        const db = createServerSupabase();
+        const access = await checkProjectAccess(
+            projectId,
+            res.locals.userId as string,
+            res.locals.userEmail as string | undefined,
+            db,
+        );
+        if (!access.ok)
+            return void res.status(404).json({ detail: "Project not found" });
+        try {
+            res.json(
+                await upgradeChatSkillBinding({
+                    tenantId,
+                    projectId,
+                    chatId,
+                    userId: res.locals.userId as string,
+                    toVersionId,
+                    db,
+                }),
+            );
+        } catch (error) {
+            res.status(409).json({
+                detail: safeErrorMessage(error, "Skill upgrade failed"),
+            });
+        }
+    },
+);
+
 // POST /projects/:projectId/chat — streaming
 projectChatRouter.post("/", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
@@ -55,6 +143,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         displayed_doc,
         attached_documents,
         ask_inputs_response,
+        skill_document_ids,
     } =
         req.body as {
             messages: ChatMessage[];
@@ -63,6 +152,11 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             displayed_doc?: { filename: string; document_id: string };
             attached_documents?: { filename: string; document_id: string }[];
             ask_inputs_response?: unknown;
+            /**
+             * Story 30: project documents selected before an explicit skill
+             * invocation starts. Only read when this turn binds a skill.
+             */
+            skill_document_ids?: string[];
         };
     const askInputsResponse = parseAskInputsResponsePayload(
         ask_inputs_response,
@@ -140,6 +234,9 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
                 chatId: chatId!,
                 userId,
                 message: lastUserText,
+                selectedDocumentIds: Array.isArray(skill_document_ids)
+                    ? skill_document_ids
+                    : [],
                 db,
             });
             skillRuntime = await loadSkillChatRuntimeContext({
@@ -184,6 +281,18 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         userId,
         db,
     );
+    // Story 30: when the member scoped this skill run to particular project
+    // documents, the unselected ones are removed from the context the tools
+    // read from — not merely described as out of scope in the prompt.
+    if (skillRuntime?.selectedDocumentIds.length) {
+        const selected = new Set(skillRuntime.selectedDocumentIds);
+        for (const [slug, info] of Object.entries(docIndex)) {
+            if (selected.has(info.document_id)) continue;
+            delete docIndex[slug];
+            docStore.delete(slug);
+            folderPaths.delete(slug);
+        }
+    }
     const docAvailability = Object.entries(docIndex).map(([doc_id, info]) => ({
         doc_id,
         filename: info.filename,

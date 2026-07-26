@@ -7,6 +7,7 @@ import { planSkillRename, type AdaptationFile } from "./adaptation";
 import { hashActionPayload } from "./actions";
 import {
   CLEAN_ROOM_SNAPSHOT_RUN_WORDS,
+  collectCleanRoomGitHubSources,
   evaluateCleanRoomLeakage,
   generateCleanRoomBrief,
 } from "./cleanRoom";
@@ -471,6 +472,15 @@ export async function createCleanRoomDeveloperArtifact(args: {
     });
   }
   const settings = await getUserModelSettings(args.createdBy, db);
+  // Explicit github.com links declared by the inspected source may be followed
+  // through the same gated acquisition service the import path uses. The
+  // fetched text never reaches the generator; it joins the leakage corpus, so
+  // a brief cannot quietly reproduce spans of the linked upstream either.
+  const linked = await collectCleanRoomGitHubSources({
+    tenantId: args.tenantId,
+    sources,
+    db,
+  });
   const brief = await generateCleanRoomBrief({
     requirementName: args.requirementName,
     provenance: {
@@ -483,14 +493,23 @@ export async function createCleanRoomDeveloperArtifact(args: {
           ? undefined
           : String(loaded.snapshot.github_resolved_commit_sha),
       licencePaths: original.licence_paths ?? [],
+      linkedSources: linked.notes,
     },
     sources,
     model: settings.fast_model,
     apiKeys: settings.api_keys,
   });
+  // Recorded on the artifact so a reviewer sees which declared links were
+  // followed — and, when the gate is off, that they were skipped rather than
+  // silently ignored.
+  const generatorProvenance = {
+    ...brief.provenance,
+    linkedGitHubSources: linked.notes,
+  };
   // The generator only saw `sources`; the recorded leakage check compares the
-  // brief against every readable file in the original snapshot.
-  const snapshotTexts = [...sources];
+  // brief against every readable file in the original snapshot, plus any
+  // linked GitHub source that was acquired.
+  const snapshotTexts = [...sources, ...linked.sources];
   for (const candidate of original.files ?? []) {
     if (
       candidate.inspection_class !== "source" &&
@@ -557,7 +576,7 @@ export async function createCleanRoomDeveloperArtifact(args: {
         path: source.path,
         sha256: source.sha256,
       })),
-      generator_provenance: brief.provenance,
+      generator_provenance: generatorProvenance,
       leakage_check: leakageCheck,
       state,
       created_by: args.createdBy,
@@ -580,7 +599,7 @@ export async function createCleanRoomDeveloperArtifact(args: {
     requirementName: args.requirementName,
     state,
     filename: file.path,
-    generatorProvenance: brief.provenance,
+    generatorProvenance,
     leakageCheck,
     reviewPayloadHash: hashActionPayload(
       developerArtifactReviewPayload({
@@ -592,7 +611,7 @@ export async function createCleanRoomDeveloperArtifact(args: {
           path: source.path,
           sha256: source.sha256,
         })),
-        generator_provenance: brief.provenance,
+        generator_provenance: generatorProvenance,
         leakage_check: leakageCheck,
         state,
       }),

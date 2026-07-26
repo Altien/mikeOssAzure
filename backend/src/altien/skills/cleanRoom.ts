@@ -4,6 +4,10 @@ import {
   providerForModel,
   type UserApiKeys,
 } from "../../lib/llm";
+import { acquireGitHubSkill, parseGitHubSourceUrl } from "./github";
+import { getGitHubSkillOAuthToken } from "./githubOAuth";
+import { getGitHubSkillImportPolicy } from "./settings";
+import type { Db } from "./shared";
 
 type SourceFile = {
   path: string;
@@ -152,6 +156,167 @@ export function findCleanRoomLeakage(markdown: string, sources: SourceFile[]) {
   }).violations;
 }
 
+/**
+ * Explicit `github.com` links the clean-room pipeline may follow, and the
+ * budget it may spend doing so. The spec allows following declared source
+ * links "through the same gated, bounded, commit-pinned acquisition service";
+ * these are the extra bounds this pipeline applies on top of the acquisition
+ * service's own import limits.
+ */
+export const CLEAN_ROOM_LINKED_SOURCE_LIMITS = {
+  /** Distinct github.com links followed for one brief. */
+  links: 2,
+  /** Text files taken from each acquired snapshot. */
+  filesPerLink: 20,
+  /** Total linked-source text added to the leakage corpus. */
+  totalBytes: 256 * 1024,
+} as const;
+
+export type CleanRoomLinkedSourceNote = {
+  url: string;
+  status:
+    | "fetched"
+    | "skipped_gate_denied"
+    | "skipped_link_budget"
+    | "skipped_unsupported_link"
+    | "unavailable";
+  repository?: string;
+  commitSha?: string;
+  selectedPath?: string;
+  fileCount?: number;
+  bytes?: number;
+  detail?: string;
+};
+
+const GITHUB_LINK = /https:\/\/github\.com\/[A-Za-z0-9._~\-/]+/gi;
+
+/**
+ * Explicit github.com links declared by snapshot content. Only whole links
+ * written literally in the inspected text count — nothing is inferred from a
+ * package name, a registry reference, or a bare owner/repo mention.
+ */
+export function findExplicitGitHubSourceLinks(
+  sources: readonly SourceFile[],
+): string[] {
+  const links = new Set<string>();
+  for (const source of sources) {
+    for (const match of source.text.matchAll(GITHUB_LINK)) {
+      const url = match[0].replace(/[.,;:)\]}'"]+$/, "").replace(/\/+$/, "");
+      if (url.split("/").length >= 5) links.add(url);
+    }
+  }
+  return [...links];
+}
+
+/**
+ * Follows explicit github.com source links through the ordinary gated
+ * acquisition service and returns their text for the leakage corpus.
+ *
+ * The gates are not re-implemented here: the same deployment + tenant policy
+ * that governs GitHub skill import governs this, and the fetch itself is
+ * `acquireGitHubSkill`, so host restriction, redirect handling, commit
+ * pinning, and import limits are exactly the import path's. A denied gate is
+ * not an error — the brief is still generated, with the skip recorded in its
+ * provenance notes.
+ */
+export async function collectCleanRoomGitHubSources(args: {
+  tenantId: string;
+  sources: readonly SourceFile[];
+  db: Db;
+  /** Test seam; defaults to the gated acquisition service. */
+  acquire?: typeof acquireGitHubSkill;
+  fetcher?: typeof fetch;
+}): Promise<{ sources: SourceFile[]; notes: CleanRoomLinkedSourceNote[] }> {
+  const links = findExplicitGitHubSourceLinks(args.sources);
+  if (!links.length) return { sources: [], notes: [] };
+
+  const policy = await getGitHubSkillImportPolicy(args.tenantId, args.db);
+  if (!policy.effectiveEnabled) {
+    return {
+      sources: [],
+      notes: links.map((url) => ({
+        url,
+        status: "skipped_gate_denied" as const,
+        detail: policy.deploymentAllowed
+          ? "GITHUB_SKILL_IMPORT_TENANT_DISABLED"
+          : "GITHUB_SKILL_IMPORT_DEPLOYMENT_DENIED",
+      })),
+    };
+  }
+
+  const acquire = args.acquire ?? acquireGitHubSkill;
+  const token =
+    (await getGitHubSkillOAuthToken(args.tenantId, args.db)) ?? undefined;
+  const notes: CleanRoomLinkedSourceNote[] = [];
+  const collected: SourceFile[] = [];
+  let budget = CLEAN_ROOM_LINKED_SOURCE_LIMITS.totalBytes;
+
+  for (const [index, url] of links.entries()) {
+    if (index >= CLEAN_ROOM_LINKED_SOURCE_LIMITS.links) {
+      notes.push({ url, status: "skipped_link_budget" });
+      continue;
+    }
+    try {
+      parseGitHubSourceUrl(url);
+    } catch (error) {
+      notes.push({
+        url,
+        status: "skipped_unsupported_link",
+        detail: error instanceof Error ? error.message : undefined,
+      });
+      continue;
+    }
+    try {
+      const acquired = await acquire({ url, token, fetcher: args.fetcher });
+      let fileCount = 0;
+      let bytes = 0;
+      for (const file of acquired.snapshot.files) {
+        if (fileCount >= CLEAN_ROOM_LINKED_SOURCE_LIMITS.filesPerLink) break;
+        if (
+          file.inspectionClass !== "source" &&
+          file.inspectionClass !== "text"
+        ) {
+          continue;
+        }
+        if (file.byteSize > budget) break;
+        let text: string;
+        try {
+          text = new TextDecoder("utf-8", { fatal: true }).decode(file.bytes);
+        } catch {
+          // Not decodable as UTF-8, so it cannot leak as verbatim text.
+          continue;
+        }
+        collected.push({
+          path: `${acquired.provenance.repository}@${acquired.provenance.resolvedCommitSha}/${file.relativePath}`,
+          sha256: file.sha256,
+          text,
+        });
+        fileCount += 1;
+        bytes += file.byteSize;
+        budget -= file.byteSize;
+      }
+      notes.push({
+        url,
+        status: "fetched",
+        repository: acquired.provenance.repository,
+        commitSha: acquired.provenance.resolvedCommitSha,
+        selectedPath: acquired.provenance.selectedPath || undefined,
+        fileCount,
+        bytes,
+      });
+    } catch (error) {
+      // An unavailable link produces an honest incomplete report, not a
+      // failed brief.
+      notes.push({
+        url,
+        status: "unavailable",
+        detail: error instanceof Error ? error.message : "Acquisition failed.",
+      });
+    }
+  }
+  return { sources: collected, notes };
+}
+
 function section(title: string, values: string[]) {
   return `## ${title}\n\n${
     values.length ? values.map((value) => `- ${value}`).join("\n") : "- None identified."
@@ -164,6 +329,8 @@ export async function generateCleanRoomBrief(args: {
     repository?: string;
     commitSha?: string;
     licencePaths: string[];
+    /** Explicit github.com links followed through the gated service. */
+    linkedSources?: CleanRoomLinkedSourceNote[];
   };
   sources: SourceFile[];
   model: string;
@@ -197,6 +364,16 @@ acceptanceTests, and unknowns.`,
     }),
   });
   const brief = parse(raw);
+  const notes = args.provenance.linkedSources ?? [];
+  const linkedSourceProvenance = notes.length
+    ? notes
+        .map((note) =>
+          note.status === "fetched"
+            ? `${note.repository}@${note.commitSha} (${note.fileCount} file(s), via ${note.url})`
+            : `${note.url} — ${note.status}`,
+        )
+        .join("; ")
+    : "none declared";
   const markdown = `# ${brief.title}
 
 > HUMAN REVIEW REQUIRED — clean-room behavioural draft; no implementation is
@@ -209,6 +386,7 @@ acceptanceTests, and unknowns.`,
 - Source input hash: ${inputHash}
 - Source files: ${args.sources.map((source) => `${source.path} (${source.sha256})`).join(", ")}
 - Licence files present: ${args.provenance.licencePaths.join(", ") || "none identified"}
+- Linked GitHub sources: ${linkedSourceProvenance}
 
 ## Observable purpose
 
