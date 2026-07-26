@@ -159,6 +159,7 @@ export async function runLLMStream(params: {
   db: ReturnType<typeof createServerSupabase>;
   write: (s: string) => void;
   extraTools?: unknown[];
+  allowedToolNames?: string[];
   includeResearchTools?: boolean;
   workflowStore?: WorkflowStore;
   tabularStore?: TabularCellStore;
@@ -186,6 +187,7 @@ export async function runLLMStream(params: {
     db,
     write,
     extraTools,
+    allowedToolNames,
     includeResearchTools = true,
     workflowStore,
     tabularStore,
@@ -204,9 +206,18 @@ export async function runLLMStream(params: {
     ...EXTERNAL_SOURCE_TOOLS,
     ...WORKFLOW_TOOLS,
   ];
-  const activeTools = extraTools?.length
+  const availableTools = extraTools?.length
     ? [...baseTools, ...mcpTools, ...extraTools]
     : [...baseTools, ...mcpTools];
+  const allowedNames = allowedToolNames
+    ? new Set(allowedToolNames)
+    : null;
+  const activeTools = allowedNames
+    ? availableTools.filter((tool) => {
+        const name = (tool as { function?: { name?: unknown } }).function?.name;
+        return typeof name === "string" && allowedNames.has(name);
+      })
+    : availableTools;
 
   // Extract system prompt; pass remaining turns to the adapter as
   // plain user/assistant messages.

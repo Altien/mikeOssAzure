@@ -1,10 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Upload, PackageOpen } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Upload, PackageOpen, Play, ScanSearch } from "lucide-react";
+import { listProjects } from "@/app/lib/mikeApi";
+import type { Project } from "@/app/components/shared/types";
 import {
+    analyseSkillVersion,
     importSkillZip,
     listSkills,
+    postSkillReviewMessage,
+    runSkillVersion,
     type SkillListItem,
 } from "./api";
 
@@ -13,11 +19,16 @@ function messageFrom(error: unknown) {
 }
 
 export function SkillsLibrary() {
+    const router = useRouter();
     const [skills, setSkills] = useState<SkillListItem[]>([]);
     const [canManage, setCanManage] = useState(false);
     const [loading, setLoading] = useState(true);
     const [importing, setImporting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [projects, setProjects] = useState<Project[]>([]);
+    const [projectByVersion, setProjectByVersion] = useState<Record<string, string>>({});
+    const [pendingEnable, setPendingEnable] = useState<Record<string, boolean>>({});
+    const [busyVersion, setBusyVersion] = useState<string | null>(null);
     const fileInput = useRef<HTMLInputElement>(null);
 
     const refresh = useCallback(async () => {
@@ -35,6 +46,7 @@ export function SkillsLibrary() {
 
     useEffect(() => {
         void refresh();
+        void listProjects().then(setProjects).catch(() => setProjects([]));
     }, [refresh]);
 
     async function importFile(file: File) {
@@ -48,6 +60,63 @@ export function SkillsLibrary() {
         } finally {
             setImporting(false);
             if (fileInput.current) fileInput.current.value = "";
+        }
+    }
+
+    async function analyse(versionId: string) {
+        setBusyVersion(versionId);
+        setError(null);
+        try {
+            await analyseSkillVersion(versionId);
+            await refresh();
+        } catch (caught) {
+            setError(messageFrom(caught));
+        } finally {
+            setBusyVersion(null);
+        }
+    }
+
+    async function proposeEnable(versionId: string) {
+        setBusyVersion(versionId);
+        setError(null);
+        try {
+            const result = await postSkillReviewMessage(versionId, "enable");
+            setPendingEnable((current) => ({ ...current, [versionId]: result.outcome === "proposed" }));
+        } catch (caught) {
+            setError(messageFrom(caught));
+        } finally {
+            setBusyVersion(null);
+        }
+    }
+
+    async function confirmEnable(versionId: string) {
+        setBusyVersion(versionId);
+        setError(null);
+        try {
+            await postSkillReviewMessage(versionId, "yes");
+            setPendingEnable((current) => ({ ...current, [versionId]: false }));
+            await refresh();
+        } catch (caught) {
+            setError(messageFrom(caught));
+        } finally {
+            setBusyVersion(null);
+        }
+    }
+
+    async function run(skill: SkillListItem) {
+        const projectId = projectByVersion[skill.version.id];
+        if (!projectId) {
+            setError("Select a project before running a skill.");
+            return;
+        }
+        setBusyVersion(skill.version.id);
+        setError(null);
+        try {
+            const result = await runSkillVersion(skill.version.id, projectId);
+            router.push(`/projects/${encodeURIComponent(projectId)}/assistant/chat/${encodeURIComponent(result.chatId)}`);
+        } catch (caught) {
+            setError(messageFrom(caught));
+            setBusyVersion(null);
         }
     }
 
@@ -117,6 +186,85 @@ export function SkillsLibrary() {
                             <p className="mt-4 truncate font-mono text-xs text-slate-500">
                                 {skill.version.entrypointPath}
                             </p>
+                            {canManage && (
+                                <div className="mt-4 border-t border-slate-100 pt-4">
+                                    <p className="text-xs text-slate-500">
+                                        Analysis: {skill.version.analysisState}
+                                        {skill.version.analysisModel
+                                            ? ` · ${skill.version.analysisModel}`
+                                            : ""}
+                                    </p>
+                                    {skill.version.state === "draft" &&
+                                        skill.version.analysisState !== "succeeded" && (
+                                            <button
+                                                type="button"
+                                                disabled={busyVersion === skill.version.id}
+                                                onClick={() => void analyse(skill.version.id)}
+                                                className="mt-3 inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                                            >
+                                                <ScanSearch className="h-4 w-4" />
+                                                {skill.version.analysisState === "failed"
+                                                    ? "Retry analysis"
+                                                    : "Analyse"}
+                                            </button>
+                                        )}
+                                    {skill.version.state === "draft" &&
+                                        skill.version.analysisState === "succeeded" &&
+                                        (!pendingEnable[skill.version.id] ? (
+                                            <button
+                                                type="button"
+                                                disabled={busyVersion === skill.version.id}
+                                                onClick={() => void proposeEnable(skill.version.id)}
+                                                className="mt-3 rounded-md border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                                            >
+                                                Propose enable
+                                            </button>
+                                        ) : (
+                                            <div className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+                                                <p>Confirm the exact pending enable action.</p>
+                                                <button
+                                                    type="button"
+                                                    disabled={busyVersion === skill.version.id}
+                                                    onClick={() => void confirmEnable(skill.version.id)}
+                                                    className="mt-2 rounded-md bg-slate-950 px-3 py-2 text-white disabled:opacity-50"
+                                                >
+                                                    Confirm enable
+                                                </button>
+                                            </div>
+                                        ))}
+                                </div>
+                            )}
+                            {skill.version.state === "enabled" && (
+                                <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4">
+                                    <select
+                                        aria-label={`Project for ${skill.displayName}`}
+                                        value={projectByVersion[skill.version.id] ?? ""}
+                                        onChange={(event) =>
+                                            setProjectByVersion((current) => ({
+                                                ...current,
+                                                [skill.version.id]: event.target.value,
+                                            }))
+                                        }
+                                        className="min-w-44 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                                    >
+                                        <option value="">Select project…</option>
+                                        {projects.map((project) => (
+                                            <option key={project.id} value={project.id}>
+                                                {project.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <button
+                                        type="button"
+                                        disabled={busyVersion === skill.version.id}
+                                        onClick={() => void run(skill)}
+                                        className="inline-flex items-center gap-2 rounded-md bg-slate-950 px-3 py-2 text-sm text-white disabled:opacity-50"
+                                    >
+                                        <Play className="h-4 w-4" />
+                                        Run skill
+                                    </button>
+                                </div>
+                            )}
                         </li>
                     ))}
                 </ul>

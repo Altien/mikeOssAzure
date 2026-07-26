@@ -532,6 +532,15 @@ export async function listTenantSkills(
         version: {
           id: String(current.id),
           state: String(current.state),
+          analysisState: String(current.analysis_state ?? "pending"),
+          analysisProvider:
+            current.analysis_provider == null
+              ? undefined
+              : String(current.analysis_provider),
+          analysisModel:
+            current.analysis_model == null
+              ? undefined
+              : String(current.analysis_model),
           entrypointPath: String(current.entrypoint_path),
           declaredVersion:
             current.declared_version == null

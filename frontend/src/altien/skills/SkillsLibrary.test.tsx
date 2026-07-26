@@ -3,14 +3,27 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "@/test/render";
 
-const { listSkillsMock, importSkillZipMock } = vi.hoisted(() => ({
+const { listSkillsMock, importSkillZipMock, listProjectsMock, pushMock } = vi.hoisted(() => ({
     listSkillsMock: vi.fn(),
     importSkillZipMock: vi.fn(),
+    listProjectsMock: vi.fn(),
+    pushMock: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
     listSkills: listSkillsMock,
     importSkillZip: importSkillZipMock,
+    analyseSkillVersion: vi.fn(),
+    postSkillReviewMessage: vi.fn(),
+    runSkillVersion: vi.fn(),
+}));
+
+vi.mock("@/app/lib/mikeApi", () => ({
+    listProjects: listProjectsMock,
+}));
+
+vi.mock("next/navigation", () => ({
+    useRouter: () => ({ push: pushMock }),
 }));
 
 import { SkillsLibrary } from "./SkillsLibrary";
@@ -19,6 +32,9 @@ describe("SkillsLibrary", () => {
     beforeEach(() => {
         listSkillsMock.mockReset();
         importSkillZipMock.mockReset();
+        listProjectsMock.mockReset();
+        listProjectsMock.mockResolvedValue([]);
+        pushMock.mockReset();
     });
 
     it("shows enabled skills without an import control to members", async () => {

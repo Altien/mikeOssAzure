@@ -3,12 +3,20 @@ import multer from "multer";
 import { requireAuth } from "../../middleware/auth";
 import { requireRole } from "../../middleware/requireRole";
 import { safeErrorMessage } from "../../lib/safeError";
+import { checkProjectAccess } from "../../lib/access";
+import { createServerSupabase } from "../../lib/supabase";
 import {
   SKILL_IMPORT_LIMITS,
   SkillArchiveValidationError,
   validateSkillZip,
 } from "./archive";
 import { listTenantSkills, storeZipSkillSnapshot } from "./persistence";
+import {
+  analyseSkillVersion,
+  createSkillRun,
+  getSkillReview,
+  postSkillReviewMessage,
+} from "./review";
 
 const zipUpload = multer({
   storage: multer.memoryStorage(),
@@ -100,6 +108,121 @@ skillsRouter.post(
       res
         .status(500)
         .json({ detail: safeErrorMessage(error, "Failed to import skill") });
+    }
+  },
+);
+
+skillsRouter.post(
+  "/versions/:versionId/analyse",
+  requireAuth,
+  requireRole("TenantAdmin"),
+  async (req, res) => {
+    const tenant = tenantId(res);
+    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+    try {
+      const result = await analyseSkillVersion({
+        tenantId: tenant,
+        versionId: req.params.versionId,
+        userId: String(res.locals.userId),
+      });
+      res.json(result);
+    } catch (error) {
+      res
+        .status(422)
+        .json({ detail: safeErrorMessage(error, "Skill analysis failed") });
+    }
+  },
+);
+
+skillsRouter.get(
+  "/versions/:versionId/review",
+  requireAuth,
+  requireRole("TenantAdmin"),
+  async (req, res) => {
+    const tenant = tenantId(res);
+    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+    try {
+      res.json(
+        await getSkillReview({
+          tenantId: tenant,
+          versionId: req.params.versionId,
+          userId: String(res.locals.userId),
+        }),
+      );
+    } catch (error) {
+      res
+        .status(404)
+        .json({ detail: safeErrorMessage(error, "Skill review not found") });
+    }
+  },
+);
+
+skillsRouter.post(
+  "/versions/:versionId/review/messages",
+  requireAuth,
+  requireRole("TenantAdmin"),
+  async (req, res) => {
+    const tenant = tenantId(res);
+    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+    const message =
+      typeof req.body?.message === "string" ? req.body.message.trim() : "";
+    if (!message || message.length > 2_000) {
+      return void res
+        .status(400)
+        .json({ detail: "A review message of at most 2,000 characters is required." });
+    }
+    try {
+      res.json(
+        await postSkillReviewMessage({
+          tenantId: tenant,
+          versionId: req.params.versionId,
+          userId: String(res.locals.userId),
+          message,
+        }),
+      );
+    } catch (error) {
+      res
+        .status(409)
+        .json({ detail: safeErrorMessage(error, "Review action failed") });
+    }
+  },
+);
+
+skillsRouter.post(
+  "/versions/:versionId/run",
+  requireAuth,
+  async (req, res) => {
+    const tenant = tenantId(res);
+    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+    const projectId =
+      typeof req.body?.projectId === "string" ? req.body.projectId.trim() : "";
+    if (!projectId) {
+      return void res.status(400).json({ detail: "projectId is required." });
+    }
+    const db = createServerSupabase();
+    const access = await checkProjectAccess(
+      projectId,
+      String(res.locals.userId),
+      res.locals.userEmail as string | undefined,
+      db,
+    );
+    if (!access.ok) {
+      return void res.status(404).json({ detail: "Project not found" });
+    }
+    try {
+      res.status(201).json(
+        await createSkillRun({
+          tenantId: tenant,
+          versionId: req.params.versionId,
+          projectId,
+          userId: String(res.locals.userId),
+          db,
+        }),
+      );
+    } catch (error) {
+      res
+        .status(409)
+        .json({ detail: safeErrorMessage(error, "Skill run could not start") });
     }
   },
 );

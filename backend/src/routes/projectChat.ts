@@ -24,6 +24,7 @@ import {
 import { checkProjectAccess } from "../lib/access";
 import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
 import { AUTHORITY_TRACE_SYSTEM_PROMPT } from "../altien/authorityTrace/chatTools";
+import { loadSkillChatRuntimeContext } from "../altien/skills/runtime";
 
 const PROJECT_SYSTEM_PROMPT_EXTRA = `PROJECT CONTEXT:
 You are operating within a project folder that contains a collection of legal documents the user has organised for a single matter. The user's questions will usually refer to one or more documents in this project — your job is to find the relevant files to work on. Use list_documents to see what is available and fetch_documents / read_document to pull in any documents you need before answering.
@@ -102,6 +103,12 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         chatTitle = newChat.title;
     }
 
+    const skillRuntime = await loadSkillChatRuntimeContext({
+        chatId,
+        projectId,
+        db,
+    });
+
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     if (askInputsResponse) {
         await appendAskInputsResponseToLastAssistantMessage(
@@ -160,6 +167,9 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     // knows which docs the user is highlighting *now*, distinct from
     // the broader project doc list.
     let systemPromptExtra = PROJECT_SYSTEM_PROMPT_EXTRA;
+    if (skillRuntime) {
+        systemPromptExtra += `\n\n${skillRuntime.systemPrompt}`;
+    }
     if (attached_documents?.length) {
         const slugByDocumentId = new Map<string, string>();
         for (const [slug, info] of Object.entries(docIndex)) {
@@ -212,6 +222,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             db,
             write,
             extraTools: PROJECT_EXTRA_TOOLS,
+            allowedToolNames: skillRuntime?.allowedToolNames,
             workflowStore,
             includeResearchTools: legalResearchUs,
             model,

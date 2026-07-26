@@ -7,6 +7,11 @@ const {
   validateSkillZipMock,
   storeZipSkillSnapshotMock,
   listTenantSkillsMock,
+  analyseSkillVersionMock,
+  getSkillReviewMock,
+  postSkillReviewMessageMock,
+  createSkillRunMock,
+  checkProjectAccessMock,
 } = vi.hoisted(() => ({
   authState: {
     roles: ["TenantAdmin"] as string[],
@@ -15,6 +20,11 @@ const {
   validateSkillZipMock: vi.fn(),
   storeZipSkillSnapshotMock: vi.fn(),
   listTenantSkillsMock: vi.fn(),
+  analyseSkillVersionMock: vi.fn(),
+  getSkillReviewMock: vi.fn(),
+  postSkillReviewMessageMock: vi.fn(),
+  createSkillRunMock: vi.fn(),
+  checkProjectAccessMock: vi.fn(),
 }));
 
 vi.mock("../../middleware/auth", () => ({
@@ -43,10 +53,26 @@ vi.mock("./persistence", () => ({
   listTenantSkills: listTenantSkillsMock,
 }));
 
+vi.mock("./review", () => ({
+  analyseSkillVersion: analyseSkillVersionMock,
+  getSkillReview: getSkillReviewMock,
+  postSkillReviewMessage: postSkillReviewMessageMock,
+  createSkillRun: createSkillRunMock,
+}));
+
+vi.mock("../../lib/access", () => ({
+  checkProjectAccess: checkProjectAccessMock,
+}));
+
+vi.mock("../../lib/supabase", () => ({
+  createServerSupabase: () => ({ fake: true }),
+}));
+
 import { skillsRouter } from "./router";
 
 function makeApp() {
   const app = express();
+  app.use(express.json());
   app.use("/api/altien/skills", skillsRouter);
   return app;
 }
@@ -58,6 +84,62 @@ describe("Skills routes", () => {
     validateSkillZipMock.mockReset();
     storeZipSkillSnapshotMock.mockReset();
     listTenantSkillsMock.mockReset();
+    analyseSkillVersionMock.mockReset();
+    getSkillReviewMock.mockReset();
+    postSkillReviewMessageMock.mockReset();
+    createSkillRunMock.mockReset();
+    checkProjectAccessMock.mockReset();
+  });
+
+  it("keeps review and analysis TenantAdmin-only", async () => {
+    analyseSkillVersionMock.mockResolvedValue({ conversationId: "review-1" });
+    await request(makeApp())
+      .post("/api/altien/skills/versions/version-1/analyse")
+      .expect(200);
+    expect(analyseSkillVersionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: "tenant-1",
+        versionId: "version-1",
+        userId: "admin-1",
+      }),
+    );
+
+    authState.roles = ["Member"];
+    await request(makeApp())
+      .post("/api/altien/skills/versions/version-1/analyse")
+      .expect(403);
+    await request(makeApp())
+      .post("/api/altien/skills/versions/version-1/review/messages")
+      .send({ message: "yes" })
+      .expect(403);
+  });
+
+  it("starts a run only after project access passes", async () => {
+    checkProjectAccessMock.mockResolvedValue({ ok: true });
+    createSkillRunMock.mockResolvedValue({
+      chatId: "chat-1",
+      projectId: "project-1",
+    });
+    authState.roles = ["Member"];
+
+    const response = await request(makeApp())
+      .post("/api/altien/skills/versions/version-1/run")
+      .send({ projectId: "project-1" })
+      .expect(201);
+    expect(response.body.chatId).toBe("chat-1");
+    expect(createSkillRunMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: "tenant-1",
+        versionId: "version-1",
+        projectId: "project-1",
+      }),
+    );
+
+    checkProjectAccessMock.mockResolvedValue({ ok: false });
+    await request(makeApp())
+      .post("/api/altien/skills/versions/version-1/run")
+      .send({ projectId: "other-project" })
+      .expect(404);
   });
 
   it("imports a ZIP for a TenantAdmin", async () => {

@@ -200,6 +200,7 @@ describe("listTenantSkills", () => {
         version: {
           id: "version-2",
           state: "enabled",
+          analysisState: "pending",
           entrypointPath: "SKILL.md",
           declaredVersion: "2",
           contentHash: "new-hash",

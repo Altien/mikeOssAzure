@@ -49,6 +49,7 @@ import { useSidebar } from "@/app/contexts/SidebarContext";
 import type {
     CitationQuote,
     CitationAnnotation,
+    ChatDetailOut,
     Document,
     EditAnnotation,
     Message,
@@ -219,6 +220,9 @@ export default function ProjectAssistantChatClient() {
     const [project, setProject] = useState<Project | null>(null);
     const [chatTitle, setChatTitle] = useState<string | null>(null);
     const [chatOwnerId, setChatOwnerId] = useState<string | null>(null);
+    const [skillBinding, setSkillBinding] = useState<
+        ChatDetailOut["skillBinding"]
+    >(null);
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
     const [chatLoaded, setChatLoaded] = useState(false);
     const [creatingChat, setCreatingChat] = useState(false);
@@ -352,9 +356,10 @@ export default function ProjectAssistantChatClient() {
         if (hasLoaded.current) return;
         hasLoaded.current = true;
         getChat(chatId)
-            .then(({ chat, messages: loaded }) => {
+            .then(({ chat, messages: loaded, skillBinding: binding }) => {
                 setChatTitle(chat.title);
                 setChatOwnerId(chat.user_id ?? null);
+                setSkillBinding(binding ?? null);
                 if (loaded.length > 0) setMessages(loaded);
             })
             .catch(() => router.replace(`/projects/${projectId}?tab=assistant`))
@@ -832,9 +837,20 @@ export default function ProjectAssistantChatClient() {
                     </button>
                     <span className="text-gray-300">›</span>
                     {chatLoaded ? (
-                        <span className="text-gray-900 truncate max-w-xs">
-                            {chatTitle ?? "Untitled New Chat"}
-                        </span>
+                        <>
+                            <span className="text-gray-900 truncate max-w-xs">
+                                {chatTitle ?? "Untitled New Chat"}
+                            </span>
+                            {skillBinding && (
+                                <span
+                                    className="rounded-full bg-violet-50 px-2 py-1 text-xs text-violet-700"
+                                    title={`Skill version ${skillBinding.versionId}; content ${skillBinding.contentHash}`}
+                                >
+                                    Skill: {skillBinding.displayName} ·{" "}
+                                    {skillBinding.contentHash.slice(0, 8)}
+                                </span>
+                            )}
+                        </>
                     ) : (
                         <div className="h-6 w-40 rounded bg-gray-100 animate-pulse" />
                     )}

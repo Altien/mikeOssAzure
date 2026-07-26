@@ -22,6 +22,7 @@ import {
     getUserModelSettings,
 } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
+import { getSkillChatBindingMetadata } from "../altien/skills/runtime";
 import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
 
 export const chatRouter = Router();
@@ -117,7 +118,8 @@ chatRouter.get("/:chatId", requireAuth, async (req, res) => {
         .order("created_at", { ascending: true });
 
     const hydrated = await hydrateEditStatuses(messages ?? [], db);
-    res.json({ chat, messages: hydrated });
+    const skillBinding = await getSkillChatBindingMetadata({ chatId, db });
+    res.json({ chat, messages: hydrated, skill_binding: skillBinding });
 });
 
 // Stored doc_edited events capture the `status` at the time the assistant

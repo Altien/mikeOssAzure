@@ -33,6 +33,7 @@ interface ServerMessage {
 interface ServerChatDetailOut {
     chat: Chat;
     messages: ServerMessage[];
+    skill_binding?: ChatDetailOut["skillBinding"];
 }
 
 export const API_BASE =
@@ -817,7 +818,11 @@ export async function getChat(chatId: string): Promise<ChatDetailOut> {
             events,
         };
     });
-    return { chat: raw.chat, messages };
+    return {
+        chat: raw.chat,
+        messages,
+        skillBinding: raw.skill_binding ?? null,
+    };
 }
 
 export async function renameChat(chatId: string, title: string): Promise<void> {

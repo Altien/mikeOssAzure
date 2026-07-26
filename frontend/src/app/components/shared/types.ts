@@ -464,6 +464,13 @@ export interface Workflow {
 export interface ChatDetailOut {
   chat: Chat;
   messages: Message[];
+  skillBinding?: {
+    skillId: string;
+    versionId: string;
+    displayName: string;
+    contentHash: string;
+    dependencyVersions: unknown[];
+  } | null;
 }
 
 export interface TabularReviewDetailOut {
