@@ -3,6 +3,7 @@ import { makeFakeDb, type DbCall } from "../../test/helpers/fakeDb";
 import {
   bindExplicitSkillInvocation,
   parseExplicitSkillInvocation,
+  parseSkillInvocationCandidates,
   resolveSelectedProjectDocuments,
   upgradeChatSkillBinding,
 } from "./invocation";
@@ -27,6 +28,23 @@ describe("explicit skill invocation", () => {
       ),
     ).toBeNull();
     expect(parseExplicitSkillInvocation("use skill Citation Reader")).toBeNull();
+  });
+
+  it("offers the natural phrasings as candidates to resolve", () => {
+    // The wording a member actually reaches for. None of these mean anything
+    // until they match an enabled skill exactly.
+    expect(
+      parseSkillInvocationCandidates(
+        "Use the case-summariser skill to give me good details here",
+      ),
+    ).toContain("case-summariser");
+    expect(
+      parseSkillInvocationCandidates("use skill case-summariser"),
+    ).toContain("case-summariser");
+    expect(parseSkillInvocationCandidates("/skill case-summariser")).toContain(
+      "case-summariser",
+    );
+    expect(parseSkillInvocationCandidates("what can you do?")).toEqual([]);
   });
 });
 
@@ -91,6 +109,51 @@ function makeSkillDb(options: {
     return { data: [], error: null };
   });
 }
+
+describe("natural-phrasing invocation", () => {
+  it("binds when the named skill exists, however the member phrased it", async () => {
+    const fake = makeSkillDb();
+    await expect(
+      bindExplicitSkillInvocation({
+        tenantId: "tenant-1",
+        projectId: "project-1",
+        chatId: "chat-1",
+        userId: "user-1",
+        message: "Use the reader skill to give me good details here",
+        db: fake.db as never,
+      }),
+    ).resolves.toMatchObject({ versionId: "version-1" });
+  });
+
+  it("leaves an ordinary sentence alone rather than failing the message", async () => {
+    const fake = makeSkillDb();
+    await expect(
+      bindExplicitSkillInvocation({
+        tenantId: "tenant-1",
+        projectId: "project-1",
+        chatId: "chat-1",
+        userId: "user-1",
+        message: "Can you use the new skill I mentioned earlier?",
+        db: fake.db as never,
+      }),
+    ).resolves.toBeNull();
+    expect(fake.callsFor("altien_chat_skill_bindings", "insert")).toHaveLength(0);
+  });
+
+  it("still reports a bad name when the member clearly meant a skill", async () => {
+    const fake = makeSkillDb();
+    await expect(
+      bindExplicitSkillInvocation({
+        tenantId: "tenant-1",
+        projectId: "project-1",
+        chatId: "chat-1",
+        userId: "user-1",
+        message: "/skill nope",
+        db: fake.db as never,
+      }),
+    ).rejects.toThrow(/'nope' was not found/);
+  });
+});
 
 describe("project document selection", () => {
   it("keeps a selection of documents that belong to the run's project", async () => {

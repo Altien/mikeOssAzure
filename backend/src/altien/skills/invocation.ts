@@ -25,6 +25,85 @@ export function parseExplicitSkillInvocation(message: string): string | null {
 }
 
 /**
+ * Looser ways a member asks for a skill: `use skill case-summariser`,
+ * `use the case-summariser skill`. These are still explicit — the member
+ * names the skill — but the wording alone cannot say where the name ends, so
+ * a candidate only counts once it matches an enabled skill exactly. That
+ * keeps "use the new skill" an ordinary sentence rather than an error, and
+ * keeps semantic auto-triggering out: nothing here infers a skill from what
+ * the member is trying to do.
+ */
+export function parseSkillInvocationCandidates(message: string): string[] {
+  const first = message.split(/\r?\n/, 1)[0] ?? "";
+  const candidates = new Set<string>();
+  const explicit = parseExplicitSkillInvocation(message);
+  if (explicit) candidates.add(explicit);
+  const unquoted = /\b(?:run|use|load)\s+skill\s+([^\s"“][^\s,.;:!?]*)/i.exec(
+    first,
+  );
+  if (unquoted?.[1]) candidates.add(unquoted[1]);
+  const trailing = /\b(?:run|use|load)\s+(?:the\s+)?(.+?)\s+skill\b/i.exec(
+    first,
+  );
+  if (trailing?.[1]) {
+    const phrase = trailing[1].replace(/^["“]|["”]$/g, "").trim();
+    candidates.add(phrase);
+    // "the case-summariser" and multi-word tails both reduce to their last
+    // word, which is where a canonical name usually sits.
+    const last = phrase.split(/\s+/).pop();
+    if (last && last !== phrase) candidates.add(last);
+  }
+  return [...candidates].filter(Boolean);
+}
+
+type EnabledSkillRow = {
+  id: unknown;
+  canonical_name: unknown;
+  display_name: unknown;
+  current_version_id: unknown;
+};
+
+async function enabledSkills(tenantId: string, db: Db) {
+  const skills = await db
+    .from("altien_skills")
+    .select("id, canonical_name, display_name, current_version_id")
+    .eq("tenant_id", tenantId)
+    .is("deleted_at", null);
+  throwOnDbError(skills);
+  return (skills.data ?? []) as EnabledSkillRow[];
+}
+
+function matchSkill(rows: EnabledSkillRow[], name: string) {
+  return rows.filter(
+    (skill) =>
+      normalize(String(skill.canonical_name)) === normalize(name) ||
+      normalize(String(skill.display_name)) === normalize(name),
+  );
+}
+
+/**
+ * An enabled skill this message names, for a chat that is not bound to one.
+ * Used to tell the member how to invoke it rather than silently answering as
+ * an ordinary chat — it never binds anything by itself.
+ */
+export async function mentionedEnabledSkillName(args: {
+  tenantId: string;
+  message: string;
+  db: Db;
+}): Promise<string | null> {
+  const rows = await enabledSkills(args.tenantId, args.db);
+  const named = rows.find((skill) => {
+    const canonical = String(skill.canonical_name);
+    if (!canonical.trim()) return false;
+    return new RegExp(
+      `(?:^|[^a-z0-9-])${canonical.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:[^a-z0-9-]|$)`,
+      "i",
+    ).test(args.message);
+  });
+  return named ? String(named.canonical_name) : null;
+}
+
+/**
  * Story 30: the documents a member selected before the skill started. Every id
  * must be a document of the run's own project — a selection can only narrow
  * what the skill may read, never reach outside the bound project.
@@ -165,8 +244,9 @@ export async function bindExplicitSkillInvocation(args: {
   selectedDocumentIds?: readonly unknown[];
   db?: Db;
 }) {
-  const requestedName = parseExplicitSkillInvocation(args.message);
-  if (!requestedName) return null;
+  const candidates = parseSkillInvocationCandidates(args.message);
+  if (!candidates.length) return null;
+  const explicit = parseExplicitSkillInvocation(args.message);
   const db = args.db ?? createServerSupabase();
   const existing = await db
     .from("altien_chat_skill_bindings")
@@ -176,24 +256,26 @@ export async function bindExplicitSkillInvocation(args: {
   throwOnDbError(existing);
   if (existing.data) throw new Error("This chat is already bound to a skill.");
 
-  const skills = await db
-    .from("altien_skills")
-    .select(
-      "id, canonical_name, display_name, current_version_id",
-    )
-    .eq("tenant_id", args.tenantId)
-    .is("deleted_at", null);
-  throwOnDbError(skills);
-  const matches = (skills.data ?? []).filter(
-    (skill) =>
-      normalize(String(skill.canonical_name)) === normalize(requestedName) ||
-      normalize(String(skill.display_name)) === normalize(requestedName),
-  );
+  const rows = await enabledSkills(args.tenantId, db);
+  let requestedName = "";
+  let matches: EnabledSkillRow[] = [];
+  for (const candidate of candidates) {
+    const found = matchSkill(rows, candidate);
+    if (found.length) {
+      requestedName = candidate;
+      matches = found;
+      break;
+    }
+  }
   if (matches.length !== 1) {
+    // `/skill x` and `use skill "x"` say plainly that a skill was meant, so a
+    // bad name is an error. A looser phrase that matches nothing is just an
+    // ordinary sentence and must not fail the member's message.
+    if (!explicit) return null;
     throw new Error(
       matches.length
-        ? `Skill name '${requestedName}' is ambiguous.`
-        : `Enabled skill '${requestedName}' was not found.`,
+        ? `Skill name '${requestedName || explicit}' is ambiguous.`
+        : `Enabled skill '${explicit}' was not found.`,
     );
   }
   const skill = matches[0];

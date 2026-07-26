@@ -31,7 +31,9 @@ import {
 import { SKILL_RESOURCE_TOOLS } from "../altien/skills/resources";
 import {
     bindExplicitSkillInvocation,
+    mentionedEnabledSkillName,
     parseExplicitSkillInvocation,
+    parseSkillInvocationCandidates,
     upgradeChatSkillBinding,
 } from "../altien/skills/invocation";
 
@@ -215,9 +217,14 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         tenantId: principalTenantId,
         db,
     });
+    // Only the unambiguous forms may reject a message outright; the looser
+    // ones are resolved against the enabled skills before they mean anything.
     const explicitSkillName = lastUserText
         ? parseExplicitSkillInvocation(lastUserText)
         : null;
+    const invocationCandidates = lastUserText
+        ? parseSkillInvocationCandidates(lastUserText)
+        : [];
     if (explicitSkillName && skillRuntime) {
         if (
             explicitSkillName.trim().toLocaleLowerCase() !==
@@ -227,7 +234,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
                 detail: `This chat is already bound to ${skillRuntime.displayName}. Start a new chat to use another skill.`,
             });
         }
-    } else if (explicitSkillName && lastUser) {
+    } else if (invocationCandidates.length && lastUser && !skillRuntime) {
         const tenantId = res.locals.principal?.tenantId;
         if (typeof tenantId !== "string" || !tenantId) {
             return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
@@ -330,6 +337,23 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     let systemPromptExtra = PROJECT_SYSTEM_PROMPT_EXTRA;
     if (skillRuntime) {
         systemPromptExtra += `\n\n${skillRuntime.systemPrompt}`;
+    } else if (lastUserText && principalTenantId) {
+        // Naming a skill in passing must not load it — binding is explicit.
+        // Saying nothing is worse though: the member believes the skill is
+        // running while an ordinary chat answers them.
+        const mentioned = await mentionedEnabledSkillName({
+            tenantId: principalTenantId,
+            message: lastUserText,
+            db,
+        });
+        if (mentioned) {
+            systemPromptExtra += `\n\nUNBOUND SKILL MENTION:
+This chat is not bound to any skill, and you cannot load one yourself. The
+member's message names the enabled skill "${mentioned}". If they meant to use
+it, say so plainly and tell them to send "/skill ${mentioned}" — in this chat
+if it has no skill yet, or in a new chat otherwise. Then answer as usual
+without pretending to have the skill's instructions or resources.`;
+        }
     }
     if (attached_documents?.length) {
         const slugByDocumentId = new Map<string, string>();
