@@ -120,6 +120,14 @@ export default function TabularReviewsPage() {
         setPage((prev) => prev + 1);
     }
 
+    function handleScroll(event: React.UIEvent<HTMLDivElement>) {
+        if (loading || loadingMore || !hasMore) return;
+        const el = event.currentTarget;
+        const distanceToBottom =
+            el.scrollHeight - el.scrollTop - el.clientHeight;
+        if (distanceToBottom < 200) handleLoadMore();
+    }
+
     useEffect(() => {
         setPage(0);
         setHasMore(true);
@@ -304,7 +312,7 @@ export default function TabularReviewsPage() {
             />
 
             {/* Table */}
-            <TableScrollArea>
+            <TableScrollArea onScroll={handleScroll}>
                 <TableHeaderRow>
                     <TableStickyCell header>
                         {loading ? (
@@ -545,7 +553,7 @@ export default function TabularReviewsPage() {
                         })}
                     </TableBody>
                 )}
-                {!effectiveLoading && hasMore && filtered.length > 0 && (
+                {!loading && hasMore && filtered.length > 0 && (
                     <div className="flex justify-center py-3">
                         <button
                             onClick={handleLoadMore}

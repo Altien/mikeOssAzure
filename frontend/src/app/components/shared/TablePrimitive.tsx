@@ -45,9 +45,16 @@ export function TableScrollArea({
     children,
     className,
     innerClassName,
-}: DivProps & { innerClassName?: string }) {
+    onScroll,
+}: DivProps & {
+    innerClassName?: string;
+    onScroll?: React.UIEventHandler<HTMLDivElement>;
+}) {
     return (
-        <div className={cn("w-full min-h-0 flex-1 overflow-auto", className)}>
+        <div
+            className={cn("w-full min-h-0 flex-1 overflow-auto", className)}
+            onScroll={onScroll}
+        >
             <div
                 className={cn("flex min-h-full min-w-max flex-col", innerClassName)}
             >
