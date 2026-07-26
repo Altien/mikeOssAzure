@@ -6,12 +6,14 @@ const {
   downloadFileMock,
   deleteFileMock,
   generateCleanRoomBriefMock,
+  collectCleanRoomGitHubSourcesMock,
   getUserModelSettingsMock,
 } = vi.hoisted(() => ({
   uploadFileMock: vi.fn(),
   downloadFileMock: vi.fn(),
   deleteFileMock: vi.fn(),
   generateCleanRoomBriefMock: vi.fn(),
+  collectCleanRoomGitHubSourcesMock: vi.fn(),
   getUserModelSettingsMock: vi.fn(),
 }));
 
@@ -25,10 +27,19 @@ vi.mock("../../lib/userSettings", () => ({
   getUserModelSettings: getUserModelSettingsMock,
 }));
 
-vi.mock("./cleanRoom", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./cleanRoom")>()),
-  generateCleanRoomBrief: generateCleanRoomBriefMock,
-}));
+vi.mock("./cleanRoom", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./cleanRoom")>();
+  // Defaults to the real gated collector so the gate tests below still
+  // exercise it; a test that needs a *fetched* link overrides it per call.
+  collectCleanRoomGitHubSourcesMock.mockImplementation(
+    actual.collectCleanRoomGitHubSources,
+  );
+  return {
+    ...actual,
+    generateCleanRoomBrief: generateCleanRoomBriefMock,
+    collectCleanRoomGitHubSources: collectCleanRoomGitHubSourcesMock,
+  };
+});
 
 import {
   approveCleanRoomDeveloperArtifact,
@@ -36,7 +47,10 @@ import {
   getCleanRoomDeveloperArtifact,
   persistSkillRename,
 } from "./artifacts";
-import { CLEAN_ROOM_SNAPSHOT_RUN_WORDS } from "./cleanRoom";
+import {
+  CLEAN_ROOM_GENERATOR_RUN_WORDS,
+  CLEAN_ROOM_SNAPSHOT_RUN_WORDS,
+} from "./cleanRoom";
 
 describe("persistSkillRename", () => {
   it("forks an update draft without renaming the live skill", async () => {
@@ -360,6 +374,65 @@ describe("createCleanRoomDeveloperArtifact", () => {
         linkedGitHubSources: [{ status: "skipped_gate_denied" }],
       },
     });
+  });
+
+  // Linked upstream text was never shown to the generator, so it is held to
+  // the strict generator-level bar rather than the looser whole-snapshot one:
+  // a short verbatim run of a third-party repository is already a leak.
+  it("blocks a brief that reproduces a short verbatim run of a fetched link", async () => {
+    uploadFileMock.mockReset();
+    uploadFileMock.mockResolvedValue(undefined);
+    downloadFileMock.mockImplementation(async () =>
+      new TextEncoder().encode("the reviewed helper reads a query").buffer,
+    );
+    getUserModelSettingsMock.mockResolvedValue({
+      fast_model: "gpt-5.4-lite",
+      api_keys: {},
+    });
+    const upstreamRun = Array.from(
+      { length: CLEAN_ROOM_GENERATOR_RUN_WORDS + 1 },
+      (_unused, index) => `upstreamToken${index}`,
+    ).join(" ");
+    collectCleanRoomGitHubSourcesMock.mockResolvedValueOnce({
+      sources: [
+        {
+          path: "github.com/example/upstream@abc/tools/index.ts",
+          sha256: "upstream-hash",
+          text: upstreamRun,
+        },
+      ],
+      notes: [
+        {
+          url: "https://github.com/example/upstream/tree/main/tools",
+          status: "fetched",
+        },
+      ],
+    });
+    generateCleanRoomBriefMock.mockResolvedValue({
+      markdown: `# Brief\n\n${upstreamRun}\n`,
+      provenance: { provider: "openai", model: "gpt-5.4-lite", schemaVersion: 1 },
+    });
+    const fake = developerArtifactDb();
+
+    const result = await createCleanRoomDeveloperArtifact({
+      tenantId: "tenant-1",
+      versionId: "version-1",
+      requirementName: "lookup_records",
+      sourcePaths: ["tool/reviewed.ts"],
+      createdBy: "admin-1",
+      db: fake.db as never,
+    });
+
+    expect(result.state).toBe("blocked");
+    expect(result.leakageCheck.violations).toEqual([
+      expect.objectContaining({
+        path: "github.com/example/upstream@abc/tools/index.ts",
+        words: CLEAN_ROOM_GENERATOR_RUN_WORDS,
+      }),
+    ]);
+    expect(result.leakageCheck.checkedPaths).toContain(
+      "github.com/example/upstream@abc/tools/index.ts",
+    );
   });
 
   it("leaves no DMS rows behind when the tree cannot be written", async () => {

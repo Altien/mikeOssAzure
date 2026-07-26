@@ -14,13 +14,25 @@ export type PendingSkillAction = {
   state: "pending";
 };
 
+/**
+ * Canonical form must survive a jsonb round-trip unchanged, because an action
+ * payload is hashed when it is proposed and re-hashed after being read back
+ * from the database. `undefined` is not JSON: storage drops an
+ * undefined-valued key and turns an undefined array element into `null`, so
+ * canonicalization does exactly the same rather than emitting an `undefined`
+ * token that could never be reproduced from the stored row.
+ */
 export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (value === null || typeof value !== "object") {
+    const json = JSON.stringify(value);
+    return json === undefined ? "null" : json;
+  }
   if (Array.isArray(value)) {
     return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
   }
   const record = value as Record<string, unknown>;
   return `{${Object.keys(record)
+    .filter((key) => record[key] !== undefined)
     .sort()
     .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
     .join(",")}}`;

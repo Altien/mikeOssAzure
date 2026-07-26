@@ -141,8 +141,18 @@ describe("storeSkillSnapshot", () => {
     expect(fake.calls).toEqual([]);
   });
 
-  function priorSkillDb(priorVersions: Array<Record<string, unknown>>) {
+  function priorSkillDb(
+    priorVersions: Array<Record<string, unknown>>,
+    options: { failVersionInsert?: boolean } = {},
+  ) {
     return makeFakeDb((call) => {
+      if (
+        options.failVersionInsert &&
+        call.table === "altien_skill_versions" &&
+        call.op === "insert"
+      ) {
+        return { data: null, error: { message: "version insert failed" } };
+      }
       if (call.table === "projects" && call.op === "select") {
         return { data: [{ id: "skill-project" }], error: null };
       }
@@ -278,6 +288,54 @@ describe("storeSkillSnapshot", () => {
     expect(
       fake.callsFor("altien_skill_versions", "insert")[0].payload,
     ).toMatchObject({ skill_id: "existing-skill", state: "draft" });
+  });
+
+  // A version added to a pre-existing skill is not cascaded away by deleting
+  // the skills this import created — there are none. Without an explicit
+  // delete, `altien_skill_versions.snapshot_id` (on delete restrict) makes the
+  // snapshot and document deletes fail silently and orphan rows whose blobs
+  // have already gone.
+  it("deletes the version row it added to a pre-existing skill when the import fails", async () => {
+    uploadFileMock.mockReset();
+    deleteFileMock.mockReset();
+    uploadFileMock.mockResolvedValue(undefined);
+    deleteFileMock.mockResolvedValue(undefined);
+    const fake = priorSkillDb(
+      [
+        {
+          id: "prior-version",
+          snapshot_id: "prior-snapshot",
+          entrypoint_path: "review/SKILL.md",
+          original_content_hash: "b".repeat(64),
+        },
+      ],
+      { failVersionInsert: true },
+    );
+
+    await expect(
+      storeSkillSnapshot({
+        tenantId: "tenant-1",
+        importedBy: "admin-1",
+        sourceFilename: "skills.zip",
+        sourceBytes: new Uint8Array([1, 2, 3]),
+        snapshot: snapshot(),
+        db: fake.db as never,
+      }),
+    ).rejects.toThrow("version insert failed");
+
+    expect(fake.callsFor("altien_skills", "delete")).toHaveLength(0);
+    const versionDeletes = fake.callsFor("altien_skill_versions", "delete");
+    expect(versionDeletes).toHaveLength(1);
+    expect(versionDeletes[0].filters[0][1]).toBe("id");
+    const order = (table: string, op: "delete") =>
+      fake.calls.findIndex((call) => call.table === table && call.op === op);
+    expect(order("altien_skill_versions", "delete")).toBeLessThan(
+      order("altien_skill_import_snapshots", "delete"),
+    );
+    expect(order("altien_skill_import_snapshots", "delete")).toBeLessThan(
+      order("documents", "delete"),
+    );
+    expect(deleteFileMock).toHaveBeenCalledTimes(3);
   });
 
   it("imports the same GitHub repository entrypoint as a new version of the prior skill", async () => {

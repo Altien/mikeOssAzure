@@ -16,54 +16,78 @@ import {
   getSkillPackageInfo,
 } from "./packages";
 
+/**
+ * `version-1` depends on `version-2`, which itself depends on `version-3`, so
+ * the manifest has a transitive dependency to pin as well as a direct one.
+ */
+const DEPENDENCY_EDGES: Record<
+  string,
+  Array<{ skillId: string; versionId: string; required: boolean }>
+> = {
+  "version-1": [
+    { skillId: "skill-2", versionId: "version-2", required: true },
+  ],
+  "version-2": [
+    { skillId: "skill-3", versionId: "version-3", required: true },
+  ],
+};
+
+const DEPENDENCY_VERSIONS: Record<string, Record<string, unknown>> = {
+  "version-2": {
+    id: "version-2",
+    skill_id: "skill-2",
+    state: "enabled",
+    original_content_hash: "dependency-hash",
+    approved_execution_contract: { projectRead: true },
+  },
+  "version-3": {
+    id: "version-3",
+    skill_id: "skill-3",
+    state: "enabled",
+    original_content_hash: "transitive-hash",
+    approved_execution_contract: { approvedToolNames: ["find_in_document"] },
+  },
+};
+
+const DEPENDENCY_SKILLS: Record<string, Record<string, unknown>> = {
+  "skill-2": { id: "skill-2", canonical_name: "helper", display_name: "Helper" },
+  "skill-3": { id: "skill-3", canonical_name: "deep", display_name: "Deep" },
+};
+
 function packageDb(adapted = false, withDependency = false) {
   return makeFakeDb((call) => {
-    if (withDependency && call.table === "altien_skill_dependencies") {
+    if (call.table === "altien_skill_dependencies") {
+      const versionId = String(
+        call.filters.find((filter) => filter[1] === "version_id")?.[2] ?? "",
+      );
       return {
-        data: [
-          {
-            version_id: "version-1",
-            dependency_skill_id: "skill-2",
-            dependency_version_id: "version-2",
-            required: true,
-          },
-        ],
+        data: withDependency
+          ? (DEPENDENCY_EDGES[versionId] ?? []).map((edge) => ({
+              version_id: versionId,
+              dependency_skill_id: edge.skillId,
+              dependency_version_id: edge.versionId,
+              required: edge.required,
+            }))
+          : [],
         error: null,
       };
     }
+    const requestedId = String(
+      call.filters.find((filter) => filter[1] === "id")?.[2] ?? "",
+    );
     if (
       withDependency &&
       call.table === "altien_skill_versions" &&
-      call.filters.some(
-        (filter) => filter[1] === "id" && filter[2] === "version-2",
-      )
+      DEPENDENCY_VERSIONS[requestedId]
     ) {
-      return {
-        data: [
-          {
-            id: "version-2",
-            skill_id: "skill-2",
-            state: "enabled",
-            original_content_hash: "dependency-hash",
-            approved_execution_contract: { projectRead: true },
-          },
-        ],
-        error: null,
-      };
+      return { data: [DEPENDENCY_VERSIONS[requestedId]], error: null };
     }
     if (
       withDependency &&
       call.table === "altien_skills" &&
-      call.filters.some(
-        (filter) => filter[1] === "id" && filter[2] === "skill-2",
-      )
+      DEPENDENCY_SKILLS[requestedId]
     ) {
-      return {
-        data: [
-          { id: "skill-2", canonical_name: "helper", display_name: "Helper" },
-        ],
-        error: null,
-      };
+      return { data: [DEPENDENCY_SKILLS[requestedId]], error: null };
     }
     if (call.table === "altien_skill_versions") {
       return {
@@ -211,20 +235,32 @@ describe("skill packages", () => {
     });
   });
 
-  it("states the exact approved dependency versions in the Mike manifest", async () => {
+  // A manifest that listed only the direct edges would leave the transitive
+  // dependency's version unpinned in the downloaded package.
+  it("pins the whole resolved dependency closure in the Mike manifest", async () => {
     downloadFileMock.mockImplementation(async () =>
       new TextEncoder().encode("skill text").buffer,
     );
+    const fake = packageDb(false, true);
     const mike = await buildMikeSkillPackage({
       tenantId: "tenant-1",
       versionId: "version-1",
-      db: packageDb(false, true).db as never,
+      db: fake.db as never,
     });
     const zip = await JSZip.loadAsync(mike.bytes);
     const manifest = JSON.parse(
       await zip.file(".mike/skill-manifest.json")!.async("text"),
     );
     expect(manifest.dependencies).toEqual([
+      {
+        skillId: "skill-3",
+        name: "deep",
+        displayName: "Deep",
+        versionId: "version-3",
+        contentHash: "transitive-hash",
+        required: true,
+        approvedExecutionContract: { approvedToolNames: ["find_in_document"] },
+      },
       {
         skillId: "skill-2",
         name: "helper",
@@ -235,6 +271,16 @@ describe("skill packages", () => {
         approvedExecutionContract: { projectRead: true },
       },
     ]);
+    // Defence in depth: the owning-skill read is tenant-scoped.
+    expect(
+      fake
+        .callsFor("altien_skills", "select")
+        .filter((call) =>
+          call.filters.some(
+            (filter) => filter[1] === "tenant_id" && filter[2] === "tenant-1",
+          ),
+        ).length,
+    ).toBeGreaterThan(0);
   });
 
   it("informs the downloader about licence files before download", async () => {

@@ -209,15 +209,24 @@ function allowedTools(contract: unknown) {
 export async function loadSkillChatRuntimeContext(args: {
   chatId: string;
   projectId: string;
+  /**
+   * Defence in depth behind the caller's project access check: when supplied,
+   * a binding written for another tenant reads as absent instead of loading.
+   * Optional so existing callers keep working unchanged.
+   */
+  tenantId?: string;
   db?: Db;
 }): Promise<SkillChatRuntimeContext | null> {
   const db = args.db ?? createServerSupabase();
-  const binding = await db
+  const bindingQuery = db
     .from("altien_chat_skill_bindings")
     .select("*")
     .eq("chat_id", args.chatId)
-    .eq("project_id", args.projectId)
-    .maybeSingle();
+    .eq("project_id", args.projectId);
+  const binding = await (args.tenantId
+    ? bindingQuery.eq("tenant_id", args.tenantId)
+    : bindingQuery
+  ).maybeSingle();
   throwOnDbError(binding);
   if (!binding.data) return null;
 

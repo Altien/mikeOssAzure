@@ -171,13 +171,36 @@ async function deleteUploaded(storagePaths: string[]) {
   );
 }
 
+/**
+ * Rolls a failed import's rows back, in the order the foreign keys require
+ * (migration 0027):
+ *
+ * - `altien_skill_versions.snapshot_id` is `on delete restrict`, so every
+ *   version row this import wrote must go before the snapshot. Deleting the
+ *   skills only cascades the versions of skills *this* import created; a
+ *   version added to a pre-existing skill has to be deleted explicitly, or
+ *   the snapshot delete fails and leaves an orphan version, snapshot, and
+ *   document set pointing at blobs that have already been removed.
+ * - The snapshot references the source document rows, so it goes before them.
+ *
+ * Every delete is best-effort per row: the original import failure is the one
+ * worth reporting.
+ */
 async function bestEffortRowCleanup(args: {
   db: Db;
+  versionIds: string[];
   skillIds: string[];
   snapshotId: string;
   documentIds: string[];
   rootFolderId?: string;
 }) {
+  for (const versionId of args.versionIds) {
+    try {
+      await args.db.from("altien_skill_versions").delete().eq("id", versionId);
+    } catch {
+      // Preserve the original import failure.
+    }
+  }
   for (const skillId of args.skillIds) {
     try {
       await args.db.from("altien_skills").delete().eq("id", skillId);
@@ -366,6 +389,7 @@ export async function storeSkillSnapshot(args: {
   }
 
   const skillIds: string[] = [];
+  const versionIds: string[] = [];
   const documentIds = [
     sourceDocumentId,
     ...preparedFiles.map((item) => item.documentId),
@@ -592,6 +616,7 @@ export async function storeSkillSnapshot(args: {
         });
       }
       const entrypoint = entrypointFile;
+      versionIds.push(draft.versionId);
       const versionRow = await db.from("altien_skill_versions").insert({
         id: draft.versionId,
         skill_id: draft.skillId,
@@ -646,6 +671,7 @@ export async function storeSkillSnapshot(args: {
   } catch (error) {
     await bestEffortRowCleanup({
       db,
+      versionIds,
       skillIds,
       snapshotId,
       documentIds,

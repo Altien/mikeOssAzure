@@ -6,12 +6,14 @@ vi.mock("../../lib/mcp/client", () => ({
   decryptString: vi.fn(),
 }));
 
+import { hashActionPayload } from "./actions";
 import {
+  CLEAN_ROOM_GENERATOR_RUN_WORDS,
   CLEAN_ROOM_LINKED_SOURCE_LIMITS,
+  CLEAN_ROOM_LINK_NOTE_DETAILS,
   CLEAN_ROOM_SNAPSHOT_RUN_WORDS,
   collectCleanRoomGitHubSources,
   evaluateCleanRoomLeakage,
-  findCleanRoomLeakage,
   findExplicitGitHubSourceLinks,
   generateCleanRoomBrief,
 } from "./cleanRoom";
@@ -60,7 +62,11 @@ describe("clean-room developer briefs", () => {
   it("blocks source-span leakage", () => {
     const copied =
       "distinctiveImplementationSequence createHiddenTransportWithRetryBudget and then serializeEveryPrivateInternalDetail before returning the secret response payload";
-    expect(findCleanRoomLeakage(copied, [source])).toHaveLength(1);
+    const result = evaluateCleanRoomLeakage(copied, [source], {
+      runWords: CLEAN_ROOM_GENERATOR_RUN_WORDS,
+    });
+    expect(result.passed).toBe(false);
+    expect(result.violations).toHaveLength(1);
   });
 });
 
@@ -117,11 +123,27 @@ describe("explicit github.com source links", () => {
     ].join("\n"),
   };
 
-  function makeGateDb(options: { tenantEnabled: boolean }) {
+  function makeGateDb(options: {
+    tenantEnabled: boolean;
+    /** A stored tenant OAuth connection the clean-room path must not use. */
+    oauthConnected?: boolean;
+  }) {
     return makeFakeDb((call: DbCall) => {
       if (call.table === "altien_skill_tenant_settings") {
         return {
           data: [{ github_import_enabled: options.tenantEnabled }],
+          error: null,
+        };
+      }
+      if (call.table === "altien_skill_github_connections") {
+        return {
+          data: options.oauthConnected
+            ? [{
+                encrypted_access_token: "cipher",
+                access_token_iv: "iv",
+                access_token_tag: "tag",
+              }]
+            : [],
           error: null,
         };
       }
@@ -198,7 +220,7 @@ describe("explicit github.com source links", () => {
       {
         url: "https://github.com/example/upstream/tree/main/tools",
         status: "skipped_gate_denied",
-        detail: "GITHUB_SKILL_IMPORT_DEPLOYMENT_DENIED",
+        detail: CLEAN_ROOM_LINK_NOTE_DETAILS.deploymentDenied,
       },
     ]);
   });
@@ -216,7 +238,7 @@ describe("explicit github.com source links", () => {
     expect(acquire).not.toHaveBeenCalled();
     expect(result.notes[0]).toMatchObject({
       status: "skipped_gate_denied",
-      detail: "GITHUB_SKILL_IMPORT_TENANT_DISABLED",
+      detail: CLEAN_ROOM_LINK_NOTE_DETAILS.tenantDisabled,
     });
   });
 
@@ -234,6 +256,34 @@ describe("explicit github.com source links", () => {
     expect(result).toEqual({ sources: [], notes: [] });
     expect(acquire).not.toHaveBeenCalled();
     expect(fake.calls).toHaveLength(0);
+  });
+
+  // Security: the links come from uploaded skill content, so authenticating
+  // the fetch with the tenant's repo-scoped OAuth token would let an uploaded
+  // archive pull private-repository text into the leakage corpus, or probe
+  // which private repositories exist. The fetch stays anonymous even when the
+  // tenant has a connection stored.
+  it("never spends the tenant OAuth token on a content-declared link", async () => {
+    process.env.ALLOW_GITHUB_SKILL_IMPORTS = "true";
+    const fake = makeGateDb({ tenantEnabled: true, oauthConnected: true });
+    const acquire = vi.fn(async () => acquired("upstream implementation text"));
+    await collectCleanRoomGitHubSources({
+      tenantId: "tenant-1",
+      sources: [linking],
+      db: fake.db as never,
+      acquire: acquire as never,
+    });
+
+    expect(acquire).toHaveBeenCalledWith(
+      expect.objectContaining({ token: undefined }),
+    );
+    // The policy read touches the connection row for its metadata; the stored
+    // token itself is never even selected, let alone decrypted.
+    expect(
+      fake.calls.filter((call) =>
+        String(call.columns ?? "").includes("encrypted_access_token"),
+      ),
+    ).toHaveLength(0);
   });
 
   it("follows an allowed link through the gated service into the leakage corpus", async () => {
@@ -290,7 +340,10 @@ describe("explicit github.com source links", () => {
     ).toHaveLength(2);
   });
 
-  it("records an unavailable link instead of failing the brief", async () => {
+  // A private repository, a deleted one, and a transport failure must be
+  // indistinguishable in the note, and the upstream error text must never
+  // reach the note at all — it flows into the generator prompt.
+  it("records an unavailable link with a fixed phrase, not the upstream error", async () => {
     process.env.ALLOW_GITHUB_SKILL_IMPORTS = "true";
     const acquire = vi.fn(async () => {
       throw new Error("GitHub repository or ref was not found.");
@@ -303,7 +356,11 @@ describe("explicit github.com source links", () => {
     });
 
     expect(result.sources).toEqual([]);
-    expect(result.notes[0]).toMatchObject({ status: "unavailable" });
+    expect(result.notes[0]).toEqual({
+      url: "https://github.com/example/upstream/tree/main/tools",
+      status: "unavailable",
+      detail: CLEAN_ROOM_LINK_NOTE_DETAILS.unavailable,
+    });
   });
 
   it("refuses a link form the acquisition service does not accept", async () => {
@@ -321,8 +378,40 @@ describe("explicit github.com source links", () => {
     });
 
     expect(acquire).not.toHaveBeenCalled();
-    expect(result.notes[0]).toMatchObject({
+    expect(result.notes[0]).toEqual({
+      url: "https://github.com/example/upstream/blob/main/tools/index.ts",
       status: "skipped_unsupported_link",
+      detail: CLEAN_ROOM_LINK_NOTE_DETAILS.unsupportedLink,
     });
+  });
+
+  // Regression: a fetched note used to carry `selectedPath: … || undefined`.
+  // `canonicalJson` emitted an `undefined` token at generation time while the
+  // jsonb round-trip dropped the key, so the approval hash recomputed from the
+  // stored row never matched and every such approval was refused.
+  it("hashes a fetched note identically before and after a jsonb round-trip", async () => {
+    process.env.ALLOW_GITHUB_SKILL_IMPORTS = "true";
+    const acquire = vi.fn(async () => {
+      const value = acquired("upstream implementation text");
+      return { ...value, provenance: { ...value.provenance, selectedPath: "" } };
+    });
+    const result = await collectCleanRoomGitHubSources({
+      tenantId: "tenant-1",
+      sources: [linking],
+      db: makeGateDb({ tenantEnabled: true }).db as never,
+      acquire: acquire as never,
+    });
+
+    const note = result.notes[0];
+    expect(note.status).toBe("fetched");
+    expect(Object.keys(note)).not.toContain("selectedPath");
+    const provenance = { linkedGitHubSources: result.notes };
+    expect(hashActionPayload(provenance)).toBe(
+      hashActionPayload(JSON.parse(JSON.stringify(provenance))),
+    );
+    // …and an explicitly undefined optional key hashes the same as an absent one.
+    expect(
+      hashActionPayload({ ...provenance, model: undefined }),
+    ).toBe(hashActionPayload(provenance));
   });
 });

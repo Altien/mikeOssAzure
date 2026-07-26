@@ -1047,7 +1047,11 @@ export async function postSkillReviewMessage(args: {
     args.userId,
     db,
   );
-  const skillDependencies = await dependencyBindings(args.versionId, db);
+  const skillDependencies = await dependencyBindings(
+    args.versionId,
+    db,
+    args.tenantId,
+  );
   const contract = await resolveCapabilityContractWithLlm({
     analysis: context.version.generated_analysis as never,
     catalogue: await catalogueFor(args.userId, db),
@@ -1118,7 +1122,7 @@ export async function getSkillReview(args: {
     version: context.version,
     deterministicAnalysis: context.version.deterministic_analysis ?? {},
     generatedAnalysis: context.version.generated_analysis ?? {},
-    dependencies: await dependencyBindings(args.versionId, db),
+    dependencies: await dependencyBindings(args.versionId, db, args.tenantId),
     declaredGitHubDependencies: await missingDeclaredGitHubDependencies({
       version: context.version,
       versionId: args.versionId,
@@ -1163,7 +1167,11 @@ export async function createSkillRun(args: {
   if (context.version.state !== "enabled") {
     throw new Error("Only an enabled skill version can start a new run.");
   }
-  const dependencies = await resolvedDependencyBindings(resolvedVersionId, db);
+  const dependencies = await resolvedDependencyBindings(
+    resolvedVersionId,
+    db,
+    args.tenantId,
+  );
   const chat = requireResult<{ id: string }>(
     await db
       .from("chats")

@@ -154,7 +154,25 @@ export async function setSkillDependency(args: {
   };
 }
 
-export async function dependencyBindings(versionId: string, db: Db) {
+/**
+ * Owning-skill read for a dependency version. `altien_skill_versions` carries
+ * no tenant column, so the tenant is enforced on the skill row: passing
+ * `tenantId` is defence in depth behind the caller's own access check, and a
+ * cross-tenant skill then reads as missing rather than resolving.
+ */
+function dependencySkillRow(skillId: unknown, db: Db, tenantId?: string) {
+  const query = db
+    .from("altien_skills")
+    .select("id, canonical_name, display_name")
+    .eq("id", skillId);
+  return (tenantId ? query.eq("tenant_id", tenantId) : query).single();
+}
+
+export async function dependencyBindings(
+  versionId: string,
+  db: Db,
+  tenantId?: string,
+) {
   const rows = await edges(versionId, db);
   const result = [];
   for (const row of rows) {
@@ -164,11 +182,7 @@ export async function dependencyBindings(versionId: string, db: Db) {
       .eq("id", row.dependency_version_id)
       .single();
     const skill = version.data
-      ? await db
-          .from("altien_skills")
-          .select("id, canonical_name, display_name")
-          .eq("id", version.data.skill_id)
-          .single()
+      ? await dependencySkillRow(version.data.skill_id, db, tenantId)
       : { data: null, error: null };
     if (version.error || !version.data || skill.error || !skill.data) {
       if (row.required) throw new Error("Required skill dependency is missing.");
@@ -285,6 +299,7 @@ export async function missingDeclaredGitHubDependencies(args: {
 export async function resolvedDependencyBindings(
   rootVersionId: string,
   db: Db,
+  tenantId?: string,
 ) {
   const versionIds = await resolveSkillDependencyGraph({
     rootVersionId,
@@ -298,11 +313,7 @@ export async function resolvedDependencyBindings(
       .eq("id", versionId)
       .single();
     const skill = version.data
-      ? await db
-          .from("altien_skills")
-          .select("id, canonical_name, display_name")
-          .eq("id", version.data.skill_id)
-          .single()
+      ? await dependencySkillRow(version.data.skill_id, db, tenantId)
       : { data: null, error: null };
     if (version.error || !version.data || skill.error || !skill.data) {
       throw new SkillDependencyResolutionError(

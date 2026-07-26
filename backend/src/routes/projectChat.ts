@@ -205,9 +205,14 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     const lastUserText =
         typeof lastUser?.content === "string" ? lastUser.content : "";
+    const principalTenantId =
+        typeof res.locals.principal?.tenantId === "string"
+            ? res.locals.principal.tenantId
+            : undefined;
     let skillRuntime = await loadSkillChatRuntimeContext({
         chatId: chatId!,
         projectId,
+        tenantId: principalTenantId,
         db,
     });
     const explicitSkillName = lastUserText
@@ -242,6 +247,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             skillRuntime = await loadSkillChatRuntimeContext({
                 chatId: chatId!,
                 projectId,
+                tenantId: principalTenantId,
                 db,
             });
         } catch (error) {

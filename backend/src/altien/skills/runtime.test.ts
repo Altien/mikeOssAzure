@@ -177,6 +177,22 @@ describe("loadSkillChatRuntimeContext", () => {
     ).resolves.toBeNull();
   });
 
+  // Defence in depth behind the caller's project access check.
+  it("scopes the binding lookup to the tenant when one is supplied", async () => {
+    const fake = makeFakeDb(() => ({ data: [], error: null }));
+    await expect(
+      loadSkillChatRuntimeContext({
+        chatId: "chat-ordinary",
+        projectId: "project-1",
+        tenantId: "tenant-1",
+        db: fake.db as never,
+      }),
+    ).resolves.toBeNull();
+    expect(fake.callsFor("altien_chat_skill_bindings")[0].filters).toEqual(
+      expect.arrayContaining([["eq", "tenant_id", "tenant-1"]]),
+    );
+  });
+
   it("loads exact dependency instructions, tools, and namespaced resources", async () => {
     downloadFileMock.mockImplementation(async (path: string) =>
       new TextEncoder().encode(

@@ -6,6 +6,7 @@ import { getUserModelSettings } from "../../lib/userSettings";
 import { planSkillRename, type AdaptationFile } from "./adaptation";
 import { hashActionPayload } from "./actions";
 import {
+  CLEAN_ROOM_GENERATOR_RUN_WORDS,
   CLEAN_ROOM_SNAPSHOT_RUN_WORDS,
   collectCleanRoomGitHubSources,
   evaluateCleanRoomLeakage,
@@ -507,9 +508,8 @@ export async function createCleanRoomDeveloperArtifact(args: {
     linkedGitHubSources: linked.notes,
   };
   // The generator only saw `sources`; the recorded leakage check compares the
-  // brief against every readable file in the original snapshot, plus any
-  // linked GitHub source that was acquired.
-  const snapshotTexts = [...sources, ...linked.sources];
+  // brief against every readable file in the original snapshot as well.
+  const snapshotTexts = [...sources];
   for (const candidate of original.files ?? []) {
     if (
       candidate.inspection_class !== "source" &&
@@ -530,9 +530,25 @@ export async function createCleanRoomDeveloperArtifact(args: {
       // A file that is unreadable as UTF-8 cannot leak as verbatim text.
     }
   }
-  const leakage = evaluateCleanRoomLeakage(brief.markdown, snapshotTexts, {
+  const snapshotLeakage = evaluateCleanRoomLeakage(
+    brief.markdown,
+    snapshotTexts,
+    { runWords: CLEAN_ROOM_SNAPSHOT_RUN_WORDS },
+  );
+  // Text fetched from a declared link is held to the same strict bar as the
+  // files the generator was shown, not the looser whole-snapshot bar: it is
+  // third-party upstream source the brief has no business reproducing at all,
+  // so a short verbatim run is already a violation.
+  const linkedLeakage = evaluateCleanRoomLeakage(
+    brief.markdown,
+    linked.sources,
+    { runWords: CLEAN_ROOM_GENERATOR_RUN_WORDS },
+  );
+  const leakage = {
+    passed: snapshotLeakage.passed && linkedLeakage.passed,
     runWords: CLEAN_ROOM_SNAPSHOT_RUN_WORDS,
-  });
+    violations: [...snapshotLeakage.violations, ...linkedLeakage.violations],
+  };
   const safeName =
     args.requirementName
       .normalize("NFKD")
@@ -558,7 +574,9 @@ export async function createCleanRoomDeveloperArtifact(args: {
   const artifactId = randomUUID();
   const leakageCheck = {
     ...leakage,
-    checkedPaths: snapshotTexts.map((source) => source.path),
+    checkedPaths: [...snapshotTexts, ...linked.sources].map(
+      (source) => source.path,
+    ),
   };
   // A brief that reproduces a long verbatim span from the snapshot is never
   // recorded as having passed; it is stored blocked so a reviewer can see it

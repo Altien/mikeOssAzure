@@ -5,7 +5,6 @@ import {
   type UserApiKeys,
 } from "../../lib/llm";
 import { acquireGitHubSkill, parseGitHubSourceUrl } from "./github";
-import { getGitHubSkillOAuthToken } from "./githubOAuth";
 import { getGitHubSkillImportPolicy } from "./settings";
 import type { Db } from "./shared";
 
@@ -150,12 +149,6 @@ export function evaluateCleanRoomLeakage(
   return { passed: violations.length === 0, runWords, violations };
 }
 
-export function findCleanRoomLeakage(markdown: string, sources: SourceFile[]) {
-  return evaluateCleanRoomLeakage(markdown, sources, {
-    runWords: CLEAN_ROOM_GENERATOR_RUN_WORDS,
-  }).violations;
-}
-
 /**
  * Explicit `github.com` links the clean-room pipeline may follow, and the
  * budget it may spend doing so. The spec allows following declared source
@@ -172,6 +165,24 @@ export const CLEAN_ROOM_LINKED_SOURCE_LIMITS = {
   totalBytes: 256 * 1024,
 } as const;
 
+/**
+ * The only values `detail` may take. A note travels into the clean-room
+ * generator prompt, so nothing derived from skill content or from an upstream
+ * service's error text may appear in it: a fixed vocabulary closes that
+ * injection channel by construction. It also means a private or non-existent
+ * repository reads identically — simply unavailable — so a note cannot be used
+ * to probe which repositories exist.
+ */
+export const CLEAN_ROOM_LINK_NOTE_DETAILS = {
+  tenantDisabled: "GITHUB_SKILL_IMPORT_TENANT_DISABLED",
+  deploymentDenied: "GITHUB_SKILL_IMPORT_DEPLOYMENT_DENIED",
+  unavailable: "GITHUB_SKILL_LINK_UNAVAILABLE",
+  unsupportedLink: "GITHUB_SKILL_LINK_UNSUPPORTED_FORM",
+} as const;
+
+export type CleanRoomLinkNoteDetail =
+  (typeof CLEAN_ROOM_LINK_NOTE_DETAILS)[keyof typeof CLEAN_ROOM_LINK_NOTE_DETAILS];
+
 export type CleanRoomLinkedSourceNote = {
   url: string;
   status:
@@ -185,7 +196,7 @@ export type CleanRoomLinkedSourceNote = {
   selectedPath?: string;
   fileCount?: number;
   bytes?: number;
-  detail?: string;
+  detail?: CleanRoomLinkNoteDetail;
 };
 
 const GITHUB_LINK = /https:\/\/github\.com\/[A-Za-z0-9._~\-/]+/gi;
@@ -218,6 +229,13 @@ export function findExplicitGitHubSourceLinks(
  * pinning, and import limits are exactly the import path's. A denied gate is
  * not an error — the brief is still generated, with the skip recorded in its
  * provenance notes.
+ *
+ * The fetch is deliberately anonymous. The links come from uploaded skill
+ * content, so authenticating them with the tenant's repo-scoped OAuth token
+ * would make this a confused deputy: an uploaded archive could name a private
+ * repository and have its contents pulled into the leakage corpus, or probe
+ * which private repositories exist. Public repositories are all a declared
+ * source link may reach; anything else is simply unavailable.
  */
 export async function collectCleanRoomGitHubSources(args: {
   tenantId: string;
@@ -238,15 +256,13 @@ export async function collectCleanRoomGitHubSources(args: {
         url,
         status: "skipped_gate_denied" as const,
         detail: policy.deploymentAllowed
-          ? "GITHUB_SKILL_IMPORT_TENANT_DISABLED"
-          : "GITHUB_SKILL_IMPORT_DEPLOYMENT_DENIED",
+          ? CLEAN_ROOM_LINK_NOTE_DETAILS.tenantDisabled
+          : CLEAN_ROOM_LINK_NOTE_DETAILS.deploymentDenied,
       })),
     };
   }
 
   const acquire = args.acquire ?? acquireGitHubSkill;
-  const token =
-    (await getGitHubSkillOAuthToken(args.tenantId, args.db)) ?? undefined;
   const notes: CleanRoomLinkedSourceNote[] = [];
   const collected: SourceFile[] = [];
   let budget = CLEAN_ROOM_LINKED_SOURCE_LIMITS.totalBytes;
@@ -258,16 +274,21 @@ export async function collectCleanRoomGitHubSources(args: {
     }
     try {
       parseGitHubSourceUrl(url);
-    } catch (error) {
+    } catch {
       notes.push({
         url,
         status: "skipped_unsupported_link",
-        detail: error instanceof Error ? error.message : undefined,
+        detail: CLEAN_ROOM_LINK_NOTE_DETAILS.unsupportedLink,
       });
       continue;
     }
     try {
-      const acquired = await acquire({ url, token, fetcher: args.fetcher });
+      // No tenant token: see the anonymous-fetch note above.
+      const acquired = await acquire({
+        url,
+        token: undefined,
+        fetcher: args.fetcher,
+      });
       let fileCount = 0;
       let bytes = 0;
       for (const file of acquired.snapshot.files) {
@@ -295,22 +316,28 @@ export async function collectCleanRoomGitHubSources(args: {
         bytes += file.byteSize;
         budget -= file.byteSize;
       }
+      // An absent optional key is omitted rather than set to `undefined`:
+      // these notes are hashed as part of the artifact approval payload, and
+      // an `undefined` value would not survive the jsonb round-trip.
       notes.push({
         url,
         status: "fetched",
         repository: acquired.provenance.repository,
         commitSha: acquired.provenance.resolvedCommitSha,
-        selectedPath: acquired.provenance.selectedPath || undefined,
+        ...(acquired.provenance.selectedPath
+          ? { selectedPath: acquired.provenance.selectedPath }
+          : {}),
         fileCount,
         bytes,
       });
-    } catch (error) {
+    } catch {
       // An unavailable link produces an honest incomplete report, not a
-      // failed brief.
+      // failed brief. Private, missing, and failed-fetch all read the same,
+      // so the note cannot report anything the uploader did not already know.
       notes.push({
         url,
         status: "unavailable",
-        detail: error instanceof Error ? error.message : "Acquisition failed.",
+        detail: CLEAN_ROOM_LINK_NOTE_DETAILS.unavailable,
       });
     }
   }
@@ -416,10 +443,14 @@ ${section("Black-box acceptance tests", brief.acceptanceTests)}
 
 ${section("Unknowns", brief.unknowns)}
 `;
-  const leakage = findCleanRoomLeakage(markdown, args.sources);
-  if (leakage.length) {
+  const leakage = evaluateCleanRoomLeakage(markdown, args.sources, {
+    runWords: CLEAN_ROOM_GENERATOR_RUN_WORDS,
+  });
+  if (!leakage.passed) {
     throw new Error(
-      `Clean-room leakage check failed for ${leakage.map((item) => item.path).join(", ")}.`,
+      `Clean-room leakage check failed for ${leakage.violations
+        .map((item) => item.path)
+        .join(", ")}.`,
     );
   }
   return {

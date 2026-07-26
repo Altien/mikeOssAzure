@@ -7,7 +7,10 @@ import {
   throwOnDbError,
   type Db,
 } from "./shared";
-import { dependencyBindings } from "./dependencies";
+import {
+  dependencyBindings,
+  resolvedDependencyBindings,
+} from "./dependencies";
 
 async function documentVersionBytes(documentVersionId: string, db: Db) {
   const version = await db
@@ -114,8 +117,22 @@ export async function buildMikeSkillPackage(args: {
     String(a.path).localeCompare(String(b.path), "en"),
   );
   // The Mike manifest must state the exact dependency versions this version is
-  // bound to, not just its own provenance and mappings.
-  const dependencies = await dependencyBindings(args.versionId, db);
+  // bound to, not just its own provenance and mappings. That means the whole
+  // resolved closure: direct edges alone would leave a transitive dependency's
+  // version unpinned in the downloaded package.
+  const dependencies = await resolvedDependencyBindings(
+    args.versionId,
+    db,
+    args.tenantId,
+  );
+  // `required` is a property of a direct edge, so it is reported only where
+  // one exists. Everything else in the closure is reached through those edges
+  // and is present in the package regardless.
+  const directRequired = new Map(
+    (await dependencyBindings(args.versionId, db, args.tenantId)).map(
+      (dependency) => [dependency.versionId, dependency.required],
+    ),
+  );
   const zip = new JSZip();
   const stableDate = new Date("1980-01-01T00:00:00.000Z");
   for (const file of files) {
@@ -169,7 +186,7 @@ export async function buildMikeSkillPackage(args: {
       displayName: dependency.displayName,
       versionId: dependency.versionId,
       contentHash: dependency.contentHash,
-      required: dependency.required,
+      required: directRequired.get(dependency.versionId) ?? true,
       approvedExecutionContract: dependency.executionContract,
     })),
     approvedExecutionContract:

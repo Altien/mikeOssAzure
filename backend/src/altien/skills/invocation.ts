@@ -124,7 +124,11 @@ async function prepareBinding(args: {
   const target = await resolveBindableVersion(args);
   return {
     ...target,
-    dependencies: await resolvedDependencyBindings(target.versionId, args.db),
+    dependencies: await resolvedDependencyBindings(
+      target.versionId,
+      args.db,
+      args.tenantId,
+    ),
   };
 }
 
