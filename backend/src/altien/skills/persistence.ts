@@ -555,6 +555,31 @@ export async function listTenantSkills(
     .order("created_at", { ascending: false });
   throwOnDbError(versions, "Failed to list skill versions.");
   const versionRows = (versions.data ?? []) as Array<Record<string, unknown>>;
+  const snapshotIds = [
+    ...new Set(
+      versionRows
+        .map((version) => version.snapshot_id)
+        .filter(
+          (value): value is string =>
+            typeof value === "string" && !!value.trim(),
+        ),
+    ),
+  ];
+  const snapshots = snapshotIds.length
+    ? await db
+        .from("altien_skill_import_snapshots")
+        .select(
+          "id, source_kind, github_repository, github_resolved_commit_sha",
+        )
+        .in("id", snapshotIds)
+    : { data: [], error: null };
+  throwOnDbError(snapshots, "Failed to list skill origins.");
+  const snapshotById = new Map(
+    (snapshots.data ?? []).map((snapshot) => [
+      String(snapshot.id),
+      snapshot as Record<string, unknown>,
+    ]),
+  );
   return skillRows
     .map((skill) => {
       const skillVersions = versionRows.filter(
@@ -569,6 +594,7 @@ export async function listTenantSkills(
         ? visibleVersions[0]
         : visibleVersions.find((version) => version.id === currentId) ??
           visibleVersions[0];
+      const origin = snapshotById.get(String(current.snapshot_id));
       return {
         id: String(skill.id),
         canonicalName: String(skill.canonical_name),
@@ -594,6 +620,15 @@ export async function listTenantSkills(
           contentHash: String(
             current.adapted_content_hash ?? current.original_content_hash,
           ),
+          sourceKind: String(origin?.source_kind ?? "zip"),
+          sourceRepository:
+            origin?.github_repository == null
+              ? undefined
+              : String(origin.github_repository),
+          sourceCommitSha:
+            origin?.github_resolved_commit_sha == null
+              ? undefined
+              : String(origin.github_resolved_commit_sha),
         },
       };
     })

@@ -19,6 +19,9 @@ export type SkillListItem = {
         entrypointPath: string;
         declaredVersion?: string;
         contentHash: string;
+        sourceKind: "zip" | "github";
+        sourceRepository?: string;
+        sourceCommitSha?: string;
     };
 };
 
@@ -35,6 +38,20 @@ export type SkillImportResult = {
 
 export function listSkills(): Promise<SkillsLibraryResponse> {
     return apiRequest<SkillsLibraryResponse>("/altien/skills");
+}
+
+export function checkGitHubSkillUpdate(versionId: string) {
+    return apiRequest<{
+        repository: string;
+        requestedRef: string;
+        selectedPath: string;
+        previousCommitSha: string;
+        currentCommitSha: string;
+        updateAvailable: boolean;
+    }>(
+        `/altien/skills/versions/${encodeURIComponent(versionId)}/check-update`,
+        { method: "POST" },
+    );
 }
 
 export function importSkillZip(file: File): Promise<SkillImportResult> {
@@ -184,6 +201,32 @@ export function createCleanRoomDeveloperArtifact(
             body: JSON.stringify({ requirementName }),
         },
     );
+}
+
+export function approveCleanRoomDeveloperArtifact(artifactId: string) {
+    return apiRequest<{ id: string; state: "approved" }>(
+        `/altien/skills/developer-artifacts/${encodeURIComponent(artifactId)}/approve`,
+        { method: "POST" },
+    );
+}
+
+export async function downloadCleanRoomDeveloperArtifact(artifactId: string) {
+    const auth = await getAuthHeader();
+    const response = await fetch(
+        `${API_BASE}/altien/skills/developer-artifacts/${encodeURIComponent(artifactId)}`,
+        { headers: auth },
+    );
+    bounceIfUnauthorized(response);
+    if (!response.ok) throw new Error(await response.text());
+    const disposition = response.headers.get("content-disposition") ?? "";
+    const utf8Name = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
+    const simpleName = /filename="([^"]+)"/i.exec(disposition)?.[1];
+    return {
+        blob: await response.blob(),
+        filename: utf8Name
+            ? decodeURIComponent(utf8Name)
+            : simpleName || "clean-room-brief.md",
+    };
 }
 
 export type GitHubSkillImportPolicy = {

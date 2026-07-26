@@ -244,6 +244,7 @@ describe("listTenantSkills", () => {
           entrypointPath: "SKILL.md",
           declaredVersion: "2",
           contentHash: "new-hash",
+          sourceKind: "zip",
         },
       },
     ]);

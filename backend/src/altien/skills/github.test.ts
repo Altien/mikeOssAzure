@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   acquireGitHubSkill,
+  checkGitHubSourceUpdate,
   parseGitHubSourceUrl,
 } from "./github";
 
@@ -138,5 +139,28 @@ describe("GitHub skill acquisition", () => {
         fetcher: fetcher as typeof fetch,
       }),
     ).rejects.toThrow("submodules");
+  });
+
+  it("checks a tracked ref without downloading or promoting content", async () => {
+    const calls: string[] = [];
+    const fetcher = (async (input: string | URL | Request) => {
+      calls.push(String(input));
+      return json({ sha: "b".repeat(40) });
+    }) as typeof fetch;
+    await expect(
+      checkGitHubSourceUpdate({
+        repository: "github.com/example/skills",
+        requestedRef: "main",
+        selectedPath: "legal",
+        lastResolvedCommitSha: "a".repeat(40),
+        fetcher,
+      }),
+    ).resolves.toMatchObject({
+      updateAvailable: true,
+      previousCommitSha: "a".repeat(40),
+      currentCommitSha: "b".repeat(40),
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain("/commits/main");
   });
 });

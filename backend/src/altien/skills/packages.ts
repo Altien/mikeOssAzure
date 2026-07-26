@@ -82,7 +82,8 @@ export async function getSkillPackageInfo(args: {
     .from("altien_skill_developer_artifacts")
     .select("id")
     .eq("tenant_id", args.tenantId)
-    .eq("version_id", args.versionId);
+    .eq("version_id", args.versionId)
+    .eq("state", "approved");
   if (artifacts.error) throw new Error(artifacts.error.message);
   return {
     versionId: args.versionId,
@@ -225,6 +226,7 @@ export async function buildDeveloperSkillPackage(args: {
     .select("*")
     .eq("tenant_id", args.tenantId)
     .eq("version_id", args.versionId)
+    .eq("state", "approved")
     .order("created_at", { ascending: true });
   if (artifacts.error) throw new Error(artifacts.error.message);
   if (!(artifacts.data ?? []).length) {

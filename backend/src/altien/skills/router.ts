@@ -39,7 +39,9 @@ import {
 } from "./pins";
 import { disableSkill } from "./lifecycle";
 import {
+  approveCleanRoomDeveloperArtifact,
   createCleanRoomDeveloperArtifact,
+  getCleanRoomDeveloperArtifact,
   persistSkillRename,
 } from "./artifacts";
 import {
@@ -50,6 +52,7 @@ import {
   startGitHubSkillOAuth,
 } from "./githubOAuth";
 import crypto from "node:crypto";
+import { checkGitHubSkillVersionUpdate } from "./updates";
 
 const zipUpload = multer({
   storage: multer.memoryStorage(),
@@ -404,6 +407,77 @@ skillsRouter.get(
       res
         .status(404)
         .json({ detail: safeErrorMessage(error, "Skill package not found") });
+    }
+  },
+);
+
+skillsRouter.post(
+  "/developer-artifacts/:artifactId/approve",
+  requireAuth,
+  requireRole("TenantAdmin"),
+  async (req, res) => {
+    const tenant = tenantId(res);
+    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+    try {
+      res.json(
+        await approveCleanRoomDeveloperArtifact({
+          tenantId: tenant,
+          artifactId: req.params.artifactId,
+          approvedBy: String(res.locals.userId),
+        }),
+      );
+    } catch (error) {
+      res.status(409).json({
+        detail: safeErrorMessage(error, "Developer artifact approval failed"),
+      });
+    }
+  },
+);
+
+skillsRouter.get(
+  "/developer-artifacts/:artifactId",
+  requireAuth,
+  requireRole("TenantAdmin"),
+  async (req, res) => {
+    const tenant = tenantId(res);
+    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+    try {
+      const artifact = await getCleanRoomDeveloperArtifact({
+        tenantId: tenant,
+        artifactId: req.params.artifactId,
+      });
+      res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+      res.setHeader(
+        "Content-Disposition",
+        buildContentDisposition("attachment", artifact.filename),
+      );
+      res.send(Buffer.from(artifact.bytes));
+    } catch (error) {
+      res.status(404).json({
+        detail: safeErrorMessage(error, "Developer artifact not found"),
+      });
+    }
+  },
+);
+
+skillsRouter.post(
+  "/versions/:versionId/check-update",
+  requireAuth,
+  requireRole("TenantAdmin"),
+  async (req, res) => {
+    const tenant = tenantId(res);
+    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+    try {
+      res.json(
+        await checkGitHubSkillVersionUpdate({
+          tenantId: tenant,
+          versionId: req.params.versionId,
+        }),
+      );
+    } catch (error) {
+      res.status(422).json({
+        detail: safeErrorMessage(error, "GitHub update check failed"),
+      });
     }
   },
 );

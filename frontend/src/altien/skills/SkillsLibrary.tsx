@@ -8,8 +8,11 @@ import type { Project } from "@/app/components/shared/types";
 import {
     adaptSkillName,
     analyseSkillVersion,
+    approveCleanRoomDeveloperArtifact,
+    checkGitHubSkillUpdate,
     createCleanRoomDeveloperArtifact,
     downloadSkillPackage,
+    downloadCleanRoomDeveloperArtifact,
     disableSkill,
     getGitHubSkillImportPolicy,
     getSkillPackageInfo,
@@ -46,6 +49,12 @@ export function SkillsLibrary() {
     const [renameByVersion, setRenameByVersion] = useState<Record<string, string>>({});
     const [developerRequirementByVersion, setDeveloperRequirementByVersion] =
         useState<Record<string, string>>({});
+    const [updateByVersion, setUpdateByVersion] = useState<
+        Record<string, string>
+    >({});
+    const [draftArtifactByVersion, setDraftArtifactByVersion] = useState<
+        Record<string, { id: string; filename: string } | undefined>
+    >({});
     const fileInput = useRef<HTMLInputElement>(null);
 
     const refresh = useCallback(async () => {
@@ -230,15 +239,81 @@ export function SkillsLibrary() {
         setBusyVersion(skill.version.id);
         setError(null);
         try {
-            await createCleanRoomDeveloperArtifact(
+            const artifact = await createCleanRoomDeveloperArtifact(
                 skill.version.id,
                 requirement,
             );
+            setDraftArtifactByVersion((current) => ({
+                ...current,
+                [skill.version.id]: {
+                    id: artifact.id,
+                    filename: artifact.filename,
+                },
+            }));
             setDeveloperRequirementByVersion((current) => ({
                 ...current,
                 [skill.version.id]: "",
             }));
             await showPackages(skill.version.id);
+        } catch (caught) {
+            setError(messageFrom(caught));
+        } finally {
+            setBusyVersion(null);
+        }
+    }
+
+    async function reviewArtifact(
+        versionId: string,
+        artifact: { id: string; filename: string },
+    ) {
+        setBusyVersion(versionId);
+        setError(null);
+        try {
+            const result = await downloadCleanRoomDeveloperArtifact(artifact.id);
+            const url = URL.createObjectURL(result.blob);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = result.filename;
+            anchor.click();
+            URL.revokeObjectURL(url);
+        } catch (caught) {
+            setError(messageFrom(caught));
+        } finally {
+            setBusyVersion(null);
+        }
+    }
+
+    async function approveArtifact(
+        versionId: string,
+        artifact: { id: string; filename: string },
+    ) {
+        setBusyVersion(versionId);
+        setError(null);
+        try {
+            await approveCleanRoomDeveloperArtifact(artifact.id);
+            setDraftArtifactByVersion((current) => ({
+                ...current,
+                [versionId]: undefined,
+            }));
+            await showPackages(versionId);
+        } catch (caught) {
+            setError(messageFrom(caught));
+        } finally {
+            setBusyVersion(null);
+        }
+    }
+
+    async function checkUpdate(skill: SkillListItem) {
+        setBusyVersion(skill.version.id);
+        setError(null);
+        try {
+            const result = await checkGitHubSkillUpdate(skill.version.id);
+            setUpdateByVersion((current) => ({
+                ...current,
+                [skill.version.id]: result.updateAvailable
+                    ? `Update available at ${result.currentCommitSha.slice(0, 12)}. Import the GitHub URL to create a new draft version.`
+                    : "Tracked GitHub ref is unchanged.",
+            }));
         } catch (caught) {
             setError(messageFrom(caught));
         } finally {
@@ -470,6 +545,75 @@ export function SkillsLibrary() {
                                             >
                                                 Generate clean-room brief
                                             </button>
+                                        </div>
+                                    )}
+                                    {skill.version.sourceKind === "github" && (
+                                        <div className="mt-3">
+                                            <button
+                                                type="button"
+                                                disabled={
+                                                    busyVersion ===
+                                                    skill.version.id
+                                                }
+                                                onClick={() =>
+                                                    void checkUpdate(skill)
+                                                }
+                                                className="rounded-md border border-slate-300 px-3 py-2 text-sm disabled:opacity-50"
+                                            >
+                                                Check GitHub update
+                                            </button>
+                                            {updateByVersion[
+                                                skill.version.id
+                                            ] && (
+                                                <p className="mt-2 text-xs text-slate-600">
+                                                    {
+                                                        updateByVersion[
+                                                            skill.version.id
+                                                        ]
+                                                    }
+                                                </p>
+                                            )}
+                                        </div>
+                                    )}
+                                    {draftArtifactByVersion[
+                                        skill.version.id
+                                    ] && (
+                                        <div className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+                                            <p>
+                                                Review the downloaded clean-room
+                                                brief before approving it for the
+                                                developer package.
+                                            </p>
+                                            <div className="mt-2 flex gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                        void reviewArtifact(
+                                                            skill.version.id,
+                                                            draftArtifactByVersion[
+                                                                skill.version.id
+                                                            ]!,
+                                                        )
+                                                    }
+                                                    className="rounded-md border border-amber-300 px-3 py-2"
+                                                >
+                                                    Download draft
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                        void approveArtifact(
+                                                            skill.version.id,
+                                                            draftArtifactByVersion[
+                                                                skill.version.id
+                                                            ]!,
+                                                        )
+                                                    }
+                                                    className="rounded-md bg-slate-950 px-3 py-2 text-white"
+                                                >
+                                                    Approve reviewed brief
+                                                </button>
+                                            </div>
                                         </div>
                                     )}
                                 </div>

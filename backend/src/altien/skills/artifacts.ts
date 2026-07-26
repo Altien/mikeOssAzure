@@ -469,3 +469,67 @@ export async function createCleanRoomDeveloperArtifact(args: {
   };
 }
 
+export async function getCleanRoomDeveloperArtifact(args: {
+  tenantId: string;
+  artifactId: string;
+  db?: Db;
+}) {
+  const db = args.db ?? createServerSupabase();
+  const artifact = await db
+    .from("altien_skill_developer_artifacts")
+    .select("*")
+    .eq("id", args.artifactId)
+    .eq("tenant_id", args.tenantId)
+    .single();
+  if (artifact.error || !artifact.data) {
+    throw new Error("Developer artifact not found.");
+  }
+  const documentVersion = await db
+    .from("document_versions")
+    .select("storage_path, filename")
+    .eq("id", artifact.data.document_version_id)
+    .single();
+  if (documentVersion.error || !documentVersion.data?.storage_path) {
+    throw new Error("Developer artifact document is unavailable.");
+  }
+  const bytes = await downloadFile(String(documentVersion.data.storage_path));
+  if (!bytes) throw new Error("Developer artifact blob is unavailable.");
+  return {
+    bytes,
+    filename: String(documentVersion.data.filename ?? "clean-room-brief.md"),
+    state: String(artifact.data.state),
+    requirementName: String(artifact.data.requirement_name),
+  };
+}
+
+export async function approveCleanRoomDeveloperArtifact(args: {
+  tenantId: string;
+  artifactId: string;
+  approvedBy: string;
+  db?: Db;
+}) {
+  const db = args.db ?? createServerSupabase();
+  const artifact = await db
+    .from("altien_skill_developer_artifacts")
+    .select("id, state")
+    .eq("id", args.artifactId)
+    .eq("tenant_id", args.tenantId)
+    .single();
+  if (artifact.error || !artifact.data) {
+    throw new Error("Developer artifact not found.");
+  }
+  if (artifact.data.state === "blocked") {
+    throw new Error("A blocked developer artifact cannot be approved.");
+  }
+  const updated = await db
+    .from("altien_skill_developer_artifacts")
+    .update({
+      state: "approved",
+      approved_by: args.approvedBy,
+      approved_at: new Date().toISOString(),
+    })
+    .eq("id", args.artifactId)
+    .eq("tenant_id", args.tenantId);
+  if (updated.error) throw new Error(updated.error.message);
+  return { id: args.artifactId, state: "approved" as const };
+}

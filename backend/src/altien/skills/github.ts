@@ -300,3 +300,39 @@ export async function acquireGitHubSkill(args: {
 export function githubDeploymentAllowed() {
   return process.env.ALLOW_GITHUB_SKILL_IMPORTS === "true";
 }
+
+export async function checkGitHubSourceUpdate(args: {
+  repository: string;
+  requestedRef: string;
+  selectedPath: string;
+  lastResolvedCommitSha: string;
+  token?: string;
+  fetcher?: GitHubFetch;
+}) {
+  const match = /^github\.com\/([^/]+)\/([^/]+)$/i.exec(args.repository);
+  if (!match) {
+    throw new GitHubSkillImportError(
+      "invalid_github_provenance",
+      "Stored GitHub repository provenance is invalid.",
+    );
+  }
+  const fetcher = args.fetcher ?? fetch;
+  const commit = await githubJson<{ sha: string }>(
+    `/repos/${encodeURIComponent(match[1])}/${encodeURIComponent(match[2])}/commits/${encodeURIComponent(args.requestedRef)}`,
+    { fetcher, token: args.token },
+  );
+  if (!commit?.sha) {
+    throw new GitHubSkillImportError(
+      "github_ref_not_found",
+      "The tracked GitHub ref could not be resolved.",
+    );
+  }
+  return {
+    repository: args.repository,
+    requestedRef: args.requestedRef,
+    selectedPath: args.selectedPath,
+    previousCommitSha: args.lastResolvedCommitSha,
+    currentCommitSha: commit.sha,
+    updateAvailable: commit.sha !== args.lastResolvedCommitSha,
+  };
+}
