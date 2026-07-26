@@ -206,9 +206,43 @@ describe("Authority Trace exports", () => {
 
     expect(html).toContain("DEGRADED EXPORT");
     expect(html).toContain(
-      '<h2>authority — Authority</h2><div class="text">Changed source</div>',
+      '<h3>authority — Authority</h3><div class="text"><span class="muted">No verified passage is available for this document.</span></div>',
     );
+    expect(html).not.toContain(">Changed source<");
     expect(html).not.toContain('data-citations="c001">Changed source');
+  });
+
+  it("shows focused evidence excerpts instead of full memo and source text", () => {
+    const value = workspace();
+    value.memo.segments = [
+      { text: "memo-before-".repeat(1_000), highlights: [] },
+      { text: "Example v Example", highlights: ["c001"] },
+      { text: "memo-after-".repeat(1_000), highlights: [] },
+    ];
+    value.sources.authority.segments = [
+      { text: "source-before-".repeat(1_000), highlights: [] },
+      { text: "The rule applies.", highlights: ["c001"] },
+      { text: "source-after-".repeat(1_000), highlights: [] },
+    ];
+
+    const html = buildReviewHtml(value);
+    const visibleBody = html.slice(
+      html.indexOf("<body>"),
+      html.indexOf("<footer>"),
+    );
+
+    expect(visibleBody).toContain("Focused evidence excerpts");
+    expect(visibleBody).toContain(
+      '<mark data-citations="c001">Example v Example</mark>',
+    );
+    expect(visibleBody).toContain(
+      '<mark data-citations="c001">The rule applies.</mark>',
+    );
+    expect(visibleBody).not.toContain("memo-before-".repeat(200));
+    expect(visibleBody).not.toContain("source-after-".repeat(200));
+    expect(visibleBody).toContain(
+      "Complete immutable text remains embedded in the export data.",
+    );
   });
 
   it("enforces per-file and total original-document caps with reasons", () => {

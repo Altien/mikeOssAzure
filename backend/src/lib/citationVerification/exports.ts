@@ -87,17 +87,74 @@ function citationState(
     : "Exact";
 }
 
-function renderSegments(
-  segments: AuthorityTraceWorkspace["memo"]["segments"],
-): string {
-  return segments
-    .map((segment) => {
-      const text = escapeHtml(segment.text);
-      return segment.highlights.length
-        ? `<mark data-citations="${escapeHtml(segment.highlights.join(" "))}">${text}</mark>`
-        : text;
+type HighlightSegment = AuthorityTraceWorkspace["memo"]["segments"][number];
+
+const REVIEW_CONTEXT_CHARACTERS = 500;
+
+function renderFocusedSegments(segments: HighlightSegment[]): string {
+  let offset = 0;
+  const positioned = segments.map((segment) => {
+    const start = offset;
+    offset += segment.text.length;
+    return {
+      ...segment,
+      start,
+      end: offset,
+    };
+  });
+  const fullLength = positioned.at(-1)?.end ?? 0;
+  const highlighted = positioned.filter(
+    (segment) => segment.highlights.length > 0,
+  );
+
+  if (!highlighted.length) {
+    return '<span class="muted">No verified passage is available for this document.</span>';
+  }
+
+  const windows = highlighted
+    .map((segment) => ({
+      start: Math.max(0, segment.start - REVIEW_CONTEXT_CHARACTERS),
+      end: Math.min(fullLength, segment.end + REVIEW_CONTEXT_CHARACTERS),
+    }))
+    .reduce<Array<{ start: number; end: number }>>((merged, window) => {
+      const previous = merged.at(-1);
+      if (previous && window.start <= previous.end) {
+        previous.end = Math.max(previous.end, window.end);
+      } else {
+        merged.push({ ...window });
+      }
+      return merged;
+    }, []);
+
+  return windows
+    .map((window, windowIndex) => {
+      const excerpt = positioned
+        .filter(
+          (segment) =>
+            segment.end > window.start && segment.start < window.end,
+        )
+        .map((segment) => {
+          const text = segment.text.slice(
+            Math.max(0, window.start - segment.start),
+            Math.min(segment.text.length, window.end - segment.start),
+          );
+          const escaped = escapeHtml(text);
+          return segment.highlights.length
+            ? `<mark data-citations="${escapeHtml(segment.highlights.join(" "))}">${escaped}</mark>`
+            : escaped;
+        })
+        .join("");
+      const prefix =
+        windowIndex === 0 && window.start > 0
+          ? '<span aria-hidden="true">…</span>'
+          : "";
+      const suffix =
+        windowIndex === windows.length - 1 && window.end < fullLength
+          ? '<span aria-hidden="true">…</span>'
+          : "";
+      return `${prefix}${excerpt}${suffix}`;
     })
-    .join("");
+    .join('\n\n<span aria-hidden="true">…</span>\n\n');
 }
 
 function renderReview(review: CitationVerificationReview | undefined): string {
@@ -160,15 +217,15 @@ function documentShell(args: {
 <title>${escapeHtml(args.title)}</title>
 <style>
 @page { size: letter${args.landscape ? " landscape" : ""}; margin: 0.45in; }
-* { box-sizing: border-box; } body { margin: 0; color: #172033; font: 14px/1.45 system-ui, sans-serif; }
+* { box-sizing: border-box; } body { margin: 24px auto; max-width: 1100px; padding: 0 20px; color: #172033; font: 14px/1.45 system-ui, sans-serif; }
 header { border-bottom: 2px solid #172033; margin-bottom: 16px; padding-bottom: 10px; }
-h1 { font-size: 22px; margin: 0; } h2 { font-size: 15px; margin: 18px 0 8px; }
+h1 { font-size: 22px; margin: 0; } h2 { font-size: 17px; margin: 22px 0 6px; } h3 { font-size: 15px; margin: 18px 0 8px; }
 .integrity { border: 1px solid; margin: 12px 0; padding: 10px; } .ok { background:#ecfdf5; border-color:#6ee7b7; }
 .degraded { background:#fef2f2; border-color:#f87171; color:#991b1b; }
 table { border-collapse: collapse; width: 100%; } th, td { border:1px solid #cbd5e1; padding:6px; text-align:left; vertical-align:top; }
 th { background:#f1f5f9; } .text { border:1px solid #cbd5e1; padding:12px; white-space:pre-wrap; overflow-wrap:anywhere; }
 mark { background:#fde68a; } .muted { color:#64748b; font-size:12px; } footer { border-top:1px solid #94a3b8; margin-top:18px; padding-top:8px; }
-@media print { .no-print { display:none; } tr { break-inside:avoid; } }
+@media print { body { margin:0; max-width:none; padding:0; } .no-print { display:none; } tr { break-inside:avoid; } }
 </style>
 </head>
 <body>
@@ -203,7 +260,7 @@ export function buildReviewHtml(
   const sources = Object.entries(workspace.sources)
     .map(
       ([key, source]) =>
-        `<h2>${escapeHtml(key)} — ${escapeHtml(source.title)}</h2><div class="text">${renderSegments(source.segments)}</div>`,
+        `<h3>${escapeHtml(key)} — ${escapeHtml(source.title)}</h3><div class="text">${renderFocusedSegments(source.segments)}</div>`,
     )
     .join("");
   return documentShell({
@@ -214,7 +271,9 @@ export function buildReviewHtml(
     body: `<header><h1>Authority Trace offline review</h1><div class="muted">Run ${escapeHtml(workspace.id)} · ${escapeHtml(workspace.created_at)}</div></header>
 ${renderIntegrity(workspace)}
 <table><thead><tr><th>ID</th><th>Citation</th><th>Anchor state</th><th>Proposition</th><th>Current verdict</th><th>Stale reviews</th></tr></thead><tbody>${rows}</tbody></table>
-<h2>Memo — ${escapeHtml(workspace.memo.filename)}</h2><div class="text">${renderSegments(workspace.memo.segments)}</div>
+<h2>Focused evidence excerpts</h2>
+<p class="muted">Only verified passages and nearby context are shown. Complete immutable text remains embedded in the export data.</p>
+<h3>Memo — ${escapeHtml(workspace.memo.filename)}</h3><div class="text">${renderFocusedSegments(workspace.memo.segments)}</div>
 ${sources}`,
   });
 }
