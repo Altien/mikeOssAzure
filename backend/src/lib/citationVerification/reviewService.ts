@@ -56,7 +56,6 @@ type ExternalSourceRow = {
   project_id: string | null;
   version_id: string;
   title: string;
-  content_text: string | null;
   content_hash: string;
   content_bytes: number;
   document_id: string | null;
@@ -211,7 +210,7 @@ export async function getAuthorityTraceWorkspace(
       ? await db
           .from("external_source_cache")
           .select(
-            "id, project_id, version_id, title, content_text, content_hash, content_bytes, document_id, document_version_id",
+            "id, project_id, version_id, title, content_hash, content_bytes, document_id, document_version_id",
           )
           .in("id", externalDocumentIds)
           .eq("project_id", String(runData.project_id))
@@ -297,12 +296,6 @@ export async function getAuthorityTraceWorkspace(
         ),
       );
       continue;
-    }
-    // Compatibility for pre-0024 rows; normal cache reads migrate these into
-    // DMS documents and clear content_text.
-    if (source.content_text !== null) {
-      externalTextById.set(source.id, source.content_text);
-      externalIdentityById.set(source.id, contentIdentity(source.content_text));
     }
   }
 

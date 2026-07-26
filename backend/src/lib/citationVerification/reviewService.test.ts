@@ -145,7 +145,6 @@ function database(options?: {
                 project_id: "project-1",
                 version_id: "source-v1",
                 title: "Authority",
-                content_text: null,
                 content_hash: result.record.sources.authority.sha256,
                 content_bytes: result.record.sources.authority.bytes,
                 document_id: "external-dms-id",

@@ -56,7 +56,6 @@ type ExternalSourceRow = {
   origin_url: string | null;
   search_tool: string;
   read_tool: string;
-  content_text: string | null;
   content_hash: string;
   content_bytes: number;
   document_id: string | null;
@@ -65,6 +64,8 @@ type ExternalSourceRow = {
   summary_status: "pending" | "generated" | "fallback";
   summary_model: string | null;
 };
+
+const EXTERNAL_PROVENANCE_OWNER = "system:external-provenance";
 
 function contentHash(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
@@ -136,7 +137,7 @@ export function createDatabaseExternalSourcePersistence(args: {
     ? `project:${args.projectId}`
     : `user:${args.userId}`;
   const select =
-    "id, source_key, provider, external_id, version_id, title, origin_url, search_tool, read_tool, content_text, content_hash, content_bytes, document_id, document_version_id, summary_text, summary_status, summary_model";
+    "id, source_key, provider, external_id, version_id, title, origin_url, search_tool, read_tool, content_hash, content_bytes, document_id, document_version_id, summary_text, summary_status, summary_model";
 
   async function findRow(id: string): Promise<ExternalSourceRow | null> {
     const base = () =>
@@ -164,7 +165,6 @@ export function createDatabaseExternalSourcePersistence(args: {
     const { data, error } = await db
       .from("external_source_cache")
       .select(select)
-      .eq("owner_user_id", args.userId)
       .eq("source_key", source.id)
       .eq("version_id", source.versionId)
       .eq("content_hash", hash)
@@ -181,7 +181,6 @@ export function createDatabaseExternalSourcePersistence(args: {
       db
         .from("projects")
         .select("id")
-        .eq("user_id", args.userId)
         .eq("project_kind", "external_provenance")
         .eq("provenance_key", key)
         .maybeSingle();
@@ -192,7 +191,7 @@ export function createDatabaseExternalSourcePersistence(args: {
     const { data, error } = await db
       .from("projects")
       .insert({
-        user_id: args.userId,
+        user_id: EXTERNAL_PROVENANCE_OWNER,
         name: `${provider.trim() || "External"} sources`,
         visibility: "private",
         project_kind: "external_provenance",
@@ -224,7 +223,7 @@ export function createDatabaseExternalSourcePersistence(args: {
     const documentVersionId = randomUUID();
     const bytes = new TextEncoder().encode(source.text);
     const storagePath = externalSourceStorageKey(
-      args.userId,
+      EXTERNAL_PROVENANCE_OWNER,
       documentId,
       documentVersionId,
     );
@@ -239,7 +238,7 @@ export function createDatabaseExternalSourcePersistence(args: {
       const { error: documentError } = await db.from("documents").insert({
         id: documentId,
         project_id: provenanceProjectId,
-        user_id: args.userId,
+        user_id: EXTERNAL_PROVENANCE_OWNER,
         status: "processing",
       });
       if (documentError) throw new Error(documentError.message);
@@ -284,51 +283,21 @@ export function createDatabaseExternalSourcePersistence(args: {
     await deleteFile(storagePath).catch(() => {});
   }
 
-  async function materializeLegacyRow(
-    row: ExternalSourceRow,
-  ): Promise<ExternalSourceRow> {
-    if (row.document_id && row.document_version_id) return row;
-    if (row.content_text === null) {
-      throw new Error(
-        `External source ${row.id} has no stored document content`,
-      );
+  function requireDmsBacking(row: ExternalSourceRow): ExternalSourceRow & {
+    document_id: string;
+    document_version_id: string;
+  } {
+    if (!row.document_id || !row.document_version_id) {
+      throw new Error(`External source has no DMS document version: ${row.id}`);
     }
-    const source: ExternalSourceDocument = {
-      id: row.source_key,
-      provider: row.provider,
-      externalId: row.external_id,
-      versionId: row.version_id,
-      title: row.title,
-      text: row.content_text,
-      ...(row.origin_url ? { originUrl: row.origin_url } : {}),
-      searchTool: row.search_tool,
-      readTool: row.read_tool,
-    };
-    const dms = await createDmsDocument(source);
-    const { error } = await db
-      .from("external_source_cache")
-      .update({
-        document_id: dms.documentId,
-        document_version_id: dms.documentVersionId,
-        content_text: null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", row.id)
-      .eq("owner_user_id", args.userId);
-    if (error) {
-      await removeDmsDocument(dms.documentId, dms.storagePath);
-      throw new Error(error.message);
-    }
-    return {
-      ...row,
-      document_id: dms.documentId,
-      document_version_id: dms.documentVersionId,
-      content_text: null,
+    return row as ExternalSourceRow & {
+      document_id: string;
+      document_version_id: string;
     };
   }
 
   async function readRowText(row: ExternalSourceRow): Promise<string> {
-    const materialized = await materializeLegacyRow(row);
+    const materialized = requireDmsBacking(row);
     const { data, error } = await db
       .from("document_versions")
       .select("id, document_id, storage_path")
@@ -364,13 +333,13 @@ export function createDatabaseExternalSourcePersistence(args: {
         .maybeSingle();
       if (findError) throw new Error(findError.message);
       if (existing) {
-        const row = await materializeLegacyRow(existing as ExternalSourceRow);
+        const row = requireDmsBacking(existing as ExternalSourceRow);
         const cached = fromStoredRow(row, source.text);
         return { id: cached.cacheRecordId!, summary: cached.summary };
       }
 
       const reusable = await findReusableRow(source, hash);
-      const reusedRow = reusable ? await materializeLegacyRow(reusable) : null;
+      const reusedRow = reusable ? requireDmsBacking(reusable) : null;
       const createdDms = reusedRow ? null : await createDmsDocument(source);
       const documentId = reusedRow?.document_id ?? createdDms!.documentId;
       const documentVersionId =
@@ -389,7 +358,6 @@ export function createDatabaseExternalSourcePersistence(args: {
           origin_url: source.originUrl ?? null,
           search_tool: source.searchTool,
           read_tool: source.readTool,
-          content_text: null,
           content_hash: hash,
           content_bytes: contentBytes,
           document_id: documentId,

@@ -176,17 +176,20 @@ describe("database external-source persistence", () => {
 
     expect(result.id).toBe("cache-row-1");
     expect(uploadFileMock).toHaveBeenCalledWith(
-      expect.stringMatching(/^documents\/user-1\/[^/]+\/versions\/[^/]+\.txt$/),
+      expect.stringMatching(
+        /^documents\/system:external-provenance\/[^/]+\/versions\/[^/]+\.txt$/,
+      ),
       expect.any(ArrayBuffer),
       "text/plain; charset=utf-8",
     );
     expect(callsFor("projects", "insert")[0]?.payload).toMatchObject({
+      user_id: "system:external-provenance",
       project_kind: "external_provenance",
       provenance_key: "courtlistener",
     });
     expect(callsFor("documents", "insert")[0]?.payload).toMatchObject({
       project_id: "provenance-project",
-      user_id: "user-1",
+      user_id: "system:external-provenance",
     });
     expect(callsFor("document_versions", "insert")[0]?.payload).toMatchObject({
       source: "external_retrieval",
@@ -197,7 +200,6 @@ describe("database external-source persistence", () => {
       callsFor("external_source_cache", "insert")[0]?.payload,
     ).toMatchObject({
       project_id: "matter-1",
-      content_text: null,
       content_hash: hash,
       document_id: expect.any(String),
       document_version_id: expect.any(String),
@@ -223,7 +225,6 @@ describe("database external-source persistence", () => {
               origin_url: source.originUrl,
               search_tool: source.searchTool,
               read_tool: source.readTool,
-              content_text: null,
               content_hash: hash,
               content_bytes: Buffer.byteLength(source.text),
               document_id: "document-1",
@@ -241,7 +242,8 @@ describe("database external-source persistence", () => {
             {
               id: "document-version-1",
               document_id: "document-1",
-              storage_path: "documents/user-1/document-1/versions/v1.txt",
+              storage_path:
+                "documents/system:external-provenance/document-1/versions/v1.txt",
             },
           ],
         };
@@ -259,11 +261,11 @@ describe("database external-source persistence", () => {
     expect(resolved?.source.text).toBe(source.text);
     expect(resolved?.summary?.text).toBe("A stored summary.");
     expect(downloadFileMock).toHaveBeenCalledWith(
-      "documents/user-1/document-1/versions/v1.txt",
+      "documents/system:external-provenance/document-1/versions/v1.txt",
     );
   });
 
-  it("reuses one provenance document across matter-scoped retrieval records", async () => {
+  it("reuses one provenance document across users and matter scopes", async () => {
     uploadFileMock.mockReset().mockResolvedValue(undefined);
     const hash = createHash("sha256").update(source.text).digest("hex");
     const reusable = {
@@ -276,7 +278,6 @@ describe("database external-source persistence", () => {
       origin_url: source.originUrl,
       search_tool: source.searchTool,
       read_tool: source.readTool,
-      content_text: null,
       content_hash: hash,
       content_bytes: Buffer.byteLength(source.text),
       document_id: "shared-document",
@@ -304,7 +305,7 @@ describe("database external-source persistence", () => {
       return { data: [] };
     });
     const persistence = createDatabaseExternalSourcePersistence({
-      userId: "user-1",
+      userId: "user-2",
       projectId: "matter-2",
       db: db as never,
     });
