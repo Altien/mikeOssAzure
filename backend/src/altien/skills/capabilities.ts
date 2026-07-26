@@ -129,6 +129,12 @@ function vague(requirement: SkillCapabilityRequirement) {
   );
 }
 
+/**
+ * Statuses that still need an explicit behavioural comparison before any tool
+ * can be granted. They are proposals, never grants.
+ */
+const UNAPPROVED_STATUSES = ["missing", "proposed"];
+
 export function resolveCapabilityContract(args: {
   analysis: GeneratedSkillAnalysis;
   catalogue: ToolCatalogueItem[];
@@ -190,11 +196,20 @@ export function resolveCapabilityContract(args: {
           };
     }
     if (vague(requirement)) {
+      // Story 23: vague naming is not a hard blocker. It grants nothing on its
+      // own, and is surfaced as a structured unresolved entry so a TenantAdmin
+      // can approve an explicit minimum capability set for it.
       return {
         requirement,
-        status: "vague_no_grant" as const,
+        status: "needs_admin_selection" as const,
         mappedToolNames: [],
-        comparison: { purpose: "No explicit observable capability." },
+        comparison: {
+          purpose: "No explicit observable capability.",
+          requestedCapabilityText: requirement.name,
+          rationale: requirement.rationale,
+          adminSelectionRequired:
+            "A TenantAdmin must explicitly select the minimum capability set for this requirement; nothing is granted otherwise.",
+        },
       };
     }
     const expectedSource =
@@ -217,11 +232,13 @@ export function resolveCapabilityContract(args: {
         },
       };
     }
+    // A mapping requires behavioural compatibility, not name similarity. This
+    // deployment holds no canonical identity linking an imported skill's tool
+    // name to a Mike tool, so an exact name match is only the first-ranked
+    // candidate and needs the same explicit approval as a fuzzy match.
     return {
       requirement,
-      status: found.available
-        ? ("compatible" as const)
-        : ("connection_required" as const),
+      status: "proposed" as const,
       mappedToolNames: [found.name],
       comparison: {
         purpose: found.description,
@@ -229,6 +246,8 @@ export function resolveCapabilityContract(args: {
         outputs: found.outputSchema ?? "unspecified",
         sideEffects: found.sideEffects,
         requiresConfirmation: found.requiresConfirmation,
+        currentlyAvailable: found.available,
+        matchBasis: "name equality only; behaviour not yet compared",
       },
     };
   });
@@ -240,6 +259,9 @@ export function resolveCapabilityContract(args: {
         "connection_required",
         "model_requirement",
         "dependency_compatible",
+        // Not a blocker: it grants nothing and is resolved by explicit
+        // TenantAdmin selection of a minimum capability set.
+        "needs_admin_selection",
       ].includes(mapping.status),
   );
   const approvedToolNames = Array.from(
@@ -319,7 +341,8 @@ export async function resolveCapabilityContractWithLlm(args: {
   const deterministic = resolveCapabilityContract(args);
   const unresolved = deterministic.mappings.filter(
     (mapping) =>
-      mapping.status === "missing" && !vague(mapping.requirement),
+      UNAPPROVED_STATUSES.includes(mapping.status) &&
+      !vague(mapping.requirement),
   );
   if (!unresolved.length) {
     return {
@@ -328,7 +351,10 @@ export async function resolveCapabilityContractWithLlm(args: {
     };
   }
   const assessmentInput = {
-    requirements: unresolved.map((mapping) => mapping.requirement),
+    requirements: unresolved.map((mapping) => ({
+      ...mapping.requirement,
+      proposedCandidateNames: mapping.mappedToolNames,
+    })),
     candidates: args.catalogue.map((tool) => ({
       name: tool.name,
       source: tool.source,
@@ -351,13 +377,18 @@ export async function resolveCapabilityContractWithLlm(args: {
 You may choose any first-party or MCP candidate when its observable behaviour
 is an acceptable replacement. Compare purpose, inputs, outputs, errors and
 limits, data access, and side effects. Name similarity is not evidence.
+A requirement may carry proposedCandidateNames: consider those candidates
+first, but reject them unless their observable behaviour actually matches.
 Never call a tool and never authorize a mapping. Return JSON only:
 {"assessments":[{"requirementName":"exact input name","compatible":true,"toolName":"exact candidate name or null","reason":"...","comparison":{"purpose":"...","inputs":"...","outputs":"...","errorsLimits":"...","dataAccess":"...","sideEffects":"..."}}]}`,
     user: inputText,
   });
   const assessments = parseFallbackAssessments(raw);
   const mappings = deterministic.mappings.map((mapping) => {
-    if (mapping.status !== "missing" || vague(mapping.requirement)) {
+    if (
+      !UNAPPROVED_STATUSES.includes(mapping.status) ||
+      vague(mapping.requirement)
+    ) {
       return mapping;
     }
     const assessment = assessments.find(
@@ -367,6 +398,8 @@ Never call a tool and never authorize a mapping. Return JSON only:
       return {
         ...mapping,
         status: "incompatible" as const,
+        // Drop any name-matched candidate: it was never behaviourally approved.
+        mappedToolNames: [],
         comparison: assessment?.comparison ?? mapping.comparison,
         llmReason: assessment?.reason ?? "No compatible replacement proposed.",
       };
@@ -398,6 +431,8 @@ Never call a tool and never authorize a mapping. Return JSON only:
         "llm_compatible",
         "connection_required",
         "model_requirement",
+        "dependency_compatible",
+        "needs_admin_selection",
       ].includes(mapping.status),
   );
   const approvedToolNames = Array.from(

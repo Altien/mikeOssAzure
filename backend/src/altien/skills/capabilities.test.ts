@@ -6,7 +6,7 @@ import {
 } from "./capabilities";
 
 describe("skill capability resolution", () => {
-  it("maps exact observable first-party capabilities and the read baseline", () => {
+  it("grants the read baseline but only proposes exact name matches", () => {
     const contract = resolveCapabilityContract({
       analysis: {
         summary: "Checks citations.",
@@ -29,17 +29,123 @@ describe("skill capability resolution", () => {
       },
       catalogue: firstPartyToolCatalogue(),
     });
-    expect(contract.blockers).toEqual([]);
     expect(contract.approvedToolNames).toEqual(
-      expect.arrayContaining(["read_document", "verify_citation_sources"]),
+      expect.arrayContaining(["read_document"]),
     );
+    // Name equality is not behavioural evidence: nothing is granted for it.
+    expect(contract.approvedToolNames).not.toContain("verify_citation_sources");
+    expect(contract.mappings[0].status).toBe("compatible");
+    expect(contract.mappings[1]).toMatchObject({
+      status: "proposed",
+      mappedToolNames: ["verify_citation_sources"],
+    });
     expect(contract.mappings[1].comparison).toEqual(
       expect.objectContaining({
         inputs: expect.any(Object),
         outputs: "unspecified",
         sideEffects: "external",
+        matchBasis: expect.stringContaining("name equality"),
       }),
     );
+    // A required, still-unapproved proposal blocks deterministic enablement.
+    expect(contract.blockers).toHaveLength(1);
+    expect(contract.blockers[0].requirement.name).toBe(
+      "verify_citation_sources",
+    );
+  });
+
+  it("puts exact name matches through the same behavioural approval as fuzzy matches", async () => {
+    let sentRequirements: unknown;
+    const contract = await resolveCapabilityContractWithLlm({
+      analysis: {
+        summary: "Checks citations.",
+        risks: [],
+        unresolvedReferences: [],
+        capabilityRequirements: [
+          {
+            name: "verify_citation_sources",
+            kind: "first_party_tool",
+            required: true,
+            rationale: "Verify the citation.",
+          },
+        ],
+      },
+      catalogue: firstPartyToolCatalogue(),
+      model: "gpt-5.4-lite",
+      complete: async ({ user }) => {
+        sentRequirements = (JSON.parse(user) as { requirements: unknown })
+          .requirements;
+        return JSON.stringify({
+          assessments: [
+            {
+              requirementName: "verify_citation_sources",
+              compatible: true,
+              toolName: "verify_citation_sources",
+              reason: "Purpose, inputs, outputs and side effects match.",
+              comparison: {
+                purpose: "verify citations",
+                inputs: "citation text",
+                outputs: "verification result",
+                errorsLimits: "bounded",
+                dataAccess: "trusted source cache",
+                sideEffects: "external",
+              },
+            },
+          ],
+        });
+      },
+    });
+    // The exact-name candidate is offered to the comparison, ranked first.
+    expect(sentRequirements).toEqual([
+      expect.objectContaining({
+        name: "verify_citation_sources",
+        proposedCandidateNames: ["verify_citation_sources"],
+      }),
+    ]);
+    expect(contract.mappings[0]).toMatchObject({
+      status: "llm_compatible",
+      mappedSource: "first_party",
+    });
+    expect(contract.blockers).toEqual([]);
+    expect(contract.approvedToolNames).toEqual(["verify_citation_sources"]);
+  });
+
+  it("keeps a rejected exact name match unapproved and blocking", async () => {
+    const contract = await resolveCapabilityContractWithLlm({
+      analysis: {
+        summary: "Checks citations.",
+        risks: [],
+        unresolvedReferences: [],
+        capabilityRequirements: [
+          {
+            name: "verify_citation_sources",
+            kind: "first_party_tool",
+            required: true,
+            rationale: "Verify against an external registry.",
+          },
+        ],
+      },
+      catalogue: firstPartyToolCatalogue(),
+      model: "gpt-5.4-lite",
+      complete: async () =>
+        JSON.stringify({
+          assessments: [
+            {
+              requirementName: "verify_citation_sources",
+              compatible: false,
+              toolName: null,
+              reason: "Same name, different observable behaviour.",
+              comparison: { purpose: "not comparable" },
+            },
+          ],
+        }),
+    });
+    expect(contract.mappings[0]).toMatchObject({
+      status: "incompatible",
+      mappedToolNames: [],
+    });
+    expect(contract.approvedToolNames).toEqual([]);
+    expect(contract.blockers).toHaveLength(1);
   });
 
   it("grants nothing for vague language and blocks required missing tools", () => {
@@ -66,12 +172,71 @@ describe("skill capability resolution", () => {
       catalogue: firstPartyToolCatalogue(),
     });
     expect(contract.approvedToolNames).toEqual([]);
-    expect(contract.mappings[0].status).toBe("vague_no_grant");
+    expect(contract.mappings[0].status).toBe("needs_admin_selection");
     expect(contract.blockers).toHaveLength(1);
+    expect(contract.blockers[0].requirement.name).toBe("nonexistent_tool");
   });
 
-  it("does not treat an unavailable confirmation-gated MCP tool as callable", () => {
+  it("offers a required vague requirement for explicit admin selection instead of blocking", () => {
     const contract = resolveCapabilityContract({
+      analysis: {
+        summary: "Uses tools.",
+        risks: [],
+        unresolvedReferences: [],
+        capabilityRequirements: [
+          {
+            name: "appropriate tools",
+            kind: "first_party_tool",
+            required: true,
+            rationale: "Whatever tools are needed.",
+          },
+        ],
+      },
+      catalogue: firstPartyToolCatalogue(),
+    });
+    expect(contract.blockers).toEqual([]);
+    expect(contract.approvedToolNames).toEqual([]);
+    expect(contract.mappings[0]).toMatchObject({
+      status: "needs_admin_selection",
+      mappedToolNames: [],
+      comparison: {
+        requestedCapabilityText: "appropriate tools",
+        rationale: "Whatever tools are needed.",
+      },
+    });
+  });
+
+  it("never sends a vague requirement to the fast model and still grants nothing", async () => {
+    let modelCalled = false;
+    const contract = await resolveCapabilityContractWithLlm({
+      analysis: {
+        summary: "Uses tools.",
+        risks: [],
+        unresolvedReferences: [],
+        capabilityRequirements: [
+          {
+            name: "tools",
+            kind: "first_party_tool",
+            required: true,
+            rationale: "Unspecified.",
+          },
+        ],
+      },
+      catalogue: firstPartyToolCatalogue(),
+      model: "gpt-5.4-lite",
+      complete: async () => {
+        modelCalled = true;
+        return '{"assessments":[]}';
+      },
+    });
+    expect(modelCalled).toBe(false);
+    expect(contract.blockers).toEqual([]);
+    expect(contract.approvedToolNames).toEqual([]);
+    expect(contract.mappings[0].status).toBe("needs_admin_selection");
+  });
+
+  it("does not treat an unavailable confirmation-gated MCP tool as callable", async () => {
+    const base = {
       analysis: {
         summary: "Calls a remote service.",
         risks: [],
@@ -79,7 +244,7 @@ describe("skill capability resolution", () => {
         capabilityRequirements: [
           {
             name: "mcp_remote_search",
-            kind: "mcp",
+            kind: "mcp" as const,
             required: true,
             rationale: "Search remote data.",
           },
@@ -88,17 +253,40 @@ describe("skill capability resolution", () => {
       catalogue: [
         {
           name: "mcp_remote_search",
-          source: "mcp",
+          source: "mcp" as const,
           description: "Search",
           inputSchema: { type: "object" },
-          sideEffects: "external",
+          sideEffects: "external" as const,
           requiresConfirmation: true,
           available: false,
         },
       ],
+    };
+    const deterministic = resolveCapabilityContract(base);
+    expect(deterministic.mappings[0]).toMatchObject({
+      status: "proposed",
+      comparison: { currentlyAvailable: false },
     });
-    expect(contract.blockers).toEqual([]);
-    expect(contract.mappings[0].status).toBe("connection_required");
+    expect(deterministic.approvedToolNames).toEqual([]);
+
+    const assessed = await resolveCapabilityContractWithLlm({
+      ...base,
+      model: "gpt-5.4-lite",
+      complete: async () =>
+        JSON.stringify({
+          assessments: [
+            {
+              requirementName: "mcp_remote_search",
+              compatible: true,
+              toolName: "mcp_remote_search",
+              reason: "Same observable search contract.",
+              comparison: { purpose: "search" },
+            },
+          ],
+        }),
+    });
+    expect(assessed.blockers).toEqual([]);
+    expect(assessed.mappings[0].status).toBe("connection_required");
   });
 
   it("uses the fast model to compare behavior across replacement tools", async () => {
