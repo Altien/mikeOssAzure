@@ -16,6 +16,61 @@ function redirect(location: string, status = 302) {
   return new Response(null, { status, headers: { location } });
 }
 
+describe("GitHub rate limiting", () => {
+  // GitHub answers an exhausted quota with the same 403 it uses for a private
+  // repository, which read as "connect OAuth" for a public one.
+  function exhausted() {
+    return new Response("", {
+      status: 403,
+      headers: {
+        "x-ratelimit-remaining": "0",
+        "x-ratelimit-reset": "1785112944",
+      },
+    });
+  }
+
+  it("reports an exhausted quota as rate limiting, not authorization", async () => {
+    await expect(
+      acquireGitHubSkill({
+        url: "https://github.com/owner/repo",
+        fetcher: async () => exhausted(),
+      }),
+    ).rejects.toMatchObject({ code: "github_rate_limited" });
+  });
+
+  it("tells an anonymous caller that connecting GitHub raises the limit", async () => {
+    await expect(
+      acquireGitHubSkill({
+        url: "https://github.com/owner/repo",
+        fetcher: async () => exhausted(),
+      }),
+    ).rejects.toThrow(/60 an hour.*Account → Connectors/s);
+  });
+
+  it("does not suggest connecting when a token was already used", async () => {
+    await expect(
+      acquireGitHubSkill({
+        url: "https://github.com/owner/repo",
+        token: "tenant-token",
+        fetcher: async () => exhausted(),
+      }),
+    ).rejects.toThrow(/Wait for the limit to reset/);
+  });
+
+  it("still reports a real permission failure as authorization", async () => {
+    await expect(
+      acquireGitHubSkill({
+        url: "https://github.com/owner/repo",
+        fetcher: async () =>
+          new Response("", {
+            status: 403,
+            headers: { "x-ratelimit-remaining": "58" },
+          }),
+      }),
+    ).rejects.toMatchObject({ code: "github_authorization_required" });
+  });
+});
+
 describe("GitHub skill acquisition", () => {
   it("accepts only github.com repository and tree URLs", () => {
     expect(

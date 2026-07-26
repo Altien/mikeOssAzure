@@ -138,12 +138,50 @@ async function githubRequest(
   );
 }
 
+/**
+ * A 403/429 carrying an exhausted quota. Anonymous callers get 60 requests an
+ * hour from GitHub, which one import can consume, so this is the likelier
+ * meaning of a 403 than a permission problem.
+ */
+function rateLimited(response: { status: number; headers: Headers }) {
+  if (response.status !== 403 && response.status !== 429) return false;
+  const remaining = response.headers.get("x-ratelimit-remaining");
+  return remaining === "0" || !!response.headers.get("retry-after");
+}
+
+function rateLimitMessage(
+  response: { headers: Headers },
+  anonymous: boolean,
+): string {
+  const reset = Number(response.headers.get("x-ratelimit-reset"));
+  const when = Number.isFinite(reset)
+    ? new Date(reset * 1000).toISOString().slice(11, 16)
+    : null;
+  return [
+    "GitHub rejected this request: its rate limit is exhausted",
+    when ? ` until ${when} UTC` : "",
+    ". ",
+    anonymous
+      ? "Unauthenticated requests are limited to 60 an hour. Connect GitHub in Account → Connectors to import with a far higher limit."
+      : "Wait for the limit to reset and try again.",
+  ].join("");
+}
+
 async function githubJson<T>(
   path: string,
   options: { fetcher: GitHubFetch; token?: string; allow404?: boolean },
 ): Promise<T | null> {
   const response = await githubRequest(path, options);
   if (options.allow404 && response.status === 404) return null;
+  // GitHub answers an exhausted rate limit with the same 403 it uses for a
+  // repository you may not read. Reporting that as an authorization problem
+  // sends an administrator off to configure OAuth for a public repository.
+  if (rateLimited(response)) {
+    throw new GitHubSkillImportError(
+      "github_rate_limited",
+      rateLimitMessage(response, !options.token),
+    );
+  }
   if (response.status === 401 || response.status === 403) {
     throw new GitHubSkillImportError(
       "github_authorization_required",
