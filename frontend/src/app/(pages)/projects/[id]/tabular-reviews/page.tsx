@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useCallback, useEffect, useMemo, useState } from "react";
+import { use, useCallback, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronDown } from "lucide-react";
 import {
@@ -16,6 +16,12 @@ import {
 import type { TabularReview } from "@/app/components/shared/types";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
+import { useDebouncedValue } from "@/app/hooks/useDebouncedValue";
+import {
+    type TabularReviewSortKey,
+    type TabularReviewSortDirection,
+    usePaginatedTabularReviews,
+} from "@/app/hooks/usePaginatedTabularReviews";
 
 interface Props {
     params: Promise<{ id: string }>;
@@ -64,40 +70,44 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
     const { user } = useAuth();
     const previewEmptyStates = searchParams.get("emptyStates") === "1";
     const {
-        ensureProjectReviews,
         project,
         projectId,
-        projectReviews,
         search,
         setOwnerOnlyAction,
-        setProjectReviews,
     } = workspace;
-    const [selectedReviewIds, setSelectedReviewIds] = useState<string[]>([]);
     const [detailsReview, setDetailsReview] = useState<TabularReview | null>(
         null,
     );
     const [actionsOpen, setActionsOpen] = useState(false);
+    const [sort, setSort] = useState<{
+        key: TabularReviewSortKey;
+        direction: TabularReviewSortDirection;
+    } | null>(null);
+    const debouncedSearch = useDebouncedValue(search, 250);
+    const {
+        reviews,
+        setReviews,
+        loading,
+        loadingMore,
+        hasMore,
+        error: loadError,
+        loadMoreError,
+        loadMore,
+        retry,
+        selectedReviewIds,
+        setSelectedReviewIds,
+    } = usePaginatedTabularReviews({
+        projectId,
+        search: debouncedSearch,
+        selectionKey: search,
+        sort,
+    });
     const docs = project?.documents ?? [];
-    const reviews = useMemo(() => projectReviews ?? [], [projectReviews]);
-    const visibleReviews = previewEmptyStates ? [] : reviews;
-    const loading = projectReviews === null && !previewEmptyStates;
-
-    useEffect(() => {
-        void ensureProjectReviews();
-    }, [ensureProjectReviews]);
-
-    const q = search.toLowerCase();
-    const filteredReviews = q
-        ? visibleReviews.filter((r) =>
-              (r.title ?? "").toLowerCase().includes(q),
-          )
-        : visibleReviews;
-    const allReviewsSelected =
-        filteredReviews.length > 0 &&
-        filteredReviews.every((r) => selectedReviewIds.includes(r.id));
-    const someReviewsSelected =
-        !allReviewsSelected &&
-        filteredReviews.some((r) => selectedReviewIds.includes(r.id));
+    const visibleReviews = useMemo(
+        () => (previewEmptyStates ? [] : reviews),
+        [previewEmptyStates, reviews],
+    );
+    const effectiveLoading = loading && !previewEmptyStates;
 
     function handleOpenDetails(review: TabularReview) {
         if (user?.id && review.user_id !== user.id) {
@@ -120,8 +130,8 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
             title: values.title,
             project_id: projectId,
         });
-        setProjectReviews((prev) =>
-            (prev ?? []).map((review) =>
+        setReviews((prev) =>
+            prev.map((review) =>
                 review.id === updated.id ? { ...review, ...updated } : review,
             ),
         );
@@ -136,9 +146,7 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
             return;
         }
         await deleteTabularReview(review.id);
-        setProjectReviews((prev) =>
-            (prev ?? []).filter((r) => r.id !== review.id),
-        );
+        setReviews((prev) => prev.filter((r) => r.id !== review.id));
     }
 
     const handleDeleteSelectedReviews = useCallback(async () => {
@@ -146,15 +154,15 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
         setActionsOpen(false);
         const owned = ids.filter((id) => {
             const review = reviews.find((r) => r.id === id);
-            return !review || review.user_id === user?.id;
+            return !!review && review.user_id === user?.id;
         });
         const blocked = ids.length - owned.length;
         setSelectedReviewIds([]);
         await Promise.all(
             owned.map((id) => deleteTabularReview(id).catch(() => {})),
         );
-        setProjectReviews((prev) =>
-            (prev ?? []).filter((review) => !owned.includes(review.id)),
+        setReviews((prev) =>
+            prev.filter((review) => !owned.includes(review.id)),
         );
         if (blocked > 0) {
             setOwnerOnlyAction(
@@ -164,8 +172,9 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
     }, [
         reviews,
         selectedReviewIds,
+        setReviews,
         setOwnerOnlyAction,
-        setProjectReviews,
+        setSelectedReviewIds,
         user?.id,
     ]);
 
@@ -184,13 +193,21 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
             <ProjectReviewsTable
                 docs={docs}
                 reviews={visibleReviews}
-                filteredReviews={filteredReviews}
                 selectedReviewIds={selectedReviewIds}
-                allReviewsSelected={allReviewsSelected}
-                someReviewsSelected={someReviewsSelected}
                 creatingReview={workspace.creatingReview}
                 currentUserId={user?.id}
-                loading={loading}
+                loading={effectiveLoading}
+                loadingMore={loadingMore}
+                hasMore={hasMore}
+                error={loadError}
+                loadMoreError={loadMoreError}
+                sort={sort}
+                onSortChange={(key, direction) => {
+                    setSelectedReviewIds([]);
+                    setSort(direction ? { key, direction } : null);
+                }}
+                onLoadMore={() => void loadMore()}
+                onRetry={retry}
                 onCreateReview={workspace.openNewReview}
                 onOpenReview={(reviewId) =>
                     router.push(

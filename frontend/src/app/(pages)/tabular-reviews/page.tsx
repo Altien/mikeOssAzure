@@ -10,7 +10,6 @@ import {
 } from "@/app/components/shared/RowActions";
 import {
     deleteTabularReview,
-    listTabularReviews,
     createTabularReview,
     listProjects,
     updateTabularReview,
@@ -43,8 +42,12 @@ import { PillButton } from "@/app/components/ui/pill-button";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 import { TabularReviewSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import { LiquidDropdownSurface } from "@/app/components/ui/liquid-dropdown";
+import {
+    type TabularReviewScope,
+    usePaginatedTabularReviews,
+} from "@/app/hooks/usePaginatedTabularReviews";
 
-type ReviewScope = "all" | "in-project" | "standalone";
+type ReviewScope = TabularReviewScope;
 type ReviewSortKey = "name" | "columns" | "documents" | "created";
 
 const REVIEW_SCOPES: { id: ReviewScope; label: string }[] = [
@@ -56,8 +59,6 @@ const SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
     { value: "asc", label: "Ascending" },
     { value: "desc", label: "Descending" },
 ];
-const PAGE_SIZE = 20;
-
 function formatDate(iso: string) {
     return new Date(iso).toLocaleDateString(undefined, {
         day: "numeric",
@@ -67,13 +68,8 @@ function formatDate(iso: string) {
 }
 
 export default function TabularReviewsPage() {
-    const [reviews, setReviews] = useState<TabularReview[]>([]);
     const [projects, setProjects] = useState<Project[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [loadingMore, setLoadingMore] = useState(false);
     const [creating, setCreating] = useState(false);
-    const [page, setPage] = useState(0);
-    const [hasMore, setHasMore] = useState(true);
     const [newTROpen, setNewTROpen] = useState(false);
     const [detailsReview, setDetailsReview] = useState<TabularReview | null>(
         null,
@@ -86,7 +82,25 @@ export default function TabularReviewsPage() {
     } | null>(null);
     const [search, setSearch] = useState("");
     const debouncedSearch = useDebouncedValue(search, 250);
-    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const {
+        reviews,
+        setReviews,
+        loading,
+        loadingMore,
+        hasMore,
+        error: loadError,
+        loadMoreError,
+        loadMore,
+        retry,
+        selectedReviewIds: selectedIds,
+        setSelectedReviewIds: setSelectedIds,
+    } = usePaginatedTabularReviews({
+        projectId: projectFilter ?? undefined,
+        search: debouncedSearch,
+        selectionKey: search,
+        scope: activeScope,
+        sort,
+    });
     const [actionsOpen, setActionsOpen] = useState(false);
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
     const actionsRef = useRef<HTMLDivElement>(null);
@@ -102,44 +116,20 @@ export default function TabularReviewsPage() {
 
     useEffect(() => {
         let cancelled = false;
-        const loadPage = async () => {
-            if (page === 0) setLoading(true);
-            else setLoadingMore(true);
-            try {
-                const [r, p] = await Promise.all([
-                    listTabularReviews(undefined, {
-                        limit: PAGE_SIZE + 1,
-                        offset: page * PAGE_SIZE,
-                        search: debouncedSearch || undefined,
-                        sortKey: sort?.key,
-                        sortDirection: sort?.direction,
-                    }).catch(() => []),
-                    page === 0 ? listProjects().catch(() => []) : null,
-                ]);
-                if (cancelled) return;
-                const nextHasMore = r.length > PAGE_SIZE;
-                const pageRows = nextHasMore ? r.slice(0, PAGE_SIZE) : r;
-                setReviews((prev) =>
-                    page === 0 ? pageRows : [...prev, ...pageRows],
-                );
-                setHasMore(nextHasMore);
-                if (p) setProjects(p);
-            } finally {
-                if (!cancelled) {
-                    setLoading(false);
-                    setLoadingMore(false);
-                }
-            }
-        };
-
-        void loadPage();
+        void listProjects()
+            .then((loadedProjects) => {
+                if (!cancelled) setProjects(loadedProjects);
+            })
+            .catch(() => {
+                if (!cancelled) setProjects([]);
+            });
         return () => {
             cancelled = true;
         };
-    }, [debouncedSearch, page, sort]);
+    }, []);
 
     function handleLoadMore() {
-        setPage((prev) => prev + 1);
+        void loadMore();
     }
 
     function handleScroll(event: React.UIEvent<HTMLDivElement>) {
@@ -147,18 +137,8 @@ export default function TabularReviewsPage() {
         const el = event.currentTarget;
         const distanceToBottom =
             el.scrollHeight - el.scrollTop - el.clientHeight;
-        if (distanceToBottom < 200) handleLoadMore();
+        if (distanceToBottom < 200) void loadMore();
     }
-
-    useEffect(() => {
-        setPage(0);
-        setHasMore(true);
-        setReviews([]);
-    }, [debouncedSearch, sort]);
-
-    useEffect(() => {
-        setSelectedIds([]);
-    }, [activeScope, projectFilter]);
 
     useEffect(() => {
         function handleClick(e: MouseEvent) {
@@ -177,13 +157,7 @@ export default function TabularReviewsPage() {
         () => new Map(projects.map((project) => [project.id, project.name])),
         [projects],
     );
-    const filtered = useMemo(() => {
-        return visibleReviews.filter((r) => {
-            if (activeScope === "in-project") return !!r.project_id;
-            if (activeScope === "standalone") return !r.project_id;
-            return true;
-        }).filter((r) => !projectFilter || r.project_id === projectFilter);
-    }, [activeScope, projectFilter, visibleReviews]);
+    const filtered = visibleReviews;
 
     const allSelected =
         filtered.length > 0 &&
@@ -282,7 +256,7 @@ export default function TabularReviewsPage() {
         setActionsOpen(false);
         const owned = ids.filter((id) => {
             const r = reviews.find((rr) => rr.id === id);
-            return !r || !user?.id || r.user_id === user.id;
+            return !!r && (!user?.id || r.user_id === user.id);
         });
         const blocked = ids.length - owned.length;
         setSelectedIds([]);
@@ -495,9 +469,28 @@ export default function TabularReviewsPage() {
                             </TableRow>
                         ))}
                     </TableBody>
+                ) : loadError ? (
+                    <TableEmptyState>
+                        <p className="text-lg font-medium font-serif text-gray-900">
+                            Unable to load reviews
+                        </p>
+                        <p className="mt-1 text-xs text-gray-400">
+                            Check your connection and try again.
+                        </p>
+                        <PillButton
+                            tone="black"
+                            size="sm"
+                            onClick={retry}
+                            className="mt-4 px-3"
+                        >
+                            Try again
+                        </PillButton>
+                    </TableEmptyState>
                 ) : filtered.length === 0 ? (
                     <TableEmptyState>
-                        {activeScope === "all" && !projectFilter ? (
+                        {activeScope === "all" &&
+                        !projectFilter &&
+                        !debouncedSearch ? (
                             <>
                                 <TabularReviewSkeuoIcon className="mb-4 h-8 w-8" />
                                 <p className="text-2xl font-medium font-serif text-gray-900">
@@ -651,7 +644,11 @@ export default function TabularReviewsPage() {
                             {loadingMore && (
                                 <Loader2 className="h-3 w-3 animate-spin" />
                             )}
-                            {loadingMore ? "Loading…" : "Load more"}
+                            {loadingMore
+                                ? "Loading…"
+                                : loadMoreError
+                                  ? "Retry loading"
+                                  : "Load more"}
                         </button>
                     </div>
                 )}

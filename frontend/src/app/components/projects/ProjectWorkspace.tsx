@@ -18,7 +18,6 @@ import {
     getProject,
     getProjectPeople,
     listProjectChats,
-    listTabularReviews,
     updateProject,
 } from "@/app/lib/mikeApi";
 import type {
@@ -26,7 +25,6 @@ import type {
     ColumnConfig,
     Folder as ProjectFolder,
     Project,
-    TabularReview,
 } from "@/app/components/shared/types";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";
 import { NewTRModal } from "@/app/components/tabular/NewTRModal";
@@ -56,12 +54,6 @@ type ProjectWorkspaceValue = {
     setProjectChats: React.Dispatch<React.SetStateAction<Chat[] | null>>;
     projectChatsLoading: boolean;
     ensureProjectChats: () => Promise<Chat[]>;
-    projectReviews: TabularReview[] | null;
-    setProjectReviews: React.Dispatch<
-        React.SetStateAction<TabularReview[] | null>
-    >;
-    projectReviewsLoading: boolean;
-    ensureProjectReviews: () => Promise<TabularReview[]>;
     prefetchProjectSections: () => void;
     creatingChat: boolean;
     creatingReview: boolean;
@@ -116,11 +108,7 @@ export function ProjectWorkspaceProvider({
         Record<ProjectWorkspaceSection, string>
     >({ documents: "", assistant: "", reviews: "" });
     const [projectChats, setProjectChats] = useState<Chat[] | null>(null);
-    const [projectReviews, setProjectReviews] = useState<
-        TabularReview[] | null
-    >(null);
     const [projectChatsLoading, setProjectChatsLoading] = useState(false);
-    const [projectReviewsLoading, setProjectReviewsLoading] = useState(false);
     const [peopleModalOpen, setPeopleModalOpen] = useState(false);
     const [projectDetailsOpen, setProjectDetailsOpen] = useState(false);
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
@@ -143,17 +131,11 @@ export function ProjectWorkspaceProvider({
     const { profile } = useUserProfile();
     const { saveChat } = useChatHistoryContext();
     const projectChatsPromiseRef = useRef<Promise<Chat[]> | null>(null);
-    const projectReviewsPromiseRef = useRef<Promise<TabularReview[]> | null>(
-        null,
-    );
 
     useEffect(() => {
         setProjectChats(null);
-        setProjectReviews(null);
         setProjectChatsLoading(false);
-        setProjectReviewsLoading(false);
         projectChatsPromiseRef.current = null;
-        projectReviewsPromiseRef.current = null;
     }, [projectId]);
 
     const setAddDocumentsHeaderAction = useCallback(
@@ -224,34 +206,9 @@ export function ProjectWorkspaceProvider({
         return promise;
     }, [projectChats, projectId]);
 
-    const ensureProjectReviews = useCallback(() => {
-        if (projectReviews) return Promise.resolve(projectReviews);
-        if (projectReviewsPromiseRef.current)
-            return projectReviewsPromiseRef.current;
-
-        setProjectReviewsLoading(true);
-        const promise = listTabularReviews(projectId)
-            .then((loaded) => {
-                setProjectReviews(loaded);
-                return loaded;
-            })
-            .catch((error) => {
-                console.error("[project reviews] failed to load", error);
-                setProjectReviews([]);
-                return [];
-            })
-            .finally(() => {
-                projectReviewsPromiseRef.current = null;
-                setProjectReviewsLoading(false);
-            });
-        projectReviewsPromiseRef.current = promise;
-        return promise;
-    }, [projectId, projectReviews]);
-
     const prefetchProjectSections = useCallback(() => {
         void ensureProjectChats();
-        void ensureProjectReviews();
-    }, [ensureProjectChats, ensureProjectReviews]);
+    }, [ensureProjectChats]);
 
     const createChat = useCallback(async () => {
         setCreatingChat(true);
@@ -305,7 +262,6 @@ export function ProjectWorkspaceProvider({
                 columns_config: columnsConfig ?? [],
                 project_id: projectId,
             });
-            setProjectReviews((prev) => (prev ? [review, ...prev] : prev));
             router.push(`/projects/${projectId}/tabular-reviews/${review.id}`);
         } finally {
             setCreatingReview(false);
@@ -379,10 +335,6 @@ export function ProjectWorkspaceProvider({
             setProjectChats,
             projectChatsLoading,
             ensureProjectChats,
-            projectReviews,
-            setProjectReviews,
-            projectReviewsLoading,
-            ensureProjectReviews,
             prefetchProjectSections,
             creatingChat,
             creatingReview,
@@ -402,9 +354,6 @@ export function ProjectWorkspaceProvider({
             projectChats,
             projectChatsLoading,
             ensureProjectChats,
-            projectReviews,
-            projectReviewsLoading,
-            ensureProjectReviews,
             prefetchProjectSections,
             creatingChat,
             creatingReview,

@@ -698,15 +698,20 @@ create table if not exists public.tabular_cells (
 create index if not exists idx_tabular_cells_review
   on public.tabular_cells(review_id, document_id, column_index);
 
+drop function if exists public.get_tabular_reviews_overview(
+  text, text, text, integer, integer, text, text, text
+);
+
 create or replace function public.get_tabular_reviews_overview(
   p_user_id text,
-  p_user_email text default null,
-  p_project_id text default null,
-  p_limit integer default 20,
-  p_offset integer default 0,
-  p_search_term text default null,
-  p_sort_key text default 'created',
-  p_sort_direction text default 'desc'
+  p_user_email text,
+  p_project_id text,
+  p_scope text,
+  p_limit integer,
+  p_offset integer,
+  p_search_term text,
+  p_sort_key text,
+  p_sort_direction text
 )
 returns table (
   id uuid,
@@ -740,9 +745,14 @@ as $$
     from public.tabular_reviews tr
     where (p_project_id is null or tr.project_id::text = p_project_id)
       and (
+        coalesce(p_scope, 'all') = 'all'
+        or (p_scope = 'in-project' and tr.project_id is not null)
+        or (p_scope = 'standalone' and tr.project_id is null)
+      )
+      and (
         p_search_term is null
         or p_search_term = ''
-        or lower(coalesce(tr.title, '')) like '%' || lower(p_search_term) || '%'
+        or lower(tr.title) like '%' || lower(p_search_term) || '%'
       )
       and (
         p_project_id is null
@@ -842,9 +852,46 @@ as $$
       when p_sort_key = 'created' and p_sort_direction = 'desc' then vr.created_at
       else null
     end desc,
-    vr.created_at desc
+    vr.created_at desc,
+    vr.id asc
   limit greatest(coalesce(p_limit, 20), 1)
   offset greatest(coalesce(p_offset, 0), 0);
+$$;
+
+create or replace function public.get_tabular_reviews_overview(
+  p_user_id text,
+  p_user_email text default null,
+  p_project_id text default null
+)
+returns table (
+  id uuid,
+  project_id uuid,
+  user_id text,
+  title text,
+  columns_config jsonb,
+  document_ids jsonb,
+  workflow_id uuid,
+  shared_with jsonb,
+  created_at timestamptz,
+  updated_at timestamptz,
+  is_owner boolean,
+  document_count integer
+)
+language sql
+stable
+as $$
+  select *
+  from public.get_tabular_reviews_overview(
+    p_user_id,
+    p_user_email,
+    p_project_id,
+    'all',
+    2147483647,
+    0,
+    null,
+    'created',
+    'desc'
+  );
 $$;
 
 create table if not exists public.tabular_review_chats (

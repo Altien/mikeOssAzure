@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
-import { Plus } from "lucide-react";
+import type { Dispatch, SetStateAction } from "react";
+import { Loader2, Plus } from "lucide-react";
 import {
     RowActionMenuItems,
     RowActions,
@@ -27,8 +27,10 @@ import { PillButton } from "@/app/components/ui/pill-button";
 import { TabularReviewSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import type { Document, TabularReview } from "@/app/components/shared/types";
 import { formatDate } from "./ProjectPageParts";
-
-type ProjectReviewSortKey = "name" | "columns" | "documents" | "created";
+import type {
+    TabularReviewSortDirection,
+    TabularReviewSortKey,
+} from "@/app/hooks/usePaginatedTabularReviews";
 
 const SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
     { value: "asc", label: "Ascending" },
@@ -38,7 +40,6 @@ const SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
 export function ProjectReviewsTable({
     docs,
     reviews,
-    filteredReviews,
     selectedReviewIds,
     creatingReview,
     currentUserId,
@@ -48,14 +49,19 @@ export function ProjectReviewsTable({
     onDeleteReview,
     onOwnerOnlyAction,
     setSelectedReviewIds,
+    sort,
+    onSortChange,
+    hasMore,
+    loadingMore,
+    error,
+    loadMoreError,
+    onLoadMore,
+    onRetry,
     loading = false,
 }: {
     docs: Document[];
     reviews: TabularReview[];
-    filteredReviews: TabularReview[];
     selectedReviewIds: string[];
-    allReviewsSelected: boolean;
-    someReviewsSelected: boolean;
     creatingReview: boolean;
     currentUserId?: string | null;
     onCreateReview: () => void;
@@ -64,61 +70,35 @@ export function ProjectReviewsTable({
     onDeleteReview: (review: TabularReview) => Promise<void> | void;
     onOwnerOnlyAction: (action: string) => void;
     setSelectedReviewIds: Dispatch<SetStateAction<string[]>>;
+    sort: {
+        key: TabularReviewSortKey;
+        direction: TabularReviewSortDirection;
+    } | null;
+    onSortChange: (
+        key: TabularReviewSortKey,
+        direction: TableSortDirection | null,
+    ) => void;
+    hasMore: boolean;
+    loadingMore: boolean;
+    error: Error | null;
+    loadMoreError: Error | null;
+    onLoadMore: () => void;
+    onRetry: () => void;
     loading?: boolean;
 }) {
-    const [sort, setSort] = useState<{
-        key: ProjectReviewSortKey;
-        direction: TableSortDirection;
-    } | null>(null);
-
     function clearSelection() {
         setSelectedReviewIds([]);
     }
 
     function handleSortChange(
-        key: ProjectReviewSortKey,
+        key: TabularReviewSortKey,
         direction: TableSortDirection | null,
     ) {
-        setSort(direction ? { key, direction } : null);
+        onSortChange(key, direction);
         clearSelection();
     }
 
-    const visibleReviews = useMemo(() => {
-        if (!sort) return filteredReviews;
-
-        return [...filteredReviews].sort((a, b) => {
-            const multiplier = sort.direction === "asc" ? 1 : -1;
-
-            if (sort.key === "columns") {
-                return (
-                    ((a.columns_config?.length ?? 0) -
-                        (b.columns_config?.length ?? 0)) *
-                    multiplier
-                );
-            }
-
-            if (sort.key === "documents") {
-                return (
-                    ((a.document_count ?? 0) - (b.document_count ?? 0)) *
-                    multiplier
-                );
-            }
-
-            if (sort.key === "created") {
-                return (
-                    (new Date(a.created_at).getTime() -
-                        new Date(b.created_at).getTime()) *
-                    multiplier
-                );
-            }
-
-            return (
-                (a.title ?? "Untitled Review").localeCompare(
-                    b.title ?? "Untitled Review",
-                ) * multiplier
-            );
-        });
-    }, [filteredReviews, sort]);
+    const visibleReviews = reviews;
 
     const allVisibleReviewsSelected =
         visibleReviews.length > 0 &&
@@ -177,6 +157,15 @@ export function ProjectReviewsTable({
 
     return (
         <TableScrollArea
+            onScroll={(event) => {
+                if (loading || loadingMore || !hasMore) return;
+                const element = event.currentTarget;
+                const distanceToBottom =
+                    element.scrollHeight -
+                    element.scrollTop -
+                    element.clientHeight;
+                if (distanceToBottom < 200) onLoadMore();
+            }}
             header={
                 <TableHeaderRow className="pr-8 md:pr-8">
                     <TableStickyCell header>
@@ -229,6 +218,23 @@ export function ProjectReviewsTable({
         >
             {loading ? (
                 <ProjectReviewsLoadingRows />
+            ) : error ? (
+                <TableEmptyState>
+                    <p className="text-lg font-medium font-serif text-gray-900">
+                        Unable to load reviews
+                    </p>
+                    <p className="mt-1 text-xs text-gray-400">
+                        Check your connection and try again.
+                    </p>
+                    <PillButton
+                        tone="black"
+                        size="sm"
+                        onClick={onRetry}
+                        className="mt-4 px-3"
+                    >
+                        Try again
+                    </PillButton>
+                </TableEmptyState>
             ) : reviews.length === 0 ? (
                 <TableEmptyState>
                     <TabularReviewSkeuoIcon className="mb-4 h-8 w-8" />
@@ -326,6 +332,24 @@ export function ProjectReviewsTable({
                         </TableRow>
                     ))}
                 </TableBody>
+            )}
+            {!loading && hasMore && reviews.length > 0 && (
+                <div className="flex justify-center py-3">
+                    <button
+                        onClick={onLoadMore}
+                        disabled={loadingMore}
+                        className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-gray-500 transition-colors hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                        {loadingMore && (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                        )}
+                        {loadingMore
+                            ? "Loading…"
+                            : loadMoreError
+                              ? "Retry loading"
+                              : "Load more"}
+                    </button>
+                </div>
             )}
         </TableScrollArea>
     );

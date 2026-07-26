@@ -60,4 +60,5 @@ cd "$BACKEND_DIR"
 exec npx vitest run \
     src/__tests__/integration/stack.supabase.test.ts \
     src/__tests__/integration/access.supabase.test.ts \
+    src/__tests__/integration/tabularPagination.supabase.test.ts \
     "$@"
