@@ -19,6 +19,7 @@ export type StoredSkillDraft = {
   canonicalName: string;
   displayName: string;
   description: string;
+  isUpdate?: boolean;
   version: {
     id: string;
     state: "draft";
@@ -414,7 +415,7 @@ export async function storeZipSkillSnapshot(args: {
 
     const existing = await db
       .from("altien_skills")
-      .select("canonical_name")
+      .select("id, canonical_name, display_name")
       .eq("tenant_id", args.tenantId);
     throwOnDbError(existing, "Failed to resolve existing skill names.");
     const reserved = new Set(
@@ -422,20 +423,44 @@ export async function storeZipSkillSnapshot(args: {
         String(row.canonical_name),
       ),
     );
+    const existingByCanonical = new Map(
+      (existing.data ?? []).map(
+        (row: {
+          id: string;
+          canonical_name: string;
+          display_name: string;
+        }) => [String(row.canonical_name), row],
+      ),
+    );
     const drafts: StoredSkillDraft[] = [];
     for (const skill of args.snapshot.skills) {
-      const draft = createDraftIdentity(skill, reserved);
-      skillIds.push(draft.skillId);
-      const skillRow = await db.from("altien_skills").insert({
-        id: draft.skillId,
-        tenant_id: args.tenantId,
-        canonical_name: draft.canonicalName,
-        display_name: skill.declaredName,
-        description: skill.description,
-        created_by: args.importedBy,
-        updated_by: args.importedBy,
-      });
-      throwOnDbError(skillRow, "Failed to create imported skill.");
+      const declaredCanonical = canonicalName(skill.declaredName);
+      const existingSkill = existingByCanonical.get(declaredCanonical);
+      const draft = existingSkill
+        ? {
+            skillId: String(existingSkill.id),
+            versionId: randomUUID(),
+            canonicalName: String(existingSkill.canonical_name),
+          }
+        : createDraftIdentity(skill, reserved);
+      if (!existingSkill) {
+        skillIds.push(draft.skillId);
+        const skillRow = await db.from("altien_skills").insert({
+          id: draft.skillId,
+          tenant_id: args.tenantId,
+          canonical_name: draft.canonicalName,
+          display_name: skill.declaredName,
+          description: skill.description,
+          created_by: args.importedBy,
+          updated_by: args.importedBy,
+        });
+        throwOnDbError(skillRow, "Failed to create imported skill.");
+        existingByCanonical.set(draft.canonicalName, {
+          id: draft.skillId,
+          canonical_name: draft.canonicalName,
+          display_name: skill.declaredName,
+        });
+      }
       const entrypoint = preparedFiles.find(
         (item) => item.file.relativePath === skill.entrypointPath,
       );
@@ -463,6 +488,7 @@ export async function storeZipSkillSnapshot(args: {
         canonicalName: draft.canonicalName,
         displayName: skill.declaredName,
         description: skill.description,
+        isUpdate: !!existingSkill,
         version: {
           id: draft.versionId,
           state: "draft",
@@ -539,9 +565,10 @@ export async function listTenantSkills(
         : skillVersions.filter((version) => version.state === "enabled");
       if (!visibleVersions.length) return null;
       const currentId = String(skill.current_version_id ?? "");
-      const current =
-        visibleVersions.find((version) => version.id === currentId) ??
-        visibleVersions[0];
+      const current = options.includeDrafts
+        ? visibleVersions[0]
+        : visibleVersions.find((version) => version.id === currentId) ??
+          visibleVersions[0];
       return {
         id: String(skill.id),
         canonicalName: String(skill.canonical_name),

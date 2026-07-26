@@ -42,8 +42,10 @@ import {
 import { AccountSection } from "../AccountSection";
 import { AccountToggle } from "../AccountToggle";
 import {
+    disconnectGitHubSkillOAuth,
     getGitHubSkillImportPolicy,
     setGitHubSkillImportPolicy,
+    startGitHubSkillOAuth,
     type GitHubSkillImportPolicy,
 } from "@/altien/skills/api";
 
@@ -85,6 +87,12 @@ type McpOAuthPopupMessage = {
     type?: string;
     success?: boolean;
     connectorId?: string;
+    detail?: string;
+};
+
+type GitHubOAuthPopupMessage = {
+    type?: string;
+    success?: boolean;
     detail?: string;
 };
 
@@ -363,6 +371,70 @@ export default function ConnectorsPage() {
         return refreshed;
     };
 
+    const connectGitHubOAuth = async () => {
+        const popup = window.open(
+            "about:blank",
+            "mike_github_skill_oauth",
+            "popup,width=680,height=760,menubar=no,toolbar=no,location=yes,status=no",
+        );
+        try {
+            const { authorizationUrl } = await startGitHubSkillOAuth();
+            if (!authorizationUrl) {
+                throw new Error("GitHub OAuth authorization URL was not returned.");
+            }
+            if (!popup) {
+                window.location.assign(authorizationUrl);
+                return;
+            }
+            popup.location.href = authorizationUrl;
+            const expectedOrigin = getMcpOAuthMessageOrigin();
+            await new Promise<void>((resolve, reject) => {
+                const timeout = window.setTimeout(() => {
+                    cleanup();
+                    reject(new Error("GitHub authorization timed out."));
+                }, 5 * 60 * 1000);
+                const poll = window.setInterval(() => {
+                    if (popup.closed) {
+                        cleanup();
+                        reject(
+                            new Error("GitHub authorization window was closed."),
+                        );
+                    }
+                }, 700);
+                const cleanup = () => {
+                    window.clearTimeout(timeout);
+                    window.clearInterval(poll);
+                    window.removeEventListener("message", onMessage);
+                };
+                const onMessage = (
+                    event: MessageEvent<GitHubOAuthPopupMessage>,
+                ) => {
+                    if (event.origin !== expectedOrigin) return;
+                    if (
+                        event.data?.type !== "github_skill_oauth_result"
+                    ) {
+                        return;
+                    }
+                    cleanup();
+                    if (event.data.success) resolve();
+                    else {
+                        reject(
+                            new Error(
+                                event.data.detail ||
+                                    "GitHub authorization failed.",
+                            ),
+                        );
+                    }
+                };
+                window.addEventListener("message", onMessage);
+            });
+            setGithubPolicy(await getGitHubSkillImportPolicy());
+        } catch (err) {
+            popup?.close();
+            throw err;
+        }
+    };
+
     const handleCreate = async () => {
         await runSensitiveAction({ type: "create" }, async () => {
             setBusyKey("create");
@@ -624,9 +696,75 @@ export default function ConnectorsPage() {
                                 <p className="mt-2 text-xs text-gray-500">
                                     Private repository connection:{" "}
                                     {githubPolicy.privateRepositoryConnectionConfigured
-                                        ? "configured"
+                                        ? `connected${githubPolicy.githubLogin ? ` as ${githubPolicy.githubLogin}` : ""}`
                                         : "not configured"}
                                 </p>
+                                {githubPolicy.canManage &&
+                                    githubPolicy.oauthAvailable && (
+                                    <div className="mt-3 flex gap-2">
+                                        {!githubPolicy.privateRepositoryConnectionConfigured ? (
+                                            <button
+                                                type="button"
+                                                disabled={githubPolicyBusy}
+                                                onClick={() => {
+                                                    setGithubPolicyBusy(true);
+                                                    setError(null);
+                                                    void connectGitHubOAuth()
+                                                        .catch((err) =>
+                                                            setError(
+                                                                err instanceof Error
+                                                                    ? err.message
+                                                                    : "GitHub connection failed.",
+                                                            ),
+                                                        )
+                                                        .finally(() =>
+                                                            setGithubPolicyBusy(
+                                                                false,
+                                                            ),
+                                                        );
+                                                }}
+                                                className={`inline-flex h-9 items-center gap-1.5 text-sm ${accountGlassPrimaryButtonClassName}`}
+                                            >
+                                                Connect GitHub
+                                            </button>
+                                        ) : (
+                                            <button
+                                                type="button"
+                                                disabled={githubPolicyBusy}
+                                                onClick={() => {
+                                                    setGithubPolicyBusy(true);
+                                                    setError(null);
+                                                    void disconnectGitHubSkillOAuth()
+                                                        .then(() =>
+                                                            getGitHubSkillImportPolicy(),
+                                                        )
+                                                        .then(setGithubPolicy)
+                                                        .catch((err) =>
+                                                            setError(
+                                                                err instanceof Error
+                                                                    ? err.message
+                                                                    : "GitHub disconnect failed.",
+                                                            ),
+                                                        )
+                                                        .finally(() =>
+                                                            setGithubPolicyBusy(
+                                                                false,
+                                                            ),
+                                                        );
+                                                }}
+                                                className={accountGlassDangerButtonClassName}
+                                            >
+                                                Disconnect GitHub
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
+                                {!githubPolicy.oauthAvailable && (
+                                    <p className="mt-2 text-xs text-amber-700">
+                                        GitHub OAuth is not configured for this
+                                        deployment.
+                                    </p>
+                                )}
                             </div>
                             <AccountToggle
                                 checked={githubPolicy.tenantEnabled}

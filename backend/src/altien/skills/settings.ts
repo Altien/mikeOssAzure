@@ -1,5 +1,9 @@
 import { createServerSupabase } from "../../lib/supabase";
 import { githubDeploymentAllowed } from "./github";
+import {
+  getGitHubSkillOAuthConnection,
+  githubSkillOAuthConfigured,
+} from "./githubOAuth";
 
 type Db = ReturnType<typeof createServerSupabase>;
 
@@ -15,12 +19,14 @@ export async function getGitHubSkillImportPolicy(
   if (result.error) throw new Error(result.error.message);
   const deploymentAllowed = githubDeploymentAllowed();
   const tenantEnabled = result.data?.github_import_enabled === true;
+  const connection = await getGitHubSkillOAuthConnection(tenantId, db);
   return {
     deploymentAllowed,
     tenantEnabled,
     effectiveEnabled: deploymentAllowed && tenantEnabled,
-    privateRepositoryConnectionConfigured:
-      !!process.env.GITHUB_SKILL_IMPORT_TOKEN?.trim(),
+    oauthAvailable: await githubSkillOAuthConfigured(),
+    privateRepositoryConnectionConfigured: connection.connected,
+    githubLogin: connection.githubLogin,
   };
 }
 

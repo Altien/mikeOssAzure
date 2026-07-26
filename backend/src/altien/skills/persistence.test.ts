@@ -140,6 +140,46 @@ describe("storeZipSkillSnapshot", () => {
     expect(deleteFileMock).toHaveBeenCalledTimes(1);
     expect(fake.calls).toEqual([]);
   });
+
+  it("imports a matching declared name as a new immutable draft version", async () => {
+    uploadFileMock.mockReset();
+    deleteFileMock.mockReset();
+    uploadFileMock.mockResolvedValue(undefined);
+    const fake = makeFakeDb((call) => {
+      if (call.table === "projects" && call.op === "select") {
+        return { data: [{ id: "skill-project" }], error: null };
+      }
+      if (call.table === "altien_skills" && call.op === "select") {
+        return {
+          data: [{
+            id: "existing-skill",
+            canonical_name: "review-skill",
+            display_name: "Review Skill",
+          }],
+          error: null,
+        };
+      }
+      return { data: [], error: null };
+    });
+    const result = await storeZipSkillSnapshot({
+      tenantId: "tenant-1",
+      importedBy: "admin-1",
+      sourceFilename: "skills.zip",
+      sourceBytes: new Uint8Array([1, 2, 3]),
+      snapshot: snapshot(),
+      db: fake.db as never,
+    });
+    expect(result.skills[0]).toMatchObject({
+      id: "existing-skill",
+      canonicalName: "review-skill",
+      isUpdate: true,
+      version: { state: "draft" },
+    });
+    expect(fake.callsFor("altien_skills", "insert")).toHaveLength(0);
+    expect(
+      fake.callsFor("altien_skill_versions", "insert")[0].payload,
+    ).toMatchObject({ skill_id: "existing-skill", state: "draft" });
+  });
 });
 
 describe("listTenantSkills", () => {

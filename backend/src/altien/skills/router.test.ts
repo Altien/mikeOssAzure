@@ -19,6 +19,10 @@ const {
   listProjectSkillPinsMock,
   disableSkillMock,
   setSkillDependencyMock,
+  getGitHubSkillOAuthTokenMock,
+  startGitHubSkillOAuthMock,
+  completeGitHubSkillOAuthMock,
+  disconnectGitHubSkillOAuthMock,
 } = vi.hoisted(() => ({
   authState: {
     roles: ["TenantAdmin"] as string[],
@@ -39,6 +43,10 @@ const {
   listProjectSkillPinsMock: vi.fn(),
   disableSkillMock: vi.fn(),
   setSkillDependencyMock: vi.fn(),
+  getGitHubSkillOAuthTokenMock: vi.fn(),
+  startGitHubSkillOAuthMock: vi.fn(),
+  completeGitHubSkillOAuthMock: vi.fn(),
+  disconnectGitHubSkillOAuthMock: vi.fn(),
 }));
 
 vi.mock("../../middleware/auth", () => ({
@@ -105,6 +113,15 @@ vi.mock("./dependencies", () => ({
   setSkillDependency: setSkillDependencyMock,
 }));
 
+vi.mock("./githubOAuth", () => ({
+  getGitHubSkillOAuthToken: getGitHubSkillOAuthTokenMock,
+  startGitHubSkillOAuth: startGitHubSkillOAuthMock,
+  completeGitHubSkillOAuth: completeGitHubSkillOAuthMock,
+  disconnectGitHubSkillOAuth: disconnectGitHubSkillOAuthMock,
+  githubSkillOAuthCallbackUrl: () =>
+    "http://localhost/api/altien/skills/settings/github/oauth/callback",
+}));
+
 import { skillsRouter } from "./router";
 
 function makeApp() {
@@ -133,6 +150,11 @@ describe("Skills routes", () => {
     listProjectSkillPinsMock.mockReset();
     disableSkillMock.mockReset();
     setSkillDependencyMock.mockReset();
+    getGitHubSkillOAuthTokenMock.mockReset();
+    startGitHubSkillOAuthMock.mockReset();
+    completeGitHubSkillOAuthMock.mockReset();
+    disconnectGitHubSkillOAuthMock.mockReset();
+    getGitHubSkillOAuthTokenMock.mockResolvedValue(null);
     getGitHubSkillImportPolicyMock.mockResolvedValue({
       deploymentAllowed: false,
       tenantEnabled: false,

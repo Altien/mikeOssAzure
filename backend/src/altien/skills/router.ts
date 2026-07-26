@@ -42,6 +42,14 @@ import {
   createCleanRoomDeveloperArtifact,
   persistSkillRename,
 } from "./artifacts";
+import {
+  completeGitHubSkillOAuth,
+  disconnectGitHubSkillOAuth,
+  getGitHubSkillOAuthToken,
+  githubSkillOAuthCallbackUrl,
+  startGitHubSkillOAuth,
+} from "./githubOAuth";
+import crypto from "node:crypto";
 
 const zipUpload = multer({
   storage: multer.memoryStorage(),
@@ -178,6 +186,101 @@ skillsRouter.put(
   },
 );
 
+function githubOAuthPopupHtml(
+  payload: { success: boolean; detail?: string },
+  nonce: string,
+) {
+  const serialized = JSON.stringify({
+    type: "github_skill_oauth_result",
+    ...payload,
+  }).replace(/</g, "\\u003c");
+  return `<!doctype html><html><body><p>GitHub connection complete. You may close this window.</p><script nonce="${nonce}">if(window.opener){window.opener.postMessage(${serialized},"*");}window.close();</script></body></html>`;
+}
+
+skillsRouter.post(
+  "/settings/github/oauth/start",
+  requireAuth,
+  requireRole("TenantAdmin"),
+  async (req, res) => {
+    const tenant = tenantId(res);
+    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+    try {
+      res.json(
+        await startGitHubSkillOAuth({
+          tenantId: tenant,
+          userId: String(res.locals.userId),
+          redirectUri: githubSkillOAuthCallbackUrl(req),
+        }),
+      );
+    } catch (error) {
+      res.status(400).json({
+        detail: safeErrorMessage(error, "GitHub OAuth could not start"),
+      });
+    }
+  },
+);
+
+skillsRouter.get("/settings/github/oauth/callback", async (req, res) => {
+  const nonce = crypto.randomBytes(16).toString("base64");
+  const state = typeof req.query.state === "string" ? req.query.state : "";
+  const code = typeof req.query.code === "string" ? req.query.code : "";
+  const providerError =
+    typeof req.query.error_description === "string"
+      ? req.query.error_description
+      : typeof req.query.error === "string"
+        ? req.query.error
+        : "";
+  try {
+    if (providerError) throw new Error(providerError);
+    if (!state || !code) throw new Error("GitHub OAuth callback is incomplete.");
+    await completeGitHubSkillOAuth({ state, code });
+    res
+      .set(
+        "Content-Security-Policy",
+        `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'none'; base-uri 'none'; frame-ancestors 'none'`,
+      )
+      .set("Cross-Origin-Opener-Policy", "unsafe-none")
+      .type("html")
+      .send(githubOAuthPopupHtml({ success: true }, nonce));
+  } catch (error) {
+    res
+      .status(400)
+      .set(
+        "Content-Security-Policy",
+        `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'none'; base-uri 'none'; frame-ancestors 'none'`,
+      )
+      .set("Cross-Origin-Opener-Policy", "unsafe-none")
+      .type("html")
+      .send(
+        githubOAuthPopupHtml(
+          {
+            success: false,
+            detail: safeErrorMessage(error, "GitHub OAuth failed"),
+          },
+          nonce,
+        ),
+      );
+  }
+});
+
+skillsRouter.delete(
+  "/settings/github/oauth",
+  requireAuth,
+  requireRole("TenantAdmin"),
+  async (_req, res) => {
+    const tenant = tenantId(res);
+    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+    try {
+      await disconnectGitHubSkillOAuth(tenant);
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({
+        detail: safeErrorMessage(error, "GitHub OAuth disconnect failed"),
+      });
+    }
+  },
+);
+
 skillsRouter.post(
   "/imports/github",
   requireAuth,
@@ -203,7 +306,7 @@ skillsRouter.post(
       }
       const acquired = await acquireGitHubSkill({
         url,
-        token: process.env.GITHUB_SKILL_IMPORT_TOKEN?.trim() || undefined,
+        token: (await getGitHubSkillOAuthToken(tenant)) ?? undefined,
       });
       const stored = await storeZipSkillSnapshot({
         tenantId: tenant,

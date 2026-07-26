@@ -191,6 +191,8 @@ export type GitHubSkillImportPolicy = {
     tenantEnabled: boolean;
     effectiveEnabled: boolean;
     privateRepositoryConnectionConfigured: boolean;
+    oauthAvailable: boolean;
+    githubLogin: string | null;
     canManage: boolean;
 };
 
@@ -198,6 +200,19 @@ export function getGitHubSkillImportPolicy() {
     return apiRequest<GitHubSkillImportPolicy>(
         "/altien/skills/settings/github",
     );
+}
+
+export function startGitHubSkillOAuth() {
+    return apiRequest<{ authorizationUrl: string }>(
+        "/altien/skills/settings/github/oauth/start",
+        { method: "POST" },
+    );
+}
+
+export function disconnectGitHubSkillOAuth() {
+    return apiRequest<void>("/altien/skills/settings/github/oauth", {
+        method: "DELETE",
+    });
 }
 
 export function setGitHubSkillImportPolicy(enabled: boolean) {
