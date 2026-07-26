@@ -1,8 +1,18 @@
--- Migration date: 2026-07-25
--- Remove the ambiguous overloads and leave a single canonical signature for the tabular reviews overview RPC.
+-- Migration date: 2026-07-26
 
-drop function if exists public.get_tabular_reviews_overview(text, text, text);
-drop function if exists public.get_tabular_reviews_overview(text, text, text, integer, integer);
+-- Performance pass on get_tabular_reviews_overview:
+-- 1. Compute document_count once (previously recomputed in the select list and
+--    twice more in the `documents` sort case branches) and reuse the value.
+-- 2. Narrow cell_document_counts to only the reviews that will actually use it
+--    (document_ids is not a jsonb array), instead of aggregating tabular_cells
+--    for every visible review regardless of whether the result gets used.
+-- 3. Add a trigram index so the leading-wildcard title search can use an index
+--    instead of a full scan of the pre-filtered set.
+
+create extension if not exists pg_trgm;
+
+create index if not exists tabular_reviews_title_trgm_idx
+  on public.tabular_reviews using gin (lower(title) gin_trgm_ops);
 
 create or replace function public.get_tabular_reviews_overview(
   p_user_id text,
@@ -77,8 +87,27 @@ as $$
       tc.review_id,
       count(distinct tc.document_id)::integer as document_count
     from public.tabular_cells tc
-    where tc.review_id in (select vr.id from visible_reviews vr)
+    where tc.review_id in (
+      select vr.id
+      from visible_reviews vr
+      where jsonb_typeof(vr.document_ids) is distinct from 'array'
+    )
     group by tc.review_id
+  ),
+  review_document_counts as (
+    select
+      vr.id,
+      case
+        when jsonb_typeof(vr.document_ids) = 'array'
+          then (
+            select count(distinct doc_id.value)::integer
+            from jsonb_array_elements_text(vr.document_ids) as doc_id(value)
+          )
+        else coalesce(cdc.document_count, 0)
+      end as document_count
+    from visible_reviews vr
+    left join cell_document_counts cdc
+      on cdc.review_id = vr.id
   )
   select
     vr.id,
@@ -92,17 +121,10 @@ as $$
     vr.created_at,
     vr.updated_at,
     vr.user_id = p_user_id as is_owner,
-    case
-      when jsonb_typeof(vr.document_ids) = 'array'
-        then (
-          select count(distinct doc_id.value)::integer
-          from jsonb_array_elements_text(vr.document_ids) as doc_id(value)
-        )
-      else coalesce(cdc.document_count, 0)
-    end as document_count
+    rdc.document_count
   from visible_reviews vr
-  left join cell_document_counts cdc
-    on cdc.review_id = vr.id
+  join review_document_counts rdc
+    on rdc.id = vr.id
   order by
     case
       when p_sort_key = 'name' and p_sort_direction = 'asc' then lower(coalesce(vr.title, ''))
@@ -121,11 +143,11 @@ as $$
       else null
     end desc,
     case
-      when p_sort_key = 'documents' and p_sort_direction = 'asc' then case when jsonb_typeof(vr.document_ids) = 'array' then (select count(distinct doc_id.value)::integer from jsonb_array_elements_text(vr.document_ids) as doc_id(value)) else coalesce(cdc.document_count, 0) end
+      when p_sort_key = 'documents' and p_sort_direction = 'asc' then rdc.document_count
       else null
     end asc,
     case
-      when p_sort_key = 'documents' and p_sort_direction = 'desc' then case when jsonb_typeof(vr.document_ids) = 'array' then (select count(distinct doc_id.value)::integer from jsonb_array_elements_text(vr.document_ids) as doc_id(value)) else coalesce(cdc.document_count, 0) end
+      when p_sort_key = 'documents' and p_sort_direction = 'desc' then rdc.document_count
       else null
     end desc,
     case

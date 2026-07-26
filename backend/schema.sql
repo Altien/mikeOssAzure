@@ -4,6 +4,7 @@
 -- newer than the version of Mike they currently have deployed.
 
 create extension if not exists "pgcrypto";
+create extension if not exists "pg_trgm";
 
 -- ---------------------------------------------------------------------------
 -- User profiles
@@ -602,6 +603,9 @@ create index if not exists idx_tabular_reviews_project
 create index if not exists tabular_reviews_shared_with_idx
   on public.tabular_reviews using gin (shared_with);
 
+create index if not exists tabular_reviews_title_trgm_idx
+  on public.tabular_reviews using gin (lower(title) gin_trgm_ops);
+
 create or replace function public.get_projects_overview(
   p_user_id text,
   p_user_email text default null
@@ -767,8 +771,27 @@ as $$
       tc.review_id,
       count(distinct tc.document_id)::integer as document_count
     from public.tabular_cells tc
-    where tc.review_id in (select vr.id from visible_reviews vr)
+    where tc.review_id in (
+      select vr.id
+      from visible_reviews vr
+      where jsonb_typeof(vr.document_ids) is distinct from 'array'
+    )
     group by tc.review_id
+  ),
+  review_document_counts as (
+    select
+      vr.id,
+      case
+        when jsonb_typeof(vr.document_ids) = 'array'
+          then (
+            select count(distinct doc_id.value)::integer
+            from jsonb_array_elements_text(vr.document_ids) as doc_id(value)
+          )
+        else coalesce(cdc.document_count, 0)
+      end as document_count
+    from visible_reviews vr
+    left join cell_document_counts cdc
+      on cdc.review_id = vr.id
   )
   select
     vr.id,
@@ -782,17 +805,10 @@ as $$
     vr.created_at,
     vr.updated_at,
     vr.user_id = p_user_id as is_owner,
-    case
-      when jsonb_typeof(vr.document_ids) = 'array'
-        then (
-          select count(distinct doc_id.value)::integer
-          from jsonb_array_elements_text(vr.document_ids) as doc_id(value)
-        )
-      else coalesce(cdc.document_count, 0)
-    end as document_count
+    rdc.document_count
   from visible_reviews vr
-  left join cell_document_counts cdc
-    on cdc.review_id = vr.id
+  join review_document_counts rdc
+    on rdc.id = vr.id
   order by
     case
       when p_sort_key = 'name' and p_sort_direction = 'asc' then lower(coalesce(vr.title, ''))
@@ -811,11 +827,11 @@ as $$
       else null
     end desc,
     case
-      when p_sort_key = 'documents' and p_sort_direction = 'asc' then case when jsonb_typeof(vr.document_ids) = 'array' then (select count(distinct doc_id.value)::integer from jsonb_array_elements_text(vr.document_ids) as doc_id(value)) else coalesce(cdc.document_count, 0) end
+      when p_sort_key = 'documents' and p_sort_direction = 'asc' then rdc.document_count
       else null
     end asc,
     case
-      when p_sort_key = 'documents' and p_sort_direction = 'desc' then case when jsonb_typeof(vr.document_ids) = 'array' then (select count(distinct doc_id.value)::integer from jsonb_array_elements_text(vr.document_ids) as doc_id(value)) else coalesce(cdc.document_count, 0) end
+      when p_sort_key = 'documents' and p_sort_direction = 'desc' then rdc.document_count
       else null
     end desc,
     case
