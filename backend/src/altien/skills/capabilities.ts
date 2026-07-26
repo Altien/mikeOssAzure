@@ -13,6 +13,7 @@ import type {
   SkillCapabilityRequirement,
 } from "./analysis";
 import { AUTHORITY_TRACE_TOOL_NAMES } from "../authorityTrace/chatTools";
+import { SKILL_RESOURCE_TOOLS, SKILL_RESOURCE_TOOL_NAMES } from "./resources";
 import type { SkillActionAmendment } from "./actions";
 import { throwOnDbError, type Db } from "./shared";
 
@@ -74,7 +75,11 @@ function catalogueItem(
 
 export function firstPartyToolCatalogue(): ToolCatalogueItem[] {
   const byName = new Map<string, ToolCatalogueItem>();
-  for (const schema of [...TOOLS, ...PROJECT_EXTRA_TOOLS]) {
+  // The skill resource tools belong in the catalogue even though the runtime
+  // grants them unconditionally: a skill that says "load my reference file"
+  // otherwise names a capability the reviewer cannot see, which reads as a
+  // missing requirement and blocks enablement.
+  for (const schema of [...TOOLS, ...PROJECT_EXTRA_TOOLS, ...SKILL_RESOURCE_TOOLS]) {
     const item = catalogueItem(schema, "first_party");
     if (item) byName.set(item.name, item);
   }
@@ -122,6 +127,22 @@ function normalize(value: string) {
   return value.trim().toLocaleLowerCase().replace(/[\s-]+/g, "_");
 }
 
+const SKILL_RESOURCE_TOOL_SET = new Set<string>(
+  Object.values(SKILL_RESOURCE_TOOL_NAMES),
+);
+
+/**
+ * True when a requirement is asking to read the skill's own package. Matches
+ * the exact tool names first; the prose fallback exists because a model that
+ * was not shown these schemas describes them in its own words, and that
+ * phrasing must not read as a missing third-party capability.
+ */
+function namesSkillResourceTools(requirement: SkillCapabilityRequirement) {
+  if (requirement.kind !== "first_party_tool") return false;
+  if (SKILL_RESOURCE_TOOL_SET.has(normalize(requirement.name))) return true;
+  return /\bskill\s*resource\b/i.test(requirement.name);
+}
+
 function vague(requirement: SkillCapabilityRequirement) {
   return /^(appropriate|available|relevant|necessary|needed)?\s*tools?$/i.test(
     requirement.name.trim(),
@@ -154,6 +175,23 @@ export function resolveCapabilityContract(args: {
           purpose: "standard read-only project document baseline",
           inputs: "project-scoped document identifiers and literal searches",
           outputs: "bounded document metadata/text",
+          sideEffects: "read",
+        },
+      };
+    }
+    // Reading the skill's own immutable package is granted to every bound
+    // version by the runtime, so a requirement that resolves to those tools
+    // is a deployment-defined baseline like project_read — not a name match
+    // needing approval, and never a reason to block enablement.
+    if (namesSkillResourceTools(requirement)) {
+      return {
+        requirement,
+        status: "compatible" as const,
+        mappedToolNames: Object.values(SKILL_RESOURCE_TOOL_NAMES),
+        comparison: {
+          purpose: "skill package resource baseline",
+          inputs: "exact package-relative paths and literal searches",
+          outputs: "bounded text from the skill's own immutable package",
           sideEffects: "read",
         },
       };

@@ -6,6 +6,57 @@ import {
   resolveCapabilityContractWithLlm,
 } from "./capabilities";
 
+describe("skill package resource baseline", () => {
+  it("is in the catalogue so a reviewer can see what the runtime grants", () => {
+    const names = firstPartyToolCatalogue().map((item) => item.name);
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "list_skill_resources",
+        "read_skill_resource",
+        "search_skill_resources",
+      ]),
+    );
+  });
+
+  it("never blocks a skill that asks to read its own package", () => {
+    const contract = resolveCapabilityContract({
+      analysis: {
+        summary: "Follows a house format shipped in the package.",
+        risks: [],
+        unresolvedReferences: [],
+        capabilityRequirements: [
+          {
+            name: "read_skill_resource",
+            kind: "first_party_tool",
+            required: true,
+            rationale: "Loads reference/house-format.md.",
+          },
+          {
+            // Prose from a model that was never shown the schemas — this is
+            // the phrasing that used to read as a missing capability.
+            name: "skill resource loading tools for reference/house-format.md",
+            kind: "first_party_tool",
+            required: true,
+            rationale: "Loads the house format before writing.",
+          },
+        ],
+      },
+      catalogue: firstPartyToolCatalogue(),
+    });
+    expect(contract.blockers).toEqual([]);
+    for (const mapping of contract.mappings) {
+      expect(mapping.status).toBe("compatible");
+    }
+    expect(contract.approvedToolNames).toEqual(
+      expect.arrayContaining([
+        "list_skill_resources",
+        "read_skill_resource",
+        "search_skill_resources",
+      ]),
+    );
+  });
+});
+
 describe("skill capability resolution", () => {
   it("grants the read baseline but only proposes exact name matches", () => {
     const contract = resolveCapabilityContract({
