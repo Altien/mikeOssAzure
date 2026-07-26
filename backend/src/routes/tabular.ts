@@ -46,7 +46,10 @@ import {
 import { parsePaginationQuery } from "../lib/pagination";
 import { normalizeSearchTerm } from "../lib/search";
 import { parseTabularReviewSort } from "../lib/sort";
-import { buildTabularReviewsOverviewRpcArgs } from "../lib/tabularReviewsOverview";
+import {
+    buildTabularReviewsOverviewRpcArgs,
+    parseTabularReviewScope,
+} from "../lib/tabularReviewsOverview";
 
 function formatPromptSuffix(format?: string, tags?: string[]): string {
     switch (format) {
@@ -133,11 +136,13 @@ tabularRouter.get("/", requireAuth, async (req, res) => {
     const pagination = parsePaginationQuery(req.query as Record<string, unknown>);
     const searchTerm = normalizeSearchTerm(req.query.search);
     const sort = parseTabularReviewSort(req.query as Record<string, unknown>);
+    const scope = parseTabularReviewScope(req.query.scope);
 
     const rpcArgs = buildTabularReviewsOverviewRpcArgs({
         userId,
         userEmail,
         projectIdFilter,
+        scope,
         pagination,
         searchTerm,
         sort,
