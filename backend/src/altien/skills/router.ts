@@ -23,6 +23,14 @@ import {
   getSkillPackageInfo,
 } from "./packages";
 import { buildContentDisposition } from "../../lib/storage";
+import {
+  getGitHubSkillImportPolicy,
+  setGitHubSkillImportPolicy,
+} from "./settings";
+import {
+  acquireGitHubSkill,
+  GitHubSkillImportError,
+} from "./github";
 
 const zipUpload = multer({
   storage: multer.memoryStorage(),
@@ -114,6 +122,104 @@ skillsRouter.post(
       res
         .status(500)
         .json({ detail: safeErrorMessage(error, "Failed to import skill") });
+    }
+  },
+);
+
+skillsRouter.get("/settings/github", requireAuth, async (_req, res) => {
+  const tenant = tenantId(res);
+  if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+  try {
+    res.json({
+      ...(await getGitHubSkillImportPolicy(tenant)),
+      canManage: (res.locals.principal?.roles ?? []).includes("TenantAdmin"),
+    });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ detail: safeErrorMessage(error, "Failed to read GitHub policy") });
+  }
+});
+
+skillsRouter.put(
+  "/settings/github",
+  requireAuth,
+  requireRole("TenantAdmin"),
+  async (req, res) => {
+    const tenant = tenantId(res);
+    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+    if (typeof req.body?.enabled !== "boolean") {
+      return void res.status(400).json({ detail: "enabled must be boolean." });
+    }
+    try {
+      res.json(
+        await setGitHubSkillImportPolicy({
+          tenantId: tenant,
+          enabled: req.body.enabled,
+          updatedBy: String(res.locals.userId),
+        }),
+      );
+    } catch (error) {
+      res.status(500).json({
+        detail: safeErrorMessage(error, "Failed to update GitHub policy"),
+      });
+    }
+  },
+);
+
+skillsRouter.post(
+  "/imports/github",
+  requireAuth,
+  requireRole("TenantAdmin"),
+  async (req, res) => {
+    const tenant = tenantId(res);
+    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+    const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+    if (!url || url.length > 2_000) {
+      return void res.status(400).json({ detail: "A GitHub URL is required." });
+    }
+    try {
+      const policy = await getGitHubSkillImportPolicy(tenant);
+      if (!policy.deploymentAllowed) {
+        return void res
+          .status(403)
+          .json({ detail: "GITHUB_SKILL_IMPORT_DEPLOYMENT_DENIED" });
+      }
+      if (!policy.tenantEnabled) {
+        return void res
+          .status(403)
+          .json({ detail: "GITHUB_SKILL_IMPORT_TENANT_DISABLED" });
+      }
+      const acquired = await acquireGitHubSkill({
+        url,
+        token: process.env.GITHUB_SKILL_IMPORT_TOKEN?.trim() || undefined,
+      });
+      const stored = await storeZipSkillSnapshot({
+        tenantId: tenant,
+        importedBy: String(res.locals.userId),
+        sourceFilename: `${acquired.provenance.repository.replace(/[^a-z0-9.-]+/gi, "-")}-${acquired.provenance.resolvedCommitSha.slice(0, 12)}.zip`,
+        sourceBytes: acquired.sourceBytes,
+        snapshot: acquired.snapshot,
+        sourceKind: "github",
+        github: acquired.provenance,
+      });
+      res.status(201).json({ ...stored, provenance: acquired.provenance });
+    } catch (error) {
+      if (error instanceof GitHubSkillImportError) {
+        return void res.status(400).json({
+          detail: error.message,
+          code: error.code,
+        });
+      }
+      if (error instanceof SkillArchiveValidationError) {
+        return void res.status(400).json({
+          detail: error.message,
+          code: error.code,
+        });
+      }
+      res.status(500).json({
+        detail: safeErrorMessage(error, "GitHub skill import failed"),
+      });
     }
   },
 );

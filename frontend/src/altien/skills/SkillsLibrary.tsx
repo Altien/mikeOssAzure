@@ -8,13 +8,16 @@ import type { Project } from "@/app/components/shared/types";
 import {
     analyseSkillVersion,
     downloadSkillPackage,
+    getGitHubSkillImportPolicy,
     getSkillPackageInfo,
     importSkillZip,
+    importSkillFromGitHub,
     listSkills,
     postSkillReviewMessage,
     runSkillVersion,
     type SkillListItem,
     type SkillPackageInfo,
+    type GitHubSkillImportPolicy,
 } from "./api";
 
 function messageFrom(error: unknown) {
@@ -33,6 +36,9 @@ export function SkillsLibrary() {
     const [pendingEnable, setPendingEnable] = useState<Record<string, boolean>>({});
     const [busyVersion, setBusyVersion] = useState<string | null>(null);
     const [packageInfo, setPackageInfo] = useState<Record<string, SkillPackageInfo>>({});
+    const [githubPolicy, setGithubPolicy] =
+        useState<GitHubSkillImportPolicy | null>(null);
+    const [githubUrl, setGithubUrl] = useState("");
     const fileInput = useRef<HTMLInputElement>(null);
 
     const refresh = useCallback(async () => {
@@ -51,6 +57,9 @@ export function SkillsLibrary() {
     useEffect(() => {
         void refresh();
         void listProjects().then(setProjects).catch(() => setProjects([]));
+        void getGitHubSkillImportPolicy()
+            .then(setGithubPolicy)
+            .catch(() => setGithubPolicy(null));
     }, [refresh]);
 
     async function importFile(file: File) {
@@ -155,6 +164,21 @@ export function SkillsLibrary() {
         }
     }
 
+    async function importGitHub() {
+        if (!githubUrl.trim()) return;
+        setImporting(true);
+        setError(null);
+        try {
+            await importSkillFromGitHub(githubUrl.trim());
+            setGithubUrl("");
+            await refresh();
+        } catch (caught) {
+            setError(messageFrom(caught));
+        } finally {
+            setImporting(false);
+        }
+    }
+
     return (
         <main className="mx-auto w-full max-w-6xl px-6 py-8">
             <div className="flex flex-wrap items-start justify-between gap-4">
@@ -182,6 +206,26 @@ export function SkillsLibrary() {
                     </label>
                 )}
             </div>
+
+            {canManage && githubPolicy?.effectiveEnabled && (
+                <div className="mt-6 flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-4">
+                    <input
+                        value={githubUrl}
+                        onChange={(event) => setGithubUrl(event.target.value)}
+                        placeholder="https://github.com/owner/repository/tree/ref/path"
+                        aria-label="GitHub skill URL"
+                        className="min-w-72 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    />
+                    <button
+                        type="button"
+                        disabled={importing || !githubUrl.trim()}
+                        onClick={() => void importGitHub()}
+                        className="rounded-md border border-slate-300 px-4 py-2 text-sm disabled:opacity-50"
+                    >
+                        Import from GitHub
+                    </button>
+                </div>
+            )}
 
             {error && (
                 <div role="alert" className="mt-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">

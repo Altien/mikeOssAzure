@@ -120,3 +120,39 @@ export async function downloadSkillPackage(
             : simpleName || `${kind}-skill.zip`,
     };
 }
+
+export type GitHubSkillImportPolicy = {
+    deploymentAllowed: boolean;
+    tenantEnabled: boolean;
+    effectiveEnabled: boolean;
+    privateRepositoryConnectionConfigured: boolean;
+    canManage: boolean;
+};
+
+export function getGitHubSkillImportPolicy() {
+    return apiRequest<GitHubSkillImportPolicy>(
+        "/altien/skills/settings/github",
+    );
+}
+
+export function setGitHubSkillImportPolicy(enabled: boolean) {
+    return apiRequest<GitHubSkillImportPolicy>(
+        "/altien/skills/settings/github",
+        {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled }),
+        },
+    );
+}
+
+export function importSkillFromGitHub(url: string) {
+    return apiRequest<SkillImportResult & { provenance: unknown }>(
+        "/altien/skills/imports/github",
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url }),
+        },
+    );
+}

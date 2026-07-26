@@ -12,6 +12,9 @@ const {
   postSkillReviewMessageMock,
   createSkillRunMock,
   checkProjectAccessMock,
+  getGitHubSkillImportPolicyMock,
+  setGitHubSkillImportPolicyMock,
+  acquireGitHubSkillMock,
 } = vi.hoisted(() => ({
   authState: {
     roles: ["TenantAdmin"] as string[],
@@ -25,6 +28,9 @@ const {
   postSkillReviewMessageMock: vi.fn(),
   createSkillRunMock: vi.fn(),
   checkProjectAccessMock: vi.fn(),
+  getGitHubSkillImportPolicyMock: vi.fn(),
+  setGitHubSkillImportPolicyMock: vi.fn(),
+  acquireGitHubSkillMock: vi.fn(),
 }));
 
 vi.mock("../../middleware/auth", () => ({
@@ -68,6 +74,16 @@ vi.mock("../../lib/supabase", () => ({
   createServerSupabase: () => ({ fake: true }),
 }));
 
+vi.mock("./settings", () => ({
+  getGitHubSkillImportPolicy: getGitHubSkillImportPolicyMock,
+  setGitHubSkillImportPolicy: setGitHubSkillImportPolicyMock,
+}));
+
+vi.mock("./github", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./github")>()),
+  acquireGitHubSkill: acquireGitHubSkillMock,
+}));
+
 import { skillsRouter } from "./router";
 
 function makeApp() {
@@ -89,6 +105,15 @@ describe("Skills routes", () => {
     postSkillReviewMessageMock.mockReset();
     createSkillRunMock.mockReset();
     checkProjectAccessMock.mockReset();
+    getGitHubSkillImportPolicyMock.mockReset();
+    setGitHubSkillImportPolicyMock.mockReset();
+    acquireGitHubSkillMock.mockReset();
+    getGitHubSkillImportPolicyMock.mockResolvedValue({
+      deploymentAllowed: false,
+      tenantEnabled: false,
+      effectiveEnabled: false,
+      privateRepositoryConnectionConfigured: false,
+    });
   });
 
   it("keeps review and analysis TenantAdmin-only", async () => {
@@ -140,6 +165,64 @@ describe("Skills routes", () => {
       .post("/api/altien/skills/versions/version-1/run")
       .send({ projectId: "other-project" })
       .expect(404);
+  });
+
+  it("enforces both GitHub import gates before acquisition", async () => {
+    await request(makeApp())
+      .post("/api/altien/skills/imports/github")
+      .send({ url: "https://github.com/example/skill" })
+      .expect(403, { detail: "GITHUB_SKILL_IMPORT_DEPLOYMENT_DENIED" });
+    expect(acquireGitHubSkillMock).not.toHaveBeenCalled();
+
+    getGitHubSkillImportPolicyMock.mockResolvedValue({
+      deploymentAllowed: true,
+      tenantEnabled: false,
+      effectiveEnabled: false,
+      privateRepositoryConnectionConfigured: false,
+    });
+    await request(makeApp())
+      .post("/api/altien/skills/imports/github")
+      .send({ url: "https://github.com/example/skill" })
+      .expect(403, { detail: "GITHUB_SKILL_IMPORT_TENANT_DISABLED" });
+    expect(acquireGitHubSkillMock).not.toHaveBeenCalled();
+  });
+
+  it("imports a commit-pinned GitHub snapshot through the DMS pipeline", async () => {
+    getGitHubSkillImportPolicyMock.mockResolvedValue({
+      deploymentAllowed: true,
+      tenantEnabled: true,
+      effectiveEnabled: true,
+      privateRepositoryConnectionConfigured: false,
+    });
+    acquireGitHubSkillMock.mockResolvedValue({
+      sourceBytes: new Uint8Array([1, 2, 3]),
+      snapshot: { treeHash: "hash" },
+      provenance: {
+        repository: "github.com/example/skill",
+        selectedPath: "",
+        requestedRef: "main",
+        resolvedCommitSha: "a".repeat(40),
+        private: false,
+      },
+    });
+    storeZipSkillSnapshotMock.mockResolvedValue({
+      id: "snapshot-1",
+      skills: [{ id: "skill-1" }],
+    });
+
+    const response = await request(makeApp())
+      .post("/api/altien/skills/imports/github")
+      .send({ url: "https://github.com/example/skill" })
+      .expect(201);
+    expect(response.body.provenance.resolvedCommitSha).toBe("a".repeat(40));
+    expect(storeZipSkillSnapshotMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceKind: "github",
+        github: expect.objectContaining({
+          resolvedCommitSha: "a".repeat(40),
+        }),
+      }),
+    );
   });
 
   it("imports a ZIP for a TenantAdmin", async () => {

@@ -242,6 +242,7 @@ export function buildApp(): express.Express {
   );
   app.post("/api/projects/:projectId/documents", uploadLimiter);
   app.post("/api/altien/skills/imports/zip", uploadLimiter);
+  app.post("/api/altien/skills/imports/github", uploadLimiter);
   // Export / data-deletion limiters (upstream 3a10943). Dev mounts the user
   // router at both /api/user and /api/users, so limit both aliases.
   for (const userBase of ["/api/user", "/api/users"]) {

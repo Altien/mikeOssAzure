@@ -41,6 +41,11 @@ import {
 } from "../accountStyles";
 import { AccountSection } from "../AccountSection";
 import { AccountToggle } from "../AccountToggle";
+import {
+    getGitHubSkillImportPolicy,
+    setGitHubSkillImportPolicy,
+    type GitHubSkillImportPolicy,
+} from "@/altien/skills/api";
 
 type PendingMfaAction =
     | { type: "create" }
@@ -152,6 +157,9 @@ export default function ConnectorsPage() {
         useState<string | null>(null);
     const [showDetailToken, setShowDetailToken] = useState(false);
     const [showDetailAdvanced, setShowDetailAdvanced] = useState(false);
+    const [githubPolicy, setGithubPolicy] =
+        useState<GitHubSkillImportPolicy | null>(null);
+    const [githubPolicyBusy, setGithubPolicyBusy] = useState(false);
 
     const selectedConnector = selectedConnectorDetails;
 
@@ -159,7 +167,12 @@ export default function ConnectorsPage() {
         setLoading(true);
         setError(null);
         try {
-            setConnectors(await listMcpConnectors());
+            const [connectorRows, policy] = await Promise.all([
+                listMcpConnectors(),
+                getGitHubSkillImportPolicy(),
+            ]);
+            setConnectors(connectorRows);
+            setGithubPolicy(policy);
         } catch (err) {
             setError(
                 err instanceof Error ? err.message : "Failed to load connectors.",
@@ -592,6 +605,61 @@ export default function ConnectorsPage() {
             )}
 
             <div className="space-y-3">
+                {githubPolicy && (
+                    <AccountSection className="p-4">
+                        <div className="flex items-start justify-between gap-4">
+                            <div>
+                                <h3 className="text-sm font-medium text-gray-900">
+                                    GitHub skill acquisition
+                                </h3>
+                                <p className="mt-1 text-sm text-gray-500">
+                                    Allow TenantAdmins to import bounded,
+                                    commit-pinned skill snapshots from github.com.
+                                </p>
+                                {!githubPolicy.deploymentAllowed && (
+                                    <p className="mt-2 text-xs text-amber-700">
+                                        Denied by the deployment-wide policy.
+                                    </p>
+                                )}
+                                <p className="mt-2 text-xs text-gray-500">
+                                    Private repository connection:{" "}
+                                    {githubPolicy.privateRepositoryConnectionConfigured
+                                        ? "configured"
+                                        : "not configured"}
+                                </p>
+                            </div>
+                            <AccountToggle
+                                checked={githubPolicy.tenantEnabled}
+                                disabled={
+                                    !githubPolicy.deploymentAllowed ||
+                                    !githubPolicy.canManage
+                                }
+                                loading={githubPolicyBusy}
+                                label={
+                                    githubPolicy.tenantEnabled
+                                        ? "Allowed"
+                                        : "Denied"
+                                }
+                                onChange={(enabled) => {
+                                    setGithubPolicyBusy(true);
+                                    setError(null);
+                                    void setGitHubSkillImportPolicy(enabled)
+                                        .then(setGithubPolicy)
+                                        .catch((err) =>
+                                            setError(
+                                                err instanceof Error
+                                                    ? err.message
+                                                    : "Failed to update GitHub policy.",
+                                            ),
+                                        )
+                                        .finally(() =>
+                                            setGithubPolicyBusy(false),
+                                        );
+                                }}
+                            />
+                        </div>
+                    </AccountSection>
+                )}
                 {loading ? (
                     <ConnectorsSkeleton />
                 ) : connectors.length === 0 ? (

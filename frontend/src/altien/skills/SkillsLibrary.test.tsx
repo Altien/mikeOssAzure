@@ -13,6 +13,8 @@ const { listSkillsMock, importSkillZipMock, listProjectsMock, pushMock } = vi.ho
 vi.mock("./api", () => ({
     listSkills: listSkillsMock,
     importSkillZip: importSkillZipMock,
+    getGitHubSkillImportPolicy: vi.fn().mockResolvedValue(null),
+    importSkillFromGitHub: vi.fn(),
     analyseSkillVersion: vi.fn(),
     postSkillReviewMessage: vi.fn(),
     runSkillVersion: vi.fn(),

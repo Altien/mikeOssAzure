@@ -211,6 +211,13 @@ export async function storeZipSkillSnapshot(args: {
   sourceFilename: string;
   sourceBytes: Uint8Array;
   snapshot: ValidatedSkillSnapshot;
+  sourceKind?: "zip" | "github";
+  github?: {
+    repository: string;
+    selectedPath: string;
+    requestedRef: string;
+    resolvedCommitSha: string;
+  };
   db?: Db;
 }): Promise<StoredSkillSnapshot> {
   const db = args.db ?? createServerSupabase();
@@ -393,6 +400,15 @@ export async function storeZipSkillSnapshot(args: {
       expanded_bytes: args.snapshot.expandedBytes,
       file_count: args.snapshot.files.length,
       status: "stored",
+      ...(args.sourceKind === "github"
+        ? {
+            source_kind: "github",
+            github_repository: args.github?.repository,
+            github_selected_path: args.github?.selectedPath,
+            github_requested_ref: args.github?.requestedRef,
+            github_resolved_commit_sha: args.github?.resolvedCommitSha,
+          }
+        : {}),
     });
     throwOnDbError(snapshotRow, "Failed to create skill import snapshot.");
 
