@@ -1,6 +1,9 @@
 -- Migration date: 2026-07-25
 -- Remove the ambiguous overloads and leave a single canonical signature for the tabular reviews overview RPC.
 
+drop function if exists public.get_tabular_reviews_overview(text, text, text);
+drop function if exists public.get_tabular_reviews_overview(text, text, text, integer, integer);
+
 create or replace function public.get_tabular_reviews_overview(
   p_user_id text,
   p_user_email text default null,
