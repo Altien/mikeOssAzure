@@ -368,6 +368,17 @@ export async function postSkillReviewMessage(args: {
   if (context.version.analysis_state !== "succeeded") {
     throw new Error("Successful fast-model analysis is required first.");
   }
+  const generated = context.version.generated_analysis as
+    | { unresolvedReferences?: unknown[] }
+    | undefined;
+  if (
+    Array.isArray(generated?.unresolvedReferences) &&
+    generated.unresolvedReferences.length > 0
+  ) {
+    throw new Error(
+      "Unresolved identity references must be reviewed before enablement.",
+    );
+  }
   const action = createEnableAction({
     versionId: args.versionId,
     analysisInputHash: String(context.version.analysis_input_hash),

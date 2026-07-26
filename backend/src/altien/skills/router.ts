@@ -17,6 +17,12 @@ import {
   getSkillReview,
   postSkillReviewMessage,
 } from "./review";
+import {
+  buildMikeSkillPackage,
+  buildOriginalSkillPackage,
+  getSkillPackageInfo,
+} from "./packages";
+import { buildContentDisposition } from "../../lib/storage";
 
 const zipUpload = multer({
   storage: multer.memoryStorage(),
@@ -108,6 +114,68 @@ skillsRouter.post(
       res
         .status(500)
         .json({ detail: safeErrorMessage(error, "Failed to import skill") });
+    }
+  },
+);
+
+skillsRouter.get("/versions/:versionId/packages", requireAuth, async (req, res) => {
+  const tenant = tenantId(res);
+  if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+  try {
+    const info = await getSkillPackageInfo({
+      tenantId: tenant,
+      versionId: req.params.versionId,
+    });
+    const roles: string[] = res.locals.principal?.roles ?? [];
+    if (info.state !== "enabled" && !roles.includes("TenantAdmin")) {
+      return void res.status(404).json({ detail: "Skill version not found." });
+    }
+    res.json(info);
+  } catch (error) {
+    res
+      .status(404)
+      .json({ detail: safeErrorMessage(error, "Skill package not found") });
+  }
+});
+
+skillsRouter.get(
+  "/versions/:versionId/packages/:kind",
+  requireAuth,
+  async (req, res) => {
+    const tenant = tenantId(res);
+    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+    if (req.params.kind !== "original" && req.params.kind !== "mike") {
+      return void res.status(404).json({ detail: "Unknown package kind." });
+    }
+    try {
+      const info = await getSkillPackageInfo({
+        tenantId: tenant,
+        versionId: req.params.versionId,
+      });
+      const roles: string[] = res.locals.principal?.roles ?? [];
+      if (info.state !== "enabled" && !roles.includes("TenantAdmin")) {
+        return void res.status(404).json({ detail: "Skill version not found." });
+      }
+      const result =
+        req.params.kind === "original"
+          ? await buildOriginalSkillPackage({
+              tenantId: tenant,
+              versionId: req.params.versionId,
+            })
+          : await buildMikeSkillPackage({
+              tenantId: tenant,
+              versionId: req.params.versionId,
+            });
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader(
+        "Content-Disposition",
+        buildContentDisposition("attachment", result.filename),
+      );
+      res.send(Buffer.from(result.bytes));
+    } catch (error) {
+      res
+        .status(404)
+        .json({ detail: safeErrorMessage(error, "Skill package not found") });
     }
   },
 );

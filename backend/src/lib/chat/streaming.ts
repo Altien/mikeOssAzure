@@ -160,6 +160,7 @@ export async function runLLMStream(params: {
   write: (s: string) => void;
   extraTools?: unknown[];
   allowedToolNames?: string[];
+  skillResourceStore?: import("../../altien/skills/resources").SkillResourceStore;
   includeResearchTools?: boolean;
   workflowStore?: WorkflowStore;
   tabularStore?: TabularCellStore;
@@ -188,6 +189,7 @@ export async function runLLMStream(params: {
     write,
     extraTools,
     allowedToolNames,
+    skillResourceStore,
     includeResearchTools = true,
     workflowStore,
     tabularStore,
@@ -467,6 +469,7 @@ export async function runLLMStream(params: {
           apiKeys,
           externalSourceCache,
           authorityTraceTurnState,
+          skillResourceStore,
         );
         throwIfAborted(signal);
         for (const r of docsRead) {

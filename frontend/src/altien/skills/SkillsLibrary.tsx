@@ -2,16 +2,19 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Upload, PackageOpen, Play, ScanSearch } from "lucide-react";
+import { Download, Upload, PackageOpen, Play, ScanSearch } from "lucide-react";
 import { listProjects } from "@/app/lib/mikeApi";
 import type { Project } from "@/app/components/shared/types";
 import {
     analyseSkillVersion,
+    downloadSkillPackage,
+    getSkillPackageInfo,
     importSkillZip,
     listSkills,
     postSkillReviewMessage,
     runSkillVersion,
     type SkillListItem,
+    type SkillPackageInfo,
 } from "./api";
 
 function messageFrom(error: unknown) {
@@ -29,6 +32,7 @@ export function SkillsLibrary() {
     const [projectByVersion, setProjectByVersion] = useState<Record<string, string>>({});
     const [pendingEnable, setPendingEnable] = useState<Record<string, boolean>>({});
     const [busyVersion, setBusyVersion] = useState<string | null>(null);
+    const [packageInfo, setPackageInfo] = useState<Record<string, SkillPackageInfo>>({});
     const fileInput = useRef<HTMLInputElement>(null);
 
     const refresh = useCallback(async () => {
@@ -116,6 +120,37 @@ export function SkillsLibrary() {
             router.push(`/projects/${encodeURIComponent(projectId)}/assistant/chat/${encodeURIComponent(result.chatId)}`);
         } catch (caught) {
             setError(messageFrom(caught));
+            setBusyVersion(null);
+        }
+    }
+
+    async function showPackages(versionId: string) {
+        setBusyVersion(versionId);
+        setError(null);
+        try {
+            const info = await getSkillPackageInfo(versionId);
+            setPackageInfo((current) => ({ ...current, [versionId]: info }));
+        } catch (caught) {
+            setError(messageFrom(caught));
+        } finally {
+            setBusyVersion(null);
+        }
+    }
+
+    async function downloadPackage(versionId: string, kind: "original" | "mike") {
+        setBusyVersion(versionId);
+        setError(null);
+        try {
+            const result = await downloadSkillPackage(versionId, kind);
+            const url = URL.createObjectURL(result.blob);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = result.filename;
+            anchor.click();
+            URL.revokeObjectURL(url);
+        } catch (caught) {
+            setError(messageFrom(caught));
+        } finally {
             setBusyVersion(null);
         }
     }
@@ -265,6 +300,56 @@ export function SkillsLibrary() {
                                     </button>
                                 </div>
                             )}
+                            <div className="mt-4 border-t border-slate-100 pt-4">
+                                {!packageInfo[skill.version.id] ? (
+                                    <button
+                                        type="button"
+                                        disabled={busyVersion === skill.version.id}
+                                        onClick={() => void showPackages(skill.version.id)}
+                                        className="text-sm text-slate-600 underline-offset-4 hover:underline"
+                                    >
+                                        Package downloads
+                                    </button>
+                                ) : (
+                                    <div className="text-sm text-slate-600">
+                                        <p>
+                                            {packageInfo[skill.version.id].licencePaths.length
+                                                ? `Includes licence files: ${packageInfo[
+                                                      skill.version.id
+                                                  ].licencePaths.join(", ")}`
+                                                : "No licence file was identified in the package."}
+                                        </p>
+                                        <div className="mt-3 flex flex-wrap gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    void downloadPackage(
+                                                        skill.version.id,
+                                                        "original",
+                                                    )
+                                                }
+                                                className="inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2"
+                                            >
+                                                <Download className="h-4 w-4" />
+                                                Original ZIP
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    void downloadPackage(
+                                                        skill.version.id,
+                                                        "mike",
+                                                    )
+                                                }
+                                                className="inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2"
+                                            >
+                                                <Download className="h-4 w-4" />
+                                                Mike package
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
                         </li>
                     ))}
                 </ul>

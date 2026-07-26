@@ -1,4 +1,9 @@
-import { apiRequest } from "@/app/lib/mikeApi";
+import {
+    API_BASE,
+    apiRequest,
+    getAuthHeader,
+} from "@/app/lib/mikeApi";
+import { bounceIfUnauthorized } from "@/lib/auth-token";
 
 export type SkillListItem = {
     id: string;
@@ -75,4 +80,43 @@ export function runSkillVersion(versionId: string, projectId: string) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId }),
     });
+}
+
+export type SkillPackageInfo = {
+    versionId: string;
+    skillName: string;
+    state: string;
+    originalAvailable: boolean;
+    mikePackageAvailable: boolean;
+    licencePaths: string[];
+    fileCount: number;
+    treeHash: string;
+};
+
+export function getSkillPackageInfo(versionId: string) {
+    return apiRequest<SkillPackageInfo>(
+        `/altien/skills/versions/${encodeURIComponent(versionId)}/packages`,
+    );
+}
+
+export async function downloadSkillPackage(
+    versionId: string,
+    kind: "original" | "mike",
+) {
+    const auth = await getAuthHeader();
+    const response = await fetch(
+        `${API_BASE}/altien/skills/versions/${encodeURIComponent(versionId)}/packages/${kind}`,
+        { headers: auth },
+    );
+    bounceIfUnauthorized(response);
+    if (!response.ok) throw new Error(await response.text());
+    const disposition = response.headers.get("content-disposition") ?? "";
+    const utf8Name = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
+    const simpleName = /filename="([^"]+)"/i.exec(disposition)?.[1];
+    return {
+        blob: await response.blob(),
+        filename: utf8Name
+            ? decodeURIComponent(utf8Name)
+            : simpleName || `${kind}-skill.zip`,
+    };
 }

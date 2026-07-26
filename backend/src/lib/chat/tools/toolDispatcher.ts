@@ -75,6 +75,11 @@ import {
   registerExternalSourceArtifact,
 } from "../../../altien/externalSources/chatDispatcher";
 import { EXTERNAL_SOURCE_TOOL_NAMES } from "../../../altien/externalSources/toolDefinitions";
+import {
+  dispatchSkillResourceTool,
+  SKILL_RESOURCE_TOOL_NAMES,
+  type SkillResourceStore,
+} from "../../../altien/skills/resources";
 
 
 type CourtlistenerCaseRecord = {
@@ -539,6 +544,7 @@ export async function runToolCalls(
   apiKeys?: import("../../llm").UserApiKeys,
   externalSourceCache?: ExternalSourceCache,
   authorityTraceState?: AuthorityTraceTurnState,
+  skillResourceStore?: SkillResourceStore,
 ): Promise<{
   toolResults: unknown[];
   docsRead: { filename: string; document_id?: string }[];
@@ -681,6 +687,36 @@ export async function runToolCalls(
       args = JSON.parse(tc.function.arguments || "{}");
     } catch {
       /* ignore */
+    }
+
+    const skillResourceToolNames = Object.values(
+      SKILL_RESOURCE_TOOL_NAMES,
+    ) as string[];
+    if (skillResourceToolNames.includes(tc.function.name)) {
+      try {
+        const content = await dispatchSkillResourceTool({
+          name: tc.function.name,
+          input: args,
+          store: skillResourceStore,
+        });
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify(content),
+        });
+      } catch (error) {
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({
+            error:
+              error instanceof Error
+                ? error.message
+                : "Skill resource access failed.",
+          }),
+        });
+      }
+      continue;
     }
 
     if (tc.function.name.startsWith("mcp_")) {

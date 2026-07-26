@@ -1,5 +1,6 @@
 import { downloadFile } from "../../lib/storage";
 import { createServerSupabase } from "../../lib/supabase";
+import { SkillResourceStore } from "./resources";
 
 type Db = ReturnType<typeof createServerSupabase>;
 
@@ -10,6 +11,7 @@ export type SkillChatRuntimeContext = {
   contentHash: string;
   systemPrompt: string;
   allowedToolNames: string[];
+  resourceStore: SkillResourceStore;
 };
 
 export type SkillChatBindingMetadata = {
@@ -140,6 +142,18 @@ export async function loadSkillChatRuntimeContext(args: {
         (name): name is string => typeof name === "string" && !!name.trim(),
       )
     : [];
+  const resources = (manifest.files ?? []).map((file) => ({
+    path: String(file.path),
+    bytes: Number(file.bytes ?? 0),
+    media_type: String(file.media_type ?? "application/octet-stream"),
+    inspection_class: String(file.inspection_class ?? "binary") as
+      | "text"
+      | "source"
+      | "binary"
+      | "nested_archive",
+    document_version_id: String(file.document_version_id),
+    sha256: String(file.sha256 ?? ""),
+  }));
   const displayName = String(skillResult.data.display_name);
   const versionId = String(version.id);
   const contentHash = String(version.original_content_hash);
@@ -148,7 +162,16 @@ export async function loadSkillChatRuntimeContext(args: {
     versionId,
     displayName,
     contentHash,
-    allowedToolNames: Array.from(new Set([...baseline, ...approved])),
+    allowedToolNames: Array.from(
+      new Set([
+        ...baseline,
+        ...approved,
+        "list_skill_resources",
+        "read_skill_resource",
+        "search_skill_resources",
+      ]),
+    ),
+    resourceStore: new SkillResourceStore(resources, db),
     systemPrompt: `APPROVED PROJECT SKILL:
 This chat is immutably bound to "${displayName}", version ${versionId},
 content hash ${contentHash}. Platform safety, authorization, and the current

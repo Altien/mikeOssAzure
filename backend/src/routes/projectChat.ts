@@ -25,6 +25,7 @@ import { checkProjectAccess } from "../lib/access";
 import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
 import { AUTHORITY_TRACE_SYSTEM_PROMPT } from "../altien/authorityTrace/chatTools";
 import { loadSkillChatRuntimeContext } from "../altien/skills/runtime";
+import { SKILL_RESOURCE_TOOLS } from "../altien/skills/resources";
 
 const PROJECT_SYSTEM_PROMPT_EXTRA = `PROJECT CONTEXT:
 You are operating within a project folder that contains a collection of legal documents the user has organised for a single matter. The user's questions will usually refer to one or more documents in this project — your job is to find the relevant files to work on. Use list_documents to see what is available and fetch_documents / read_document to pull in any documents you need before answering.
@@ -221,8 +222,11 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             userId,
             db,
             write,
-            extraTools: PROJECT_EXTRA_TOOLS,
+            extraTools: skillRuntime
+                ? [...PROJECT_EXTRA_TOOLS, ...SKILL_RESOURCE_TOOLS]
+                : PROJECT_EXTRA_TOOLS,
             allowedToolNames: skillRuntime?.allowedToolNames,
+            skillResourceStore: skillRuntime?.resourceStore,
             workflowStore,
             includeResearchTools: legalResearchUs,
             model,
