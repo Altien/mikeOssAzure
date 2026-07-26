@@ -35,6 +35,7 @@ import { useAssistantChat } from "@/app/hooks/useAssistantChat";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { UserMessage } from "@/app/components/assistant/UserMessage";
 import { AssistantMessage } from "@/app/components/assistant/AssistantMessage";
+import { AuthorityTracePanel } from "@/app/components/assistant/AuthorityTracePanel";
 import { ChatInput } from "@/app/components/assistant/ChatInput";
 import type { ChatInputHandle } from "@/app/components/assistant/ChatInput";
 import { ProjectExplorer } from "@/app/components/projects/ProjectExplorer";
@@ -236,6 +237,9 @@ export default function ProjectAssistantChatClient() {
     // Tabs
     const [tabs, setTabs] = useState<DocTab[]>([]);
     const [activeTabId, setActiveTabId] = useState<string | null>(null);
+    const [authorityTraceRunId, setAuthorityTraceRunId] = useState<
+        string | null
+    >(null);
     const [activeQuotes, setActiveQuotes] = useState<CitationQuote[] | null>(
         null,
     );
@@ -247,6 +251,11 @@ export default function ProjectAssistantChatClient() {
     );
 
     const activeTab = tabs.find((t) => t.documentId === activeTabId) ?? null;
+    const authorityTraceTabId = authorityTraceRunId
+        ? `authority-trace:${authorityTraceRunId}`
+        : null;
+    const authorityTraceActive =
+        authorityTraceTabId !== null && activeTabId === authorityTraceTabId;
     const tabBarRef = useRef<HTMLDivElement | null>(null);
     const tabItemRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -478,6 +487,21 @@ export default function ProjectAssistantChatClient() {
         setActiveTabId(docId);
         setActiveQuotes(null);
         setSelectedDocId(docId);
+    }
+
+    const openAuthorityTrace = useCallback((runId: string) => {
+        setAuthorityTraceRunId(runId);
+        setActiveTabId(`authority-trace:${runId}`);
+        setActiveQuotes(null);
+        setSelectedDocId(null);
+    }, []);
+
+    function closeAuthorityTrace() {
+        const fallback = tabs.at(-1) ?? null;
+        setAuthorityTraceRunId(null);
+        setActiveTabId(fallback?.documentId ?? null);
+        setActiveQuotes(null);
+        setSelectedDocId(fallback?.documentId ?? null);
     }
 
     // ── Handlers ──────────────────────────────────────────────────────────────
@@ -991,7 +1015,7 @@ export default function ProjectAssistantChatClient() {
                         ref={tabBarRef}
                         className="h-10 flex items-end border-b border-gray-200 shrink-0 overflow-x-auto min-w-0 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
                     >
-                        {tabs.length === 0 ? (
+                        {tabs.length === 0 && !authorityTraceRunId ? (
                             <span className="px-4 self-center text-xs text-gray-700">
                                 Document Viewer
                             </span>
@@ -1070,9 +1094,55 @@ export default function ProjectAssistantChatClient() {
                                 );
                             })
                         )}
+                        {authorityTraceRunId && authorityTraceTabId && (
+                            <div
+                                ref={(el) => {
+                                    tabItemRefs.current[authorityTraceTabId] =
+                                        el;
+                                }}
+                                onClick={() =>
+                                    setActiveTabId(authorityTraceTabId)
+                                }
+                                className={`group flex h-full max-w-[260px] shrink-0 cursor-pointer items-center gap-1.5 border-r border-gray-200 px-3 transition-colors ${
+                                    authorityTraceActive
+                                        ? "bg-gray-100"
+                                        : "bg-white hover:bg-gray-50"
+                                }`}
+                            >
+                                <FileText className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                                <span
+                                    className={`truncate text-xs ${
+                                        authorityTraceActive
+                                            ? "font-medium text-gray-900"
+                                            : "text-gray-500"
+                                    }`}
+                                >
+                                    Authority Trace
+                                </span>
+                                <button
+                                    type="button"
+                                    aria-label="Close Authority Trace"
+                                    onClick={(event) => {
+                                        event.stopPropagation();
+                                        closeAuthorityTrace();
+                                    }}
+                                    className={`shrink-0 transition-colors ${
+                                        authorityTraceActive
+                                            ? "text-gray-500 hover:text-gray-700"
+                                            : "text-gray-300 hover:text-gray-600"
+                                    }`}
+                                >
+                                    <X className="h-3 w-3" />
+                                </button>
+                            </div>
+                        )}
                     </div>
                     <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-                        {activeTab ? (
+                        {authorityTraceActive && authorityTraceRunId ? (
+                            <AuthorityTracePanel
+                                runId={authorityTraceRunId}
+                            />
+                        ) : activeTab ? (
                             isDocxTab(activeTab.filename) ? (
                                 <DocxView
                                     key={activeTab.documentId}
@@ -1210,6 +1280,9 @@ export default function ProjectAssistantChatClient() {
                                             annotations={msg.annotations}
                                             onCitationClick={
                                                 handleCitationClick
+                                            }
+                                            onAuthorityTraceOpen={
+                                                openAuthorityTrace
                                             }
                                             minHeight={
                                                 i === lastAssistantIdx
