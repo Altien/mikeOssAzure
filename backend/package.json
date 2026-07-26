@@ -3,7 +3,8 @@
   "version": "0.3.0-azure.1",
   "private": true,
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --import ./dev-log.mjs src/index.ts",
+    "dev:nolog": "tsx watch src/index.ts",
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",

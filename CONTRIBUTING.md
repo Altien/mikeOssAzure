@@ -117,6 +117,22 @@ In the meantime, the local docker stack
 work" environment. Please exercise the golden path and at least one
 failure mode before opening a PR.
 
+## Backend dev logs
+
+`npm run dev --prefix backend` tees everything the server prints — including
+stack traces and unhandled rejections — to `backend/.tmp/backend-dev.log`,
+so a failed request can be read after the fact instead of being lost to a
+scrolled terminal:
+
+```bash
+tail -f backend/.tmp/backend-dev.log
+```
+
+The file appends across restarts and marks each run with a `===== dev start`
+separator; delete it when it gets long. Set `DEV_LOG_FILE` to write
+elsewhere, or use `npm run dev:nolog --prefix backend` for the previous
+console-only behaviour.
+
 ## What gets refused without discussion
 
 To keep MikeOssAzure focused, the following kinds of contributions
