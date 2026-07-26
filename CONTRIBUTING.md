@@ -117,6 +117,21 @@ In the meantime, the local docker stack
 work" environment. Please exercise the golden path and at least one
 failure mode before opening a PR.
 
+## Migrations
+
+Nothing migrates on boot — several replicas can start against one database,
+so applying them is a deliberate step:
+
+```bash
+npm run migrate:local --prefix backend   # docker-compose Postgres
+npm run migrate:dev   --prefix backend   # any other DATABASE_URL
+```
+
+On startup the server compares the migrations in the build against the
+`pgmigrations` table and prints the names of any that are unapplied. It only
+reports: a schema behind the code otherwise fails later as an unrelated
+application error.
+
 ## Backend dev logs
 
 `npm run dev --prefix backend` tees everything the server prints — including

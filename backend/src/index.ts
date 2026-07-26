@@ -17,6 +17,7 @@ import { installProcessGuards } from "./lib/processGuards";
 installProcessGuards();
 import { buildApp } from "./app";
 import { initDownloadSigningSecret } from "./lib/downloadTokens";
+import { checkSchemaVersion } from "./lib/schemaCheck";
 
 const PORT = process.env.PORT ?? 3001;
 
@@ -27,5 +28,8 @@ const PORT = process.env.PORT ?? 3001;
 initDownloadSigningSecret().finally(() => {
   buildApp().listen(PORT, () => {
     console.log(`Mike backend running on port ${PORT}`);
+    // After listen, and never awaited: a schema report must not delay or
+    // prevent serving traffic. Migrations stay a deliberate manual step.
+    void checkSchemaVersion().catch(() => {});
   });
 });
