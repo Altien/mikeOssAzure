@@ -19,7 +19,11 @@ export type AuthorityTraceEvent =
   | {
       type: "authority_trace_verification";
       run_id?: string;
-      outcome: "success" | "completed_with_failures" | "fatal";
+      outcome:
+        | "success"
+        | "completed_with_failures"
+        | "action_required"
+        | "fatal";
       total: number;
       anchored: number;
       failed: number;
@@ -38,7 +42,7 @@ Backend research/read results that supply canonical source text may include a ve
 
 When a selected project source is DOCX or PDF, call extract_document_for_verification before proposing passages. Use the returned document_handle as the verification source. The extraction is a stable Markdown snapshot; an ocr_required warning means the PDF text layer is inadequate and no OCR content was invented.
 
-After verify_citation_sources returns, retry actionable anchoring failures at most twice (three verifier calls total). Never retry a fatal result. When retries_remaining is zero, do not call the verifier again. Always give the user a final synthesis. Name formatting-different matches, citations with no proposed quote, every warning, every memo-citation failure, every source-passage failure, and any fatal source/version error.`;
+If verify_citation_sources returns action_required because a DOCX or PDF needs stable extraction, call extract_document_for_verification with the named document, replace that document handle in the proposal, and retry. This prerequisite does not consume a verifier attempt. After an actual verification run, retry actionable anchoring failures at most twice (three verifier calls total). Never retry a fatal result. When retries_remaining is zero, do not call the verifier again. Always give the user a final synthesis. Name formatting-different matches, citations with no proposed quote, every warning, every memo-citation failure, every source-passage failure, and any fatal source/version error.`;
 
 export const AUTHORITY_TRACE_TOOLS = [
   {

@@ -11,6 +11,15 @@ const {
 }));
 
 vi.mock("../../citationVerification/service", () => ({
+  VerificationExtractionRequiredError: class extends Error {
+    readonly code = "verification_extraction_required";
+
+    constructor(documentId: string, versionId: string) {
+      super(
+        `Document ${documentId}/${versionId} must be converted with extract_document_for_verification before citation verification`,
+      );
+    }
+  },
   registerVerificationArtifact: (
     store: Map<string, unknown>,
     artifact: { artifactId: string },
@@ -27,6 +36,7 @@ vi.mock("../../mcpConnectors", () => ({
   executeMcpToolCall: executeMcpToolCallMock,
 }));
 
+import { VerificationExtractionRequiredError } from "../../citationVerification/service";
 import { runToolCalls } from "./toolDispatcher";
 import {
   AUTHORITY_TRACE_SYSTEM_PROMPT,
@@ -241,6 +251,169 @@ describe("Authority Trace tool dispatch", () => {
       '"type":"authority_trace_verification"',
     );
     expect(writes.join("")).not.toContain("The court adopted the rule.");
+  });
+
+  it("allows extraction and retry when verification requires a stable DOCX snapshot", async () => {
+    const extractionRequired = new VerificationExtractionRequiredError(
+      "memo-id",
+      "memo-v1",
+    );
+    verifyCitationSourcesMock
+      .mockRejectedValueOnce(extractionRequired)
+      .mockResolvedValueOnce({
+        runId: "run-after-extraction",
+        record: { schema_version: 1 },
+        report: {
+          outcome: "success",
+          total: 1,
+          anchored: 1,
+          failed: 0,
+          exact: 1,
+          formatting_different: 0,
+          no_quote_claimed: 0,
+          warnings: [],
+          failures: [],
+        },
+      });
+    extractDocumentForVerificationMock.mockResolvedValue({
+      source_document_id: "memo-id",
+      source_version_id: "memo-v1",
+      extracted_document_id: "extracted-memo-id",
+      extracted_version_id: "extracted-memo-v1",
+      filename: "memo.verification.md",
+      media_type: "text/markdown",
+      source_media_type:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      page_count: null,
+      sha256: "a".repeat(64),
+      source_sha256: "b".repeat(64),
+      bytes: 100,
+      warnings: [],
+    });
+    const state = {
+      verificationAttempts: 0,
+      terminal: false,
+      fatal: false,
+    };
+    const docIndex = {
+      "doc-0": { document_id: "memo-id", filename: "memo.docx" },
+    };
+    const artifactProposal = {
+      ...proposal,
+      sources: {
+        authority: {
+          verification_source_id: "source-handle",
+          title: "Authority",
+          kind: "case",
+        },
+      },
+    };
+
+    const first = await runToolCalls(
+      [
+        {
+          id: "verify-before-extraction",
+          function: {
+            name: AUTHORITY_TRACE_TOOL_NAMES.verifyCitationSources,
+            arguments: JSON.stringify(artifactProposal),
+          },
+        },
+      ],
+      new Map(),
+      "user-1",
+      {} as never,
+      () => {},
+      undefined,
+      undefined,
+      docIndex,
+      undefined,
+      undefined,
+      "project-1",
+      undefined,
+      undefined,
+      undefined,
+      state,
+    );
+
+    expect(first.authorityTraceEvents).toEqual([
+      expect.objectContaining({
+        type: "authority_trace_verification",
+        outcome: "action_required",
+        error: expect.stringMatching(/extract_document_for_verification/i),
+      }),
+    ]);
+    expect(state).toEqual({
+      verificationAttempts: 0,
+      terminal: false,
+      fatal: false,
+    });
+
+    const extraction = await runToolCalls(
+      [
+        {
+          id: "extract-memo",
+          function: {
+            name: AUTHORITY_TRACE_TOOL_NAMES.extractDocument,
+            arguments: JSON.stringify({ document_id: "doc-0" }),
+          },
+        },
+      ],
+      new Map(),
+      "user-1",
+      {} as never,
+      () => {},
+      undefined,
+      undefined,
+      docIndex,
+      undefined,
+      undefined,
+      "project-1",
+      undefined,
+      undefined,
+      undefined,
+      state,
+    );
+    const extractedHandle = String(
+      JSON.parse(String(extraction.toolResults[0].content)).document_handle,
+    );
+
+    const second = await runToolCalls(
+      [
+        {
+          id: "verify-after-extraction",
+          function: {
+            name: AUTHORITY_TRACE_TOOL_NAMES.verifyCitationSources,
+            arguments: JSON.stringify({
+              ...artifactProposal,
+              memo: { document_id: extractedHandle },
+            }),
+          },
+        },
+      ],
+      new Map(),
+      "user-1",
+      {} as never,
+      () => {},
+      undefined,
+      undefined,
+      docIndex,
+      undefined,
+      undefined,
+      "project-1",
+      undefined,
+      undefined,
+      undefined,
+      state,
+    );
+
+    expect(second.authorityTraceEvents).toEqual([
+      expect.objectContaining({
+        type: "authority_trace_verification",
+        run_id: "run-after-extraction",
+        outcome: "success",
+      }),
+    ]);
+    expect(verifyCitationSourcesMock).toHaveBeenCalledTimes(2);
   });
 
   it("emits a fatal event and no run id when verification rejects", async () => {

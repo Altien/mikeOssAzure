@@ -51,6 +51,20 @@ export type VerificationArtifact = {
 
 export type VerificationArtifactStore = Map<string, VerificationArtifact>;
 
+export class VerificationExtractionRequiredError extends Error {
+  readonly code = "verification_extraction_required";
+
+  constructor(
+    readonly documentId: string,
+    readonly versionId: string,
+  ) {
+    super(
+      `Document ${documentId}/${versionId} must be converted with extract_document_for_verification before citation verification`,
+    );
+    this.name = "VerificationExtractionRequiredError";
+  }
+}
+
 export function registerVerificationArtifact(
   store: VerificationArtifactStore,
   artifact: VerificationArtifact,
@@ -123,9 +137,7 @@ async function downloadResolvedDocument(
   const bytes = new Uint8Array(content);
   const fileType = version.file_type?.trim().toLowerCase() ?? "";
   if (fileType === "pdf" || fileType === "docx" || fileType === "doc") {
-    throw new Error(
-      `Document ${documentId}/${version.id} must be converted with extract_document_for_verification before citation verification`,
-    );
+    throw new VerificationExtractionRequiredError(documentId, version.id);
   }
   return {
     documentId,

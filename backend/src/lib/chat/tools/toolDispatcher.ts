@@ -14,6 +14,7 @@ import {
 } from "./authorityTraceTools";
 import {
   registerVerificationArtifact,
+  VerificationExtractionRequiredError,
   verifyCitationSources,
 } from "../../citationVerification/service";
 import type {
@@ -1263,9 +1264,40 @@ export async function runToolCalls(
           }),
         });
       } catch (err) {
-        traceState.fatal = true;
         const message =
           err instanceof Error ? err.message : "Citation verification failed";
+        if (err instanceof VerificationExtractionRequiredError) {
+          traceState.verificationAttempts = Math.max(
+            0,
+            traceState.verificationAttempts - 1,
+          );
+          const event: AuthorityTraceEvent = {
+            type: "authority_trace_verification",
+            outcome: "action_required",
+            total: 0,
+            anchored: 0,
+            failed: 0,
+            error: message,
+          };
+          authorityTraceEvents.push(event);
+          write(`data: ${JSON.stringify(event)}\n\n`);
+          toolResults.push({
+            role: "tool",
+            tool_call_id: tc.id,
+            content: JSON.stringify({
+              outcome: "action_required",
+              error: message,
+              retries_remaining: Math.max(
+                0,
+                3 - traceState.verificationAttempts,
+              ),
+              instruction:
+                "Call extract_document_for_verification for this document, replace its handle in the proposal, then retry verify_citation_sources.",
+            }),
+          });
+          continue;
+        }
+        traceState.fatal = true;
         const event: AuthorityTraceEvent = {
           type: "authority_trace_verification",
           outcome: "fatal",

@@ -805,6 +805,47 @@ describe("useAssistantChat: Authority Trace events", () => {
       },
     ]);
   });
+
+  it("preserves an extraction prerequisite as action required", async () => {
+    mockStreamProjectChat.mockResolvedValue(
+      sseResponse([
+        {
+          type: "authority_trace_verification_start",
+          citation_count: 1,
+        },
+        {
+          type: "authority_trace_verification",
+          outcome: "action_required",
+          total: 0,
+          anchored: 0,
+          failed: 0,
+          error: "Call extract_document_for_verification first",
+        },
+      ]),
+    );
+    const { result } = renderHook(() =>
+      useAssistantChat({ projectId: "project-1" }),
+    );
+
+    await act(async () => {
+      await result.current.handleChat(USER_MSG("verify DOCX"));
+    });
+
+    const events = (result.current.messages.at(-1)?.events ?? []).filter(
+      (event) => event.type === "authority_trace_verification",
+    );
+    expect(events).toEqual([
+      {
+        type: "authority_trace_verification",
+        outcome: "action_required",
+        total: 0,
+        anchored: 0,
+        failed: 0,
+        error: "Call extract_document_for_verification first",
+        isStreaming: false,
+      },
+    ]);
+  });
 });
 
 describe("useAssistantChat: doc_find events", () => {

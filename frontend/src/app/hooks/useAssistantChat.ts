@@ -664,6 +664,7 @@ export function useAssistantChat({
                   outcome:
                     data.outcome === "success" ||
                     data.outcome === "completed_with_failures" ||
+                    data.outcome === "action_required" ||
                     data.outcome === "fatal"
                       ? data.outcome
                       : "fatal",

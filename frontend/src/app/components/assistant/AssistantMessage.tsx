@@ -2318,9 +2318,11 @@ export function AssistantMessage({
                 ? "Verifying citation sources"
                 : event.outcome === "fatal"
                   ? "Authority Trace failed"
-                  : event.outcome === "completed_with_failures"
-                    ? "Authority Trace completed with failures"
-                    : "Authority Trace completed";
+                  : event.outcome === "action_required"
+                    ? "Authority Trace needs document extraction"
+                    : event.outcome === "completed_with_failures"
+                      ? "Authority Trace completed with failures"
+                      : "Authority Trace completed";
             const detail = event.isStreaming
                 ? `${event.total} ${event.total === 1 ? "citation" : "citations"}`
                 : event.error

@@ -229,7 +229,11 @@ export type AssistantEvent =
   | {
       type: "authority_trace_verification";
       run_id?: string;
-      outcome?: "success" | "completed_with_failures" | "fatal";
+      outcome?:
+        | "success"
+        | "completed_with_failures"
+        | "action_required"
+        | "fatal";
       total: number;
       anchored: number;
       failed: number;

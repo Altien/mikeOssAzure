@@ -118,4 +118,32 @@ describe("AssistantMessage Authority Trace", () => {
         expect(screen.getByText("Authority Trace failed")).toBeInTheDocument();
         expect(screen.getByText("Invalid proposal")).toBeInTheDocument();
     });
+
+    it("renders extraction prerequisites without labelling them fatal", () => {
+        renderWithProviders(
+            <AssistantMessage
+                content=""
+                events={[
+                    {
+                        type: "authority_trace_verification",
+                        outcome: "action_required",
+                        total: 0,
+                        anchored: 0,
+                        failed: 0,
+                        error: "Call extract_document_for_verification first",
+                    },
+                ]}
+            />,
+        );
+
+        expect(
+            screen.getByText("Authority Trace needs document extraction"),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByText("Call extract_document_for_verification first"),
+        ).toBeInTheDocument();
+        expect(
+            screen.queryByText("Authority Trace failed"),
+        ).not.toBeInTheDocument();
+    });
 });
