@@ -135,10 +135,15 @@ const SKILL_RESOURCE_TOOL_SET = new Set<string>(
  * True when a requirement is asking to read the skill's own package. Matches
  * the exact tool names first; the prose fallback exists because a model that
  * was not shown these schemas describes them in its own words, and that
- * phrasing must not read as a missing third-party capability.
+ * phrasing must not read as a missing capability.
+ *
+ * Deliberately ignores `kind`. Models classify this inconsistently — reading
+ * the package has been labelled `first_party_tool` and `skill` (as though the
+ * package were a separate skill to bind) — and a wrong label must not decide
+ * whether a version can be enabled. The requirement text identifies it; a
+ * real skill dependency is named after the skill it needs.
  */
 function namesSkillResourceTools(requirement: SkillCapabilityRequirement) {
-  if (requirement.kind !== "first_party_tool") return false;
   if (SKILL_RESOURCE_TOOL_SET.has(normalize(requirement.name))) return true;
   return /\bskill\s*resource\b/i.test(requirement.name);
 }

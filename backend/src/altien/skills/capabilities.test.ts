@@ -18,6 +18,45 @@ describe("skill package resource baseline", () => {
     );
   });
 
+  it("resolves package reading whatever kind the model labelled it", () => {
+    // Verbatim from a real kimi-k3 analysis: it labelled reading the skill's
+    // own package `kind: "skill"`, as though the package were a separate
+    // skill to bind. That mislabel used to make the version unenablable.
+    const contract = resolveCapabilityContract({
+      analysis: {
+        summary: "Summarises a litigation document.",
+        risks: [],
+        unresolvedReferences: [],
+        capabilityRequirements: [
+          {
+            name: "project document reading (list_documents / read_document / fetch_documents / find_in_document)",
+            kind: "project_read",
+            required: true,
+            rationale: "Step 1 requires reading the project documents.",
+          },
+          {
+            name: "skill resource loading tools for reference/house-format.md",
+            kind: "skill",
+            required: true,
+            rationale:
+              "Step 2 mandates loading 'reference/house-format.md' with 'the skill resource tools'.",
+          },
+          {
+            name: "general language model summarisation",
+            kind: "model",
+            required: true,
+            rationale: "Producing structured issues requires reasoning.",
+          },
+        ],
+      },
+      catalogue: firstPartyToolCatalogue(),
+    });
+    expect(contract.blockers).toEqual([]);
+    expect(contract.approvedToolNames).toEqual(
+      expect.arrayContaining(["read_skill_resource"]),
+    );
+  });
+
   it("never blocks a skill that asks to read its own package", () => {
     const contract = resolveCapabilityContract({
       analysis: {
