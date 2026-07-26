@@ -190,7 +190,9 @@ describe("validateSkillZip", () => {
     // DEFLATE's maximum 1032:1 ratio (~17 MB), independent of how large the
     // entry claims to be. Without the streaming abort the whole 64 MB payload
     // would be materialised before any limit was consulted.
-    expect(inflatedBytes).toBeLessThan(24 * 1024 * 1024);
+    expect(inflatedBytes).toBeLessThan(
+      SKILL_IMPORT_LIMITS.fileBytes + 24 * 1024 * 1024,
+    );
   });
 
   it("allows obvious placeholder credentials", async () => {

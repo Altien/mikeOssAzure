@@ -6,12 +6,23 @@ import {
   type DetectedMcpRequirement,
 } from "./mcpRequirements";
 
+/**
+ * Sized for real skill packages rather than hand-written instructions. Skills
+ * in the wild vendor their own assets — a PDF viewer, schemas, fixtures — and
+ * the original 500 KB per-file cap rejected them on a single bundled file.
+ *
+ * These stay the zip-bomb defence, so they are generous, not absent. Every
+ * entry is measured while it decompresses and aborted the moment it crosses a
+ * cap, which bounds one import at roughly `expandedBytes` plus the ~17 MB a
+ * DEFLATE block can still inflate after the abort. Importing is TenantAdmin
+ * only, so that ceiling applies to an authorised, infrequent action.
+ */
 export const SKILL_IMPORT_LIMITS = {
-  compressedBytes: 1 * 1024 * 1024,
-  expandedBytes: 2 * 1024 * 1024,
-  files: 50,
-  fileBytes: 500 * 1024,
-  skillMarkdownBytes: 64 * 1024,
+  compressedBytes: 16 * 1024 * 1024,
+  expandedBytes: 64 * 1024 * 1024,
+  files: 300,
+  fileBytes: 8 * 1024 * 1024,
+  skillMarkdownBytes: 256 * 1024,
 } as const;
 
 export type SkillSnapshotFile = {
