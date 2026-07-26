@@ -142,6 +142,14 @@ export default function TabularReviewsPage() {
         setPage((prev) => prev + 1);
     }
 
+    function handleScroll(event: React.UIEvent<HTMLDivElement>) {
+        if (loading || loadingMore || !hasMore) return;
+        const el = event.currentTarget;
+        const distanceToBottom =
+            el.scrollHeight - el.scrollTop - el.clientHeight;
+        if (distanceToBottom < 200) handleLoadMore();
+    }
+
     useEffect(() => {
         setPage(0);
         setHasMore(true);
@@ -409,6 +417,7 @@ export default function TabularReviewsPage() {
 
             {/* Table */}
             <TableScrollArea
+                onScroll={handleScroll}
                 header={
                     <TableHeaderRow>
                         <TableStickyCell header>
