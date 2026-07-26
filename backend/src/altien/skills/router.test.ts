@@ -222,14 +222,14 @@ describe("Skills routes", () => {
     });
     checkProjectAccessMock.mockResolvedValue({ ok: true, isOwner: false });
     await request(makeApp())
-      .post("/api/altien/skills/projects/project-1/pins/skill-1")
+      .put("/api/altien/skills/projects/project-1/pins/skill-1")
       .send({ versionId: "version-1" })
       .expect(403, { detail: "PROJECT_OWNER_REQUIRED" });
     expect(setProjectSkillPinMock).not.toHaveBeenCalled();
 
     checkProjectAccessMock.mockResolvedValue({ ok: true, isOwner: true });
     await request(makeApp())
-      .post("/api/altien/skills/projects/project-1/pins/skill-1")
+      .put("/api/altien/skills/projects/project-1/pins/skill-1")
       .send({ versionId: "version-1" })
       .expect(200);
     expect(setProjectSkillPinMock).toHaveBeenCalledWith(

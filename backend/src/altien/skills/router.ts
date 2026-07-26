@@ -562,7 +562,7 @@ skillsRouter.post(
   },
 );
 
-skillsRouter.post(
+skillsRouter.put(
   "/projects/:projectId/pins/:skillId",
   requireAuth,
   async (req, res) => {

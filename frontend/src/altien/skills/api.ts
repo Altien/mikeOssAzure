@@ -112,7 +112,7 @@ export function setProjectSkillPin(
     }>(
         `/altien/skills/projects/${encodeURIComponent(projectId)}/pins/${encodeURIComponent(skillId)}`,
         {
-            method: "POST",
+            method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ versionId }),
         },
