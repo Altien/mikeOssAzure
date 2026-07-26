@@ -203,4 +203,116 @@ describe("loadSkillChatRuntimeContext", () => {
       ]),
     );
   });
+
+  // Regression: bindings record the adapted hash when a version was adapted,
+  // so the runtime integrity check must compare against the adapted hash too.
+  function makeAdaptedDb(storedDependencyAdaptedHash: string) {
+    return makeFakeDb((call) => {
+      const id = call.filters.find((filter) => filter[1] === "id")?.[2];
+      if (call.table === "altien_chat_skill_bindings") {
+        return {
+          data: [{
+            root_skill_id: "skill-root",
+            root_version_id: "version-root",
+            dependency_versions: [{
+              skillId: "skill-dependency",
+              canonicalName: "helper",
+              displayName: "Helper",
+              versionId: "version-dependency",
+              contentHash: "adapted-dependency",
+              executionContract: {},
+            }],
+          }],
+          error: null,
+        };
+      }
+      if (call.table === "altien_skill_versions") {
+        const dependency = id === "version-dependency";
+        return {
+          data: [{
+            id,
+            snapshot_id: dependency ? "snapshot-dependency" : "snapshot-root",
+            entrypoint_path: "SKILL.md",
+            original_content_hash: dependency
+              ? "original-dependency"
+              : "original-root",
+            adapted_content_hash: dependency
+              ? storedDependencyAdaptedHash
+              : "adapted-root",
+            approved_execution_contract: {},
+          }],
+          error: null,
+        };
+      }
+      if (call.table === "altien_skills") {
+        return { data: [{ id: "skill-root", display_name: "Root" }], error: null };
+      }
+      if (call.table === "altien_skill_import_snapshots") {
+        const dependency = id === "snapshot-dependency";
+        return {
+          data: [{
+            manifest: {
+              files: [{
+                path: "SKILL.md",
+                document_version_id: dependency ? "doc-dependency" : "doc-root",
+                inspection_class: "text",
+              }],
+            },
+          }],
+          error: null,
+        };
+      }
+      if (call.table === "document_versions") {
+        return {
+          data: [{
+            storage_path:
+              id === "doc-dependency"
+                ? "skills/dependency.md"
+                : "skills/root.md",
+          }],
+          error: null,
+        };
+      }
+      return { data: [], error: null };
+    });
+  }
+
+  it("accepts an adapted dependency version pinned to the chat", async () => {
+    downloadFileMock.mockImplementation(async (path: string) =>
+      new TextEncoder().encode(
+        path.includes("dependency")
+          ? "---\nname: Helper\n---\nUse the helper method."
+          : "---\nname: Root\n---\nFollow the root method.",
+      ).buffer,
+    );
+    const fake = makeAdaptedDb("adapted-dependency");
+
+    const result = await loadSkillChatRuntimeContext({
+      chatId: "chat-adapted",
+      projectId: "project-1",
+      db: fake.db as never,
+    });
+
+    expect(result?.contentHash).toBe("adapted-root");
+    expect(result?.systemPrompt).toContain("Use the helper method.");
+  });
+
+  it("rejects a dependency whose stored content was tampered with", async () => {
+    downloadFileMock.mockImplementation(async (path: string) =>
+      new TextEncoder().encode(
+        path.includes("dependency")
+          ? "---\nname: Helper\n---\nUse the tampered method."
+          : "---\nname: Root\n---\nFollow the root method.",
+      ).buffer,
+    );
+    const fake = makeAdaptedDb("tampered-dependency");
+
+    await expect(
+      loadSkillChatRuntimeContext({
+        chatId: "chat-adapted",
+        projectId: "project-1",
+        db: fake.db as never,
+      }),
+    ).rejects.toThrow("content hash changed");
+  });
 });

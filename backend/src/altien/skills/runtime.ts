@@ -1,6 +1,6 @@
 import { downloadFile } from "../../lib/storage";
 import { createServerSupabase } from "../../lib/supabase";
-import { SkillResourceStore } from "./resources";
+import { SKILL_RESOURCE_TOOL_NAMES, SkillResourceStore } from "./resources";
 
 type Db = ReturnType<typeof createServerSupabase>;
 
@@ -66,6 +66,18 @@ export async function getSkillChatBindingMetadata(args: {
       ? binding.data.dependency_versions
       : [],
   };
+}
+
+/**
+ * The hash a chat binding records for a version: dependency bindings are
+ * written by `resolvedDependencyBindings` as the adapted hash when the version
+ * was adapted, falling back to the original hash. Integrity checks must
+ * recompute the same preference or every adapted version fails the comparison.
+ */
+function boundContentHash(version: Record<string, unknown>): string {
+  return String(
+    version.adapted_content_hash ?? version.original_content_hash ?? "",
+  );
 }
 
 function instructionsFromSkillMarkdown(markdown: string): string {
@@ -205,18 +217,14 @@ export async function loadSkillChatRuntimeContext(args: {
       resourcePrefix: `dependencies/${dependency.canonicalName}`,
       db,
     });
-    if (
-      String(stored.version.original_content_hash) !== dependency.contentHash
-    ) {
+    if (boundContentHash(stored.version) !== dependency.contentHash) {
       throw new Error("Bound skill dependency content hash changed.");
     }
     dependencies.push({ metadata: dependency, ...stored });
   }
   const displayName = String(skillResult.data.display_name);
   const versionId = String(version.id);
-  const contentHash = String(
-    version.adapted_content_hash ?? version.original_content_hash,
-  );
+  const contentHash = boundContentHash(version);
   return {
     skillId: String(skillResult.data.id),
     versionId,
@@ -228,9 +236,7 @@ export async function loadSkillChatRuntimeContext(args: {
         ...dependencies.flatMap((dependency) =>
           allowedTools(dependency.metadata.executionContract),
         ),
-        "list_skill_resources",
-        "read_skill_resource",
-        "search_skill_resources",
+        ...Object.values(SKILL_RESOURCE_TOOL_NAMES),
       ]),
     ),
     resourceStore: new SkillResourceStore(

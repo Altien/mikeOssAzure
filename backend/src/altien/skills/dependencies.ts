@@ -4,6 +4,23 @@ type Db = ReturnType<typeof createServerSupabase>;
 export const SKILL_DEPENDENCY_MAX_DEPTH = 5;
 export const SKILL_DEPENDENCY_MAX_NODES = 10;
 
+export class SkillDependencyResolutionError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+    public readonly dependency: {
+      versionId: string;
+      skillId?: string;
+      canonicalName?: string;
+      displayName?: string;
+      state?: string;
+    },
+  ) {
+    super(message);
+    this.name = "SkillDependencyResolutionError";
+  }
+}
+
 type DependencyEdge = {
   version_id: string;
   dependency_skill_id: string;
@@ -199,7 +216,7 @@ export async function resolvedDependencyBindings(
   for (const versionId of versionIds) {
     const version = await db
       .from("altien_skill_versions")
-      .select("id, skill_id, original_content_hash, adapted_content_hash, approved_execution_contract")
+      .select("id, skill_id, state, original_content_hash, adapted_content_hash, approved_execution_contract")
       .eq("id", versionId)
       .single();
     const skill = version.data
@@ -210,7 +227,25 @@ export async function resolvedDependencyBindings(
           .single()
       : { data: null, error: null };
     if (version.error || !version.data || skill.error || !skill.data) {
-      throw new Error("Resolved skill dependency is unavailable.");
+      throw new SkillDependencyResolutionError(
+        "dependency_unavailable",
+        `Skill dependency version '${versionId}' is unavailable.`,
+        { versionId },
+      );
+    }
+    const state = String(version.data.state ?? "");
+    if (state !== "enabled") {
+      throw new SkillDependencyResolutionError(
+        "dependency_not_enabled",
+        `Skill dependency '${String(skill.data.display_name)}' version '${versionId}' is ${state || "unknown"}, not enabled.`,
+        {
+          versionId,
+          skillId: String(skill.data.id),
+          canonicalName: String(skill.data.canonical_name),
+          displayName: String(skill.data.display_name),
+          state,
+        },
+      );
     }
     bindings.push({
       skillId: String(skill.data.id),
