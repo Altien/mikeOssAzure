@@ -5,7 +5,7 @@ import {
   buildReviewHtml,
   MAX_EMBEDDED_ORIGINAL_BYTES,
   selectOriginalsForEmbedding,
-} from "./exports";
+} from "./htmlExports";
 
 function workspace(): AuthorityTraceWorkspace {
   const citation = {

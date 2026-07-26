@@ -1,4 +1,5 @@
 // Shared TypeScript types for Mike AI legal assistant
+import type { AuthorityTraceAssistantEvent } from "@/altien/authorityTrace/events";
 
 export interface Folder {
   id: string;
@@ -88,6 +89,7 @@ export interface EditAnnotation {
 }
 
 export type AssistantEvent =
+  | AuthorityTraceAssistantEvent
   | { type: "reasoning"; text: string; isStreaming?: boolean }
   | { type: "error"; message: string }
   | {
@@ -211,37 +213,6 @@ export type AssistantEvent =
       type: "courtlistener_verify_citations";
       citation_count?: number;
       match_count?: number;
-      error?: string;
-      isStreaming?: boolean;
-    }
-  | {
-      type: "authority_trace_extraction";
-      outcome?: "success" | "fatal";
-      document_id?: string;
-      version_id?: string;
-      document_handle?: string;
-      filename?: string;
-      page_count?: number | null;
-      warnings?: string[];
-      error?: string;
-      isStreaming?: boolean;
-    }
-  | {
-      type: "authority_trace_verification";
-      run_id?: string;
-      outcome?:
-        | "success"
-        | "completed_with_failures"
-        | "action_required"
-        | "fatal";
-      total: number;
-      anchored: number;
-      failed: number;
-      exact?: number;
-      formatting_different?: number;
-      no_quote_claimed?: number;
-      warning_count?: number;
-      diagnostics?: string[];
       error?: string;
       isStreaming?: boolean;
     }

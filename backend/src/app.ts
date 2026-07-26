@@ -25,7 +25,7 @@ import { configRouter } from "./routes/config";
 import { caseLawRouter } from "./routes/caseLaw";
 import { helpRouter } from "./routes/help";
 import { diagRouter } from "./routes/diag";
-import { authorityTraceRouter } from "./routes/authorityTrace";
+import { authorityTraceRouter } from "./altien/authorityTrace/router";
 
 // ── Rate-limit configuration (from upstream ba6f771) ───────────────────────
 

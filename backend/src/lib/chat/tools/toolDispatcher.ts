@@ -8,20 +8,18 @@ import {
   type CaseCitationEvent,
   type CourtlistenerToolEvent,
 } from "./courtlistenerTools";
+import type { AuthorityTraceEvent } from "../../../altien/authorityTrace/chatTools";
 import {
-  AUTHORITY_TRACE_TOOL_NAMES,
-  type AuthorityTraceEvent,
-} from "./authorityTraceTools";
+  dispatchAuthorityTraceTool,
+  type AuthorityTraceTurnState,
+} from "../../../altien/authorityTrace/chatDispatcher";
 import {
   registerVerificationArtifact,
-  VerificationExtractionRequiredError,
-  verifyCitationSources,
-} from "../../citationVerification/service";
+} from "../../../altien/authorityTrace/core/service";
 import type {
   VerificationArtifact,
   VerificationArtifactStore,
-} from "../../citationVerification/service";
-import { extractDocumentForVerification } from "../../citationVerification/extractionService";
+} from "../../../altien/authorityTrace/core/service";
 import {
   executeMcpToolCall,
   type McpToolEvent,
@@ -71,9 +69,12 @@ import {
 } from "./documentOps";
 import {
   ExternalSourceCache,
-  type CachedExternalSource,
-} from "../externalSourceCache";
-import { EXTERNAL_SOURCE_TOOL_NAMES } from "./externalSourceTools";
+} from "../../../altien/externalSources/cache";
+import {
+  dispatchExternalSourceTool,
+  registerExternalSourceArtifact,
+} from "../../../altien/externalSources/chatDispatcher";
+import { EXTERNAL_SOURCE_TOOL_NAMES } from "../../../altien/externalSources/toolDefinitions";
 
 
 type CourtlistenerCaseRecord = {
@@ -453,21 +454,6 @@ function registerCourtlistenerOpinionArtifact(
   );
 }
 
-function registerExternalSourceArtifact(
-  store: VerificationArtifactStore,
-  cached: CachedExternalSource,
-): string {
-  return registerVerificationArtifact(store, {
-    artifactId: cached.cacheRecordId ?? cached.source.id,
-    provider: cached.source.provider,
-    externalId: cached.source.externalId,
-    versionId: cached.source.versionId,
-    filename: `${cached.source.title}.txt`,
-    text: cached.source.text,
-    originUrl: cached.source.originUrl,
-  });
-}
-
 function requestedCourtlistenerOpinionIds(args: Record<string, unknown>) {
   const rawIds = Array.isArray(args.opinionIds)
     ? args.opinionIds
@@ -536,12 +522,6 @@ function cachedCaseNotFetchedResult(clusterId: number | null) {
       "Case has not been fetched in this turn. Call courtlistener_get_cases first.",
   };
 }
-
-export type AuthorityTraceTurnState = {
-  verificationAttempts: number;
-  terminal: boolean;
-  fatal: boolean;
-};
 
 export async function runToolCalls(
   toolCalls: ToolCall[],
@@ -736,139 +716,37 @@ export async function runToolCalls(
     }
 
     if (
-      tc.function.name === EXTERNAL_SOURCE_TOOL_NAMES.search ||
-      tc.function.name === EXTERNAL_SOURCE_TOOL_NAMES.read
+      await dispatchExternalSourceTool({
+        toolCall: tc,
+        args,
+        externalSources,
+        verificationArtifacts: courtState.verificationArtifacts,
+        toolResults,
+      })
     ) {
-      const sourceId =
-        typeof args.external_source_id === "string"
-          ? args.external_source_id
-          : "";
-      const cached = await externalSources.resolve(sourceId);
-      if (!cached) {
-        toolResults.push({
-          role: "tool",
-          tool_call_id: tc.id,
-          content: JSON.stringify({
-            ok: false,
-            external_source_id: sourceId,
-            error:
-              "External source is unavailable or unauthorized. Call its retrieval or download tool first.",
-          }),
-        });
-        continue;
-      }
-
-      const verificationSourceId = registerExternalSourceArtifact(
-        courtState.verificationArtifacts,
-        cached,
-      );
-      if (tc.function.name === EXTERNAL_SOURCE_TOOL_NAMES.search) {
-        const query = typeof args.query === "string" ? args.query.trim() : "";
-        const maxResults =
-          typeof args.max_results === "number"
-            ? Math.max(1, Math.min(50, Math.floor(args.max_results)))
-            : 20;
-        const contextChars =
-          typeof args.context_chars === "number"
-            ? Math.max(40, Math.min(2_000, Math.floor(args.context_chars)))
-            : 240;
-        const matches = findTextMatches({
-          text: cached.source.text,
-          query,
-          maxResults,
-          contextChars,
-        });
-        toolResults.push({
-          role: "tool",
-          tool_call_id: tc.id,
-          content: JSON.stringify({
-            ok: true,
-            external_source_id: sourceId,
-            verification_source_id: verificationSourceId,
-            title: cached.source.title,
-            query,
-            total_matches: matches.totalMatches,
-            returned: matches.hits.length,
-            truncated: matches.totalMatches > matches.hits.length,
-            hits: matches.hits,
-          }),
-        });
-      } else {
-        const start =
-          typeof args.start === "number"
-            ? Math.max(
-                0,
-                Math.min(
-                  cached.source.text.length,
-                  Math.floor(args.start),
-                ),
-              )
-            : 0;
-        const maxChars =
-          typeof args.max_chars === "number"
-            ? Math.max(500, Math.min(50_000, Math.floor(args.max_chars)))
-            : 12_000;
-        const end = Math.min(cached.source.text.length, start + maxChars);
-        toolResults.push({
-          role: "tool",
-          tool_call_id: tc.id,
-          content: JSON.stringify({
-            ok: true,
-            external_source_id: sourceId,
-            verification_source_id: verificationSourceId,
-            title: cached.source.title,
-            start,
-            end,
-            total_chars: cached.source.text.length,
-            truncated: end < cached.source.text.length,
-            text: cached.source.text.slice(start, end),
-          }),
-        });
-      }
       continue;
     }
 
     if (
-      tc.function.name ===
-      AUTHORITY_TRACE_TOOL_NAMES.readVerificationSource
+      await dispatchAuthorityTraceTool({
+        toolCall: tc,
+        args,
+        userId,
+        projectId,
+        docIndex,
+        db,
+        write,
+        verificationArtifacts: courtState.verificationArtifacts,
+        externalSources,
+        authorityTraceState,
+        authorityTraceEvents,
+        toolResults,
+      })
     ) {
-      const artifactId =
-        typeof args.verification_source_id === "string"
-          ? args.verification_source_id
-          : "";
-      let artifact = courtState.verificationArtifacts.get(artifactId);
-      if (!artifact) {
-        const cached = await externalSources.resolve(artifactId);
-        if (cached) {
-          registerExternalSourceArtifact(
-            courtState.verificationArtifacts,
-            cached,
-          );
-          artifact = courtState.verificationArtifacts.get(
-            cached.cacheRecordId ?? cached.source.id,
-          );
-        }
-      }
-      toolResults.push({
-        role: "tool",
-        tool_call_id: tc.id,
-        content: artifact
-          ? JSON.stringify({
-              ok: true,
-              verification_source_id: artifact.artifactId,
-              provider: artifact.provider,
-              version_id: artifact.versionId,
-              filename: artifact.filename,
-              origin_url: artifact.originUrl,
-              text: artifact.text,
-            })
-          : JSON.stringify({
-              ok: false,
-              error:
-                "Verification source is unavailable or unauthorized.",
-            }),
-      });
-    } else if (tc.function.name === "ask_inputs") {
+      continue;
+    }
+
+    if (tc.function.name === "ask_inputs") {
       const event = normalizeAskInputsEvent(args);
       if (event.items.length > 0) askInputsEvents.push(event);
       continue;
@@ -1079,241 +957,6 @@ export async function runToolCalls(
         tool_call_id: tc.id,
         content: lines.join("\n") || "No cells found.",
       });
-    } else if (
-      tc.function.name === AUTHORITY_TRACE_TOOL_NAMES.extractDocument
-    ) {
-      write(
-        `data: ${JSON.stringify({
-          type: "authority_trace_extraction_start",
-          document_id:
-            typeof args.document_id === "string"
-              ? args.document_id
-              : undefined,
-        })}\n\n`,
-      );
-      try {
-        if (!projectId || !docIndex) {
-          throw new Error(
-            "Document extraction requires an active project context",
-          );
-        }
-        if (typeof args.document_id !== "string") {
-          throw new Error("document_id is required");
-        }
-        const result = await extractDocumentForVerification(
-          {
-            projectId,
-            userId,
-            documentId: args.document_id,
-            ...(typeof args.version_id === "string"
-              ? { versionId: args.version_id }
-              : {}),
-            ...(typeof args.first_page === "number"
-              ? { firstPage: args.first_page }
-              : {}),
-            docIndex,
-          },
-          db,
-        );
-        let nextIndex = Object.keys(docIndex).length;
-        let documentHandle = `doc-${nextIndex}`;
-        while (Object.hasOwn(docIndex, documentHandle)) {
-          nextIndex += 1;
-          documentHandle = `doc-${nextIndex}`;
-        }
-        docIndex[documentHandle] = {
-          document_id: result.extracted_document_id,
-          filename: result.filename,
-        };
-        const event: AuthorityTraceEvent = {
-          type: "authority_trace_extraction",
-          outcome: "success",
-          document_id: result.extracted_document_id,
-          version_id: result.extracted_version_id,
-          document_handle: documentHandle,
-          filename: result.filename,
-          page_count: result.page_count,
-          warnings: result.warnings,
-        };
-        authorityTraceEvents.push(event);
-        write(`data: ${JSON.stringify(event)}\n\n`);
-        toolResults.push({
-          role: "tool",
-          tool_call_id: tc.id,
-          content: JSON.stringify({
-            ...result,
-            document_handle: documentHandle,
-          }),
-        });
-      } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Document extraction failed";
-        const event: AuthorityTraceEvent = {
-          type: "authority_trace_extraction",
-          outcome: "fatal",
-          error: message,
-        };
-        authorityTraceEvents.push(event);
-        write(`data: ${JSON.stringify(event)}\n\n`);
-        toolResults.push({
-          role: "tool",
-          tool_call_id: tc.id,
-          content: JSON.stringify({ outcome: "fatal", error: message }),
-        });
-      }
-    } else if (
-      tc.function.name === AUTHORITY_TRACE_TOOL_NAMES.verifyCitationSources
-    ) {
-      const traceState =
-        authorityTraceState ??
-        ({
-          verificationAttempts: 0,
-          terminal: false,
-          fatal: false,
-        } satisfies AuthorityTraceTurnState);
-      const citationCount = Array.isArray(args.citations)
-        ? args.citations.length
-        : 0;
-      if (traceState.terminal || traceState.verificationAttempts >= 3) {
-        toolResults.push({
-          role: "tool",
-          tool_call_id: tc.id,
-          content: JSON.stringify({
-            outcome: traceState.terminal
-              ? "already_completed"
-              : "retry_limit_reached",
-            retries_remaining: 0,
-            instruction: traceState.terminal
-              ? "Do not call verify_citation_sources again; summarize the completed run."
-              : "Do not call verify_citation_sources again; summarize every residual failure and warning.",
-          }),
-        });
-        continue;
-      }
-      write(
-        `data: ${JSON.stringify({
-          type: "authority_trace_verification_start",
-          citation_count: citationCount,
-        })}\n\n`,
-      );
-      try {
-        if (traceState.fatal) {
-          throw new Error(
-            "Authority Trace stopped after a fatal error in this assistant turn",
-          );
-        }
-        if (!projectId || !docIndex) {
-          throw new Error(
-            "Citation verification requires an active project context",
-          );
-        }
-        traceState.verificationAttempts += 1;
-        const result = await verifyCitationSources(
-          {
-            projectId,
-            userId,
-            proposal: args,
-            docIndex,
-            sourceArtifacts: courtState.verificationArtifacts,
-          },
-          db,
-        );
-        if (result.report.outcome === "success") {
-          traceState.terminal = true;
-        }
-        const retriesRemaining = Math.max(
-          0,
-          3 - traceState.verificationAttempts,
-        );
-        const event: AuthorityTraceEvent = {
-          type: "authority_trace_verification",
-          run_id: result.runId,
-          outcome: result.report.outcome,
-          total: result.report.total,
-          anchored: result.report.anchored,
-          failed: result.report.failed,
-          exact: result.report.exact,
-          formatting_different: result.report.formatting_different,
-          no_quote_claimed: result.report.no_quote_claimed,
-          warning_count: result.report.warnings?.length ?? 0,
-          diagnostics: [
-            ...result.report.failures.map(
-              (failure) =>
-                `${failure.citation_id}: ${failure.reason.replaceAll("_", " ")}`,
-            ),
-            ...(result.report.warnings ?? []).map(
-              (warning) =>
-                `${warning.citation_id}: ${warning.warning.replaceAll("_", " ")}`,
-            ),
-          ],
-        };
-        authorityTraceEvents.push(event);
-        write(`data: ${JSON.stringify(event)}\n\n`);
-        toolResults.push({
-          role: "tool",
-          tool_call_id: tc.id,
-          content: JSON.stringify({
-            run_id: result.runId,
-            ...result.report,
-            retries_remaining: retriesRemaining,
-            instruction:
-              result.report.outcome === "completed_with_failures" &&
-              retriesRemaining === 0
-                ? "Retry limit reached. Summarize every residual failure and warning."
-                : undefined,
-          }),
-        });
-      } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Citation verification failed";
-        if (err instanceof VerificationExtractionRequiredError) {
-          traceState.verificationAttempts = Math.max(
-            0,
-            traceState.verificationAttempts - 1,
-          );
-          const event: AuthorityTraceEvent = {
-            type: "authority_trace_verification",
-            outcome: "action_required",
-            total: 0,
-            anchored: 0,
-            failed: 0,
-            error: message,
-          };
-          authorityTraceEvents.push(event);
-          write(`data: ${JSON.stringify(event)}\n\n`);
-          toolResults.push({
-            role: "tool",
-            tool_call_id: tc.id,
-            content: JSON.stringify({
-              outcome: "action_required",
-              error: message,
-              retries_remaining: Math.max(
-                0,
-                3 - traceState.verificationAttempts,
-              ),
-              instruction:
-                "Call extract_document_for_verification for this document, replace its handle in the proposal, then retry verify_citation_sources.",
-            }),
-          });
-          continue;
-        }
-        traceState.fatal = true;
-        const event: AuthorityTraceEvent = {
-          type: "authority_trace_verification",
-          outcome: "fatal",
-          total: 0,
-          anchored: 0,
-          failed: 0,
-          error: message,
-        };
-        authorityTraceEvents.push(event);
-        write(`data: ${JSON.stringify(event)}\n\n`);
-        toolResults.push({
-          role: "tool",
-          tool_call_id: tc.id,
-          content: JSON.stringify({ outcome: "fatal", error: message }),
-        });
-      }
     } else if (tc.function.name === COURTLISTENER_TOOL_NAMES.searchCaseLaw) {
       const query = typeof args.query === "string" ? args.query : "";
       write(

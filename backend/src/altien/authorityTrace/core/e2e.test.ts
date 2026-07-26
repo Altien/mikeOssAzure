@@ -1,11 +1,11 @@
 import JSZip from "jszip";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { makeFakeDb, type DbCall } from "../../test/helpers/fakeDb";
+import { makeFakeDb, type DbCall } from "../../../test/helpers/fakeDb";
 
 const { downloadFileMock } = vi.hoisted(() => ({
   downloadFileMock: vi.fn(),
 }));
-vi.mock("../storage", () => ({
+vi.mock("../../../lib/storage", () => ({
   downloadFile: downloadFileMock,
 }));
 
@@ -18,7 +18,7 @@ import {
   createCitationVerificationReview,
   getAuthorityTraceWorkspace,
 } from "./reviewService";
-import { buildAuditHtml, buildReviewHtml } from "./exports";
+import { buildAuditHtml, buildReviewHtml } from "./htmlExports";
 
 const encoder = new TextEncoder();
 const ns =

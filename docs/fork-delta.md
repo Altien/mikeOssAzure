@@ -33,19 +33,20 @@ changes can be reviewed and integrated incrementally.
 ## Authority Trace
 
 - Adds an additive, provider-neutral citation verification subsystem
-  (`backend/src/lib/citationVerification/`) with deterministic extraction,
-  normalization, anchoring, integrity checks, review, and self-contained
-  export modules.
-- Adds a durable, access-scoped external source cache
-  (`backend/src/lib/chat/externalSourceCache.ts`) and general first-party tool
+  (`backend/src/altien/authorityTrace/`) with deterministic extraction,
+  normalization, anchoring, integrity checks, review, routing, tool dispatch,
+  segmentation, and self-contained export modules.
+- Adds a durable, access-scoped external source cache and tool definitions
+  (`backend/src/altien/externalSources/`) and general first-party tool
   schemas that do not depend on connectors or imported skills.
 - Adds thin orchestration hooks in the chat streaming and tool dispatcher
   code, plus authenticated run, review, and export routes
-  (`backend/src/routes/authorityTrace.ts`).
+  (`backend/src/altien/authorityTrace/router.ts`).
 - Adds migrations `0021` through `0024` for immutable verification runs,
   external sources, and append-only human verdict history.
-- Adds the Authority Trace review panel and client calls in the frontend
-  assistant components and `mikeApi.ts`.
+- Adds the Authority Trace review panel and client calls
+  (`frontend/src/altien/authorityTrace/`, with thin hooks in shared
+  assistant components and `mikeApi.ts`).
 - Release verification evidence is in
   [`tests/09-authority-trace.md`](tests/09-authority-trace.md).
 

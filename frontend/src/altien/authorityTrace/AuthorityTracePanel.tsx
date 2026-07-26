@@ -9,7 +9,7 @@ import {
     type AuthorityTraceSegment,
     type AuthorityTraceVerdict,
     type AuthorityTraceWorkspace,
-} from "@/app/lib/mikeApi";
+} from "./api";
 import { cn } from "@/lib/utils";
 
 function citationState(citation: AuthorityTraceCitation): {

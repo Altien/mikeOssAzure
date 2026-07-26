@@ -1,6 +1,6 @@
 import JSZip from "jszip";
 import { XMLParser } from "fast-xml-parser";
-import { STANDARD_FONT_DATA_URL } from "../chat/types";
+import { STANDARD_FONT_DATA_URL } from "../../../lib/chat/types";
 
 export type ExtractionWarning = "revisions_present" | "ocr_required";
 

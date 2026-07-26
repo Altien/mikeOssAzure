@@ -17,7 +17,7 @@ import {
     CaseLawPanel,
     type CaseTab,
 } from "./CaseLawPanel";
-import { AuthorityTracePanel } from "./AuthorityTracePanel";
+import { AuthorityTracePanel } from "@/altien/authorityTrace/AuthorityTracePanel";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------

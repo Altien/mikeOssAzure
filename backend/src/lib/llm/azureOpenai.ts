@@ -7,7 +7,7 @@ import type {
     AzureOpenaiSettings,
 } from "./types";
 import { resolveSecret } from "../envSecrets";
-import { toolLoopTurns } from "./toolLoop";
+import { toolLoopTurns } from "../../altien/runtime/toolLoop";
 
 // Azure OpenAI is the same chat-completions API as classic OpenAI but
 // with extra connection parameters: endpoint, apiVersion, and deployment

@@ -10,13 +10,13 @@ import {
     Copy,
     Check,
     ChevronDown,
-    ChevronRight,
     Download,
     File,
     FileText,
     Loader2,
     Scale,
 } from "lucide-react";
+import { AuthorityTraceEventBlock } from "@/altien/authorityTrace/AuthorityTraceEventBlock";
 import { MikeIcon } from "@/components/chat/mike-icon";
 import { displayCitationQuote, formatCitationPage } from "../shared/types";
 import type {
@@ -881,7 +881,6 @@ function CourtListenerBlock({
     hasError,
     showConnector,
     items,
-    onClick,
 }: {
     label: string;
     detail?: string;
@@ -889,7 +888,6 @@ function CourtListenerBlock({
     hasError?: boolean;
     showConnector?: boolean;
     items?: CourtListenerBlockItem[];
-    onClick?: () => void;
 }) {
     const [isOpen, setIsOpen] = useState(false);
     const hasItems = !!items && items.length > 0;
@@ -919,24 +917,6 @@ function CourtListenerBlock({
                                 size={10}
                                 className={`relative top-px ml-1 transition-transform duration-200 ${isOpen ? "" : "-rotate-90"}`}
                             />
-                        </button>
-                    ) : onClick ? (
-                        <button
-                            type="button"
-                            onClick={onClick}
-                            className="group flex w-full cursor-pointer items-center gap-2 rounded-md border border-emerald-200/70 bg-emerald-50/50 px-2 py-1.5 text-left text-gray-600 transition-colors hover:bg-emerald-50 hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
-                        >
-                            <span className="min-w-0 flex-1">
-                                <span className="font-medium">{label}</span>
-                                {detail ? <span> {detail}</span> : null}
-                            </span>
-                            <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-emerald-700 group-hover:text-emerald-800">
-                                Open review
-                                <ChevronRight
-                                    size={13}
-                                    aria-hidden="true"
-                                />
-                            </span>
                         </button>
                     ) : (
                         <>
@@ -2290,87 +2270,16 @@ export function AssistantMessage({
                 />
             );
         }
-        if (event.type === "authority_trace_extraction") {
-            const label = event.isStreaming
-                ? "Extracting verification document"
-                : event.outcome === "fatal"
-                  ? "Verification extraction failed"
-                  : "Verification document extracted";
-            const detail = event.isStreaming
-                ? undefined
-                : event.error
-                  ? event.error
-                  : [
-                        event.filename,
-                        event.document_handle,
-                        ...(event.warnings ?? []).map((warning) =>
-                            warning.replaceAll("_", " "),
-                        ),
-                    ]
-                        .filter(Boolean)
-                        .join(" · ");
+        if (
+            event.type === "authority_trace_extraction" ||
+            event.type === "authority_trace_verification"
+        ) {
             return (
-                <CourtListenerBlock
+                <AuthorityTraceEventBlock
                     key={globalIdx}
-                    label={label}
-                    detail={detail}
-                    isStreaming={!!event.isStreaming}
-                    hasError={
-                        event.outcome === "fatal" ||
-                        (event.warnings?.includes("ocr_required") ?? false)
-                    }
+                    event={event}
                     showConnector={showConnector}
-                />
-            );
-        }
-        if (event.type === "authority_trace_verification") {
-            const label = event.isStreaming
-                ? "Verifying citation sources"
-                : event.outcome === "fatal"
-                  ? "Authority Trace failed"
-                  : event.outcome === "action_required"
-                    ? "Authority Trace needs document extraction"
-                    : event.outcome === "completed_with_failures"
-                      ? "Authority Trace completed with failures"
-                      : "Authority Trace completed";
-            const detail = event.isStreaming
-                ? `${event.total} ${event.total === 1 ? "citation" : "citations"}`
-                : event.error
-                  ? event.error
-                  : [
-                        `${event.exact ?? event.anchored} exact`,
-                        event.formatting_different
-                            ? `${event.formatting_different} formatting differs`
-                            : null,
-                        `${event.failed} failed`,
-                        event.no_quote_claimed
-                            ? `${event.no_quote_claimed} no quote`
-                            : null,
-                        event.warning_count
-                            ? `${event.warning_count} warnings`
-                            : null,
-                        ...(event.diagnostics ?? []),
-                    ]
-                        .filter(Boolean)
-                        .join(" · ");
-            return (
-                <CourtListenerBlock
-                    key={globalIdx}
-                    label={label}
-                    detail={detail}
-                    isStreaming={!!event.isStreaming}
-                    hasError={
-                        event.outcome === "fatal" || event.failed > 0
-                    }
-                    showConnector={showConnector}
-                    onClick={
-                        !event.isStreaming &&
-                        event.outcome !== "fatal" &&
-                        event.run_id &&
-                        onAuthorityTraceOpen
-                            ? () => onAuthorityTraceOpen(event.run_id!)
-                            : undefined
-                    }
+                    onOpen={onAuthorityTraceOpen}
                 />
             );
         }

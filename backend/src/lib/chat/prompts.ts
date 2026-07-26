@@ -1,5 +1,5 @@
 import { COURTLISTENER_SYSTEM_PROMPT } from "./tools/courtlistenerTools";
-import { EXTERNAL_SOURCE_SYSTEM_PROMPT } from "./tools/externalSourceTools";
+import { EXTERNAL_SOURCE_SYSTEM_PROMPT } from "../../altien/externalSources/toolDefinitions";
 
 // Upstream divergence (sync-log: a5fe6d6): NOT SUPPORTED — the model must not
 // be instructed to call ask_inputs while its required frontend interaction is

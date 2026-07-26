@@ -7,7 +7,7 @@ import type {
     NormalizedToolResult,
     UserApiKeys,
 } from "./types";
-import { toolLoopTurns } from "./toolLoop";
+import { toolLoopTurns } from "../../altien/runtime/toolLoop";
 import { resolveSecret } from "../envSecrets";
 
 // OpenAI's tool-call schema is what the rest of the codebase calls

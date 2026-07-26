@@ -3,7 +3,7 @@ import { fireEvent, screen } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "@/test/render";
 import type { Message } from "@/app/components/shared/types";
-import ProjectAssistantChatClient from "./ProjectAssistantChatClient";
+import ProjectAssistantChatClient from "@/app/(pages)/projects/[id]/assistant/chat/[chatId]/ProjectAssistantChatClient";
 
 const { authorityTraceMessage } = vi.hoisted(() => ({
     authorityTraceMessage: {
@@ -96,7 +96,7 @@ vi.mock("@/app/components/shared/OwnerOnlyModal", () => ({
     OwnerOnlyModal: () => null,
 }));
 
-vi.mock("@/app/components/assistant/AuthorityTracePanel", () => ({
+vi.mock("@/altien/authorityTrace/AuthorityTracePanel", () => ({
     AuthorityTracePanel: ({ runId }: { runId: string }) => (
         <div>Reviewing Authority Trace {runId}</div>
     ),

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { downloadFile } from "../storage";
-import { createServerSupabase } from "../supabase";
+import { downloadFile } from "../../../lib/storage";
+import { createServerSupabase } from "../../../lib/supabase";
 import {
   verificationReportSchema,
   verifiedRecordSchema,

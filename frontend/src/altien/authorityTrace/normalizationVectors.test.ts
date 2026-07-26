@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
     findPlainPassageMatches,
     normalizeWithPositions,
-} from "../../../../../backend/src/lib/citationVerification/normalization";
+} from "../../../../backend/src/altien/authorityTrace/core/normalization";
 
 type SharedVector = {
     name: string;
@@ -20,7 +20,7 @@ const sharedVectors = (
         readFileSync(
             resolve(
                 process.cwd(),
-                "../docs/tests/fixtures/authority-trace-normalization.json",
+                "../docs/altien/tests/authority-trace-normalization.json",
             ),
             "utf8",
         ),

@@ -10,16 +10,16 @@ const {
   extractDocumentForVerificationMock: vi.fn(),
 }));
 
-vi.mock("../llm", () => ({
+vi.mock("../../lib/llm", () => ({
   DEFAULT_MAIN_MODEL: "test-model",
   resolveModel: (model?: string) => model ?? "test-model",
   streamChatWithTools: streamChatWithToolsMock,
 }));
-vi.mock("../mcpConnectors", () => ({
+vi.mock("../../lib/mcpConnectors", () => ({
   buildUserMcpTools: vi.fn().mockResolvedValue([]),
   executeMcpToolCall: vi.fn(),
 }));
-vi.mock("../citationVerification/service", () => ({
+vi.mock("./core/service", () => ({
   registerVerificationArtifact: (
     store: Map<string, unknown>,
     artifact: { artifactId: string },
@@ -29,13 +29,13 @@ vi.mock("../citationVerification/service", () => ({
   },
   verifyCitationSources: verifyCitationSourcesMock,
 }));
-vi.mock("../citationVerification/extractionService", () => ({
+vi.mock("./core/extractionService", () => ({
   extractDocumentForVerification: extractDocumentForVerificationMock,
 }));
 
-import { runLLMStream } from "./streaming";
-import { AUTHORITY_TRACE_TOOL_NAMES } from "./tools/authorityTraceTools";
-import { PROJECT_EXTRA_TOOLS } from "./tools/toolSchemas";
+import { runLLMStream } from "../../lib/chat/streaming";
+import { AUTHORITY_TRACE_TOOL_NAMES } from "./chatTools";
+import { PROJECT_EXTRA_TOOLS } from "../../lib/chat/tools/toolSchemas";
 
 beforeEach(() => {
   streamChatWithToolsMock.mockReset();

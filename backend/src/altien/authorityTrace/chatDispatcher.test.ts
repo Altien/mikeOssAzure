@@ -10,7 +10,7 @@ const {
   extractDocumentForVerificationMock: vi.fn(),
 }));
 
-vi.mock("../../citationVerification/service", () => ({
+vi.mock("./core/service", () => ({
   VerificationExtractionRequiredError: class extends Error {
     readonly code = "verification_extraction_required";
 
@@ -29,20 +29,20 @@ vi.mock("../../citationVerification/service", () => ({
   },
   verifyCitationSources: verifyCitationSourcesMock,
 }));
-vi.mock("../../citationVerification/extractionService", () => ({
+vi.mock("./core/extractionService", () => ({
   extractDocumentForVerification: extractDocumentForVerificationMock,
 }));
-vi.mock("../../mcpConnectors", () => ({
+vi.mock("../../lib/mcpConnectors", () => ({
   executeMcpToolCall: executeMcpToolCallMock,
 }));
 
-import { VerificationExtractionRequiredError } from "../../citationVerification/service";
-import { runToolCalls } from "./toolDispatcher";
+import { VerificationExtractionRequiredError } from "./core/service";
+import { runToolCalls } from "../../lib/chat/tools/toolDispatcher";
 import {
   AUTHORITY_TRACE_SYSTEM_PROMPT,
   AUTHORITY_TRACE_TOOL_NAMES,
   AUTHORITY_TRACE_TOOLS,
-} from "./authorityTraceTools";
+} from "./chatTools";
 
 const proposal = {
   schema_version: 1,

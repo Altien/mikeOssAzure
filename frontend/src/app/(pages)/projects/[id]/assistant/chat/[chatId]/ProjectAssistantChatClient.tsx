@@ -35,7 +35,7 @@ import { useAssistantChat } from "@/app/hooks/useAssistantChat";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { UserMessage } from "@/app/components/assistant/UserMessage";
 import { AssistantMessage } from "@/app/components/assistant/AssistantMessage";
-import { AuthorityTracePanel } from "@/app/components/assistant/AuthorityTracePanel";
+import { AuthorityTracePanel } from "@/altien/authorityTrace/AuthorityTracePanel";
 import { ChatInput } from "@/app/components/assistant/ChatInput";
 import type { ChatInputHandle } from "@/app/components/assistant/ChatInput";
 import { ProjectExplorer } from "@/app/components/projects/ProjectExplorer";

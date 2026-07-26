@@ -1,7 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { makeFakeDb, type DbCall } from "../test/helpers/fakeDb";
+import { makeFakeDb, type DbCall } from "../../test/helpers/fakeDb";
 
 const {
   validateSupabaseTokenMock,
@@ -15,20 +15,20 @@ const {
   checkProjectAccessMock: vi.fn(),
 }));
 
-vi.mock("../lib/auth/providers/supabase.js", () => ({
+vi.mock("../../lib/auth/providers/supabase.js", () => ({
   validateSupabaseToken: validateSupabaseTokenMock,
 }));
-vi.mock("../lib/userSettings.js", () => ({
+vi.mock("../../lib/userSettings.js", () => ({
   upsertUserProfile: upsertUserProfileMock,
 }));
-vi.mock("../lib/supabase", () => ({
+vi.mock("../../lib/supabase", () => ({
   createServerSupabase: createServerSupabaseMock,
 }));
-vi.mock("../lib/access", () => ({
+vi.mock("../../lib/access", () => ({
   checkProjectAccess: checkProjectAccessMock,
 }));
 
-import { diagnosticsRouter } from "./diagnostics";
+import { diagnosticsRouter } from "../../routes/diagnostics";
 
 function makeApp() {
   const app = express();

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getCourtlistenerCaseOpinions } from "./courtlistener";
+import { getCourtlistenerCaseOpinions } from "../../lib/courtlistener";
 
 afterEach(() => {
   vi.unstubAllEnvs();

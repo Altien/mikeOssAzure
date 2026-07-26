@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { makeFakeDb, type DbCall } from "../../test/helpers/fakeDb";
+import { makeFakeDb, type DbCall } from "../../../test/helpers/fakeDb";
 import { verificationProposalSchema } from "./schemas";
 import { verifyResolvedProposal } from "./verify";
 
 const { downloadFileMock } = vi.hoisted(() => ({
   downloadFileMock: vi.fn(),
 }));
-vi.mock("../storage", () => ({
+vi.mock("../../../lib/storage", () => ({
   downloadFile: downloadFileMock,
 }));
 

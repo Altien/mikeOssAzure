@@ -18,7 +18,7 @@ import type {
   StreamChatResult,
 } from "./types";
 import { createRawLlmStreamRecorder, logRawLlmStream } from "./rawStreamLog";
-import { toolLoopTurns } from "./toolLoop";
+import { toolLoopTurns } from "../../altien/runtime/toolLoop";
 import { resolveSecret } from "../envSecrets";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";

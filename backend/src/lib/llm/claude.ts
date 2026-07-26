@@ -9,7 +9,7 @@ import type {
 import { toClaudeTools } from "./tools";
 import { resolveSecret } from "../envSecrets";
 import { createRawLlmStreamRecorder, logRawLlmStream } from "./rawStreamLog";
-import { toolLoopTurns } from "./toolLoop";
+import { toolLoopTurns } from "../../altien/runtime/toolLoop";
 
 type ContentBlock =
   | { type: "text"; text: string }

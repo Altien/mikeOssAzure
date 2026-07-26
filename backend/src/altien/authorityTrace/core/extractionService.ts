@@ -1,11 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { DocIndex } from "../chat/types";
+import type { DocIndex } from "../../../lib/chat/types";
 import {
   downloadFile,
   uploadFile,
   versionStorageKey,
-} from "../storage";
-import { createServerSupabase } from "../supabase";
+} from "../../../lib/storage";
+import { createServerSupabase } from "../../../lib/supabase";
 import {
   extractDocxForVerification,
   extractPdfForVerification,

@@ -7,7 +7,7 @@ const { uploadFileMock, downloadFileMock, deleteFileMock } = vi.hoisted(() => ({
   downloadFileMock: vi.fn(),
   deleteFileMock: vi.fn(),
 }));
-vi.mock("../storage", () => ({
+vi.mock("../../lib/storage", () => ({
   uploadFile: uploadFileMock,
   downloadFile: downloadFileMock,
   deleteFile: deleteFileMock,
@@ -24,7 +24,7 @@ import {
   type CachedExternalSource,
   type ExternalSourceDocument,
   type ExternalSourceSummary,
-} from "./externalSourceCache";
+} from "./cache";
 
 const source: ExternalSourceDocument = {
   id: "courtlistener:cluster:123:opinion:456",

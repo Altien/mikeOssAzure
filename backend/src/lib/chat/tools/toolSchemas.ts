@@ -1,4 +1,4 @@
-import { AUTHORITY_TRACE_TOOLS } from "./authorityTraceTools";
+import { AUTHORITY_TRACE_TOOLS } from "../../../altien/authorityTrace/chatTools";
 
 export const PROJECT_EXTRA_TOOLS = [
   ...AUTHORITY_TRACE_TOOLS,

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { makeFakeDb, type DbCall } from "../../test/helpers/fakeDb";
+import { makeFakeDb, type DbCall } from "../../../test/helpers/fakeDb";
 
 const { downloadFileMock, uploadFileMock, extractDocxMock, extractPdfMock } =
   vi.hoisted(() => ({
@@ -9,7 +9,7 @@ const { downloadFileMock, uploadFileMock, extractDocxMock, extractPdfMock } =
     extractPdfMock: vi.fn(),
   }));
 
-vi.mock("../storage", () => ({
+vi.mock("../../../lib/storage", () => ({
   downloadFile: downloadFileMock,
   uploadFile: uploadFileMock,
   versionStorageKey: (

@@ -20,19 +20,19 @@ const {
   checkProjectAccessMock: vi.fn(),
 }));
 
-vi.mock("../lib/auth/providers/supabase.js", () => ({
+vi.mock("../../lib/auth/providers/supabase.js", () => ({
   validateSupabaseToken: validateSupabaseTokenMock,
 }));
-vi.mock("../lib/userSettings.js", () => ({
+vi.mock("../../lib/userSettings.js", () => ({
   upsertUserProfile: upsertUserProfileMock,
 }));
-vi.mock("../lib/supabase", () => ({
+vi.mock("../../lib/supabase", () => ({
   createServerSupabase: createServerSupabaseMock,
 }));
-vi.mock("../lib/citationVerification/service", () => ({
+vi.mock("./core/service", () => ({
   getCitationVerificationRun: getCitationVerificationRunMock,
 }));
-vi.mock("../lib/citationVerification/reviewService", async () => {
+vi.mock("./core/reviewService", async () => {
   class ReviewBindingChangedError extends Error {}
   return {
     getAuthorityTraceWorkspace: getAuthorityTraceWorkspaceMock,
@@ -40,11 +40,11 @@ vi.mock("../lib/citationVerification/reviewService", async () => {
     ReviewBindingChangedError,
   };
 });
-vi.mock("../lib/access", () => ({
+vi.mock("../../lib/access", () => ({
   checkProjectAccess: checkProjectAccessMock,
 }));
 
-import { authorityTraceRouter } from "./authorityTrace";
+import { authorityTraceRouter } from "./router";
 
 function makeApp() {
   const app = express();

@@ -16,7 +16,7 @@ import {
   type CaseCitationEvent,
   type CourtlistenerToolEvent,
 } from "./tools/courtlistenerTools";
-import { EXTERNAL_SOURCE_TOOLS } from "./tools/externalSourceTools";
+import { EXTERNAL_SOURCE_TOOLS } from "../../altien/externalSources/toolDefinitions";
 import {
   type DocStore,
   type DocIndex,
@@ -42,12 +42,12 @@ import {
   type TurnEditState,
   type TurnReadState,
 } from "./tools/documentOps";
-import type { AuthorityTraceEvent } from "./tools/authorityTraceTools";
+import type { AuthorityTraceEvent } from "../../altien/authorityTrace/chatTools";
 import {
   createDatabaseExternalSourcePersistence,
   createFastModelExternalSourceSummarizer,
   ExternalSourceCache,
-} from "./externalSourceCache";
+} from "../../altien/externalSources/cache";
 
 
 export type AssistantEvent =

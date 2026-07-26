@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
-import { completeText, type UserApiKeys } from "../llm";
-import { createServerSupabase } from "../supabase";
+import { completeText, type UserApiKeys } from "../../lib/llm";
+import { createServerSupabase } from "../../lib/supabase";
 import {
   deleteFile,
   downloadFile,
   externalSourceStorageKey,
   uploadFile,
-} from "../storage";
+} from "../../lib/storage";
 
 export type ExternalSourceDocument = {
   id: string;

@@ -1,19 +1,19 @@
 import { Router } from "express";
-import { requireAuth } from "../middleware/auth";
-import { checkProjectAccess } from "../lib/access";
+import { requireAuth } from "../../middleware/auth";
+import { checkProjectAccess } from "../../lib/access";
 import {
   getCitationVerificationRun,
-} from "../lib/citationVerification/service";
+} from "./core/service";
 import {
   createCitationVerificationReview,
   getAuthorityTraceWorkspace,
   ReviewBindingChangedError,
-} from "../lib/citationVerification/reviewService";
+} from "./core/reviewService";
 import {
   buildAuditHtml,
   buildReviewHtml,
-} from "../lib/citationVerification/exports";
-import { createServerSupabase } from "../lib/supabase";
+} from "./core/htmlExports";
+import { createServerSupabase } from "../../lib/supabase";
 import { ZodError } from "zod";
 
 export const authorityTraceRouter = Router();

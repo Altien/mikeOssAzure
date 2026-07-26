@@ -1,15 +1,15 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "@/test/render";
-import type { AuthorityTraceWorkspace } from "@/app/lib/mikeApi";
+import type { AuthorityTraceWorkspace } from "./api";
 
 const { downloadExportMock, getRunMock, saveReviewMock } = vi.hoisted(() => ({
     downloadExportMock: vi.fn(),
     getRunMock: vi.fn(),
     saveReviewMock: vi.fn(),
 }));
-vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("@/app/lib/mikeApi")>()),
+vi.mock("./api", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("./api")>()),
     downloadAuthorityTraceExport: downloadExportMock,
     getAuthorityTraceRun: getRunMock,
     saveAuthorityTraceReview: saveReviewMock,

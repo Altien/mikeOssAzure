@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ExternalSourceCache } from "../externalSourceCache";
+import { ExternalSourceCache } from "./cache";
 
 const {
   getCourtlistenerCasesMock,
@@ -11,13 +11,13 @@ const {
   verifyCourtlistenerCitationsMock: vi.fn(),
 }));
 
-vi.mock("../../courtlistener", () => ({
+vi.mock("../../lib/courtlistener", () => ({
   getCourtlistenerCases: getCourtlistenerCasesMock,
   searchCourtlistenerCaseLaw: searchCourtlistenerCaseLawMock,
   verifyCourtlistenerCitations: verifyCourtlistenerCitationsMock,
 }));
 
-import { runToolCalls } from "./toolDispatcher";
+import { runToolCalls } from "../../lib/chat/tools/toolDispatcher";
 
 beforeEach(() => {
   getCourtlistenerCasesMock.mockReset();
