@@ -3,8 +3,7 @@ import type { Request } from "express";
 import { createServerSupabase } from "../../lib/supabase";
 import { decryptString, encryptString } from "../../lib/mcp/client";
 import { resolveSecret } from "../../lib/envSecrets";
-
-type Db = ReturnType<typeof createServerSupabase>;
+import { throwOnDbError, type Db } from "./shared";
 const STATE_TTL_MS = 10 * 60 * 1_000;
 
 async function loadGitHubOAuthConfig() {
@@ -56,7 +55,7 @@ export async function startGitHubSkillOAuth(args: {
     redirect_uri: args.redirectUri,
     expires_at: new Date(Date.now() + STATE_TTL_MS).toISOString(),
   });
-  if (inserted.error) throw new Error(inserted.error.message);
+  throwOnDbError(inserted);
   const url = new URL("https://github.com/login/oauth/authorize");
   url.searchParams.set("client_id", clientId);
   url.searchParams.set("redirect_uri", args.redirectUri);
@@ -108,7 +107,7 @@ export async function completeGitHubSkillOAuth(args: {
     .select("*")
     .eq("state_hash", stateHash(args.state))
     .maybeSingle();
-  if (state.error) throw new Error(state.error.message);
+  throwOnDbError(state);
   if (
     !state.data ||
     new Date(String(state.data.expires_at)).getTime() <= Date.now()
@@ -166,7 +165,7 @@ export async function completeGitHubSkillOAuth(args: {
     .select("tenant_id")
     .eq("tenant_id", state.data.tenant_id)
     .maybeSingle();
-  if (existing.error) throw new Error(existing.error.message);
+  throwOnDbError(existing);
   const payload = {
     encrypted_access_token: encrypted.encrypted,
     access_token_iv: encrypted.iv,
@@ -187,7 +186,7 @@ export async function completeGitHubSkillOAuth(args: {
         tenant_id: state.data.tenant_id,
         ...payload,
       });
-  if (write.error) throw new Error(write.error.message);
+  throwOnDbError(write);
   await db
     .from("altien_skill_github_oauth_states")
     .delete()
@@ -210,7 +209,7 @@ export async function getGitHubSkillOAuthConnection(
     )
     .eq("tenant_id", tenantId)
     .maybeSingle();
-  if (result.error) throw new Error(result.error.message);
+  throwOnDbError(result);
   return result.data
     ? {
         connected: true,
@@ -232,7 +231,7 @@ export async function getGitHubSkillOAuthToken(
     .select("encrypted_access_token, access_token_iv, access_token_tag")
     .eq("tenant_id", tenantId)
     .maybeSingle();
-  if (result.error) throw new Error(result.error.message);
+  throwOnDbError(result);
   if (!result.data) return null;
   return decryptString(
     result.data.encrypted_access_token,
@@ -249,5 +248,5 @@ export async function disconnectGitHubSkillOAuth(
     .from("altien_skill_github_connections")
     .delete()
     .eq("tenant_id", tenantId);
-  if (deleted.error) throw new Error(deleted.error.message);
+  throwOnDbError(deleted);
 }

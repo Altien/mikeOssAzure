@@ -16,8 +16,55 @@ import {
   getSkillPackageInfo,
 } from "./packages";
 
-function packageDb(adapted = false) {
+function packageDb(adapted = false, withDependency = false) {
   return makeFakeDb((call) => {
+    if (withDependency && call.table === "altien_skill_dependencies") {
+      return {
+        data: [
+          {
+            version_id: "version-1",
+            dependency_skill_id: "skill-2",
+            dependency_version_id: "version-2",
+            required: true,
+          },
+        ],
+        error: null,
+      };
+    }
+    if (
+      withDependency &&
+      call.table === "altien_skill_versions" &&
+      call.filters.some(
+        (filter) => filter[1] === "id" && filter[2] === "version-2",
+      )
+    ) {
+      return {
+        data: [
+          {
+            id: "version-2",
+            skill_id: "skill-2",
+            state: "enabled",
+            original_content_hash: "dependency-hash",
+            approved_execution_contract: { projectRead: true },
+          },
+        ],
+        error: null,
+      };
+    }
+    if (
+      withDependency &&
+      call.table === "altien_skills" &&
+      call.filters.some(
+        (filter) => filter[1] === "id" && filter[2] === "skill-2",
+      )
+    ) {
+      return {
+        data: [
+          { id: "skill-2", canonical_name: "helper", display_name: "Helper" },
+        ],
+        error: null,
+      };
+    }
     if (call.table === "altien_skill_versions") {
       return {
         data: [
@@ -162,6 +209,32 @@ describe("skill packages", () => {
       provenance: { sourceKind: "zip", treeHash: "tree-hash" },
       licencePaths: ["reader/LICENSE"],
     });
+  });
+
+  it("states the exact approved dependency versions in the Mike manifest", async () => {
+    downloadFileMock.mockImplementation(async () =>
+      new TextEncoder().encode("skill text").buffer,
+    );
+    const mike = await buildMikeSkillPackage({
+      tenantId: "tenant-1",
+      versionId: "version-1",
+      db: packageDb(false, true).db as never,
+    });
+    const zip = await JSZip.loadAsync(mike.bytes);
+    const manifest = JSON.parse(
+      await zip.file(".mike/skill-manifest.json")!.async("text"),
+    );
+    expect(manifest.dependencies).toEqual([
+      {
+        skillId: "skill-2",
+        name: "helper",
+        displayName: "Helper",
+        versionId: "version-2",
+        contentHash: "dependency-hash",
+        required: true,
+        approvedExecutionContract: { projectRead: true },
+      },
+    ]);
   });
 
   it("informs the downloader about licence files before download", async () => {

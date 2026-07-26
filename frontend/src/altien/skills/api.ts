@@ -194,6 +194,7 @@ export function createCleanRoomDeveloperArtifact(
         requirementName: string;
         state: "draft";
         filename: string;
+        reviewPayloadHash: string;
     }>(
         `/altien/skills/versions/${encodeURIComponent(versionId)}/developer-artifacts`,
         {
@@ -204,10 +205,17 @@ export function createCleanRoomDeveloperArtifact(
     );
 }
 
-export function approveCleanRoomDeveloperArtifact(artifactId: string) {
+export function approveCleanRoomDeveloperArtifact(
+    artifactId: string,
+    reviewedPayloadHash: string,
+) {
     return apiRequest<{ id: string; state: "approved" }>(
         `/altien/skills/developer-artifacts/${encodeURIComponent(artifactId)}/approve`,
-        { method: "POST" },
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ reviewedPayloadHash }),
+        },
     );
 }
 

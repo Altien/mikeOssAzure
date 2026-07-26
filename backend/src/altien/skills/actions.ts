@@ -2,7 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 
 export type PendingSkillAction = {
   id: string;
-  actionType: "enable_version" | "disable_version" | "approve_contract";
+  actionType:
+    | "enable_version"
+    | "disable_version"
+    | "approve_contract"
+    | "link_prior_skill";
   payload: Record<string, unknown>;
   payloadHash: string;
   state: "pending";
@@ -37,6 +41,37 @@ export function createEnableAction(args: {
   return {
     id: randomUUID(),
     actionType: "enable_version",
+    payload,
+    payloadHash: hashActionPayload(payload),
+    state: "pending",
+  };
+}
+
+/**
+ * Import identity that was only suggested by weak evidence (declared name, or
+ * a matching ZIP filename and entrypoint set) is never applied silently. The
+ * administrator authorizes this exact payload to make the draft a new version
+ * of the named prior skill instead of a separate one.
+ */
+export function createLinkPriorSkillAction(args: {
+  versionId: string;
+  currentSkillId: string;
+  priorSkillId: string;
+  priorCanonicalName: string;
+  matchedOn: string;
+  contentHash: string;
+}): PendingSkillAction {
+  const payload = {
+    versionId: args.versionId,
+    currentSkillId: args.currentSkillId,
+    priorSkillId: args.priorSkillId,
+    priorCanonicalName: args.priorCanonicalName,
+    matchedOn: args.matchedOn,
+    contentHash: args.contentHash,
+  };
+  return {
+    id: randomUUID(),
+    actionType: "link_prior_skill",
     payload,
     payloadHash: hashActionPayload(payload),
     state: "pending",

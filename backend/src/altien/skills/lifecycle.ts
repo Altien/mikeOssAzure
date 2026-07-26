@@ -1,6 +1,5 @@
 import { createServerSupabase } from "../../lib/supabase";
-
-type Db = ReturnType<typeof createServerSupabase>;
+import { throwOnDbError, type Db } from "./shared";
 
 export async function disableSkill(args: {
   tenantId: string;
@@ -26,7 +25,7 @@ export async function disableSkill(args: {
       .update({ state: "disabled" })
       .eq("id", versionId)
       .eq("skill_id", args.skillId);
-    if (disabled.error) throw new Error(disabled.error.message);
+    throwOnDbError(disabled);
   }
   const updated = await db
     .from("altien_skills")
@@ -37,7 +36,7 @@ export async function disableSkill(args: {
     })
     .eq("id", args.skillId)
     .eq("tenant_id", args.tenantId);
-  if (updated.error) throw new Error(updated.error.message);
+  throwOnDbError(updated);
   return { skillId: args.skillId, disabledVersionId: versionId };
 }
 

@@ -1,6 +1,10 @@
 import type { SkillListItem } from "./api";
 
-export type DraftArtifact = { id: string; filename: string };
+export type DraftArtifact = {
+    id: string;
+    filename: string;
+    reviewPayloadHash: string;
+};
 
 /**
  * Admin controls that adapt an imported skill: rename into an adapted copy,

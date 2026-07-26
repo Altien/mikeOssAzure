@@ -1,8 +1,7 @@
 import { createServerSupabase } from "../../lib/supabase";
 import { resolvedDependencyBindings } from "./dependencies";
 import { getProjectSkillPin } from "./pins";
-
-type Db = ReturnType<typeof createServerSupabase>;
+import { throwOnDbError, type Db } from "./shared";
 
 function normalize(value: string) {
   return value.trim().toLocaleLowerCase().replace(/[\s_-]+/g, " ");
@@ -34,7 +33,7 @@ export async function bindExplicitSkillInvocation(args: {
     .select("chat_id")
     .eq("chat_id", args.chatId)
     .maybeSingle();
-  if (existing.error) throw new Error(existing.error.message);
+  throwOnDbError(existing);
   if (existing.data) throw new Error("This chat is already bound to a skill.");
 
   const skills = await db
@@ -44,7 +43,7 @@ export async function bindExplicitSkillInvocation(args: {
     )
     .eq("tenant_id", args.tenantId)
     .is("deleted_at", null);
-  if (skills.error) throw new Error(skills.error.message);
+  throwOnDbError(skills);
   const matches = (skills.data ?? []).filter(
     (skill) =>
       normalize(String(skill.canonical_name)) === normalize(requestedName) ||
@@ -85,7 +84,7 @@ export async function bindExplicitSkillInvocation(args: {
     bound_by: args.userId,
     dependency_versions: dependencies,
   });
-  if (binding.error) throw new Error(binding.error.message);
+  throwOnDbError(binding);
   return {
     skillId: String(skill.id),
     displayName: String(skill.display_name),

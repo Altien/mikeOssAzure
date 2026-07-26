@@ -9,8 +9,10 @@ import {
 import {
   assertActionIntegrity,
   createEnableAction,
+  createLinkPriorSkillAction,
   isAffirmativeAuthorization,
   isRejection,
+  type PendingSkillAction,
 } from "./actions";
 import {
   firstPartyToolCatalogue,
@@ -22,56 +24,12 @@ import {
   resolvedDependencyBindings,
 } from "./dependencies";
 import { getProjectSkillPin } from "./pins";
-
-type Db = ReturnType<typeof createServerSupabase>;
-
-function errorMessage(result: { error?: { message?: string } | null }) {
-  return result.error?.message ?? null;
-}
-
-function requireResult<T>(
-  result: { data?: T | null; error?: { message?: string } | null },
-  fallback: string,
-): T {
-  const message = errorMessage(result);
-  if (message || !result.data) throw new Error(message ?? fallback);
-  return result.data;
-}
-
-async function loadVersionContext(args: {
-  tenantId: string;
-  versionId: string;
-  db: Db;
-}) {
-  const version = requireResult<Record<string, unknown>>(
-    await args.db
-      .from("altien_skill_versions")
-      .select("*")
-      .eq("id", args.versionId)
-      .single(),
-    "Skill version not found.",
-  );
-  const skill = requireResult<Record<string, unknown>>(
-    await args.db
-      .from("altien_skills")
-      .select("*")
-      .eq("id", String(version.skill_id))
-      .eq("tenant_id", args.tenantId)
-      .is("deleted_at", null)
-      .single(),
-    "Skill version not found.",
-  );
-  const snapshot = requireResult<Record<string, unknown>>(
-    await args.db
-      .from("altien_skill_import_snapshots")
-      .select("*")
-      .eq("id", String(version.snapshot_id))
-      .eq("tenant_id", args.tenantId)
-      .single(),
-    "Skill snapshot not found.",
-  );
-  return { version, skill, snapshot };
-}
+import {
+  loadSkillVersionContext,
+  requireResult,
+  throwOnDbError,
+  type Db,
+} from "./shared";
 
 function manifestFile(
   version: Record<string, unknown>,
@@ -100,7 +58,7 @@ async function ensureConversation(args: {
     .eq("version_id", args.versionId)
     .eq("tenant_id", args.tenantId)
     .maybeSingle();
-  if (existing.error) throw new Error(existing.error.message);
+  throwOnDbError(existing);
   if (existing.data?.id) return String(existing.data.id);
   const inserted = requireResult<{ id: string }>(
     await args.db
@@ -135,7 +93,7 @@ async function addMessage(args: {
     content: args.content,
     structured_content: args.structuredContent ?? null,
   });
-  if (result.error) throw new Error(result.error.message);
+  throwOnDbError(result);
   return id;
 }
 
@@ -156,12 +114,12 @@ export async function analyseSkillVersion(args: {
   settings?: typeof getUserModelSettings;
 }) {
   const db = args.db ?? createServerSupabase();
-  const context = await loadVersionContext({ ...args, db });
+  const context = await loadSkillVersionContext({ ...args, db });
   const running = await db
     .from("altien_skill_versions")
     .update({ analysis_state: "running" })
     .eq("id", args.versionId);
-  if (running.error) throw new Error(running.error.message);
+  throwOnDbError(running);
   try {
     const entrypointPath = String(context.version.entrypoint_path);
     const file = manifestFile(context.version, context.snapshot, entrypointPath);
@@ -207,7 +165,7 @@ export async function analyseSkillVersion(args: {
         generated_analysis: artifact.generated,
       })
       .eq("id", args.versionId);
-    if (saved.error) throw new Error(saved.error.message);
+    throwOnDbError(saved);
     await db
       .from("altien_skill_import_snapshots")
       .update({ status: "ready" })
@@ -235,6 +193,147 @@ export async function analyseSkillVersion(args: {
   }
 }
 
+type PossibleSkillIdentityMatch = {
+  skillId: string;
+  canonicalName: string;
+  displayName: string;
+  matchedOn: string;
+};
+
+function possibleIdentityMatch(
+  version: Record<string, unknown>,
+): PossibleSkillIdentityMatch | null {
+  const identity = (
+    version.deterministic_analysis as {
+      identity?: { possible_match?: PossibleSkillIdentityMatch | null };
+    } | null
+  )?.identity;
+  const match = identity?.possible_match ?? null;
+  return match && match.skillId ? match : null;
+}
+
+/** Records the proposal message and the pending row for an exact payload. */
+async function proposePendingAction(args: {
+  tenantId: string;
+  versionId: string;
+  conversationId: string;
+  action: PendingSkillAction;
+  content: string;
+  db: Db;
+}) {
+  const actionMessageId = await addMessage({
+    conversationId: args.conversationId,
+    role: "assistant",
+    content: args.content,
+    structuredContent: { type: "pending_action", action: args.action },
+    db: args.db,
+  });
+  const inserted = await args.db.from("altien_skill_pending_actions").insert({
+    id: args.action.id,
+    tenant_id: args.tenantId,
+    conversation_id: args.conversationId,
+    version_id: args.versionId,
+    proposed_by_message_id: actionMessageId,
+    action_type: args.action.actionType,
+    payload: args.action.payload,
+    payload_hash: args.action.payloadHash,
+    state: "pending",
+  });
+  throwOnDbError(inserted);
+  return { conversationId: args.conversationId, outcome: "proposed", action: args.action };
+}
+
+/**
+ * Applies an authorized `link_prior_skill` action: the draft becomes a version
+ * of the confirmed prior skill and the placeholder skill created at import is
+ * removed once it holds no versions.
+ */
+async function executeLinkPriorSkill(args: {
+  tenantId: string;
+  versionId: string;
+  userId: string;
+  conversationId: string;
+  userMessageId: string;
+  pending: Record<string, unknown>;
+  skill: Record<string, unknown>;
+  version: Record<string, unknown>;
+  db: Db;
+}) {
+  const payload = args.pending.payload as {
+    currentSkillId?: string;
+    priorSkillId?: string;
+    contentHash?: string;
+  };
+  const contentHash = String(
+    args.version.adapted_content_hash ??
+      args.version.original_content_hash ??
+      "",
+  );
+  if (
+    String(args.skill.id) !== String(payload.currentSkillId) ||
+    String(payload.contentHash) !== contentHash
+  ) {
+    throw new Error("The pending action no longer matches this import.");
+  }
+  const prior = requireResult<Record<string, unknown>>(
+    await args.db
+      .from("altien_skills")
+      .select("id, canonical_name, display_name")
+      .eq("id", String(payload.priorSkillId))
+      .eq("tenant_id", args.tenantId)
+      .is("deleted_at", null)
+      .single(),
+    "The matched prior skill is no longer available.",
+  );
+  const moved = await args.db
+    .from("altien_skill_versions")
+    .update({ skill_id: String(prior.id) })
+    .eq("id", args.versionId);
+  throwOnDbError(moved);
+  const remaining = await args.db
+    .from("altien_skill_versions")
+    .select("id")
+    .eq("skill_id", String(payload.currentSkillId));
+  throwOnDbError(remaining);
+  if (!(remaining.data ?? []).length) {
+    const removed = await args.db
+      .from("altien_skills")
+      .delete()
+      .eq("id", String(payload.currentSkillId))
+      .eq("tenant_id", args.tenantId);
+    throwOnDbError(removed);
+  }
+  await args.db
+    .from("altien_skill_pending_actions")
+    .update({
+      state: "executed",
+      authorised_by: args.userId,
+      authorised_by_message_id: args.userMessageId,
+      authorised_at: new Date().toISOString(),
+      execution_result: {
+        linkedSkillId: String(prior.id),
+        replacedSkillId: String(payload.currentSkillId),
+      },
+    })
+    .eq("id", String(args.pending.id));
+  await addMessage({
+    conversationId: args.conversationId,
+    role: "assistant",
+    content: `This draft is now a new version of '${String(prior.canonical_name)}'. It is still draft until you enable it.`,
+    structuredContent: {
+      type: "action_executed",
+      actionId: args.pending.id,
+      versionId: args.versionId,
+    },
+    db: args.db,
+  });
+  return {
+    conversationId: args.conversationId,
+    outcome: "linked",
+    actionId: args.pending.id,
+  };
+}
+
 export async function postSkillReviewMessage(args: {
   tenantId: string;
   versionId: string;
@@ -243,7 +342,7 @@ export async function postSkillReviewMessage(args: {
   db?: Db;
 }) {
   const db = args.db ?? createServerSupabase();
-  const context = await loadVersionContext({ ...args, db });
+  const context = await loadSkillVersionContext({ ...args, db });
   const conversationId = await ensureConversation({ ...args, db });
   const userMessageId = await addMessage({
     conversationId,
@@ -259,7 +358,7 @@ export async function postSkillReviewMessage(args: {
     .eq("state", "pending")
     .order("created_at", { ascending: false })
     .limit(1);
-  if (pendingResult.error) throw new Error(pendingResult.error.message);
+  throwOnDbError(pendingResult);
   const pending = (pendingResult.data?.[0] ?? null) as Record<
     string,
     unknown
@@ -294,6 +393,19 @@ export async function postSkillReviewMessage(args: {
       payload: pending.payload as Record<string, unknown>,
       payloadHash: String(pending.payload_hash),
     });
+    if (pending.action_type === "link_prior_skill") {
+      return await executeLinkPriorSkill({
+        tenantId: args.tenantId,
+        versionId: args.versionId,
+        userId: args.userId,
+        conversationId,
+        userMessageId,
+        pending,
+        skill: context.skill,
+        version: context.version,
+        db,
+      });
+    }
     if (
       pending.action_type !== "enable_version" ||
       context.version.analysis_state !== "succeeded" ||
@@ -327,7 +439,7 @@ export async function postSkillReviewMessage(args: {
         enabled_at: new Date().toISOString(),
       })
       .eq("id", args.versionId);
-    if (enabled.error) throw new Error(enabled.error.message);
+    throwOnDbError(enabled);
     const promoted = await db
       .from("altien_skills")
       .update({
@@ -337,7 +449,7 @@ export async function postSkillReviewMessage(args: {
       })
       .eq("id", String(context.skill.id))
       .eq("tenant_id", args.tenantId);
-    if (promoted.error) throw new Error(promoted.error.message);
+    throwOnDbError(promoted);
     await db
       .from("altien_skill_pending_actions")
       .update({
@@ -360,6 +472,45 @@ export async function postSkillReviewMessage(args: {
       db,
     });
     return { conversationId, outcome: "enabled", actionId: pending.id };
+  }
+
+  // A weak import-identity match never attaches silently; the administrator
+  // confirms it here before the version can be enabled under the prior skill.
+  const possibleMatch = possibleIdentityMatch(context.version);
+  if (
+    possibleMatch &&
+    String(context.skill.id) !== String(possibleMatch.skillId)
+  ) {
+    const linkActions = await db
+      .from("altien_skill_pending_actions")
+      .select("id, state")
+      .eq("version_id", args.versionId)
+      .eq("action_type", "link_prior_skill");
+    throwOnDbError(linkActions);
+    const outstanding = (linkActions.data ?? []).some((row) =>
+      ["pending", "executed", "rejected"].includes(String(row.state)),
+    );
+    if (!outstanding) {
+      return await proposePendingAction({
+        tenantId: args.tenantId,
+        versionId: args.versionId,
+        conversationId,
+        action: createLinkPriorSkillAction({
+          versionId: args.versionId,
+          currentSkillId: String(context.skill.id),
+          priorSkillId: String(possibleMatch.skillId),
+          priorCanonicalName: String(possibleMatch.canonicalName),
+          matchedOn: String(possibleMatch.matchedOn),
+          contentHash: String(
+            context.version.adapted_content_hash ??
+              context.version.original_content_hash ??
+              "",
+          ),
+        }),
+        content: `This import matches the existing skill '${possibleMatch.canonicalName}' only by ${possibleMatch.matchedOn === "zip_source" ? "source filename and entrypoint set" : "declared name"}. Pending action: make it a new version of that skill. Reply “yes” to authorize this payload, or “no” to keep it as a separate skill.`,
+        db,
+      });
+    }
   }
 
   if (context.version.analysis_state !== "succeeded") {
@@ -395,32 +546,19 @@ export async function postSkillReviewMessage(args: {
         .join(", ")}.`,
     );
   }
-  const action = createEnableAction({
+  return await proposePendingAction({
+    tenantId: args.tenantId,
     versionId: args.versionId,
-    analysisInputHash: String(context.version.analysis_input_hash),
-    executionContract: contract,
-  });
-  const actionMessageId = await addMessage({
     conversationId,
-    role: "assistant",
+    action: createEnableAction({
+      versionId: args.versionId,
+      analysisInputHash: String(context.version.analysis_input_hash),
+      executionContract: contract,
+    }),
     content:
       "Pending action: enable this exact reviewed version for project-bound runs. Reply “yes” to authorize this payload.",
-    structuredContent: { type: "pending_action", action },
     db,
   });
-  const inserted = await db.from("altien_skill_pending_actions").insert({
-    id: action.id,
-    tenant_id: args.tenantId,
-    conversation_id: conversationId,
-    version_id: args.versionId,
-    proposed_by_message_id: actionMessageId,
-    action_type: action.actionType,
-    payload: action.payload,
-    payload_hash: action.payloadHash,
-    state: "pending",
-  });
-  if (inserted.error) throw new Error(inserted.error.message);
-  return { conversationId, outcome: "proposed", action };
 }
 
 export async function getSkillReview(args: {
@@ -430,14 +568,14 @@ export async function getSkillReview(args: {
   db?: Db;
 }) {
   const db = args.db ?? createServerSupabase();
-  const context = await loadVersionContext({ ...args, db });
+  const context = await loadSkillVersionContext({ ...args, db });
   const conversationId = await ensureConversation({ ...args, db });
   const messages = await db
     .from("altien_skill_import_messages")
     .select("*")
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: true });
-  if (messages.error) throw new Error(messages.error.message);
+  throwOnDbError(messages);
   return {
     conversationId,
     skill: context.skill,
@@ -457,7 +595,7 @@ export async function createSkillRun(args: {
   db?: Db;
 }) {
   const db = args.db ?? createServerSupabase();
-  let context = await loadVersionContext({ ...args, db });
+  let context = await loadSkillVersionContext({ ...args, db });
   const pin = await getProjectSkillPin({
     tenantId: args.tenantId,
     projectId: args.projectId,
@@ -466,7 +604,7 @@ export async function createSkillRun(args: {
   });
   const resolvedVersionId = pin?.versionId ?? args.versionId;
   if (resolvedVersionId !== args.versionId) {
-    context = await loadVersionContext({
+    context = await loadSkillVersionContext({
       tenantId: args.tenantId,
       versionId: resolvedVersionId,
       db,
@@ -498,7 +636,7 @@ export async function createSkillRun(args: {
     bound_by: args.userId,
     dependency_versions: dependencies,
   });
-  if (binding.error) throw new Error(binding.error.message);
+  throwOnDbError(binding);
   return {
     chatId: chat.id,
     projectId: args.projectId,

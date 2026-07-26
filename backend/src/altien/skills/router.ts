@@ -10,7 +10,7 @@ import {
   SkillArchiveValidationError,
   validateSkillZip,
 } from "./archive";
-import { listTenantSkills, storeZipSkillSnapshot } from "./persistence";
+import { listTenantSkills, storeSkillSnapshot } from "./persistence";
 import {
   analyseSkillVersion,
   createSkillRun,
@@ -78,16 +78,28 @@ function uploadOne(req: Request, res: Response, next: NextFunction) {
   });
 }
 
-function tenantId(res: Response): string | null {
+/**
+ * Every Skills route is tenant-scoped. Mirrors `requireRole`: reject before
+ * the handler runs rather than repeating the guard in each one.
+ */
+function requireTenant(_req: Request, res: Response, next: NextFunction): void {
   const value = res.locals.principal?.tenantId;
-  return typeof value === "string" && value.trim() ? value : null;
+  if (typeof value !== "string" || !value.trim()) {
+    res.status(403).json({ detail: "TENANT_UNKNOWN" });
+    return;
+  }
+  res.locals.tenantId = value;
+  next();
+}
+
+function tenantId(res: Response): string {
+  return String(res.locals.tenantId);
 }
 
 export const skillsRouter = Router();
 
-skillsRouter.get("/", requireAuth, async (_req, res) => {
+skillsRouter.get("/", requireAuth, requireTenant, async (_req, res) => {
   const tenant = tenantId(res);
-  if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
   const roles: string[] = res.locals.principal?.roles ?? [];
   try {
     const skills = await listTenantSkills(tenant, {
@@ -108,10 +120,10 @@ skillsRouter.post(
   "/imports/zip",
   requireAuth,
   requireRole("TenantAdmin"),
+  requireTenant,
   uploadOne,
   async (req, res) => {
     const tenant = tenantId(res);
-    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
     if (!req.file) {
       return void res.status(400).json({ detail: "ZIP file is required." });
     }
@@ -126,7 +138,7 @@ skillsRouter.post(
         req.file.buffer.byteLength,
       );
       const snapshot = await validateSkillZip(sourceBytes);
-      const stored = await storeZipSkillSnapshot({
+      const stored = await storeSkillSnapshot({
         tenantId: tenant,
         importedBy: String(res.locals.userId),
         sourceFilename,
@@ -148,9 +160,8 @@ skillsRouter.post(
   },
 );
 
-skillsRouter.get("/settings/github", requireAuth, async (_req, res) => {
+skillsRouter.get("/settings/github", requireAuth, requireTenant, async (_req, res) => {
   const tenant = tenantId(res);
-  if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
   try {
     res.json({
       ...(await getGitHubSkillImportPolicy(tenant)),
@@ -167,9 +178,9 @@ skillsRouter.put(
   "/settings/github",
   requireAuth,
   requireRole("TenantAdmin"),
+  requireTenant,
   async (req, res) => {
     const tenant = tenantId(res);
-    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
     if (typeof req.body?.enabled !== "boolean") {
       return void res.status(400).json({ detail: "enabled must be boolean." });
     }
@@ -200,13 +211,24 @@ function githubOAuthPopupHtml(
   return `<!doctype html><html><body><p>GitHub connection complete. You may close this window.</p><script nonce="${nonce}">if(window.opener){window.opener.postMessage(${serialized},"*");}window.close();</script></body></html>`;
 }
 
+/** Popup headers: the inline script runs only under its one-shot nonce. */
+function githubOAuthPopupHeaders(res: Response, nonce: string) {
+  return res
+    .set(
+      "Content-Security-Policy",
+      `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'none'; base-uri 'none'; frame-ancestors 'none'`,
+    )
+    .set("Cross-Origin-Opener-Policy", "unsafe-none")
+    .type("html");
+}
+
 skillsRouter.post(
   "/settings/github/oauth/start",
   requireAuth,
   requireRole("TenantAdmin"),
+  requireTenant,
   async (req, res) => {
     const tenant = tenantId(res);
-    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
     try {
       res.json(
         await startGitHubSkillOAuth({
@@ -237,32 +259,19 @@ skillsRouter.get("/settings/github/oauth/callback", async (req, res) => {
     if (providerError) throw new Error(providerError);
     if (!state || !code) throw new Error("GitHub OAuth callback is incomplete.");
     await completeGitHubSkillOAuth({ state, code });
-    res
-      .set(
-        "Content-Security-Policy",
-        `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'none'; base-uri 'none'; frame-ancestors 'none'`,
-      )
-      .set("Cross-Origin-Opener-Policy", "unsafe-none")
-      .type("html")
-      .send(githubOAuthPopupHtml({ success: true }, nonce));
+    githubOAuthPopupHeaders(res, nonce).send(
+      githubOAuthPopupHtml({ success: true }, nonce),
+    );
   } catch (error) {
-    res
-      .status(400)
-      .set(
-        "Content-Security-Policy",
-        `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'none'; base-uri 'none'; frame-ancestors 'none'`,
-      )
-      .set("Cross-Origin-Opener-Policy", "unsafe-none")
-      .type("html")
-      .send(
-        githubOAuthPopupHtml(
-          {
-            success: false,
-            detail: safeErrorMessage(error, "GitHub OAuth failed"),
-          },
-          nonce,
-        ),
-      );
+    githubOAuthPopupHeaders(res.status(400), nonce).send(
+      githubOAuthPopupHtml(
+        {
+          success: false,
+          detail: safeErrorMessage(error, "GitHub OAuth failed"),
+        },
+        nonce,
+      ),
+    );
   }
 });
 
@@ -270,9 +279,9 @@ skillsRouter.delete(
   "/settings/github/oauth",
   requireAuth,
   requireRole("TenantAdmin"),
+  requireTenant,
   async (_req, res) => {
     const tenant = tenantId(res);
-    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
     try {
       await disconnectGitHubSkillOAuth(tenant);
       res.status(204).send();
@@ -288,9 +297,9 @@ skillsRouter.post(
   "/imports/github",
   requireAuth,
   requireRole("TenantAdmin"),
+  requireTenant,
   async (req, res) => {
     const tenant = tenantId(res);
-    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
     const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
     if (!url || url.length > 2_000) {
       return void res.status(400).json({ detail: "A GitHub URL is required." });
@@ -311,7 +320,7 @@ skillsRouter.post(
         url,
         token: (await getGitHubSkillOAuthToken(tenant)) ?? undefined,
       });
-      const stored = await storeZipSkillSnapshot({
+      const stored = await storeSkillSnapshot({
         tenantId: tenant,
         importedBy: String(res.locals.userId),
         sourceFilename: `${acquired.provenance.repository.replace(/[^a-z0-9.-]+/gi, "-")}-${acquired.provenance.resolvedCommitSha.slice(0, 12)}.zip`,
@@ -341,9 +350,8 @@ skillsRouter.post(
   },
 );
 
-skillsRouter.get("/versions/:versionId/packages", requireAuth, async (req, res) => {
+skillsRouter.get("/versions/:versionId/packages", requireAuth, requireTenant, async (req, res) => {
   const tenant = tenantId(res);
-  if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
   try {
     const info = await getSkillPackageInfo({
       tenantId: tenant,
@@ -364,9 +372,9 @@ skillsRouter.get("/versions/:versionId/packages", requireAuth, async (req, res) 
 skillsRouter.get(
   "/versions/:versionId/packages/:kind",
   requireAuth,
+  requireTenant,
   async (req, res) => {
     const tenant = tenantId(res);
-    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
     if (
       req.params.kind !== "original" &&
       req.params.kind !== "mike" &&
@@ -415,15 +423,27 @@ skillsRouter.post(
   "/developer-artifacts/:artifactId/approve",
   requireAuth,
   requireRole("TenantAdmin"),
+  requireTenant,
   async (req, res) => {
     const tenant = tenantId(res);
-    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
+    // Approval carries the hash of exactly what was reviewed, like every other
+    // pending skill action.
+    const reviewedPayloadHash =
+      typeof req.body?.reviewedPayloadHash === "string"
+        ? req.body.reviewedPayloadHash.trim()
+        : "";
+    if (!reviewedPayloadHash) {
+      return void res.status(400).json({
+        detail: "reviewedPayloadHash of the reviewed artifact is required.",
+      });
+    }
     try {
       res.json(
         await approveCleanRoomDeveloperArtifact({
           tenantId: tenant,
           artifactId: req.params.artifactId,
           approvedBy: String(res.locals.userId),
+          reviewedPayloadHash,
         }),
       );
     } catch (error) {
@@ -438,9 +458,9 @@ skillsRouter.get(
   "/developer-artifacts/:artifactId",
   requireAuth,
   requireRole("TenantAdmin"),
+  requireTenant,
   async (req, res) => {
     const tenant = tenantId(res);
-    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
     try {
       const artifact = await getCleanRoomDeveloperArtifact({
         tenantId: tenant,
@@ -451,6 +471,8 @@ skillsRouter.get(
         "Content-Disposition",
         buildContentDisposition("attachment", artifact.filename),
       );
+      // The reviewer echoes this back when approving.
+      res.setHeader("X-Skill-Artifact-Review-Hash", artifact.reviewPayloadHash);
       res.send(Buffer.from(artifact.bytes));
     } catch (error) {
       res.status(404).json({
@@ -464,9 +486,9 @@ skillsRouter.post(
   "/versions/:versionId/check-update",
   requireAuth,
   requireRole("TenantAdmin"),
+  requireTenant,
   async (req, res) => {
     const tenant = tenantId(res);
-    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
     try {
       res.json(
         await checkGitHubSkillVersionUpdate({
@@ -486,9 +508,9 @@ skillsRouter.post(
   "/versions/:versionId/adapt/rename",
   requireAuth,
   requireRole("TenantAdmin"),
+  requireTenant,
   async (req, res) => {
     const tenant = tenantId(res);
-    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
     const newDisplayName =
       typeof req.body?.newDisplayName === "string"
         ? req.body.newDisplayName.trim()
@@ -519,9 +541,9 @@ skillsRouter.post(
   "/versions/:versionId/developer-artifacts",
   requireAuth,
   requireRole("TenantAdmin"),
+  requireTenant,
   async (req, res) => {
     const tenant = tenantId(res);
-    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
     const requirementName =
       typeof req.body?.requirementName === "string"
         ? req.body.requirementName.trim()
@@ -565,9 +587,9 @@ skillsRouter.post(
 skillsRouter.put(
   "/projects/:projectId/pins/:skillId",
   requireAuth,
+  requireTenant,
   async (req, res) => {
     const tenant = tenantId(res);
-    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
     const versionId =
       typeof req.body?.versionId === "string" ? req.body.versionId.trim() : "";
     if (!versionId) {
@@ -608,9 +630,9 @@ skillsRouter.put(
 skillsRouter.get(
   "/projects/:projectId/pins",
   requireAuth,
+  requireTenant,
   async (req, res) => {
     const tenant = tenantId(res);
-    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
     const db = createServerSupabase();
     const access = await checkProjectAccess(
       req.params.projectId,
@@ -642,9 +664,9 @@ skillsRouter.post(
   "/:skillId/disable",
   requireAuth,
   requireRole("TenantAdmin"),
+  requireTenant,
   async (req, res) => {
     const tenant = tenantId(res);
-    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
     try {
       res.json(
         await disableSkill({
@@ -665,9 +687,9 @@ skillsRouter.post(
   "/versions/:versionId/dependencies",
   requireAuth,
   requireRole("TenantAdmin"),
+  requireTenant,
   async (req, res) => {
     const tenant = tenantId(res);
-    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
     const dependencyVersionId =
       typeof req.body?.dependencyVersionId === "string"
         ? req.body.dependencyVersionId.trim()
@@ -699,9 +721,9 @@ skillsRouter.post(
   "/versions/:versionId/analyse",
   requireAuth,
   requireRole("TenantAdmin"),
+  requireTenant,
   async (req, res) => {
     const tenant = tenantId(res);
-    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
     try {
       const result = await analyseSkillVersion({
         tenantId: tenant,
@@ -721,9 +743,9 @@ skillsRouter.get(
   "/versions/:versionId/review",
   requireAuth,
   requireRole("TenantAdmin"),
+  requireTenant,
   async (req, res) => {
     const tenant = tenantId(res);
-    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
     try {
       res.json(
         await getSkillReview({
@@ -744,9 +766,9 @@ skillsRouter.post(
   "/versions/:versionId/review/messages",
   requireAuth,
   requireRole("TenantAdmin"),
+  requireTenant,
   async (req, res) => {
     const tenant = tenantId(res);
-    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
     const message =
       typeof req.body?.message === "string" ? req.body.message.trim() : "";
     if (!message || message.length > 2_000) {
@@ -774,9 +796,9 @@ skillsRouter.post(
 skillsRouter.post(
   "/versions/:versionId/run",
   requireAuth,
+  requireTenant,
   async (req, res) => {
     const tenant = tenantId(res);
-    if (!tenant) return void res.status(403).json({ detail: "TENANT_UNKNOWN" });
     const projectId =
       typeof req.body?.projectId === "string" ? req.body.projectId.trim() : "";
     if (!projectId) {

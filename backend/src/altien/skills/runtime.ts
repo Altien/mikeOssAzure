@@ -1,8 +1,7 @@
 import { downloadFile } from "../../lib/storage";
 import { createServerSupabase } from "../../lib/supabase";
 import { SKILL_RESOURCE_TOOL_NAMES, SkillResourceStore } from "./resources";
-
-type Db = ReturnType<typeof createServerSupabase>;
+import { throwOnDbError, type Db } from "./shared";
 
 export type SkillChatRuntimeContext = {
   skillId: string;
@@ -40,7 +39,7 @@ export async function getSkillChatBindingMetadata(args: {
     .select("*")
     .eq("chat_id", args.chatId)
     .maybeSingle();
-  if (binding.error) throw new Error(binding.error.message);
+  throwOnDbError(binding);
   if (!binding.data) return null;
   const version = await args.db
     .from("altien_skill_versions")
@@ -184,7 +183,7 @@ export async function loadSkillChatRuntimeContext(args: {
     .eq("chat_id", args.chatId)
     .eq("project_id", args.projectId)
     .maybeSingle();
-  if (binding.error) throw new Error(binding.error.message);
+  throwOnDbError(binding);
   if (!binding.data) return null;
 
   const root = await loadStoredVersion({

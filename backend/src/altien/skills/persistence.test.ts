@@ -13,7 +13,7 @@ vi.mock("../../lib/storage", () => ({
   normalizeDownloadFilename: (name: string) => name,
 }));
 
-import { listTenantSkills, storeZipSkillSnapshot } from "./persistence";
+import { listTenantSkills, storeSkillSnapshot } from "./persistence";
 
 function snapshot(): ValidatedSkillSnapshot {
   const skillBytes = new TextEncoder().encode(
@@ -61,7 +61,7 @@ function snapshot(): ValidatedSkillSnapshot {
   };
 }
 
-describe("storeZipSkillSnapshot", () => {
+describe("storeSkillSnapshot", () => {
   it("stores source and tree files as DMS records and creates a draft", async () => {
     uploadFileMock.mockReset();
     deleteFileMock.mockReset();
@@ -76,7 +76,7 @@ describe("storeZipSkillSnapshot", () => {
       return { data: [], error: null };
     });
 
-    const result = await storeZipSkillSnapshot({
+    const result = await storeSkillSnapshot({
       tenantId: "tenant-1",
       importedBy: "admin-1",
       sourceFilename: "skills.zip",
@@ -127,7 +127,7 @@ describe("storeZipSkillSnapshot", () => {
     const fake = makeFakeDb();
 
     await expect(
-      storeZipSkillSnapshot({
+      storeSkillSnapshot({
         tenantId: "tenant-1",
         importedBy: "admin-1",
         sourceFilename: "skills.zip",
@@ -141,7 +141,146 @@ describe("storeZipSkillSnapshot", () => {
     expect(fake.calls).toEqual([]);
   });
 
-  it("imports a matching declared name as a new immutable draft version", async () => {
+  function priorSkillDb(priorVersions: Array<Record<string, unknown>>) {
+    return makeFakeDb((call) => {
+      if (call.table === "projects" && call.op === "select") {
+        return { data: [{ id: "skill-project" }], error: null };
+      }
+      if (call.table === "altien_skills" && call.op === "select") {
+        return {
+          data: [{
+            id: "existing-skill",
+            canonical_name: "review-skill",
+            display_name: "Review Skill",
+          }],
+          error: null,
+        };
+      }
+      if (call.table === "altien_skill_versions" && call.op === "select") {
+        return { data: priorVersions, error: null };
+      }
+      if (
+        call.table === "altien_skill_import_snapshots" &&
+        call.op === "select"
+      ) {
+        return {
+          data: [{
+            id: "prior-snapshot",
+            source_kind: "zip",
+            source_filename: "skills.zip",
+            manifest: { entrypoints: ["review/SKILL.md"] },
+          }],
+          error: null,
+        };
+      }
+      return { data: [], error: null };
+    });
+  }
+
+  it("does not attach a frontmatter-name-only match to the prior skill", async () => {
+    uploadFileMock.mockReset();
+    deleteFileMock.mockReset();
+    uploadFileMock.mockResolvedValue(undefined);
+    const fake = priorSkillDb([
+      {
+        id: "prior-version",
+        snapshot_id: "prior-snapshot",
+        entrypoint_path: "other/SKILL.md",
+        original_content_hash: "d".repeat(64),
+      },
+    ]);
+    const result = await storeSkillSnapshot({
+      tenantId: "tenant-1",
+      importedBy: "admin-1",
+      sourceFilename: "different.zip",
+      sourceBytes: new Uint8Array([1, 2, 3]),
+      snapshot: snapshot(),
+      db: fake.db as never,
+    });
+    expect(result.skills[0]).toMatchObject({
+      canonicalName: "review-skill-2",
+      isUpdate: false,
+      possibleMatch: {
+        skillId: "existing-skill",
+        canonicalName: "review-skill",
+        matchedOn: "declared_name",
+      },
+    });
+    expect(result.skills[0].id).not.toBe("existing-skill");
+    expect(fake.callsFor("altien_skills", "insert")).toHaveLength(1);
+    expect(
+      fake.callsFor("altien_skill_versions", "insert")[0].payload,
+    ).toMatchObject({
+      deterministic_analysis: expect.objectContaining({
+        identity: expect.objectContaining({
+          matched_on: "declared_name",
+          linked_prior_skill_id: null,
+        }),
+      }),
+    });
+  });
+
+  it("reports a matching ZIP filename and entrypoint set as a possible match only", async () => {
+    uploadFileMock.mockReset();
+    deleteFileMock.mockReset();
+    uploadFileMock.mockResolvedValue(undefined);
+    const fake = priorSkillDb([
+      {
+        id: "prior-version",
+        snapshot_id: "prior-snapshot",
+        entrypoint_path: "review/SKILL.md",
+        original_content_hash: "d".repeat(64),
+      },
+    ]);
+    const result = await storeSkillSnapshot({
+      tenantId: "tenant-1",
+      importedBy: "admin-1",
+      sourceFilename: "skills.zip",
+      sourceBytes: new Uint8Array([1, 2, 3]),
+      snapshot: snapshot(),
+      db: fake.db as never,
+    });
+    expect(result.skills[0]).toMatchObject({
+      isUpdate: false,
+      possibleMatch: { skillId: "existing-skill", matchedOn: "zip_source" },
+    });
+    expect(fake.callsFor("altien_skills", "insert")).toHaveLength(1);
+  });
+
+  it("imports a matching content hash as a new immutable draft version", async () => {
+    uploadFileMock.mockReset();
+    deleteFileMock.mockReset();
+    uploadFileMock.mockResolvedValue(undefined);
+    const fake = priorSkillDb([
+      {
+        id: "prior-version",
+        snapshot_id: "prior-snapshot",
+        entrypoint_path: "review/SKILL.md",
+        original_content_hash: "b".repeat(64),
+      },
+    ]);
+    const result = await storeSkillSnapshot({
+      tenantId: "tenant-1",
+      importedBy: "admin-1",
+      sourceFilename: "skills.zip",
+      sourceBytes: new Uint8Array([1, 2, 3]),
+      snapshot: snapshot(),
+      db: fake.db as never,
+    });
+    expect(result.skills[0]).toMatchObject({
+      id: "existing-skill",
+      canonicalName: "review-skill",
+      isUpdate: true,
+      version: { state: "draft" },
+    });
+    expect(result.skills[0].possibleMatch).toBeUndefined();
+    expect(fake.callsFor("altien_skills", "insert")).toHaveLength(0);
+    expect(
+      fake.callsFor("altien_skill_versions", "insert")[0].payload,
+    ).toMatchObject({ skill_id: "existing-skill", state: "draft" });
+  });
+
+  it("imports the same GitHub repository entrypoint as a new version of the prior skill", async () => {
     uploadFileMock.mockReset();
     deleteFileMock.mockReset();
     uploadFileMock.mockResolvedValue(undefined);
@@ -159,26 +298,53 @@ describe("storeZipSkillSnapshot", () => {
           error: null,
         };
       }
+      if (call.table === "altien_skill_versions" && call.op === "select") {
+        return {
+          data: [{
+            id: "prior-version",
+            snapshot_id: "prior-snapshot",
+            entrypoint_path: "review/SKILL.md",
+            original_content_hash: "d".repeat(64),
+          }],
+          error: null,
+        };
+      }
+      if (
+        call.table === "altien_skill_import_snapshots" &&
+        call.op === "select"
+      ) {
+        return {
+          data: [{
+            id: "prior-snapshot",
+            source_kind: "github",
+            github_repository: "github.com/example/skills",
+            github_selected_path: "review",
+          }],
+          error: null,
+        };
+      }
       return { data: [], error: null };
     });
-    const result = await storeZipSkillSnapshot({
+    const result = await storeSkillSnapshot({
       tenantId: "tenant-1",
       importedBy: "admin-1",
       sourceFilename: "skills.zip",
       sourceBytes: new Uint8Array([1, 2, 3]),
       snapshot: snapshot(),
+      sourceKind: "github",
+      github: {
+        repository: "github.com/example/skills",
+        selectedPath: "review",
+        requestedRef: "main",
+        resolvedCommitSha: "a".repeat(40),
+      },
       db: fake.db as never,
     });
     expect(result.skills[0]).toMatchObject({
       id: "existing-skill",
-      canonicalName: "review-skill",
       isUpdate: true,
-      version: { state: "draft" },
     });
     expect(fake.callsFor("altien_skills", "insert")).toHaveLength(0);
-    expect(
-      fake.callsFor("altien_skill_versions", "insert")[0].payload,
-    ).toMatchObject({ skill_id: "existing-skill", state: "draft" });
   });
 });
 

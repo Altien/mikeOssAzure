@@ -1,10 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 import { makeFakeDb } from "../../test/helpers/fakeDb";
 
-const { uploadFileMock, downloadFileMock, deleteFileMock } = vi.hoisted(() => ({
+const {
+  uploadFileMock,
+  downloadFileMock,
+  deleteFileMock,
+  generateCleanRoomBriefMock,
+  getUserModelSettingsMock,
+} = vi.hoisted(() => ({
   uploadFileMock: vi.fn(),
   downloadFileMock: vi.fn(),
   deleteFileMock: vi.fn(),
+  generateCleanRoomBriefMock: vi.fn(),
+  getUserModelSettingsMock: vi.fn(),
 }));
 
 vi.mock("../../lib/storage", () => ({
@@ -13,7 +21,22 @@ vi.mock("../../lib/storage", () => ({
   deleteFile: deleteFileMock,
 }));
 
-import { persistSkillRename } from "./artifacts";
+vi.mock("../../lib/userSettings", () => ({
+  getUserModelSettings: getUserModelSettingsMock,
+}));
+
+vi.mock("./cleanRoom", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./cleanRoom")>()),
+  generateCleanRoomBrief: generateCleanRoomBriefMock,
+}));
+
+import {
+  approveCleanRoomDeveloperArtifact,
+  createCleanRoomDeveloperArtifact,
+  getCleanRoomDeveloperArtifact,
+  persistSkillRename,
+} from "./artifacts";
+import { CLEAN_ROOM_SNAPSHOT_RUN_WORDS } from "./cleanRoom";
 
 describe("persistSkillRename", () => {
   it("forks an update draft without renaming the live skill", async () => {
@@ -108,5 +131,317 @@ describe("persistSkillRename", () => {
       entrypoint_path: "forked-skill/SKILL.md",
     });
     expect(fake.callsFor("altien_skills", "update")).toHaveLength(0);
+  });
+});
+
+const hiddenSource = Array.from(
+  { length: 80 },
+  (_unused, index) => `hiddenToken${index}`,
+).join(" ");
+
+function developerArtifactDb(
+  options: { documentsInsertFails?: boolean } = {},
+) {
+  return makeFakeDb((call) => {
+    if (
+      options.documentsInsertFails &&
+      call.table === "documents" &&
+      call.op === "insert"
+    ) {
+      return { data: null, error: { message: "documents insert failed" } };
+    }
+    if (call.table === "altien_skill_versions" && call.op === "select") {
+      return {
+        data: [{
+          id: "version-1",
+          skill_id: "skill-1",
+          snapshot_id: "snapshot-1",
+          entrypoint_path: "tool/SKILL.md",
+          state: "draft",
+          generated_analysis: {
+            capabilityRequirements: [
+              { name: "lookup_records", kind: "first_party_tool" },
+            ],
+          },
+        }],
+        error: null,
+      };
+    }
+    if (call.table === "altien_skills" && call.op === "select") {
+      return {
+        data: [{
+          id: "skill-1",
+          canonical_name: "tool",
+          display_name: "Tool",
+          description: "Looks things up",
+        }],
+        error: null,
+      };
+    }
+    if (call.table === "altien_skill_import_snapshots") {
+      return {
+        data: [{
+          id: "snapshot-1",
+          tenant_id: "tenant-1",
+          dms_project_id: "library-project",
+          root_folder_id: "snapshot-root",
+          manifest: {
+            licence_paths: [],
+            files: [
+              {
+                path: "tool/reviewed.ts",
+                sha256: "reviewed-hash",
+                bytes: 10,
+                media_type: "text/plain",
+                inspection_class: "source",
+                document_id: "reviewed-document",
+                document_version_id: "reviewed-version",
+              },
+              {
+                path: "tool/unreviewed.ts",
+                sha256: "unreviewed-hash",
+                bytes: 10,
+                media_type: "text/plain",
+                inspection_class: "source",
+                document_id: "unreviewed-document",
+                document_version_id: "unreviewed-version",
+              },
+            ],
+          },
+        }],
+        error: null,
+      };
+    }
+    if (call.table === "document_versions" && call.op === "select") {
+      return {
+        data: [{ storage_path: `blob/${String(call.filters[0]?.[2])}` }],
+        error: null,
+      };
+    }
+    return { data: [], error: null };
+  });
+}
+
+describe("createCleanRoomDeveloperArtifact", () => {
+  it("blocks an artifact whose brief leaks a verbatim span of the snapshot", async () => {
+    uploadFileMock.mockReset();
+    deleteFileMock.mockReset();
+    uploadFileMock.mockResolvedValue(undefined);
+    downloadFileMock.mockImplementation(async (path: string) =>
+      new TextEncoder().encode(
+        path === "blob/unreviewed-version"
+          ? hiddenSource
+          : "the reviewed helper reads a query and returns records",
+      ).buffer,
+    );
+    getUserModelSettingsMock.mockResolvedValue({
+      fast_model: "gpt-5.4-lite",
+      api_keys: {},
+    });
+    const leaked = Array.from(
+      { length: CLEAN_ROOM_SNAPSHOT_RUN_WORDS + 2 },
+      (_unused, index) => `hiddenToken${index}`,
+    ).join(" ");
+    generateCleanRoomBriefMock.mockResolvedValue({
+      markdown: `# Brief\n\n${leaked}\n`,
+      provenance: {
+        provider: "openai",
+        model: "gpt-5.4-lite",
+        schemaVersion: 1,
+      },
+    });
+    const fake = developerArtifactDb();
+
+    const result = await createCleanRoomDeveloperArtifact({
+      tenantId: "tenant-1",
+      versionId: "version-1",
+      requirementName: "lookup_records",
+      sourcePaths: ["tool/reviewed.ts"],
+      createdBy: "admin-1",
+      db: fake.db as never,
+    });
+
+    expect(result.state).toBe("blocked");
+    expect(result.leakageCheck).toMatchObject({
+      passed: false,
+      runWords: CLEAN_ROOM_SNAPSHOT_RUN_WORDS,
+      violations: [expect.objectContaining({ path: "tool/unreviewed.ts" })],
+    });
+    expect(
+      fake.callsFor("altien_skill_developer_artifacts", "insert")[0].payload,
+    ).toMatchObject({ state: "blocked" });
+  });
+
+  it("records a passing leakage check for a behavioural brief", async () => {
+    uploadFileMock.mockReset();
+    uploadFileMock.mockResolvedValue(undefined);
+    downloadFileMock.mockImplementation(async (path: string) =>
+      new TextEncoder().encode(
+        path === "blob/unreviewed-version"
+          ? hiddenSource
+          : "the reviewed helper reads a query and returns records",
+      ).buffer,
+    );
+    getUserModelSettingsMock.mockResolvedValue({
+      fast_model: "gpt-5.4-lite",
+      api_keys: {},
+    });
+    generateCleanRoomBriefMock.mockResolvedValue({
+      markdown: "# Brief\n\nAccepts a query and returns bounded records.\n",
+      provenance: {
+        provider: "openai",
+        model: "gpt-5.4-lite",
+        schemaVersion: 1,
+      },
+    });
+    const fake = developerArtifactDb();
+
+    const result = await createCleanRoomDeveloperArtifact({
+      tenantId: "tenant-1",
+      versionId: "version-1",
+      requirementName: "lookup_records",
+      sourcePaths: ["tool/reviewed.ts"],
+      createdBy: "admin-1",
+      db: fake.db as never,
+    });
+
+    expect(result.state).toBe("draft");
+    expect(result.leakageCheck.passed).toBe(true);
+    expect(result.reviewPayloadHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("leaves no DMS rows behind when the tree cannot be written", async () => {
+    uploadFileMock.mockReset();
+    deleteFileMock.mockReset();
+    uploadFileMock.mockResolvedValue(undefined);
+    deleteFileMock.mockResolvedValue(undefined);
+    downloadFileMock.mockImplementation(async () =>
+      new TextEncoder().encode("the reviewed helper reads a query").buffer,
+    );
+    getUserModelSettingsMock.mockResolvedValue({
+      fast_model: "gpt-5.4-lite",
+      api_keys: {},
+    });
+    generateCleanRoomBriefMock.mockResolvedValue({
+      markdown: "# Brief\n\nAccepts a query.\n",
+      provenance: {
+        provider: "openai",
+        model: "gpt-5.4-lite",
+        schemaVersion: 1,
+      },
+    });
+    const fake = developerArtifactDb({ documentsInsertFails: true });
+
+    await expect(
+      createCleanRoomDeveloperArtifact({
+        tenantId: "tenant-1",
+        versionId: "version-1",
+        requirementName: "lookup_records",
+        sourcePaths: ["tool/reviewed.ts"],
+        createdBy: "admin-1",
+        db: fake.db as never,
+      }),
+    ).rejects.toThrow("documents insert failed");
+
+    expect(fake.callsFor("project_subfolders", "delete")).toHaveLength(1);
+    expect(deleteFileMock).toHaveBeenCalledTimes(1);
+    expect(
+      fake.callsFor("altien_skill_developer_artifacts", "insert"),
+    ).toHaveLength(0);
+  });
+});
+
+describe("approveCleanRoomDeveloperArtifact", () => {
+  const artifactRow = {
+    id: "artifact-1",
+    tenant_id: "tenant-1",
+    version_id: "version-1",
+    requirement_name: "lookup_records",
+    document_id: "artifact-document",
+    document_version_id: "artifact-version",
+    source_hashes: [{ path: "tool/reviewed.ts", sha256: "reviewed-hash" }],
+    generator_provenance: { provider: "openai", model: "gpt-5.4-lite" },
+    leakage_check: { passed: true, runWords: 40, violations: [] },
+    state: "draft",
+  };
+
+  function approvalDb(row: Record<string, unknown> = artifactRow) {
+    return makeFakeDb((call) => {
+      if (call.table === "altien_skill_developer_artifacts") {
+        return { data: [row], error: null };
+      }
+      if (call.table === "document_versions") {
+        return {
+          data: [{ storage_path: "blob/artifact", filename: "lookup.md" }],
+          error: null,
+        };
+      }
+      return { data: [], error: null };
+    });
+  }
+
+  it("approves only the exact reviewed payload", async () => {
+    downloadFileMock.mockResolvedValue(
+      new TextEncoder().encode("# Brief").buffer,
+    );
+    const reviewed = await getCleanRoomDeveloperArtifact({
+      tenantId: "tenant-1",
+      artifactId: "artifact-1",
+      db: approvalDb().db as never,
+    });
+    expect(reviewed.reviewPayloadHash).toMatch(/^[0-9a-f]{64}$/);
+
+    await expect(
+      approveCleanRoomDeveloperArtifact({
+        tenantId: "tenant-1",
+        artifactId: "artifact-1",
+        approvedBy: "admin-1",
+        reviewedPayloadHash: "0".repeat(64),
+        db: approvalDb().db as never,
+      }),
+    ).rejects.toThrow("changed since it was reviewed");
+
+    const fake = approvalDb();
+    await expect(
+      approveCleanRoomDeveloperArtifact({
+        tenantId: "tenant-1",
+        artifactId: "artifact-1",
+        approvedBy: "admin-1",
+        reviewedPayloadHash: reviewed.reviewPayloadHash,
+        db: fake.db as never,
+      }),
+    ).resolves.toEqual({ id: "artifact-1", state: "approved" });
+    expect(
+      fake.callsFor("altien_skill_developer_artifacts", "update")[0].payload,
+    ).toMatchObject({ state: "approved", approved_by: "admin-1" });
+  });
+
+  it("refuses to approve an artifact blocked by its leakage check", async () => {
+    const blocked = {
+      ...artifactRow,
+      state: "blocked",
+      leakage_check: {
+        passed: false,
+        runWords: 40,
+        violations: [{ path: "tool/unreviewed.ts" }],
+      },
+    };
+    downloadFileMock.mockResolvedValue(
+      new TextEncoder().encode("# Brief").buffer,
+    );
+    const reviewed = await getCleanRoomDeveloperArtifact({
+      tenantId: "tenant-1",
+      artifactId: "artifact-1",
+      db: approvalDb(blocked).db as never,
+    });
+    await expect(
+      approveCleanRoomDeveloperArtifact({
+        tenantId: "tenant-1",
+        artifactId: "artifact-1",
+        approvedBy: "admin-1",
+        reviewedPayloadHash: reviewed.reviewPayloadHash,
+        db: approvalDb(blocked).db as never,
+      }),
+    ).rejects.toThrow("A blocked developer artifact cannot be approved.");
   });
 });

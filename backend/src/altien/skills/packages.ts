@@ -1,56 +1,13 @@
 import JSZip from "jszip";
 import { downloadFile } from "../../lib/storage";
 import { createServerSupabase } from "../../lib/supabase";
-
-type Db = ReturnType<typeof createServerSupabase>;
-
-type PackageContext = {
-  skill: Record<string, unknown>;
-  version: Record<string, unknown>;
-  snapshot: Record<string, unknown>;
-};
-
-function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  return bytes.buffer.slice(
-    bytes.byteOffset,
-    bytes.byteOffset + bytes.byteLength,
-  ) as ArrayBuffer;
-}
-
-async function context(
-  tenantId: string,
-  versionId: string,
-  db: Db,
-): Promise<PackageContext> {
-  const version = await db
-    .from("altien_skill_versions")
-    .select("*")
-    .eq("id", versionId)
-    .single();
-  if (version.error || !version.data) throw new Error("Skill version not found.");
-  const skill = await db
-    .from("altien_skills")
-    .select("*")
-    .eq("id", version.data.skill_id)
-    .eq("tenant_id", tenantId)
-    .is("deleted_at", null)
-    .single();
-  if (skill.error || !skill.data) throw new Error("Skill version not found.");
-  const snapshot = await db
-    .from("altien_skill_import_snapshots")
-    .select("*")
-    .eq("id", version.data.snapshot_id)
-    .eq("tenant_id", tenantId)
-    .single();
-  if (snapshot.error || !snapshot.data) {
-    throw new Error("Skill snapshot not found.");
-  }
-  return {
-    skill: skill.data as Record<string, unknown>,
-    version: version.data as Record<string, unknown>,
-    snapshot: snapshot.data as Record<string, unknown>,
-  };
-}
+import {
+  exactArrayBuffer,
+  loadSkillVersionContext,
+  throwOnDbError,
+  type Db,
+} from "./shared";
+import { dependencyBindings } from "./dependencies";
 
 async function documentVersionBytes(documentVersionId: string, db: Db) {
   const version = await db
@@ -72,7 +29,11 @@ export async function getSkillPackageInfo(args: {
   db?: Db;
 }) {
   const db = args.db ?? createServerSupabase();
-  const loaded = await context(args.tenantId, args.versionId, db);
+  const loaded = await loadSkillVersionContext({
+    tenantId: args.tenantId,
+    versionId: args.versionId,
+    db,
+  });
   const manifest = (loaded.version.adapted_manifest ??
     loaded.snapshot.manifest) as {
     licence_paths?: unknown[];
@@ -84,7 +45,7 @@ export async function getSkillPackageInfo(args: {
     .eq("tenant_id", args.tenantId)
     .eq("version_id", args.versionId)
     .eq("state", "approved");
-  if (artifacts.error) throw new Error(artifacts.error.message);
+  throwOnDbError(artifacts);
   return {
     versionId: args.versionId,
     skillName: String(loaded.skill.display_name),
@@ -118,7 +79,11 @@ export async function buildOriginalSkillPackage(args: {
   db?: Db;
 }) {
   const db = args.db ?? createServerSupabase();
-  const loaded = await context(args.tenantId, args.versionId, db);
+  const loaded = await loadSkillVersionContext({
+    tenantId: args.tenantId,
+    versionId: args.versionId,
+    db,
+  });
   const sourceVersionId = String(
     loaded.snapshot.source_document_version_id ?? "",
   );
@@ -135,7 +100,11 @@ export async function buildMikeSkillPackage(args: {
   db?: Db;
 }) {
   const db = args.db ?? createServerSupabase();
-  const loaded = await context(args.tenantId, args.versionId, db);
+  const loaded = await loadSkillVersionContext({
+    tenantId: args.tenantId,
+    versionId: args.versionId,
+    db,
+  });
   const manifest = (loaded.version.adapted_manifest ??
     loaded.snapshot.manifest) as {
     files?: Array<Record<string, unknown>>;
@@ -144,6 +113,9 @@ export async function buildMikeSkillPackage(args: {
   const files = [...(manifest.files ?? [])].sort((a, b) =>
     String(a.path).localeCompare(String(b.path), "en"),
   );
+  // The Mike manifest must state the exact dependency versions this version is
+  // bound to, not just its own provenance and mappings.
+  const dependencies = await dependencyBindings(args.versionId, db);
   const zip = new JSZip();
   const stableDate = new Date("1980-01-01T00:00:00.000Z");
   for (const file of files) {
@@ -191,6 +163,15 @@ export async function buildMikeSkillPackage(args: {
       mediaType: file.media_type,
     })),
     licencePaths: manifest.licence_paths ?? [],
+    dependencies: dependencies.map((dependency) => ({
+      skillId: dependency.skillId,
+      name: dependency.canonicalName,
+      displayName: dependency.displayName,
+      versionId: dependency.versionId,
+      contentHash: dependency.contentHash,
+      required: dependency.required,
+      approvedExecutionContract: dependency.executionContract,
+    })),
     approvedExecutionContract:
       loaded.version.approved_execution_contract ?? {},
   };
@@ -206,10 +187,7 @@ export async function buildMikeSkillPackage(args: {
     platform: "UNIX",
   });
   return {
-    bytes: bytes.buffer.slice(
-      bytes.byteOffset,
-      bytes.byteOffset + bytes.byteLength,
-    ) as ArrayBuffer,
+    bytes: exactArrayBuffer(bytes),
     filename: `${String(loaded.skill.canonical_name)}-mike.zip`,
   };
 }
@@ -220,7 +198,11 @@ export async function buildDeveloperSkillPackage(args: {
   db?: Db;
 }) {
   const db = args.db ?? createServerSupabase();
-  const loaded = await context(args.tenantId, args.versionId, db);
+  const loaded = await loadSkillVersionContext({
+    tenantId: args.tenantId,
+    versionId: args.versionId,
+    db,
+  });
   const artifacts = await db
     .from("altien_skill_developer_artifacts")
     .select("*")
@@ -228,7 +210,7 @@ export async function buildDeveloperSkillPackage(args: {
     .eq("version_id", args.versionId)
     .eq("state", "approved")
     .order("created_at", { ascending: true });
-  if (artifacts.error) throw new Error(artifacts.error.message);
+  throwOnDbError(artifacts);
   if (!(artifacts.data ?? []).length) {
     throw new Error("No clean-room developer artifacts are available.");
   }

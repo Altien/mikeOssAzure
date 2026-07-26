@@ -1,6 +1,5 @@
 import { createServerSupabase } from "../../lib/supabase";
-
-type Db = ReturnType<typeof createServerSupabase>;
+import { throwOnDbError, type Db } from "./shared";
 
 async function enabledTenantVersion(args: {
   tenantId: string;
@@ -39,7 +38,7 @@ export async function listProjectSkillPins(args: {
     .select("*")
     .eq("tenant_id", args.tenantId)
     .eq("project_id", args.projectId);
-  if (result.error) throw new Error(result.error.message);
+  throwOnDbError(result);
   return (result.data ?? []).map((row) => ({
     skillId: String(row.skill_id),
     versionId: String(row.version_id),
@@ -61,7 +60,7 @@ export async function getProjectSkillPin(args: {
     .eq("project_id", args.projectId)
     .eq("skill_id", args.skillId)
     .maybeSingle();
-  if (result.error) throw new Error(result.error.message);
+  throwOnDbError(result);
   return result.data
     ? {
         skillId: String(result.data.skill_id),
@@ -99,7 +98,7 @@ export async function setProjectSkillPin(args: {
         skill_id: args.skillId,
         ...payload,
       });
-  if (write.error) throw new Error(write.error.message);
+  throwOnDbError(write);
   return {
     projectId: args.projectId,
     skillId: args.skillId,

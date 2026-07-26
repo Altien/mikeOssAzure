@@ -4,8 +4,7 @@ import {
   getGitHubSkillOAuthConnection,
   githubSkillOAuthConfigured,
 } from "./githubOAuth";
-
-type Db = ReturnType<typeof createServerSupabase>;
+import { throwOnDbError, type Db } from "./shared";
 
 export async function getGitHubSkillImportPolicy(
   tenantId: string,
@@ -16,7 +15,7 @@ export async function getGitHubSkillImportPolicy(
     .select("github_import_enabled")
     .eq("tenant_id", tenantId)
     .maybeSingle();
-  if (result.error) throw new Error(result.error.message);
+  throwOnDbError(result);
   const deploymentAllowed = githubDeploymentAllowed();
   const tenantEnabled = result.data?.github_import_enabled === true;
   const connection = await getGitHubSkillOAuthConnection(tenantId, db);
@@ -42,7 +41,7 @@ export async function setGitHubSkillImportPolicy(args: {
     .select("tenant_id")
     .eq("tenant_id", args.tenantId)
     .maybeSingle();
-  if (existing.error) throw new Error(existing.error.message);
+  throwOnDbError(existing);
   const payload = {
     github_import_enabled: args.enabled,
     updated_by: args.updatedBy,
@@ -57,6 +56,6 @@ export async function setGitHubSkillImportPolicy(args: {
         tenant_id: args.tenantId,
         ...payload,
       });
-  if (write.error) throw new Error(write.error.message);
+  throwOnDbError(write);
   return getGitHubSkillImportPolicy(args.tenantId, db);
 }

@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const {
   authState,
   validateSkillZipMock,
-  storeZipSkillSnapshotMock,
+  storeSkillSnapshotMock,
   listTenantSkillsMock,
   analyseSkillVersionMock,
   getSkillReviewMock,
@@ -29,7 +29,7 @@ const {
     tenantId: "tenant-1",
   },
   validateSkillZipMock: vi.fn(),
-  storeZipSkillSnapshotMock: vi.fn(),
+  storeSkillSnapshotMock: vi.fn(),
   listTenantSkillsMock: vi.fn(),
   analyseSkillVersionMock: vi.fn(),
   getSkillReviewMock: vi.fn(),
@@ -71,7 +71,7 @@ vi.mock("./archive", async (importOriginal) => ({
 }));
 
 vi.mock("./persistence", () => ({
-  storeZipSkillSnapshot: storeZipSkillSnapshotMock,
+  storeSkillSnapshot: storeSkillSnapshotMock,
   listTenantSkills: listTenantSkillsMock,
 }));
 
@@ -136,7 +136,7 @@ describe("Skills routes", () => {
     authState.roles = ["TenantAdmin"];
     authState.tenantId = "tenant-1";
     validateSkillZipMock.mockReset();
-    storeZipSkillSnapshotMock.mockReset();
+    storeSkillSnapshotMock.mockReset();
     listTenantSkillsMock.mockReset();
     analyseSkillVersionMock.mockReset();
     getSkillReviewMock.mockReset();
@@ -294,7 +294,7 @@ describe("Skills routes", () => {
         private: false,
       },
     });
-    storeZipSkillSnapshotMock.mockResolvedValue({
+    storeSkillSnapshotMock.mockResolvedValue({
       id: "snapshot-1",
       skills: [{ id: "skill-1" }],
     });
@@ -304,7 +304,7 @@ describe("Skills routes", () => {
       .send({ url: "https://github.com/example/skill" })
       .expect(201);
     expect(response.body.provenance.resolvedCommitSha).toBe("a".repeat(40));
-    expect(storeZipSkillSnapshotMock).toHaveBeenCalledWith(
+    expect(storeSkillSnapshotMock).toHaveBeenCalledWith(
       expect.objectContaining({
         sourceKind: "github",
         github: expect.objectContaining({
@@ -316,7 +316,7 @@ describe("Skills routes", () => {
 
   it("imports a ZIP for a TenantAdmin", async () => {
     validateSkillZipMock.mockResolvedValue({ treeHash: "hash" });
-    storeZipSkillSnapshotMock.mockResolvedValue({
+    storeSkillSnapshotMock.mockResolvedValue({
       id: "snapshot-1",
       skills: [{ id: "skill-1" }],
     });
@@ -330,7 +330,7 @@ describe("Skills routes", () => {
       id: "snapshot-1",
       skills: [{ id: "skill-1" }],
     });
-    expect(storeZipSkillSnapshotMock).toHaveBeenCalledWith(
+    expect(storeSkillSnapshotMock).toHaveBeenCalledWith(
       expect.objectContaining({
         tenantId: "tenant-1",
         importedBy: "admin-1",
@@ -367,5 +367,28 @@ describe("Skills routes", () => {
     expect(listTenantSkillsMock).toHaveBeenLastCalledWith("tenant-1", {
       includeDrafts: false,
     });
+  });
+
+  it("rejects a principal without a tenant before any handler runs", async () => {
+    authState.tenantId = "";
+    listTenantSkillsMock.mockResolvedValue([]);
+    await request(makeApp())
+      .get("/api/altien/skills")
+      .expect(403, { detail: "TENANT_UNKNOWN" });
+    expect(listTenantSkillsMock).not.toHaveBeenCalled();
+
+    await request(makeApp())
+      .post("/api/altien/skills/versions/version-1/analyse")
+      .expect(403, { detail: "TENANT_UNKNOWN" });
+    expect(analyseSkillVersionMock).not.toHaveBeenCalled();
+  });
+
+  it("requires the reviewed payload hash before approving a developer artifact", async () => {
+    await request(makeApp())
+      .post("/api/altien/skills/developer-artifacts/artifact-1/approve")
+      .send({})
+      .expect(400, {
+        detail: "reviewedPayloadHash of the reviewed artifact is required.",
+      });
   });
 });

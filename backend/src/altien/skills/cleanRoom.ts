@@ -93,24 +93,63 @@ function normalizedWords(value: string) {
     .filter((word) => word.length > 2);
 }
 
-export function findCleanRoomLeakage(markdown: string, sources: SourceFile[]) {
+/**
+ * Word run compared when a generated brief is checked against the whole
+ * original snapshot rather than the files the generator was shown. Forty
+ * normalized words is roughly 200 characters of prose — long enough that a
+ * match is verbatim copying rather than shared vocabulary.
+ */
+export const CLEAN_ROOM_SNAPSHOT_RUN_WORDS = 40;
+
+/** Word run compared against the files handed to the generator. */
+export const CLEAN_ROOM_GENERATOR_RUN_WORDS = 10;
+
+export type CleanRoomLeakageViolation = {
+  path: string;
+  fragment: string;
+  words: number;
+};
+
+export type CleanRoomLeakageResult = {
+  passed: boolean;
+  runWords: number;
+  violations: CleanRoomLeakageViolation[];
+};
+
+/**
+ * Deterministic verbatim-span check: any normalized word run of `runWords`
+ * that appears in both the generated text and a source file is reported. No
+ * model is involved, so the same inputs always produce the same verdict.
+ */
+export function evaluateCleanRoomLeakage(
+  markdown: string,
+  sources: SourceFile[],
+  options: { runWords?: number } = {},
+): CleanRoomLeakageResult {
+  const runWords = options.runWords ?? CLEAN_ROOM_GENERATOR_RUN_WORDS;
   const outputWords = normalizedWords(markdown);
-  const outputNgrams = new Set<string>();
-  for (let index = 0; index <= outputWords.length - 10; index += 1) {
-    outputNgrams.add(outputWords.slice(index, index + 10).join(" "));
+  const outputRuns = new Set<string>();
+  for (let index = 0; index <= outputWords.length - runWords; index += 1) {
+    outputRuns.add(outputWords.slice(index, index + runWords).join(" "));
   }
-  const violations: Array<{ path: string; fragment: string }> = [];
+  const violations: CleanRoomLeakageViolation[] = [];
   for (const source of sources) {
     const words = normalizedWords(source.text);
-    for (let index = 0; index <= words.length - 10; index += 1) {
-      const fragment = words.slice(index, index + 10).join(" ");
-      if (outputNgrams.has(fragment)) {
-        violations.push({ path: source.path, fragment });
+    for (let index = 0; index <= words.length - runWords; index += 1) {
+      const fragment = words.slice(index, index + runWords).join(" ");
+      if (outputRuns.has(fragment)) {
+        violations.push({ path: source.path, fragment, words: runWords });
         break;
       }
     }
   }
-  return violations;
+  return { passed: violations.length === 0, runWords, violations };
+}
+
+export function findCleanRoomLeakage(markdown: string, sources: SourceFile[]) {
+  return evaluateCleanRoomLeakage(markdown, sources, {
+    runWords: CLEAN_ROOM_GENERATOR_RUN_WORDS,
+  }).violations;
 }
 
 function section(title: string, values: string[]) {

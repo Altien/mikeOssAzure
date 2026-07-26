@@ -1,13 +1,21 @@
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
-import { deleteFile, uploadFile } from "../../lib/storage";
+import { deleteFile, downloadFile, uploadFile } from "../../lib/storage";
 import { createServerSupabase } from "../../lib/supabase";
 import { getUserModelSettings } from "../../lib/userSettings";
 import { planSkillRename, type AdaptationFile } from "./adaptation";
-import { generateCleanRoomBrief } from "./cleanRoom";
-import { downloadFile } from "../../lib/storage";
-
-type Db = ReturnType<typeof createServerSupabase>;
+import { hashActionPayload } from "./actions";
+import {
+  CLEAN_ROOM_SNAPSHOT_RUN_WORDS,
+  evaluateCleanRoomLeakage,
+  generateCleanRoomBrief,
+} from "./cleanRoom";
+import {
+  exactArrayBuffer,
+  loadSkillVersionContext,
+  throwOnDbError,
+  type Db,
+} from "./shared";
 
 type ManifestFile = {
   path: string;
@@ -18,13 +26,6 @@ type ManifestFile = {
   document_id: string;
   document_version_id: string;
 };
-
-function exactBuffer(bytes: Uint8Array) {
-  return bytes.buffer.slice(
-    bytes.byteOffset,
-    bytes.byteOffset + bytes.byteLength,
-  ) as ArrayBuffer;
-}
 
 function tenantKey(tenantId: string) {
   return createHash("sha256").update(tenantId).digest("hex").slice(0, 24);
@@ -46,31 +47,6 @@ function storagePath(
   relativePath: string,
 ) {
   return `documents/${owner}/${documentId}/versions/${versionId}${extension(relativePath)}`;
-}
-
-async function context(tenantId: string, versionId: string, db: Db) {
-  const version = await db
-    .from("altien_skill_versions")
-    .select("*")
-    .eq("id", versionId)
-    .single();
-  if (version.error || !version.data) throw new Error("Skill version not found.");
-  const skill = await db
-    .from("altien_skills")
-    .select("*")
-    .eq("id", version.data.skill_id)
-    .eq("tenant_id", tenantId)
-    .is("deleted_at", null)
-    .single();
-  if (skill.error || !skill.data) throw new Error("Skill version not found.");
-  const snapshot = await db
-    .from("altien_skill_import_snapshots")
-    .select("*")
-    .eq("id", version.data.snapshot_id)
-    .eq("tenant_id", tenantId)
-    .single();
-  if (snapshot.error || !snapshot.data) throw new Error("Skill snapshot not found.");
-  return { version: version.data, skill: skill.data, snapshot: snapshot.data };
 }
 
 function originalManifest(snapshot: Record<string, unknown>) {
@@ -132,11 +108,13 @@ async function persistTree(args: {
     };
   });
   const uploaded: string[] = [];
+  const insertedFolderIds: string[] = [];
+  const insertedDocumentIds: string[] = [];
   try {
     for (const file of prepared) {
       await uploadFile(
         file.storagePath,
-        exactBuffer(file.bytes),
+        exactArrayBuffer(file.bytes),
         file.mediaType,
       );
       uploaded.push(file.storagePath);
@@ -149,7 +127,8 @@ async function persistTree(args: {
       name: args.rootName,
       parent_folder_id: args.parentFolderId,
     });
-    if (root.error) throw new Error(root.error.message);
+    throwOnDbError(root);
+    insertedFolderIds.push(rootFolderId);
     const folders = new Map<string, string>([["", rootFolderId]]);
     const directoryPaths = [
       ...new Set(
@@ -172,7 +151,8 @@ async function persistTree(args: {
         parent_folder_id:
           folders.get(parent === "." ? "" : parent) ?? rootFolderId,
       });
-      if (inserted.error) throw new Error(inserted.error.message);
+      throwOnDbError(inserted);
+      insertedFolderIds.push(folderId);
       folders.set(directory, folderId);
     }
     const documents = prepared.map((file) => ({
@@ -188,7 +168,8 @@ async function persistTree(args: {
         ) ?? rootFolderId,
     }));
     const insertedDocuments = await args.db.from("documents").insert(documents);
-    if (insertedDocuments.error) throw new Error(insertedDocuments.error.message);
+    throwOnDbError(insertedDocuments);
+    insertedDocumentIds.push(...documents.map((document) => document.id));
     const versions = prepared.map((file) => ({
       id: file.versionId,
       document_id: file.documentId,
@@ -202,16 +183,18 @@ async function persistTree(args: {
     const insertedVersions = await args.db
       .from("document_versions")
       .insert(versions);
-    if (insertedVersions.error) throw new Error(insertedVersions.error.message);
+    throwOnDbError(insertedVersions);
     for (const version of versions) {
       const activated = await args.db
         .from("documents")
         .update({ current_version_id: version.id })
         .eq("id", version.document_id);
-      if (activated.error) throw new Error(activated.error.message);
+      throwOnDbError(activated);
     }
     return {
       rootFolderId,
+      folderIds: [...insertedFolderIds],
+      storagePaths: [...uploaded],
       files: prepared.map((file) => ({
         path: file.path,
         sha256: createHash("sha256").update(file.bytes).digest("hex"),
@@ -223,11 +206,49 @@ async function persistTree(args: {
       })),
     };
   } catch (error) {
-    await Promise.all(
-      uploaded.map((item) => deleteFile(item).catch(() => undefined)),
+    await discardPersistedTree(
+      {
+        folderIds: insertedFolderIds,
+        documentIds: insertedDocumentIds,
+        storagePaths: uploaded,
+      },
+      args.db,
     );
     throw error;
   }
+}
+
+/**
+ * Removes an adapted/clean-room tree that must not survive: DMS documents
+ * (which cascade to their versions and any artifact row referencing them),
+ * then the folders that held them, then the blobs. Spec OSS-7 requires a
+ * failed ingestion to leave no orphan database rows behind its deleted blobs.
+ */
+async function discardPersistedTree(
+  tree: {
+    folderIds: string[];
+    documentIds: string[];
+    storagePaths: string[];
+  },
+  db: Db,
+) {
+  for (const documentId of tree.documentIds) {
+    try {
+      await db.from("documents").delete().eq("id", documentId);
+    } catch {
+      // Preserve the original failure.
+    }
+  }
+  for (const folderId of [...tree.folderIds].reverse()) {
+    try {
+      await db.from("project_subfolders").delete().eq("id", folderId);
+    } catch {
+      // Preserve the original failure.
+    }
+  }
+  await Promise.all(
+    tree.storagePaths.map((item) => deleteFile(item).catch(() => undefined)),
+  );
 }
 
 export async function persistSkillRename(args: {
@@ -238,7 +259,11 @@ export async function persistSkillRename(args: {
   db?: Db;
 }) {
   const db = args.db ?? createServerSupabase();
-  const loaded = await context(args.tenantId, args.versionId, db);
+  const loaded = await loadSkillVersionContext({
+    tenantId: args.tenantId,
+    versionId: args.versionId,
+    db,
+  });
   if (loaded.version.state !== "draft") {
     throw new Error("Only a draft skill version can be renamed.");
   }
@@ -277,7 +302,7 @@ export async function persistSkillRename(args: {
     .eq("canonical_name", plan.newCanonicalName)
     .neq("id", loaded.skill.id)
     .maybeSingle();
-  if (collision.error) throw new Error(collision.error.message);
+  throwOnDbError(collision);
   if (collision.data) {
     throw new Error(`A skill named '${plan.newCanonicalName}' already exists.`);
   }
@@ -301,76 +326,89 @@ export async function persistSkillRename(args: {
     }),
     db,
   });
-  const entrypoint = stored.files.find(
-    (file) => file.path === plan.newEntrypointPath,
-  );
-  if (!entrypoint) throw new Error("Adapted entrypoint was not persisted.");
-  const adaptedManifest = {
-    files: stored.files,
-    licence_paths: (manifest.licence_paths ?? []).map((licencePath) => {
-      const renamed = plan.files.find(
-        (file) => file.originalPath === licencePath,
-      );
-      return renamed?.path ?? licencePath;
-    }),
-    tree_hash: plan.treeHash,
-  };
-  const targetSkillId = forksExistingSkill ? randomUUID() : String(loaded.skill.id);
-  if (forksExistingSkill) {
-    const createdSkill = await db.from("altien_skills").insert({
-      id: targetSkillId,
-      tenant_id: args.tenantId,
-      canonical_name: plan.newCanonicalName,
-      display_name: plan.newDisplayName,
-      description: String(loaded.skill.description),
-      created_by: args.adaptedBy,
-      updated_by: args.adaptedBy,
-    });
-    if (createdSkill.error) throw new Error(createdSkill.error.message);
-  }
-  const versionWrite = await db
-    .from("altien_skill_versions")
-    .update({
-      ...(forksExistingSkill ? { skill_id: targetSkillId } : {}),
-      entrypoint_path: plan.newEntrypointPath,
-      adapted_root_folder_id: stored.rootFolderId,
-      adapted_manifest: adaptedManifest,
-      adapted_content_hash: entrypoint.sha256,
-      adaptation_diff: plan.changes,
-      adapted_at: new Date().toISOString(),
-      analysis_state: "pending",
-      generated_analysis: null,
-      analysis_input_hash: null,
-      approved_execution_contract: null,
-    })
-    .eq("id", args.versionId);
-  if (versionWrite.error) throw new Error(versionWrite.error.message);
-  if (!forksExistingSkill) {
-    const skillWrite = await db
-      .from("altien_skills")
-      .update({
+  // Anything that fails from here on must take the adapted tree with it.
+  try {
+    const entrypoint = stored.files.find(
+      (file) => file.path === plan.newEntrypointPath,
+    );
+    if (!entrypoint) throw new Error("Adapted entrypoint was not persisted.");
+    const adaptedManifest = {
+      files: stored.files,
+      licence_paths: (manifest.licence_paths ?? []).map((licencePath) => {
+        const renamed = plan.files.find(
+          (file) => file.originalPath === licencePath,
+        );
+        return renamed?.path ?? licencePath;
+      }),
+      tree_hash: plan.treeHash,
+    };
+    const targetSkillId = forksExistingSkill ? randomUUID() : String(loaded.skill.id);
+    if (forksExistingSkill) {
+      const createdSkill = await db.from("altien_skills").insert({
+        id: targetSkillId,
+        tenant_id: args.tenantId,
         canonical_name: plan.newCanonicalName,
         display_name: plan.newDisplayName,
+        description: String(loaded.skill.description),
+        created_by: args.adaptedBy,
         updated_by: args.adaptedBy,
-        updated_at: new Date().toISOString(),
+      });
+      throwOnDbError(createdSkill);
+    }
+    const versionWrite = await db
+      .from("altien_skill_versions")
+      .update({
+        ...(forksExistingSkill ? { skill_id: targetSkillId } : {}),
+        entrypoint_path: plan.newEntrypointPath,
+        adapted_root_folder_id: stored.rootFolderId,
+        adapted_manifest: adaptedManifest,
+        adapted_content_hash: entrypoint.sha256,
+        adaptation_diff: plan.changes,
+        adapted_at: new Date().toISOString(),
+        analysis_state: "pending",
+        generated_analysis: null,
+        analysis_input_hash: null,
+        approved_execution_contract: null,
       })
-      .eq("id", loaded.skill.id)
-      .eq("tenant_id", args.tenantId);
-    if (skillWrite.error) throw new Error(skillWrite.error.message);
+      .eq("id", args.versionId);
+    throwOnDbError(versionWrite);
+    if (!forksExistingSkill) {
+      const skillWrite = await db
+        .from("altien_skills")
+        .update({
+          canonical_name: plan.newCanonicalName,
+          display_name: plan.newDisplayName,
+          updated_by: args.adaptedBy,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", loaded.skill.id)
+        .eq("tenant_id", args.tenantId);
+      throwOnDbError(skillWrite);
+    }
+    return {
+      skillId: targetSkillId,
+      forkedFromSkillId: forksExistingSkill
+        ? String(loaded.skill.id)
+        : undefined,
+      versionId: args.versionId,
+      displayName: plan.newDisplayName,
+      canonicalName: plan.newCanonicalName,
+      entrypointPath: plan.newEntrypointPath,
+      contentHash: entrypoint.sha256,
+      treeHash: plan.treeHash,
+      changes: plan.changes,
+    };
+  } catch (error) {
+    await discardPersistedTree(
+      {
+        folderIds: stored.folderIds,
+        documentIds: stored.files.map((file) => file.document_id),
+        storagePaths: stored.storagePaths,
+      },
+      db,
+    );
+    throw error;
   }
-  return {
-    skillId: targetSkillId,
-    forkedFromSkillId: forksExistingSkill
-      ? String(loaded.skill.id)
-      : undefined,
-    versionId: args.versionId,
-    displayName: plan.newDisplayName,
-    canonicalName: plan.newCanonicalName,
-    entrypointPath: plan.newEntrypointPath,
-    contentHash: entrypoint.sha256,
-    treeHash: plan.treeHash,
-    changes: plan.changes,
-  };
 }
 
 export async function createCleanRoomDeveloperArtifact(args: {
@@ -382,7 +420,11 @@ export async function createCleanRoomDeveloperArtifact(args: {
   db?: Db;
 }) {
   const db = args.db ?? createServerSupabase();
-  const loaded = await context(args.tenantId, args.versionId, db);
+  const loaded = await loadSkillVersionContext({
+    tenantId: args.tenantId,
+    versionId: args.versionId,
+    db,
+  });
   const generated = loaded.version.generated_analysis as
     | { capabilityRequirements?: Array<Record<string, unknown>> }
     | null;
@@ -446,6 +488,32 @@ export async function createCleanRoomDeveloperArtifact(args: {
     model: settings.fast_model,
     apiKeys: settings.api_keys,
   });
+  // The generator only saw `sources`; the recorded leakage check compares the
+  // brief against every readable file in the original snapshot.
+  const snapshotTexts = [...sources];
+  for (const candidate of original.files ?? []) {
+    if (
+      candidate.inspection_class !== "source" &&
+      candidate.inspection_class !== "text"
+    ) {
+      continue;
+    }
+    if (snapshotTexts.some((source) => source.path === candidate.path)) continue;
+    try {
+      snapshotTexts.push({
+        path: candidate.path,
+        sha256: candidate.sha256,
+        text: new TextDecoder("utf-8", { fatal: true }).decode(
+          await bytesFor(candidate, db),
+        ),
+      });
+    } catch {
+      // A file that is unreadable as UTF-8 cannot leak as verbatim text.
+    }
+  }
+  const leakage = evaluateCleanRoomLeakage(brief.markdown, snapshotTexts, {
+    runWords: CLEAN_ROOM_SNAPSHOT_RUN_WORDS,
+  });
   const safeName =
     args.requirementName
       .normalize("NFKD")
@@ -469,32 +537,94 @@ export async function createCleanRoomDeveloperArtifact(args: {
   });
   const file = stored.files[0];
   const artifactId = randomUUID();
-  const inserted = await db.from("altien_skill_developer_artifacts").insert({
-    id: artifactId,
-    tenant_id: args.tenantId,
-    version_id: args.versionId,
-    requirement_name: args.requirementName,
-    document_id: file.document_id,
-    document_version_id: file.document_version_id,
-    source_hashes: sources.map((source) => ({
-      path: source.path,
-      sha256: source.sha256,
-    })),
-    generator_provenance: brief.provenance,
-    leakage_check: { passed: true, violations: [] },
-    state: "draft",
-    created_by: args.createdBy,
-  });
-  if (inserted.error) throw new Error(inserted.error.message);
+  const leakageCheck = {
+    ...leakage,
+    checkedPaths: snapshotTexts.map((source) => source.path),
+  };
+  // A brief that reproduces a long verbatim span from the snapshot is never
+  // recorded as having passed; it is stored blocked so a reviewer can see it
+  // and approval refuses it.
+  const state = leakage.passed ? "draft" : "blocked";
+  try {
+    const inserted = await db.from("altien_skill_developer_artifacts").insert({
+      id: artifactId,
+      tenant_id: args.tenantId,
+      version_id: args.versionId,
+      requirement_name: args.requirementName,
+      document_id: file.document_id,
+      document_version_id: file.document_version_id,
+      source_hashes: sources.map((source) => ({
+        path: source.path,
+        sha256: source.sha256,
+      })),
+      generator_provenance: brief.provenance,
+      leakage_check: leakageCheck,
+      state,
+      created_by: args.createdBy,
+    });
+    throwOnDbError(inserted);
+  } catch (error) {
+    await discardPersistedTree(
+      {
+        folderIds: stored.folderIds,
+        documentIds: stored.files.map((item) => item.document_id),
+        storagePaths: stored.storagePaths,
+      },
+      db,
+    );
+    throw error;
+  }
   return {
     id: artifactId,
     versionId: args.versionId,
     requirementName: args.requirementName,
-    state: "draft",
+    state,
     filename: file.path,
     generatorProvenance: brief.provenance,
-    leakageCheck: { passed: true, violations: [] },
+    leakageCheck,
+    reviewPayloadHash: hashActionPayload(
+      developerArtifactReviewPayload({
+        id: artifactId,
+        version_id: args.versionId,
+        requirement_name: args.requirementName,
+        document_version_id: file.document_version_id,
+        source_hashes: sources.map((source) => ({
+          path: source.path,
+          sha256: source.sha256,
+        })),
+        generator_provenance: brief.provenance,
+        leakage_check: leakageCheck,
+        state,
+      }),
+    ),
   };
+}
+
+/**
+ * The exact reviewable facts about a developer artifact. Approval carries the
+ * hash of this payload, so — like every other pending skill action — the
+ * server can prove the administrator approved what is actually stored.
+ */
+function developerArtifactReviewPayload(
+  row: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    artifactId: String(row.id),
+    versionId: String(row.version_id),
+    requirementName: String(row.requirement_name),
+    documentVersionId: String(row.document_version_id),
+    sourceHashes: (row.source_hashes ?? []) as unknown,
+    generatorProvenance: (row.generator_provenance ?? {}) as unknown,
+    leakageCheck: (row.leakage_check ?? {}) as unknown,
+    state: String(row.state),
+  };
+}
+
+/** Hash of what a reviewer is shown for `artifactId`. */
+export function developerArtifactReviewHash(
+  row: Record<string, unknown>,
+): string {
+  return hashActionPayload(developerArtifactReviewPayload(row));
 }
 
 export async function getCleanRoomDeveloperArtifact(args: {
@@ -527,6 +657,7 @@ export async function getCleanRoomDeveloperArtifact(args: {
     filename: String(documentVersion.data.filename ?? "clean-room-brief.md"),
     state: String(artifact.data.state),
     requirementName: String(artifact.data.requirement_name),
+    reviewPayloadHash: developerArtifactReviewHash(artifact.data),
   };
 }
 
@@ -534,17 +665,31 @@ export async function approveCleanRoomDeveloperArtifact(args: {
   tenantId: string;
   artifactId: string;
   approvedBy: string;
+  /** Hash of the artifact facts the administrator actually reviewed. */
+  reviewedPayloadHash: string;
   db?: Db;
 }) {
   const db = args.db ?? createServerSupabase();
   const artifact = await db
     .from("altien_skill_developer_artifacts")
-    .select("id, state")
+    .select("*")
     .eq("id", args.artifactId)
     .eq("tenant_id", args.tenantId)
     .single();
   if (artifact.error || !artifact.data) {
     throw new Error("Developer artifact not found.");
+  }
+  if (!args.reviewedPayloadHash) {
+    throw new Error(
+      "Developer artifact approval requires the reviewed payload hash.",
+    );
+  }
+  if (
+    developerArtifactReviewHash(artifact.data) !== args.reviewedPayloadHash
+  ) {
+    throw new Error(
+      "The developer artifact changed since it was reviewed; review it again.",
+    );
   }
   if (artifact.data.state === "blocked") {
     throw new Error("A blocked developer artifact cannot be approved.");
@@ -558,6 +703,6 @@ export async function approveCleanRoomDeveloperArtifact(args: {
     })
     .eq("id", args.artifactId)
     .eq("tenant_id", args.tenantId);
-  if (updated.error) throw new Error(updated.error.message);
+  throwOnDbError(updated);
   return { id: args.artifactId, state: "approved" as const };
 }

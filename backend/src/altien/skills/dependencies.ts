@@ -1,6 +1,6 @@
 import { createServerSupabase } from "../../lib/supabase";
+import { loadSkillVersion, throwOnDbError, type Db } from "./shared";
 
-type Db = ReturnType<typeof createServerSupabase>;
 export const SKILL_DEPENDENCY_MAX_DEPTH = 5;
 export const SKILL_DEPENDENCY_MAX_NODES = 10;
 
@@ -28,30 +28,15 @@ type DependencyEdge = {
   required: boolean;
 };
 
-async function versionAndSkill(versionId: string, tenantId: string, db: Db) {
-  const version = await db
-    .from("altien_skill_versions")
-    .select("*")
-    .eq("id", versionId)
-    .single();
-  if (version.error || !version.data) throw new Error("Skill version not found.");
-  const skill = await db
-    .from("altien_skills")
-    .select("*")
-    .eq("id", version.data.skill_id)
-    .eq("tenant_id", tenantId)
-    .is("deleted_at", null)
-    .single();
-  if (skill.error || !skill.data) throw new Error("Skill version not found.");
-  return { version: version.data, skill: skill.data };
-}
+const versionAndSkill = (versionId: string, tenantId: string, db: Db) =>
+  loadSkillVersion({ tenantId, versionId, db });
 
 async function edges(versionId: string, db: Db): Promise<DependencyEdge[]> {
   const result = await db
     .from("altien_skill_dependencies")
     .select("*")
     .eq("version_id", versionId);
-  if (result.error) throw new Error(result.error.message);
+  throwOnDbError(result);
   return (result.data ?? []) as DependencyEdge[];
 }
 
@@ -118,7 +103,7 @@ export async function setSkillDependency(args: {
     .eq("version_id", args.versionId)
     .eq("dependency_skill_id", dependency.skill.id)
     .maybeSingle();
-  if (existing.error) throw new Error(existing.error.message);
+  throwOnDbError(existing);
   const payload = {
     dependency_version_id: args.dependencyVersionId,
     required: args.required,
@@ -135,7 +120,7 @@ export async function setSkillDependency(args: {
         dependency_skill_id: dependency.skill.id,
         ...payload,
       });
-  if (write.error) throw new Error(write.error.message);
+  throwOnDbError(write);
   try {
     await resolveSkillDependencyGraph({ rootVersionId: args.versionId, db });
   } catch (error) {

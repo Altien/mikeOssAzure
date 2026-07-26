@@ -205,6 +205,7 @@ export function SkillsLibrary() {
                 [skill.version.id]: {
                     id: artifact.id,
                     filename: artifact.filename,
+                    reviewPayloadHash: artifact.reviewPayloadHash,
                 },
             }));
             setDeveloperRequirementByVersion((current) => ({
@@ -225,7 +226,10 @@ export function SkillsLibrary() {
 
     const approveArtifact = (versionId: string, artifact: DraftArtifact) =>
         void runForVersion(versionId, async () => {
-            await approveCleanRoomDeveloperArtifact(artifact.id);
+            await approveCleanRoomDeveloperArtifact(
+                artifact.id,
+                artifact.reviewPayloadHash,
+            );
             setDraftArtifactByVersion((current) => ({
                 ...current,
                 [versionId]: undefined,

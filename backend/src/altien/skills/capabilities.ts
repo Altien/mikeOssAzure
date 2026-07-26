@@ -8,14 +8,12 @@ import {
   providerForModel,
   type UserApiKeys,
 } from "../../lib/llm";
-import type { createServerSupabase } from "../../lib/supabase";
 import type {
   GeneratedSkillAnalysis,
   SkillCapabilityRequirement,
 } from "./analysis";
 import { AUTHORITY_TRACE_TOOL_NAMES } from "../authorityTrace/chatTools";
-
-type Db = ReturnType<typeof createServerSupabase>;
+import { throwOnDbError, type Db } from "./shared";
 
 export type ToolCatalogueItem = {
   name: string;
@@ -92,7 +90,7 @@ export async function inspectMcpToolCatalogue(
       "openai_tool_name, description, input_schema, output_schema, enabled, requires_confirmation, user_mcp_connectors!inner(user_id, enabled)",
     )
     .eq("user_mcp_connectors.user_id", userId);
-  if (result.error) throw new Error(result.error.message);
+  throwOnDbError(result);
   return (result.data ?? []).map((row) => {
     const connector = row.user_mcp_connectors as
       | { enabled?: boolean }

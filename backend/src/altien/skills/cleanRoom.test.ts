@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  CLEAN_ROOM_SNAPSHOT_RUN_WORDS,
+  evaluateCleanRoomLeakage,
   findCleanRoomLeakage,
   generateCleanRoomBrief,
 } from "./cleanRoom";
@@ -48,5 +50,47 @@ describe("clean-room developer briefs", () => {
     const copied =
       "distinctiveImplementationSequence createHiddenTransportWithRetryBudget and then serializeEveryPrivateInternalDetail before returning the secret response payload";
     expect(findCleanRoomLeakage(copied, [source])).toHaveLength(1);
+  });
+});
+
+describe("evaluateCleanRoomLeakage", () => {
+  const implementation = {
+    path: "src/transport.ts",
+    sha256: "transport-hash",
+    text: Array.from(
+      { length: 120 },
+      (_unused, index) => `implementationToken${index}`,
+    ).join(" "),
+  };
+
+  it("fails a brief that reproduces a long verbatim span", () => {
+    const copied = Array.from(
+      { length: CLEAN_ROOM_SNAPSHOT_RUN_WORDS + 5 },
+      (_unused, index) => `implementationToken${index}`,
+    ).join(" ");
+    const result = evaluateCleanRoomLeakage(
+      `# Brief\n\n${copied}\n`,
+      [implementation],
+      { runWords: CLEAN_ROOM_SNAPSHOT_RUN_WORDS },
+    );
+    expect(result.passed).toBe(false);
+    expect(result.violations[0]).toMatchObject({
+      path: "src/transport.ts",
+      words: CLEAN_ROOM_SNAPSHOT_RUN_WORDS,
+    });
+  });
+
+  it("passes a behavioural brief that only shares short phrases", () => {
+    const brief =
+      "# Brief\n\nThe tool returns matching records for a query and rejects an empty query. " +
+      "implementationToken1 implementationToken2 implementationToken3 appear only as short quotations.";
+    const result = evaluateCleanRoomLeakage(brief, [implementation], {
+      runWords: CLEAN_ROOM_SNAPSHOT_RUN_WORDS,
+    });
+    expect(result).toMatchObject({
+      passed: true,
+      runWords: CLEAN_ROOM_SNAPSHOT_RUN_WORDS,
+      violations: [],
+    });
   });
 });

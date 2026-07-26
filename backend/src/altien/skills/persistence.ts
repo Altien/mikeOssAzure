@@ -11,8 +11,31 @@ import type {
   SkillSnapshotFile,
   ValidatedSkillSnapshot,
 } from "./archive";
+import { exactArrayBuffer, throwOnDbError, type Db } from "./shared";
 
-type Db = ReturnType<typeof createServerSupabase>;
+/**
+ * How an incoming skill was tied to an existing tenant skill.
+ *
+ * `content_hash` and `github_source` are strong evidence: the import is the
+ * same artifact, or the same repository entrypoint, so it becomes a new draft
+ * version of the prior skill. `zip_source` (matching source filename and
+ * entrypoint set) and `declared_name` are only suggestive — spec OSS-7 states
+ * ZIP identity is never silently inferred solely from frontmatter name — so
+ * they are reported as a possible match for explicit confirmation in the
+ * import review conversation and the draft stays a separate skill.
+ */
+export type SkillIdentityEvidence =
+  | "content_hash"
+  | "github_source"
+  | "zip_source"
+  | "declared_name";
+
+export type SkillIdentityCandidate = {
+  skillId: string;
+  canonicalName: string;
+  displayName: string;
+  matchedOn: SkillIdentityEvidence;
+};
 
 export type StoredSkillDraft = {
   id: string;
@@ -20,6 +43,8 @@ export type StoredSkillDraft = {
   displayName: string;
   description: string;
   isUpdate?: boolean;
+  /** Set when a prior skill looks related but the evidence is not conclusive. */
+  possibleMatch?: SkillIdentityCandidate;
   version: {
     id: string;
     state: "draft";
@@ -38,25 +63,6 @@ export type StoredSkillSnapshot = {
   sourceDocumentVersionId: string;
   skills: StoredSkillDraft[];
 };
-
-function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  return bytes.buffer.slice(
-    bytes.byteOffset,
-    bytes.byteOffset + bytes.byteLength,
-  ) as ArrayBuffer;
-}
-
-function dbMessage(result: { error?: { message?: string } | null }) {
-  return result.error?.message ?? null;
-}
-
-function throwOnDbError(
-  result: { error?: { message?: string } | null },
-  fallback: string,
-) {
-  const message = dbMessage(result);
-  if (message) throw new Error(message || fallback);
-}
 
 function tenantKey(tenantId: string): string {
   return createHash("sha256").update(tenantId).digest("hex").slice(0, 24);
@@ -206,7 +212,97 @@ async function bestEffortRowCleanup(args: {
   }
 }
 
-export async function storeZipSkillSnapshot(args: {
+function isStrongEvidence(evidence: SkillIdentityEvidence): boolean {
+  return evidence === "content_hash" || evidence === "github_source";
+}
+
+function sameEntrypointSet(a: unknown, b: string[]): boolean {
+  if (!Array.isArray(a) || a.length !== b.length) return false;
+  const left = [...a].map(String).sort();
+  const right = [...b].sort();
+  return left.every((value, index) => value === right[index]);
+}
+
+/**
+ * Decides how much the incoming skill actually proves about being the same
+ * skill as `candidateSkillId` (which matched only by canonical declared name).
+ */
+async function identityEvidence(args: {
+  db: Db;
+  tenantId: string;
+  candidateSkillId: string;
+  entrypointPath: string;
+  entrypointSha256: string;
+  sourceKind: "zip" | "github";
+  sourceFilename: string;
+  entrypointPaths: string[];
+  github?: { repository: string; selectedPath: string };
+}): Promise<SkillIdentityEvidence> {
+  const versions = await args.db
+    .from("altien_skill_versions")
+    .select("id, snapshot_id, entrypoint_path, original_content_hash")
+    .eq("skill_id", args.candidateSkillId);
+  throwOnDbError(versions, "Failed to resolve prior skill versions.");
+  const versionRows = (versions.data ?? []) as Array<Record<string, unknown>>;
+  if (
+    versionRows.some(
+      (row) => String(row.original_content_hash ?? "") === args.entrypointSha256,
+    )
+  ) {
+    return "content_hash";
+  }
+  const snapshotIds = [
+    ...new Set(
+      versionRows
+        .map((row) => String(row.snapshot_id ?? ""))
+        .filter((value) => !!value),
+    ),
+  ];
+  if (!snapshotIds.length) return "declared_name";
+  const snapshots = await args.db
+    .from("altien_skill_import_snapshots")
+    .select(
+      "id, source_kind, source_filename, github_repository, github_selected_path, manifest",
+    )
+    .eq("tenant_id", args.tenantId)
+    .in("id", snapshotIds);
+  throwOnDbError(snapshots, "Failed to resolve prior skill provenance.");
+  const snapshotById = new Map(
+    ((snapshots.data ?? []) as Array<Record<string, unknown>>).map(
+      (row) => [String(row.id), row] as const,
+    ),
+  );
+  let weak: SkillIdentityEvidence = "declared_name";
+  for (const row of versionRows) {
+    const snapshot = snapshotById.get(String(row.snapshot_id ?? ""));
+    if (!snapshot) continue;
+    if (
+      args.sourceKind === "github" &&
+      snapshot.source_kind === "github" &&
+      !!args.github?.repository &&
+      String(snapshot.github_repository ?? "") === args.github.repository &&
+      String(snapshot.github_selected_path ?? "") ===
+        (args.github.selectedPath ?? "") &&
+      String(row.entrypoint_path ?? "") === args.entrypointPath
+    ) {
+      return "github_source";
+    }
+    if (
+      args.sourceKind === "zip" &&
+      snapshot.source_kind === "zip" &&
+      String(snapshot.source_filename ?? "") === args.sourceFilename &&
+      sameEntrypointSet(
+        (snapshot.manifest as { entrypoints?: unknown } | null)?.entrypoints,
+        args.entrypointPaths,
+      )
+    ) {
+      weak = "zip_source";
+    }
+  }
+  return weak;
+}
+
+export async function storeSkillSnapshot(args: {
   tenantId: string;
   importedBy: string;
   sourceFilename: string;
@@ -435,7 +531,41 @@ export async function storeZipSkillSnapshot(args: {
     const drafts: StoredSkillDraft[] = [];
     for (const skill of args.snapshot.skills) {
       const declaredCanonical = canonicalName(skill.declaredName);
-      const existingSkill = existingByCanonical.get(declaredCanonical);
+      const candidateRow = existingByCanonical.get(declaredCanonical) ?? null;
+      const entrypointFile = preparedFiles.find(
+        (item) => item.file.relativePath === skill.entrypointPath,
+      );
+      if (!entrypointFile) {
+        throw new Error("Skill entrypoint was not persisted.");
+      }
+      const evidence = candidateRow
+        ? await identityEvidence({
+            db,
+            tenantId: args.tenantId,
+            candidateSkillId: String(candidateRow.id),
+            entrypointPath: skill.entrypointPath,
+            entrypointSha256: entrypointFile.file.sha256,
+            sourceKind: args.sourceKind ?? "zip",
+            sourceFilename,
+            entrypointPaths: args.snapshot.skills.map(
+              (item) => item.entrypointPath,
+            ),
+            github: args.github,
+          })
+        : null;
+      const linkedSkill = evidence && isStrongEvidence(evidence)
+        ? candidateRow
+        : null;
+      const possibleMatch: SkillIdentityCandidate | undefined =
+        evidence && !isStrongEvidence(evidence) && candidateRow
+          ? {
+              skillId: String(candidateRow.id),
+              canonicalName: String(candidateRow.canonical_name),
+              displayName: String(candidateRow.display_name),
+              matchedOn: evidence,
+            }
+          : undefined;
+      const existingSkill = linkedSkill;
       const draft = existingSkill
         ? {
             skillId: String(existingSkill.id),
@@ -461,10 +591,7 @@ export async function storeZipSkillSnapshot(args: {
           display_name: skill.declaredName,
         });
       }
-      const entrypoint = preparedFiles.find(
-        (item) => item.file.relativePath === skill.entrypointPath,
-      );
-      if (!entrypoint) throw new Error("Skill entrypoint was not persisted.");
+      const entrypoint = entrypointFile;
       const versionRow = await db.from("altien_skill_versions").insert({
         id: draft.versionId,
         skill_id: draft.skillId,
@@ -480,6 +607,14 @@ export async function storeZipSkillSnapshot(args: {
           licence_paths: skill.licencePaths,
           warnings: args.snapshot.warnings,
           mcp_requirements: args.snapshot.mcpRequirements ?? [],
+          identity: {
+            declared_canonical_name: declaredCanonical,
+            matched_on: evidence ?? null,
+            linked_prior_skill_id: existingSkill
+              ? String(existingSkill.id)
+              : null,
+            possible_match: possibleMatch ?? null,
+          },
         },
       });
       throwOnDbError(versionRow, "Failed to create imported skill version.");
@@ -489,6 +624,7 @@ export async function storeZipSkillSnapshot(args: {
         displayName: skill.declaredName,
         description: skill.description,
         isUpdate: !!existingSkill,
+        ...(possibleMatch ? { possibleMatch } : {}),
         version: {
           id: draft.versionId,
           state: "draft",
