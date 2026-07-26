@@ -550,6 +550,9 @@ export async function resolveCapabilityContractWithLlm(args: {
     model: args.model,
     apiKeys: args.apiKeys,
     maxTokens: 3_000,
+    // A behavioural comparison against a fixed catalogue; extra reasoning
+    // budget invents justifications rather than finding better matches.
+    reasoningEffort: "low",
     systemPrompt: `Compare imported skill requirements with tool contracts.
 You may choose any first-party or MCP candidate when its observable behaviour
 is an acceptable replacement. Compare purpose, inputs, outputs, errors and

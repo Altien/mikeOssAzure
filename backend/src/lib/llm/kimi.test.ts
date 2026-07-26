@@ -223,4 +223,25 @@ describe("Kimi K3 API adapter", () => {
         expect(createMock).toHaveBeenCalledTimes(2);
         expect(createMock.mock.calls[1][0].tools).toBeUndefined();
     });
+
+    it("sends the requested reasoning effort, and omits it when unset", async () => {
+        // kimi-k3 reasons at "max" by default and rejects the `thinking`
+        // parameter, so reasoning_effort is the only way to bound it.
+        await completeKimiText({
+            model: "kimi-k3",
+            user: "Analyse this",
+            apiKeys: { kimi: "org-kimi-key" },
+            reasoningEffort: "low",
+        });
+        expect(createMock.mock.calls[0][0].reasoning_effort).toBe("low");
+
+        await completeKimiText({
+            model: "kimi-k3",
+            user: "Analyse this",
+            apiKeys: { kimi: "org-kimi-key" },
+        });
+        expect(createMock.mock.calls[1][0]).not.toHaveProperty(
+            "reasoning_effort",
+        );
+    });
 });

@@ -4,7 +4,21 @@ import {
   getGitHubSkillOAuthConnection,
   githubSkillOAuthConfigured,
 } from "./githubOAuth";
+import { isAllowedModelId } from "../../lib/llm/models";
 import { throwOnDbError, type Db } from "./shared";
+
+/**
+ * Model used to analyse an imported skill package and to resolve its
+ * capability contract. This is closer to code review than to the lightweight
+ * work the fast model exists for, so the deployment can nominate a stronger
+ * model without changing anyone's chat settings. Falls back to the importing
+ * administrator's fast model when unset or set to an unknown id.
+ */
+export function skillAnalysisModel(fastModel: string): string {
+  const configured = process.env.ALTIEN_SKILL_ANALYSIS_MODEL?.trim();
+  if (configured && isAllowedModelId(configured)) return configured;
+  return fastModel;
+}
 
 export async function getGitHubSkillImportPolicy(
   tenantId: string,

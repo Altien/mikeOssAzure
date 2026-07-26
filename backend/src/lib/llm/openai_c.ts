@@ -257,6 +257,12 @@ export type OpenAICompatibleCompleteParams = {
     user: string;
     maxTokens?: number;
     apiKeys?: UserApiKeys;
+    /**
+     * Provider-side reasoning budget. Kimi K3 reasons at `max` by default and
+     * does not accept the `thinking` parameter, so this is the only way to
+     * keep a bounded extraction task from over-reasoning its way off-task.
+     */
+    reasoningEffort?: "low" | "high" | "max";
 };
 
 export async function completeOpenAICompatibleText(
@@ -273,6 +279,14 @@ export async function completeOpenAICompatibleText(
         model: params.model,
         messages,
         max_completion_tokens: params.maxTokens ?? 512,
+        // Moonshot accepts "max", which is outside the OpenAI SDK's own
+        // ReasoningEffort union, so the field is cast rather than the call.
+        ...(params.reasoningEffort
+            ? {
+                  reasoning_effort:
+                      params.reasoningEffort as unknown as "low" | "high",
+              }
+            : {}),
     });
     return resp.choices[0]?.message?.content ?? "";
 }

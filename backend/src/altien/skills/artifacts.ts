@@ -5,6 +5,7 @@ import { createServerSupabase } from "../../lib/supabase";
 import { getUserModelSettings } from "../../lib/userSettings";
 import { planSkillRename, type AdaptationFile } from "./adaptation";
 import { hashActionPayload } from "./actions";
+import { skillAnalysisModel } from "./settings";
 import {
   CLEAN_ROOM_GENERATOR_RUN_WORDS,
   CLEAN_ROOM_SNAPSHOT_RUN_WORDS,
@@ -497,7 +498,7 @@ export async function createCleanRoomDeveloperArtifact(args: {
       linkedSources: linked.notes,
     },
     sources,
-    model: settings.fast_model,
+    model: skillAnalysisModel(settings.fast_model),
     apiKeys: settings.api_keys,
   });
   // Recorded on the artifact so a reviewer sees which declared links were

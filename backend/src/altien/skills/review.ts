@@ -36,7 +36,7 @@ import { acquireGitHubSkill } from "./github";
 import { resolveSelectedProjectDocuments } from "./invocation";
 import { getGitHubSkillOAuthToken } from "./githubOAuth";
 import { storeSkillSnapshot } from "./persistence";
-import { getGitHubSkillImportPolicy } from "./settings";
+import { getGitHubSkillImportPolicy, skillAnalysisModel } from "./settings";
 import { SkillResourceStore } from "./resources";
 import { getProjectSkillPin } from "./pins";
 import {
@@ -164,7 +164,7 @@ export async function analyseSkillVersion(args: {
       instructions,
       deterministicFindings: context.version.deterministic_analysis ?? {},
       toolCatalogue,
-      model: settings.fast_model,
+      model: skillAnalysisModel(settings.fast_model),
       apiKeys: settings.api_keys,
     });
     const completedAt = new Date().toISOString();
@@ -1061,7 +1061,7 @@ export async function postSkillReviewMessage(args: {
     analysis: context.version.generated_analysis as never,
     catalogue: await catalogueFor(args.userId, db),
     skillDependencies,
-    model: settings.fast_model,
+    model: skillAnalysisModel(settings.fast_model),
     apiKeys: settings.api_keys,
   });
   if (contract.blockers.length > 0) {
