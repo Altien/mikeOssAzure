@@ -261,6 +261,15 @@ export async function persistSkillRename(args: {
     oldCanonicalName: String(loaded.skill.canonical_name),
     newDisplayName: args.newDisplayName,
   });
+  const forksExistingSkill =
+    !!loaded.skill.current_version_id &&
+    String(loaded.skill.current_version_id) !== args.versionId;
+  if (
+    forksExistingSkill &&
+    plan.newCanonicalName === String(loaded.skill.canonical_name)
+  ) {
+    throw new Error("Import as requires a different available skill name.");
+  }
   const collision = await db
     .from("altien_skills")
     .select("id")
@@ -306,9 +315,23 @@ export async function persistSkillRename(args: {
     }),
     tree_hash: plan.treeHash,
   };
+  const targetSkillId = forksExistingSkill ? randomUUID() : String(loaded.skill.id);
+  if (forksExistingSkill) {
+    const createdSkill = await db.from("altien_skills").insert({
+      id: targetSkillId,
+      tenant_id: args.tenantId,
+      canonical_name: plan.newCanonicalName,
+      display_name: plan.newDisplayName,
+      description: String(loaded.skill.description),
+      created_by: args.adaptedBy,
+      updated_by: args.adaptedBy,
+    });
+    if (createdSkill.error) throw new Error(createdSkill.error.message);
+  }
   const versionWrite = await db
     .from("altien_skill_versions")
     .update({
+      ...(forksExistingSkill ? { skill_id: targetSkillId } : {}),
       entrypoint_path: plan.newEntrypointPath,
       adapted_root_folder_id: stored.rootFolderId,
       adapted_manifest: adaptedManifest,
@@ -322,19 +345,24 @@ export async function persistSkillRename(args: {
     })
     .eq("id", args.versionId);
   if (versionWrite.error) throw new Error(versionWrite.error.message);
-  const skillWrite = await db
-    .from("altien_skills")
-    .update({
-      canonical_name: plan.newCanonicalName,
-      display_name: plan.newDisplayName,
-      updated_by: args.adaptedBy,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", loaded.skill.id)
-    .eq("tenant_id", args.tenantId);
-  if (skillWrite.error) throw new Error(skillWrite.error.message);
+  if (!forksExistingSkill) {
+    const skillWrite = await db
+      .from("altien_skills")
+      .update({
+        canonical_name: plan.newCanonicalName,
+        display_name: plan.newDisplayName,
+        updated_by: args.adaptedBy,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", loaded.skill.id)
+      .eq("tenant_id", args.tenantId);
+    if (skillWrite.error) throw new Error(skillWrite.error.message);
+  }
   return {
-    skillId: String(loaded.skill.id),
+    skillId: targetSkillId,
+    forkedFromSkillId: forksExistingSkill
+      ? String(loaded.skill.id)
+      : undefined,
     versionId: args.versionId,
     displayName: plan.newDisplayName,
     canonicalName: plan.newCanonicalName,

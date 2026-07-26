@@ -10,6 +10,7 @@ export type SkillListItem = {
     canonicalName: string;
     displayName: string;
     description: string;
+    isUpdate?: boolean;
     version: {
         id: string;
         state: "draft" | "enabled" | "disabled";

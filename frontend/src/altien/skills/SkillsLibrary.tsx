@@ -413,7 +413,9 @@ export function SkillsLibrary() {
                                     {skill.displayName}
                                 </h2>
                                 <span className="rounded-full bg-slate-100 px-2 py-1 text-xs capitalize text-slate-600">
-                                    {skill.version.state}
+                                    {skill.isUpdate
+                                        ? "update draft"
+                                        : skill.version.state}
                                 </span>
                             </div>
                             <p className="mt-2 text-sm text-slate-600">
@@ -485,7 +487,11 @@ export function SkillsLibrary() {
                                                         }),
                                                     )
                                                 }
-                                                placeholder="Import as…"
+                                                placeholder={
+                                                    skill.isUpdate
+                                                        ? "Import update as…"
+                                                        : "Rename as…"
+                                                }
                                                 aria-label={`Rename ${skill.displayName}`}
                                                 className="min-w-48 rounded-md border border-slate-300 px-3 py-2 text-sm"
                                             />

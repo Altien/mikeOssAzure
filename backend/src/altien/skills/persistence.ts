@@ -600,6 +600,14 @@ export async function listTenantSkills(
         canonicalName: String(skill.canonical_name),
         displayName: String(skill.display_name),
         description: String(skill.description),
+        ...(options.includeDrafts
+          ? {
+              isUpdate:
+                current.state === "draft" &&
+                !!skill.current_version_id &&
+                String(skill.current_version_id) !== String(current.id),
+            }
+          : {}),
         version: {
           id: String(current.id),
           state: String(current.state),
