@@ -48,6 +48,7 @@ const REVIEW_SCOPES: { id: ReviewScope; label: string }[] = [
     { id: "in-project", label: "In Project" },
     { id: "standalone", label: "Standalone" },
 ];
+const PAGE_SIZE = 20;
 
 function formatDate(iso: string) {
     return new Date(iso).toLocaleDateString(undefined, {
@@ -87,15 +88,19 @@ export default function TabularReviewsPage() {
             try {
                 const [r, p] = await Promise.all([
                     listTabularReviews(undefined, {
-                        limit: 20,
-                        offset: page * 20,
+                        limit: PAGE_SIZE + 1,
+                        offset: page * PAGE_SIZE,
                         search: debouncedSearch || undefined,
                     }).catch(() => []),
                     page === 0 ? listProjects().catch(() => []) : null,
                 ]);
                 if (cancelled) return;
-                setReviews((prev) => (page === 0 ? r : [...prev, ...r]));
-                setHasMore(r.length === 20);
+                const nextHasMore = r.length > PAGE_SIZE;
+                const pageRows = nextHasMore ? r.slice(0, PAGE_SIZE) : r;
+                setReviews((prev) =>
+                    page === 0 ? pageRows : [...prev, ...pageRows],
+                );
+                setHasMore(nextHasMore);
                 if (p) setProjects(p);
             } finally {
                 if (!cancelled) {
