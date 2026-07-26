@@ -80,6 +80,7 @@ export default function TabularReviewsPage() {
     const { user } = useAuth();
 
     useEffect(() => {
+        let cancelled = false;
         const loadPage = async () => {
             if (page === 0) setLoading(true);
             else setLoadingMore(true);
@@ -92,17 +93,23 @@ export default function TabularReviewsPage() {
                     }).catch(() => []),
                     page === 0 ? listProjects().catch(() => []) : null,
                 ]);
+                if (cancelled) return;
                 setReviews((prev) => (page === 0 ? r : [...prev, ...r]));
                 setHasMore(r.length === 20);
                 if (p) setProjects(p);
             } finally {
-                setLoading(false);
-                setLoadingMore(false);
+                if (!cancelled) {
+                    setLoading(false);
+                    setLoadingMore(false);
+                }
             }
         };
 
         void loadPage();
-    }, [debouncedSearch, page]);
+        return () => {
+            cancelled = true;
+        };
+    }, [debouncedSearch, page, sort]);
 
     function handleLoadMore() {
         setPage((prev) => prev + 1);
