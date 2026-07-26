@@ -90,6 +90,140 @@ function sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
+const ZIP_CENTRAL_FILE_HEADER_SIGNATURE = 0x02014b50;
+const ZIP_END_OF_CENTRAL_DIRECTORY_SIZE = 22;
+const ZIP_CENTRAL_FILE_HEADER_SIZE = 46;
+const ZIP_MAX_COMMENT_SIZE = 0xffff;
+const ZIP_ENCRYPTED_FLAG = 0x0001;
+
+/**
+ * Reports whether any central directory record sets general purpose bit flag 0
+ * (traditional or strong encryption). JSZip rejects encrypted archives with an
+ * opaque `Error`, so the raw scan lets us fail with a structured code instead.
+ * Archives we cannot walk (truncated, ZIP64, not a ZIP at all) return false and
+ * fall through to JSZip, whose own encryption error is mapped below.
+ */
+function hasEncryptedEntry(input: Uint8Array): boolean {
+  if (input.byteLength < ZIP_END_OF_CENTRAL_DIRECTORY_SIZE) return false;
+  const view = new DataView(input.buffer, input.byteOffset, input.byteLength);
+  const lastRecordStart = input.byteLength - ZIP_END_OF_CENTRAL_DIRECTORY_SIZE;
+  const earliestRecordStart = Math.max(0, lastRecordStart - ZIP_MAX_COMMENT_SIZE);
+  let endOfCentralDirectory = -1;
+  for (let offset = lastRecordStart; offset >= earliestRecordStart; offset -= 1) {
+    if (view.getUint32(offset, true) === ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE) {
+      endOfCentralDirectory = offset;
+      break;
+    }
+  }
+  if (endOfCentralDirectory < 0) return false;
+
+  const recordCount = view.getUint16(endOfCentralDirectory + 10, true);
+  let offset = view.getUint32(endOfCentralDirectory + 16, true);
+  for (let index = 0; index < recordCount; index += 1) {
+    if (offset + ZIP_CENTRAL_FILE_HEADER_SIZE > input.byteLength) return false;
+    if (view.getUint32(offset, true) !== ZIP_CENTRAL_FILE_HEADER_SIGNATURE) {
+      return false;
+    }
+    const flags = view.getUint16(offset + 8, true);
+    if ((flags & ZIP_ENCRYPTED_FLAG) === ZIP_ENCRYPTED_FLAG) return true;
+    const nameLength = view.getUint16(offset + 28, true);
+    const extraLength = view.getUint16(offset + 30, true);
+    const commentLength = view.getUint16(offset + 32, true);
+    offset +=
+      ZIP_CENTRAL_FILE_HEADER_SIZE + nameLength + extraLength + commentLength;
+  }
+  return false;
+}
+
+type StreamingZipObject = JSZip.JSZipObject & {
+  internalStream(type: "uint8array"): JSZip.JSZipStreamHelper<Uint8Array>;
+};
+
+function concatChunks(chunks: Uint8Array[], byteLength: number): Uint8Array {
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+/**
+ * Decompresses one entry with the expansion limits applied to every chunk, so a
+ * high-ratio ZIP bomb is aborted mid-inflate instead of being fully
+ * materialised in memory before the limits are checked. Pausing stops JSZip
+ * feeding further compressed blocks, so the worst case is the 16 KB block
+ * already inside the inflater (~17 MB at DEFLATE's 1032:1 ceiling) rather than
+ * the entry's full declared — or undeclared — expanded size.
+ */
+function readEntryBytes(
+  entry: JSZip.JSZipObject,
+  relativePath: string,
+  expandedBytesBefore: number,
+): Promise<Uint8Array> {
+  const isSkillMarkdown = path.posix.basename(relativePath) === "SKILL.md";
+  return new Promise<Uint8Array>((resolve, reject) => {
+    const stream = (entry as StreamingZipObject).internalStream("uint8array");
+    const chunks: Uint8Array[] = [];
+    let entryBytes = 0;
+    let settled = false;
+
+    const abort = (code: string, message: string) => {
+      settled = true;
+      chunks.length = 0;
+      stream.pause();
+      reject(new SkillArchiveValidationError(code, message));
+    };
+
+    stream
+      .on("data", (chunk) => {
+        if (settled) return;
+        entryBytes += chunk.byteLength;
+        if (entryBytes > SKILL_IMPORT_LIMITS.fileBytes) {
+          abort(
+            "file_size_limit",
+            `'${relativePath}' exceeds the ${SKILL_IMPORT_LIMITS.fileBytes} byte limit.`,
+          );
+          return;
+        }
+        if (
+          isSkillMarkdown &&
+          entryBytes > SKILL_IMPORT_LIMITS.skillMarkdownBytes
+        ) {
+          abort(
+            "skill_markdown_size_limit",
+            `'${relativePath}' exceeds the ${SKILL_IMPORT_LIMITS.skillMarkdownBytes} byte SKILL.md limit.`,
+          );
+          return;
+        }
+        if (
+          expandedBytesBefore + entryBytes >
+          SKILL_IMPORT_LIMITS.expandedBytes
+        ) {
+          abort(
+            "expanded_size_limit",
+            `Expanded ZIP exceeds the ${SKILL_IMPORT_LIMITS.expandedBytes} byte limit.`,
+          );
+          return;
+        }
+        chunks.push(chunk);
+      })
+      .on("error", (error) => {
+        if (settled) return;
+        settled = true;
+        reject(error);
+      })
+      .on("end", () => {
+        if (settled) return;
+        settled = true;
+        resolve(concatChunks(chunks, entryBytes));
+      })
+      .resume();
+  });
+}
+
 const TEXT_EXTENSIONS = new Set([
   ".md",
   ".txt",
@@ -334,10 +468,17 @@ export async function validateSkillZip(
     );
   }
 
+  if (hasEncryptedEntry(input)) {
+    fail("encrypted_archive", "Encrypted ZIP archives are not supported.");
+  }
+
   let zip: JSZip;
   try {
     zip = await JSZip.loadAsync(input, { createFolders: true });
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && /encrypted/i.test(error.message)) {
+      fail("encrypted_archive", "Encrypted ZIP archives are not supported.");
+    }
     fail("invalid_zip", "The uploaded file is not a supported ZIP archive.");
   }
 
@@ -369,29 +510,8 @@ export async function validateSkillZip(
     if (isSymlink(entry)) {
       fail("symlink", `Symlink '${relativePath}' is not allowed.`);
     }
-    const bytes = await entry.async("uint8array");
-    if (bytes.byteLength > SKILL_IMPORT_LIMITS.fileBytes) {
-      fail(
-        "file_size_limit",
-        `'${relativePath}' exceeds the ${SKILL_IMPORT_LIMITS.fileBytes} byte limit.`,
-      );
-    }
-    if (
-      path.posix.basename(relativePath) === "SKILL.md" &&
-      bytes.byteLength > SKILL_IMPORT_LIMITS.skillMarkdownBytes
-    ) {
-      fail(
-        "skill_markdown_size_limit",
-        `'${relativePath}' exceeds the ${SKILL_IMPORT_LIMITS.skillMarkdownBytes} byte SKILL.md limit.`,
-      );
-    }
+    const bytes = await readEntryBytes(entry, relativePath, expandedBytes);
     expandedBytes += bytes.byteLength;
-    if (expandedBytes > SKILL_IMPORT_LIMITS.expandedBytes) {
-      fail(
-        "expanded_size_limit",
-        `Expanded ZIP exceeds the ${SKILL_IMPORT_LIMITS.expandedBytes} byte limit.`,
-      );
-    }
     const classification = classifyFile(relativePath);
     files.push({
       relativePath,
