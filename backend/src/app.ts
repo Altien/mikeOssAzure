@@ -26,6 +26,7 @@ import { caseLawRouter } from "./routes/caseLaw";
 import { helpRouter } from "./routes/help";
 import { diagRouter } from "./routes/diag";
 import { authorityTraceRouter } from "./altien/authorityTrace/router";
+import { skillsRouter } from "./altien/skills/router";
 
 // ── Rate-limit configuration (from upstream ba6f771) ───────────────────────
 
@@ -240,6 +241,7 @@ export function buildApp(): express.Express {
     uploadLimiter,
   );
   app.post("/api/projects/:projectId/documents", uploadLimiter);
+  app.post("/api/altien/skills/imports/zip", uploadLimiter);
   // Export / data-deletion limiters (upstream 3a10943). Dev mounts the user
   // router at both /api/user and /api/users, so limit both aliases.
   for (const userBase of ["/api/user", "/api/users"]) {
@@ -265,6 +267,7 @@ export function buildApp(): express.Express {
   app.use("/api/case-law", caseLawRouter);
   app.use("/api/help", helpRouter);
   app.use("/api/authority-trace", authorityTraceRouter);
+  app.use("/api/altien/skills", skillsRouter);
   app.use("/api/auth", authRouter);
   app.use("/api/llm", llmRouter);
   app.use("/api/admin/diagnostics", diagnosticsRouter);

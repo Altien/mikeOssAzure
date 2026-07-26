@@ -7,6 +7,7 @@ import {
     FolderOpen,
     Table2,
     Library,
+    PackageOpen,
     User,
     ChevronsUpDown,
     ChevronDown,
@@ -27,6 +28,7 @@ const NAV_ITEMS = [
     { href: "/projects", label: "Projects", icon: FolderOpen },
     { href: "/tabular-reviews", label: "Tabular Review", icon: Table2 },
     { href: "/workflows", label: "Workflows", icon: Library },
+    { href: "/skills", label: "Skills", icon: PackageOpen },
 ];
 
 interface AppSidebarProps {
