@@ -8,21 +8,36 @@ import {
 } from "./analysis";
 import {
   assertActionIntegrity,
+  createAcquireDependencyAction,
   createEnableAction,
   createLinkPriorSkillAction,
+  createRenameSkillAction,
   isAffirmativeAuthorization,
   isRejection,
+  parseSkillActionAmendments,
+  SKILL_AMENDMENT_SYNTAX,
   type PendingSkillAction,
+  type SkillActionAmendment,
 } from "./actions";
+import { persistSkillRename } from "./artifacts";
 import {
+  applyCapabilityAmendments,
   firstPartyToolCatalogue,
   inspectMcpToolCatalogue,
   resolveCapabilityContractWithLlm,
+  type ToolCatalogueItem,
 } from "./capabilities";
 import {
   dependencyBindings,
+  missingDeclaredGitHubDependencies,
   resolvedDependencyBindings,
 } from "./dependencies";
+import { acquireGitHubSkill } from "./github";
+import { resolveSelectedProjectDocuments } from "./invocation";
+import { getGitHubSkillOAuthToken } from "./githubOAuth";
+import { storeSkillSnapshot } from "./persistence";
+import { getGitHubSkillImportPolicy } from "./settings";
+import { SkillResourceStore } from "./resources";
 import { getProjectSkillPin } from "./pins";
 import {
   loadSkillVersionContext,
@@ -334,12 +349,416 @@ async function executeLinkPriorSkill(args: {
   };
 }
 
+/**
+ * Read-only snapshot access for the review conversation.
+ *
+ * The conversation has no model tool loop — analysis is one bounded
+ * completion — so rather than inventing one, list/search/read are
+ * deterministic commands handled server-side before anything else. They are
+ * backed by the same tenant-scoped read-only `SkillResourceStore` the runtime
+ * uses, over the version's own immutable manifest, so no content crosses the
+ * tenant boundary and nothing is ever written or executed.
+ */
+type SnapshotCommand =
+  | { kind: "list" }
+  | { kind: "search"; query: string }
+  | { kind: "read"; path: string; offset: number };
+
+const SNAPSHOT_READ_MAX_CHARS = 8_000;
+const SNAPSHOT_SEARCH_MAX_RESULTS = 10;
+
+export const SKILL_SNAPSHOT_COMMAND_SYNTAX =
+  "list · search <text> · read <path> [@offset]";
+
+function parseSnapshotCommand(message: string): SnapshotCommand | null {
+  const trimmed = message.trim();
+  if (/^list(\s+(files|snapshot))?[.!]?$/i.test(trimmed)) return { kind: "list" };
+  const search = /^search\s+(.{1,200})$/i.exec(trimmed);
+  if (search) {
+    return {
+      kind: "search",
+      query: search[1].trim().replace(/^["']|["']$/g, ""),
+    };
+  }
+  const read = /^read\s+(\S{1,400})(?:\s+@?(\d{1,7}))?$/i.exec(trimmed);
+  if (read) {
+    return {
+      kind: "read",
+      path: read[1].replace(/^["']|["']$/g, ""),
+      offset: read[2] ? Number(read[2]) : 0,
+    };
+  }
+  return null;
+}
+
+function snapshotResourceStore(
+  version: Record<string, unknown>,
+  snapshot: Record<string, unknown>,
+  db: Db,
+) {
+  const manifest = (version.adapted_manifest ?? snapshot.manifest) as
+    | { files?: Array<Record<string, unknown>> }
+    | undefined;
+  const files = (manifest?.files ?? []).filter(
+    (file) => !!file.document_version_id,
+  );
+  return new SkillResourceStore(
+    files.map((file) => ({
+      path: String(file.path),
+      bytes: Number(file.bytes ?? 0),
+      media_type: String(file.media_type ?? "application/octet-stream"),
+      inspection_class: String(file.inspection_class ?? "binary") as
+        | "text"
+        | "source"
+        | "binary"
+        | "nested_archive",
+      document_version_id: String(file.document_version_id),
+      sha256: String(file.sha256 ?? ""),
+    })),
+    db,
+  );
+}
+
+async function runSnapshotCommand(args: {
+  command: SnapshotCommand;
+  conversationId: string;
+  version: Record<string, unknown>;
+  snapshot: Record<string, unknown>;
+  db: Db;
+}) {
+  const store = snapshotResourceStore(args.version, args.snapshot, args.db);
+  let content: string;
+  let result: unknown;
+  if (args.command.kind === "list") {
+    const files = store.list();
+    result = files;
+    content = [
+      `Snapshot files (${files.length}):`,
+      ...files.map(
+        (file) =>
+          `${file.path} — ${file.bytes} bytes${file.readable ? "" : ` (inert: ${file.inert_reason})`}`,
+      ),
+    ].join("\n");
+  } else if (args.command.kind === "search") {
+    const found = await store.search({
+      query: args.command.query,
+      max_results: SNAPSHOT_SEARCH_MAX_RESULTS,
+    });
+    result = found;
+    content = found.matches.length
+      ? [
+          `Matches for “${args.command.query}” (${found.matches.length}):`,
+          ...found.matches.map(
+            (match) => `${match.path} @${match.offset}: ${match.context}`,
+          ),
+        ].join("\n")
+      : `No snapshot text matches “${args.command.query}”.`;
+  } else {
+    const read = await store.read({
+      path: args.command.path,
+      offset: args.command.offset,
+      max_chars: SNAPSHOT_READ_MAX_CHARS,
+    });
+    result = read;
+    content = `${read.path} @${read.offset}${read.truncated ? " (truncated)" : ""}:\n${read.text}`;
+  }
+  await addMessage({
+    conversationId: args.conversationId,
+    role: "assistant",
+    content,
+    structuredContent: { type: "snapshot_view", command: args.command, result },
+    db: args.db,
+  });
+  return {
+    conversationId: args.conversationId,
+    outcome: "snapshot" as const,
+    command: args.command,
+    result,
+  };
+}
+
+async function catalogueFor(userId: string, db: Db): Promise<ToolCatalogueItem[]> {
+  return [
+    ...firstPartyToolCatalogue(),
+    ...(await inspectMcpToolCatalogue(userId, db)),
+  ];
+}
+
+/** Expiry, version binding, and payload integrity, before any payload is used. */
+async function assertPendingCurrent(
+  pending: Record<string, unknown>,
+  versionId: string,
+  db: Db,
+) {
+  if (
+    new Date(String(pending.expires_at)).getTime() <= Date.now() ||
+    pending.version_id !== versionId
+  ) {
+    await db
+      .from("altien_skill_pending_actions")
+      .update({ state: "expired" })
+      .eq("id", String(pending.id));
+    throw new Error("The pending action has expired.");
+  }
+  assertActionIntegrity({
+    payload: pending.payload as Record<string, unknown>,
+    payloadHash: String(pending.payload_hash),
+  });
+}
+
+/**
+ * Story 15: an amendment never edits the reviewed payload in place. The
+ * reviewed action is marked superseded and a NEW action is proposed whose
+ * hash covers exactly the amended content, so approval keeps verifying the
+ * hash of what the administrator was shown.
+ */
+async function amendPendingAction(args: {
+  tenantId: string;
+  versionId: string;
+  userId: string;
+  conversationId: string;
+  pending: Record<string, unknown>;
+  amendments: SkillActionAmendment[];
+  skill: Record<string, unknown>;
+  db: Db;
+}) {
+  if (args.pending.action_type !== "enable_version") {
+    throw new Error("Only a pending enable action can be amended.");
+  }
+  await assertPendingCurrent(args.pending, args.versionId, args.db);
+  const rename = args.amendments.find(
+    (amendment): amendment is Extract<SkillActionAmendment, { kind: "rename" }> =>
+      amendment.kind === "rename",
+  );
+  const capabilityAmendments = args.amendments.filter(
+    (amendment) => amendment.kind !== "rename",
+  );
+  if (rename && capabilityAmendments.length) {
+    throw new Error(
+      "A rename amendment resets analysis, so it must be issued on its own.",
+    );
+  }
+  const payload = args.pending.payload as {
+    analysisInputHash?: string;
+    executionContract?: Record<string, unknown>;
+  };
+  let action: PendingSkillAction;
+  let content: string;
+  if (rename) {
+    action = createRenameSkillAction({
+      versionId: args.versionId,
+      currentDisplayName: String(args.skill.display_name),
+      newDisplayName: rename.displayName,
+      amendedFromActionId: String(args.pending.id),
+    });
+    content = [
+      `Amended pending action: rename this draft from “${String(args.skill.display_name)}” to “${rename.displayName}”.`,
+      "This supersedes the pending enable action. Approving rewrites the adapted tree and resets analysis, so the version must be analysed and proposed for enablement again.",
+      `Reply “yes” to authorize this payload, “no” to reject it, or amend again: ${SKILL_AMENDMENT_SYNTAX}`,
+    ].join("\n");
+  } else {
+    const amended = applyCapabilityAmendments({
+      contract: (payload.executionContract ?? {}) as Record<string, unknown>,
+      amendments: capabilityAmendments,
+      catalogue: await catalogueFor(args.userId, args.db),
+    });
+    const approved = Array.isArray(amended.contract.approvedToolNames)
+      ? (amended.contract.approvedToolNames as string[])
+      : [];
+    action = createEnableAction({
+      versionId: args.versionId,
+      analysisInputHash: String(payload.analysisInputHash ?? ""),
+      executionContract: amended.contract,
+      amendedFromActionId: String(args.pending.id),
+    });
+    content = [
+      "Amended pending action: enable this exact reviewed version with the amended capability set.",
+      ...amended.effects,
+      `Approved tools: ${approved.length ? approved.join(", ") : "none"}.`,
+      `Project read baseline: ${amended.contract.projectRead ? "on" : "off"}.`,
+      `Reply “yes” to authorize this amended payload, “no” to reject it, or amend again: ${SKILL_AMENDMENT_SYNTAX}`,
+    ].join("\n");
+  }
+  const superseded = await args.db
+    .from("altien_skill_pending_actions")
+    .update({ state: "superseded", superseded_by_action_id: action.id })
+    .eq("id", String(args.pending.id));
+  throwOnDbError(superseded);
+  const proposed = await proposePendingAction({
+    tenantId: args.tenantId,
+    versionId: args.versionId,
+    conversationId: args.conversationId,
+    action,
+    content,
+    db: args.db,
+  });
+  return {
+    ...proposed,
+    outcome: "amended",
+    supersededActionId: String(args.pending.id),
+  };
+}
+
+/**
+ * Applies an authorized `rename_skill` amendment through the ordinary
+ * adaptation path, which resets analysis by design.
+ */
+async function executeRenameSkill(args: {
+  tenantId: string;
+  versionId: string;
+  userId: string;
+  conversationId: string;
+  userMessageId: string;
+  pending: Record<string, unknown>;
+  skill: Record<string, unknown>;
+  rename: typeof persistSkillRename;
+  db: Db;
+}) {
+  const payload = args.pending.payload as {
+    versionId?: string;
+    currentDisplayName?: string;
+    newDisplayName?: string;
+  };
+  if (
+    String(payload.versionId) !== args.versionId ||
+    String(payload.currentDisplayName) !== String(args.skill.display_name)
+  ) {
+    throw new Error("The pending action no longer matches this import.");
+  }
+  const renamed = await args.rename({
+    tenantId: args.tenantId,
+    versionId: args.versionId,
+    newDisplayName: String(payload.newDisplayName),
+    adaptedBy: args.userId,
+    db: args.db,
+  });
+  await args.db
+    .from("altien_skill_pending_actions")
+    .update({
+      state: "executed",
+      authorised_by: args.userId,
+      authorised_by_message_id: args.userMessageId,
+      authorised_at: new Date().toISOString(),
+      execution_result: {
+        displayName: renamed.displayName,
+        canonicalName: renamed.canonicalName,
+        contentHash: renamed.contentHash,
+      },
+    })
+    .eq("id", String(args.pending.id));
+  await addMessage({
+    conversationId: args.conversationId,
+    role: "assistant",
+    content: `This draft is now “${renamed.displayName}”. Its adapted tree changed, so analysis was reset — analyse it again before proposing enablement.`,
+    structuredContent: {
+      type: "action_executed",
+      actionId: args.pending.id,
+      versionId: args.versionId,
+    },
+    db: args.db,
+  });
+  return {
+    conversationId: args.conversationId,
+    outcome: "renamed",
+    actionId: args.pending.id,
+    displayName: renamed.displayName,
+  };
+}
+
+/**
+ * Story 38: acquisition of a declared-but-missing dependency runs only after
+ * the administrator authorizes this exact repository/ref payload, and then
+ * only through the ordinary gated acquisition path — the same deployment and
+ * tenant gates, OAuth token, host restriction, and DMS pipeline as a manual
+ * GitHub import. The acquired snapshot lands as a draft; it is not bound as a
+ * dependency and it is not enabled.
+ */
+async function executeAcquireDependency(args: {
+  tenantId: string;
+  versionId: string;
+  userId: string;
+  conversationId: string;
+  userMessageId: string;
+  pending: Record<string, unknown>;
+  acquire: typeof acquireGitHubSkill;
+  storeSnapshot: typeof storeSkillSnapshot;
+  githubPolicy: typeof getGitHubSkillImportPolicy;
+  githubToken: typeof getGitHubSkillOAuthToken;
+  db: Db;
+}) {
+  const payload = args.pending.payload as {
+    versionId?: string;
+    dependencyName?: string;
+    url?: string;
+  };
+  if (String(payload.versionId) !== args.versionId) {
+    throw new Error("The pending action no longer matches this import.");
+  }
+  const policy = await args.githubPolicy(args.tenantId, args.db);
+  if (!policy.deploymentAllowed) {
+    throw new Error("GITHUB_SKILL_IMPORT_DEPLOYMENT_DENIED");
+  }
+  if (!policy.tenantEnabled) {
+    throw new Error("GITHUB_SKILL_IMPORT_TENANT_DISABLED");
+  }
+  const token = (await args.githubToken(args.tenantId, args.db)) ?? undefined;
+  const acquired = await args.acquire({ url: String(payload.url), token });
+  const stored = await args.storeSnapshot({
+    tenantId: args.tenantId,
+    importedBy: args.userId,
+    sourceFilename: `${acquired.provenance.repository.replace(/[^a-z0-9.-]+/gi, "-")}-${acquired.provenance.resolvedCommitSha.slice(0, 12)}.zip`,
+    sourceBytes: acquired.sourceBytes,
+    snapshot: acquired.snapshot,
+    sourceKind: "github",
+    github: acquired.provenance,
+    db: args.db,
+  });
+  await args.db
+    .from("altien_skill_pending_actions")
+    .update({
+      state: "executed",
+      authorised_by: args.userId,
+      authorised_by_message_id: args.userMessageId,
+      authorised_at: new Date().toISOString(),
+      execution_result: {
+        snapshotId: stored.id,
+        repository: acquired.provenance.repository,
+        resolvedCommitSha: acquired.provenance.resolvedCommitSha,
+        draftSkillIds: (stored.skills ?? []).map((skill) => skill.id),
+      },
+    })
+    .eq("id", String(args.pending.id));
+  await addMessage({
+    conversationId: args.conversationId,
+    role: "assistant",
+    content: `Acquired “${String(payload.dependencyName)}” from ${acquired.provenance.repository} at commit ${acquired.provenance.resolvedCommitSha.slice(0, 12)} as a draft. Review and enable it, then bind it as a dependency, before this skill can use it.`,
+    structuredContent: {
+      type: "action_executed",
+      actionId: args.pending.id,
+      snapshotId: stored.id,
+    },
+    db: args.db,
+  });
+  return {
+    conversationId: args.conversationId,
+    outcome: "acquired",
+    actionId: args.pending.id,
+    snapshotId: stored.id,
+  };
+}
+
 export async function postSkillReviewMessage(args: {
   tenantId: string;
   versionId: string;
   userId: string;
   message: string;
   db?: Db;
+  acquire?: typeof acquireGitHubSkill;
+  storeSnapshot?: typeof storeSkillSnapshot;
+  githubPolicy?: typeof getGitHubSkillImportPolicy;
+  githubToken?: typeof getGitHubSkillOAuthToken;
+  rename?: typeof persistSkillRename;
+  settings?: typeof getUserModelSettings;
 }) {
   const db = args.db ?? createServerSupabase();
   const context = await loadSkillVersionContext({ ...args, db });
@@ -351,6 +770,16 @@ export async function postSkillReviewMessage(args: {
     actorUserId: args.userId,
     db,
   });
+  const snapshotCommand = parseSnapshotCommand(args.message);
+  if (snapshotCommand) {
+    return await runSnapshotCommand({
+      command: snapshotCommand,
+      conversationId,
+      version: context.version,
+      snapshot: context.snapshot,
+      db,
+    });
+  }
   const pendingResult = await db
     .from("altien_skill_pending_actions")
     .select("*")
@@ -363,6 +792,23 @@ export async function postSkillReviewMessage(args: {
     string,
     unknown
   > | null;
+
+  const amendments = parseSkillActionAmendments(args.message);
+  if (amendments) {
+    if (!pending) {
+      throw new Error("There is no pending action to amend.");
+    }
+    return await amendPendingAction({
+      tenantId: args.tenantId,
+      versionId: args.versionId,
+      userId: args.userId,
+      conversationId,
+      pending,
+      amendments,
+      skill: context.skill,
+      db,
+    });
+  }
 
   if (pending && isRejection(args.message)) {
     await db
@@ -378,21 +824,43 @@ export async function postSkillReviewMessage(args: {
     return { conversationId, outcome: "rejected", actionId: pending.id };
   }
 
-  if (pending && isAffirmativeAuthorization(args.message)) {
-    if (
-      new Date(String(pending.expires_at)).getTime() <= Date.now() ||
-      pending.version_id !== args.versionId
-    ) {
-      await db
-        .from("altien_skill_pending_actions")
-        .update({ state: "expired" })
-        .eq("id", String(pending.id));
-      throw new Error("The pending action has expired.");
+  // “enable” is an affirmative for an enable action only: it must never be
+  // read as authorization for an acquisition, rename, or identity link.
+  const enableWord = /^enable(\s+it)?[.!]?$/i.test(args.message.trim());
+  if (
+    pending &&
+    isAffirmativeAuthorization(args.message) &&
+    !(enableWord && pending.action_type !== "enable_version")
+  ) {
+    await assertPendingCurrent(pending, args.versionId, db);
+    if (pending.action_type === "rename_skill") {
+      return await executeRenameSkill({
+        tenantId: args.tenantId,
+        versionId: args.versionId,
+        userId: args.userId,
+        conversationId,
+        userMessageId,
+        pending,
+        skill: context.skill,
+        rename: args.rename ?? persistSkillRename,
+        db,
+      });
     }
-    assertActionIntegrity({
-      payload: pending.payload as Record<string, unknown>,
-      payloadHash: String(pending.payload_hash),
-    });
+    if (pending.action_type === "acquire_dependency") {
+      return await executeAcquireDependency({
+        tenantId: args.tenantId,
+        versionId: args.versionId,
+        userId: args.userId,
+        conversationId,
+        userMessageId,
+        pending,
+        acquire: args.acquire ?? acquireGitHubSkill,
+        storeSnapshot: args.storeSnapshot ?? storeSkillSnapshot,
+        githubPolicy: args.githubPolicy ?? getGitHubSkillImportPolicy,
+        githubToken: args.githubToken ?? getGitHubSkillOAuthToken,
+        db,
+      });
+    }
     if (pending.action_type === "link_prior_skill") {
       return await executeLinkPriorSkill({
         tenantId: args.tenantId,
@@ -527,14 +995,62 @@ export async function postSkillReviewMessage(args: {
       "Unresolved identity references must be reviewed before enablement.",
     );
   }
-  const settings = await getUserModelSettings(args.userId, db);
+  // A declared `github.com` dependency URL is evidence, not an instruction:
+  // nothing is fetched until the administrator authorizes the exact payload.
+  const missingDependencies = await missingDeclaredGitHubDependencies({
+    version: context.version,
+    versionId: args.versionId,
+    db,
+  });
+  if (missingDependencies.length) {
+    const acquisitions = await db
+      .from("altien_skill_pending_actions")
+      .select("payload, state")
+      .eq("version_id", args.versionId)
+      .eq("action_type", "acquire_dependency");
+    throwOnDbError(acquisitions);
+    const handled = new Set(
+      (acquisitions.data ?? [])
+        .filter((row) =>
+          ["pending", "executed", "rejected"].includes(String(row.state)),
+        )
+        .map((row) => String((row.payload as { url?: string })?.url ?? "")),
+    );
+    const next = missingDependencies.find(
+      (dependency) => !handled.has(dependency.url),
+    );
+    if (next) {
+      return await proposePendingAction({
+        tenantId: args.tenantId,
+        versionId: args.versionId,
+        conversationId,
+        action: createAcquireDependencyAction({
+          versionId: args.versionId,
+          dependencyName: next.name,
+          url: next.url,
+          owner: next.owner,
+          repository: next.repository,
+          ref: next.ref,
+          path: next.path,
+        }),
+        content: [
+          `This skill declares the dependency “${next.name}” at ${next.url}, and no approved version of it is bound.`,
+          `Pending action: acquire exactly ${next.repository}${next.ref ? ` at ref ${next.ref}` : ""}${next.path ? `, path ${next.path}` : ""} through the gated GitHub acquisition service. Nothing is fetched until you authorize it, and the result is a draft that still needs review, enablement, and an explicit dependency binding.`,
+          "Reply “yes” to authorize this payload, or “no” to leave the dependency unmet.",
+        ].join("\n"),
+        db,
+      });
+    }
+  }
+
+  const settings = await (args.settings ?? getUserModelSettings)(
+    args.userId,
+    db,
+  );
   const skillDependencies = await dependencyBindings(args.versionId, db);
   const contract = await resolveCapabilityContractWithLlm({
     analysis: context.version.generated_analysis as never,
-    catalogue: [
-      ...firstPartyToolCatalogue(),
-      ...(await inspectMcpToolCatalogue(args.userId, db)),
-    ],
+    catalogue: await catalogueFor(args.userId, db),
     skillDependencies,
     model: settings.fast_model,
     apiKeys: settings.api_keys,
@@ -555,8 +1071,21 @@ export async function postSkillReviewMessage(args: {
       analysisInputHash: String(context.version.analysis_input_hash),
       executionContract: contract,
     }),
-    content:
-      "Pending action: enable this exact reviewed version for project-bound runs. Reply “yes” to authorize this payload.",
+    content: [
+      "Pending action: enable this exact reviewed version for project-bound runs.",
+      `Approved tools: ${contract.approvedToolNames.length ? contract.approvedToolNames.join(", ") : "none"}.`,
+      ...contract.mappings
+        .filter((mapping) =>
+          ["needs_admin_selection", "proposed"].includes(mapping.status),
+        )
+        .map((mapping) =>
+          mapping.status === "needs_admin_selection"
+            ? `“${mapping.requirement.name}” names no explicit capability and grants nothing until you select a minimum set.`
+            : `“${mapping.requirement.name}” has the name-match candidate ${mapping.mappedToolNames.join(", ")}, which is not approved on name equality alone.`,
+        ),
+      `Reply “yes” to authorize this payload, “no” to reject it, or amend it: ${SKILL_AMENDMENT_SYNTAX}`,
+      `You can also inspect the snapshot: ${SKILL_SNAPSHOT_COMMAND_SYNTAX}`,
+    ].join("\n"),
     db,
   });
 }
@@ -576,6 +1105,13 @@ export async function getSkillReview(args: {
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: true });
   throwOnDbError(messages);
+  const pendingActions = await db
+    .from("altien_skill_pending_actions")
+    .select("*")
+    .eq("conversation_id", conversationId)
+    .eq("state", "pending")
+    .order("created_at", { ascending: false });
+  throwOnDbError(pendingActions);
   return {
     conversationId,
     skill: context.skill,
@@ -583,6 +1119,14 @@ export async function getSkillReview(args: {
     deterministicAnalysis: context.version.deterministic_analysis ?? {},
     generatedAnalysis: context.version.generated_analysis ?? {},
     dependencies: await dependencyBindings(args.versionId, db),
+    declaredGitHubDependencies: await missingDeclaredGitHubDependencies({
+      version: context.version,
+      versionId: args.versionId,
+      db,
+    }),
+    pendingActions: pendingActions.data ?? [],
+    amendmentSyntax: SKILL_AMENDMENT_SYNTAX,
+    snapshotCommandSyntax: SKILL_SNAPSHOT_COMMAND_SYNTAX,
     messages: messages.data ?? [],
   };
 }
@@ -592,9 +1136,15 @@ export async function createSkillRun(args: {
   versionId: string;
   projectId: string;
   userId: string;
+  selectedDocumentIds?: readonly unknown[];
   db?: Db;
 }) {
   const db = args.db ?? createServerSupabase();
+  const selectedDocumentIds = await resolveSelectedProjectDocuments({
+    projectId: args.projectId,
+    documentIds: args.selectedDocumentIds ?? [],
+    db,
+  });
   let context = await loadSkillVersionContext({ ...args, db });
   const pin = await getProjectSkillPin({
     tenantId: args.tenantId,
@@ -635,6 +1185,7 @@ export async function createSkillRun(args: {
     root_version_id: resolvedVersionId,
     bound_by: args.userId,
     dependency_versions: dependencies,
+    selected_document_ids: selectedDocumentIds,
   });
   throwOnDbError(binding);
   return {

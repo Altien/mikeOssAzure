@@ -186,6 +186,47 @@ describe("Skills routes", () => {
       .expect(403);
   });
 
+  it("passes amendment and snapshot commands through verbatim", async () => {
+    postSkillReviewMessageMock.mockResolvedValue({
+      conversationId: "review-1",
+      outcome: "amended",
+      supersededActionId: "action-1",
+      action: { id: "action-2", payloadHash: "hash-2" },
+    });
+    const amended = await request(makeApp())
+      .post("/api/altien/skills/versions/version-1/review/messages")
+      .send({ message: "amend tools list_documents" })
+      .expect(200);
+    expect(amended.body).toMatchObject({ outcome: "amended" });
+    expect(postSkillReviewMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: "tenant-1",
+        versionId: "version-1",
+        message: "amend tools list_documents",
+      }),
+    );
+
+    postSkillReviewMessageMock.mockResolvedValue({
+      conversationId: "review-1",
+      outcome: "snapshot",
+      command: { kind: "read", path: "reader/SKILL.md", offset: 0 },
+      result: { path: "reader/SKILL.md", text: "..." },
+    });
+    const snapshot = await request(makeApp())
+      .post("/api/altien/skills/versions/version-1/review/messages")
+      .send({ message: "read reader/SKILL.md" })
+      .expect(200);
+    expect(snapshot.body).toMatchObject({ outcome: "snapshot" });
+
+    postSkillReviewMessageMock.mockRejectedValue(
+      new Error("Unrecognised amendment."),
+    );
+    await request(makeApp())
+      .post("/api/altien/skills/versions/version-1/review/messages")
+      .send({ message: "amend nonsense" })
+      .expect(409);
+  });
+
   it("starts a run only after project access passes", async () => {
     checkProjectAccessMock.mockResolvedValue({ ok: true });
     createSkillRunMock.mockResolvedValue({

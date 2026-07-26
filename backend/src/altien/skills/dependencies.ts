@@ -1,4 +1,5 @@
 import { createServerSupabase } from "../../lib/supabase";
+import { parseGitHubSourceUrl } from "./github";
 import { loadSkillVersion, throwOnDbError, type Db } from "./shared";
 
 export const SKILL_DEPENDENCY_MAX_DEPTH = 5;
@@ -187,6 +188,98 @@ export async function dependencyBindings(versionId: string, db: Db) {
     });
   }
   return result;
+}
+
+/**
+ * A dependency the imported skill declares in its own frontmatter, together
+ * with the `github.com` location it names. Declaring it acquires nothing:
+ * it is evidence for a proposal a TenantAdmin must authorize (story 38).
+ */
+export type DeclaredGitHubDependency = {
+  name: string;
+  url: string;
+  owner: string;
+  repository: string;
+  ref: string | null;
+  path: string | null;
+};
+
+const DEPENDENCY_KEYS = /^(dependencies|dependency|requires|required_skills)$/i;
+
+function normalizeName(value: string) {
+  return value.trim().toLocaleLowerCase().replace(/[\s-]+/g, "_");
+}
+
+function nameFor(prefix: string, parsed: ReturnType<typeof parseGitHubSourceUrl>) {
+  const cleaned = prefix
+    .replace(/^[-*\s]+/, "")
+    .replace(/["']/g, "")
+    .replace(/[:=]\s*$/, "")
+    .trim();
+  if (cleaned && cleaned.length <= 128) return cleaned;
+  const tail = parsed.treeTail.slice(1).filter(Boolean).pop();
+  return tail || parsed.repository;
+}
+
+/**
+ * Deterministically reads declared dependencies out of the entrypoint
+ * frontmatter. Only `https://github.com` locations are recognised — the single
+ * acquisition host in this delivery — and anything unparseable is ignored
+ * rather than guessed at.
+ */
+export function declaredGitHubDependencies(
+  version: Record<string, unknown>,
+): DeclaredGitHubDependency[] {
+  const metadata = (version.declared_metadata ?? {}) as Record<string, unknown>;
+  const found = new Map<string, DeclaredGitHubDependency>();
+  for (const [key, raw] of Object.entries(metadata)) {
+    if (!DEPENDENCY_KEYS.test(key) || typeof raw !== "string") continue;
+    for (const line of raw.split(/[\n,]+/)) {
+      const match = /https:\/\/github\.com\/\S+/i.exec(line);
+      if (!match) continue;
+      const url = match[0].replace(/[).,;'"]+$/, "");
+      let parsed;
+      try {
+        parsed = parseGitHubSourceUrl(url);
+      } catch {
+        continue;
+      }
+      const treeTail = parsed.treeTail;
+      const dependency: DeclaredGitHubDependency = {
+        name: nameFor(line.slice(0, match.index), parsed),
+        url,
+        owner: parsed.owner,
+        repository: `${parsed.owner}/${parsed.repository}`,
+        ref: treeTail[0] ?? null,
+        path: treeTail.length > 1 ? treeTail.slice(1).join("/") : null,
+      };
+      if (!found.has(dependency.url)) found.set(dependency.url, dependency);
+    }
+  }
+  return [...found.values()];
+}
+
+/**
+ * Declared GitHub dependencies with no approved binding on this version.
+ * Nothing is fetched here; missing dependencies are never acquired silently.
+ */
+export async function missingDeclaredGitHubDependencies(args: {
+  version: Record<string, unknown>;
+  versionId: string;
+  db: Db;
+}): Promise<DeclaredGitHubDependency[]> {
+  const declared = declaredGitHubDependencies(args.version);
+  if (!declared.length) return [];
+  const bound = await dependencyBindings(args.versionId, args.db);
+  const boundNames = new Set(
+    bound.flatMap((binding) => [
+      normalizeName(binding.canonicalName),
+      normalizeName(binding.displayName),
+    ]),
+  );
+  return declared.filter(
+    (dependency) => !boundNames.has(normalizeName(dependency.name)),
+  );
 }
 
 export async function resolvedDependencyBindings(

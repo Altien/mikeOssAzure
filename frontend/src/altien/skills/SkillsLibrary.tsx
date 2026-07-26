@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PackageOpen } from "lucide-react";
-import { listProjects } from "@/app/lib/mikeApi";
-import type { Project } from "@/app/components/shared/types";
+import { getProject, listProjects } from "@/app/lib/mikeApi";
+import type { Document, Project } from "@/app/components/shared/types";
 import {
     adaptSkillName,
     analyseSkillVersion,
@@ -16,6 +16,7 @@ import {
     disableSkill,
     getGitHubSkillImportPolicy,
     getSkillPackageInfo,
+    getSkillReview,
     importSkillZip,
     importSkillFromGitHub,
     listSkills,
@@ -24,11 +25,12 @@ import {
     setProjectSkillPin,
     type SkillListItem,
     type SkillPackageInfo,
+    type SkillPendingAction,
     type GitHubSkillImportPolicy,
 } from "./api";
 import { messageFrom, useBusyAction } from "./useBusyAction";
 import { ImportPanel } from "./ImportPanel";
-import { ReviewPanel } from "./ReviewPanel";
+import { formatSnapshotResult, ReviewPanel } from "./ReviewPanel";
 import { AdaptationPanel, type DraftArtifact } from "./AdaptationPanel";
 import { RunAndPinPanel } from "./RunAndPinPanel";
 import { PackagesPanel, type SkillPackageKind } from "./PackagesPanel";
@@ -51,7 +53,20 @@ export function SkillsLibrary() {
     const [error, setError] = useState<string | null>(null);
     const [projects, setProjects] = useState<Project[]>([]);
     const [projectByVersion, setProjectByVersion] = useState<Record<string, string>>({});
-    const [pendingEnable, setPendingEnable] = useState<Record<string, boolean>>({});
+    const [documentsByProject, setDocumentsByProject] = useState<
+        Record<string, Document[]>
+    >({});
+    const [documentsByVersion, setDocumentsByVersion] = useState<
+        Record<string, string[]>
+    >({});
+    const [pendingActionByVersion, setPendingActionByVersion] = useState<
+        Record<string, SkillPendingAction | undefined>
+    >({});
+    const [amendByVersion, setAmendByVersion] = useState<Record<string, string>>({});
+    const [snapshotByVersion, setSnapshotByVersion] = useState<Record<string, string>>({});
+    const [snapshotOutputByVersion, setSnapshotOutputByVersion] = useState<
+        Record<string, string | undefined>
+    >({});
     const [packageInfo, setPackageInfo] = useState<Record<string, SkillPackageInfo>>({});
     const [githubPolicy, setGithubPolicy] =
         useState<GitHubSkillImportPolicy | null>(null);
@@ -77,6 +92,39 @@ export function SkillsLibrary() {
             const result = await listSkills();
             setSkills(result.skills);
             setCanManage(result.canManage);
+            // Pending actions outlive the page: rehydrate them so a reload
+            // still shows exactly what is awaiting approval.
+            if (result.canManage) {
+                const reviewable = result.skills.filter(
+                    (skill) =>
+                        skill.version.state === "draft" &&
+                        skill.version.analysisState === "succeeded",
+                );
+                const reviews = await Promise.all(
+                    reviewable.map((skill) =>
+                        getSkillReview(skill.version.id)
+                            .then((review) => [skill.version.id, review] as const)
+                            .catch(() => null),
+                    ),
+                );
+                setPendingActionByVersion((current) => {
+                    const next = { ...current };
+                    for (const entry of reviews) {
+                        if (!entry) continue;
+                        const [versionId, review] = entry;
+                        const row = review?.pendingActions?.[0];
+                        next[versionId] = row
+                            ? {
+                                  id: row.id,
+                                  actionType: row.action_type,
+                                  payload: row.payload,
+                                  payloadHash: row.payload_hash,
+                              }
+                            : undefined;
+                    }
+                    return next;
+                });
+            }
         } catch (caught) {
             setError(messageFrom(caught));
         } finally {
@@ -112,21 +160,86 @@ export function SkillsLibrary() {
             await refresh();
         });
 
+    const setPendingAction = (
+        versionId: string,
+        action: SkillPendingAction | undefined,
+    ) =>
+        setPendingActionByVersion((current) => ({
+            ...current,
+            [versionId]: action,
+        }));
+
     const proposeEnable = (versionId: string) =>
         void runForVersion(versionId, async () => {
             const result = await postSkillReviewMessage(versionId, "enable");
-            setPendingEnable((current) => ({
-                ...current,
-                [versionId]: result.outcome === "proposed",
-            }));
+            setPendingAction(versionId, result.action);
         });
 
-    const confirmEnable = (versionId: string) =>
+    /** Approves whichever exact action is pending: enable, rename, or acquire. */
+    const confirmPending = (versionId: string) =>
         void runForVersion(versionId, async () => {
             await postSkillReviewMessage(versionId, "yes");
-            setPendingEnable((current) => ({ ...current, [versionId]: false }));
+            setPendingAction(versionId, undefined);
             await refresh();
         });
+
+    const rejectPending = (versionId: string) =>
+        void runForVersion(versionId, async () => {
+            await postSkillReviewMessage(versionId, "no");
+            setPendingAction(versionId, undefined);
+        });
+
+    /**
+     * An amendment supersedes the reviewed action with a new one carrying a
+     * new payload hash, so the panel always shows what will actually happen.
+     */
+    const amendPending = (versionId: string) => {
+        const command = amendByVersion[versionId]?.trim();
+        if (!command) return;
+        void runForVersion(versionId, async () => {
+            const result = await postSkillReviewMessage(versionId, command);
+            setPendingAction(versionId, result.action);
+            setAmendByVersion((current) => ({ ...current, [versionId]: "" }));
+        });
+    };
+
+    const runSnapshotCommand = (versionId: string) => {
+        const command = snapshotByVersion[versionId]?.trim();
+        if (!command) return;
+        void runForVersion(versionId, async () => {
+            const result = await postSkillReviewMessage(versionId, command);
+            setSnapshotOutputByVersion((current) => ({
+                ...current,
+                [versionId]: result.result
+                    ? formatSnapshotResult(result.result)
+                    : "No snapshot result.",
+            }));
+        });
+    };
+
+    /** Picking a run project resets the doc selection and lazily loads its documents. */
+    const selectRunProject = (versionId: string, projectId: string) => {
+        setProjectByVersion((current) => ({
+            ...current,
+            [versionId]: projectId,
+        }));
+        setDocumentsByVersion((current) => ({ ...current, [versionId]: [] }));
+        if (projectId && !documentsByProject[projectId]) {
+            void getProject(projectId)
+                .then((project) =>
+                    setDocumentsByProject((current) => ({
+                        ...current,
+                        [projectId]: project.documents ?? [],
+                    })),
+                )
+                .catch(() =>
+                    setDocumentsByProject((current) => ({
+                        ...current,
+                        [projectId]: [],
+                    })),
+                );
+        }
+    };
 
     const run = (skill: SkillListItem) => {
         const projectId = projectByVersion[skill.version.id];
@@ -140,6 +253,7 @@ export function SkillsLibrary() {
                 const result = await runSkillVersion(
                     skill.version.id,
                     projectId,
+                    documentsByVersion[skill.version.id] ?? [],
                 );
                 router.push(
                     `/projects/${encodeURIComponent(projectId)}/assistant/chat/${encodeURIComponent(result.chatId)}`,
@@ -315,12 +429,43 @@ export function SkillsLibrary() {
                                     <ReviewPanel
                                         skill={skill}
                                         busy={busyVersion === skill.version.id}
-                                        pendingEnable={
-                                            !!pendingEnable[skill.version.id]
+                                        pendingAction={
+                                            pendingActionByVersion[
+                                                skill.version.id
+                                            ]
+                                        }
+                                        amendValue={
+                                            amendByVersion[skill.version.id] ??
+                                            ""
+                                        }
+                                        onAmendChange={(value) =>
+                                            setAmendByVersion((current) => ({
+                                                ...current,
+                                                [skill.version.id]: value,
+                                            }))
+                                        }
+                                        onAmend={amendPending}
+                                        snapshotValue={
+                                            snapshotByVersion[
+                                                skill.version.id
+                                            ] ?? ""
+                                        }
+                                        onSnapshotChange={(value) =>
+                                            setSnapshotByVersion((current) => ({
+                                                ...current,
+                                                [skill.version.id]: value,
+                                            }))
+                                        }
+                                        onSnapshotCommand={runSnapshotCommand}
+                                        snapshotOutput={
+                                            snapshotOutputByVersion[
+                                                skill.version.id
+                                            ]
                                         }
                                         onAnalyse={analyse}
                                         onProposeEnable={proposeEnable}
-                                        onConfirmEnable={confirmEnable}
+                                        onConfirmPending={confirmPending}
+                                        onRejectPending={rejectPending}
                                     />
                                     <AdaptationPanel
                                         skill={skill}
@@ -375,11 +520,28 @@ export function SkillsLibrary() {
                                     selectedProjectId={
                                         projectByVersion[skill.version.id] ?? ""
                                     }
-                                    onProjectChange={(projectId) =>
-                                        setProjectByVersion((current) => ({
+                                    projectDocuments={
+                                        documentsByProject[
+                                            projectByVersion[
+                                                skill.version.id
+                                            ] ?? ""
+                                        ] ?? []
+                                    }
+                                    selectedDocumentIds={
+                                        documentsByVersion[skill.version.id] ??
+                                        []
+                                    }
+                                    onDocumentsChange={(documentIds) =>
+                                        setDocumentsByVersion((current) => ({
                                             ...current,
-                                            [skill.version.id]: projectId,
+                                            [skill.version.id]: documentIds,
                                         }))
+                                    }
+                                    onProjectChange={(projectId) =>
+                                        selectRunProject(
+                                            skill.version.id,
+                                            projectId,
+                                        )
                                     }
                                     onRun={run}
                                     onPin={pin}

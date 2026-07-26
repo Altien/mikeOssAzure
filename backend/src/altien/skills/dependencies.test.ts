@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { makeFakeDb } from "../../test/helpers/fakeDb";
 import {
+  declaredGitHubDependencies,
+  missingDeclaredGitHubDependencies,
   resolveSkillDependencyGraph,
   resolvedDependencyBindings,
 } from "./dependencies";
@@ -139,5 +141,97 @@ describe("resolvedDependencyBindings", () => {
         state: "disabled",
       },
     });
+  });
+});
+
+describe("declared GitHub dependencies", () => {
+  const version = {
+    declared_metadata: {
+      name: "citation-review",
+      dependencies: `citation-checker https://github.com/acme/citation-checker/tree/v2/skills/citation-checker
+helper https://github.com/acme/helper
+internal-tool https://gitlab.example.com/acme/internal
+prose about a dependency with no link`,
+    },
+  };
+
+  it("reads only exact github.com locations out of the frontmatter", () => {
+    expect(declaredGitHubDependencies(version)).toEqual([
+      {
+        name: "citation-checker",
+        url: "https://github.com/acme/citation-checker/tree/v2/skills/citation-checker",
+        owner: "acme",
+        repository: "acme/citation-checker",
+        ref: "v2",
+        path: "skills/citation-checker",
+      },
+      {
+        name: "helper",
+        url: "https://github.com/acme/helper",
+        owner: "acme",
+        repository: "acme/helper",
+        ref: null,
+        path: null,
+      },
+    ]);
+  });
+
+  it("ignores a version with no declared dependencies", () => {
+    expect(declaredGitHubDependencies({ declared_metadata: {} })).toEqual([]);
+    expect(declaredGitHubDependencies({})).toEqual([]);
+  });
+
+  it("reports only declarations with no approved binding", async () => {
+    const fake = makeFakeDb((call) => {
+      if (call.table === "altien_skill_dependencies") {
+        return {
+          data: [
+            {
+              version_id: "version-root",
+              dependency_skill_id: "skill-helper",
+              dependency_version_id: "version-helper",
+              required: true,
+            },
+          ],
+          error: null,
+        };
+      }
+      if (call.table === "altien_skill_versions") {
+        return {
+          data: [
+            {
+              id: "version-helper",
+              skill_id: "skill-helper",
+              original_content_hash: "hash-helper",
+              approved_execution_contract: {},
+            },
+          ],
+          error: null,
+        };
+      }
+      if (call.table === "altien_skills") {
+        return {
+          data: [
+            {
+              id: "skill-helper",
+              canonical_name: "helper",
+              display_name: "Helper",
+            },
+          ],
+          error: null,
+        };
+      }
+      return { data: [], error: null };
+    });
+
+    await expect(
+      missingDeclaredGitHubDependencies({
+        version,
+        versionId: "version-root",
+        db: fake.db as never,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({ name: "citation-checker" }),
+    ]);
   });
 });

@@ -1,10 +1,11 @@
 import { Play } from "lucide-react";
-import type { Project } from "@/app/components/shared/types";
+import type { Document, Project } from "@/app/components/shared/types";
 import type { SkillListItem } from "./api";
 
 /**
- * Controls for an enabled skill: pick a project, run it, pin the version to
- * that project, or (for admins) disable the skill.
+ * Controls for an enabled skill: pick a project, optionally narrow which of
+ * its documents the run may read (story 30), run it, pin the version to that
+ * project, or (for admins) disable the skill.
  */
 export function RunAndPinPanel({
     skill,
@@ -12,7 +13,10 @@ export function RunAndPinPanel({
     canManage,
     projects,
     selectedProjectId,
+    projectDocuments,
+    selectedDocumentIds,
     onProjectChange,
+    onDocumentsChange,
     onRun,
     onPin,
     onDisable,
@@ -22,7 +26,10 @@ export function RunAndPinPanel({
     canManage: boolean;
     projects: Project[];
     selectedProjectId: string;
+    projectDocuments: Document[];
+    selectedDocumentIds: string[];
     onProjectChange: (projectId: string) => void;
+    onDocumentsChange: (documentIds: string[]) => void;
     onRun: (skill: SkillListItem) => void;
     onPin: (skill: SkillListItem) => void;
     onDisable: (skill: SkillListItem) => void;
@@ -42,6 +49,30 @@ export function RunAndPinPanel({
                     </option>
                 ))}
             </select>
+            {selectedProjectId && projectDocuments.length > 0 && (
+                <select
+                    multiple
+                    aria-label={`Documents for ${skill.displayName}`}
+                    title="Optional: limit the skill to selected documents. None selected = whole project."
+                    value={selectedDocumentIds}
+                    onChange={(event) =>
+                        onDocumentsChange(
+                            Array.from(
+                                event.target.selectedOptions,
+                                (option) => option.value,
+                            ),
+                        )
+                    }
+                    className="min-w-44 max-w-72 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    size={Math.min(projectDocuments.length, 4)}
+                >
+                    {projectDocuments.map((document) => (
+                        <option key={document.id} value={document.id}>
+                            {document.filename}
+                        </option>
+                    ))}
+                </select>
+            )}
             <button
                 type="button"
                 disabled={busy}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyCapabilityAmendments,
   firstPartyToolCatalogue,
   resolveCapabilityContract,
   resolveCapabilityContractWithLlm,
@@ -383,5 +384,120 @@ describe("skill capability resolution", () => {
       comparison: { versionId: "version-7", contentHash: "hash-7" },
     });
     expect(bound.approvedToolNames).toEqual([]);
+  });
+});
+
+describe("applyCapabilityAmendments", () => {
+  const reviewed = () =>
+    resolveCapabilityContract({
+      analysis: {
+        summary: "Checks citations.",
+        risks: [],
+        unresolvedReferences: [],
+        capabilityRequirements: [
+          {
+            name: "project documents",
+            kind: "project_read",
+            required: true,
+            rationale: "Read the memo.",
+          },
+          {
+            name: "appropriate tools",
+            kind: "first_party_tool",
+            required: false,
+            rationale: "The skill names its tools vaguely.",
+          },
+          {
+            name: "generate_docx",
+            kind: "first_party_tool",
+            required: false,
+            rationale: "Writes a brief.",
+          },
+        ],
+      },
+      catalogue: firstPartyToolCatalogue(),
+    }) as unknown as Record<string, unknown>;
+
+  it("grants an explicit minimum capability set for a vague requirement", () => {
+    const amended = applyCapabilityAmendments({
+      contract: reviewed(),
+      amendments: [
+        {
+          kind: "select_capability",
+          requirementName: "appropriate tools",
+          toolNames: ["generate_docx"],
+        },
+      ],
+      catalogue: firstPartyToolCatalogue(),
+    });
+    expect(amended.contract.approvedToolNames).toContain("generate_docx");
+    expect(
+      (amended.contract.mappings as Array<Record<string, unknown>>)[1],
+    ).toMatchObject({
+      status: "admin_selected",
+      mappedToolNames: ["generate_docx"],
+    });
+    expect(amended.effects[0]).toContain("appropriate tools");
+  });
+
+  it("drops a name-match candidate the administrator refuses", () => {
+    const amended = applyCapabilityAmendments({
+      contract: reviewed(),
+      amendments: [
+        { kind: "reject_capability", requirementName: "generate_docx" },
+      ],
+      catalogue: firstPartyToolCatalogue(),
+    });
+    expect(amended.contract.approvedToolNames).not.toContain("generate_docx");
+    expect(
+      (amended.contract.mappings as Array<Record<string, unknown>>)[2],
+    ).toMatchObject({ status: "admin_rejected", mappedToolNames: [] });
+  });
+
+  it("only ever narrows the approved tool set", () => {
+    const amended = applyCapabilityAmendments({
+      contract: reviewed(),
+      amendments: [{ kind: "restrict_tools", toolNames: ["read_document"] }],
+      catalogue: firstPartyToolCatalogue(),
+    });
+    expect(amended.contract.approvedToolNames).toEqual(["read_document"]);
+
+    expect(() =>
+      applyCapabilityAmendments({
+        contract: reviewed(),
+        amendments: [{ kind: "restrict_tools", toolNames: ["generate_docx"] }],
+        catalogue: firstPartyToolCatalogue(),
+      }),
+    ).toThrow("was not in the reviewed approved set");
+  });
+
+  it("refuses a selection outside the catalogue or already resolved", () => {
+    expect(() =>
+      applyCapabilityAmendments({
+        contract: reviewed(),
+        amendments: [
+          {
+            kind: "select_capability",
+            requirementName: "appropriate tools",
+            toolNames: ["exfiltrate_documents"],
+          },
+        ],
+        catalogue: firstPartyToolCatalogue(),
+      }),
+    ).toThrow("is not in the tool catalogue");
+
+    expect(() =>
+      applyCapabilityAmendments({
+        contract: reviewed(),
+        amendments: [
+          {
+            kind: "select_capability",
+            requirementName: "project documents",
+            toolNames: ["generate_docx"],
+          },
+        ],
+        catalogue: firstPartyToolCatalogue(),
+      }),
+    ).toThrow("cannot be amended");
   });
 });

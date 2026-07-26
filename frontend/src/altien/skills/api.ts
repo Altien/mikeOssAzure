@@ -73,12 +73,49 @@ export function analyseSkillVersion(versionId: string) {
     });
 }
 
+/** An exact pending action the TenantAdmin may approve, amend, or reject. */
+export type SkillPendingAction = {
+    id: string;
+    actionType:
+        | "enable_version"
+        | "link_prior_skill"
+        | "rename_skill"
+        | "acquire_dependency";
+    payload: Record<string, unknown>;
+    payloadHash: string;
+};
+
+export type SkillSnapshotEntry = {
+    path: string;
+    bytes: number;
+    readable: boolean;
+    inert_reason: string | null;
+};
+
+export type SkillSnapshotResult =
+    | SkillSnapshotEntry[]
+    | { matches: Array<{ path: string; offset: number; context: string }> }
+    | { path: string; text: string; truncated: boolean };
+
+export type SkillReviewMessageResult = {
+    conversationId: string;
+    outcome:
+        | "proposed"
+        | "amended"
+        | "enabled"
+        | "rejected"
+        | "renamed"
+        | "acquired"
+        | "linked"
+        | "snapshot";
+    action?: SkillPendingAction;
+    supersededActionId?: string;
+    command?: { kind: "list" | "search" | "read" };
+    result?: SkillSnapshotResult;
+};
+
 export function postSkillReviewMessage(versionId: string, message: string) {
-    return apiRequest<{
-        conversationId: string;
-        outcome: "proposed" | "enabled" | "rejected";
-        action?: { id: string; payloadHash: string };
-    }>(
+    return apiRequest<SkillReviewMessageResult>(
         `/altien/skills/versions/${encodeURIComponent(versionId)}/review/messages`,
         {
             method: "POST",
@@ -88,7 +125,36 @@ export function postSkillReviewMessage(versionId: string, message: string) {
     );
 }
 
-export function runSkillVersion(versionId: string, projectId: string) {
+export type SkillReview = {
+    conversationId: string;
+    pendingActions: Array<{
+        id: string;
+        action_type: SkillPendingAction["actionType"];
+        payload: Record<string, unknown>;
+        payload_hash: string;
+    }>;
+    declaredGitHubDependencies: Array<{
+        name: string;
+        url: string;
+        repository: string;
+        ref: string | null;
+        path: string | null;
+    }>;
+    amendmentSyntax: string;
+    snapshotCommandSyntax: string;
+};
+
+export function getSkillReview(versionId: string) {
+    return apiRequest<SkillReview>(
+        `/altien/skills/versions/${encodeURIComponent(versionId)}/review`,
+    );
+}
+
+export function runSkillVersion(
+    versionId: string,
+    projectId: string,
+    documentIds: string[] = [],
+) {
     return apiRequest<{
         chatId: string;
         projectId: string;
@@ -96,7 +162,7 @@ export function runSkillVersion(versionId: string, projectId: string) {
     }>(`/altien/skills/versions/${encodeURIComponent(versionId)}/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId }),
+        body: JSON.stringify({ projectId, documentIds }),
     });
 }
 

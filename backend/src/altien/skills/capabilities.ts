@@ -13,6 +13,7 @@ import type {
   SkillCapabilityRequirement,
 } from "./analysis";
 import { AUTHORITY_TRACE_TOOL_NAMES } from "../authorityTrace/chatTools";
+import type { SkillActionAmendment } from "./actions";
 import { throwOnDbError, type Db } from "./shared";
 
 export type ToolCatalogueItem = {
@@ -285,6 +286,184 @@ export function resolveCapabilityContract(args: {
       .filter((mapping) => mapping.status === "model_requirement")
       .map((mapping) => mapping.requirement),
     approvedAt: null,
+  };
+}
+
+/** Statuses that actually contribute tool names to the approved set. */
+const GRANTING_STATUSES = [
+  "compatible",
+  "llm_compatible",
+  "connection_required",
+  // Story 23: an explicit TenantAdmin minimum capability set.
+  "admin_selected",
+];
+
+/** Statuses a required requirement may hold without blocking enablement. */
+const NON_BLOCKING_STATUSES = [
+  ...GRANTING_STATUSES,
+  "model_requirement",
+  "dependency_compatible",
+  "needs_admin_selection",
+  // A deliberate refusal is a decision, not a missing capability.
+  "admin_rejected",
+];
+
+type StoredContractMapping = {
+  requirement: { name: string; required?: boolean; kind?: string };
+  status: string;
+  mappedToolNames?: unknown;
+  comparison?: unknown;
+  [key: string]: unknown;
+};
+
+function mappedNames(mapping: StoredContractMapping): string[] {
+  return Array.isArray(mapping.mappedToolNames)
+    ? mapping.mappedToolNames.filter(
+        (name): name is string => typeof name === "string" && !!name.trim(),
+      )
+    : [];
+}
+
+function findMapping(
+  mappings: StoredContractMapping[],
+  name: string,
+): StoredContractMapping {
+  const found = mappings.find(
+    (mapping) => normalize(String(mapping.requirement?.name ?? "")) === normalize(name),
+  );
+  if (!found) {
+    throw new Error(`No reviewed capability requirement is named '${name}'.`);
+  }
+  return found;
+}
+
+/**
+ * Applies TenantAdmin amendments to an already-proposed execution contract.
+ *
+ * Amendments may only narrow or explicitly resolve what the review already
+ * displayed: they can select a minimum capability set for an unresolved
+ * requirement, refuse a proposed name-match candidate, or restrict the
+ * approved tool list to a subset of it. They can never add a tool that was
+ * not already approved, and never clear a blocker.
+ */
+export function applyCapabilityAmendments(args: {
+  contract: Record<string, unknown>;
+  amendments: SkillActionAmendment[];
+  catalogue: ToolCatalogueItem[];
+}): { contract: Record<string, unknown>; effects: string[] } {
+  const mappings: StoredContractMapping[] = (
+    Array.isArray(args.contract.mappings) ? args.contract.mappings : []
+  ).map((mapping) => ({ ...(mapping as StoredContractMapping) }));
+  const effects: string[] = [];
+
+  const selectable = (mapping: StoredContractMapping, name: string) => {
+    if (!["needs_admin_selection", "proposed"].includes(mapping.status)) {
+      throw new Error(
+        `Requirement '${name}' is already resolved as '${mapping.status}' and cannot be amended.`,
+      );
+    }
+  };
+
+  for (const amendment of args.amendments) {
+    if (amendment.kind === "select_capability") {
+      const mapping = findMapping(mappings, amendment.requirementName);
+      selectable(mapping, amendment.requirementName);
+      for (const toolName of amendment.toolNames) {
+        const candidate = args.catalogue.find((tool) => tool.name === toolName);
+        if (!candidate) {
+          throw new Error(`Tool '${toolName}' is not in the tool catalogue.`);
+        }
+        if (!candidate.available) {
+          throw new Error(`Tool '${toolName}' is not currently available.`);
+        }
+      }
+      mapping.status = "admin_selected";
+      mapping.mappedToolNames = [...amendment.toolNames];
+      mapping.comparison = {
+        ...((mapping.comparison as Record<string, unknown>) ?? {}),
+        adminSelection: {
+          basis: "explicit TenantAdmin minimum capability set",
+          selectedToolNames: [...amendment.toolNames],
+        },
+      };
+      effects.push(
+        `Explicit minimum capability set for “${amendment.requirementName}”: ${amendment.toolNames.join(", ")}.`,
+      );
+      continue;
+    }
+    if (amendment.kind === "reject_capability") {
+      const mapping = findMapping(mappings, amendment.requirementName);
+      selectable(mapping, amendment.requirementName);
+      mapping.status = "admin_rejected";
+      mapping.mappedToolNames = [];
+      effects.push(
+        `Refused every candidate for “${amendment.requirementName}”; the version runs without it.`,
+      );
+    }
+  }
+
+  const approvedFrom = (source: StoredContractMapping[]) =>
+    Array.from(
+      new Set(
+        source
+          .filter((mapping) => GRANTING_STATUSES.includes(mapping.status))
+          .flatMap((mapping) => mappedNames(mapping)),
+      ),
+    );
+  let approvedToolNames = approvedFrom(mappings);
+
+  const restriction = args.amendments.find(
+    (amendment) => amendment.kind === "restrict_tools",
+  );
+  if (restriction && restriction.kind === "restrict_tools") {
+    const unknownName = restriction.toolNames.find(
+      (name) => !approvedToolNames.includes(name),
+    );
+    if (unknownName) {
+      throw new Error(
+        `An amendment cannot approve '${unknownName}': it was not in the reviewed approved set.`,
+      );
+    }
+    for (const mapping of mappings) {
+      if (!GRANTING_STATUSES.includes(mapping.status)) continue;
+      const kept = mappedNames(mapping).filter((name) =>
+        restriction.toolNames.includes(name),
+      );
+      if (kept.length) {
+        mapping.mappedToolNames = kept;
+        continue;
+      }
+      mapping.status = "admin_rejected";
+      mapping.mappedToolNames = [];
+    }
+    approvedToolNames = approvedFrom(mappings);
+    effects.push(
+      `Approved tool set restricted to: ${approvedToolNames.length ? approvedToolNames.join(", ") : "none"}.`,
+    );
+  }
+
+  const blockers = mappings.filter(
+    (mapping) =>
+      mapping.requirement?.required === true &&
+      !NON_BLOCKING_STATUSES.includes(mapping.status),
+  );
+  if (blockers.length) {
+    throw new Error(
+      `Required capabilities are missing or unavailable: ${blockers
+        .map((mapping) => mapping.requirement.name)
+        .join(", ")}.`,
+    );
+  }
+  return {
+    contract: {
+      ...args.contract,
+      mappings,
+      approvedToolNames,
+      blockers,
+      amendments: args.amendments,
+      approvedAt: null,
+    },
+    effects,
   };
 }
 

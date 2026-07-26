@@ -821,6 +821,9 @@ skillsRouter.post(
           versionId: req.params.versionId,
           projectId,
           userId: String(res.locals.userId),
+          selectedDocumentIds: Array.isArray(req.body?.documentIds)
+            ? req.body.documentIds
+            : [],
           db,
         }),
       );
