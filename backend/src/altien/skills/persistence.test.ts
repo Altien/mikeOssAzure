@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeFakeDb } from "../../test/helpers/fakeDb";
 import type { ValidatedSkillSnapshot } from "./archive";
 
@@ -13,7 +13,17 @@ vi.mock("../../lib/storage", () => ({
   normalizeDownloadFilename: (name: string) => name,
 }));
 
-import { listTenantSkills, storeSkillSnapshot } from "./persistence";
+import {
+  deleteSkillDraftVersion,
+  listTenantSkills,
+  storeSkillSnapshot,
+} from "./persistence";
+import type { DbCall } from "../../test/helpers/fakeDb";
+
+/** Value of the first filter on `column`, or undefined when unfiltered. */
+function filterValue(call: DbCall, column: string) {
+  return call.filters.find(([, name]) => name === column)?.[2];
+}
 
 function snapshot(): ValidatedSkillSnapshot {
   const skillBytes = new TextEncoder().encode(
@@ -167,7 +177,18 @@ describe("storeSkillSnapshot", () => {
         };
       }
       if (call.table === "altien_skill_versions" && call.op === "select") {
-        return { data: priorVersions, error: null };
+        // The duplicate-import guard asks for one exact content hash; the
+        // identity check asks for every version of the candidate skill.
+        const hash = filterValue(call, "original_content_hash");
+        return {
+          data:
+            hash === undefined
+              ? priorVersions
+              : priorVersions.filter(
+                  (row) => row.original_content_hash === hash,
+                ),
+          error: null,
+        };
       }
       if (
         call.table === "altien_skill_import_snapshots" &&
@@ -257,10 +278,14 @@ describe("storeSkillSnapshot", () => {
     expect(fake.callsFor("altien_skills", "insert")).toHaveLength(1);
   });
 
-  it("imports a matching content hash as a new immutable draft version", async () => {
+  // `unique(skill_id, original_content_hash)` (migration 0027) rejects the
+  // insert; without this guard the administrator sees a raw duplicate-key
+  // error and the bad import is stuck in the library.
+  it("refuses a re-import of content the skill already has", async () => {
     uploadFileMock.mockReset();
     deleteFileMock.mockReset();
     uploadFileMock.mockResolvedValue(undefined);
+    deleteFileMock.mockResolvedValue(undefined);
     const fake = priorSkillDb([
       {
         id: "prior-version",
@@ -269,26 +294,98 @@ describe("storeSkillSnapshot", () => {
         original_content_hash: "b".repeat(64),
       },
     ]);
-    const result = await storeSkillSnapshot({
-      tenantId: "tenant-1",
-      importedBy: "admin-1",
-      sourceFilename: "skills.zip",
-      sourceBytes: new Uint8Array([1, 2, 3]),
-      snapshot: snapshot(),
-      db: fake.db as never,
-    });
-    expect(result.skills[0]).toMatchObject({
-      id: "existing-skill",
-      canonicalName: "review-skill",
-      isUpdate: true,
-      version: { state: "draft" },
-    });
-    expect(result.skills[0].possibleMatch).toBeUndefined();
-    expect(fake.callsFor("altien_skills", "insert")).toHaveLength(0);
-    expect(
-      fake.callsFor("altien_skill_versions", "insert")[0].payload,
-    ).toMatchObject({ skill_id: "existing-skill", state: "draft" });
+
+    await expect(
+      storeSkillSnapshot({
+        tenantId: "tenant-1",
+        importedBy: "admin-1",
+        sourceFilename: "skills.zip",
+        sourceBytes: new Uint8Array([1, 2, 3]),
+        snapshot: snapshot(),
+        db: fake.db as never,
+      }),
+    ).rejects.toThrow("This exact version was already imported");
+
+    expect(fake.callsFor("altien_skill_versions", "insert")).toHaveLength(0);
+    // The refused import takes its own rows and blobs with it.
+    expect(fake.callsFor("altien_skill_import_snapshots", "delete")).toHaveLength(
+      1,
+    );
+    expect(deleteFileMock).toHaveBeenCalledTimes(3);
   });
+
+  /** Prior skill linked by GitHub provenance, so its content hash differs. */
+  function githubPriorSkillDb(options: { failVersionInsert?: boolean } = {}) {
+    return makeFakeDb((call) => {
+      if (
+        options.failVersionInsert &&
+        call.table === "altien_skill_versions" &&
+        call.op === "insert"
+      ) {
+        return { data: null, error: { message: "version insert failed" } };
+      }
+      if (call.table === "projects" && call.op === "select") {
+        return { data: [{ id: "skill-project" }], error: null };
+      }
+      if (call.table === "altien_skills" && call.op === "select") {
+        return {
+          data: [{
+            id: "existing-skill",
+            canonical_name: "review-skill",
+            display_name: "Review Skill",
+          }],
+          error: null,
+        };
+      }
+      if (call.table === "altien_skill_versions" && call.op === "select") {
+        const priorVersions = [{
+          id: "prior-version",
+          snapshot_id: "prior-snapshot",
+          entrypoint_path: "review/SKILL.md",
+          original_content_hash: "d".repeat(64),
+        }];
+        const hash = filterValue(call, "original_content_hash");
+        return {
+          data:
+            hash === undefined
+              ? priorVersions
+              : priorVersions.filter(
+                  (row) => row.original_content_hash === hash,
+                ),
+          error: null,
+        };
+      }
+      if (
+        call.table === "altien_skill_import_snapshots" &&
+        call.op === "select"
+      ) {
+        return {
+          data: [{
+            id: "prior-snapshot",
+            source_kind: "github",
+            github_repository: "github.com/example/skills",
+            github_selected_path: "review",
+          }],
+          error: null,
+        };
+      }
+      return { data: [], error: null };
+    });
+  }
+
+  const githubImport = {
+    tenantId: "tenant-1",
+    importedBy: "admin-1",
+    sourceFilename: "skills.zip",
+    sourceBytes: new Uint8Array([1, 2, 3]),
+    sourceKind: "github" as const,
+    github: {
+      repository: "github.com/example/skills",
+      selectedPath: "review",
+      requestedRef: "main",
+      resolvedCommitSha: "a".repeat(40),
+    },
+  };
 
   // A version added to a pre-existing skill is not cascaded away by deleting
   // the skills this import created — there are none. Without an explicit
@@ -300,24 +397,11 @@ describe("storeSkillSnapshot", () => {
     deleteFileMock.mockReset();
     uploadFileMock.mockResolvedValue(undefined);
     deleteFileMock.mockResolvedValue(undefined);
-    const fake = priorSkillDb(
-      [
-        {
-          id: "prior-version",
-          snapshot_id: "prior-snapshot",
-          entrypoint_path: "review/SKILL.md",
-          original_content_hash: "b".repeat(64),
-        },
-      ],
-      { failVersionInsert: true },
-    );
+    const fake = githubPriorSkillDb({ failVersionInsert: true });
 
     await expect(
       storeSkillSnapshot({
-        tenantId: "tenant-1",
-        importedBy: "admin-1",
-        sourceFilename: "skills.zip",
-        sourceBytes: new Uint8Array([1, 2, 3]),
+        ...githubImport,
         snapshot: snapshot(),
         db: fake.db as never,
       }),
@@ -342,67 +426,340 @@ describe("storeSkillSnapshot", () => {
     uploadFileMock.mockReset();
     deleteFileMock.mockReset();
     uploadFileMock.mockResolvedValue(undefined);
-    const fake = makeFakeDb((call) => {
-      if (call.table === "projects" && call.op === "select") {
-        return { data: [{ id: "skill-project" }], error: null };
-      }
-      if (call.table === "altien_skills" && call.op === "select") {
-        return {
-          data: [{
-            id: "existing-skill",
-            canonical_name: "review-skill",
-            display_name: "Review Skill",
-          }],
-          error: null,
-        };
-      }
-      if (call.table === "altien_skill_versions" && call.op === "select") {
-        return {
-          data: [{
-            id: "prior-version",
-            snapshot_id: "prior-snapshot",
-            entrypoint_path: "review/SKILL.md",
-            original_content_hash: "d".repeat(64),
-          }],
-          error: null,
-        };
-      }
-      if (
-        call.table === "altien_skill_import_snapshots" &&
-        call.op === "select"
-      ) {
-        return {
-          data: [{
-            id: "prior-snapshot",
-            source_kind: "github",
-            github_repository: "github.com/example/skills",
-            github_selected_path: "review",
-          }],
-          error: null,
-        };
-      }
-      return { data: [], error: null };
-    });
+    const fake = githubPriorSkillDb();
     const result = await storeSkillSnapshot({
-      tenantId: "tenant-1",
-      importedBy: "admin-1",
-      sourceFilename: "skills.zip",
-      sourceBytes: new Uint8Array([1, 2, 3]),
+      ...githubImport,
       snapshot: snapshot(),
-      sourceKind: "github",
-      github: {
-        repository: "github.com/example/skills",
-        selectedPath: "review",
-        requestedRef: "main",
-        resolvedCommitSha: "a".repeat(40),
-      },
       db: fake.db as never,
     });
     expect(result.skills[0]).toMatchObject({
       id: "existing-skill",
       isUpdate: true,
+      version: { state: "draft" },
     });
+    expect(result.skills[0].possibleMatch).toBeUndefined();
     expect(fake.callsFor("altien_skills", "insert")).toHaveLength(0);
+    expect(
+      fake.callsFor("altien_skill_versions", "insert")[0].payload,
+    ).toMatchObject({ skill_id: "existing-skill", state: "draft" });
+  });
+});
+
+describe("deleteSkillDraftVersion", () => {
+  const draftVersion = {
+    id: "version-1",
+    skill_id: "skill-1",
+    snapshot_id: "snapshot-1",
+    state: "draft",
+    adapted_manifest: null,
+    adapted_root_folder_id: null,
+  };
+  const parentSkill = {
+    id: "skill-1",
+    tenant_id: "tenant-1",
+    current_version_id: null,
+  };
+  const importSnapshot = {
+    id: "snapshot-1",
+    tenant_id: "tenant-1",
+    dms_project_id: "project-1",
+    root_folder_id: "folder-1",
+    source_document_id: "doc-source",
+    manifest: {
+      files: [{ document_id: "doc-1", document_version_id: "dv-1" }],
+    },
+  };
+
+  function deleteDb(
+    overrides: {
+      version?: Record<string, unknown>;
+      skill?: Record<string, unknown>;
+      /** Rows returned for "every version of this skill". */
+      skillVersions?: Array<Record<string, unknown>>;
+      /** Rows returned for "every version cut from this snapshot". */
+      snapshotVersions?: Array<Record<string, unknown>>;
+      bindings?: Array<Record<string, unknown>>;
+      dependents?: Array<Record<string, unknown>>;
+      pins?: Array<Record<string, unknown>>;
+      artifacts?: Array<Record<string, unknown>>;
+    } = {},
+  ) {
+    return makeFakeDb((call) => {
+      if (call.op !== "select") return { data: [], error: null };
+      switch (call.table) {
+        case "altien_skill_versions":
+          if (filterValue(call, "id") !== undefined) {
+            return {
+              data: [{ ...draftVersion, ...overrides.version }],
+              error: null,
+            };
+          }
+          if (filterValue(call, "skill_id") !== undefined) {
+            return {
+              data: overrides.skillVersions ?? [{ id: "version-1" }],
+              error: null,
+            };
+          }
+          return {
+            data: overrides.snapshotVersions ?? [{ id: "version-1" }],
+            error: null,
+          };
+        case "altien_skills":
+          return {
+            data: [{ ...parentSkill, ...overrides.skill }],
+            error: null,
+          };
+        case "altien_skill_import_snapshots":
+          return { data: [importSnapshot], error: null };
+        case "altien_chat_skill_bindings":
+          return { data: overrides.bindings ?? [], error: null };
+        case "altien_skill_dependencies":
+          return { data: overrides.dependents ?? [], error: null };
+        case "altien_project_skill_pins":
+          return { data: overrides.pins ?? [], error: null };
+        case "altien_skill_import_conversations":
+          return { data: [{ id: "conversation-1" }], error: null };
+        case "altien_skill_developer_artifacts":
+          return { data: overrides.artifacts ?? [], error: null };
+        case "document_versions":
+          return {
+            data: [
+              {
+                id: "dv-1",
+                document_id: "doc-1",
+                storage_path: "documents/library/doc-1/versions/dv-1.md",
+              },
+              {
+                id: "dv-source",
+                document_id: "doc-source",
+                storage_path:
+                  "documents/library/doc-source/versions/dv-source.zip",
+              },
+            ],
+            error: null,
+          };
+        default:
+          return { data: [], error: null };
+      }
+    });
+  }
+
+  const deleteOrder = (
+    fake: ReturnType<typeof makeFakeDb>,
+    table: string,
+  ) => fake.calls.findIndex((c) => c.table === table && c.op === "delete");
+
+  beforeEach(() => {
+    deleteFileMock.mockReset();
+    deleteFileMock.mockResolvedValue(undefined);
+  });
+
+  it("deletes a lone draft with its snapshot tree and parent skill", async () => {
+    const fake = deleteDb();
+
+    const result = await deleteSkillDraftVersion({
+      tenantId: "tenant-1",
+      versionId: "version-1",
+      db: fake.db as never,
+    });
+
+    expect(result).toMatchObject({
+      versionId: "version-1",
+      skillId: "skill-1",
+      skillDeleted: true,
+      snapshotDeleted: true,
+      deletedDocumentCount: 2,
+      deletedBlobCount: 2,
+    });
+    // Review rows reference each other: actions -> messages -> conversation.
+    expect(deleteOrder(fake, "altien_skill_pending_actions")).toBeLessThan(
+      deleteOrder(fake, "altien_skill_import_messages"),
+    );
+    expect(deleteOrder(fake, "altien_skill_import_messages")).toBeLessThan(
+      deleteOrder(fake, "altien_skill_import_conversations"),
+    );
+    // `snapshot_id` is on delete restrict, and the snapshot references its
+    // source document, which lives in the preserved folder tree.
+    expect(deleteOrder(fake, "altien_skill_import_conversations")).toBeLessThan(
+      deleteOrder(fake, "altien_skill_versions"),
+    );
+    expect(deleteOrder(fake, "altien_skill_versions")).toBeLessThan(
+      deleteOrder(fake, "altien_skills"),
+    );
+    expect(deleteOrder(fake, "altien_skills")).toBeLessThan(
+      deleteOrder(fake, "altien_skill_import_snapshots"),
+    );
+    expect(deleteOrder(fake, "altien_skill_import_snapshots")).toBeLessThan(
+      deleteOrder(fake, "documents"),
+    );
+    expect(deleteOrder(fake, "documents")).toBeLessThan(
+      deleteOrder(fake, "project_subfolders"),
+    );
+    expect(fake.callsFor("documents", "delete")[0].filters[0]).toEqual([
+      "in",
+      "id",
+      ["doc-1", "doc-source"],
+    ]);
+    expect(fake.callsFor("project_subfolders", "delete")[0].filters[0]).toEqual(
+      ["eq", "id", "folder-1"],
+    );
+    // Blobs go last: no surviving row ever points at a deleted blob.
+    expect(deleteFileMock.mock.calls.map(([path]) => path)).toEqual([
+      "documents/library/doc-1/versions/dv-1.md",
+      "documents/library/doc-source/versions/dv-source.zip",
+    ]);
+  });
+
+  it("refuses a version that is no longer a draft", async () => {
+    const fake = deleteDb({ version: { state: "enabled" } });
+
+    await expect(
+      deleteSkillDraftVersion({
+        tenantId: "tenant-1",
+        versionId: "version-1",
+        db: fake.db as never,
+      }),
+    ).rejects.toThrow(/Only a draft version can be deleted; this version is enabled/);
+
+    expect(fake.calls.filter((call) => call.op === "delete")).toEqual([]);
+    expect(deleteFileMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a version a chat is bound to, as root or as a dependency", async () => {
+    const asRoot = deleteDb({
+      bindings: [
+        {
+          chat_id: "chat-1",
+          root_version_id: "version-1",
+          dependency_versions: [],
+        },
+      ],
+    });
+    await expect(
+      deleteSkillDraftVersion({
+        tenantId: "tenant-1",
+        versionId: "version-1",
+        db: asRoot.db as never,
+      }),
+    ).rejects.toThrow(/A chat is still bound to this skill version/);
+    expect(asRoot.calls.filter((call) => call.op === "delete")).toEqual([]);
+
+    const asDependency = deleteDb({
+      bindings: [
+        {
+          chat_id: "chat-2",
+          root_version_id: "version-other",
+          dependency_versions: [{ versionId: "version-1" }],
+        },
+      ],
+    });
+    await expect(
+      deleteSkillDraftVersion({
+        tenantId: "tenant-1",
+        versionId: "version-1",
+        db: asDependency.db as never,
+      }),
+    ).rejects.toThrow(/A chat is still bound to this skill version/);
+    expect(deleteFileMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a version another skill version depends on", async () => {
+    const fake = deleteDb({
+      dependents: [
+        { version_id: "version-9", dependency_skill_id: "skill-9" },
+      ],
+    });
+
+    await expect(
+      deleteSkillDraftVersion({
+        tenantId: "tenant-1",
+        versionId: "version-1",
+        db: fake.db as never,
+      }),
+    ).rejects.toThrow(/Another skill version depends on this version/);
+    expect(fake.calls.filter((call) => call.op === "delete")).toEqual([]);
+  });
+
+  it("refuses a version a project pins", async () => {
+    const fake = deleteDb({
+      pins: [{ project_id: "project-1", skill_id: "skill-1" }],
+    });
+
+    await expect(
+      deleteSkillDraftVersion({
+        tenantId: "tenant-1",
+        versionId: "version-1",
+        db: fake.db as never,
+      }),
+    ).rejects.toThrow(/A project pins this skill version/);
+    expect(fake.calls.filter((call) => call.op === "delete")).toEqual([]);
+  });
+
+  it("keeps the parent skill and the snapshot when another version remains", async () => {
+    const fake = deleteDb({
+      skillVersions: [{ id: "version-1" }, { id: "version-2" }],
+      snapshotVersions: [{ id: "version-1" }, { id: "version-2" }],
+    });
+
+    const result = await deleteSkillDraftVersion({
+      tenantId: "tenant-1",
+      versionId: "version-1",
+      db: fake.db as never,
+    });
+
+    expect(result).toMatchObject({
+      skillDeleted: false,
+      snapshotDeleted: false,
+      deletedDocumentCount: 0,
+      deletedBlobCount: 0,
+    });
+    expect(fake.callsFor("altien_skill_versions", "delete")).toHaveLength(1);
+    expect(fake.callsFor("altien_skills", "delete")).toHaveLength(0);
+    expect(
+      fake.callsFor("altien_skill_import_snapshots", "delete"),
+    ).toHaveLength(0);
+    expect(fake.callsFor("documents", "delete")).toHaveLength(0);
+    expect(fake.callsFor("project_subfolders", "delete")).toHaveLength(0);
+    expect(deleteFileMock).not.toHaveBeenCalled();
+  });
+
+  it("removes developer artifacts and the adapted tree before the version row", async () => {
+    const fake = deleteDb({
+      version: {
+        adapted_root_folder_id: "adapted-folder-1",
+        adapted_manifest: {
+          files: [
+            { document_id: "doc-adapted", document_version_id: "dv-adapted" },
+          ],
+        },
+      },
+      artifacts: [{ id: "artifact-1", document_id: "doc-brief" }],
+    });
+
+    const result = await deleteSkillDraftVersion({
+      tenantId: "tenant-1",
+      versionId: "version-1",
+      db: fake.db as never,
+    });
+
+    expect(result.deletedDocumentCount).toBe(4);
+    expect(
+      deleteOrder(fake, "altien_skill_developer_artifacts"),
+    ).toBeLessThan(deleteOrder(fake, "documents"));
+    expect(deleteOrder(fake, "documents")).toBeLessThan(
+      deleteOrder(fake, "altien_skill_versions"),
+    );
+    // `adapted_root_folder_id` has no cascade, so the version row goes first.
+    const folderDeletes = fake.callsFor("project_subfolders", "delete");
+    expect(folderDeletes.map((call) => call.filters[0][2])).toEqual([
+      "adapted-folder-1",
+      "folder-1",
+    ]);
+    expect(deleteOrder(fake, "altien_skill_versions")).toBeLessThan(
+      folderDeletes.length
+        ? fake.calls.indexOf(folderDeletes[0])
+        : Number.MAX_SAFE_INTEGER,
+    );
   });
 });
 

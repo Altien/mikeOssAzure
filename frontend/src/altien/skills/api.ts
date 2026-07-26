@@ -186,6 +186,23 @@ export function setProjectSkillPin(
     );
 }
 
+/**
+ * Removes a draft import outright. The server refuses anything that is not a
+ * draft, or that a chat, dependency, or project pin still references.
+ */
+export function deleteSkillVersion(versionId: string) {
+    return apiRequest<{
+        versionId: string;
+        skillId: string;
+        skillDeleted: boolean;
+        snapshotDeleted: boolean;
+        deletedDocumentCount: number;
+        deletedBlobCount: number;
+    }>(`/altien/skills/versions/${encodeURIComponent(versionId)}`, {
+        method: "DELETE",
+    });
+}
+
 export function disableSkill(skillId: string) {
     return apiRequest<{ skillId: string; disabledVersionId: string | null }>(
         `/altien/skills/${encodeURIComponent(skillId)}/disable`,

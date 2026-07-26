@@ -10,6 +10,7 @@ const {
     pushMock,
     postSkillReviewMessageMock,
     getSkillReviewMock,
+    deleteSkillVersionMock,
 } = vi.hoisted(() => ({
     listSkillsMock: vi.fn(),
     importSkillZipMock: vi.fn(),
@@ -17,6 +18,7 @@ const {
     pushMock: vi.fn(),
     postSkillReviewMessageMock: vi.fn(),
     getSkillReviewMock: vi.fn(),
+    deleteSkillVersionMock: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
@@ -28,6 +30,7 @@ vi.mock("./api", () => ({
     postSkillReviewMessage: postSkillReviewMessageMock,
     getSkillReview: getSkillReviewMock,
     runSkillVersion: vi.fn(),
+    deleteSkillVersion: deleteSkillVersionMock,
 }));
 
 vi.mock("@/app/lib/mikeApi", () => ({
@@ -50,6 +53,7 @@ describe("SkillsLibrary", () => {
         postSkillReviewMessageMock.mockReset();
         getSkillReviewMock.mockReset();
         getSkillReviewMock.mockResolvedValue({ pendingActions: [] });
+        deleteSkillVersionMock.mockReset();
     });
 
     const draftSkill = {
@@ -255,6 +259,91 @@ describe("SkillsLibrary", () => {
                 "yes",
             ),
         );
+    });
+
+    it("deletes a draft only after an explicit confirmation, then refreshes", async () => {
+        listSkillsMock
+            .mockResolvedValueOnce({ canManage: true, skills: [draftSkill] })
+            .mockResolvedValueOnce({ canManage: true, skills: [] });
+        deleteSkillVersionMock.mockResolvedValue({
+            versionId: "version-1",
+            skillId: "skill-1",
+            skillDeleted: true,
+            snapshotDeleted: true,
+        });
+        const user = userEvent.setup();
+
+        renderWithProviders(<SkillsLibrary />, {
+            user: { id: "admin-1", email: "admin@example.test" },
+        });
+
+        await user.click(
+            await screen.findByRole("button", { name: "Delete draft" }),
+        );
+        // The first click only asks; nothing has been deleted yet.
+        expect(deleteSkillVersionMock).not.toHaveBeenCalled();
+        expect(
+            await screen.findByText(/cannot be undone/),
+        ).toBeInTheDocument();
+
+        await user.click(screen.getByRole("button", { name: "Delete" }));
+        await waitFor(() =>
+            expect(deleteSkillVersionMock).toHaveBeenCalledWith("version-1"),
+        );
+        expect(listSkillsMock).toHaveBeenCalledTimes(2);
+        expect(
+            await screen.findByText("No skills are available yet"),
+        ).toBeInTheDocument();
+    });
+
+    it("keeps the draft when the delete confirmation is cancelled", async () => {
+        listSkillsMock.mockResolvedValue({
+            canManage: true,
+            skills: [draftSkill],
+        });
+        const user = userEvent.setup();
+
+        renderWithProviders(<SkillsLibrary />, {
+            user: { id: "admin-1", email: "admin@example.test" },
+        });
+
+        await user.click(
+            await screen.findByRole("button", { name: "Delete draft" }),
+        );
+        await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+        expect(deleteSkillVersionMock).not.toHaveBeenCalled();
+        expect(screen.queryByText(/cannot be undone/)).not.toBeInTheDocument();
+        expect(
+            screen.getByRole("heading", { name: "Contract review" }),
+        ).toBeInTheDocument();
+    });
+
+    it("reports a refused delete without removing the card", async () => {
+        listSkillsMock.mockResolvedValue({
+            canManage: true,
+            skills: [draftSkill],
+        });
+        deleteSkillVersionMock.mockRejectedValue(
+            new Error("A project pins this skill version."),
+        );
+        const user = userEvent.setup();
+
+        renderWithProviders(<SkillsLibrary />, {
+            user: { id: "admin-1", email: "admin@example.test" },
+        });
+
+        await user.click(
+            await screen.findByRole("button", { name: "Delete draft" }),
+        );
+        await user.click(screen.getByRole("button", { name: "Delete" }));
+
+        expect(
+            await screen.findByText("A project pins this skill version."),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByRole("heading", { name: "Contract review" }),
+        ).toBeInTheDocument();
     });
 
     it("runs a read-only snapshot command and renders its result", async () => {

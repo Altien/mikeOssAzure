@@ -7,6 +7,7 @@ const {
   validateSkillZipMock,
   storeSkillSnapshotMock,
   listTenantSkillsMock,
+  deleteSkillDraftVersionMock,
   analyseSkillVersionMock,
   getSkillReviewMock,
   postSkillReviewMessageMock,
@@ -31,6 +32,7 @@ const {
   validateSkillZipMock: vi.fn(),
   storeSkillSnapshotMock: vi.fn(),
   listTenantSkillsMock: vi.fn(),
+  deleteSkillDraftVersionMock: vi.fn(),
   analyseSkillVersionMock: vi.fn(),
   getSkillReviewMock: vi.fn(),
   postSkillReviewMessageMock: vi.fn(),
@@ -70,9 +72,13 @@ vi.mock("./archive", async (importOriginal) => ({
   validateSkillZip: validateSkillZipMock,
 }));
 
-vi.mock("./persistence", () => ({
+// `SkillImportDuplicateError` is a real class the route branches on with
+// `instanceof`, so it comes from the original module.
+vi.mock("./persistence", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./persistence")>()),
   storeSkillSnapshot: storeSkillSnapshotMock,
   listTenantSkills: listTenantSkillsMock,
+  deleteSkillDraftVersion: deleteSkillDraftVersionMock,
 }));
 
 vi.mock("./review", () => ({
@@ -122,6 +128,7 @@ vi.mock("./githubOAuth", () => ({
     "http://localhost/api/altien/skills/settings/github/oauth/callback",
 }));
 
+import { SkillImportDuplicateError } from "./persistence";
 import { skillsRouter } from "./router";
 
 function makeApp() {
@@ -138,6 +145,7 @@ describe("Skills routes", () => {
     validateSkillZipMock.mockReset();
     storeSkillSnapshotMock.mockReset();
     listTenantSkillsMock.mockReset();
+    deleteSkillDraftVersionMock.mockReset();
     analyseSkillVersionMock.mockReset();
     getSkillReviewMock.mockReset();
     postSkillReviewMessageMock.mockReset();
@@ -422,6 +430,57 @@ describe("Skills routes", () => {
       .post("/api/altien/skills/versions/version-1/analyse")
       .expect(403, { detail: "TENANT_UNKNOWN" });
     expect(analyseSkillVersionMock).not.toHaveBeenCalled();
+  });
+
+  it("deletes a draft version for a TenantAdmin and refuses with the reason", async () => {
+    deleteSkillDraftVersionMock.mockResolvedValue({
+      versionId: "version-1",
+      skillId: "skill-1",
+      skillDeleted: true,
+      snapshotDeleted: true,
+      deletedDocumentCount: 2,
+      deletedBlobCount: 2,
+    });
+
+    const deleted = await request(makeApp())
+      .delete("/api/altien/skills/versions/version-1")
+      .expect(200);
+    expect(deleted.body).toMatchObject({ skillDeleted: true });
+    expect(deleteSkillDraftVersionMock).toHaveBeenCalledWith({
+      tenantId: "tenant-1",
+      versionId: "version-1",
+    });
+
+    deleteSkillDraftVersionMock.mockRejectedValue(
+      new Error("A project pins this skill version."),
+    );
+    await request(makeApp())
+      .delete("/api/altien/skills/versions/version-1")
+      .expect(409, { detail: "A project pins this skill version." });
+
+    authState.roles = ["Member"];
+    deleteSkillDraftVersionMock.mockClear();
+    await request(makeApp())
+      .delete("/api/altien/skills/versions/version-1")
+      .expect(403);
+    expect(deleteSkillDraftVersionMock).not.toHaveBeenCalled();
+  });
+
+  it("answers a duplicate ZIP import with the reason, not a 500", async () => {
+    validateSkillZipMock.mockResolvedValue({ treeHash: "hash" });
+    storeSkillSnapshotMock.mockRejectedValue(
+      new SkillImportDuplicateError(),
+    );
+
+    const response = await request(makeApp())
+      .post("/api/altien/skills/imports/zip")
+      .attach("file", Buffer.from("zip"), "skills.zip");
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({
+      detail: "This exact version was already imported.",
+      code: "SKILL_IMPORT_DUPLICATE",
+    });
   });
 
   it("requires the reviewed payload hash before approving a developer artifact", async () => {

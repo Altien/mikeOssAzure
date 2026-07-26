@@ -141,7 +141,13 @@ describe("explicit chat skill upgrade", () => {
             user: { id: "user-1", email: "tester@example.com" },
         });
 
-        const upgrade = await screen.findByRole("button", { name: /Upgrade/ });
+        // The banner appears only after the binding request resolves, which
+        // can exceed the 1s default when the whole suite runs in parallel.
+        const upgrade = await screen.findByRole(
+            "button",
+            { name: /Upgrade/ },
+            { timeout: 5_000 },
+        );
         expect(
             screen.getByText(/has a newer approved version/),
         ).toBeInTheDocument();
@@ -183,7 +189,11 @@ describe("explicit chat skill upgrade", () => {
             user: { id: "user-1", email: "tester@example.com" },
         });
 
-        expect(await screen.findByText(/Skill: Citation Reader/)).toBeInTheDocument();
+        expect(
+            await screen.findByText(/Skill: Citation Reader/, undefined, {
+                timeout: 5_000,
+            }),
+        ).toBeInTheDocument();
         expect(
             screen.queryByRole("button", { name: /Upgrade/ }),
         ).not.toBeInTheDocument();

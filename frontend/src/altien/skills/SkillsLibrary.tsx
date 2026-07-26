@@ -5,12 +5,14 @@ import { useRouter } from "next/navigation";
 import { PackageOpen } from "lucide-react";
 import { getProject, listProjects } from "@/app/lib/mikeApi";
 import type { Document, Project } from "@/app/components/shared/types";
+import { ConfirmPopup } from "@/app/components/shared/ConfirmPopup";
 import {
     adaptSkillName,
     analyseSkillVersion,
     approveCleanRoomDeveloperArtifact,
     checkGitHubSkillUpdate,
     createCleanRoomDeveloperArtifact,
+    deleteSkillVersion,
     downloadSkillPackage,
     downloadCleanRoomDeveloperArtifact,
     disableSkill,
@@ -34,6 +36,7 @@ import { formatSnapshotResult, ReviewPanel } from "./ReviewPanel";
 import { AdaptationPanel, type DraftArtifact } from "./AdaptationPanel";
 import { RunAndPinPanel } from "./RunAndPinPanel";
 import { PackagesPanel, type SkillPackageKind } from "./PackagesPanel";
+import { DeleteDraftPanel } from "./DeleteDraftPanel";
 
 /** Triggers a browser download for an in-memory blob. */
 function downloadBlob(name: string, blob: Blob) {
@@ -80,6 +83,10 @@ export function SkillsLibrary() {
     const [draftArtifactByVersion, setDraftArtifactByVersion] = useState<
         Record<string, DraftArtifact | undefined>
     >({});
+    /** The draft awaiting an explicit delete confirmation, if any. */
+    const [pendingDelete, setPendingDelete] = useState<SkillListItem | null>(
+        null,
+    );
     const fileInput = useRef<HTMLInputElement>(null);
 
     const [busyVersion, runForVersion] = useBusyAction<string>(setError);
@@ -282,6 +289,24 @@ export function SkillsLibrary() {
             await disableSkill(skill.id);
             await refresh();
         });
+
+    /**
+     * Deletes the confirmed draft. The popup closes either way: a refusal
+     * (pinned, bound to a chat, no longer a draft) is reported in the page
+     * error banner rather than under the confirmation.
+     */
+    const confirmDelete = () => {
+        const target = pendingDelete;
+        if (!target) return;
+        void runForVersion(
+            target.version.id,
+            async () => {
+                await deleteSkillVersion(target.version.id);
+                await refresh();
+            },
+            { onSettled: () => setPendingDelete(null) },
+        );
+    };
 
     const showPackages = (versionId: string) =>
         runForVersion(versionId, async () => {
@@ -512,6 +537,11 @@ export function SkillsLibrary() {
                                         onReviewArtifact={reviewArtifact}
                                         onApproveArtifact={approveArtifact}
                                     />
+                                    <DeleteDraftPanel
+                                        skill={skill}
+                                        busy={busyVersion === skill.version.id}
+                                        onRequestDelete={setPendingDelete}
+                                    />
                                 </div>
                             )}
                             {skill.version.state === "enabled" && (
@@ -564,6 +594,24 @@ export function SkillsLibrary() {
                     ))}
                 </ul>
             )}
+
+            <ConfirmPopup
+                open={!!pendingDelete}
+                title="Delete this draft skill?"
+                message={
+                    pendingDelete
+                        ? `“${pendingDelete.displayName}” and its imported snapshot are removed permanently. This cannot be undone.`
+                        : undefined
+                }
+                confirmLabel="Delete"
+                confirmStatus={
+                    pendingDelete && busyVersion === pendingDelete.version.id
+                        ? "loading"
+                        : "idle"
+                }
+                onCancel={() => setPendingDelete(null)}
+                onConfirm={confirmDelete}
+            />
         </main>
     );
 }

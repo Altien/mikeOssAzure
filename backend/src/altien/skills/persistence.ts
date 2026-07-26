@@ -11,7 +11,12 @@ import type {
   SkillSnapshotFile,
   ValidatedSkillSnapshot,
 } from "./archive";
-import { exactArrayBuffer, throwOnDbError, type Db } from "./shared";
+import {
+  exactArrayBuffer,
+  loadSkillVersionContext,
+  throwOnDbError,
+  type Db,
+} from "./shared";
 
 /**
  * How an incoming skill was tied to an existing tenant skill.
@@ -237,6 +242,42 @@ async function bestEffortRowCleanup(args: {
 
 function isStrongEvidence(evidence: SkillIdentityEvidence): boolean {
   return evidence === "content_hash" || evidence === "github_source";
+}
+
+/**
+ * The import is byte-for-byte a version the skill already has.
+ *
+ * `altien_skill_versions` carries `unique(skill_id, original_content_hash)`
+ * (migration 0027), so re-importing an unchanged ZIP or an unchanged commit
+ * used to surface as a raw Postgres duplicate-key error. Mike's content hash
+ * is authoritative for version identity, so the right answer is not a new row
+ * but a refusal the administrator can act on.
+ */
+export class SkillImportDuplicateError extends Error {
+  readonly code = "SKILL_IMPORT_DUPLICATE";
+  constructor(message = "This exact version was already imported.") {
+    super(message);
+    this.name = "SkillImportDuplicateError";
+  }
+}
+
+/**
+ * Refusal to delete an imported version, naming which relationship blocks it.
+ * Distinct from a generic failure so the route can answer with the reason
+ * rather than a 500.
+ */
+export class SkillVersionDeletionRefusedError extends Error {
+  constructor(
+    readonly code:
+      | "version_not_draft"
+      | "chat_binding_exists"
+      | "dependent_version_exists"
+      | "project_pin_exists",
+    message: string,
+  ) {
+    super(message);
+    this.name = "SkillVersionDeletionRefusedError";
+  }
 }
 
 function sameEntrypointSet(a: unknown, b: string[]): boolean {
@@ -590,6 +631,22 @@ export async function storeSkillSnapshot(args: {
             }
           : undefined;
       const existingSkill = linkedSkill;
+      if (existingSkill) {
+        // `unique(skill_id, original_content_hash)` would reject this insert
+        // with a duplicate-key error. Say what actually happened instead.
+        const duplicate = await db
+          .from("altien_skill_versions")
+          .select("id")
+          .eq("skill_id", String(existingSkill.id))
+          .eq("original_content_hash", entrypointFile.file.sha256)
+          .maybeSingle();
+        throwOnDbError(duplicate, "Failed to check for a duplicate import.");
+        if (duplicate.data) {
+          throw new SkillImportDuplicateError(
+            `This exact version was already imported as '${String(existingSkill.display_name)}'.`,
+          );
+        }
+      }
       const draft = existingSkill
         ? {
             skillId: String(existingSkill.id),
@@ -803,4 +860,380 @@ export async function listTenantSkills(
       };
     })
     .filter(Boolean);
+}
+
+type ManifestDocumentRef = {
+  document_id?: unknown;
+  document_version_id?: unknown;
+};
+
+function manifestDocumentIds(manifest: unknown): string[] {
+  const files = (manifest as { files?: ManifestDocumentRef[] } | null)?.files;
+  if (!Array.isArray(files)) return [];
+  return files
+    .map((file) => String(file?.document_id ?? ""))
+    .filter((value) => !!value);
+}
+
+/**
+ * Blob locations for a set of DMS documents, read before the rows go.
+ * Storage paths live on `document_versions`, which cascades away with its
+ * document — so they have to be collected first or the blobs become
+ * unreachable.
+ */
+async function storagePathsForDocuments(
+  documentIds: string[],
+  db: Db,
+): Promise<string[]> {
+  if (!documentIds.length) return [];
+  const rows = await db
+    .from("document_versions")
+    .select("id, document_id, storage_path")
+    .in("document_id", documentIds);
+  throwOnDbError(rows, "Failed to resolve skill blob locations.");
+  return [
+    ...new Set(
+      ((rows.data ?? []) as Array<Record<string, unknown>>)
+        .map((row) => String(row.storage_path ?? ""))
+        .filter((value) => !!value),
+    ),
+  ];
+}
+
+async function deleteRows(
+  db: Db,
+  table: string,
+  column: string,
+  value: string,
+  failure: string,
+) {
+  const result = await db.from(table).delete().eq(column, value);
+  throwOnDbError(result, failure);
+}
+
+async function deleteDocuments(db: Db, documentIds: string[]) {
+  if (!documentIds.length) return;
+  const result = await db.from("documents").delete().in("id", documentIds);
+  throwOnDbError(result, "Failed to delete skill DMS documents.");
+}
+
+/** Rows of one table for a single scalar filter, as plain records. */
+async function rowsWhere(
+  db: Db,
+  table: string,
+  columns: string,
+  column: string,
+  value: string,
+  failure: string,
+): Promise<Array<Record<string, unknown>>> {
+  const result = await db.from(table).select(columns).eq(column, value);
+  throwOnDbError(result, failure);
+  // The column list is a runtime string, so supabase cannot infer a row type.
+  return (result.data ?? []) as unknown as Array<Record<string, unknown>>;
+}
+
+function bindsVersion(
+  binding: Record<string, unknown>,
+  versionId: string,
+): boolean {
+  if (String(binding.root_version_id ?? "") === versionId) return true;
+  const dependencies = binding.dependency_versions;
+  if (!Array.isArray(dependencies)) return false;
+  return dependencies.some((entry) => {
+    const row = (entry ?? {}) as Record<string, unknown>;
+    return (
+      String(row.versionId ?? "") === versionId ||
+      String(row.version_id ?? "") === versionId
+    );
+  });
+}
+
+/**
+ * Refuses the delete when something still points at the version. Each check
+ * names its own reason: an administrator who cannot delete needs to know which
+ * relationship to unwind, not that the request failed.
+ */
+async function refuseIfVersionIsReferenced(args: {
+  db: Db;
+  tenantId: string;
+  versionId: string;
+}) {
+  const bindings = await rowsWhere(
+    args.db,
+    "altien_chat_skill_bindings",
+    "chat_id, root_version_id, dependency_versions",
+    "tenant_id",
+    args.tenantId,
+    "Failed to check chat skill bindings.",
+  );
+  if (bindings.some((binding) => bindsVersion(binding, args.versionId))) {
+    throw new SkillVersionDeletionRefusedError(
+      "chat_binding_exists",
+      "A chat is still bound to this skill version. Chats keep their exact root and dependency versions for their lifetime, so it cannot be deleted.",
+    );
+  }
+  const dependents = await rowsWhere(
+    args.db,
+    "altien_skill_dependencies",
+    "version_id, dependency_skill_id",
+    "dependency_version_id",
+    args.versionId,
+    "Failed to check skill dependency edges.",
+  );
+  if (dependents.length) {
+    throw new SkillVersionDeletionRefusedError(
+      "dependent_version_exists",
+      "Another skill version depends on this version. Remove that dependency before deleting it.",
+    );
+  }
+  const pins = await rowsWhere(
+    args.db,
+    "altien_project_skill_pins",
+    "project_id, skill_id",
+    "version_id",
+    args.versionId,
+    "Failed to check project skill pins.",
+  );
+  if (pins.length) {
+    throw new SkillVersionDeletionRefusedError(
+      "project_pin_exists",
+      "A project pins this skill version. Repin or remove the pin before deleting it.",
+    );
+  }
+}
+
+export type DeletedSkillVersion = {
+  versionId: string;
+  skillId: string;
+  skillDeleted: boolean;
+  snapshotDeleted: boolean;
+  deletedDocumentCount: number;
+  deletedBlobCount: number;
+};
+
+/**
+ * Deletes a draft skill version and everything the import created for it.
+ *
+ * Only a `draft` may be deleted: an `enabled` or `disabled` version can be
+ * pinned by a project or bound to a live chat, and those references are
+ * `on delete restrict` precisely so a running matter cannot lose the exact
+ * version it was reviewed against. Disablement, not deletion, retires a
+ * promoted version (spec OSS-7, "Runtime").
+ *
+ * The order below is the foreign-key order of migrations 0027-0034 and follows
+ * `bestEffortRowCleanup` and `discardPersistedTree`: rows that reference are
+ * removed before the rows they reference, and blobs go last so no surviving
+ * row ever points at a deleted blob.
+ *
+ *  1. clear `altien_skills.current_version_id` when it names this version
+ *  2. pending actions (they reference review messages)
+ *  3. review messages, then the review conversation
+ *  4. this version's own dependency edges
+ *  5. developer artifacts, then their DMS documents (versions cascade)
+ *  6. the adapted tree's DMS documents
+ *  7. the version row — after every `restrict` reference, before the folder it
+ *     names (`adapted_root_folder_id`) and before its snapshot
+ *     (`snapshot_id` is `on delete restrict`)
+ *  8. the adapted root folder (subfolders cascade)
+ *  9. the parent skill, only when this was its last version
+ * 10. the snapshot, only when no other version was cut from it, then its
+ *     documents (the snapshot references the source document) and finally the
+ *     preserved root folder
+ * 11. every blob, best effort, through the storage module
+ */
+export async function deleteSkillDraftVersion(args: {
+  tenantId: string;
+  versionId: string;
+  db?: Db;
+}): Promise<DeletedSkillVersion> {
+  const db = args.db ?? createServerSupabase();
+  const { version, skill, snapshot } = await loadSkillVersionContext({
+    tenantId: args.tenantId,
+    versionId: args.versionId,
+    db,
+  });
+  const state = String(version.state ?? "");
+  if (state !== "draft") {
+    throw new SkillVersionDeletionRefusedError(
+      "version_not_draft",
+      `Only a draft version can be deleted; this version is ${state || "unknown"}. Disable the skill instead — an enabled or disabled version may be pinned or bound to a running chat.`,
+    );
+  }
+  await refuseIfVersionIsReferenced({
+    db,
+    tenantId: args.tenantId,
+    versionId: args.versionId,
+  });
+
+  const skillId = String(skill.id);
+  const snapshotId = String(snapshot.id);
+  const siblingsOfSkill = await rowsWhere(
+    db,
+    "altien_skill_versions",
+    "id",
+    "skill_id",
+    skillId,
+    "Failed to resolve sibling skill versions.",
+  );
+  const deleteSkillRow = !siblingsOfSkill.some(
+    (row) => String(row.id) !== args.versionId,
+  );
+  const siblingsOfSnapshot = await rowsWhere(
+    db,
+    "altien_skill_versions",
+    "id",
+    "snapshot_id",
+    snapshotId,
+    "Failed to resolve versions sharing the import snapshot.",
+  );
+  const deleteSnapshotRow = !siblingsOfSnapshot.some(
+    (row) => String(row.id) !== args.versionId,
+  );
+
+  const conversation = await db
+    .from("altien_skill_import_conversations")
+    .select("id")
+    .eq("version_id", args.versionId)
+    .maybeSingle();
+  throwOnDbError(conversation, "Failed to resolve the import conversation.");
+
+  const artifacts = await rowsWhere(
+    db,
+    "altien_skill_developer_artifacts",
+    "id, document_id",
+    "version_id",
+    args.versionId,
+    "Failed to resolve developer artifacts.",
+  );
+  const artifactDocumentIds = [
+    ...new Set(
+      artifacts
+        .map((row) => String(row.document_id ?? ""))
+        .filter((value) => !!value),
+    ),
+  ];
+  const adaptedDocumentIds = manifestDocumentIds(version.adapted_manifest);
+  const snapshotDocumentIds = deleteSnapshotRow
+    ? [
+        ...new Set(
+          [
+            ...manifestDocumentIds(snapshot.manifest),
+            String(snapshot.source_document_id ?? ""),
+          ].filter((value) => !!value),
+        ),
+      ]
+    : [];
+  const storagePaths = [
+    ...(await storagePathsForDocuments(artifactDocumentIds, db)),
+    ...(await storagePathsForDocuments(adaptedDocumentIds, db)),
+    ...(await storagePathsForDocuments(snapshotDocumentIds, db)),
+  ];
+
+  if (String(skill.current_version_id ?? "") === args.versionId) {
+    const cleared = await db
+      .from("altien_skills")
+      .update({ current_version_id: null })
+      .eq("id", skillId)
+      .eq("tenant_id", args.tenantId);
+    throwOnDbError(cleared, "Failed to clear the current skill version.");
+  }
+
+  await deleteRows(
+    db,
+    "altien_skill_pending_actions",
+    "version_id",
+    args.versionId,
+    "Failed to delete pending skill actions.",
+  );
+  if (conversation.data?.id) {
+    await deleteRows(
+      db,
+      "altien_skill_import_messages",
+      "conversation_id",
+      String(conversation.data.id),
+      "Failed to delete import conversation messages.",
+    );
+    await deleteRows(
+      db,
+      "altien_skill_import_conversations",
+      "version_id",
+      args.versionId,
+      "Failed to delete the import conversation.",
+    );
+  }
+  await deleteRows(
+    db,
+    "altien_skill_dependencies",
+    "version_id",
+    args.versionId,
+    "Failed to delete skill dependency edges.",
+  );
+  if (artifacts.length) {
+    await deleteRows(
+      db,
+      "altien_skill_developer_artifacts",
+      "version_id",
+      args.versionId,
+      "Failed to delete developer artifacts.",
+    );
+  }
+  await deleteDocuments(db, artifactDocumentIds);
+  await deleteDocuments(db, adaptedDocumentIds);
+
+  const versionRow = await db
+    .from("altien_skill_versions")
+    .delete()
+    .eq("id", args.versionId);
+  throwOnDbError(versionRow, "Failed to delete the skill version.");
+
+  if (version.adapted_root_folder_id) {
+    await deleteRows(
+      db,
+      "project_subfolders",
+      "id",
+      String(version.adapted_root_folder_id),
+      "Failed to delete the adapted skill folder.",
+    );
+  }
+  if (deleteSkillRow) {
+    const skillRow = await db
+      .from("altien_skills")
+      .delete()
+      .eq("id", skillId)
+      .eq("tenant_id", args.tenantId);
+    throwOnDbError(skillRow, "Failed to delete the skill.");
+  }
+  if (deleteSnapshotRow) {
+    await deleteRows(
+      db,
+      "altien_skill_import_snapshots",
+      "id",
+      snapshotId,
+      "Failed to delete the import snapshot.",
+    );
+    await deleteDocuments(db, snapshotDocumentIds);
+    if (snapshot.root_folder_id) {
+      await deleteRows(
+        db,
+        "project_subfolders",
+        "id",
+        String(snapshot.root_folder_id),
+        "Failed to delete the preserved snapshot folder.",
+      );
+    }
+  }
+
+  await deleteUploaded(storagePaths);
+
+  return {
+    versionId: args.versionId,
+    skillId,
+    skillDeleted: deleteSkillRow,
+    snapshotDeleted: deleteSnapshotRow,
+    deletedDocumentCount:
+      artifactDocumentIds.length +
+      adaptedDocumentIds.length +
+      snapshotDocumentIds.length,
+    deletedBlobCount: storagePaths.length,
+  };
 }

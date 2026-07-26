@@ -10,7 +10,12 @@ import {
   SkillArchiveValidationError,
   validateSkillZip,
 } from "./archive";
-import { listTenantSkills, storeSkillSnapshot } from "./persistence";
+import {
+  deleteSkillDraftVersion,
+  listTenantSkills,
+  SkillImportDuplicateError,
+  storeSkillSnapshot,
+} from "./persistence";
 import {
   analyseSkillVersion,
   createSkillRun,
@@ -149,6 +154,12 @@ skillsRouter.post(
     } catch (error) {
       if (error instanceof SkillArchiveValidationError) {
         return void res.status(400).json({
+          detail: error.message,
+          code: error.code,
+        });
+      }
+      if (error instanceof SkillImportDuplicateError) {
+        return void res.status(409).json({
           detail: error.message,
           code: error.code,
         });
@@ -343,6 +354,12 @@ skillsRouter.post(
           code: error.code,
         });
       }
+      if (error instanceof SkillImportDuplicateError) {
+        return void res.status(409).json({
+          detail: error.message,
+          code: error.code,
+        });
+      }
       res.status(500).json({
         detail: safeErrorMessage(error, "GitHub skill import failed"),
       });
@@ -477,6 +494,33 @@ skillsRouter.get(
     } catch (error) {
       res.status(404).json({
         detail: safeErrorMessage(error, "Developer artifact not found"),
+      });
+    }
+  },
+);
+
+/**
+ * Removes a draft import outright. Deliberately draft-only: a promoted version
+ * is retired with `POST /:skillId/disable`, which leaves running chats intact.
+ * Refusals answer 409 with the exact reason.
+ */
+skillsRouter.delete(
+  "/versions/:versionId",
+  requireAuth,
+  requireRole("TenantAdmin"),
+  requireTenant,
+  async (req, res) => {
+    const tenant = tenantId(res);
+    try {
+      res.json(
+        await deleteSkillDraftVersion({
+          tenantId: tenant,
+          versionId: req.params.versionId,
+        }),
+      );
+    } catch (error) {
+      res.status(409).json({
+        detail: safeErrorMessage(error, "Skill version could not be deleted"),
       });
     }
   },
