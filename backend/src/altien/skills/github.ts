@@ -66,6 +66,11 @@ export function parseGitHubSourceUrl(raw: string): ParsedGitHubSource {
 
 type GitHubFetch = typeof fetch;
 
+const GITHUB_API_HOST = "api.github.com";
+/** Redirect hops we will follow after the initial request. */
+const GITHUB_MAX_REDIRECT_HOPS = 3;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
 function headers(token?: string) {
   return {
     Accept: "application/vnd.github+json",
@@ -75,23 +80,69 @@ function headers(token?: string) {
   };
 }
 
+/**
+ * Resolve a redirect target against the URL that produced it and reject
+ * anything that is not HTTPS api.github.com. The check happens BEFORE the
+ * next hop is issued — `redirect: "manual"` is what makes that possible,
+ * because `redirect: "follow"` has already fetched the off-host target by
+ * the time `response.url` can be inspected.
+ */
+function allowedRedirectTarget(location: string, from: string): string {
+  let target: URL;
+  try {
+    target = new URL(location, from);
+  } catch {
+    throw new GitHubSkillImportError(
+      "github_redirect_rejected",
+      "GitHub API redirected outside api.github.com.",
+    );
+  }
+  if (
+    target.protocol !== "https:" ||
+    target.hostname.toLocaleLowerCase() !== GITHUB_API_HOST ||
+    target.username ||
+    target.password ||
+    target.port
+  ) {
+    throw new GitHubSkillImportError(
+      "github_redirect_rejected",
+      "GitHub API redirected outside api.github.com.",
+    );
+  }
+  return target.toString();
+}
+
+async function githubRequest(
+  path: string,
+  options: { fetcher: GitHubFetch; token?: string },
+): Promise<Response> {
+  let target = `https://${GITHUB_API_HOST}${path}`;
+  for (let hop = 0; hop <= GITHUB_MAX_REDIRECT_HOPS; hop += 1) {
+    const response = await options.fetcher(target, {
+      headers: headers(options.token),
+      redirect: "manual",
+    });
+    if (!REDIRECT_STATUSES.has(response.status)) return response;
+    const location = response.headers.get("location");
+    if (!location) {
+      throw new GitHubSkillImportError(
+        "github_redirect_rejected",
+        "GitHub API returned a redirect without a location.",
+      );
+    }
+    target = allowedRedirectTarget(location, target);
+  }
+  throw new GitHubSkillImportError(
+    "github_redirect_rejected",
+    `GitHub API exceeded ${GITHUB_MAX_REDIRECT_HOPS} redirect hops.`,
+  );
+}
+
 async function githubJson<T>(
   path: string,
   options: { fetcher: GitHubFetch; token?: string; allow404?: boolean },
 ): Promise<T | null> {
-  const response = await options.fetcher(`https://api.github.com${path}`, {
-    headers: headers(options.token),
-    redirect: "follow",
-  });
-  if (response.url) {
-    const final = new URL(response.url);
-    if (final.protocol !== "https:" || final.hostname !== "api.github.com") {
-      throw new GitHubSkillImportError(
-        "github_redirect_rejected",
-        "GitHub API redirected outside api.github.com.",
-      );
-    }
-  }
+  const response = await githubRequest(path, options);
   if (options.allow404 && response.status === 404) return null;
   if (response.status === 401 || response.status === 403) {
     throw new GitHubSkillImportError(

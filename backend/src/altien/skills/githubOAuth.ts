@@ -7,7 +7,7 @@ import { resolveSecret } from "../../lib/envSecrets";
 type Db = ReturnType<typeof createServerSupabase>;
 const STATE_TTL_MS = 10 * 60 * 1_000;
 
-async function config() {
+async function loadGitHubOAuthConfig() {
   const [clientId, clientSecret] = await Promise.all([
     resolveSecret("github-skill-oauth-client-id"),
     resolveSecret("github-skill-oauth-client-secret"),
@@ -20,7 +20,7 @@ async function config() {
 
 export async function githubSkillOAuthConfigured() {
   try {
-    await config();
+    await loadGitHubOAuthConfig();
     return true;
   } catch {
     return false;
@@ -47,7 +47,7 @@ export async function startGitHubSkillOAuth(args: {
   db?: Db;
 }) {
   const db = args.db ?? createServerSupabase();
-  const { clientId } = await config();
+  const { clientId } = await loadGitHubOAuthConfig();
   const state = randomBytes(32).toString("base64url");
   const inserted = await db.from("altien_skill_github_oauth_states").insert({
     tenant_id: args.tenantId,
@@ -60,6 +60,11 @@ export async function startGitHubSkillOAuth(args: {
   const url = new URL("https://github.com/login/oauth/authorize");
   url.searchParams.set("client_id", clientId);
   url.searchParams.set("redirect_uri", args.redirectUri);
+  // GitHub OAuth has no read-only repository scope: `repo` is the narrowest
+  // scope that can read a private repository, and it carries write access.
+  // The spec's private-App access (a GitHub App with Contents: read-only) is
+  // the follow-on path for true least-privilege private reads; the callers
+  // here only ever issue bounded read operations against the REST API.
   url.searchParams.set("scope", "repo");
   url.searchParams.set("state", state);
   url.searchParams.set("allow_signup", "false");
@@ -97,7 +102,7 @@ export async function completeGitHubSkillOAuth(args: {
 }) {
   const db = args.db ?? createServerSupabase();
   const fetcher = args.fetcher ?? fetch;
-  const oauthConfig = await config();
+  const oauthConfig = await loadGitHubOAuthConfig();
   const state = await db
     .from("altien_skill_github_oauth_states")
     .select("*")

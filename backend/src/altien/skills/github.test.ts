@@ -12,6 +12,10 @@ function json(value: unknown, status = 200) {
   });
 }
 
+function redirect(location: string, status = 302) {
+  return new Response(null, { status, headers: { location } });
+}
+
 describe("GitHub skill acquisition", () => {
   it("accepts only github.com repository and tree URLs", () => {
     expect(
@@ -162,5 +166,100 @@ describe("GitHub skill acquisition", () => {
     });
     expect(calls).toHaveLength(1);
     expect(calls[0]).toContain("/commits/main");
+  });
+
+  it("never issues the request for an off-host redirect target", async () => {
+    const calls: string[] = [];
+    const fetcher = (async (input: string | URL | Request) => {
+      calls.push(String(input));
+      return redirect("https://evil.example/steal");
+    }) as typeof fetch;
+    await expect(
+      checkGitHubSourceUpdate({
+        repository: "github.com/example/skills",
+        requestedRef: "main",
+        selectedPath: "",
+        lastResolvedCommitSha: "a".repeat(40),
+        fetcher,
+      }),
+    ).rejects.toThrow("redirected outside api.github.com");
+    // Only the original api.github.com request happened; the off-host target
+    // was rejected before it could be fetched.
+    expect(calls).toHaveLength(1);
+    expect(calls.every((call) => call.startsWith("https://api.github.com/"))).toBe(
+      true,
+    );
+  });
+
+  it("rejects a redirect that downgrades the scheme or adds credentials", async () => {
+    for (const location of [
+      "http://api.github.com/repos/example/skills/commits/main",
+      "https://user:pass@api.github.com/repos/example/skills/commits/main",
+      "https://api.github.com.evil.example/repos/example/skills/commits/main",
+    ]) {
+      const calls: string[] = [];
+      const fetcher = (async (input: string | URL | Request) => {
+        calls.push(String(input));
+        return redirect(location);
+      }) as typeof fetch;
+      await expect(
+        checkGitHubSourceUpdate({
+          repository: "github.com/example/skills",
+          requestedRef: "main",
+          selectedPath: "",
+          lastResolvedCommitSha: "a".repeat(40),
+          fetcher,
+        }),
+      ).rejects.toThrow("redirected outside api.github.com");
+      expect(calls).toHaveLength(1);
+    }
+  });
+
+  it("follows a redirect that stays on api.github.com", async () => {
+    const calls: string[] = [];
+    const fetcher = (async (input: string | URL | Request) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes("/repos/example/skills/commits/main")) {
+        // Relative Location, as GitHub emits for renamed repositories.
+        return redirect("/repos/example/skills-renamed/commits/main", 301);
+      }
+      return json({ sha: "b".repeat(40) });
+    }) as typeof fetch;
+    await expect(
+      checkGitHubSourceUpdate({
+        repository: "github.com/example/skills",
+        requestedRef: "main",
+        selectedPath: "",
+        lastResolvedCommitSha: "a".repeat(40),
+        fetcher,
+      }),
+    ).resolves.toMatchObject({
+      updateAvailable: true,
+      currentCommitSha: "b".repeat(40),
+    });
+    expect(calls).toEqual([
+      "https://api.github.com/repos/example/skills/commits/main",
+      "https://api.github.com/repos/example/skills-renamed/commits/main",
+    ]);
+  });
+
+  it("stops following after the redirect hop limit", async () => {
+    const calls: string[] = [];
+    const fetcher = (async (input: string | URL | Request) => {
+      calls.push(String(input));
+      return redirect(`https://api.github.com/hop/${calls.length}`);
+    }) as typeof fetch;
+    await expect(
+      checkGitHubSourceUpdate({
+        repository: "github.com/example/skills",
+        requestedRef: "main",
+        selectedPath: "",
+        lastResolvedCommitSha: "a".repeat(40),
+        fetcher,
+      }),
+    ).rejects.toThrow("redirect hops");
+    // Original request plus at most three followed hops.
+    expect(calls).toHaveLength(4);
   });
 });
