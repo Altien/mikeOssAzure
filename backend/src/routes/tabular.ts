@@ -45,6 +45,7 @@ import {
 import { parsePaginationQuery } from "../lib/pagination";
 import { normalizeSearchTerm } from "../lib/search";
 import { parseTabularReviewSort } from "../lib/sort";
+import { buildTabularReviewsOverviewRpcArgs } from "../lib/tabularReviewsOverview";
 
 function formatPromptSuffix(format?: string, tags?: string[]): string {
     switch (format) {
@@ -103,16 +104,16 @@ tabularRouter.get("/", requireAuth, async (req, res) => {
     const searchTerm = normalizeSearchTerm(req.query.search);
     const sort = parseTabularReviewSort(req.query as Record<string, unknown>);
 
-    const { data, error } = await db.rpc("get_tabular_reviews_overview", {
-        p_user_id: userId,
-        p_user_email: userEmail ?? null,
-        p_project_id: projectIdFilter,
-        p_limit: pagination.limit,
-        p_offset: pagination.offset,
-        p_search_term: searchTerm,
-        p_sort_key: sort.key,
-        p_sort_direction: sort.direction,
+    const rpcArgs = buildTabularReviewsOverviewRpcArgs({
+        userId,
+        userEmail,
+        projectIdFilter,
+        pagination,
+        searchTerm,
+        sort,
     });
+
+    const { data, error } = await db.rpc("get_tabular_reviews_overview", rpcArgs);
     if (error) return void res.status(500).json({ detail: error.message });
 
     res.json(data ?? []);
