@@ -16,6 +16,69 @@ function redirect(location: string, status = 302) {
   return new Response(null, { status, headers: { location } });
 }
 
+describe("tree URL ref resolution", () => {
+  it("keeps searching when a candidate ref is rejected as a bad SHA", async () => {
+    // Verbatim from GitHub for a candidate that joins the ref to the path.
+    // It answers 422 here, not 404, which used to abort the whole import and
+    // broke every /tree/<ref>/<path> URL with a multi-segment path.
+    const unresolvable = () =>
+      json(
+        {
+          message:
+            "No commit found for SHA: main/plugins/dingduff/skills/dingduff-citation-check",
+        },
+        422,
+      );
+    const skillMarkdown =
+      "---\nname: reader\ndescription: Reads.\n---\n\nRead things.\n";
+    const skillBytes = Buffer.byteLength(skillMarkdown);
+    const attempted: string[] = [];
+    const result = await acquireGitHubSkill({
+      url: "https://github.com/owner/repo/tree/main/plugins/skills/reader",
+      fetcher: async (input) => {
+        const url = String(input);
+        attempted.push(url);
+        if (url.endsWith("/repos/owner/repo")) {
+          return json({ default_branch: "main", private: false, full_name: "owner/repo" });
+        }
+        if (url.includes("/commits/")) {
+          return url.endsWith("/commits/main")
+            ? json({ sha: "a".repeat(40) })
+            : unresolvable();
+        }
+        if (url.includes("/git/trees/")) {
+          return json({
+            truncated: false,
+            tree: [
+              {
+                path: "plugins/skills/reader/SKILL.md",
+                mode: "100644",
+                type: "blob",
+                sha: "b".repeat(40),
+                size: skillBytes,
+              },
+            ],
+          });
+        }
+        return json({
+          content: Buffer.from(skillMarkdown).toString("base64"),
+          encoding: "base64",
+          size: skillBytes,
+        });
+      },
+    });
+
+    expect(result.provenance).toMatchObject({
+      requestedRef: "main",
+      selectedPath: "plugins/skills/reader",
+    });
+    // It must actually have tried the longer candidates and moved past them.
+    expect(
+      attempted.filter((url) => url.includes("/commits/")).length,
+    ).toBeGreaterThan(1);
+  });
+});
+
 describe("GitHub rate limiting", () => {
   // GitHub answers an exhausted quota with the same 403 it uses for a private
   // repository, which read as "connect OAuth" for a public one.

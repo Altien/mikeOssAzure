@@ -169,10 +169,28 @@ function rateLimitMessage(
 
 async function githubJson<T>(
   path: string,
-  options: { fetcher: GitHubFetch; token?: string; allow404?: boolean },
+  options: {
+    fetcher: GitHubFetch;
+    token?: string;
+    allow404?: boolean;
+    /**
+     * A candidate ref that does not exist. GitHub answers 404 for an unknown
+     * branch but 422 ("No commit found for SHA") when the candidate cannot be
+     * a ref at all — which is what every `<ref>/<path>` guess longer than the
+     * real ref looks like. Both mean "try the next candidate", so neither may
+     * abort the search.
+     */
+    allowUnresolvedRef?: boolean;
+  },
 ): Promise<T | null> {
   const response = await githubRequest(path, options);
   if (options.allow404 && response.status === 404) return null;
+  if (
+    options.allowUnresolvedRef &&
+    (response.status === 404 || response.status === 422)
+  ) {
+    return null;
+  }
   // GitHub answers an exhausted rate limit with the same 403 it uses for a
   // repository you may not read. Reporting that as an authorization problem
   // sends an administrator off to configure OAuth for a public repository.
@@ -230,7 +248,7 @@ async function resolveRefAndPath(args: {
       .join("/");
     const commit = await githubJson<{ sha: string } | null>(
       `/repos/${encodeURIComponent(args.parsed.owner)}/${encodeURIComponent(args.parsed.repository)}/commits/${encodeURIComponent(requestedRef)}`,
-      { ...args, allow404: true },
+      { ...args, allowUnresolvedRef: true },
     );
     if (commit) {
       return {
