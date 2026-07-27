@@ -626,6 +626,26 @@ function parseFallbackAssessments(raw: string) {
   });
 }
 
+/**
+ * Notes added to a candidate for capability matching only. The chat tool
+ * descriptions are written for the assistant mid-conversation and are shared
+ * with upstream, so they are not edited here; this says what a matcher needs
+ * and nothing else reads it.
+ *
+ * Every entry exists because a broad tool's own description invites a match
+ * that a narrower tool should win. `read_document` says it is what to call
+ * before "citing from" a document, which is true in chat and wrong here: an
+ * imported skill that verifies citations needs the stable extraction its
+ * anchoring depends on, and a plain text read produces quotes anchored to
+ * nothing while looking like it worked.
+ */
+const MATCHER_NOTES: Record<string, string> = {
+  read_document:
+    "Plain current text of one attached document. Not a verification record: no stable immutable snapshot, no printed-page markers, no structure preservation, no hash. Where the behaviour is citation, quotation, anchoring or page-referenced work, extract_document_for_verification is the correct candidate.",
+  fetch_documents:
+    "Plain current text of several attached documents, with the same limits as read_document.",
+};
+
 /** One narrow behaviour taken out of a requirement, compared on its own. */
 type CapabilityAtom = { label: string; intent: string };
 
@@ -771,8 +791,15 @@ is an acceptable replacement. Compare purpose, inputs, outputs, errors and
 limits, data access, and side effects. Name similarity is not evidence.
 The behaviour may carry proposedCandidateNames: consider those first, but
 reject them unless their observable behaviour actually matches.
+Where more than one candidate could perform the behaviour, take the most
+specific one rather than the most general. A general tool that merely returns
+the same kind of value is the wrong answer when a narrower candidate produces
+the record the behaviour actually needs. A candidate may carry a matchingNote;
+it is authoritative about that candidate's limits.
 Judge only the behaviour given. Do not consider the rest of the skill, and do
-not reject a match because other parts of the skill are unsupported.
+not reject a match because other parts of the skill are unsupported. partOf
+names the requirement it came from: use it only to disambiguate between
+candidates, never as a reason to reject one.
 Never call a tool and never authorize a mapping.
 Use exact candidate names as given. Where this one behaviour genuinely needs
 several tools, list them comma-separated in toolName. Never invent a name.
@@ -855,6 +882,9 @@ export async function resolveCapabilityContractWithLlm(args: {
       name: tool.name,
       source: tool.source,
       description: tool.description,
+      ...(MATCHER_NOTES[tool.name]
+        ? { matchingNote: MATCHER_NOTES[tool.name] }
+        : {}),
       inputSchema: tool.inputSchema,
       outputSchema: tool.outputSchema ?? null,
       sideEffects: tool.sideEffects,

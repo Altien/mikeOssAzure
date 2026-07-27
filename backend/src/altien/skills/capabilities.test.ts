@@ -834,15 +834,18 @@ describe("bundled scripts through the behavioural comparison", () => {
             {
               requirementName: NAME,
               compatible: true,
-              toolName: "read_document",
-              reason: "Extracting document text is read_document's job.",
-              comparison: { purpose: "extract text" },
+              toolName: "extract_document_for_verification",
+              reason:
+                "Stable extraction with page markers is what these scripts produce.",
+              comparison: { purpose: "extract a verification record" },
             },
           ],
         })) as never,
     });
     expect(contract.blockers).toEqual([]);
-    expect(contract.approvedToolNames).toContain("read_document");
+    expect(contract.approvedToolNames).toContain(
+      "extract_document_for_verification",
+    );
   });
 });
 
@@ -871,9 +874,10 @@ describe("a requirement that names several behaviours at once", () => {
   };
 
   /**
-   * Answers whichever of the two questions it was asked. Only extract_docx.py
-   * has an equivalent here, which is the point: the other three must not drag
-   * it down, and it must not carry them.
+   * Answers whichever of the two questions it was asked. Three of the four
+   * have an equivalent — Authority Trace does this same work — and
+   * build_review.py does not, which is the point: the one gap must not drag
+   * the other three down, and they must not carry it.
    */
   function stub(calls: { decompose: number; match: string[] }) {
     return (async ({
@@ -894,16 +898,23 @@ describe("a requirement that names several behaviours at once", () => {
         });
       }
       calls.match.push(input.name);
-      const compatible = input.name === "extract_docx.py";
+      // The real equivalents: Authority Trace already extracts DOCX/PDF as a
+      // stable record with printed-page markers, and already anchors quotes.
+      const equivalent: Record<string, string> = {
+        "verify_anchors.py": "verify_citation_sources",
+        "extract_docx.py": "extract_document_for_verification",
+        "mark_pdf_pages.py": "extract_document_for_verification",
+      };
+      const toolName = equivalent[input.name] ?? null;
       return JSON.stringify({
         assessments: [
           {
             requirementName: input.name,
-            compatible,
-            toolName: compatible ? "read_document" : null,
-            reason: compatible
-              ? "Reading a document's text is read_document's job."
-              : "Nothing here does this.",
+            compatible: Boolean(toolName),
+            toolName,
+            reason: toolName
+              ? `Authority Trace already does this as ${toolName}.`
+              : "Nothing here assembles the review record.",
             comparison: { purpose: input.behaviour },
           },
         ],
@@ -944,22 +955,74 @@ describe("a requirement that names several behaviours at once", () => {
     expect(mapping.atoms).toEqual([
       expect.objectContaining({
         label: "verify_anchors.py",
-        mappedToolNames: [],
+        mappedToolNames: ["verify_citation_sources"],
       }),
       expect.objectContaining({
         label: "extract_docx.py",
         intent: INTENTS["extract_docx.py"],
-        mappedToolNames: ["read_document"],
+        mappedToolNames: ["extract_document_for_verification"],
       }),
       expect.objectContaining({
         label: "mark_pdf_pages.py",
-        mappedToolNames: [],
+        mappedToolNames: ["extract_document_for_verification"],
       }),
       expect.objectContaining({ label: "build_review.py", mappedToolNames: [] }),
     ]);
-    expect(mapping.llmReason).toContain("extract_docx.py → read_document");
+    expect(mapping.llmReason).toContain(
+      "extract_docx.py → extract_document_for_verification",
+    );
     // Partial cover is not cover: nothing is granted on the strength of it.
-    expect(contract.approvedToolNames).not.toContain("read_document");
+    expect(contract.approvedToolNames).toEqual([]);
+  });
+
+  it("warns the matcher off the shallow reader for anchoring work", async () => {
+    // read_document's own description says to call it before "citing from" a
+    // document, which is true in chat and wrong for an imported skill whose
+    // quotes have to anchor. Left unsaid, a fast model takes it and the skill
+    // produces citations anchored to nothing while appearing to work.
+    let candidates: Array<Record<string, unknown>> = [];
+    await resolveCapabilityContractWithLlm({
+      analysis,
+      catalogue: firstPartyToolCatalogue(),
+      model: "gpt-5.4-lite",
+      complete: (async ({
+        systemPrompt,
+        user,
+      }: {
+        systemPrompt: string;
+        user: string;
+      }) => {
+        if (systemPrompt.includes("State what each named item does")) {
+          return JSON.stringify({ atoms: [] });
+        }
+        candidates = (JSON.parse(user) as { candidates: typeof candidates })
+          .candidates;
+        return JSON.stringify({
+          assessments: [
+            {
+              requirementName: "x",
+              compatible: false,
+              toolName: null,
+              reason: "no",
+              comparison: {},
+            },
+          ],
+        });
+      }) as never,
+    });
+    const readDocument = candidates.find(
+      (candidate) => candidate.name === "read_document",
+    );
+    expect(readDocument?.matchingNote).toContain(
+      "extract_document_for_verification",
+    );
+    // The tool it points at has to be in the same list, or the note is advice
+    // the matcher cannot take.
+    expect(
+      candidates.some(
+        (candidate) => candidate.name === "extract_document_for_verification",
+      ),
+    ).toBe(true);
   });
 
   it("leaves a single-behaviour requirement whole", async () => {
