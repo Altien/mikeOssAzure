@@ -89,6 +89,82 @@ describe("SkillsLibrary", () => {
         },
     };
 
+    /** An enable action whose contract exercises every rendering branch. */
+    const fullContractAction = {
+        id: "action-full",
+        actionType: "enable_version",
+        payloadHash: "hash-full-abcdef",
+        payload: {
+            executionContract: {
+                projectRead: true,
+                approvedToolNames: [
+                    "list_documents",
+                    "mcp_dingduff_opinion_store_2500a7a0",
+                ],
+                toolLabels: {
+                    mcp_dingduff_opinion_store_2500a7a0:
+                        "MCP://DingDuff/opinion_store",
+                },
+                mappings: [
+                    {
+                        requirement: {
+                            name: "read project documents",
+                            kind: "project_read",
+                            required: true,
+                        },
+                        status: "compatible",
+                        mappedToolNames: ["list_documents"],
+                    },
+                    {
+                        requirement: {
+                            name: "opinion store lookup",
+                            kind: "mcp",
+                            required: true,
+                        },
+                        status: "llm_compatible",
+                        mappedToolNames: [
+                            "mcp_dingduff_opinion_store_2500a7a0",
+                        ],
+                    },
+                    {
+                        requirement: {
+                            name: "Local python3 with bundled scripts (verify_anchors.py, split_sections.py)",
+                            kind: "local_execution",
+                            required: true,
+                        },
+                        status: "not_executed",
+                        mappedToolNames: [],
+                        llmReason:
+                            "1 of 2 behaviours already exist as Mike tools.",
+                        atoms: [
+                            {
+                                label: "verify anchors",
+                                intent: "check every anchor resolves",
+                                mappedToolNames: ["find_in_document"],
+                                reason: "find_in_document performs the lookup.",
+                            },
+                            {
+                                label: "split sections",
+                                intent: "cut the document into sections",
+                                mappedToolNames: [],
+                                reason: "No available tool performs this.",
+                            },
+                        ],
+                    },
+                    {
+                        requirement: {
+                            name: "optional citation polish",
+                            kind: "tool",
+                            required: false,
+                        },
+                        status: "invented_future_status",
+                        mappedToolNames: [],
+                    },
+                ],
+            },
+        },
+    };
+
     it("shows enabled skills without an import control to members", async () => {
         listSkillsMock.mockResolvedValue({
             canManage: false,
@@ -214,6 +290,84 @@ describe("SkillsLibrary", () => {
         );
         // The panel now restates the amended payload and its new hash.
         expect(await screen.findByText(/hash-two-abc/)).toBeInTheDocument();
+    });
+
+    /** Proposes the enable action above and returns once its panel is up. */
+    async function openFullContract() {
+        listSkillsMock.mockResolvedValue({
+            canManage: true,
+            skills: [draftSkill],
+        });
+        postSkillReviewMessageMock.mockResolvedValueOnce({
+            conversationId: "review-1",
+            outcome: "proposed",
+            action: fullContractAction,
+        });
+        const user = userEvent.setup();
+
+        renderWithProviders(<SkillsLibrary />, {
+            user: { id: "admin-1", email: "admin@example.test" },
+        });
+
+        await user.click(
+            await screen.findByRole("button", { name: "Propose enable" }),
+        );
+        expect(await screen.findByText(/Capability mapping/)).toBeInTheDocument();
+    }
+
+    it("lists every capability mapping, not only the unresolved ones", async () => {
+        await openFullContract();
+
+        expect(screen.getByText("Capability mapping (4)")).toBeInTheDocument();
+        expect(screen.getByText("read project documents")).toBeInTheDocument();
+        expect(screen.getByText("opinion store lookup")).toBeInTheDocument();
+        expect(
+            screen.getByText(/Local python3 with bundled scripts/),
+        ).toBeInTheDocument();
+        expect(screen.getByText("optional citation polish")).toBeInTheDocument();
+        // The two plainly mapped requirements read as mapped rather than as
+        // their raw enum values.
+        expect(screen.getAllByText("mapped")).toHaveLength(2);
+    });
+
+    it("shows a not_executed requirement as never executed here", async () => {
+        await openFullContract();
+
+        expect(screen.getByText("never executed here")).toBeInTheDocument();
+        expect(
+            screen.getByText(/1 of 2 behaviours already exist as Mike tools/),
+        ).toBeInTheDocument();
+    });
+
+    it("renders an MCP tool by its label, never its wire name", async () => {
+        await openFullContract();
+
+        expect(
+            screen.getAllByText(/MCP:\/\/DingDuff\/opinion_store/).length,
+        ).toBeGreaterThan(0);
+        expect(
+            screen.queryByText(/mcp_dingduff_opinion_store_2500a7a0/),
+        ).not.toBeInTheDocument();
+    });
+
+    it("breaks a multi-behaviour requirement down per atom", async () => {
+        await openFullContract();
+
+        expect(screen.getByText(/verify anchors/)).toBeInTheDocument();
+        expect(screen.getByText("find_in_document")).toBeInTheDocument();
+        // The behaviour Mike does not cover is named as such, rather than
+        // being hidden behind the requirement's single verdict.
+        expect(screen.getByText(/split sections/)).toBeInTheDocument();
+        expect(screen.getByText("no equivalent")).toBeInTheDocument();
+    });
+
+    it("falls back to the raw status for an unrecognised mapping status", async () => {
+        await openFullContract();
+
+        expect(
+            screen.getByText("invented_future_status"),
+        ).toBeInTheDocument();
+        expect(screen.getByText("optional")).toBeInTheDocument();
     });
 
     it("surfaces an acquisition proposal and approves it explicitly", async () => {

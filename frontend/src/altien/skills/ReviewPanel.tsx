@@ -5,18 +5,194 @@ import type {
     SkillSnapshotResult,
 } from "./api";
 
+type ContractAtom = {
+    label?: string;
+    intent?: string;
+    mappedToolNames?: string[];
+    reason?: string;
+};
+
 type ContractMapping = {
-    requirement?: { name?: string };
+    requirement?: { name?: string; kind?: string; required?: boolean };
     status?: string;
     mappedToolNames?: string[];
+    llmReason?: string;
+    atoms?: ContractAtom[];
+};
+
+type ExecutionContract = {
+    approvedToolNames?: string[];
+    toolLabels?: Record<string, string>;
+    projectRead?: boolean;
+    mappings?: ContractMapping[];
 };
 
 function contractOf(action: SkillPendingAction) {
-    return (action.payload.executionContract ?? {}) as {
-        approvedToolNames?: string[];
-        projectRead?: boolean;
-        mappings?: ContractMapping[];
-    };
+    return (action.payload.executionContract ?? {}) as ExecutionContract;
+}
+
+/**
+ * Wire name -> display label, mirroring the backend's `labelForTool`. Only MCP
+ * tools differ, and their wire name hides which server they came from, so the
+ * label is the only readable form of the thing being approved.
+ */
+function labelForTool(
+    name: string,
+    labels: Record<string, string> | undefined,
+): string {
+    return labels?.[name] ?? name;
+}
+
+function labelTools(
+    names: string[] | undefined,
+    labels: Record<string, string> | undefined,
+): string {
+    return (names ?? []).map((name) => labelForTool(name, labels)).join(", ");
+}
+
+/**
+ * Short human phrase per contract status, so the panel reads as a decision
+ * rather than as an enum dump. `tone` drives the visual weight: anything not
+ * plainly mapped has to catch a reviewer's eye.
+ */
+const STATUS_PHRASES: Record<string, { label: string; tone: string }> = {
+    compatible: { label: "mapped", tone: "mapped" },
+    llm_compatible: { label: "mapped", tone: "mapped" },
+    dependency_compatible: { label: "bound skill", tone: "mapped" },
+    admin_selected: { label: "you selected this", tone: "warn" },
+    connection_required: { label: "needs a connector", tone: "warn" },
+    not_executed: { label: "never executed here", tone: "warn" },
+    proposed: { label: "needs approval", tone: "warn" },
+    needs_admin_selection: { label: "you must choose", tone: "warn" },
+    dependency_required: { label: "needs a skill binding", tone: "warn" },
+    incompatible: { label: "no equivalent", tone: "blocked" },
+    missing: { label: "not found", tone: "blocked" },
+    model_requirement: { label: "model behaviour", tone: "neutral" },
+    admin_rejected: { label: "you rejected this", tone: "neutral" },
+};
+
+/** Statuses that need no further reading: the requirement is covered. */
+const PLAINLY_MAPPED = ["compatible", "llm_compatible", "dependency_compatible"];
+
+const TONE_CLASSES: Record<string, string> = {
+    mapped: "bg-emerald-100 text-emerald-800",
+    warn: "bg-amber-200 text-amber-900",
+    blocked: "bg-rose-100 text-rose-800",
+    neutral: "bg-slate-200 text-slate-700",
+};
+
+/** Never renders nothing: an unrecognised status shows its raw wire value. */
+function phraseFor(status: string) {
+    return (
+        STATUS_PHRASES[status] ?? {
+            label: status || "unknown status",
+            tone: "neutral",
+        }
+    );
+}
+
+const REASON_LIMIT = 160;
+
+function truncate(text: string) {
+    return text.length > REASON_LIMIT
+        ? `${text.slice(0, REASON_LIMIT).trimEnd()}…`
+        : text;
+}
+
+/**
+ * Every requirement in the contract with what it actually resolved to. The
+ * whole mapping is the thing under approval, so nothing here is filtered out —
+ * a requirement silently marked compatible and mapped onto unrelated tools is
+ * exactly the case this table exists to make visible.
+ */
+function CapabilityMappingTable({ contract }: { contract: ExecutionContract }) {
+    const mappings = contract.mappings ?? [];
+    if (!mappings.length) return null;
+    return (
+        <div className="mt-2">
+            <p className="text-xs font-medium">
+                Capability mapping ({mappings.length})
+            </p>
+            <div className="mt-1 max-h-72 w-full min-w-0 overflow-auto rounded-md border border-amber-200 bg-white/70">
+                <ul className="divide-y divide-amber-100">
+                    {mappings.map((mapping, index) => {
+                        const status = String(mapping.status ?? "");
+                        const phrase = phraseFor(status);
+                        const plain = PLAINLY_MAPPED.includes(status);
+                        const tools = labelTools(
+                            mapping.mappedToolNames,
+                            contract.toolLabels,
+                        );
+                        const atoms = mapping.atoms ?? [];
+                        return (
+                            <li
+                                key={`${mapping.requirement?.name ?? "requirement"}-${index}`}
+                                className={
+                                    plain
+                                        ? "px-2 py-1.5"
+                                        : "border-l-2 border-amber-500 bg-amber-100/60 px-2 py-1.5"
+                                }
+                            >
+                                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                                    <span className="break-words text-xs font-medium">
+                                        {mapping.requirement?.name ??
+                                            "unnamed requirement"}
+                                    </span>
+                                    {mapping.requirement?.required === false && (
+                                        <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                                            optional
+                                        </span>
+                                    )}
+                                    <span
+                                        className={`rounded px-1.5 py-0.5 text-[10px] ${TONE_CLASSES[phrase.tone] ?? TONE_CLASSES.neutral}`}
+                                    >
+                                        {phrase.label}
+                                    </span>
+                                </div>
+                                <p className="mt-0.5 break-all font-mono text-[11px] text-slate-600">
+                                    {tools || "no tools"}
+                                </p>
+                                {atoms.length > 0 && (
+                                    <ul className="mt-1 space-y-0.5 border-l border-amber-300 pl-2">
+                                        {atoms.map((atom, atomIndex) => {
+                                            const atomTools = labelTools(
+                                                atom.mappedToolNames,
+                                                contract.toolLabels,
+                                            );
+                                            return (
+                                                <li
+                                                    key={`${atom.label ?? "atom"}-${atomIndex}`}
+                                                    className="break-words text-[11px] text-slate-700"
+                                                    title={atom.reason}
+                                                >
+                                                    {atom.label ?? "behaviour"}{" "}
+                                                    <span aria-hidden="true">
+                                                        →
+                                                    </span>{" "}
+                                                    <span className="break-all font-mono text-slate-600">
+                                                        {atomTools ||
+                                                            "no equivalent"}
+                                                    </span>
+                                                </li>
+                                            );
+                                        })}
+                                    </ul>
+                                )}
+                                {mapping.llmReason && (
+                                    <p
+                                        className="mt-0.5 break-words text-[11px] text-slate-500"
+                                        title={mapping.llmReason}
+                                    >
+                                        {truncate(mapping.llmReason)}
+                                    </p>
+                                )}
+                            </li>
+                        );
+                    })}
+                </ul>
+            </div>
+        </div>
+    );
 }
 
 /** Human-readable rendering of one read-only snapshot command result. */
@@ -80,13 +256,16 @@ function PendingActionDetail({ action }: { action: SkillPendingAction }) {
         ["needs_admin_selection", "proposed"].includes(String(mapping.status)),
     );
     return (
-        <>
+        <div className="min-w-0">
             <p>Confirm the exact pending enable action.</p>
             <p className="mt-1">
                 Approved tools:{" "}
-                <span className="font-mono">
+                <span className="break-all font-mono">
                     {contract.approvedToolNames?.length
-                        ? contract.approvedToolNames.join(", ")
+                        ? labelTools(
+                              contract.approvedToolNames,
+                              contract.toolLabels,
+                          )
                         : "none"}
                 </span>
                 {contract.projectRead ? " · project read baseline on" : ""}
@@ -97,12 +276,13 @@ function PendingActionDetail({ action }: { action: SkillPendingAction }) {
                         <li key={String(mapping.requirement?.name)}>
                             {mapping.status === "needs_admin_selection"
                                 ? `“${mapping.requirement?.name}” grants nothing until you select a minimum capability set.`
-                                : `“${mapping.requirement?.name}” has the unapproved name-match candidate ${(mapping.mappedToolNames ?? []).join(", ")}.`}
+                                : `“${mapping.requirement?.name}” has the unapproved name-match candidate ${labelTools(mapping.mappedToolNames, contract.toolLabels)}.`}
                         </li>
                     ))}
                 </ul>
             )}
-        </>
+            <CapabilityMappingTable contract={contract} />
+        </div>
     );
 }
 
@@ -184,7 +364,7 @@ export function ReviewPanel({
                         Propose enable
                     </button>
                 ) : (
-                    <div className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+                    <div className="mt-3 min-w-0 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
                         <PendingActionDetail action={pendingAction} />
                         <p className="mt-1 font-mono text-xs">
                             payload {pendingAction.payloadHash.slice(0, 12)}…

@@ -849,6 +849,108 @@ describe("bundled scripts through the behavioural comparison", () => {
   });
 });
 
+describe("a project_read label the requirement does not support", () => {
+  // Verbatim from the contract a real kimi-k3 analysis produced for
+  // DingDuff's citation-check skill, which enabled with all three of these
+  // marked compatible against the document baseline.
+  function contract(name: string, kind: "project_read" = "project_read") {
+    return resolveCapabilityContract({
+      analysis: {
+        summary: "Verifies citations in a drafted memo.",
+        risks: [],
+        unresolvedReferences: [],
+        capabilityRequirements: [
+          { name, kind, required: true, rationale: "Stated by the skill." },
+        ],
+      },
+      catalogue: firstPartyToolCatalogue(),
+    });
+  }
+
+  it("still grants the baseline for a requirement that is project reading", () => {
+    const resolved = contract(
+      "project document reading (list_documents / read_document / fetch_documents / find_in_document)",
+    );
+    expect(resolved.mappings[0].status).toBe("compatible");
+    expect(resolved.mappings[0].mappedToolNames).toContain("read_document");
+    expect(resolved.blockers).toEqual([]);
+  });
+
+  it("keeps granting it for workspace access described in the usual words", () => {
+    // The parenthetical names files; the claim is in the head. Holding the
+    // examples to the vocabulary would make every ordinary requirement fall
+    // through and turn a wrong label into a new blocker.
+    const resolved = contract(
+      "Project workspace read/write (memo, sources/, .cite-check/, cites.json, review.html)",
+    );
+    expect(resolved.mappings[0].status).toBe("compatible");
+  });
+
+  it("does not answer a request to run scripts with the document tools", () => {
+    // The incident: labelled project_read, so the branch granted the baseline
+    // and marked it compatible before anything looked at the words. A request
+    // for python3 was answered with read_document and no brief was generated.
+    const resolved = contract(
+      "Local python3 with bundled scripts (verify_anchors.py, extract_docx.py, mark_pdf_pages.py, build_review.py)",
+    );
+    expect(resolved.mappings[0].status).toBe("not_executed");
+    expect(resolved.mappings[0].mappedToolNames).toEqual([]);
+    // Still never a blocker: nothing an administrator approves makes Mike run
+    // imported source.
+    expect(resolved.blockers).toEqual([]);
+  });
+
+  it("does not answer a named PDF extractor with the document tools either", () => {
+    const resolved = contract(
+      "pdftotext (poppler) or equivalent text-layer PDF extractor",
+    );
+    expect(resolved.mappings[0].status).not.toBe("compatible");
+    expect(resolved.mappings[0].mappedToolNames).toEqual([]);
+  });
+
+  it("sends an unfamiliar phrasing to the comparison rather than granting it", async () => {
+    // A whitelist fails towards asking. This one really is project reading,
+    // phrased in words the vocabulary does not have, so the comparison reaches
+    // the same baseline for the cost of one call.
+    const resolved = await resolveCapabilityContractWithLlm({
+      analysis: {
+        summary: "Reads what the user filed.",
+        risks: [],
+        unresolvedReferences: [],
+        capabilityRequirements: [
+          {
+            name: "access to the practitioner's filed materials",
+            kind: "project_read",
+            required: true,
+            rationale: "Reads the documents already in the matter.",
+          },
+        ],
+      },
+      catalogue: firstPartyToolCatalogue(),
+      model: "gpt-5.4-lite",
+      complete: (async ({ systemPrompt }: { systemPrompt: string }) =>
+        systemPrompt.includes("State what each named item does")
+          ? JSON.stringify({ atoms: [] })
+          : JSON.stringify({
+              assessments: [
+                {
+                  requirementName: "access to the practitioner's filed materials",
+                  compatible: true,
+                  toolName: "read_document, list_documents",
+                  reason: "Project document reading by another name.",
+                  comparison: { purpose: "read project documents" },
+                },
+              ],
+            })) as never,
+    });
+    expect(resolved.mappings[0].status).toBe("llm_compatible");
+    expect(resolved.approvedToolNames).toEqual(
+      expect.arrayContaining(["read_document", "list_documents"]),
+    );
+    expect(resolved.blockers).toEqual([]);
+  });
+});
+
 describe("a requirement that names several behaviours at once", () => {
   const NAME =
     "verify_anchors.py / extract_docx.py / mark_pdf_pages.py / build_review.py (bundled scripts, run via python3 shell)";

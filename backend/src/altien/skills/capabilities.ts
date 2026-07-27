@@ -172,6 +172,55 @@ function namesLocalExecution(requirement: SkillCapabilityRequirement) {
   );
 }
 
+/**
+ * Words a genuine project-read requirement is made of. The baseline it unlocks
+ * is the four read-only document tools, so anything describable with these is
+ * already answered by it.
+ */
+const PROJECT_READ_VOCABULARY = new Set([
+  "a", "access", "and", "attached", "attachment", "attachments", "content",
+  "contents", "doc", "docs", "document", "documents", "faceted", "file",
+  "files", "find", "finding", "for", "from", "in", "list", "listing", "memo",
+  "memos", "of", "only", "or", "project", "projects", "read", "reading",
+  "reads", "readonly", "retrieval", "retrieve", "search", "searching", "see",
+  "source", "sources", "text", "the", "to", "uploaded", "user", "users",
+  "with", "workspace", "write",
+  "list_documents", "fetch_documents", "read_document", "find_in_document",
+  "fetch", "fetching",
+]);
+
+/**
+ * Whether a requirement the analysis labelled `project_read` actually
+ * describes project document access.
+ *
+ * The label alone cannot be trusted. A real analysis put "Local python3 with
+ * bundled scripts (verify_anchors.py, ...)" and "pdftotext (poppler) or
+ * equivalent text-layer PDF extractor" under this kind, and the branch it
+ * guards grants the document baseline and marks the requirement compatible
+ * without any comparison — so a request to run scripts was answered with
+ * read_document, silently, and no clean-room brief was ever generated.
+ *
+ * The test is a whitelist rather than a search for suspicious words: an
+ * unfamiliar phrasing falls through to the ordinary path and gets compared,
+ * which costs a model call and reaches the same baseline if that is genuinely
+ * what it wanted. Guessing the other way grants without looking.
+ */
+function describesProjectRead(requirement: SkillCapabilityRequirement) {
+  if (namesLocalExecution(requirement)) return false;
+  // A trailing parenthetical lists examples — file names, paths — while the
+  // head carries the claim, so only the head is held to the vocabulary.
+  const words = splitRequirementName(requirement.name)
+    .parts.join(" ")
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9_]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  return (
+    words.length > 0 && words.every((word) => PROJECT_READ_VOCABULARY.has(word))
+  );
+}
+
 function vague(requirement: SkillCapabilityRequirement) {
   return /^(appropriate|available|relevant|necessary|needed)?\s*tools?$/i.test(
     requirement.name.trim(),
@@ -214,7 +263,7 @@ export function resolveCapabilityContract(args: {
   skillDependencies?: ApprovedSkillDependency[];
 }) {
   const mappings = args.analysis.capabilityRequirements.map((requirement) => {
-    if (requirement.kind === "project_read") {
+    if (requirement.kind === "project_read" && describesProjectRead(requirement)) {
       return {
         requirement,
         status: "compatible" as const,
