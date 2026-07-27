@@ -438,7 +438,7 @@ function loadWorkflows() {
       .flatMap((entry) => {
         const entryDir = path.join(collectionDir, entry.name);
         if (fs.existsSync(path.join(entryDir, "SKILL.md"))) return [entryDir];
-        if (!fs.existsSync(path.join(entryDir, "pack.json"))) return [];
+        if (!fs.existsSync(path.join(entryDir, "pack.yaml"))) return [];
         return fs
           .readdirSync(entryDir, { withFileTypes: true })
           .filter(
