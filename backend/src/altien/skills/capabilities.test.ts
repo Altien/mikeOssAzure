@@ -4,6 +4,7 @@ import {
   firstPartyToolCatalogue,
   resolveCapabilityContract,
   resolveCapabilityContractWithLlm,
+  UNAPPROVED_STATUSES,
 } from "./capabilities";
 
 describe("bundled executables versus a missing connector", () => {
@@ -38,6 +39,38 @@ describe("bundled executables versus a missing connector", () => {
       },
       catalogue: firstPartyToolCatalogue(),
     });
+
+  it("maps a bundled script onto an existing tool rather than refusing it", () => {
+    // Wanting to run bundled code is only unsatisfiable once nothing here
+    // does the same job. A script named after a real tool must still map.
+    const mapped = resolveCapabilityContract({
+      analysis: {
+        summary: "Reads documents with a bundled script.",
+        risks: [],
+        unresolvedReferences: [],
+        capabilityRequirements: [
+          {
+            name: "read_document",
+            kind: "first_party_tool",
+            required: true,
+            rationale: "The bundled python script extracts document text.",
+          },
+        ],
+      },
+      catalogue: firstPartyToolCatalogue(),
+    }).mappings[0];
+    expect(mapped.status).toBe("proposed");
+    expect(mapped.mappedToolNames).toEqual(["read_document"]);
+  });
+
+  it("offers an unmatched script to the behavioural comparison", () => {
+    // It must reach the LLM pass, which is where a differently-named Mike
+    // tool can still be recognised as doing the same job.
+    const shell = contract().mappings.find((mapping) =>
+      mapping.requirement.name.startsWith("Local shell"),
+    );
+    expect(UNAPPROVED_STATUSES).toContain(shell?.status);
+  });
 
   it("never blocks on code Mike will not execute", () => {
     const shell = contract().mappings.find((mapping) =>

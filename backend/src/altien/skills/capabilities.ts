@@ -174,7 +174,9 @@ function vague(requirement: SkillCapabilityRequirement) {
  * Statuses that still need an explicit behavioural comparison before any tool
  * can be granted. They are proposals, never grants.
  */
-const UNAPPROVED_STATUSES = ["missing", "proposed"];
+// `not_executed` is here so a bundled script still gets a behavioural
+// comparison against the catalogue: Mike may already do the job natively.
+export const UNAPPROVED_STATUSES = ["missing", "proposed", "not_executed"];
 
 export function resolveCapabilityContract(args: {
   analysis: GeneratedSkillAnalysis;
@@ -214,20 +216,6 @@ export function resolveCapabilityContract(args: {
           inputs: "exact package-relative paths and literal searches",
           outputs: "bounded text from the skill's own immutable package",
           sideEffects: "read",
-        },
-      };
-    }
-    if (namesLocalExecution(requirement)) {
-      return {
-        requirement,
-        status: "not_executed" as const,
-        mappedToolNames: [],
-        comparison: {
-          purpose: "Imported executable source is never run.",
-          requestedCapabilityText: requirement.name,
-          rationale: requirement.rationale,
-          cleanRoomPath:
-            "Generate a clean-room brief for this behaviour and build it as a Mike tool; the skill runs without it until then.",
         },
       };
     }
@@ -292,6 +280,25 @@ export function resolveCapabilityContract(args: {
         normalize(item.name) === normalize(requirement.name),
     );
     if (!found) {
+      // Wanting to run bundled code is only unsatisfiable once nothing here
+      // does the same job. The behavioural comparison still runs — a script
+      // that extracts text from a document may well map onto a Mike tool —
+      // and this is the answer when it finds nothing, so it reports the
+      // clean-room route instead of blocking on code that will never run.
+      if (namesLocalExecution(requirement)) {
+        return {
+          requirement,
+          status: "not_executed" as const,
+          mappedToolNames: [],
+          comparison: {
+            purpose: "Imported executable source is never run.",
+            requestedCapabilityText: requirement.name,
+            rationale: requirement.rationale,
+            cleanRoomPath:
+              "No available tool does this. Generate a clean-room brief and build it as a Mike tool; the skill runs without it until then.",
+          },
+        };
+      }
       return {
         requirement,
         status: "missing" as const,
@@ -381,6 +388,8 @@ const NON_BLOCKING_STATUSES = [
   "model_requirement",
   "dependency_compatible",
   "needs_admin_selection",
+  // Reported, never enforced: no approval makes Mike execute imported source.
+  "not_executed",
   // A deliberate refusal is a decision, not a missing capability.
   "admin_rejected",
 ];
@@ -687,6 +696,8 @@ Never call a tool and never authorize a mapping. Return JSON only:
         "compatible",
         "llm_compatible",
         "connection_required",
+        // Never a blocker: no approval makes Mike execute imported source.
+        "not_executed",
         "model_requirement",
         "dependency_compatible",
         "needs_admin_selection",
