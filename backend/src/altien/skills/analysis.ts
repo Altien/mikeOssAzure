@@ -30,11 +30,19 @@ export type SkillAnalysisArtifact = {
   generated: GeneratedSkillAnalysis;
 };
 
+/**
+ * Descriptive text from the model. A missing or non-string value is a real
+ * schema failure, but merely being long is not: these are labels and
+ * rationales, and discarding an entire analysis because one of them ran over
+ * makes re-analysis a coin flip on a package with a lot to describe. Over-long
+ * values are truncated so the finding survives.
+ */
 function boundedString(value: unknown, field: string, max: number): string {
-  if (typeof value !== "string" || !value.trim() || value.length > max) {
+  if (typeof value !== "string" || !value.trim()) {
     throw new Error(`Invalid generated skill analysis field '${field}'.`);
   }
-  return value.trim();
+  const trimmed = value.trim();
+  return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed;
 }
 
 function stringList(value: unknown, field: string): string[] {

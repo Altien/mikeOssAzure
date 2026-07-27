@@ -66,6 +66,50 @@ describe("skill import analysis boundary", () => {
       ),
     ).toThrow("capability kind");
   });
+
+  it("truncates an over-long label instead of discarding the analysis", () => {
+    // A package with a lot to describe draws long requirement names from the
+    // model. Losing every finding because one label ran over made a
+    // re-analysis a coin flip.
+    const longName = `Bundled scripts (${"verify_anchors.py, ".repeat(12)}) and python3 runtime`;
+    expect(longName.length).toBeGreaterThan(128);
+    const parsed = parseGeneratedSkillAnalysis(
+      JSON.stringify({
+        summary: "Checks citations.",
+        capabilityRequirements: [
+          {
+            name: longName,
+            kind: "first_party_tool",
+            required: true,
+            rationale: "Runs the bundled scripts.",
+          },
+        ],
+        risks: [],
+        unresolvedReferences: [],
+      }),
+    );
+    expect(parsed.capabilityRequirements).toHaveLength(1);
+    expect(parsed.capabilityRequirements[0].name).toHaveLength(128);
+    expect(parsed.capabilityRequirements[0].name).toMatch(/…$/);
+    expect(parsed.capabilityRequirements[0].kind).toBe("first_party_tool");
+  });
+
+  it("still rejects a missing or non-string label", () => {
+    for (const name of [undefined, "", "   ", 42]) {
+      expect(() =>
+        parseGeneratedSkillAnalysis(
+          JSON.stringify({
+            summary: "x",
+            capabilityRequirements: [
+              { name, kind: "first_party_tool", required: true, rationale: "x" },
+            ],
+            risks: [],
+            unresolvedReferences: [],
+          }),
+        ),
+      ).toThrow("capabilityRequirements[0].name");
+    }
+  });
 });
 
 describe("skill pending actions", () => {
