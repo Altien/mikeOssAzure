@@ -677,3 +677,85 @@ describe("applyCapabilityAmendments", () => {
     ).toThrow("cannot be amended");
   });
 });
+
+describe("multi-tool assessments", () => {
+  const analysis = {
+    summary: "Fetches cited sources.",
+    risks: [],
+    unresolvedReferences: [],
+    capabilityRequirements: [
+      {
+        name: "opinion_store / statute_store (DingDuff fetch tools)",
+        kind: "mcp" as const,
+        required: true,
+        rationale: "Fetches the cited sources.",
+      },
+    ],
+  };
+  const catalogue = [
+    {
+      name: "mcp_dingduff_opinion_store",
+      source: "mcp" as const,
+      description: "Fetch an opinion.",
+      inputSchema: {},
+      sideEffects: "external" as const,
+      requiresConfirmation: false,
+      available: true,
+    },
+    {
+      name: "mcp_dingduff_statute_store",
+      source: "mcp" as const,
+      description: "Fetch a statute.",
+      inputSchema: {},
+      sideEffects: "external" as const,
+      requiresConfirmation: false,
+      available: true,
+    },
+  ];
+
+  function complete(toolName: string) {
+    return async () =>
+      JSON.stringify({
+        assessments: [
+          {
+            requirementName: analysis.capabilityRequirements[0].name,
+            compatible: true,
+            toolName,
+            reason: "Both fetch stored sources.",
+            comparison: { purpose: "fetch" },
+          },
+        ],
+      });
+  }
+
+  it("maps one requirement onto the several tools it needs", async () => {
+    // One capability in two calls: the model answers with both names, and
+    // mappedToolNames has always been a list.
+    const contract = await resolveCapabilityContractWithLlm({
+      analysis,
+      catalogue,
+      model: "gpt-5.4-lite",
+      complete: complete(
+        "mcp_dingduff_opinion_store and mcp_dingduff_statute_store",
+      ) as never,
+    });
+    expect(contract.blockers).toEqual([]);
+    expect(contract.approvedToolNames).toEqual(
+      expect.arrayContaining([
+        "mcp_dingduff_opinion_store",
+        "mcp_dingduff_statute_store",
+      ]),
+    );
+  });
+
+  it("names the catalogue when the assessment invents a tool", async () => {
+    await expect(
+      resolveCapabilityContractWithLlm({
+        analysis,
+        catalogue,
+        model: "gpt-5.4-lite",
+        complete: complete("mcp_dingduff_imaginary_store") as never,
+      }),
+    ).rejects.toThrow(/Available: mcp_dingduff_opinion_store/);
+  });
+});

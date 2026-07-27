@@ -400,7 +400,11 @@ export function SkillsLibrary() {
     };
 
     return (
-        <main className="mx-auto w-full max-w-6xl px-6 py-8">
+        // The app shell is md:overflow-hidden, so a page taller than the
+        // viewport is clipped unless it scrolls itself. Skill cards grow with
+        // their analysis, and the controls sit at the bottom of the card.
+        <div className="h-full w-full overflow-y-auto">
+        <div className="mx-auto w-full max-w-6xl px-6 py-8">
             <ImportPanel
                 canManage={canManage}
                 importing={importing}
@@ -612,6 +616,7 @@ export function SkillsLibrary() {
                 onCancel={() => setPendingDelete(null)}
                 onConfirm={confirmDelete}
             />
-        </main>
+        </div>
+        </div>
     );
 }

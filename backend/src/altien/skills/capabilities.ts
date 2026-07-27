@@ -646,7 +646,10 @@ limits, data access, and side effects. Name similarity is not evidence.
 A requirement may carry proposedCandidateNames: consider those candidates
 first, but reject them unless their observable behaviour actually matches.
 Never call a tool and never authorize a mapping. Return JSON only:
-{"assessments":[{"requirementName":"exact input name","compatible":true,"toolName":"exact candidate name or null","reason":"...","comparison":{"purpose":"...","inputs":"...","outputs":"...","errorsLimits":"...","dataAccess":"...","sideEffects":"..."}}]}`,
+Use exact candidate names as given. When one requirement genuinely needs
+several tools, list them comma-separated in toolName. Never invent a name.
+Return JSON only:
+{"assessments":[{"requirementName":"exact input name","compatible":true,"toolName":"exact candidate name, or several comma-separated, or null","reason":"...","comparison":{"purpose":"...","inputs":"...","outputs":"...","errorsLimits":"...","dataAccess":"...","sideEffects":"..."}}]}`,
     user: inputText,
   });
   const assessments = parseFallbackAssessments(raw);
@@ -670,23 +673,40 @@ Never call a tool and never authorize a mapping. Return JSON only:
         llmReason: assessment?.reason ?? "No compatible replacement proposed.",
       };
     }
-    const candidate = args.catalogue.find(
-      (tool) => tool.name === assessment.toolName,
-    );
-    if (!candidate) {
+    // One requirement can legitimately need several tools — "opinion_store /
+    // statute_store" is one capability in two calls — and the model answers
+    // with both. Splitting is what the contract already expects: mapped tool
+    // names are a list.
+    const selected = String(assessment.toolName)
+      .split(/\s*(?:,|;|\/|\band\b|\+)\s*/i)
+      .map((name) => name.trim())
+      .filter(Boolean);
+    const candidates = selected.map((name) => ({
+      name,
+      tool: args.catalogue.find((item) => item.name === name),
+    }));
+    const unknown = candidates.filter((entry) => !entry.tool);
+    if (!candidates.length || unknown.length) {
+      // Name the catalogue: an assessment that invents a tool is a prompt
+      // problem, and the reviewer can only judge it against what exists.
       throw new Error(
-        `Fast-model compatibility assessment selected unknown tool '${assessment.toolName}'.`,
+        `Fast-model compatibility assessment selected unknown tool ${unknown
+          .map((entry) => `'${entry.name}'`)
+          .join(", ")} for '${mapping.requirement.name}'. Available: ${args.catalogue
+          .map((tool) => tool.name)
+          .join(", ")}.`,
       );
     }
+    const tools = candidates.map((entry) => entry.tool!);
     return {
       ...mapping,
-      status: candidate.available
+      status: tools.every((tool) => tool.available)
         ? ("llm_compatible" as const)
         : ("connection_required" as const),
-      mappedToolNames: [candidate.name],
+      mappedToolNames: tools.map((tool) => tool.name),
       comparison: assessment.comparison,
       llmReason: assessment.reason,
-      mappedSource: candidate.source,
+      mappedSource: tools[0].source,
     };
   });
   const blockers = mappings.filter(
