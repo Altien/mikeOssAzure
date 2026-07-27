@@ -44,9 +44,32 @@ function parseWwwAuthenticate(value: string | null): string | null {
     return match?.[1] ?? match?.[2] ?? null;
 }
 
+/**
+ * Metadata discovery follows redirects, unlike the MCP transport itself.
+ * Servers routinely serve the RFC 8414 well-known paths from a redirect —
+ * DingDuff answers `/.well-known/oauth-authorization-server/mcp` with a 302 to
+ * `/mcp/.well-known/oauth-authorization-server` — and refusing to follow makes
+ * those servers unusable.
+ *
+ * Every hop is re-validated by `validateRemoteMcpUrl`, so a redirect can no
+ * more reach a forbidden host than the original request could.
+ */
 async function fetchJson(url: string, init?: RequestInit) {
-    await validateRemoteMcpUrl(url);
-    const response = await fetch(url, { ...init, redirect: "manual" });
+    let target = url;
+    let response!: Response;
+    for (let hop = 0; hop <= 3; hop += 1) {
+        await validateRemoteMcpUrl(target);
+        response = await fetch(target, { ...init, redirect: "manual" });
+        if (response.status < 300 || response.status >= 400) break;
+        const location = response.headers.get("location");
+        if (!location) break;
+        target = new URL(location, target).toString();
+        if (hop === 3) {
+            throw new Error(
+                `Too many redirects loading OAuth metadata from ${url}.`,
+            );
+        }
+    }
     if (!response.ok) {
         throw new Error(`Failed to fetch OAuth metadata (${response.status}).`);
     }
