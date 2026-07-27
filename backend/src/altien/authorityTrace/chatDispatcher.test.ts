@@ -4,10 +4,12 @@ const {
   executeMcpToolCallMock,
   verifyCitationSourcesMock,
   extractDocumentForVerificationMock,
+  exportCitationReviewMock,
 } = vi.hoisted(() => ({
   executeMcpToolCallMock: vi.fn(),
   verifyCitationSourcesMock: vi.fn(),
   extractDocumentForVerificationMock: vi.fn(),
+  exportCitationReviewMock: vi.fn(),
 }));
 
 vi.mock("./core/service", () => ({
@@ -32,12 +34,16 @@ vi.mock("./core/service", () => ({
 vi.mock("./core/extractionService", () => ({
   extractDocumentForVerification: extractDocumentForVerificationMock,
 }));
+vi.mock("./core/exportService", () => ({
+  exportCitationReview: exportCitationReviewMock,
+}));
 vi.mock("../../lib/mcpConnectors", () => ({
   executeMcpToolCall: executeMcpToolCallMock,
 }));
 
 import { VerificationExtractionRequiredError } from "./core/service";
 import { runToolCalls } from "../../lib/chat/tools/toolDispatcher";
+import { PROJECT_EXTRA_TOOLS } from "../../lib/chat/tools/toolSchemas";
 import {
   AUTHORITY_TRACE_SYSTEM_PROMPT,
   AUTHORITY_TRACE_TOOL_NAMES,
@@ -75,7 +81,32 @@ beforeEach(() => {
   executeMcpToolCallMock.mockReset();
   verifyCitationSourcesMock.mockReset();
   extractDocumentForVerificationMock.mockReset();
+  exportCitationReviewMock.mockReset();
 });
+
+function exportToolCall(args: Record<string, unknown>) {
+  return runToolCalls(
+    [
+      {
+        id: "export-1",
+        function: {
+          name: AUTHORITY_TRACE_TOOL_NAMES.exportCitationReview,
+          arguments: JSON.stringify(args),
+        },
+      },
+    ],
+    new Map(),
+    "user-1",
+    {} as never,
+    () => {},
+    undefined,
+    undefined,
+    { "doc-0": { document_id: "memo-id", filename: "memo.md" } },
+    undefined,
+    undefined,
+    "project-1",
+  );
+}
 
 describe("Authority Trace tool dispatch", () => {
   it("is registered as a general project tool", () => {
@@ -85,11 +116,86 @@ describe("Authority Trace tool dispatch", () => {
       expect.arrayContaining([
         AUTHORITY_TRACE_TOOL_NAMES.extractDocument,
         AUTHORITY_TRACE_TOOL_NAMES.verifyCitationSources,
+        AUTHORITY_TRACE_TOOL_NAMES.exportCitationReview,
       ]),
     );
+    expect(
+      PROJECT_EXTRA_TOOLS.map((tool) => tool.function.name),
+    ).toContain(AUTHORITY_TRACE_TOOL_NAMES.exportCitationReview);
     expect(JSON.stringify(AUTHORITY_TRACE_TOOLS)).not.toMatch(
       /connector|skill|diffduff|dingduff/i,
     );
+  });
+
+  it("offers the review export no parameter that could force a degraded report", () => {
+    const parameters = AUTHORITY_TRACE_TOOLS.find(
+      (tool) =>
+        tool.function.name === AUTHORITY_TRACE_TOOL_NAMES.exportCitationReview,
+    )?.function.parameters as {
+      additionalProperties?: boolean;
+      properties: Record<string, unknown>;
+      required: string[];
+    };
+
+    expect(Object.keys(parameters.properties)).toEqual(["run_id"]);
+    expect(parameters.required).toEqual(["run_id"]);
+    expect(parameters.additionalProperties).toBe(false);
+    expect(JSON.stringify(AUTHORITY_TRACE_TOOLS)).not.toMatch(
+      /force_degraded|include_originals/i,
+    );
+  });
+
+  it("returns the export download reference to the model, never the report body", async () => {
+    exportCitationReviewMock.mockResolvedValue({
+      ok: true,
+      run_id: "run-1",
+      export_type: "review",
+      filename: "authority-trace-run-1-review.html",
+      download_url: "/download/token.signature",
+      citations: { total: 1, anchored: 1, failed: 0 },
+    });
+
+    const result = await exportToolCall({ run_id: "run-1" });
+
+    expect(exportCitationReviewMock).toHaveBeenCalledWith(
+      { runId: "run-1", userId: "user-1", projectId: "project-1" },
+      {},
+    );
+    const content = String(result.toolResults[0].content);
+    expect(JSON.parse(content)).toMatchObject({
+      ok: true,
+      download_url: "/download/token.signature",
+    });
+    expect(content).not.toContain("<");
+    // The export renders an existing run, so it advances no verification.
+    expect(result.authorityTraceEvents).toEqual([]);
+  });
+
+  it("hands back the integrity refusal instead of an export", async () => {
+    exportCitationReviewMock.mockResolvedValue({
+      ok: false,
+      error: "integrity_check_failed",
+      detail: "Export blocked because memo or source integrity checks failed",
+      warnings: ["The memo bytes no longer match this run."],
+      instruction: "Do not export this run.",
+    });
+
+    const result = await exportToolCall({
+      run_id: "run-1",
+      force_degraded: true,
+    });
+
+    // An unschema'd argument reaches the dispatcher only if a model invents
+    // it; it must never become an override.
+    expect(exportCitationReviewMock).toHaveBeenCalledWith(
+      { runId: "run-1", userId: "user-1", projectId: "project-1" },
+      {},
+    );
+    expect(JSON.parse(String(result.toolResults[0].content))).toMatchObject({
+      ok: false,
+      error: "integrity_check_failed",
+      warnings: ["The memo bytes no longer match this run."],
+    });
   });
 
   it("extracts a project document and makes the immutable result available this turn", async () => {

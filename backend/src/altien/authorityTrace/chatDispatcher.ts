@@ -4,6 +4,7 @@ import {
   ExternalSourceCache,
 } from "../externalSources/cache";
 import { registerExternalSourceArtifact } from "../externalSources/chatDispatcher";
+import { exportCitationReview } from "./core/exportService";
 import { extractDocumentForVerification } from "./core/extractionService";
 import {
   VerificationExtractionRequiredError,
@@ -91,6 +92,51 @@ export async function dispatchAuthorityTraceTool(input: {
             error: "Verification source is unavailable or unauthorized.",
           }),
     } satisfies ToolResult);
+    return true;
+  }
+
+  if (
+    toolCall.function.name === AUTHORITY_TRACE_TOOL_NAMES.exportCitationReview
+  ) {
+    // No stream event: the export renders an existing run rather than
+    // advancing one, so there is no verification progress for the UI to show.
+    try {
+      if (!projectId) {
+        throw new Error(
+          "Citation review export requires an active project context",
+        );
+      }
+      if (typeof args.run_id !== "string" || !args.run_id) {
+        throw new Error("run_id is required");
+      }
+      const result = await exportCitationReview(
+        {
+          runId: args.run_id,
+          userId,
+          projectId,
+        },
+        db,
+      );
+      toolResults.push({
+        role: "tool",
+        tool_call_id: toolCall.id,
+        content: JSON.stringify(result),
+      } satisfies ToolResult);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Citation review export failed";
+      toolResults.push({
+        role: "tool",
+        tool_call_id: toolCall.id,
+        content: JSON.stringify({
+          ok: false,
+          error: "export_failed",
+          detail: message,
+        }),
+      } satisfies ToolResult);
+    }
     return true;
   }
 

@@ -2,6 +2,7 @@ export const AUTHORITY_TRACE_TOOL_NAMES = {
   extractDocument: "extract_document_for_verification",
   readVerificationSource: "read_verification_source",
   verifyCitationSources: "verify_citation_sources",
+  exportCitationReview: "export_citation_review",
 } as const;
 
 export type AuthorityTraceEvent =
@@ -39,6 +40,8 @@ export const AUTHORITY_TRACE_SYSTEM_PROMPT = `AUTHORITY TRACE SOURCE SELECTION:
 Citation verification is a hybrid task. You are responsible for discovering candidate authorities, comparing plausible sources, deciding which documents and passages may support each citation, and explaining uncertainty. Choose whichever available project-document, legal-research, search, read, retrieval, or download tools are appropriate for that work; do not assume one fixed provider or search path.
 
 Backend research/read results that supply canonical source text may include a verification_source_id. A search result, snippet, summary, or generated analysis without that id is discovery evidence only and cannot be used as a verification source. Before using a verification_source_id, call read_verification_source and copy proposed passages from the exact verification text it returns. Before calling verify_citation_sources, every selected source must be either an authorized project document or a trusted verification_source_id returned by a backend tool and still accessible in the current project, and must be included in the sources map. Never invent a document id or verification source id. Include all plausible source keys in source_candidates, and bind every proposed exact quote to the source key it came from. The TypeScript verifier will resolve the trusted backend source, confirm exact textual presence, calculate offsets and hashes, and persist the result. It does not replace your judgment about source selection, legal validity, or whether the passage substantively supports the proposition.
+
+Use export_citation_review to hand the user the reviewable report for a persisted run. It returns a download link and a summary, never the report body, and it records nothing: a citation verdict remains a human act in the review view. If it refuses because memo or source integrity checks failed, say so and name every warning. A report whose inputs no longer match the run is a person's decision to rely on, and there is no other route to one.
 
 When a selected project source is DOCX or PDF, call extract_document_for_verification before proposing passages. Use the returned document_handle as the verification source. The extraction is a stable Markdown snapshot; an ocr_required warning means the PDF text layer is inadequate and no OCR content was invented.
 
@@ -93,6 +96,26 @@ export const AUTHORITY_TRACE_TOOLS = [
           },
         },
         required: ["verification_source_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: AUTHORITY_TRACE_TOOL_NAMES.exportCitationReview,
+      description:
+        "Render the offline review report for a persisted verification run in this project and return a download link plus a short summary. Read-only: it re-checks memo and source integrity at export time, writes nothing to the run, and never records a citation verdict. It refuses when integrity checks fail; report that refusal and its warnings rather than looking for another way to produce the report.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          run_id: {
+            type: "string",
+            description:
+              "The run_id returned by verify_citation_sources for a run in the current project.",
+          },
+        },
+        required: ["run_id"],
       },
     },
   },
