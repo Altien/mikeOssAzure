@@ -23,6 +23,8 @@ export type SkillListItem = {
         sourceKind: "zip" | "github";
         sourceRepository?: string;
         sourceCommitSha?: string;
+        /** Requirement names a clean-room brief can be generated for. */
+        briefRequirements?: string[];
     };
 };
 

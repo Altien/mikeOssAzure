@@ -6,6 +6,7 @@ import {
   uploadFile,
 } from "../../lib/storage";
 import { createServerSupabase } from "../../lib/supabase";
+import { briefEligibleRequirements } from "./artifacts";
 import type {
   DiscoveredSkill,
   SkillSnapshotFile,
@@ -835,6 +836,13 @@ export async function listTenantSkills(
             current.analysis_provider == null
               ? undefined
               : String(current.analysis_provider),
+          // Names a clean-room brief can be generated for. Empty means the
+          // analysis found no executable or MCP gap, so the UI hides the
+          // control rather than offering something that can only fail.
+          briefRequirements: briefEligibleRequirements(
+            current.generated_analysis as never,
+            {},
+          ),
           analysisModel:
             current.analysis_model == null
               ? undefined

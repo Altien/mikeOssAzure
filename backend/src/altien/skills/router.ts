@@ -46,6 +46,7 @@ import { disableSkill } from "./lifecycle";
 import {
   approveCleanRoomDeveloperArtifact,
   createCleanRoomDeveloperArtifact,
+  SkillBriefRequirementError,
   getCleanRoomDeveloperArtifact,
   persistSkillRename,
 } from "./artifacts";
@@ -618,6 +619,13 @@ skillsRouter.post(
         }),
       );
     } catch (error) {
+      // These name what the administrator should do instead, so they are
+      // reported verbatim rather than flattened to a generic failure.
+      if (error instanceof SkillBriefRequirementError) {
+        return void res
+          .status(422)
+          .json({ detail: error.message, code: error.code });
+      }
       res.status(422).json({
         detail: safeErrorMessage(
           error,

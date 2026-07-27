@@ -414,6 +414,51 @@ export async function persistSkillRename(args: {
   }
 }
 
+export class SkillBriefRequirementError extends Error {
+  constructor(
+    readonly code: "requirement_not_identified" | "remote_mcp_requirement",
+    message: string,
+  ) {
+    super(message);
+    this.name = "SkillBriefRequirementError";
+  }
+}
+
+/**
+ * The names a brief can actually be generated for. Naming them beats saying
+ * only that the given one was wrong: the analysis already knows the answer,
+ * so the administrator should not have to guess it.
+ */
+export function briefEligibleRequirements(
+  generated: { capabilityRequirements?: Array<Record<string, unknown>> } | null,
+  original: { mcp_requirements?: Array<Record<string, unknown>> },
+): string[] {
+  const names = new Set<string>();
+  for (const item of generated?.capabilityRequirements ?? []) {
+    if (item.kind === "first_party_tool" || item.kind === "mcp") {
+      const name = String(item.name ?? "").trim();
+      if (name) names.add(name);
+    }
+  }
+  for (const item of original.mcp_requirements ?? []) {
+    if (item.kind !== "local") continue;
+    for (const value of [item.name, item.command]) {
+      if (typeof value === "string" && value.trim()) names.add(value.trim());
+    }
+  }
+  return [...names];
+}
+
+function briefRequirementHelp(
+  generated: { capabilityRequirements?: Array<Record<string, unknown>> } | null,
+  original: { mcp_requirements?: Array<Record<string, unknown>> },
+): string {
+  const eligible = briefEligibleRequirements(generated, original);
+  return eligible.length
+    ? `Name a requirement this analysis identified: ${eligible.join(", ")}.`
+    : "This skill's analysis identified no executable or local MCP requirement, so there is nothing to specify.";
+}
+
 export async function createCleanRoomDeveloperArtifact(args: {
   tenantId: string;
   versionId: string;
@@ -449,8 +494,27 @@ export async function createCleanRoomDeveloperArtifact(args: {
             args.requirementName.trim().toLocaleLowerCase(),
         ),
   );
+  // Spec: a skill referencing an existing remote MCP requires that MCP; it is
+  // not reverse-engineered. Writing a clean-room specification of somebody
+  // else's hosted service is the one gap a brief must refuse to fill.
+  const remoteMcp = (original.mcp_requirements ?? []).find(
+    (item) =>
+      item.kind === "remote" &&
+      typeof item.name === "string" &&
+      item.name.toLocaleLowerCase() ===
+        args.requirementName.trim().toLocaleLowerCase(),
+  ) as { name?: string; endpoint?: string } | undefined;
+  if (remoteMcp) {
+    throw new SkillBriefRequirementError(
+      "remote_mcp_requirement",
+      `'${args.requirementName.trim()}' is served by the remote MCP at ${remoteMcp.endpoint ?? "an external endpoint"}. Connect that MCP server in Account → Connectors; Mike does not specify a third-party hosted service.`,
+    );
+  }
   if (!declaredRequirement && !localMcp) {
-    throw new Error("The named executable/MCP requirement was not identified.");
+    throw new SkillBriefRequirementError(
+      "requirement_not_identified",
+      briefRequirementHelp(generated, original),
+    );
   }
   const manifest = activeManifest(loaded.version, loaded.snapshot);
   const requested = new Set(args.sourcePaths ?? []);

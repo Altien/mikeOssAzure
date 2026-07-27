@@ -65,17 +65,24 @@ export function AdaptationPanel({
                     </button>
                 </div>
             )}
-            {skill.version.analysisState === "succeeded" && (
+            {skill.version.analysisState === "succeeded" &&
+                !!skill.version.briefRequirements?.length && (
                 <div className="mt-3 flex flex-wrap gap-2">
                     <input
                         value={requirementValue}
                         onChange={(event) =>
                             onRequirementChange(event.target.value)
                         }
-                        placeholder="Missing executable or local MCP"
+                        list={`brief-requirements-${skill.version.id}`}
+                        placeholder={`Requirement to specify, e.g. ${skill.version.briefRequirements[0]}`}
                         aria-label={`Clean-room requirement for ${skill.displayName}`}
                         className="min-w-64 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
                     />
+                    <datalist id={`brief-requirements-${skill.version.id}`}>
+                        {skill.version.briefRequirements.map((name) => (
+                            <option key={name} value={name} />
+                        ))}
+                    </datalist>
                     <button
                         type="button"
                         disabled={busy || !requirementValue.trim()}

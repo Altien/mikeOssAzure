@@ -154,7 +154,10 @@ const hiddenSource = Array.from(
 ).join(" ");
 
 function developerArtifactDb(
-  options: { documentsInsertFails?: boolean } = {},
+  options: {
+    documentsInsertFails?: boolean;
+    remoteMcp?: { name: string; endpoint: string };
+  } = {},
 ) {
   return makeFakeDb((call) => {
     if (
@@ -201,6 +204,20 @@ function developerArtifactDb(
           root_folder_id: "snapshot-root",
           manifest: {
             licence_paths: [],
+            ...(options.remoteMcp
+              ? {
+                  mcp_requirements: [
+                    {
+                      kind: "remote",
+                      sourcePath: "tool/mcp.json",
+                      name: options.remoteMcp.name,
+                      endpoint: options.remoteMcp.endpoint,
+                      transport: "http",
+                      auth: null,
+                    },
+                  ],
+                }
+              : {}),
             files: [
               {
                 path: "tool/reviewed.ts",
@@ -235,6 +252,47 @@ function developerArtifactDb(
     return { data: [], error: null };
   });
 }
+
+describe("clean-room brief eligibility", () => {
+  it("refuses to specify a third party's hosted MCP", async () => {
+    // Spec: a skill referencing an existing remote MCP requires that MCP; it
+    // is not reverse-engineered. Writing its contract would be exactly that.
+    const fake = developerArtifactDb({
+      remoteMcp: {
+        name: "citecheck_review",
+        endpoint: "https://app.example.com/mcp",
+      },
+    });
+    await expect(
+      createCleanRoomDeveloperArtifact({
+        tenantId: "tenant-1",
+        versionId: "version-1",
+        requirementName: "citecheck_review",
+        createdBy: "admin-1",
+        db: fake.db as never,
+      }),
+    ).rejects.toMatchObject({
+      code: "remote_mcp_requirement",
+      message: expect.stringContaining("https://app.example.com/mcp"),
+    });
+  });
+
+  it("names the requirements it can specify when given an unknown one", async () => {
+    const fake = developerArtifactDb();
+    await expect(
+      createCleanRoomDeveloperArtifact({
+        tenantId: "tenant-1",
+        versionId: "version-1",
+        requirementName: "https://app.example.com/mcp",
+        createdBy: "admin-1",
+        db: fake.db as never,
+      }),
+    ).rejects.toMatchObject({
+      code: "requirement_not_identified",
+      message: expect.stringContaining("lookup_records"),
+    });
+  });
+});
 
 describe("createCleanRoomDeveloperArtifact", () => {
   it("blocks an artifact whose brief leaks a verbatim span of the snapshot", async () => {

@@ -826,6 +826,9 @@ describe("listTenantSkills", () => {
           declaredVersion: "2",
           contentHash: "new-hash",
           sourceKind: "zip",
+          // No analysis yet, so no requirement can be specified — the UI
+          // hides the clean-room control on an empty list.
+          briefRequirements: [],
         },
       },
     ]);
