@@ -697,6 +697,17 @@ Return JSON only:
       (item) => item.requirementName === mapping.requirement.name,
     );
     if (!assessment?.compatible || !assessment.toolName) {
+      // The comparison ran and found nothing, which for bundled code is the
+      // answer, not a failure: it stays not_executed and keeps the clean-room
+      // route. Downgrading it to incompatible would block enablement on code
+      // that was never going to run here whatever the comparison said.
+      if (mapping.status === "not_executed") {
+        return {
+          ...mapping,
+          llmReason:
+            assessment?.reason ?? "No available tool performs this behaviour.",
+        };
+      }
       return {
         ...mapping,
         status: "incompatible" as const,

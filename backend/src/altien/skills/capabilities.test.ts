@@ -785,3 +785,66 @@ describe("tool names an administrator has to read", () => {
     expect(labelForTool("read_document", labels)).toBe("read_document");
   });
 });
+
+describe("bundled scripts through the behavioural comparison", () => {
+  // Verbatim from the analysis of DingDuff's citation-check skill.
+  const NAME =
+    "verify_anchors.py / extract_docx.py / mark_pdf_pages.py / build_review.py (bundled scripts, run via python3 shell)";
+  const analysis = {
+    summary: "Verifies citations.",
+    risks: [],
+    unresolvedReferences: [],
+    capabilityRequirements: [
+      {
+        name: NAME,
+        kind: "first_party_tool" as const,
+        required: true,
+        rationale: "Runs the bundled verification scripts.",
+      },
+    ],
+  };
+
+  it("stays non-blocking when the comparison finds no equivalent tool", async () => {
+    const contract = await resolveCapabilityContractWithLlm({
+      analysis,
+      catalogue: firstPartyToolCatalogue(),
+      model: "gpt-5.4-lite",
+      complete: (async () =>
+        JSON.stringify({
+          assessments: [
+            {
+              requirementName: NAME,
+              compatible: false,
+              toolName: null,
+              reason: "Nothing here executes scripts.",
+              comparison: { purpose: "run scripts" },
+            },
+          ],
+        })) as never,
+    });
+    expect(contract.blockers).toEqual([]);
+    expect(contract.mappings[0].status).toBe("not_executed");
+  });
+
+  it("takes the equivalent tool when the comparison finds one", async () => {
+    const contract = await resolveCapabilityContractWithLlm({
+      analysis,
+      catalogue: firstPartyToolCatalogue(),
+      model: "gpt-5.4-lite",
+      complete: (async () =>
+        JSON.stringify({
+          assessments: [
+            {
+              requirementName: NAME,
+              compatible: true,
+              toolName: "read_document",
+              reason: "Extracting document text is read_document's job.",
+              comparison: { purpose: "extract text" },
+            },
+          ],
+        })) as never,
+    });
+    expect(contract.blockers).toEqual([]);
+    expect(contract.approvedToolNames).toContain("read_document");
+  });
+});
