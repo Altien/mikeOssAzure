@@ -27,6 +27,7 @@ import {
   labelForTool,
   inspectMcpToolCatalogue,
   resolveCapabilityContractWithLlm,
+  STRUCTURAL_GAP_STATUSES,
   type ToolCatalogueItem,
 } from "./capabilities";
 import {
@@ -1128,8 +1129,8 @@ export async function postSkillReviewMessage(args: {
       ...contract.blockers.filter((b) => isConnector(b.requirement.name)),
       ...contract.blockers.filter((b) => !isConnector(b.requirement.name)),
     ].map((blocker) => blocker.requirement.name);
-    const notExecuted = contract.mappings
-      .filter((mapping) => mapping.status === "not_executed")
+    const structural = contract.mappings
+      .filter((mapping) => STRUCTURAL_GAP_STATUSES.includes(mapping.status))
       .map((mapping) => mapping.requirement.name);
     throw new Error(
       [
@@ -1137,8 +1138,8 @@ export async function postSkillReviewMessage(args: {
         ordered.some(isConnector)
           ? "Connect the named MCP server in Account → Connectors, then propose again."
           : "",
-        notExecuted.length
-          ? `Not blocking, and never executed here: ${notExecuted.join(", ")} — generate a clean-room brief for these.`
+        structural.length
+          ? `Not blocking — this deployment does not provide these at all: ${structural.join(", ")}. Generate a clean-room brief for them.`
           : "",
       ]
         .filter(Boolean)

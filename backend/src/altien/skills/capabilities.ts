@@ -221,6 +221,21 @@ function describesProjectRead(requirement: SkillCapabilityRequirement) {
   );
 }
 
+/**
+ * A requirement for a writable local filesystem — a scratch directory the
+ * skill keeps intermediate files in while it works.
+ *
+ * Mike has no filesystem to lend and no connector, catalogue entry or approval
+ * creates one, so this is the same wall with no door as running bundled code.
+ * Reported, never enforced: the skill's file steps are answered by adapting it
+ * or by a clean-room brief, not by an administrator clicking something.
+ */
+function namesLocalFilesystem(requirement: SkillCapabilityRequirement) {
+  return /\b(file\s?systems?|local (?:disk|directory|folder|path|storage|files?)|working director\w+|scratch (?:space|director\w+)|workspace (?:read|write|access)|temp(?:orary)? (?:director\w+|folder|files?))\b/i.test(
+    requirement.name,
+  );
+}
+
 function vague(requirement: SkillCapabilityRequirement) {
   return /^(appropriate|available|relevant|necessary|needed)?\s*tools?$/i.test(
     requirement.name.trim(),
@@ -228,12 +243,23 @@ function vague(requirement: SkillCapabilityRequirement) {
 }
 
 /**
+ * Gaps in what this deployment structurally provides, rather than in what an
+ * administrator has configured. Nothing anyone approves closes them.
+ */
+export const STRUCTURAL_GAP_STATUSES = ["not_executed", "not_provided"];
+
+/**
  * Statuses that still need an explicit behavioural comparison before any tool
  * can be granted. They are proposals, never grants.
  */
-// `not_executed` is here so a bundled script still gets a behavioural
-// comparison against the catalogue: Mike may already do the job natively.
-export const UNAPPROVED_STATUSES = ["missing", "proposed", "not_executed"];
+// The structural gaps are here so they still get a behavioural comparison
+// against the catalogue: Mike may already do the job natively, and a script or
+// a scratch file is often just a step it has a tool for.
+export const UNAPPROVED_STATUSES = [
+  "missing",
+  "proposed",
+  ...STRUCTURAL_GAP_STATUSES,
+];
 
 /**
  * Wire name -> what to show an administrator. Only MCP tools differ: their
@@ -378,6 +404,20 @@ export function resolveCapabilityContract(args: {
           },
         };
       }
+      if (namesLocalFilesystem(requirement)) {
+        return {
+          requirement,
+          status: "not_provided" as const,
+          mappedToolNames: [],
+          comparison: {
+            purpose: "Mike has no local filesystem to lend a skill.",
+            requestedCapabilityText: requirement.name,
+            rationale: requirement.rationale,
+            cleanRoomPath:
+              "Project documents replace a scratch directory. The skill's file steps need adapting, or a clean-room brief for whatever the files were for.",
+          },
+        };
+      }
       return {
         requirement,
         status: "missing" as const,
@@ -409,23 +449,7 @@ export function resolveCapabilityContract(args: {
       },
     };
   });
-  const blockers = mappings.filter(
-    (mapping) =>
-      mapping.requirement.required &&
-      ![
-        "compatible",
-        "connection_required",
-        "model_requirement",
-        "dependency_compatible",
-        // Not a blocker: it grants nothing and is resolved by explicit
-        // TenantAdmin selection of a minimum capability set.
-        "needs_admin_selection",
-        // Not a blocker either: nothing the administrator can connect or
-        // approve will make Mike execute imported source. Reported, and
-        // answered by a clean-room brief.
-        "not_executed",
-      ].includes(mapping.status),
-  );
+  const blockers = mappings.filter(blocksEnablement);
   const approvedToolNames = Array.from(
     new Set(
       mappings
@@ -472,9 +496,46 @@ const NON_BLOCKING_STATUSES = [
   "needs_admin_selection",
   // Reported, never enforced: no approval makes Mike execute imported source.
   "not_executed",
+  // Nor lend it a filesystem to write scratch files into.
+  "not_provided",
   // A deliberate refusal is a decision, not a missing capability.
   "admin_rejected",
 ];
+
+/**
+ * Whether a required capability should stop this version being enabled.
+ *
+ * Only when the administrator can do something about it. Connecting the MCP
+ * server a skill names, binding a skill version it depends on, approving a
+ * proposed mapping: those are levers. A gap in Mike's own capabilities is not
+ * — no approval makes Mike run python, lend a filesystem, or grow a tool it
+ * does not have — so blocking there is a dead end that protects nothing and
+ * leaves the skill permanently unenablable.
+ *
+ * Those gaps are reported instead. The review panel lists every mapping with
+ * what it resolved to, so the administrator can see exactly what the skill
+ * will be missing and decide whether it is still worth enabling.
+ *
+ * Deliberately independent of how the requirement was worded. Every earlier
+ * version of this rule keyed off the requirement text — bundled scripts, a
+ * python3 shell, a workspace, a filesystem — and each re-analysis phrased it
+ * differently and broke it. What an administrator can act on does not change
+ * with the phrasing.
+ */
+function blocksEnablement(mapping: {
+  requirement: { required?: boolean; kind?: string };
+  status: string;
+}) {
+  if (mapping.requirement.required !== true) return false;
+  if (NON_BLOCKING_STATUSES.includes(mapping.status)) return false;
+  // Bind the exact skill version it needs.
+  if (mapping.status === "dependency_required") return true;
+  // Connect the server it names.
+  if (mapping.requirement.kind === "mcp") return true;
+  // A name match that has not been through its behavioural approval yet: the
+  // approval itself is the administrator's lever.
+  return mapping.status === "proposed";
+}
 
 type StoredContractMapping = {
   requirement: { name: string; required?: boolean; kind?: string };
@@ -610,11 +671,7 @@ export function applyCapabilityAmendments(args: {
     );
   }
 
-  const blockers = mappings.filter(
-    (mapping) =>
-      mapping.requirement?.required === true &&
-      !NON_BLOCKING_STATUSES.includes(mapping.status),
-  );
+  const blockers = mappings.filter(blocksEnablement);
   if (blockers.length) {
     throw new Error(
       `Required capabilities are missing or unavailable: ${blockers
@@ -1004,10 +1061,10 @@ export async function resolveCapabilityContractWithLlm(args: {
     const matched = results.filter((result) => result.toolNames.length);
     if (matched.length < results.length) {
       // Partial cover is not cover: a requirement is satisfied when every
-      // behaviour it names is. For bundled code that is the expected answer
-      // rather than a failure, so it keeps not_executed and the clean-room
-      // route; blocking there would be a wall with no door.
-      if (mapping.status === "not_executed") {
+      // behaviour it names is. For a structural gap that is the expected
+      // answer rather than a failure, so it keeps its status and its
+      // clean-room route.
+      if (STRUCTURAL_GAP_STATUSES.includes(mapping.status)) {
         return {
           ...mapping,
           atoms,
@@ -1055,20 +1112,7 @@ export async function resolveCapabilityContractWithLlm(args: {
       mappedSource: tools[0].source,
     };
   });
-  const blockers = mappings.filter(
-    (mapping) =>
-      mapping.requirement.required &&
-      ![
-        "compatible",
-        "llm_compatible",
-        "connection_required",
-        // Never a blocker: no approval makes Mike execute imported source.
-        "not_executed",
-        "model_requirement",
-        "dependency_compatible",
-        "needs_admin_selection",
-      ].includes(mapping.status),
-  );
+  const blockers = mappings.filter(blocksEnablement);
   const approvedToolNames = Array.from(
     new Set(
       mappings

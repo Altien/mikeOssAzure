@@ -62,6 +62,7 @@ const STATUS_PHRASES: Record<string, { label: string; tone: string }> = {
     admin_selected: { label: "you selected this", tone: "warn" },
     connection_required: { label: "needs a connector", tone: "warn" },
     not_executed: { label: "never executed here", tone: "warn" },
+    not_provided: { label: "not provided here", tone: "warn" },
     proposed: { label: "needs approval", tone: "warn" },
     needs_admin_selection: { label: "you must choose", tone: "warn" },
     dependency_required: { label: "needs a skill binding", tone: "warn" },

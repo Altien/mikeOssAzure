@@ -320,11 +320,14 @@ describe("skill capability resolution", () => {
       status: "incompatible",
       mappedToolNames: [],
     });
+    // The grant is what matters, and there is none. Blocking as well would be
+    // a dead end: the tool exists, the comparison rejected its behaviour, and
+    // no administrator action changes that. The gap is reported instead.
     expect(contract.approvedToolNames).toEqual([]);
-    expect(contract.blockers).toHaveLength(1);
+    expect(contract.blockers).toEqual([]);
   });
 
-  it("grants nothing for vague language and blocks required missing tools", () => {
+  it("grants nothing for vague language or for a tool that is not here", () => {
     const contract = resolveCapabilityContract({
       analysis: {
         summary: "Uses tools.",
@@ -349,8 +352,53 @@ describe("skill capability resolution", () => {
     });
     expect(contract.approvedToolNames).toEqual([]);
     expect(contract.mappings[0].status).toBe("needs_admin_selection");
-    expect(contract.blockers).toHaveLength(1);
-    expect(contract.blockers[0].requirement.name).toBe("nonexistent_tool");
+    // Reported, not enforced: an administrator cannot conjure a first-party
+    // tool this deployment does not have, so blocking leaves the skill
+    // permanently unenablable and protects nothing that the visible mapping
+    // does not already say.
+    expect(contract.mappings[1]).toMatchObject({
+      requirement: { name: "nonexistent_tool" },
+      status: "missing",
+      mappedToolNames: [],
+    });
+    expect(contract.blockers).toEqual([]);
+  });
+
+  it("blocks only what an administrator can actually resolve", () => {
+    const contract = resolveCapabilityContract({
+      analysis: {
+        summary: "Needs a server and a filesystem.",
+        risks: [],
+        unresolvedReferences: [],
+        capabilityRequirements: [
+          {
+            name: "DingDuff citecheck_review MCP tool",
+            kind: "mcp",
+            required: true,
+            rationale: "Opens the review panel.",
+          },
+          {
+            name: "Project filesystem read/write (sources/, cites.json)",
+            kind: "project_read",
+            required: true,
+            rationale: "Keeps intermediate files.",
+          },
+          {
+            name: "Local shell with python3 (scripts verify_anchors.py)",
+            kind: "first_party_tool",
+            required: true,
+            rationale: "Runs the bundled scripts.",
+          },
+        ],
+      },
+      catalogue: firstPartyToolCatalogue(),
+    });
+    // The connector is the one an administrator can go and connect.
+    expect(contract.blockers.map((blocker) => blocker.requirement.name)).toEqual(
+      ["DingDuff citecheck_review MCP tool"],
+    );
+    expect(contract.mappings[1].status).toBe("not_provided");
+    expect(contract.mappings[2].status).toBe("not_executed");
   });
 
   it("offers a required vague requirement for explicit admin selection instead of blocking", () => {
