@@ -7,7 +7,7 @@ import {
     type SetStateAction,
 } from "react";
 import type { TabularReview } from "@/app/components/shared/types";
-import { listTabularReviews } from "@/app/lib/mikeApi";
+import { listTabularReviewIds, listTabularReviews } from "@/app/lib/mikeApi";
 
 export type TabularReviewSortKey =
     | "name"
@@ -48,6 +48,7 @@ export function usePaginatedTabularReviews(options: {
     const [hasMore, setHasMore] = useState(true);
     const [error, setError] = useState<Error | null>(null);
     const [loadMoreError, setLoadMoreError] = useState<Error | null>(null);
+    const [selectingAll, setSelectingAll] = useState(false);
     const [retryVersion, setRetryVersion] = useState(0);
     const requestVersionRef = useRef(0);
     const loadingMoreRef = useRef(false);
@@ -86,6 +87,23 @@ export function usePaginatedTabularReviews(options: {
             });
         },
         [queryKey],
+    );
+    // Owner lookup for review ids that "select all matching" pulled in but
+    // that haven't been paged into `reviews` yet — bulk actions (e.g. delete)
+    // need the owning user_id without fetching each review's full payload.
+    const [selectAllOwners, setSelectAllOwners] = useState<{
+        queryKey: string;
+        ownerById: Record<string, string>;
+    }>({ queryKey, ownerById: {} });
+    const getReviewOwnerId = useCallback(
+        (id: string): string | undefined => {
+            const loaded = reviews.find((review) => review.id === id);
+            if (loaded) return loaded.user_id;
+            return selectAllOwners.queryKey === queryKey
+                ? selectAllOwners.ownerById[id]
+                : undefined;
+        },
+        [reviews, selectAllOwners, queryKey],
     );
 
     useEffect(() => {
@@ -212,6 +230,37 @@ export function usePaginatedTabularReviews(options: {
         setRetryVersion((current) => current + 1);
     }, []);
 
+    // Selects every review matching the current filters, not just the page(s)
+    // already loaded — a plain "select loaded rows" checkbox is misleading
+    // once results span more than one page. Fetches only ids (+ owner), not
+    // full review payloads, since that's all a bulk selection needs.
+    const selectAllMatching = useCallback(async () => {
+        if (!hasMore) {
+            setSelectedReviewIds(reviews.map((review) => review.id));
+            return;
+        }
+
+        const requestVersion = requestVersionRef.current;
+        setSelectingAll(true);
+        try {
+            const rows = await listTabularReviewIds(projectId, {
+                search: search || undefined,
+                scope,
+            });
+            if (requestVersion !== requestVersionRef.current) return;
+
+            setSelectAllOwners({
+                queryKey,
+                ownerById: Object.fromEntries(
+                    rows.map((row) => [row.id, row.user_id]),
+                ),
+            });
+            setSelectedReviewIds(rows.map((row) => row.id));
+        } finally {
+            setSelectingAll(false);
+        }
+    }, [hasMore, projectId, queryKey, reviews, scope, search, setSelectedReviewIds]);
+
     return {
         reviews,
         setReviews,
@@ -224,5 +273,8 @@ export function usePaginatedTabularReviews(options: {
         retry,
         selectedReviewIds,
         setSelectedReviewIds,
+        selectAllMatching,
+        selectingAll,
+        getReviewOwnerId,
     };
 }

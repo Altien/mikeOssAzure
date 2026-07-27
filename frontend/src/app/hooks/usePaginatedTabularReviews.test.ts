@@ -1,14 +1,16 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TabularReview } from "@/app/components/shared/types";
-import { listTabularReviews } from "@/app/lib/mikeApi";
+import { listTabularReviewIds, listTabularReviews } from "@/app/lib/mikeApi";
 import { usePaginatedTabularReviews } from "./usePaginatedTabularReviews";
 
 vi.mock("@/app/lib/mikeApi", () => ({
     listTabularReviews: vi.fn(),
+    listTabularReviewIds: vi.fn(),
 }));
 
 const listTabularReviewsMock = vi.mocked(listTabularReviews);
+const listTabularReviewIdsMock = vi.mocked(listTabularReviewIds);
 
 function review(id: string): TabularReview {
     return {
@@ -93,5 +95,67 @@ describe("usePaginatedTabularReviews", () => {
             expect(result.current.reviews).toEqual([review("retry")]),
         );
         expect(result.current.error).toBeNull();
+    });
+
+    it("selects every review matching the filters via a single lightweight ids request", async () => {
+        // First page load: 20 rows + 1 to signal more pages exist.
+        const firstPageRows = Array.from({ length: 21 }, (_, i) =>
+            review(`row-${i}`),
+        );
+        listTabularReviewsMock.mockResolvedValueOnce(firstPageRows);
+
+        const { result } = renderHook(() =>
+            usePaginatedTabularReviews({ scope: "in-project" }),
+        );
+        await waitFor(() => expect(result.current.loading).toBe(false));
+        expect(result.current.reviews).toHaveLength(20);
+        expect(result.current.hasMore).toBe(true);
+
+        // selectAllMatching should ask for ids only (not full review rows) —
+        // this stands in for a filter match spanning far more than one page.
+        const allMatches = Array.from({ length: 150 }, (_, i) => ({
+            id: `all-${i}`,
+            user_id: "user-1",
+        }));
+        listTabularReviewIdsMock.mockResolvedValueOnce(allMatches);
+
+        await act(async () => {
+            await result.current.selectAllMatching();
+        });
+
+        const expectedIds = allMatches.map((row) => row.id);
+        expect(result.current.selectedReviewIds).toEqual(expectedIds);
+
+        // It's a single round trip for ids/owners, not a loop over full pages.
+        expect(listTabularReviewIdsMock).toHaveBeenCalledTimes(1);
+        expect(listTabularReviewIdsMock).toHaveBeenCalledWith(undefined, {
+            search: undefined,
+            scope: "in-project",
+        });
+        // No extra calls to the full-row endpoint beyond the initial page load.
+        expect(listTabularReviewsMock).toHaveBeenCalledTimes(1);
+
+        // Ids beyond the loaded page still resolve an owner for bulk actions
+        // (e.g. delete) that need to know who can delete each selection.
+        expect(result.current.getReviewOwnerId("all-149")).toBe("user-1");
+        expect(result.current.getReviewOwnerId("row-0")).toBe("user-1");
+    });
+
+    it("selects already-loaded reviews without a network request once everything is loaded", async () => {
+        listTabularReviewsMock.mockResolvedValueOnce([
+            review("one"),
+            review("two"),
+        ]);
+
+        const { result } = renderHook(() => usePaginatedTabularReviews({}));
+        await waitFor(() => expect(result.current.loading).toBe(false));
+        expect(result.current.hasMore).toBe(false);
+
+        await act(async () => {
+            await result.current.selectAllMatching();
+        });
+
+        expect(listTabularReviewIdsMock).not.toHaveBeenCalled();
+        expect(result.current.selectedReviewIds).toEqual(["one", "two"]);
     });
 });
