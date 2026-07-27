@@ -322,6 +322,11 @@ export function ReviewPanel({
     onConfirmPending: (versionId: string) => void;
     onRejectPending: (versionId: string) => void;
 }) {
+    // An enabled version is immutable — its approved contract is bound to the
+    // analysis it was reviewed against. Disabling is the way back to review,
+    // and without it a disabled version had no route forward at all.
+    const reviewable =
+        skill.version.state === "draft" || skill.version.state === "disabled";
     return (
         <>
             <p className="text-xs text-slate-500">
@@ -330,7 +335,13 @@ export function ReviewPanel({
                     ? ` · ${skill.version.analysisModel}`
                     : ""}
             </p>
-            {skill.version.state === "draft" && (
+            {skill.version.state === "disabled" && (
+                <p className="mt-1 text-xs text-slate-500">
+                    Disabled: no project can reach it. Re-analyse and propose to
+                    put a rebuilt contract back in front of you.
+                </p>
+            )}
+            {reviewable && (
                 <button
                     type="button"
                     disabled={busy}
@@ -352,7 +363,7 @@ export function ReviewPanel({
                           : "Analyse"}
                 </button>
             )}
-            {skill.version.state === "draft" &&
+            {reviewable &&
                 skill.version.analysisState === "succeeded" &&
                 (!pendingAction ? (
                     <button
@@ -420,7 +431,7 @@ export function ReviewPanel({
                         )}
                     </div>
                 ))}
-            {skill.version.state === "draft" && (
+            {reviewable && (
                 <div className="mt-3">
                     <label
                         className="block text-xs text-slate-500"

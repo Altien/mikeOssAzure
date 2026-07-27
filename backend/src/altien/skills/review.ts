@@ -114,6 +114,29 @@ async function addMessage(args: {
   return id;
 }
 
+/**
+ * Versions whose analysis and capability contract may still be rebuilt.
+ *
+ * An enabled version is immutable: its approved contract is bound to the exact
+ * analysis it was reviewed against, by both input and output hash, so
+ * re-analysing one in place would leave an approval pointing at findings that
+ * no longer exist. Disabling is the way back — it grants nothing and no
+ * project can reach it, so there is nothing left to invalidate.
+ *
+ * This was previously enforced only by the review panel hiding its buttons,
+ * which left the route open and left a disabled version with no way forward
+ * at all.
+ */
+const REVIEWABLE_STATES = ["draft", "disabled"];
+
+function assertReviewable(version: { state?: unknown }) {
+  const state = String(version.state ?? "");
+  if (REVIEWABLE_STATES.includes(state)) return;
+  throw new Error(
+    `A ${state} version cannot be re-analysed or re-proposed. Disable the skill first; its approved contract is bound to the analysis it was reviewed against.`,
+  );
+}
+
 export async function analyseSkillVersion(args: {
   tenantId: string;
   versionId: string;
@@ -132,6 +155,7 @@ export async function analyseSkillVersion(args: {
 }) {
   const db = args.db ?? createServerSupabase();
   const context = await loadSkillVersionContext({ ...args, db });
+  assertReviewable(context.version);
   const running = await db
     .from("altien_skill_versions")
     .update({ analysis_state: "running" })
@@ -1012,6 +1036,7 @@ export async function postSkillReviewMessage(args: {
     }
   }
 
+  assertReviewable(context.version);
   if (context.version.analysis_state !== "succeeded") {
     throw new Error("Successful fast-model analysis is required first.");
   }

@@ -236,6 +236,59 @@ describe("SkillsLibrary", () => {
         expect(listSkillsMock).toHaveBeenCalledTimes(2);
     });
 
+    it("offers a disabled version a way back into review", async () => {
+        // An enabled version is immutable, so disabling is the only route to a
+        // rebuilt contract. Gating the controls on "draft" alone left a
+        // disabled skill with nothing to click at all.
+        listSkillsMock.mockResolvedValue({
+            canManage: true,
+            skills: [
+                {
+                    ...draftSkill,
+                    version: { ...draftSkill.version, state: "disabled" },
+                },
+            ],
+        });
+
+        renderWithProviders(<SkillsLibrary />, {
+            user: { id: "admin-1", email: "admin@example.test" },
+        });
+
+        expect(
+            await screen.findByRole("button", { name: "Re-analyse" }),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByRole("button", { name: "Propose enable" }),
+        ).toBeInTheDocument();
+        expect(screen.getByText(/no project can reach it/i)).toBeInTheDocument();
+    });
+
+    it("keeps an enabled version out of review", async () => {
+        listSkillsMock.mockResolvedValue({
+            canManage: true,
+            skills: [
+                {
+                    ...draftSkill,
+                    version: { ...draftSkill.version, state: "enabled" },
+                },
+            ],
+        });
+
+        renderWithProviders(<SkillsLibrary />, {
+            user: { id: "admin-1", email: "admin@example.test" },
+        });
+
+        expect(
+            await screen.findByRole("heading", { name: "Contract review" }),
+        ).toBeInTheDocument();
+        expect(
+            screen.queryByRole("button", { name: "Re-analyse" }),
+        ).not.toBeInTheDocument();
+        expect(
+            screen.queryByRole("button", { name: "Propose enable" }),
+        ).not.toBeInTheDocument();
+    });
+
     it("shows the amendable pending action and sends the amendment verbatim", async () => {
         listSkillsMock.mockResolvedValue({
             canManage: true,

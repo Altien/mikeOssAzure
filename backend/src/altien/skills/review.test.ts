@@ -17,7 +17,7 @@ const fastModelSettings = vi.fn().mockResolvedValue({
   api_keys: {},
 }) as never;
 
-function reviewDb() {
+function reviewDb(state = "draft") {
   return makeFakeDb((call) => {
     if (call.table === "altien_skill_versions" && call.op === "select") {
       return {
@@ -27,6 +27,7 @@ function reviewDb() {
             skill_id: "skill-1",
             snapshot_id: "snapshot-1",
             entrypoint_path: "reader/SKILL.md",
+            state,
             deterministic_analysis: { warnings: [] },
           },
         ],
@@ -131,6 +132,61 @@ describe("analyseSkillVersion", () => {
         }),
       ]),
     );
+  });
+
+  it("refuses to re-analyse an enabled version in place", async () => {
+    // Its approved contract is bound to the analysis it was reviewed against
+    // by both hashes, so rebuilding the analysis under it would leave an
+    // approval pointing at findings that no longer exist. The review panel
+    // hid the button; the route stayed open.
+    const fake = reviewDb("enabled");
+    await expect(
+      analyseSkillVersion({
+        tenantId: "tenant-1",
+        versionId: "version-1",
+        userId: "admin-1",
+        db: fake.db as never,
+        settings: vi.fn().mockResolvedValue({
+          fast_model: "gpt-5.4-lite",
+          api_keys: {},
+        }) as never,
+        analyse: vi.fn(),
+      }),
+    ).rejects.toThrow(/enabled version cannot be re-analysed/i);
+    expect(fake.callsFor("altien_skill_versions", "update")).toEqual([]);
+  });
+
+  it("lets a disabled version be analysed again", async () => {
+    // Disabling grants nothing and no project can reach it, so there is
+    // nothing left to invalidate — and without this a disabled version had no
+    // route forward at all.
+    downloadFileMock.mockResolvedValue(
+      new TextEncoder().encode("Read the selected project documents.").buffer,
+    );
+    const fake = reviewDb("disabled");
+    const result = await analyseSkillVersion({
+      tenantId: "tenant-1",
+      versionId: "version-1",
+      userId: "admin-1",
+      db: fake.db as never,
+      settings: vi.fn().mockResolvedValue({
+        fast_model: "gpt-5.4-lite",
+        api_keys: {},
+      }) as never,
+      analyse: vi.fn().mockResolvedValue({
+        provider: "openai",
+        model: "gpt-5.4-lite",
+        schemaVersion: 1,
+        inputHash: "input-hash",
+        generated: {
+          summary: "Reads project documents.",
+          capabilityRequirements: [],
+          risks: [],
+          unresolvedReferences: [],
+        },
+      }),
+    });
+    expect(result.artifact.inputHash).toBe("input-hash");
   });
 
   it("records failure and does not fabricate fallback analysis", async () => {
