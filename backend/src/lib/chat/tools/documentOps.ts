@@ -23,6 +23,7 @@ import {
   contentTypeForDocumentType,
   isPresentationDocumentType,
   isSpreadsheetDocumentType,
+  isTextDocumentType,
   isWordDocumentType,
   shouldConvertToPdf,
 } from "../../documentTypes";
@@ -1529,6 +1530,14 @@ export async function readDocumentContent(
       text = await extractPresentationText(Buffer.from(raw));
       devLog(
         `[read_document] presentation extracted length=${text.length} for filename="${docInfo.filename}"`,
+      );
+    } else if (isTextDocumentType(fileType)) {
+      // The bytes are the content. Without this a document this assistant
+      // wrote with write_project_document could not be read back, which is
+      // the whole point of writing it.
+      text = new TextDecoder().decode(raw);
+      devLog(
+        `[read_document] text decoded length=${text.length} for filename="${docInfo.filename}"`,
       );
     } else if (
       isPresentationDocumentType(fileType) ||

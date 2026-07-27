@@ -54,6 +54,7 @@ function catalogueItem(
     "generate_ppt",
     "edit_document",
     "replicate_document",
+    "write_project_document",
   ]);
   const external =
     name.startsWith("courtlistener_") ||

@@ -61,6 +61,30 @@ export const PROJECT_EXTRA_TOOLS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "write_project_document",
+      description:
+        "Write a text document into the current project — notes, extracted data, an intermediate working file you will read back later, or a rendered HTML/Markdown report. Creates the document the first time; writing the same filename again adds a new version of that same document rather than a second copy. Returns a download link, plus the doc_id to read it back with. Text only (md, markdown, txt, json, csv, html, xml, yaml, yml), 1 MiB per write, and it never overwrites a document it did not write itself — a user upload, a generated file, or a skill package file with that filename is refused. For Word, Excel, PowerPoint or PDF output use generate_docx, generate_excel or generate_ppt instead.",
+      parameters: {
+        type: "object",
+        properties: {
+          filename: {
+            type: "string",
+            description:
+              "Filename including the extension (e.g. 'cites.json'). A plain name, not a path: no directories, no leading dot.",
+          },
+          content: {
+            type: "string",
+            description:
+              "The complete UTF-8 text of the document. It is stored exactly as given and is not parsed or validated.",
+          },
+        },
+        required: ["filename", "content"],
+      },
+    },
+  },
 ];
 
 export const TABULAR_TOOLS = [

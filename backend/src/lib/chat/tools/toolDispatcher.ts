@@ -67,6 +67,7 @@ import {
   type DocReplicatedResult,
   type TextMatch,
 } from "./documentOps";
+import { writeProjectDocument } from "./projectDocumentWrites";
 import {
   ExternalSourceCache,
 } from "../../../altien/externalSources/cache";
@@ -2042,6 +2043,81 @@ export async function runToolCalls(
         previewFilename,
         "docx",
       );
+    } else if (tc.function.name === "write_project_document") {
+      const result = await writeProjectDocument(
+        {
+          filename: args.filename as string,
+          content: args.content as string,
+          userId,
+          projectId: projectId ?? null,
+        },
+        db,
+      );
+      if (!result.ok) {
+        // No document events on a refusal: nothing was written, and a
+        // doc_created_start with no doc_created behind it leaves the UI
+        // holding a card for a document that will never arrive.
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify(result),
+        });
+      } else {
+        const { storage_path, version_number, ...toolPayload } = result;
+        write(
+          `data: ${JSON.stringify({ type: "doc_created_start", filename: result.filename })}\n\n`,
+        );
+        // A new version reuses the document's existing label; only a new
+        // document needs one, so a skill rewriting cites.json keeps calling it
+        // by the same doc_id it read it back with.
+        let docLabel =
+          Object.keys(docIndex ?? {}).find(
+            (label) => docIndex?.[label]?.document_id === result.document_id,
+          ) ?? null;
+        if (docIndex && !docLabel) {
+          let i = 0;
+          while (Object.prototype.hasOwnProperty.call(docIndex, `doc-${i}`)) i++;
+          docLabel = `doc-${i}`;
+        }
+        if (docIndex && docLabel) {
+          docIndex[docLabel] = {
+            document_id: result.document_id,
+            filename: result.filename,
+          };
+          docStore.set(docLabel, {
+            storage_path,
+            file_type: result.filename.split(".").pop() ?? "txt",
+            filename: result.filename,
+          });
+          // The stored bytes changed, so an earlier read of this document in
+          // this turn is no longer what the file says.
+          clearTurnReadsForDocument(turnReadState, result.document_id);
+        }
+        write(
+          `data: ${JSON.stringify({
+            type: "doc_created",
+            filename: result.filename,
+            download_url: result.download_url,
+            document_id: result.document_id,
+            version_id: result.version_id,
+            version_number,
+          })}\n\n`,
+        );
+        docsCreated.push({
+          filename: result.filename,
+          download_url: result.download_url,
+          document_id: result.document_id,
+          version_id: result.version_id,
+          version_number,
+        });
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify(
+            docLabel ? { ...toolPayload, doc_id: docLabel } : toolPayload,
+          ),
+        });
+      }
     } else if (tc.function.name === "generate_excel") {
       const title = args.title as string;
       devLog(`[generate_excel] title="${title}"`);

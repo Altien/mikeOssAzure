@@ -12,6 +12,38 @@ export const ALLOWED_DOCUMENT_TYPES = new Set([
 export const ALLOWED_DOCUMENT_TYPES_LABEL =
   "pdf, docx, doc, xlsx, xlsm, xls, pptx, ppt";
 
+/**
+ * Text formats Mike stores verbatim: the bytes are the content, so they are
+ * written and read back without a converter. Separate from
+ * ALLOWED_DOCUMENT_TYPES, which is what a person may upload.
+ */
+const TEXT_TYPES = new Map<string, string>([
+  ["md", "text/markdown; charset=utf-8"],
+  ["markdown", "text/markdown; charset=utf-8"],
+  ["txt", "text/plain; charset=utf-8"],
+  ["json", "application/json; charset=utf-8"],
+  ["csv", "text/csv; charset=utf-8"],
+  ["html", "text/html; charset=utf-8"],
+  ["xml", "application/xml; charset=utf-8"],
+  ["yaml", "application/yaml; charset=utf-8"],
+  ["yml", "application/yaml; charset=utf-8"],
+]);
+
+export const TEXT_DOCUMENT_TYPES_LABEL =
+  "md, markdown, txt, json, csv, html, xml, yaml, yml";
+
+export function isTextDocumentType(fileType: string | null | undefined) {
+  return TEXT_TYPES.has((fileType ?? "").toLowerCase());
+}
+
+export function contentTypeForTextDocumentType(
+  fileType: string | null | undefined,
+) {
+  return (
+    TEXT_TYPES.get((fileType ?? "").toLowerCase()) ?? "text/plain; charset=utf-8"
+  );
+}
+
 const WORD_TYPES = new Set(["docx", "doc"]);
 const SPREADSHEET_TYPES = new Set(["xlsx", "xlsm", "xls"]);
 const PRESENTATION_TYPES = new Set(["pptx", "ppt"]);
