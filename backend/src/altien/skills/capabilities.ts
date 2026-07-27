@@ -26,6 +26,12 @@ export type ToolCatalogueItem = {
   sideEffects: "read" | "write" | "external" | "unknown";
   requiresConfirmation: boolean;
   available: boolean;
+  /**
+   * What an administrator should read. An MCP tool's wire name is a sanitised
+   * `mcp_<connector>_<tool>_<hash>` that says nothing about which server it
+   * belongs to; the contract stores the wire name, this is what is shown.
+   */
+  label?: string;
 };
 
 export type ApprovedSkillDependency = {
@@ -93,19 +99,21 @@ export async function inspectMcpToolCatalogue(
   const result = await db
     .from("user_mcp_connector_tools")
     .select(
-      "openai_tool_name, description, input_schema, output_schema, enabled, requires_confirmation, user_mcp_connectors!inner(user_id, enabled)",
+      "openai_tool_name, tool_name, description, input_schema, output_schema, enabled, requires_confirmation, user_mcp_connectors!inner(user_id, enabled, name)",
     )
     .eq("user_mcp_connectors.user_id", userId);
   throwOnDbError(result);
   return (result.data ?? []).map((row) => {
     const connector = row.user_mcp_connectors as
-      | { enabled?: boolean }
-      | { enabled?: boolean }[];
-    const connectorEnabled = Array.isArray(connector)
-      ? connector[0]?.enabled === true
-      : connector?.enabled === true;
+      | { enabled?: boolean; name?: string }
+      | Array<{ enabled?: boolean; name?: string }>;
+    const connectorRow = Array.isArray(connector) ? connector[0] : connector;
+    const connectorEnabled = connectorRow?.enabled === true;
+    const serverName = String(connectorRow?.name ?? "").trim();
+    const toolName = String(row.tool_name ?? row.openai_tool_name);
     return {
       name: String(row.openai_tool_name),
+      label: serverName ? `MCP://${serverName}/${toolName}` : toolName,
       source: "mcp" as const,
       description: String(row.description ?? ""),
       inputSchema: (row.input_schema ?? {}) as Record<string, unknown>,
@@ -177,6 +185,28 @@ function vague(requirement: SkillCapabilityRequirement) {
 // `not_executed` is here so a bundled script still gets a behavioural
 // comparison against the catalogue: Mike may already do the job natively.
 export const UNAPPROVED_STATUSES = ["missing", "proposed", "not_executed"];
+
+/**
+ * Wire name -> what to show an administrator. Only MCP tools differ: their
+ * wire name is a sanitised `mcp_<connector>_<tool>_<hash>` that hides which
+ * server they came from.
+ */
+export function toolDisplayLabels(
+  catalogue: ToolCatalogueItem[],
+): Record<string, string> {
+  const labels: Record<string, string> = {};
+  for (const tool of catalogue) {
+    if (tool.label && tool.label !== tool.name) labels[tool.name] = tool.label;
+  }
+  return labels;
+}
+
+export function labelForTool(
+  name: string,
+  labels: Record<string, string> | undefined,
+): string {
+  return labels?.[name] ?? name;
+}
 
 export function resolveCapabilityContract(args: {
   analysis: GeneratedSkillAnalysis;
@@ -364,6 +394,9 @@ export function resolveCapabilityContract(args: {
         mapping.status === "compatible",
     ),
     approvedToolNames,
+    // Display only; the approved set above stays the wire names the runtime
+    // filters on.
+    toolLabels: toolDisplayLabels(args.catalogue),
     mappings,
     blockers,
     modelRequirements: mappings

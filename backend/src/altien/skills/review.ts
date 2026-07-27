@@ -24,6 +24,7 @@ import { persistSkillRename } from "./artifacts";
 import {
   applyCapabilityAmendments,
   firstPartyToolCatalogue,
+  labelForTool,
   inspectMcpToolCatalogue,
   resolveCapabilityContractWithLlm,
   type ToolCatalogueItem,
@@ -590,7 +591,19 @@ async function amendPendingAction(args: {
     content = [
       "Amended pending action: enable this exact reviewed version with the amended capability set.",
       ...amended.effects,
-      `Approved tools: ${approved.length ? approved.join(", ") : "none"}.`,
+      `Approved tools: ${
+        approved.length
+          ? approved
+              .map((name) =>
+                labelForTool(
+                  name,
+                  (payload.executionContract as { toolLabels?: Record<string, string> })
+                    ?.toolLabels,
+                ),
+              )
+              .join(", ")
+          : "none"
+      }.`,
       `Project read baseline: ${amended.contract.projectRead ? "on" : "off"}.`,
       `Reply “yes” to authorize this amended payload, “no” to reject it, or amend again: ${SKILL_AMENDMENT_SYNTAX}`,
     ].join("\n");
@@ -1120,7 +1133,13 @@ export async function postSkillReviewMessage(args: {
     }),
     content: [
       "Pending action: enable this exact reviewed version for project-bound runs.",
-      `Approved tools: ${contract.approvedToolNames.length ? contract.approvedToolNames.join(", ") : "none"}.`,
+      `Approved tools: ${
+        contract.approvedToolNames.length
+          ? contract.approvedToolNames
+              .map((name) => labelForTool(name, contract.toolLabels))
+              .join(", ")
+          : "none"
+      }.`,
       ...(unresolvedReferences.length
         ? [
             `The analysis could not resolve: ${unresolvedReferences.join("; ")}. These grant nothing and are part of what you are approving.`,

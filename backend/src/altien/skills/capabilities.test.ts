@@ -5,6 +5,8 @@ import {
   resolveCapabilityContract,
   resolveCapabilityContractWithLlm,
   UNAPPROVED_STATUSES,
+  toolDisplayLabels,
+  labelForTool,
 } from "./capabilities";
 
 describe("bundled executables versus a missing connector", () => {
@@ -757,5 +759,29 @@ describe("multi-tool assessments", () => {
         complete: complete("mcp_dingduff_imaginary_store") as never,
       }),
     ).rejects.toThrow(/Available: mcp_dingduff_opinion_store/);
+  });
+});
+
+describe("tool names an administrator has to read", () => {
+  it("shows an MCP tool as its server and tool, not its wire name", () => {
+    // The wire name is a sanitised mcp_<connector>_<tool>_<hash>, which hides
+    // which server the tool belongs to.
+    const labels = toolDisplayLabels([
+      {
+        name: "mcp_dingduff_citecheck_review_2500a7a0",
+        label: "MCP://DingDuff/citecheck_review",
+        source: "mcp",
+        description: "Opens the review panel.",
+        inputSchema: {},
+        sideEffects: "external",
+        requiresConfirmation: false,
+        available: true,
+      },
+    ]);
+    expect(
+      labelForTool("mcp_dingduff_citecheck_review_2500a7a0", labels),
+    ).toBe("MCP://DingDuff/citecheck_review");
+    // A first-party tool is already readable and is left alone.
+    expect(labelForTool("read_document", labels)).toBe("read_document");
   });
 });
