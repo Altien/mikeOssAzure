@@ -94,6 +94,9 @@ export default function TabularReviewsPage() {
         retry,
         selectedReviewIds: selectedIds,
         setSelectedReviewIds: setSelectedIds,
+        selectAllMatching,
+        selectingAll,
+        getReviewOwnerId,
     } = usePaginatedTabularReviews({
         projectId: projectFilter ?? undefined,
         search: debouncedSearch,
@@ -167,7 +170,7 @@ export default function TabularReviewsPage() {
 
     function toggleAll() {
         if (allSelected) setSelectedIds([]);
-        else setSelectedIds(filtered.map((r) => r.id));
+        else void selectAllMatching();
     }
 
     function toggleOne(id: string) {
@@ -255,8 +258,8 @@ export default function TabularReviewsPage() {
         const ids = [...selectedIds];
         setActionsOpen(false);
         const owned = ids.filter((id) => {
-            const r = reviews.find((rr) => rr.id === id);
-            return !!r && (!user?.id || r.user_id === user.id);
+            const ownerId = getReviewOwnerId(id);
+            return !!ownerId && (!user?.id || ownerId === user.id);
         });
         const blocked = ids.length - owned.length;
         setSelectedIds([]);
@@ -401,6 +404,7 @@ export default function TabularReviewsPage() {
                                 <input
                                     type="checkbox"
                                     checked={allSelected}
+                                    disabled={selectingAll}
                                     ref={(el) => {
                                         if (el) el.indeterminate = someSelected;
                                     }}

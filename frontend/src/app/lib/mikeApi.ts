@@ -1073,6 +1073,27 @@ export async function listTabularReviews(
     });
 }
 
+export async function listTabularReviewIds(
+    projectId?: string,
+    options?: {
+        search?: string;
+        scope?: "all" | "in-project" | "standalone";
+        signal?: AbortSignal;
+    },
+): Promise<{ id: string; user_id: string }[]> {
+    const params = new URLSearchParams();
+    if (projectId) params.set("project_id", projectId);
+    if (options?.search) params.set("search", options.search);
+    if (options?.scope && options.scope !== "all")
+        params.set("scope", options.scope);
+
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    return apiRequest<{ id: string; user_id: string }[]>(
+        `/tabular-review/ids${qs}`,
+        { signal: options?.signal },
+    );
+}
+
 export async function createTabularReview(payload: {
     title?: string;
     document_ids: string[];

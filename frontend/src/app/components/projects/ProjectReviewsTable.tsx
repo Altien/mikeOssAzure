@@ -49,6 +49,8 @@ export function ProjectReviewsTable({
     onDeleteReview,
     onOwnerOnlyAction,
     setSelectedReviewIds,
+    onToggleAll,
+    selectingAll = false,
     sort,
     onSortChange,
     hasMore,
@@ -70,6 +72,8 @@ export function ProjectReviewsTable({
     onDeleteReview: (review: TabularReview) => Promise<void> | void;
     onOwnerOnlyAction: (action: string) => void;
     setSelectedReviewIds: Dispatch<SetStateAction<string[]>>;
+    onToggleAll: () => void;
+    selectingAll?: boolean;
     sort: {
         key: TabularReviewSortKey;
         direction: TabularReviewSortDirection;
@@ -175,19 +179,13 @@ export function ProjectReviewsTable({
                             <input
                                 type="checkbox"
                                 checked={allVisibleReviewsSelected}
+                                disabled={selectingAll}
                                 ref={(el) => {
                                     if (el)
                                         el.indeterminate =
                                             someVisibleReviewsSelected;
                                 }}
-                                onChange={() => {
-                                    if (allVisibleReviewsSelected)
-                                        setSelectedReviewIds([]);
-                                    else
-                                        setSelectedReviewIds(
-                                            visibleReviews.map((r) => r.id),
-                                        );
-                                }}
+                                onChange={onToggleAll}
                                 className={TABLE_CHECKBOX_CLASS}
                             />
                         )}
