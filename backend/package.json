@@ -11,6 +11,7 @@
     "test:coverage": "vitest run --coverage",
     "chat:inspect": "tsx src/scripts/inspect-chat.ts",
     "smoke:skills": "tsx src/scripts/skillsSmoke.ts",
+    "check:matching": "tsx src/scripts/capabilityMatchCheck.ts",
     "start": "node dist/index.js",
     "migrate": "node dist/scripts/runMigrations.js",
     "migrate:dev": "tsx src/scripts/runMigrations.ts",

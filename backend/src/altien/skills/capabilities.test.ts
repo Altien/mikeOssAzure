@@ -1175,6 +1175,37 @@ describe("a requirement that names several behaviours at once", () => {
     ).toBe(true);
   });
 
+  it("takes the behaviours out of the parenthetical when that is where they are", async () => {
+    // The same four scripts, written the way a later re-analysis wrote them:
+    // the qualifier in the head, the scripts listed in the parenthetical.
+    // Which way round an analysis puts them changes between runs, and the
+    // behaviours have to be compared individually either way.
+    const calls = { decompose: 0, match: [] as string[] };
+    await resolveCapabilityContractWithLlm({
+      analysis: {
+        ...analysis,
+        capabilityRequirements: [
+          {
+            name: "Local shell with python3 (scripts verify_anchors.py, extract_docx.py, mark_pdf_pages.py, build_review.py)",
+            kind: "first_party_tool" as const,
+            required: true,
+            rationale: "Runs the bundled verification scripts.",
+          },
+        ],
+      },
+      catalogue: firstPartyToolCatalogue(),
+      model: "gpt-5.4-lite",
+      complete: stub(calls),
+    });
+    expect(calls.decompose).toBe(1);
+    expect(calls.match).toEqual([
+      "verify_anchors.py",
+      "extract_docx.py",
+      "mark_pdf_pages.py",
+      "build_review.py",
+    ]);
+  });
+
   it("leaves a single-behaviour requirement whole", async () => {
     // `and` inside a name is part of it. Splitting `find_in_document` style
     // names apart would ask about behaviours the skill never named.

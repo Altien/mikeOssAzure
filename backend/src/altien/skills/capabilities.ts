@@ -782,11 +782,27 @@ function splitRequirementName(name: string) {
   const trailing = name.match(/\(([^()]*)\)\s*$/);
   const context = trailing ? trailing[1].trim() : "";
   const head = trailing ? name.slice(0, trailing.index).trim() : name.trim();
-  const parts = head
+  const headParts = head
     .split(/\s*[,;/]\s*|\s+(?:and|\+)\s+/i)
     .map((part) => part.trim())
     .filter(Boolean);
-  return { parts: parts.length ? parts : [head], context };
+  if (headParts.length > 1) return { parts: headParts, context };
+  // The head names one thing and the parenthetical enumerates several: then
+  // the list is the behaviours and the head is what they have in common.
+  // "Local shell with python3 (scripts verify_anchors.py, extract_docx.py …)"
+  // is the same four behaviours as "verify_anchors.py / extract_docx.py …
+  // (bundled scripts)", and which way round an analysis writes it changes
+  // between runs. Paths keep their slashes here — only a list is a list.
+  const listed = context
+    .replace(
+      /^(?:scripts?|files?|tools?|commands?|e\.?g\.?,?|including|via|using|such as)\s+/i,
+      "",
+    )
+    .split(/\s*[,;]\s*|\s+(?:and|\+)\s+/i)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (listed.length > 1) return { parts: listed, context: head };
+  return { parts: headParts.length ? headParts : [head], context };
 }
 
 /**
