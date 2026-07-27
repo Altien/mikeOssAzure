@@ -16,6 +16,7 @@ import {
     decryptString,
     encryptString,
     guardedFetch,
+    guardedDiscoveryFetch,
     loadConnector,
     stateHash,
     validateRemoteMcpUrl,
@@ -650,7 +651,7 @@ export async function startUserMcpConnectorOAuth(
     const result = await runMcpOAuth(provider, {
         serverUrl: connector.server_url,
         ...(env.scope ? { scope: env.scope } : {}),
-        fetchFn: guardedFetch,
+        fetchFn: guardedDiscoveryFetch,
     });
     if (result === "AUTHORIZED") {
         return { authorizationUrl: null, alreadyAuthorized: true };
@@ -704,7 +705,7 @@ export async function completeMcpConnectorOAuthAuthorization(
     const result = await runMcpOAuth(provider, {
         serverUrl: connector.server_url,
         authorizationCode: code,
-        fetchFn: guardedFetch,
+        fetchFn: guardedDiscoveryFetch,
     });
     if (result !== "AUTHORIZED") {
         throw new Error("OAuth authorization did not complete.");

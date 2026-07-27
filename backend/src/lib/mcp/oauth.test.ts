@@ -90,3 +90,37 @@ describe("MCP OAuth metadata discovery", () => {
         ).rejects.toThrow(/redirect|OAuth metadata/i);
     });
 });
+
+describe("the fetcher handed to the MCP SDK", () => {
+    const realFetch = globalThis.fetch;
+    afterEach(() => {
+        globalThis.fetch = realFetch;
+        vi.restoreAllMocks();
+    });
+
+    it("follows a redirected GET but never redirects a credential POST", async () => {
+        const posts: string[] = [];
+        globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input instanceof Request ? input.url : input);
+            if ((init?.method ?? "GET").toUpperCase() === "POST") {
+                posts.push(url);
+                return redirect("https://app.example.com/elsewhere");
+            }
+            return url.endsWith("/moved") ? json(AUTH_SERVER) : redirect("/moved");
+        }) as typeof fetch;
+
+        const { guardedDiscoveryFetch } = await import("./client");
+
+        const followed = await guardedDiscoveryFetch("https://app.example.com/start");
+        expect(followed.status).toBe(200);
+
+        // A token exchange carries the authorization code: it goes exactly
+        // where discovery said, and no further.
+        const posted = await guardedDiscoveryFetch("https://app.example.com/token", {
+            method: "POST",
+            body: "grant_type=authorization_code",
+        });
+        expect(posted.status).toBe(302);
+        expect(posts).toEqual(["https://app.example.com/token"]);
+    });
+});

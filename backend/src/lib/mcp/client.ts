@@ -413,6 +413,40 @@ export async function guardedFetch(
     return fetch(input, { ...init, redirect: "manual" });
 }
 
+/**
+ * `guardedFetch` for OAuth discovery, which must follow redirects: hosted MCP
+ * servers commonly serve the RFC 8414 well-known paths from one, and the SDK
+ * treats any 3xx as fatal. The transport keeps the strict version — a
+ * redirected tool call is a different question from a redirected metadata GET.
+ *
+ * Only GETs are followed. A token or registration POST carries the
+ * authorization code and client credentials, and those are sent exactly where
+ * discovery said to send them, never onward to a redirect target.
+ */
+export async function guardedDiscoveryFetch(
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+) {
+    const method = (init?.method ?? "GET").toUpperCase();
+    let response = await guardedFetch(input, init);
+    if (method !== "GET") return response;
+
+    let target =
+        typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+    for (let hop = 0; hop < 3; hop += 1) {
+        if (response.status < 300 || response.status >= 400) return response;
+        const location = response.headers.get("location");
+        if (!location) return response;
+        target = new URL(location, target).toString();
+        response = await guardedFetch(target, init);
+    }
+    return response;
+}
+
 export function base64Url(buffer: Buffer) {
     return buffer
         .toString("base64")
