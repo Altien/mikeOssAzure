@@ -894,6 +894,71 @@ as $$
   );
 $$;
 
+create or replace function public.get_tabular_review_ids_overview(
+  p_user_id text,
+  p_user_email text,
+  p_project_id text,
+  p_scope text,
+  p_search_term text,
+  p_limit integer,
+  p_offset integer
+)
+returns table (
+  id uuid,
+  user_id text
+)
+language sql
+stable
+as $$
+  with accessible_projects as (
+    select p.id
+    from public.projects p
+    where p.user_id = p_user_id
+       or (
+        coalesce(p_user_email, '') <> ''
+        and p.user_id <> p_user_id
+        and p.shared_with @> jsonb_build_array(p_user_email)
+      )
+  )
+  select tr.id, tr.user_id
+  from public.tabular_reviews tr
+  where (p_project_id is null or tr.project_id::text = p_project_id)
+    and (
+      coalesce(p_scope, 'all') = 'all'
+      or (p_scope = 'in-project' and tr.project_id is not null)
+      or (p_scope = 'standalone' and tr.project_id is null)
+    )
+    and (
+      p_search_term is null
+      or p_search_term = ''
+      or lower(tr.title) like '%' || lower(p_search_term) || '%'
+    )
+    and (
+      p_project_id is null
+      or exists (
+        select 1
+        from accessible_projects ap
+        where ap.id::text = p_project_id
+      )
+    )
+    and (
+      tr.user_id = p_user_id
+      or (
+        tr.project_id in (select ap.id from accessible_projects ap)
+        and tr.user_id <> p_user_id
+      )
+      or (
+        p_project_id is null
+        and coalesce(p_user_email, '') <> ''
+        and tr.user_id <> p_user_id
+        and tr.shared_with @> jsonb_build_array(p_user_email)
+      )
+    )
+  order by tr.created_at desc, tr.id asc
+  limit greatest(coalesce(p_limit, 1000), 1)
+  offset greatest(coalesce(p_offset, 0), 0);
+$$;
+
 create table if not exists public.tabular_review_chats (
   id uuid primary key default gen_random_uuid(),
   review_id uuid not null references public.tabular_reviews(id) on delete cascade,

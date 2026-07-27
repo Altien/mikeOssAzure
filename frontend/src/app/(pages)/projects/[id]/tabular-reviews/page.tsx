@@ -96,6 +96,9 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
         retry,
         selectedReviewIds,
         setSelectedReviewIds,
+        selectAllMatching,
+        selectingAll,
+        getReviewOwnerId,
     } = usePaginatedTabularReviews({
         projectId,
         search: debouncedSearch,
@@ -140,6 +143,16 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
         );
     }
 
+    function handleToggleAllReviews() {
+        const allSelected =
+            visibleReviews.length > 0 &&
+            visibleReviews.every((review) =>
+                selectedReviewIds.includes(review.id),
+            );
+        if (allSelected) setSelectedReviewIds([]);
+        else void selectAllMatching();
+    }
+
     async function handleDeleteReviewRow(review: TabularReview) {
         if (user?.id && review.user_id !== user.id) {
             setOwnerOnlyAction("delete this tabular review");
@@ -153,8 +166,8 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
         const ids = [...selectedReviewIds];
         setActionsOpen(false);
         const owned = ids.filter((id) => {
-            const review = reviews.find((r) => r.id === id);
-            return !!review && review.user_id === user?.id;
+            const ownerId = getReviewOwnerId(id);
+            return !!ownerId && ownerId === user?.id;
         });
         const blocked = ids.length - owned.length;
         setSelectedReviewIds([]);
@@ -170,7 +183,7 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
             );
         }
     }, [
-        reviews,
+        getReviewOwnerId,
         selectedReviewIds,
         setReviews,
         setOwnerOnlyAction,
@@ -201,6 +214,8 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
                 hasMore={hasMore}
                 error={loadError}
                 loadMoreError={loadMoreError}
+                onToggleAll={handleToggleAllReviews}
+                selectingAll={selectingAll}
                 sort={sort}
                 onSortChange={(key, direction) => {
                     setSelectedReviewIds([]);

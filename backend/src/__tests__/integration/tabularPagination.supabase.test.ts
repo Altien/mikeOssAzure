@@ -108,6 +108,61 @@ maybeDescribe("Supabase tabular-review pagination", () => {
         );
     });
 
+    it("filters by scope alone (no project_id) across every accessible project", async () => {
+        // This is the request the "In Project" / "Standalone" tabs on the
+        // global tabular-reviews list send: a scope with no project_id, so
+        // it must filter across every project the user can see rather than
+        // just the one seeded project.
+        const inProject = await admin.rpc("get_tabular_reviews_overview", {
+            p_user_id: ownerId,
+            p_user_email: ownerEmail,
+            p_project_id: null,
+            p_scope: "in-project",
+            p_limit: 100,
+            p_offset: 0,
+            p_search_term: "needle",
+            p_sort_key: "created",
+            p_sort_direction: "desc",
+        });
+        const standalone = await admin.rpc("get_tabular_reviews_overview", {
+            p_user_id: ownerId,
+            p_user_email: ownerEmail,
+            p_project_id: null,
+            p_scope: "standalone",
+            p_limit: 100,
+            p_offset: 0,
+            p_search_term: "needle",
+            p_sort_key: "created",
+            p_sort_direction: "desc",
+        });
+
+        expect(inProject.error).toBeNull();
+        expect(standalone.error).toBeNull();
+
+        const inProjectIds = new Set(
+            (inProject.data ?? []).map((row) => row.id as string),
+        );
+        const standaloneIds = new Set(
+            (standalone.data ?? []).map((row) => row.id as string),
+        );
+
+        for (const id of projectReviewIds) expect(inProjectIds.has(id)).toBe(true);
+        for (const id of standaloneReviewIds)
+            expect(inProjectIds.has(id)).toBe(false);
+
+        for (const id of standaloneReviewIds)
+            expect(standaloneIds.has(id)).toBe(true);
+        for (const id of projectReviewIds)
+            expect(standaloneIds.has(id)).toBe(false);
+
+        expect(
+            (inProject.data ?? []).every((row) => row.project_id !== null),
+        ).toBe(true);
+        expect(
+            (standalone.data ?? []).every((row) => row.project_id === null),
+        ).toBe(true);
+    });
+
     it("applies scope and search before limiting rows", async () => {
         const result = await admin.rpc("get_tabular_reviews_overview", {
             p_user_id: ownerId,
@@ -148,6 +203,52 @@ maybeDescribe("Supabase tabular-review pagination", () => {
                 0,
         );
         expect(columnCounts).toEqual([...columnCounts].sort((a, b) => a - b));
+    });
+
+    it("returns ids + owner for every matching review within one page", async () => {
+        // Backs the "select all matching" bulk action: needs only id +
+        // user_id, not the full review payload, for the entire filtered set.
+        const result = await admin.rpc("get_tabular_review_ids_overview", {
+            p_user_id: ownerId,
+            p_user_email: ownerEmail,
+            p_project_id: null,
+            p_scope: "in-project",
+            p_search_term: "needle",
+            p_limit: 1000,
+            p_offset: 0,
+        });
+
+        expect(result.error).toBeNull();
+        const rows = (result.data ?? []) as { id: string; user_id: string }[];
+        expect(rows).toHaveLength(projectReviewIds.length);
+        expect(new Set(rows.map((row) => row.id))).toEqual(
+            new Set(projectReviewIds),
+        );
+        expect(rows.every((row) => row.user_id === ownerId)).toBe(true);
+    });
+
+    it("paginates the ids RPC deterministically without duplicates or gaps", async () => {
+        // Proves the pagination contract the /tabular-review/ids route relies
+        // on to page past PostgREST's own row cap: consecutive small pages
+        // must together cover the full filtered set with no overlap.
+        const pageSize = 10;
+        const collected: string[] = [];
+        for (let offset = 0; offset < projectReviewIds.length; offset += pageSize) {
+            const page = await admin.rpc("get_tabular_review_ids_overview", {
+                p_user_id: ownerId,
+                p_user_email: ownerEmail,
+                p_project_id: null,
+                p_scope: "in-project",
+                p_search_term: "needle",
+                p_limit: pageSize,
+                p_offset: offset,
+            });
+            expect(page.error).toBeNull();
+            collected.push(...(page.data ?? []).map((row) => row.id as string));
+        }
+
+        expect(new Set(collected).size).toBe(projectReviewIds.length);
+        expect([...collected].sort()).toEqual([...projectReviewIds].sort());
     });
 
     it("keeps the legacy three-argument RPC callable", async () => {
