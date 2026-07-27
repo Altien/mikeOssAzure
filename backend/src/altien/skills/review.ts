@@ -1083,10 +1083,28 @@ export async function postSkillReviewMessage(args: {
     apiKeys: settings.api_keys,
   });
   if (contract.blockers.length > 0) {
+    // Connector gaps lead: they are the ones an administrator can resolve
+    // today by connecting the server the skill names.
+    const isConnector = (name: string) => /\bmcp\b|connector/i.test(name);
+    const ordered = [
+      ...contract.blockers.filter((b) => isConnector(b.requirement.name)),
+      ...contract.blockers.filter((b) => !isConnector(b.requirement.name)),
+    ].map((blocker) => blocker.requirement.name);
+    const notExecuted = contract.mappings
+      .filter((mapping) => mapping.status === "not_executed")
+      .map((mapping) => mapping.requirement.name);
     throw new Error(
-      `Required capabilities are missing or unavailable: ${contract.blockers
-        .map((blocker) => blocker.requirement.name)
-        .join(", ")}.`,
+      [
+        `Required capabilities are missing or unavailable: ${ordered.join(", ")}.`,
+        ordered.some(isConnector)
+          ? "Connect the named MCP server in Account → Connectors, then propose again."
+          : "",
+        notExecuted.length
+          ? `Not blocking, and never executed here: ${notExecuted.join(", ")} — generate a clean-room brief for these.`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
     );
   }
   return await proposePendingAction({

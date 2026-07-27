@@ -6,6 +6,59 @@ import {
   resolveCapabilityContractWithLlm,
 } from "./capabilities";
 
+describe("bundled executables versus a missing connector", () => {
+  // The three requirements a real kimi-k3 analysis produced for DingDuff's
+  // citation-check skill.
+  const contract = () =>
+    resolveCapabilityContract({
+      analysis: {
+        summary: "Verifies citations in a drafted memo.",
+        risks: [],
+        unresolvedReferences: [],
+        capabilityRequirements: [
+          {
+            name: "Local shell with python3 and script execution",
+            kind: "first_party_tool",
+            required: true,
+            rationale: "Runs the bundled verification scripts.",
+          },
+          {
+            name: "citecheck_review MCP tool",
+            kind: "mcp",
+            required: true,
+            rationale: "Opens the interactive review panel.",
+          },
+          {
+            name: "opinion_store / statute_store (DingDuff fetch tools)",
+            kind: "mcp",
+            required: true,
+            rationale: "Fetches the cited sources.",
+          },
+        ],
+      },
+      catalogue: firstPartyToolCatalogue(),
+    });
+
+  it("never blocks on code Mike will not execute", () => {
+    const shell = contract().mappings.find((mapping) =>
+      mapping.requirement.name.startsWith("Local shell"),
+    );
+    expect(shell?.status).toBe("not_executed");
+    expect(shell?.mappedToolNames).toEqual([]);
+    expect(
+      contract().blockers.map((blocker) => blocker.requirement.name),
+    ).not.toContain("Local shell with python3 and script execution");
+  });
+
+  it("still blocks on a connector the administrator could add", () => {
+    const blocked = contract().blockers.map((b) => b.requirement.name);
+    expect(blocked).toContain("citecheck_review MCP tool");
+    expect(blocked).toContain(
+      "opinion_store / statute_store (DingDuff fetch tools)",
+    );
+  });
+});
+
 describe("skill package resource baseline", () => {
   it("is in the catalogue so a reviewer can see what the runtime grants", () => {
     const names = firstPartyToolCatalogue().map((item) => item.name);

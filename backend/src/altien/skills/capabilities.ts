@@ -148,6 +148,22 @@ function namesSkillResourceTools(requirement: SkillCapabilityRequirement) {
   return /\bskill\s*resource\b/i.test(requirement.name);
 }
 
+/**
+ * A requirement to run the package's own bundled code — scripts, a shell, a
+ * language runtime. Mike never executes imported source, so no connector,
+ * catalogue entry or approval can ever satisfy this: the only route is a
+ * clean-room brief and a native tool built from it.
+ *
+ * Blocking enablement on it is therefore a wall with no door, unlike a
+ * missing MCP, which the administrator can simply connect. It grants nothing
+ * either way, so it is reported rather than enforced.
+ */
+function namesLocalExecution(requirement: SkillCapabilityRequirement) {
+  return /\b(python3?|shell|bash|node(?:js)?|script execution|bundled scripts?|executables?|subprocess|runtime)\b/i.test(
+    requirement.name,
+  );
+}
+
 function vague(requirement: SkillCapabilityRequirement) {
   return /^(appropriate|available|relevant|necessary|needed)?\s*tools?$/i.test(
     requirement.name.trim(),
@@ -198,6 +214,20 @@ export function resolveCapabilityContract(args: {
           inputs: "exact package-relative paths and literal searches",
           outputs: "bounded text from the skill's own immutable package",
           sideEffects: "read",
+        },
+      };
+    }
+    if (namesLocalExecution(requirement)) {
+      return {
+        requirement,
+        status: "not_executed" as const,
+        mappedToolNames: [],
+        comparison: {
+          purpose: "Imported executable source is never run.",
+          requestedCapabilityText: requirement.name,
+          rationale: requirement.rationale,
+          cleanRoomPath:
+            "Generate a clean-room brief for this behaviour and build it as a Mike tool; the skill runs without it until then.",
         },
       };
     }
@@ -304,6 +334,10 @@ export function resolveCapabilityContract(args: {
         // Not a blocker: it grants nothing and is resolved by explicit
         // TenantAdmin selection of a minimum capability set.
         "needs_admin_selection",
+        // Not a blocker either: nothing the administrator can connect or
+        // approve will make Mike execute imported source. Reported, and
+        // answered by a clean-room brief.
+        "not_executed",
       ].includes(mapping.status),
   );
   const approvedToolNames = Array.from(
