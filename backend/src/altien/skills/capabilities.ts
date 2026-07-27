@@ -626,6 +626,210 @@ function parseFallbackAssessments(raw: string) {
   });
 }
 
+/** One narrow behaviour taken out of a requirement, compared on its own. */
+type CapabilityAtom = { label: string; intent: string };
+
+type AtomAssessment = {
+  atom: CapabilityAtom;
+  toolNames: string[];
+  reason: string;
+  comparison: Record<string, unknown>;
+};
+
+/** No honest requirement names more distinct behaviours than this. */
+const MAX_ATOMS_PER_REQUIREMENT = 12;
+/** Whole-contract ceiling, so one sprawling analysis cannot fan out into cost. */
+const MAX_TOTAL_ATOMS = 40;
+
+/**
+ * Split a requirement that names several things at once. Analysis models write
+ * these as one row — "verify_anchors.py / extract_docx.py / mark_pdf_pages.py
+ * (bundled scripts, run via python3 shell)" — and comparing that as a single
+ * behaviour asks whether one tool replaces all of them, where the weakest
+ * member decides the verdict for every other.
+ *
+ * A trailing parenthetical is shared context, not another item, so it is
+ * lifted off before splitting. `and`/`+` need surrounding whitespace:
+ * `find_and_replace` is one tool, not two.
+ */
+function splitRequirementName(name: string) {
+  const trailing = name.match(/\(([^()]*)\)\s*$/);
+  const context = trailing ? trailing[1].trim() : "";
+  const head = trailing ? name.slice(0, trailing.index).trim() : name.trim();
+  const parts = head
+    .split(/\s*[,;/]\s*|\s+(?:and|\+)\s+/i)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return { parts: parts.length ? parts : [head], context };
+}
+
+/**
+ * Descriptive output only: a malformed reply costs match quality, never the
+ * import. Every part keeps its place with the requirement's own rationale as
+ * the intent it was going to be compared under anyway.
+ */
+function parseAtoms(
+  raw: string,
+  items: string[],
+  fallbackIntent: string,
+): CapabilityAtom[] {
+  const described = new Map<string, string>();
+  try {
+    const value = JSON.parse(
+      raw
+        .trim()
+        .replace(/^```(?:json)?\s*/i, "")
+        .replace(/\s*```$/, ""),
+    );
+    const atoms = (value as { atoms?: unknown })?.atoms;
+    if (Array.isArray(atoms)) {
+      for (const entry of atoms) {
+        const row = entry as Record<string, unknown>;
+        if (typeof row?.label === "string" && typeof row?.intent === "string") {
+          described.set(normalize(row.label), row.intent.slice(0, 600));
+        }
+      }
+    }
+  } catch {
+    // Left to the fallback below.
+  }
+  return items.map((label) => ({
+    label,
+    intent: described.get(normalize(label)) ?? fallbackIntent,
+  }));
+}
+
+/**
+ * Stage one of our own loop: turn a requirement into the behaviours it
+ * actually names. A bare filename tells a comparison nothing, so the model is
+ * asked only to say what each part does — a description task, with no
+ * catalogue in front of it and no matching decision to make.
+ */
+async function decomposeRequirement(args: {
+  requirement: SkillCapabilityRequirement;
+  summary: string;
+  model: string;
+  apiKeys?: UserApiKeys;
+  call: typeof completeText;
+}): Promise<CapabilityAtom[]> {
+  const { parts, context } = splitRequirementName(args.requirement.name);
+  if (parts.length < 2) {
+    // Nothing compound to take apart. The requirement's own name stays the
+    // label, which is also what a reply keys on.
+    return [
+      { label: args.requirement.name, intent: args.requirement.rationale },
+    ];
+  }
+  const items = parts.slice(0, MAX_ATOMS_PER_REQUIREMENT);
+  const raw = await args.call({
+    model: args.model,
+    apiKeys: args.apiKeys,
+    maxTokens: 1_500,
+    reasoningEffort: "low",
+    systemPrompt: `State what each named item does. One entry per input item,
+same labels, same order. Never merge items and never add items.
+Use only the given summary, rationale and shared context. Where they do not
+say what an item does, say that plainly instead of guessing.
+Return JSON only:
+{"atoms":[{"label":"exact input label","intent":"one sentence: the observable behaviour, its inputs, its outputs"}]}`,
+    user: JSON.stringify({
+      skillSummary: args.summary,
+      requirement: args.requirement.name,
+      rationale: args.requirement.rationale,
+      sharedContext: context,
+      items,
+    }),
+  });
+  return parseAtoms(raw, items, args.requirement.rationale);
+}
+
+/**
+ * Stage two: one behaviour against the whole catalogue, one question, one
+ * answer. The chosen names are verified against the catalogue here — the
+ * model describes, this code decides what exists.
+ */
+async function matchAtom(args: {
+  atom: CapabilityAtom;
+  requirement: SkillCapabilityRequirement;
+  proposedCandidateNames: string[];
+  candidateText: string;
+  catalogue: ToolCatalogueItem[];
+  model: string;
+  apiKeys?: UserApiKeys;
+  call: typeof completeText;
+}): Promise<AtomAssessment> {
+  const raw = await args.call({
+    model: args.model,
+    apiKeys: args.apiKeys,
+    maxTokens: 1_200,
+    // A behavioural comparison against a fixed catalogue; extra reasoning
+    // budget invents justifications rather than finding better matches.
+    reasoningEffort: "low",
+    systemPrompt: `Compare ONE imported skill behaviour with tool contracts.
+You may choose any first-party or MCP candidate when its observable behaviour
+is an acceptable replacement. Compare purpose, inputs, outputs, errors and
+limits, data access, and side effects. Name similarity is not evidence.
+The behaviour may carry proposedCandidateNames: consider those first, but
+reject them unless their observable behaviour actually matches.
+Judge only the behaviour given. Do not consider the rest of the skill, and do
+not reject a match because other parts of the skill are unsupported.
+Never call a tool and never authorize a mapping.
+Use exact candidate names as given. Where this one behaviour genuinely needs
+several tools, list them comma-separated in toolName. Never invent a name.
+Return JSON only:
+{"assessments":[{"requirementName":"exact input name","compatible":true,"toolName":"exact candidate name, or several comma-separated, or null","reason":"...","comparison":{"purpose":"...","inputs":"...","outputs":"...","errorsLimits":"...","dataAccess":"...","sideEffects":"..."}}]}`,
+    user: JSON.stringify({
+      name: args.atom.label,
+      behaviour: args.atom.intent,
+      kind: args.requirement.kind,
+      partOf: args.requirement.name,
+      proposedCandidateNames: args.proposedCandidateNames,
+      candidates: JSON.parse(args.candidateText),
+    }),
+  });
+  const assessments = parseFallbackAssessments(raw);
+  const assessment =
+    assessments.find(
+      (item) => normalize(item.requirementName) === normalize(args.atom.label),
+    ) ??
+    // Asked about one behaviour, a lone reply is that behaviour's answer
+    // whatever it echoed back as the name. The label is bookkeeping; the tool
+    // name below is authority and is checked against the catalogue.
+    (assessments.length === 1 ? assessments[0] : undefined);
+  if (!assessment?.compatible || !assessment.toolName) {
+    return {
+      atom: args.atom,
+      toolNames: [],
+      reason: assessment?.reason ?? "No available tool performs this behaviour.",
+      comparison: assessment?.comparison ?? {},
+    };
+  }
+  const selected = String(assessment.toolName)
+    .split(/\s*(?:,|;|\/|\band\b|\+)\s*/i)
+    .map((name) => name.trim())
+    .filter(Boolean);
+  const unknown = selected.filter(
+    (name) => !args.catalogue.some((item) => item.name === name),
+  );
+  if (!selected.length || unknown.length) {
+    // Name the catalogue: an assessment that invents a tool is a prompt
+    // problem, and the reviewer can only judge it against what exists.
+    throw new Error(
+      `Fast-model compatibility assessment selected unknown tool ${unknown
+        .map((name) => `'${name}'`)
+        .join(", ")} for '${args.atom.label}'. Available: ${args.catalogue
+        .map((tool) => tool.name)
+        .join(", ")}.`,
+    );
+  }
+  return {
+    atom: args.atom,
+    toolNames: selected,
+    reason: assessment.reason,
+    comparison: assessment.comparison,
+  };
+}
+
 export async function resolveCapabilityContractWithLlm(args: {
   analysis: GeneratedSkillAnalysis;
   catalogue: ToolCatalogueItem[];
@@ -646,12 +850,8 @@ export async function resolveCapabilityContractWithLlm(args: {
       compatibilityAssessment: null,
     };
   }
-  const assessmentInput = {
-    requirements: unresolved.map((mapping) => ({
-      ...mapping.requirement,
-      proposedCandidateNames: mapping.mappedToolNames,
-    })),
-    candidates: args.catalogue.map((tool) => ({
+  const candidateText = JSON.stringify(
+    args.catalogue.map((tool) => ({
       name: tool.name,
       source: tool.source,
       description: tool.description,
@@ -661,31 +861,49 @@ export async function resolveCapabilityContractWithLlm(args: {
       requiresConfirmation: tool.requiresConfirmation,
       currentlyAvailable: tool.available,
     })),
-  };
-  const inputText = JSON.stringify(assessmentInput);
-  const inputHash = createHash("sha256").update(inputText).digest("hex");
+  );
   const call = args.complete ?? completeText;
-  const raw = await call({
-    model: args.model,
-    apiKeys: args.apiKeys,
-    maxTokens: 3_000,
-    // A behavioural comparison against a fixed catalogue; extra reasoning
-    // budget invents justifications rather than finding better matches.
-    reasoningEffort: "low",
-    systemPrompt: `Compare imported skill requirements with tool contracts.
-You may choose any first-party or MCP candidate when its observable behaviour
-is an acceptable replacement. Compare purpose, inputs, outputs, errors and
-limits, data access, and side effects. Name similarity is not evidence.
-A requirement may carry proposedCandidateNames: consider those candidates
-first, but reject them unless their observable behaviour actually matches.
-Never call a tool and never authorize a mapping. Return JSON only:
-Use exact candidate names as given. When one requirement genuinely needs
-several tools, list them comma-separated in toolName. Never invent a name.
-Return JSON only:
-{"assessments":[{"requirementName":"exact input name","compatible":true,"toolName":"exact candidate name, or several comma-separated, or null","reason":"...","comparison":{"purpose":"...","inputs":"...","outputs":"...","errorsLimits":"...","dataAccess":"...","sideEffects":"..."}}]}`,
-    user: inputText,
-  });
-  const assessments = parseFallbackAssessments(raw);
+
+  // Our own loop, deliberately not an agentic one. Decomposing a requirement
+  // and matching every part of it in a single reply is the thing these models
+  // are worst at, so the control flow lives here: split, then ask one narrow
+  // question per behaviour, then combine the answers in code.
+  const assessed = new Map<string, AtomAssessment[]>();
+  const audit: unknown[] = [];
+  let remainingAtoms = MAX_TOTAL_ATOMS;
+  for (const mapping of unresolved) {
+    if (remainingAtoms <= 0) break;
+    const atoms = (
+      await decomposeRequirement({
+        requirement: mapping.requirement,
+        summary: args.analysis.summary,
+        model: args.model,
+        apiKeys: args.apiKeys,
+        call,
+      })
+    ).slice(0, remainingAtoms);
+    remainingAtoms -= atoms.length;
+    const results = await Promise.all(
+      atoms.map((atom) =>
+        matchAtom({
+          atom,
+          requirement: mapping.requirement,
+          proposedCandidateNames: mapping.mappedToolNames,
+          candidateText,
+          catalogue: args.catalogue,
+          model: args.model,
+          apiKeys: args.apiKeys,
+          call,
+        }),
+      ),
+    );
+    assessed.set(mapping.requirement.name, results);
+    audit.push({ requirement: mapping.requirement.name, atoms });
+  }
+  const inputHash = createHash("sha256")
+    .update(JSON.stringify({ atoms: audit, candidates: candidateText }))
+    .digest("hex");
+
   const mappings = deterministic.mappings.map((mapping) => {
     if (
       !UNAPPROVED_STATUSES.includes(mapping.status) ||
@@ -693,19 +911,36 @@ Return JSON only:
     ) {
       return mapping;
     }
-    const assessment = assessments.find(
-      (item) => item.requirementName === mapping.requirement.name,
-    );
-    if (!assessment?.compatible || !assessment.toolName) {
-      // The comparison ran and found nothing, which for bundled code is the
-      // answer, not a failure: it stays not_executed and keeps the clean-room
-      // route. Downgrading it to incompatible would block enablement on code
-      // that was never going to run here whatever the comparison said.
+    const results = assessed.get(mapping.requirement.name);
+    if (!results?.length) return mapping;
+    // What each part of the requirement resolved to, kept on the mapping so a
+    // reviewer and a clean-room brief can see the two-thirds Mike already
+    // covers instead of one verdict for the whole lump.
+    const atoms = results.map((result) => ({
+      label: result.atom.label,
+      intent: result.atom.intent,
+      mappedToolNames: result.toolNames,
+      reason: result.reason,
+    }));
+    const matched = results.filter((result) => result.toolNames.length);
+    if (matched.length < results.length) {
+      // Partial cover is not cover: a requirement is satisfied when every
+      // behaviour it names is. For bundled code that is the expected answer
+      // rather than a failure, so it keeps not_executed and the clean-room
+      // route; blocking there would be a wall with no door.
       if (mapping.status === "not_executed") {
         return {
           ...mapping,
-          llmReason:
-            assessment?.reason ?? "No available tool performs this behaviour.",
+          atoms,
+          llmReason: matched.length
+            ? `${matched.length} of ${results.length} behaviours already exist as Mike tools: ${matched
+                .map(
+                  (result) =>
+                    `${result.atom.label} → ${result.toolNames.join(", ")}`,
+                )
+                .join("; ")}.`
+            : (results[0]?.reason ??
+              "No available tool performs this behaviour."),
         };
       }
       return {
@@ -713,43 +948,31 @@ Return JSON only:
         status: "incompatible" as const,
         // Drop any name-matched candidate: it was never behaviourally approved.
         mappedToolNames: [],
-        comparison: assessment?.comparison ?? mapping.comparison,
-        llmReason: assessment?.reason ?? "No compatible replacement proposed.",
+        atoms,
+        comparison: results[0]?.comparison ?? mapping.comparison,
+        llmReason: matched.length
+          ? `Only ${matched.length} of ${results.length} named behaviours have an equivalent here.`
+          : (results[0]?.reason ?? "No compatible replacement proposed."),
       };
     }
-    // One requirement can legitimately need several tools — "opinion_store /
-    // statute_store" is one capability in two calls — and the model answers
-    // with both. Splitting is what the contract already expects: mapped tool
-    // names are a list.
-    const selected = String(assessment.toolName)
-      .split(/\s*(?:,|;|\/|\band\b|\+)\s*/i)
-      .map((name) => name.trim())
-      .filter(Boolean);
-    const candidates = selected.map((name) => ({
-      name,
-      tool: args.catalogue.find((item) => item.name === name),
-    }));
-    const unknown = candidates.filter((entry) => !entry.tool);
-    if (!candidates.length || unknown.length) {
-      // Name the catalogue: an assessment that invents a tool is a prompt
-      // problem, and the reviewer can only judge it against what exists.
-      throw new Error(
-        `Fast-model compatibility assessment selected unknown tool ${unknown
-          .map((entry) => `'${entry.name}'`)
-          .join(", ")} for '${mapping.requirement.name}'. Available: ${args.catalogue
-          .map((tool) => tool.name)
-          .join(", ")}.`,
-      );
-    }
-    const tools = candidates.map((entry) => entry.tool!);
+    // Every named behaviour has an equivalent — including a bundled script
+    // set that turns out to be entirely covered natively, which is exactly
+    // the case worth catching.
+    const toolNames = Array.from(
+      new Set(matched.flatMap((result) => result.toolNames)),
+    );
+    const tools = toolNames.map(
+      (name) => args.catalogue.find((item) => item.name === name)!,
+    );
     return {
       ...mapping,
       status: tools.every((tool) => tool.available)
         ? ("llm_compatible" as const)
         : ("connection_required" as const),
-      mappedToolNames: tools.map((tool) => tool.name),
-      comparison: assessment.comparison,
-      llmReason: assessment.reason,
+      mappedToolNames: toolNames,
+      atoms,
+      comparison: results[0].comparison,
+      llmReason: results.map((result) => result.reason).join(" "),
       mappedSource: tools[0].source,
     };
   });

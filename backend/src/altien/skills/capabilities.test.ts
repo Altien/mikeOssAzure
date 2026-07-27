@@ -252,8 +252,7 @@ describe("skill capability resolution", () => {
       catalogue: firstPartyToolCatalogue(),
       model: "gpt-5.4-lite",
       complete: async ({ user }) => {
-        sentRequirements = (JSON.parse(user) as { requirements: unknown })
-          .requirements;
+        sentRequirements = JSON.parse(user);
         return JSON.stringify({
           assessments: [
             {
@@ -274,13 +273,11 @@ describe("skill capability resolution", () => {
         });
       },
     });
-    // The exact-name candidate is offered to the comparison, ranked first.
-    expect(sentRequirements).toEqual([
-      expect.objectContaining({
-        name: "verify_citation_sources",
-        proposedCandidateNames: ["verify_citation_sources"],
-      }),
-    ]);
+    // One behaviour per call, with the exact-name candidate offered to it.
+    expect(sentRequirements).toMatchObject({
+      name: "verify_citation_sources",
+      proposedCandidateNames: ["verify_citation_sources"],
+    });
     expect(contract.mappings[0]).toMatchObject({
       status: "llm_compatible",
       mappedSource: "first_party",
@@ -846,5 +843,146 @@ describe("bundled scripts through the behavioural comparison", () => {
     });
     expect(contract.blockers).toEqual([]);
     expect(contract.approvedToolNames).toContain("read_document");
+  });
+});
+
+describe("a requirement that names several behaviours at once", () => {
+  const NAME =
+    "verify_anchors.py / extract_docx.py / mark_pdf_pages.py / build_review.py (bundled scripts, run via python3 shell)";
+  const analysis = {
+    summary: "Verifies citations in a drafted memo.",
+    risks: [],
+    unresolvedReferences: [],
+    capabilityRequirements: [
+      {
+        name: NAME,
+        kind: "first_party_tool" as const,
+        required: true,
+        rationale: "Runs the bundled verification scripts.",
+      },
+    ],
+  };
+
+  const INTENTS: Record<string, string> = {
+    "verify_anchors.py": "Checks each quoted anchor still appears in the source.",
+    "extract_docx.py": "Extracts the text of a .docx file.",
+    "mark_pdf_pages.py": "Writes page markers onto a PDF.",
+    "build_review.py": "Assembles the reviewer's report.",
+  };
+
+  /**
+   * Answers whichever of the two questions it was asked. Only extract_docx.py
+   * has an equivalent here, which is the point: the other three must not drag
+   * it down, and it must not carry them.
+   */
+  function stub(calls: { decompose: number; match: string[] }) {
+    return (async ({
+      systemPrompt,
+      user,
+    }: {
+      systemPrompt: string;
+      user: string;
+    }) => {
+      const input = JSON.parse(user) as Record<string, string>;
+      if (systemPrompt.includes("State what each named item does")) {
+        calls.decompose += 1;
+        return JSON.stringify({
+          atoms: Object.entries(INTENTS).map(([label, intent]) => ({
+            label,
+            intent,
+          })),
+        });
+      }
+      calls.match.push(input.name);
+      const compatible = input.name === "extract_docx.py";
+      return JSON.stringify({
+        assessments: [
+          {
+            requirementName: input.name,
+            compatible,
+            toolName: compatible ? "read_document" : null,
+            reason: compatible
+              ? "Reading a document's text is read_document's job."
+              : "Nothing here does this.",
+            comparison: { purpose: input.behaviour },
+          },
+        ],
+      });
+    }) as never;
+  }
+
+  it("asks about one behaviour per call instead of the whole lump", async () => {
+    const calls = { decompose: 0, match: [] as string[] };
+    await resolveCapabilityContractWithLlm({
+      analysis,
+      catalogue: firstPartyToolCatalogue(),
+      model: "gpt-5.4-lite",
+      complete: stub(calls),
+    });
+    expect(calls.decompose).toBe(1);
+    // The trailing "(bundled scripts, run via python3 shell)" is shared
+    // context for all four, never a fifth item.
+    expect(calls.match).toEqual([
+      "verify_anchors.py",
+      "extract_docx.py",
+      "mark_pdf_pages.py",
+      "build_review.py",
+    ]);
+  });
+
+  it("records the part Mike already covers rather than one verdict for all four", async () => {
+    const calls = { decompose: 0, match: [] as string[] };
+    const contract = await resolveCapabilityContractWithLlm({
+      analysis,
+      catalogue: firstPartyToolCatalogue(),
+      model: "gpt-5.4-lite",
+      complete: stub(calls),
+    });
+    const mapping = contract.mappings[0] as Record<string, unknown>;
+    expect(mapping.status).toBe("not_executed");
+    expect(contract.blockers).toEqual([]);
+    expect(mapping.atoms).toEqual([
+      expect.objectContaining({
+        label: "verify_anchors.py",
+        mappedToolNames: [],
+      }),
+      expect.objectContaining({
+        label: "extract_docx.py",
+        intent: INTENTS["extract_docx.py"],
+        mappedToolNames: ["read_document"],
+      }),
+      expect.objectContaining({
+        label: "mark_pdf_pages.py",
+        mappedToolNames: [],
+      }),
+      expect.objectContaining({ label: "build_review.py", mappedToolNames: [] }),
+    ]);
+    expect(mapping.llmReason).toContain("extract_docx.py → read_document");
+    // Partial cover is not cover: nothing is granted on the strength of it.
+    expect(contract.approvedToolNames).not.toContain("read_document");
+  });
+
+  it("leaves a single-behaviour requirement whole", async () => {
+    // `and` inside a name is part of it. Splitting `find_in_document` style
+    // names apart would ask about behaviours the skill never named.
+    const calls = { decompose: 0, match: [] as string[] };
+    await resolveCapabilityContractWithLlm({
+      analysis: {
+        ...analysis,
+        capabilityRequirements: [
+          {
+            name: "find_and_replace",
+            kind: "first_party_tool" as const,
+            required: true,
+            rationale: "Rewrites matched text.",
+          },
+        ],
+      },
+      catalogue: firstPartyToolCatalogue(),
+      model: "gpt-5.4-lite",
+      complete: stub(calls),
+    });
+    expect(calls.decompose).toBe(0);
+    expect(calls.match).toEqual(["find_and_replace"]);
   });
 });
