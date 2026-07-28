@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
+import { recordAudit } from "../lib/audit";
 import { downloadFile } from "../lib/storage";
 import {
     attachActiveVersionPaths,
@@ -166,6 +167,15 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
     );
     if (cells.length) await db.from("tabular_cells").insert(cells);
 
+    void recordAudit(db, {
+        userId,
+        userEmail,
+        action: "tabular.created",
+        title: (review as { title?: string | null }).title ?? null,
+        surface: "tabular",
+        projectId: project_id ?? null,
+        reviewId: (review as { id: string }).id,
+    });
     res.status(201).json(review);
 });
 
@@ -940,6 +950,13 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
             }),
         );
 
+        void recordAudit(db, {
+            userId,
+            userEmail,
+            action: "tabular.generated",
+            surface: "tabular",
+            reviewId,
+        });
         write("data: [DONE]\n\n");
     } catch (err) {
         console.error("[tabular/generate] stream error", safeErrorLog(err));

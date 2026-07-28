@@ -13,6 +13,7 @@ import { workflowsRouter } from "./routes/workflows";
 import { userRouter } from "./routes/user";
 import { downloadsRouter } from "./routes/downloads";
 import { caseLawRouter } from "./routes/caseLaw";
+import { auditRouter } from "./routes/audit";
 
 export const app = express();
 const isProduction = process.env.NODE_ENV === "production";
@@ -157,5 +158,6 @@ app.use("/user", userRouter);
 app.use("/users", userRouter);
 app.use("/download", downloadsRouter);
 app.use("/case-law", caseLawRouter);
+app.use("/audit", auditRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
