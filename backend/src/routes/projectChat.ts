@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
+import { recordChatTurn } from "../lib/audit";
 import {
     buildProjectDocContext,
     buildMessages,
@@ -500,6 +501,19 @@ without pretending to have the skill's instructions or resources.`;
                 .update({ title: lastUser.content.slice(0, 120) })
                 .eq("id", chatId);
         }
+
+        void recordChatTurn(
+            db,
+            {
+                userId,
+                userEmail,
+                chatId,
+                projectId,
+                title: chatTitle ?? lastUser?.content?.slice(0, 120) ?? null,
+                model,
+            },
+            persistedEvents,
+        );
     } catch (err) {
         if (isAbortError(err)) {
             console.log("[project-chat/stream] client aborted stream", {

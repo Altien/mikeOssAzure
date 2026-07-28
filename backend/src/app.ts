@@ -29,6 +29,7 @@ import { manifestPublicKey } from "./lib/manifestSigning";
 import { safeErrorLog } from "./lib/safeError";
 import { authorityTraceRouter } from "./altien/authorityTrace/router";
 import { skillsRouter } from "./altien/skills/router";
+import { auditRouter } from "./routes/audit";
 
 // ── Rate-limit configuration (from upstream ba6f771) ───────────────────────
 
@@ -308,6 +309,7 @@ export function buildApp(): express.Express {
   app.use("/api/help", helpRouter);
   app.use("/api/authority-trace", authorityTraceRouter);
   app.use("/api/altien/skills", skillsRouter);
+  app.use("/api/audit", auditRouter);
   app.use("/api/auth", authRouter);
   app.use("/api/llm", llmRouter);
   app.use("/api/admin/diagnostics", diagnosticsRouter);

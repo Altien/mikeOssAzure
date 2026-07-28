@@ -30,6 +30,7 @@ import {
     TabularReviewSkeuoIcon,
     WorkflowSkeuoIcon,
 } from "@/app/components/shared/AppSidebarSkeuoIcons";
+import { HistorySkeuoIcon } from "@/app/components/shared/HistorySkeuoIcon";
 import { ProjectSvgIcon } from "@/app/components/shared/FolderSvgIcon";
 import { listProjectSummaries } from "@/app/lib/mikeApi";
 import type { Project } from "@/app/components/shared/types";
@@ -51,6 +52,7 @@ const NAV_ITEMS = [
     { href: "/workflows", label: "Workflows", icon: WorkflowSkeuoIcon },
     // Upstream divergence (OSS-6, §2.3 item 7): dev's skills library page.
     { href: "/skills", label: "Skills", icon: PackageOpen },
+    { href: "/history", label: "History", icon: HistorySkeuoIcon },
 ];
 
 const RECENT_PROJECT_PAGE_SIZE = 10;
