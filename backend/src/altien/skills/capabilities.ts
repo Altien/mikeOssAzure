@@ -168,9 +168,35 @@ function namesSkillResourceTools(requirement: SkillCapabilityRequirement) {
  * either way, so it is reported rather than enforced.
  */
 function namesLocalExecution(requirement: SkillCapabilityRequirement) {
-  return /\b(python3?|shell|bash|node(?:js)?|script execution|bundled scripts?|executables?|subprocess|runtime)\b/i.test(
-    requirement.name,
+  return (
+    /\b(python3?|shell|bash|node(?:js)?|script execution|bundled scripts?|executables?|subprocess|runtime)\b/i.test(
+      requirement.name,
+    ) ||
+    // A source filename is bundled code whatever prose surrounds it. One
+    // analysis named this requirement "Local shell with python3 (scripts
+    // verify_anchors.py, …)" and the next named it
+    // "verify_anchors.py / extract_docx.py / …" — same requirement, and only
+    // the first carried a word this pattern knew. The extension is the part
+    // the model cannot paraphrase away.
+    /\.(py|sh|bash|zsh|js|mjs|cjs|ts|rb|pl|ps1|bat|cmd|exe)\b/i.test(
+      requirement.name,
+    )
   );
+}
+
+function notExecuted(requirement: SkillCapabilityRequirement) {
+  return {
+    requirement,
+    status: "not_executed" as const,
+    mappedToolNames: [] as string[],
+    comparison: {
+      purpose: "Imported executable source is never run.",
+      requestedCapabilityText: requirement.name,
+      rationale: requirement.rationale,
+      cleanRoomPath:
+        "No available tool does this. Generate a clean-room brief and build it as a Mike tool; the skill runs without it until then.",
+    },
+  };
 }
 
 /**
@@ -334,6 +360,14 @@ export function resolveCapabilityContract(args: {
       };
     }
     if (requirement.kind === "skill") {
+      // The label alone cannot be trusted here either. An analysis labelled
+      // this package's own bundled scripts `skill`, and the branch below then
+      // demanded an administrator bind an enabled skill version named
+      // "verify_anchors.py / extract_docx.py / …" — a blocker with nothing
+      // behind it, because no such skill exists or ever could. A dependency is
+      // another imported skill; bundled code is a structural gap whatever the
+      // model called it.
+      if (namesLocalExecution(requirement)) return notExecuted(requirement);
       const dependency = (args.skillDependencies ?? []).find(
         (candidate) =>
           normalize(candidate.canonicalName) === normalize(requirement.name) ||
@@ -391,20 +425,7 @@ export function resolveCapabilityContract(args: {
       // that extracts text from a document may well map onto a Mike tool —
       // and this is the answer when it finds nothing, so it reports the
       // clean-room route instead of blocking on code that will never run.
-      if (namesLocalExecution(requirement)) {
-        return {
-          requirement,
-          status: "not_executed" as const,
-          mappedToolNames: [],
-          comparison: {
-            purpose: "Imported executable source is never run.",
-            requestedCapabilityText: requirement.name,
-            rationale: requirement.rationale,
-            cleanRoomPath:
-              "No available tool does this. Generate a clean-room brief and build it as a Mike tool; the skill runs without it until then.",
-          },
-        };
-      }
+      if (namesLocalExecution(requirement)) return notExecuted(requirement);
       if (namesLocalFilesystem(requirement)) {
         return {
           requirement,

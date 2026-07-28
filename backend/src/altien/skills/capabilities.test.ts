@@ -85,6 +85,34 @@ describe("bundled executables versus a missing connector", () => {
     ).not.toContain("Local shell with python3 and script execution");
   });
 
+  it("reads the same requirement the same way however the analysis words it", () => {
+    // Both names came from real kimi-k3 runs over the identical package: the
+    // first said "Local shell with python3 (scripts …)", the second listed the
+    // filenames alone and labelled them a skill dependency. The second asked an
+    // administrator to bind an enabled skill version called
+    // "verify_anchors.py / …", which blocked enablement on a skill that cannot
+    // exist.
+    const contract = resolveCapabilityContract({
+      analysis: {
+        summary: "Verifies citations in a drafted memo.",
+        risks: [],
+        unresolvedReferences: [],
+        capabilityRequirements: [
+          {
+            name: "verify_anchors.py / extract_docx.py / mark_pdf_pages.py / build_review.py",
+            kind: "skill",
+            required: true,
+            rationale: "Runs the bundled verification scripts.",
+          },
+        ],
+      },
+      catalogue: firstPartyToolCatalogue(),
+    });
+    expect(contract.mappings[0].status).toBe("not_executed");
+    expect(contract.mappings[0].mappedToolNames).toEqual([]);
+    expect(contract.blockers).toEqual([]);
+  });
+
   it("still blocks on a connector the administrator could add", () => {
     const blocked = contract().blockers.map((b) => b.requirement.name);
     expect(blocked).toContain("citecheck_review MCP tool");
