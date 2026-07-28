@@ -1201,6 +1201,21 @@ describe("a requirement that names several behaviours at once", () => {
         (candidate) => candidate.name === "extract_document_for_verification",
       ),
     ).toBe(true);
+
+    // The other direction: a tool described in Mike's vocabulary answering a
+    // requirement written in the imported skill's. Nothing in
+    // write_project_document's own description says "filesystem", which is the
+    // only word the requirement ever uses.
+    const writeDocument = candidates.find(
+      (candidate) => candidate.name === "write_project_document",
+    );
+    expect(writeDocument?.matchingNote).toMatch(/filesystem/i);
+    for (const named of ["read_document", "generate_docx"]) {
+      expect(writeDocument?.matchingNote).toContain(named);
+      expect(candidates.some((candidate) => candidate.name === named)).toBe(
+        true,
+      );
+    }
   });
 
   it("takes the behaviours out of the parenthetical when that is where they are", async () => {
@@ -1231,6 +1246,66 @@ describe("a requirement that names several behaviours at once", () => {
       "extract_docx.py",
       "mark_pdf_pages.py",
       "build_review.py",
+    ]);
+  });
+
+  it("reads a trailing slash as a path marker, not a separator", async () => {
+    // "sources/ directory" split into "sources" and "directory", and no tool
+    // answers a bare "directory" — so one artifact of the split held the whole
+    // requirement at partial cover and nothing was granted for it. A slash
+    // spaced on one side only is part of the phrase.
+    const calls = { decompose: 0, match: [] as string[] };
+    await resolveCapabilityContractWithLlm({
+      analysis: {
+        ...analysis,
+        capabilityRequirements: [
+          {
+            name: "Local file system with project root and sources/ directory",
+            kind: "first_party_tool" as const,
+            required: true,
+            rationale: "Keeps intermediate files.",
+          },
+        ],
+      },
+      catalogue: firstPartyToolCatalogue(),
+      model: "gpt-5.4-lite",
+      complete: stub(calls),
+    });
+    expect(calls.match).toEqual([
+      "Local file system with project root",
+      "sources/ directory",
+    ]);
+  });
+
+  it("still splits a slash spaced on both sides, and on neither", async () => {
+    const calls = { decompose: 0, match: [] as string[] };
+    await resolveCapabilityContractWithLlm({
+      analysis: {
+        ...analysis,
+        capabilityRequirements: [
+          {
+            name: "opinion_store / statute_store",
+            kind: "mcp" as const,
+            required: true,
+            rationale: "Fetches the cited sources.",
+          },
+          {
+            name: "Project filesystem read/write",
+            kind: "first_party_tool" as const,
+            required: true,
+            rationale: "Keeps intermediate files.",
+          },
+        ],
+      },
+      catalogue: firstPartyToolCatalogue(),
+      model: "gpt-5.4-lite",
+      complete: stub(calls),
+    });
+    expect(calls.match).toEqual([
+      "opinion_store",
+      "statute_store",
+      "Project filesystem read",
+      "write",
     ]);
   });
 

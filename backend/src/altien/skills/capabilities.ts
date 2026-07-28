@@ -760,18 +760,23 @@ function parseFallbackAssessments(raw: string) {
  * with upstream, so they are not edited here; this says what a matcher needs
  * and nothing else reads it.
  *
- * Every entry exists because a broad tool's own description invites a match
- * that a narrower tool should win. `read_document` says it is what to call
- * before "citing from" a document, which is true in chat and wrong here: an
- * imported skill that verifies citations needs the stable extraction its
+ * Entries run in both directions. A broad tool's own description can invite a
+ * match a narrower tool should win: `read_document` says it is what to call
+ * before "citing from" a document, which is true in chat and wrong here, since
+ * an imported skill that verifies citations needs the stable extraction its
  * anchoring depends on, and a plain text read produces quotes anchored to
- * nothing while looking like it worked.
+ * nothing while looking like it worked. A tool can equally be described in
+ * Mike's vocabulary while the requirement is written in the imported skill's:
+ * a package asking for a scratch directory has no reason to recognise a
+ * document writer as the answer.
  */
 const MATCHER_NOTES: Record<string, string> = {
   read_document:
     "Plain current text of one attached document. Not a verification record: no stable immutable snapshot, no printed-page markers, no structure preservation, no hash. Where the behaviour is citation, quotation, anchoring or page-referenced work, extract_document_for_verification is the correct candidate.",
   fetch_documents:
     "Plain current text of several attached documents, with the same limits as read_document.",
+  write_project_document:
+    "This deployment's answer to a filesystem write. An imported skill asking for a working directory, a scratch or temp file, a project root it can write into, or naming an output it produces (cites.json, review.html, notes.md, an intermediate it reads back later) is asking for this, whatever filesystem words it used. Names only, never paths — a skill's sources/foo.json becomes one document named foo.json. Reading such a file back afterwards is read_document by the returned doc_id, not a verification extraction. Text only: a .docx, .xlsx, .pptx or .pdf output is generate_docx, generate_excel or generate_ppt instead.",
 };
 
 /** One narrow behaviour taken out of a requirement, compared on its own. */
@@ -804,8 +809,14 @@ function splitRequirementName(name: string) {
   const trailing = name.match(/\(([^()]*)\)\s*$/);
   const context = trailing ? trailing[1].trim() : "";
   const head = trailing ? name.slice(0, trailing.index).trim() : name.trim();
+  // A slash separates alternatives when it is spaced on both sides
+  // ("opinion_store / statute_store") or on neither ("read/write"). Spaced on
+  // one side only, it is a trailing path marker and the phrase is one thing:
+  // "sources/ directory" was being split into "sources" and "directory", and
+  // the second is a behaviour no tool can answer, which held the whole
+  // requirement at partial cover.
   const headParts = head
-    .split(/\s*[,;/]\s*|\s+(?:and|\+)\s+/i)
+    .split(/\s*[,;]\s*|\s+\/\s+|(?<=\S)\/(?=\S)|\s+(?:and|\+)\s+/i)
     .map((part) => part.trim())
     .filter(Boolean);
   if (headParts.length > 1) return { parts: headParts, context };
