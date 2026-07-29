@@ -84,10 +84,6 @@ const dataDeleteLimiter = makeLimiter({
   message: "Too many data deletion requests. Please try again later.",
 });
 
-function jsonLimitForPath(path: string): string {
-  return "50mb";
-}
-
 app.disable("x-powered-by");
 app.set("trust proxy", envInt("TRUST_PROXY_HOPS", 1));
 
@@ -142,9 +138,7 @@ app.delete("/user/chats", dataDeleteLimiter);
 app.delete("/user/projects", dataDeleteLimiter);
 app.delete("/user/tabular-reviews", dataDeleteLimiter);
 
-app.use((req, res, next) =>
-  express.json({ limit: jsonLimitForPath(req.path) })(req, res, next),
-);
+app.use(express.json({ limit: "50mb" }));
 
 app.use("/chat", chatRouter);
 app.use("/projects", projectsRouter);
