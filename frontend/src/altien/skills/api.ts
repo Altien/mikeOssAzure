@@ -25,6 +25,8 @@ export type SkillListItem = {
         sourceCommitSha?: string;
         /** Requirement names a clean-room brief can be generated for. */
         briefRequirements?: string[];
+        /** What approving granted. Present once a version has been enabled. */
+        approvedContract?: Record<string, unknown>;
     };
 };
 

@@ -342,6 +342,47 @@ export function ReviewPanel({
                     put a rebuilt contract back in front of you.
                 </p>
             )}
+            {/*
+             * The approved contract, for an enabled version. The same table is
+             * shown on the pending action, but that one disappears the moment
+             * it is approved — so what a live skill can actually reach was the
+             * one thing there was no way to look at.
+             *
+             * Enabled only: a disabled version keeps its old contract row, and
+             * showing it would read as a list of what is granted when nothing
+             * is.
+             */}
+            {skill.version.state === "enabled" &&
+                skill.version.approvedContract && (
+                    <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">
+                        <p className="font-medium">Approved contract</p>
+                        <p className="mt-1">
+                            Granted tools:{" "}
+                            <span className="break-all font-mono">
+                                {(
+                                    skill.version.approvedContract
+                                        .approvedToolNames as string[]
+                                )?.length
+                                    ? labelTools(
+                                          skill.version.approvedContract
+                                              .approvedToolNames as string[],
+                                          skill.version.approvedContract
+                                              .toolLabels as Record<
+                                              string,
+                                              string
+                                          >,
+                                      )
+                                    : "none"}
+                            </span>
+                        </p>
+                        <CapabilityMappingTable
+                            contract={
+                                skill.version
+                                    .approvedContract as ExecutionContract
+                            }
+                        />
+                    </div>
+                )}
             {reviewable && (
                 <button
                     type="button"

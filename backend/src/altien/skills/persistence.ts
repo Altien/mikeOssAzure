@@ -843,6 +843,14 @@ export async function listTenantSkills(
             current.generated_analysis as never,
             {},
           ),
+          // What approving actually granted. It was only ever visible on the
+          // pending action, so it disappeared at the moment it started being
+          // true — leaving no way to see what an enabled skill can reach.
+          approvedContract:
+            (current.approved_execution_contract as Record<
+              string,
+              unknown
+            > | null) ?? undefined,
           analysisModel:
             current.analysis_model == null
               ? undefined

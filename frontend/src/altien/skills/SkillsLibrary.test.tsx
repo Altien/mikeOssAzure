@@ -289,6 +289,80 @@ describe("SkillsLibrary", () => {
         ).not.toBeInTheDocument();
     });
 
+    it("shows an enabled version what approving actually granted", async () => {
+        // The mapping table lived only on the pending action, so it vanished at
+        // the moment it became true and there was no way to see what a live
+        // skill could reach.
+        const approvedContract = {
+            approvedToolNames: ["write_project_document"],
+            toolLabels: {},
+            mappings: [
+                {
+                    requirement: { name: "Project filesystem read/write" },
+                    status: "llm_compatible",
+                    mappedToolNames: ["write_project_document"],
+                },
+            ],
+        };
+        listSkillsMock.mockResolvedValue({
+            canManage: true,
+            skills: [
+                {
+                    ...draftSkill,
+                    version: {
+                        ...draftSkill.version,
+                        state: "enabled",
+                        approvedContract,
+                    },
+                },
+            ],
+        });
+
+        renderWithProviders(<SkillsLibrary />, {
+            user: { id: "admin-1", email: "admin@example.test" },
+        });
+
+        expect(
+            await screen.findByText("Approved contract"),
+        ).toBeInTheDocument();
+        expect(screen.getByText("Capability mapping (1)")).toBeInTheDocument();
+        expect(
+            screen.getByText("Project filesystem read/write"),
+        ).toBeInTheDocument();
+    });
+
+    it("does not present a disabled version's old contract as granted", async () => {
+        listSkillsMock.mockResolvedValue({
+            canManage: true,
+            skills: [
+                {
+                    ...draftSkill,
+                    version: {
+                        ...draftSkill.version,
+                        state: "disabled",
+                        approvedContract: {
+                            approvedToolNames: ["write_project_document"],
+                            mappings: [
+                                {
+                                    requirement: { name: "Something granted once" },
+                                    status: "llm_compatible",
+                                    mappedToolNames: ["write_project_document"],
+                                },
+                            ],
+                        },
+                    },
+                },
+            ],
+        });
+
+        renderWithProviders(<SkillsLibrary />, {
+            user: { id: "admin-1", email: "admin@example.test" },
+        });
+
+        expect(await screen.findByText(/no project can reach it/i)).toBeInTheDocument();
+        expect(screen.queryByText("Approved contract")).not.toBeInTheDocument();
+    });
+
     it("shows the amendable pending action and sends the amendment verbatim", async () => {
         listSkillsMock.mockResolvedValue({
             canManage: true,
