@@ -590,7 +590,7 @@ describe("skill capability resolution", () => {
     });
   });
 
-  it("requires named skills to be exact approved version dependencies", async () => {
+  it("binds a named skill to an exact version, and reports rather than blocks without one", async () => {
     let modelCalled = false;
     const base = {
       analysis: {
@@ -613,9 +613,16 @@ describe("skill capability resolution", () => {
         return '{"assessments":[]}';
       },
     };
+    // Reported so the panel shows the claim, but not a blocker: nothing in a
+    // package declares a skill-to-skill dependency, so `kind: "skill"` is the
+    // model's word alone. Five analyses of one unchanged package used it six
+    // times and never for a skill — it was a scripts directory, a package's
+    // own resources, pdftotext, subagent delegation. Blocking asked the
+    // administrator to bind a skill version that does not exist.
     const missing = await resolveCapabilityContractWithLlm(base);
-    expect(missing.blockers).toHaveLength(1);
     expect(missing.mappings[0].status).toBe("dependency_required");
+    expect(missing.blockers).toEqual([]);
+    expect(missing.approvedToolNames).toEqual([]);
     expect(modelCalled).toBe(false);
 
     const bound = await resolveCapabilityContractWithLlm({

@@ -550,9 +550,18 @@ function blocksEnablement(mapping: {
 }) {
   if (mapping.requirement.required !== true) return false;
   if (NON_BLOCKING_STATUSES.includes(mapping.status)) return false;
-  // Bind the exact skill version it needs.
-  if (mapping.status === "dependency_required") return true;
-  // Connect the server it names.
+  // Connect the server it names. The only `kind` this trusts, because it is
+  // the only one with a source outside the model: the import scan records the
+  // package's MCP requirements deterministically in deterministic_analysis,
+  // so a connector gap is corroborated rather than claimed.
+  //
+  // `kind: "skill"` has no such source — nothing in the package declares a
+  // skill-to-skill dependency — and five analyses of one unchanged package
+  // applied it six times, not once to an actual skill. It is still reported as
+  // dependency_required so the panel shows the claim, but a claim no
+  // administrator can act on is not a blocker: there is no skill of that name
+  // to bind. A genuine declared dependency still blocks, upstream of here,
+  // through the GitHub acquisition flow that works from structured references.
   if (mapping.requirement.kind === "mcp") return true;
   // A name match that has not been through its behavioural approval yet: the
   // approval itself is the administrator's lever.
