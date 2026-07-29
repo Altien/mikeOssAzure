@@ -213,11 +213,41 @@ export async function analyseSkillVersion(args: {
       .update({ status: "ready" })
       .eq("id", String(context.snapshot.id));
     const conversationId = await ensureConversation({ ...args, db });
+    // An enable proposal is bound to the exact analysis it was built from, so
+    // this analysis has just invalidated any outstanding one. Left pending, it
+    // captures every affirmative reply — "enable", "yes" — and answers each
+    // with "The pending action no longer matches this analysis", with no route
+    // forward except knowing to reject it first. Only enable actions are
+    // expired: a rename, an acquisition or an identity link carries no
+    // analysis hash and this says nothing about them.
+    const outstanding = await db
+      .from("altien_skill_pending_actions")
+      .select("id")
+      .eq("version_id", args.versionId)
+      .eq("action_type", "enable_version")
+      .eq("state", "pending");
+    throwOnDbError(outstanding);
+    const expiredCount = (outstanding.data ?? []).length;
+    if (expiredCount) {
+      const expired = await db
+        .from("altien_skill_pending_actions")
+        .update({ state: "expired" })
+        .eq("version_id", args.versionId)
+        .eq("action_type", "enable_version")
+        .eq("state", "pending");
+      throwOnDbError(expired);
+    }
     await addMessage({
       conversationId,
       role: "assistant",
-      content:
+      content: [
         "Analysis complete. Review the exact requirements, then tell me to enable this version if they are acceptable.",
+        ...(expiredCount
+          ? [
+              "An earlier enable proposal was built from the previous analysis and no longer applies; it has expired. Nothing was enabled by it.",
+            ]
+          : []),
+      ].join("\n"),
       structuredContent: { type: "analysis", artifact },
       db,
     });

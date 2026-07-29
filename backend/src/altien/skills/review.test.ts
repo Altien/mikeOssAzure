@@ -17,8 +17,15 @@ const fastModelSettings = vi.fn().mockResolvedValue({
   api_keys: {},
 }) as never;
 
-function reviewDb(state = "draft") {
+function reviewDb(state = "draft", outstandingEnableAction = false) {
   return makeFakeDb((call) => {
+    if (
+      call.table === "altien_skill_pending_actions" &&
+      call.op === "select" &&
+      outstandingEnableAction
+    ) {
+      return { data: [{ id: "action-1" }], error: null };
+    }
     if (call.table === "altien_skill_versions" && call.op === "select") {
       return {
         data: [
@@ -130,6 +137,52 @@ describe("analyseSkillVersion", () => {
           analysis_model: "gpt-5.4-lite",
           generated_analysis: expect.any(Object),
         }),
+      ]),
+    );
+  });
+
+  it("expires an enable proposal the new analysis has invalidated", async () => {
+    // Re-analysing changes the hashes an enable action is bound to, so the
+    // proposal cannot be approved any more. Left pending it swallows every
+    // affirmative reply and answers "The pending action no longer matches this
+    // analysis" — a dead end unless the reviewer happens to know that
+    // rejecting it first is the way out.
+    downloadFileMock.mockResolvedValue(
+      new TextEncoder().encode("Read the selected project documents.").buffer,
+    );
+    const fake = reviewDb("disabled", true);
+    await analyseSkillVersion({
+      tenantId: "tenant-1",
+      versionId: "version-1",
+      userId: "admin-1",
+      db: fake.db as never,
+      settings: vi.fn().mockResolvedValue({
+        fast_model: "gpt-5.4-lite",
+        api_keys: {},
+      }) as never,
+      analyse: vi.fn().mockResolvedValue({
+        provider: "openai",
+        model: "gpt-5.4-lite",
+        schemaVersion: 1,
+        inputHash: "input-hash",
+        generated: {
+          summary: "Reads project documents.",
+          capabilityRequirements: [],
+          risks: [],
+          unresolvedReferences: [],
+        },
+      }),
+    });
+    const expiries = fake
+      .callsFor("altien_skill_pending_actions", "update")
+      .filter((call) => call.payload?.state === "expired");
+    expect(expiries).toHaveLength(1);
+    // A rename, an acquisition or an identity link carries no analysis hash,
+    // so this must not touch them.
+    expect(expiries[0].filters).toEqual(
+      expect.arrayContaining([
+        ["eq", "action_type", "enable_version"],
+        ["eq", "state", "pending"],
       ]),
     );
   });
