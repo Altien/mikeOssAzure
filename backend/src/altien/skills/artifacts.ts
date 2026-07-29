@@ -12,6 +12,7 @@ import {
   collectCleanRoomGitHubSources,
   evaluateCleanRoomLeakage,
   generateCleanRoomBrief,
+  type CleanRoomCoverage,
 } from "./cleanRoom";
 import {
   exactArrayBuffer,
@@ -459,6 +460,104 @@ function briefRequirementHelp(
     : "This skill's analysis identified no executable or local MCP requirement, so there is nothing to specify.";
 }
 
+type ContractMapping = {
+  requirement?: { name?: unknown };
+  atoms?: { label?: unknown; intent?: unknown; mappedToolNames?: unknown }[];
+};
+
+/**
+ * The per-behaviour result the capability matcher already produced for this
+ * requirement, read back rather than recomputed.
+ *
+ * Re-resolving would mean a decompose call plus one match call per behaviour
+ * every time somebody asks for a brief, and — as five analyses of one
+ * unchanged package showed — it would not even give the same answer twice. The
+ * reviewer approves a contract; a brief written against a different one would
+ * describe work the reviewer never saw.
+ *
+ * An enabled version has its approved contract; a version still in review has
+ * the one carried by its pending enable action. Neither exists before the
+ * first propose, and then the brief covers the whole requirement as it always
+ * did.
+ */
+async function requirementCoverage(
+  version: Record<string, unknown>,
+  versionId: string,
+  requirementName: string,
+  db: Db,
+): Promise<CleanRoomCoverage | undefined> {
+  const approved = version.approved_execution_contract as
+    | { mappings?: ContractMapping[] }
+    | null;
+  let mappings = approved?.mappings;
+  if (!mappings?.length) {
+    const pending = await db
+      .from("altien_skill_pending_actions")
+      .select("payload, created_at")
+      .eq("version_id", versionId)
+      .eq("action_type", "enable_version")
+      .order("created_at", { ascending: false })
+      .limit(1);
+    const payload = (pending.data ?? [])[0]?.payload as
+      | { executionContract?: { mappings?: ContractMapping[] } }
+      | undefined;
+    mappings = payload?.executionContract?.mappings;
+  }
+  const wanted = requirementName.trim().toLocaleLowerCase();
+  const mapping = (mappings ?? []).find(
+    (item) =>
+      String(item.requirement?.name ?? "")
+        .trim()
+        .toLocaleLowerCase() === wanted,
+  );
+  const atoms = mapping?.atoms;
+  if (!Array.isArray(atoms) || !atoms.length) return undefined;
+  const coverage: CleanRoomCoverage = { covered: [], uncovered: [] };
+  for (const atom of atoms) {
+    const label = String(atom.label ?? "").trim();
+    if (!label) continue;
+    const toolNames = Array.isArray(atom.mappedToolNames)
+      ? atom.mappedToolNames.map(String).filter(Boolean)
+      : [];
+    if (toolNames.length) coverage.covered.push({ label, toolNames });
+    else
+      coverage.uncovered.push({
+        label,
+        intent: String(atom.intent ?? "").trim() || label,
+      });
+  }
+  return coverage.covered.length || coverage.uncovered.length
+    ? coverage
+    : undefined;
+}
+
+/**
+ * The files a scoped brief needs: those named by a behaviour nothing here
+ * performs. Specifying `verify_anchors.py` does not need the three scripts
+ * beside it whose jobs Mike already does.
+ *
+ * Falls back to every eligible file whenever no behaviour names one, so a
+ * requirement whose behaviours are not file-shaped is never starved. The
+ * leakage check is unaffected either way — it is run against the whole
+ * snapshot regardless of what the generator was shown.
+ */
+function sourcesForCoverage<T extends { path: string }>(
+  eligible: T[],
+  coverage: CleanRoomCoverage | undefined,
+  explicitlyRequested: boolean,
+): T[] {
+  if (!coverage?.uncovered.length || explicitlyRequested) return eligible;
+  const named = eligible.filter((file) =>
+    coverage.uncovered.some((atom) => {
+      const label = atom.label.trim().toLocaleLowerCase();
+      if (label.length < 3) return false;
+      const lower = file.path.toLocaleLowerCase();
+      return lower === label || lower.endsWith(`/${label}`);
+    }),
+  );
+  return named.length ? named : eligible;
+}
+
 export async function createCleanRoomDeveloperArtifact(args: {
   tenantId: string;
   versionId: string;
@@ -518,16 +617,25 @@ export async function createCleanRoomDeveloperArtifact(args: {
   }
   const manifest = activeManifest(loaded.version, loaded.snapshot);
   const requested = new Set(args.sourcePaths ?? []);
-  const eligible = (manifest.files ?? []).filter(
+  const allEligible = (manifest.files ?? []).filter(
     (file) =>
       (file.inspection_class === "source" ||
         file.inspection_class === "text") &&
       (requested.size ? requested.has(file.path) : file.inspection_class === "source"),
   );
-  if (!eligible.length) throw new Error("No eligible source files were selected.");
-  if (requested.size !== 0 && eligible.length !== requested.size) {
+  if (!allEligible.length) throw new Error("No eligible source files were selected.");
+  if (requested.size !== 0 && allEligible.length !== requested.size) {
     throw new Error("One or more requested source paths are unavailable.");
   }
+  const coverage = await requirementCoverage(
+    loaded.version,
+    args.versionId,
+    args.requirementName,
+    db,
+  );
+  // An explicit sourcePaths request is the caller being specific on purpose,
+  // and narrowing it further would silently drop a file they asked for.
+  const eligible = sourcesForCoverage(allEligible, coverage, requested.size > 0);
   const sources = [];
   for (const file of eligible) {
     const bytes = await bytesFor(file, db);
@@ -562,6 +670,7 @@ export async function createCleanRoomDeveloperArtifact(args: {
       linkedSources: linked.notes,
     },
     sources,
+    coverage,
     model: skillAnalysisModel(settings.fast_model),
     apiKeys: settings.api_keys,
   });

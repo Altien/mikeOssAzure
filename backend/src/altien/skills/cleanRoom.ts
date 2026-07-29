@@ -14,6 +14,25 @@ type SourceFile = {
   text: string;
 };
 
+/**
+ * What the capability matcher already worked out about a requirement, broken
+ * down by the individual behaviours it names.
+ *
+ * A requirement like "Local shell with python3 (verify_anchors.py,
+ * extract_docx.py, mark_pdf_pages.py, build_review.py)" resolves per script,
+ * and three of those four already have Mike tools. Without this the generator
+ * is told only the requirement's name and specifies all four, so the one real
+ * gap arrives buried in three-quarters of work nobody needs to do — and a
+ * brief that respecifies an existing tool is an invitation to build a
+ * duplicate of it.
+ */
+export type CleanRoomCoverage = {
+  /** Behaviours with a Mike tool already, and the tools they resolved to. */
+  covered: { label: string; toolNames: string[] }[];
+  /** Behaviours nothing here performs. These are what a brief is for. */
+  uncovered: { label: string; intent: string }[];
+};
+
 type CleanRoomJson = {
   title: string;
   purpose: string;
@@ -360,6 +379,8 @@ export async function generateCleanRoomBrief(args: {
     linkedSources?: CleanRoomLinkedSourceNote[];
   };
   sources: SourceFile[];
+  /** Absent when no contract has been resolved for this version yet. */
+  coverage?: CleanRoomCoverage;
   model: string;
   apiKeys?: UserApiKeys;
   complete?: typeof completeText;
@@ -369,6 +390,23 @@ export async function generateCleanRoomBrief(args: {
     sha256: source.sha256,
     text: source.text,
   }));
+  const coverage = args.coverage;
+  // Only worth scoping when the matcher actually found something. All-uncovered
+  // is the same brief either way, and saying "specify nothing" when everything
+  // is covered would produce an empty document rather than a useful one — the
+  // caller decides whether a fully covered requirement needs a brief at all.
+  const scoped = !!coverage?.covered.length && !!coverage.uncovered.length;
+  const scopeInstruction = scoped
+    ? `\nThis deployment already performs some of what this requirement names.
+Specify ONLY these behaviours: ${coverage.uncovered
+        .map((atom) => `${atom.label} (${atom.intent})`)
+        .join("; ")}.
+Do not specify these, which already exist as tools here: ${coverage.covered
+        .map((atom) => `${atom.label} → ${atom.toolNames.join(", ")}`)
+        .join("; ")}.
+Reference an existing tool by name where the behaviour you are specifying
+depends on it, but do not restate its contract.`
+    : "";
   const inputHash = createHash("sha256")
     .update(JSON.stringify(sourceInput))
     .digest("hex");
@@ -383,10 +421,16 @@ that are not necessary to the public contract, or implementation structure.
 Describe only observable behaviour. Return JSON with title, purpose, inputs,
 outputs, errorsAndLimits, sideEffects, networkAndDataAccess,
 securityRequirements, stateAndConcurrency, proposedToolSchema,
-acceptanceTests, and unknowns.`,
+acceptanceTests, and unknowns.${scopeInstruction}`,
     user: JSON.stringify({
       requirementName: args.requirementName,
       provenance: args.provenance,
+      ...(scoped
+        ? {
+            specifyOnly: coverage.uncovered,
+            alreadyProvided: coverage.covered,
+          }
+        : {}),
       sources: sourceInput,
     }),
   });
@@ -414,7 +458,19 @@ acceptanceTests, and unknowns.`,
 - Source files: ${args.sources.map((source) => `${source.path} (${source.sha256})`).join(", ")}
 - Licence files present: ${args.provenance.licencePaths.join(", ") || "none identified"}
 - Linked GitHub sources: ${linkedSourceProvenance}
+${
+  scoped
+    ? `
+## Scope
 
+This requirement names several behaviours. This brief specifies only the ones
+nothing here performs; the rest are listed so no one builds them twice.
+
+${coverage.uncovered.map((atom) => `- **Specified here** — ${atom.label}: ${atom.intent}`).join("\n")}
+${coverage.covered.map((atom) => `- Already provided by ${atom.toolNames.join(", ")} — ${atom.label}`).join("\n")}
+`
+    : ""
+}
 ## Observable purpose
 
 ${brief.purpose}

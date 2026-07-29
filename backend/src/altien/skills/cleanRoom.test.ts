@@ -59,6 +59,109 @@ describe("clean-room developer briefs", () => {
     });
   });
 
+  it("specifies only the behaviours nothing here performs", async () => {
+    // The real case: four bundled scripts, three of which already have Mike
+    // tools. Told only the requirement's name, the generator specifies all
+    // four and the one genuine gap arrives buried in redundant work — which
+    // is also how somebody ends up rebuilding extract_document_for_verification.
+    let systemPrompt = "";
+    let user = "";
+    const result = await generateCleanRoomBrief({
+      requirementName:
+        "Local shell with python3 (verify_anchors.py, extract_docx.py, mark_pdf_pages.py, build_review.py)",
+      provenance: { licencePaths: [] },
+      sources: [source],
+      coverage: {
+        covered: [
+          { label: "extract_docx.py", toolNames: ["extract_document_for_verification"] },
+          { label: "mark_pdf_pages.py", toolNames: ["extract_document_for_verification"] },
+          { label: "build_review.py", toolNames: ["write_project_document"] },
+        ],
+        uncovered: [
+          {
+            label: "verify_anchors.py",
+            intent: "Confirms each quoted span still appears at its anchor.",
+          },
+        ],
+      },
+      model: "gpt-5.4-lite",
+      complete: (async (call: { systemPrompt: string; user: string }) => {
+        systemPrompt = call.systemPrompt;
+        user = call.user;
+        return JSON.stringify({
+          title: "Anchor verification tool",
+          purpose: "Confirm a quoted span still appears where it is cited.",
+          inputs: ["A quoted span and its anchor."],
+          outputs: ["Whether the span still matches."],
+          errorsAndLimits: ["Reject an empty span."],
+          sideEffects: ["No mutation."],
+          networkAndDataAccess: ["Reads project documents only."],
+          securityRequirements: ["Use the current caller authorization."],
+          stateAndConcurrency: ["Calls are independent."],
+          proposedToolSchema: { name: "verify_anchors" },
+          acceptanceTests: ["A moved span is reported as unmatched."],
+          unknowns: ["Tolerance for whitespace drift is unknown."],
+        });
+      }) as never,
+    });
+
+    expect(systemPrompt).toContain("verify_anchors.py");
+    expect(systemPrompt).toContain("Do not specify these");
+    expect(systemPrompt).toContain("extract_document_for_verification");
+    const sent = JSON.parse(user) as {
+      specifyOnly: { label: string }[];
+      alreadyProvided: { label: string }[];
+    };
+    expect(sent.specifyOnly.map((atom) => atom.label)).toEqual([
+      "verify_anchors.py",
+    ]);
+    expect(sent.alreadyProvided.map((atom) => atom.label)).toEqual([
+      "extract_docx.py",
+      "mark_pdf_pages.py",
+      "build_review.py",
+    ]);
+    // The reader has to be able to see what was deliberately left out, or a
+    // scoped brief reads as an incomplete one.
+    expect(result.markdown).toContain("## Scope");
+    expect(result.markdown).toContain("**Specified here** — verify_anchors.py");
+    expect(result.markdown).toContain(
+      "Already provided by extract_document_for_verification — extract_docx.py",
+    );
+  });
+
+  it("specifies the whole requirement when nothing is covered", async () => {
+    let systemPrompt = "";
+    const result = await generateCleanRoomBrief({
+      requirementName: "verify_anchors.py",
+      provenance: { licencePaths: [] },
+      sources: [source],
+      coverage: {
+        covered: [],
+        uncovered: [{ label: "verify_anchors.py", intent: "Checks anchors." }],
+      },
+      model: "gpt-5.4-lite",
+      complete: (async (call: { systemPrompt: string }) => {
+        systemPrompt = call.systemPrompt;
+        return JSON.stringify({
+          title: "Anchor verification tool",
+          purpose: "Confirm a quoted span still appears where it is cited.",
+          inputs: ["A span."],
+          outputs: ["A verdict."],
+          errorsAndLimits: ["Reject an empty span."],
+          sideEffects: ["No mutation."],
+          networkAndDataAccess: ["Reads project documents only."],
+          securityRequirements: ["Caller authorization."],
+          stateAndConcurrency: ["Independent."],
+          proposedToolSchema: { name: "verify_anchors" },
+          acceptanceTests: ["A moved span is unmatched."],
+          unknowns: ["None."],
+        });
+      }) as never,
+    });
+    expect(systemPrompt).not.toContain("Do not specify these");
+    expect(result.markdown).not.toContain("## Scope");
+  });
+
   it("blocks source-span leakage", () => {
     const copied =
       "distinctiveImplementationSequence createHiddenTransportWithRetryBudget and then serializeEveryPrivateInternalDetail before returning the secret response payload";

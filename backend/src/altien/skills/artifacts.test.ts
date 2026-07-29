@@ -157,9 +157,35 @@ function developerArtifactDb(
   options: {
     documentsInsertFails?: boolean;
     remoteMcp?: { name: string; endpoint: string };
+    /** Atoms on the pending enable action's contract, as propose leaves them. */
+    pendingAtoms?: Array<{
+      label: string;
+      intent: string;
+      mappedToolNames: string[];
+    }>;
   } = {},
 ) {
   return makeFakeDb((call) => {
+    if (call.table === "altien_skill_pending_actions" && call.op === "select") {
+      return {
+        data: options.pendingAtoms
+          ? [{
+              created_at: "2026-07-29T00:00:00Z",
+              payload: {
+                executionContract: {
+                  mappings: [
+                    {
+                      requirement: { name: "lookup_records" },
+                      atoms: options.pendingAtoms,
+                    },
+                  ],
+                },
+              },
+            }]
+          : [],
+        error: null,
+      };
+    }
     if (
       options.documentsInsertFails &&
       call.table === "documents" &&
@@ -252,6 +278,107 @@ function developerArtifactDb(
     return { data: [], error: null };
   });
 }
+
+describe("what a clean-room brief is asked to specify", () => {
+  function briefRun(
+    pendingAtoms?: Array<{
+      label: string;
+      intent: string;
+      mappedToolNames: string[];
+    }>,
+  ) {
+    uploadFileMock.mockReset();
+    uploadFileMock.mockResolvedValue(undefined);
+    downloadFileMock.mockResolvedValue(
+      new TextEncoder().encode("ordinary prose about a lookup").buffer,
+    );
+    getUserModelSettingsMock.mockResolvedValue({
+      fast_model: "gpt-5.4-lite",
+      api_keys: {},
+    });
+    generateCleanRoomBriefMock.mockReset();
+    generateCleanRoomBriefMock.mockResolvedValue({
+      markdown: "# Brief\n\nNothing copied.",
+      provenance: {
+        provider: "openai",
+        model: "gpt-5.4-lite",
+        inputHash: "hash",
+        schemaVersion: 1,
+      },
+    });
+    return createCleanRoomDeveloperArtifact({
+      tenantId: "tenant-1",
+      versionId: "version-1",
+      requirementName: "lookup_records",
+      createdBy: "admin-1",
+      db: developerArtifactDb({ pendingAtoms }).db as never,
+    });
+  }
+
+  it("hands over the per-behaviour result the reviewer already approved", async () => {
+    // Recomputing it would mean a decompose plus a match call per behaviour on
+    // every brief, and would not give the same answer twice — the reviewer
+    // would be approving one contract while the brief described another.
+    await briefRun([
+      {
+        label: "reviewed.ts",
+        intent: "Reads a record.",
+        mappedToolNames: ["read_document"],
+      },
+      {
+        label: "unreviewed.ts",
+        intent: "Checks an anchor still matches.",
+        mappedToolNames: [],
+      },
+    ]);
+    const call = generateCleanRoomBriefMock.mock.calls[0][0];
+    expect(call.coverage).toEqual({
+      covered: [{ label: "reviewed.ts", toolNames: ["read_document"] }],
+      uncovered: [
+        { label: "unreviewed.ts", intent: "Checks an anchor still matches." },
+      ],
+    });
+    // And only the file the unspecified behaviour names: specifying one script
+    // does not need the ones beside it whose jobs Mike already does.
+    expect(call.sources.map((source: { path: string }) => source.path)).toEqual([
+      "tool/unreviewed.ts",
+    ]);
+  });
+
+  it("specifies the whole requirement when no contract has been resolved yet", async () => {
+    // A brief can be asked for before the first propose, and then there is no
+    // approved per-behaviour result to scope it by.
+    await briefRun(undefined);
+    const call = generateCleanRoomBriefMock.mock.calls[0][0];
+    expect(call.coverage).toBeUndefined();
+    expect(call.sources.map((source: { path: string }) => source.path)).toEqual([
+      "tool/reviewed.ts",
+      "tool/unreviewed.ts",
+    ]);
+  });
+
+  it("keeps every file when no behaviour names one", async () => {
+    // Behaviours are not always file-shaped. Narrowing on a label that matches
+    // nothing would hand the generator an empty corpus.
+    await briefRun([
+      {
+        label: "page-anchored extraction",
+        intent: "Extracts text with page markers.",
+        mappedToolNames: [],
+      },
+      {
+        label: "record lookup",
+        intent: "Finds a record.",
+        mappedToolNames: ["read_document"],
+      },
+    ]);
+    const call = generateCleanRoomBriefMock.mock.calls[0][0];
+    expect(call.sources.map((source: { path: string }) => source.path)).toEqual([
+      "tool/reviewed.ts",
+      "tool/unreviewed.ts",
+    ]);
+  });
+});
 
 describe("clean-room brief eligibility", () => {
   it("refuses to specify a third party's hosted MCP", async () => {
