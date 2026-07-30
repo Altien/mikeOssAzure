@@ -1047,9 +1047,51 @@ export async function streamProjectChat(payload: {
 
 export async function listTabularReviews(
     projectId?: string,
+    pagination?: {
+        limit?: number;
+        offset?: number;
+        search?: string;
+        sortKey?: string;
+        sortDirection?: "asc" | "desc";
+        scope?: "all" | "in-project" | "standalone";
+        signal?: AbortSignal;
+    },
 ): Promise<TabularReview[]> {
-    const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
-    return apiRequest<TabularReview[]>(`/tabular-review${qs}`);
+    const params = new URLSearchParams();
+    if (projectId) params.set("project_id", projectId);
+    if (pagination?.limit) params.set("limit", String(pagination.limit));
+    if (pagination?.offset) params.set("offset", String(pagination.offset));
+    if (pagination?.search) params.set("search", pagination.search);
+    if (pagination?.sortKey) params.set("sort_key", pagination.sortKey);
+    if (pagination?.sortDirection) params.set("sort_direction", pagination.sortDirection);
+    if (pagination?.scope && pagination.scope !== "all")
+        params.set("scope", pagination.scope);
+
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    return apiRequest<TabularReview[]>(`/tabular-review${qs}`, {
+        signal: pagination?.signal,
+    });
+}
+
+export async function listTabularReviewIds(
+    projectId?: string,
+    options?: {
+        search?: string;
+        scope?: "all" | "in-project" | "standalone";
+        signal?: AbortSignal;
+    },
+): Promise<{ id: string; user_id: string }[]> {
+    const params = new URLSearchParams();
+    if (projectId) params.set("project_id", projectId);
+    if (options?.search) params.set("search", options.search);
+    if (options?.scope && options.scope !== "all")
+        params.set("scope", options.scope);
+
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    return apiRequest<{ id: string; user_id: string }[]>(
+        `/tabular-review/ids${qs}`,
+        { signal: options?.signal },
+    );
 }
 
 export async function createTabularReview(payload: {
