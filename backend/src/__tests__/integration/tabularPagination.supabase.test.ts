@@ -183,6 +183,37 @@ maybeDescribe("Supabase tabular-review pagination", () => {
         ).toBe(true);
     });
 
+    it.each(["%", "_"])(
+        "treats %s as a literal search character",
+        async (searchTerm) => {
+            const reviews = await admin.rpc("get_tabular_reviews_overview", {
+                p_user_id: ownerId,
+                p_user_email: ownerEmail,
+                p_project_id: null,
+                p_scope: "all",
+                p_limit: 100,
+                p_offset: 0,
+                p_search_term: searchTerm,
+                p_sort_key: "created",
+                p_sort_direction: "desc",
+            });
+            const ids = await admin.rpc("get_tabular_review_ids_overview", {
+                p_user_id: ownerId,
+                p_user_email: ownerEmail,
+                p_project_id: null,
+                p_scope: "all",
+                p_search_term: searchTerm,
+                p_limit: 100,
+                p_offset: 0,
+            });
+
+            expect(reviews.error).toBeNull();
+            expect(ids.error).toBeNull();
+            expect(reviews.data).toEqual([]);
+            expect(ids.data).toEqual([]);
+        },
+    );
+
     it("sorts the complete filtered set before pagination", async () => {
         const result = await admin.rpc("get_tabular_reviews_overview", {
             p_user_id: ownerId,

@@ -52,6 +52,71 @@ describe("usePaginatedTabularReviews", () => {
         expect(result.current.selectedReviewIds).toEqual([]);
     });
 
+    it("blocks select all until the debounced search matches the typed search", async () => {
+        const firstPageRows = Array.from({ length: 21 }, (_, index) =>
+            review(`row-${index}`),
+        );
+        listTabularReviewsMock.mockResolvedValue(firstPageRows);
+
+        const { result, rerender } = renderHook(
+            ({ search, selectionKey }) =>
+                usePaginatedTabularReviews({ search, selectionKey }),
+            {
+                initialProps: {
+                    search: "",
+                    selectionKey: "",
+                },
+            },
+        );
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        rerender({ search: "", selectionKey: "new search" });
+        expect(result.current.selectingAll).toBe(true);
+
+        await act(async () => {
+            await result.current.selectAllMatching();
+        });
+        expect(listTabularReviewIdsMock).not.toHaveBeenCalled();
+        expect(result.current.selectedReviewIds).toEqual([]);
+
+        const matchingIds = [{ id: "matching", user_id: "user-1" }];
+        listTabularReviewIdsMock.mockResolvedValueOnce(matchingIds);
+        rerender({ search: "new search", selectionKey: "new search" });
+        expect(result.current.selectingAll).toBe(false);
+
+        await act(async () => {
+            await result.current.selectAllMatching();
+        });
+        expect(listTabularReviewIdsMock).toHaveBeenCalledWith(undefined, {
+            search: "new search",
+            scope: "all",
+        });
+        expect(result.current.selectedReviewIds).toEqual(["matching"]);
+    });
+
+    it("clears a row selected during a debounced query transition", async () => {
+        listTabularReviewsMock.mockResolvedValue([review("old-row")]);
+
+        const { result, rerender } = renderHook(
+            ({ search, selectionKey }) =>
+                usePaginatedTabularReviews({ search, selectionKey }),
+            {
+                initialProps: {
+                    search: "old",
+                    selectionKey: "old",
+                },
+            },
+        );
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        rerender({ search: "old", selectionKey: "new" });
+        act(() => result.current.setSelectedReviewIds(["old-row"]));
+        expect(result.current.selectedReviewIds).toEqual(["old-row"]);
+
+        rerender({ search: "new", selectionKey: "new" });
+        expect(result.current.selectedReviewIds).toEqual([]);
+    });
+
     it("aborts an obsolete request when the query changes", async () => {
         let firstSignal: AbortSignal | undefined;
         listTabularReviewsMock
@@ -73,7 +138,9 @@ describe("usePaginatedTabularReviews", () => {
 
         rerender({ search: "new" });
         expect(firstSignal?.aborted).toBe(true);
-        await waitFor(() => expect(result.current.reviews).toEqual([review("new")]));
+        await waitFor(() =>
+            expect(result.current.reviews).toEqual([review("new")]),
+        );
         expect(result.current.error).toBeNull();
     });
 
@@ -82,9 +149,7 @@ describe("usePaginatedTabularReviews", () => {
             .mockRejectedValueOnce(new Error("network unavailable"))
             .mockResolvedValueOnce([review("retry")]);
 
-        const { result } = renderHook(() =>
-            usePaginatedTabularReviews({}),
-        );
+        const { result } = renderHook(() => usePaginatedTabularReviews({}));
 
         await waitFor(() =>
             expect(result.current.error?.message).toBe("network unavailable"),
@@ -98,8 +163,8 @@ describe("usePaginatedTabularReviews", () => {
     });
 
     it("selects every review matching the filters via a single lightweight ids request", async () => {
-        // First page load: 20 rows + 1 to signal more pages exist.
-        const firstPageRows = Array.from({ length: 21 }, (_, i) =>
+        // First page load: 30 rows + 1 to signal more pages exist.
+        const firstPageRows = Array.from({ length: 31 }, (_, i) =>
             review(`row-${i}`),
         );
         listTabularReviewsMock.mockResolvedValueOnce(firstPageRows);
@@ -108,7 +173,7 @@ describe("usePaginatedTabularReviews", () => {
             usePaginatedTabularReviews({ scope: "in-project" }),
         );
         await waitFor(() => expect(result.current.loading).toBe(false));
-        expect(result.current.reviews).toHaveLength(20);
+        expect(result.current.reviews).toHaveLength(30);
         expect(result.current.hasMore).toBe(true);
 
         // selectAllMatching should ask for ids only (not full review rows) —

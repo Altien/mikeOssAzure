@@ -51,6 +51,8 @@ export function ProjectReviewsTable({
     setSelectedReviewIds,
     onToggleAll,
     selectingAll = false,
+    deletingReviewIds,
+    hasActiveSearch,
     sort,
     onSortChange,
     hasMore,
@@ -74,6 +76,8 @@ export function ProjectReviewsTable({
     setSelectedReviewIds: Dispatch<SetStateAction<string[]>>;
     onToggleAll: () => void;
     selectingAll?: boolean;
+    deletingReviewIds: ReadonlySet<string>;
+    hasActiveSearch: boolean;
     sort: {
         key: TabularReviewSortKey;
         direction: TabularReviewSortDirection;
@@ -179,7 +183,9 @@ export function ProjectReviewsTable({
                             <input
                                 type="checkbox"
                                 checked={allVisibleReviewsSelected}
-                                disabled={selectingAll}
+                                disabled={
+                                    selectingAll || deletingReviewIds.size > 0
+                                }
                                 ref={(el) => {
                                     if (el)
                                         el.indeterminate =
@@ -235,100 +241,139 @@ export function ProjectReviewsTable({
                 </TableEmptyState>
             ) : reviews.length === 0 ? (
                 <TableEmptyState>
-                    <TabularReviewSkeuoIcon className="mb-4 h-8 w-8" />
-                    <p className="text-2xl font-medium font-serif text-gray-900">
-                        Tabular Reviews
-                    </p>
-                    <p className="mt-1 text-xs text-gray-400 max-w-xs">
-                        Extract data from project documents into tables using AI.
-                    </p>
-                    <PillButton
-                        tone="black"
-                        size="sm"
-                        onClick={onCreateReview}
-                        disabled={creatingReview || docs.length === 0}
-                        className="mt-4 px-3"
-                    >
-                        <Plus className="h-3.5 w-3.5" />
-                        Create
-                    </PillButton>
+                    {hasActiveSearch ? (
+                        <p className="text-sm text-gray-400">
+                            No reviews found
+                        </p>
+                    ) : (
+                        <>
+                            <TabularReviewSkeuoIcon className="mb-4 h-8 w-8" />
+                            <p className="text-2xl font-medium font-serif text-gray-900">
+                                Tabular Reviews
+                            </p>
+                            <p className="mt-1 text-xs text-gray-400 max-w-xs">
+                                Extract data from project documents into tables
+                                using AI.
+                            </p>
+                            <PillButton
+                                tone="black"
+                                size="sm"
+                                onClick={onCreateReview}
+                                disabled={creatingReview || docs.length === 0}
+                                className="mt-4 px-3"
+                            >
+                                <Plus className="h-3.5 w-3.5" />
+                                Create
+                            </PillButton>
+                        </>
+                    )}
                 </TableEmptyState>
             ) : (
                 <TableBody>
-                    {visibleReviews.map((review) => (
-                        <TableRow
-                            key={review.id}
-                            selected={selectedReviewIds.includes(review.id)}
-                            rightClickDropdown={(close, menuProps) => (
-                                <RowActionMenuItems
-                                    onClose={close}
-                                    surfaceProps={menuProps}
-                                    onEditDetails={() => {
-                                        if (
-                                            currentUserId &&
-                                            review.user_id !== currentUserId
-                                        ) {
-                                            onOwnerOnlyAction(
-                                                "edit tabular review details",
-                                            );
-                                            return;
-                                        }
-                                        onOpenDetails(review);
-                                    }}
-                                    onDelete={() => onDeleteReview(review)}
-                                />
-                            )}
-                            onClick={() => onOpenReview(review.id)}
-                            className="pr-8 md:pr-8"
-                        >
-                            <TablePrimaryCell
-                                selected={selectedReviewIds.includes(review.id)}
-                                onSelectionChange={() =>
-                                    setSelectedReviewIds((prev) =>
-                                        prev.includes(review.id)
-                                            ? prev.filter(
-                                                  (x) => x !== review.id,
-                                              )
-                                            : [...prev, review.id],
-                                    )
+                    {visibleReviews.map((review) => {
+                        const deleting = deletingReviewIds.has(review.id);
+                        return (
+                            <TableRow
+                                key={review.id}
+                                interactive={!deleting}
+                                selected={
+                                    !deleting &&
+                                    selectedReviewIds.includes(review.id)
                                 }
-                                label={review.title ?? "Untitled Review"}
-                            />
-                            <TableCell className="ml-auto w-24">
-                                {review.columns_config?.length ?? 0}
-                            </TableCell>
-                            <TableCell className="w-24">
-                                {review.document_count ?? 0}
-                            </TableCell>
-                            <TableCell className="w-32">
-                                {review.created_at ? (
-                                    formatDate(review.created_at)
-                                ) : (
-                                    <span className="text-gray-300">—</span>
-                                )}
-                            </TableCell>
-                            <div
-                                className="w-8 shrink-0 flex justify-end"
-                                onClick={(e) => e.stopPropagation()}
+                                rightClickDropdown={
+                                    deleting
+                                        ? undefined
+                                        : (close, menuProps) => (
+                                              <RowActionMenuItems
+                                                  onClose={close}
+                                                  surfaceProps={menuProps}
+                                                  onEditDetails={() => {
+                                                      if (
+                                                          currentUserId &&
+                                                          review.user_id !==
+                                                              currentUserId
+                                                      ) {
+                                                          onOwnerOnlyAction(
+                                                              "edit tabular review details",
+                                                          );
+                                                          return;
+                                                      }
+                                                      onOpenDetails(review);
+                                                  }}
+                                                  onDelete={() =>
+                                                      onDeleteReview(review)
+                                                  }
+                                              />
+                                          )
+                                }
+                                onClick={
+                                    deleting
+                                        ? undefined
+                                        : () => onOpenReview(review.id)
+                                }
+                                className={
+                                    deleting
+                                        ? "pointer-events-none pr-8 opacity-50 md:pr-8"
+                                        : "pr-8 md:pr-8"
+                                }
                             >
-                                <RowActions
-                                    onEditDetails={() => {
-                                        if (
-                                            currentUserId &&
-                                            review.user_id !== currentUserId
-                                        ) {
-                                            onOwnerOnlyAction(
-                                                "edit tabular review details",
-                                            );
-                                            return;
-                                        }
-                                        onOpenDetails(review);
-                                    }}
-                                    onDelete={() => onDeleteReview(review)}
+                                <TablePrimaryCell
+                                    selected={
+                                        !deleting &&
+                                        selectedReviewIds.includes(review.id)
+                                    }
+                                    selectionIndicator={
+                                        deleting ? (
+                                            <Loader2 className="mr-4 h-3 w-3 shrink-0 animate-spin text-gray-400" />
+                                        ) : undefined
+                                    }
+                                    onSelectionChange={() =>
+                                        setSelectedReviewIds((prev) =>
+                                            prev.includes(review.id)
+                                                ? prev.filter(
+                                                      (x) => x !== review.id,
+                                                  )
+                                                : [...prev, review.id],
+                                        )
+                                    }
+                                    label={review.title ?? "Untitled Review"}
                                 />
-                            </div>
-                        </TableRow>
-                    ))}
+                                <TableCell className="ml-auto w-24">
+                                    {review.columns_config?.length ?? 0}
+                                </TableCell>
+                                <TableCell className="w-24">
+                                    {review.document_count ?? 0}
+                                </TableCell>
+                                <TableCell className="w-32">
+                                    {review.created_at ? (
+                                        formatDate(review.created_at)
+                                    ) : (
+                                        <span className="text-gray-300">—</span>
+                                    )}
+                                </TableCell>
+                                <div
+                                    className="w-8 shrink-0 flex justify-end"
+                                    onClick={(e) => e.stopPropagation()}
+                                >
+                                    <RowActions
+                                        onEditDetails={() => {
+                                            if (
+                                                currentUserId &&
+                                                review.user_id !== currentUserId
+                                            ) {
+                                                onOwnerOnlyAction(
+                                                    "edit tabular review details",
+                                                );
+                                                return;
+                                            }
+                                            onOpenDetails(review);
+                                        }}
+                                        onDelete={() => onDeleteReview(review)}
+                                    />
+                                </div>
+                            </TableRow>
+                        );
+                    })}
                 </TableBody>
             )}
             {!loading && hasMore && reviews.length > 0 && (
@@ -359,11 +404,7 @@ function ProjectReviewsLoadingRows() {
     return (
         <TableBody>
             {[1, 2, 3, 4, 5].map((i) => (
-                <TableRow
-                    key={i}
-                    interactive={false}
-                    className="pr-8 md:pr-8"
-                >
+                <TableRow key={i} interactive={false} className="pr-8 md:pr-8">
                     <TableStickyCell hover={false}>
                         <div className="flex min-w-0 items-center">
                             <SkeletonDot className="mr-4" />

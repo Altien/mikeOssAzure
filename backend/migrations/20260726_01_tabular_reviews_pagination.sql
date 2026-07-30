@@ -71,7 +71,19 @@ as $$
       and (
         p_search_term is null
         or p_search_term = ''
-        or lower(tr.title) like '%' || lower(p_search_term) || '%'
+        or lower(tr.title) like
+          '%' ||
+          replace(
+            replace(
+              replace(lower(p_search_term), '\', '\\'),
+              '%',
+              '\%'
+            ),
+            '_',
+            '\_'
+          ) ||
+          '%'
+          escape '\'
       )
       and (
         p_project_id is null
@@ -273,7 +285,19 @@ as $$
     and (
       p_search_term is null
       or p_search_term = ''
-      or lower(tr.title) like '%' || lower(p_search_term) || '%'
+      or lower(tr.title) like
+        '%' ||
+        replace(
+          replace(
+            replace(lower(p_search_term), '\', '\\'),
+            '%',
+            '\%'
+          ),
+          '_',
+          '\_'
+        ) ||
+        '%'
+        escape '\'
     )
     and (
       p_project_id is null
