@@ -9,15 +9,11 @@ import {
 import type { TabularReview } from "@/app/components/shared/types";
 import { listTabularReviewIds, listTabularReviews } from "@/app/lib/mikeApi";
 
-export type TabularReviewSortKey =
-    | "name"
-    | "columns"
-    | "documents"
-    | "created";
+export type TabularReviewSortKey = "name" | "columns" | "documents" | "created";
 export type TabularReviewSortDirection = "asc" | "desc";
 export type TabularReviewScope = "all" | "in-project" | "standalone";
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 30;
 
 function pageRows(rows: TabularReview[]) {
     return {
@@ -48,24 +44,21 @@ export function usePaginatedTabularReviews(options: {
     const [hasMore, setHasMore] = useState(true);
     const [error, setError] = useState<Error | null>(null);
     const [loadMoreError, setLoadMoreError] = useState<Error | null>(null);
-    const [selectingAll, setSelectingAll] = useState(false);
+    const [selectingAllRequest, setSelectingAllRequest] = useState(false);
     const [retryVersion, setRetryVersion] = useState(0);
     const requestVersionRef = useRef(0);
     const loadingMoreRef = useRef(false);
     const loadMoreControllerRef = useRef<AbortController | null>(null);
 
-    const {
-        projectId,
-        search,
-        selectionKey,
-        scope = "all",
-        sort,
-    } = options;
+    const { projectId, search, selectionKey, scope = "all", sort } = options;
     const sortKey = sort?.key;
     const sortDirection = sort?.direction;
+    const selectionQueryPending =
+        selectionKey !== undefined && selectionKey !== search;
     const queryKey = JSON.stringify([
         projectId ?? null,
-        selectionKey ?? search ?? null,
+        selectionKey ?? null,
+        search ?? null,
         scope,
         sortKey ?? null,
         sortDirection ?? null,
@@ -76,18 +69,19 @@ export function usePaginatedTabularReviews(options: {
     }>({ queryKey, ids: [] });
     const selectedReviewIds =
         selection.queryKey === queryKey ? selection.ids : [];
-    const setSelectedReviewIds: Dispatch<SetStateAction<string[]>> = useCallback(
-        (value) => {
-            setSelection((current) => {
-                const currentIds =
-                    current.queryKey === queryKey ? current.ids : [];
-                const ids =
-                    typeof value === "function" ? value(currentIds) : value;
-                return { queryKey, ids };
-            });
-        },
-        [queryKey],
-    );
+    const setSelectedReviewIds: Dispatch<SetStateAction<string[]>> =
+        useCallback(
+            (value) => {
+                setSelection((current) => {
+                    const currentIds =
+                        current.queryKey === queryKey ? current.ids : [];
+                    const ids =
+                        typeof value === "function" ? value(currentIds) : value;
+                    return { queryKey, ids };
+                });
+            },
+            [queryKey],
+        );
     // Owner lookup for review ids that "select all matching" pulled in but
     // that haven't been paged into `reviews` yet — bulk actions (e.g. delete)
     // need the owning user_id without fetching each review's full payload.
@@ -154,14 +148,7 @@ export function usePaginatedTabularReviews(options: {
             controller.abort();
             loadMoreControllerRef.current?.abort();
         };
-    }, [
-        projectId,
-        retryVersion,
-        scope,
-        search,
-        sortDirection,
-        sortKey,
-    ]);
+    }, [projectId, retryVersion, scope, search, sortDirection, sortKey]);
 
     const loadMore = useCallback(async () => {
         if (loading || loadingMoreRef.current || !hasMore) return;
@@ -235,13 +222,15 @@ export function usePaginatedTabularReviews(options: {
     // once results span more than one page. Fetches only ids (+ owner), not
     // full review payloads, since that's all a bulk selection needs.
     const selectAllMatching = useCallback(async () => {
+        if (selectionQueryPending) return;
+
         if (!hasMore) {
             setSelectedReviewIds(reviews.map((review) => review.id));
             return;
         }
 
         const requestVersion = requestVersionRef.current;
-        setSelectingAll(true);
+        setSelectingAllRequest(true);
         try {
             const rows = await listTabularReviewIds(projectId, {
                 search: search || undefined,
@@ -257,9 +246,18 @@ export function usePaginatedTabularReviews(options: {
             });
             setSelectedReviewIds(rows.map((row) => row.id));
         } finally {
-            setSelectingAll(false);
+            setSelectingAllRequest(false);
         }
-    }, [hasMore, projectId, queryKey, reviews, scope, search, setSelectedReviewIds]);
+    }, [
+        hasMore,
+        projectId,
+        queryKey,
+        reviews,
+        scope,
+        search,
+        selectionQueryPending,
+        setSelectedReviewIds,
+    ]);
 
     return {
         reviews,
@@ -274,7 +272,7 @@ export function usePaginatedTabularReviews(options: {
         selectedReviewIds,
         setSelectedReviewIds,
         selectAllMatching,
-        selectingAll,
+        selectingAll: selectingAllRequest || selectionQueryPending,
         getReviewOwnerId,
     };
 }
