@@ -30,6 +30,10 @@ import { skillsRouter } from "./altien/skills/router";
 
 // ── Rate-limit configuration (from upstream ba6f771) ───────────────────────
 
+// Ceiling for JSON request bodies. Generous because chat and tabular
+// routes post document text inline; uploads go through multer, not here.
+const JSON_BODY_LIMIT = "50mb";
+
 function envInt(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw) return fallback;
@@ -182,7 +186,7 @@ export function buildApp(): express.Express {
   // the route mounts below.
   app.use(generalLimiter);
 
-  app.use(express.json({ limit: "50mb" }));
+  app.use(express.json({ limit: JSON_BODY_LIMIT }));
   // /install posts form-encoded bodies (the bootstrap-token paste form).
   // Limit is small — the only field is a token + maybe a few config values.
   app.use(express.urlencoded({ extended: false, limit: "32kb" }));
