@@ -22,7 +22,7 @@ services:
       JWT_EXP: 3600
     volumes:
       - db_data:/var/lib/postgresql/data
-      - ./supabase/roles.sql:/docker-entrypoint-initdb.d/zz-roles.sql:ro
+      - ./docker/db-init/roles.sql:/docker-entrypoint-initdb.d/zz-roles.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
