@@ -17,6 +17,10 @@ import { caseLawRouter } from "./routes/caseLaw";
 export const app = express();
 const isProduction = process.env.NODE_ENV === "production";
 
+// Ceiling for JSON request bodies. Generous because chat and tabular
+// routes post document text inline; uploads go through multer, not here.
+const JSON_BODY_LIMIT = "50mb";
+
 function envInt(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw) return fallback;
@@ -138,7 +142,7 @@ app.delete("/user/chats", dataDeleteLimiter);
 app.delete("/user/projects", dataDeleteLimiter);
 app.delete("/user/tabular-reviews", dataDeleteLimiter);
 
-app.use(express.json({ limit: "50mb" }));
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 app.use("/chat", chatRouter);
 app.use("/projects", projectsRouter);
