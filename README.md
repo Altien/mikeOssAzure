@@ -113,6 +113,11 @@ accept/reject trail. To check a file you were given, run
 before this shipped carry a `null` hash, so they read as unverifiable rather
 than as falsely verified.
 
+Soft-deleted versions stay in the manifest, carrying their `deleted_at`. A
+trail that dropped them would be a weaker attestation, but it does mean the
+filename and timestamps of a deleted version are visible to anyone with access
+to the project.
+
 The manifest also carries a SHA-256 `digest` over its own body, meaning
 everything except `digest` and `signature`. Serialise that body with object
 keys sorted, array order kept, and no whitespace, and you can recompute the

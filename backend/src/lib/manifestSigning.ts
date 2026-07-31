@@ -142,6 +142,17 @@ export function canonicalize(value: unknown): string {
     if (value === null || typeof value !== "object") return JSON.stringify(value);
     if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
 
+    // Anything that is not a plain object serialises wrongly and quietly: a
+    // Date becomes {} where JSON.stringify gives an ISO string, a Buffer
+    // enumerates its indices, a Map becomes {}. A manifest body only ever
+    // holds JSON from the database, so this should not arise — but a silently
+    // wrong serialisation is the same failure as the non-finite number above,
+    // and this function is what every digest rests on.
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+        throw new TypeError("Manifest bodies must hold plain objects");
+    }
+
     return `{${Object.entries(value as Record<string, unknown>)
         .filter(([, v]) => v !== undefined)
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))

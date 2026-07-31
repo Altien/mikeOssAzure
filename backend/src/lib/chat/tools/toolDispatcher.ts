@@ -1681,7 +1681,10 @@ export async function runToolCalls(
                 version_number: 1,
                 filename: d.filename,
                 file_type: active?.file_type ?? sourceInfo.file_type,
-                size_bytes: active?.size_bytes ?? raw.byteLength,
+                // From `raw`, not `active`, so size and hash always describe
+                // the same bytes. A verifier that stats a file before hashing
+                // it must not see a size that disagrees with content_sha256.
+                size_bytes: raw.byteLength,
                 page_count: active?.page_count ?? null,
                 content_sha256: contentSha256(raw),
               }));
