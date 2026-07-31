@@ -96,6 +96,11 @@ key from `GET /api/manifest-signing-key`, not from the manifest: whoever edits a
 manifest can re-sign it with a key of their own, so the embedded copy shows
 consistency, never provenance.
 
+Soft-deleted versions stay in the manifest, carrying their `deleted_at`. A
+trail that dropped them would be a weaker attestation, but it does mean the
+filename and timestamps of a deleted version are visible to anyone with access
+to the project.
+
 ## Validation
 
 ```bash

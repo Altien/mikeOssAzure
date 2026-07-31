@@ -17,7 +17,7 @@ import { installProcessGuards } from "./lib/processGuards";
 installProcessGuards();
 import { buildApp } from "./app";
 import { initDownloadSigningSecret } from "./lib/downloadTokens";
-import { initManifestSigningKey } from "./lib/manifestSigning";
+import { initManifestSigningKey, manifestPublicKey } from "./lib/manifestSigning";
 import { checkSchemaVersion } from "./lib/schemaCheck";
 
 const PORT = process.env.PORT ?? 3001;
@@ -31,6 +31,20 @@ Promise.all([
   initDownloadSigningSecret(),
   initManifestSigningKey().catch(() => {}),
 ]).finally(() => {
+  // Surface a malformed MANIFEST_SIGNING_KEY at boot rather than when
+  // someone's first export fails. Unset is valid (manifests export unsigned);
+  // malformed is a misconfiguration, so stop rather than serve a deployment
+  // whose exports will fail later.
+  try {
+    const signingKey = manifestPublicKey();
+    if (signingKey) {
+      console.log(`Export manifests signed with key ${signingKey.key_id}`);
+    }
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+
   buildApp().listen(PORT, () => {
     console.log(`Mike backend running on port ${PORT}`);
     // After listen, and never awaited: a schema report must not delay or

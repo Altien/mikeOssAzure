@@ -70,6 +70,21 @@ describe("canonicalize", () => {
         expect(() => canonicalize({ n: Infinity })).toThrow(/finite/);
     });
 
+    it("refuses non-plain objects rather than serialising them wrongly", () => {
+        // Each of these would otherwise pass silently and produce a digest
+        // over something other than what the value represents.
+        expect(() => canonicalize({ d: new Date() })).toThrow(/plain objects/);
+        expect(() => canonicalize({ b: Buffer.from("x") })).toThrow(
+            /plain objects/,
+        );
+        expect(() => canonicalize({ m: new Map() })).toThrow(/plain objects/);
+        // Plain objects, including null-prototype ones, still pass.
+        expect(canonicalize({ a: 1 })).toBe('{"a":1}');
+        expect(canonicalize(Object.assign(Object.create(null), { a: 1 }))).toBe(
+            '{"a":1}',
+        );
+    });
+
     it("gives a round-tripped manifest the same digest", () => {
         expect(digestManifestBody(JSON.parse(JSON.stringify(BODY))).value).toBe(
             digestManifestBody(BODY).value,
