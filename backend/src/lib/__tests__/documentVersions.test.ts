@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+    contentSha256,
     loadActiveVersion,
     attachActiveVersionPaths,
     attachLatestVersionNumbers,
@@ -311,5 +312,44 @@ describe("attachLatestVersionNumbers", () => {
         });
         const docs = await attachLatestVersionNumbers<TestDoc>(db, [{ id: "doc-1" }]);
         expect(docs[0].latest_version_number).toBe(2);
+    });
+});
+
+// Known SHA-256 vector for "abc" (FIPS 180-4). Call sites hand this helper a
+// mix of Buffers, raw ArrayBuffers, and views into larger buffers (multer's
+// file.buffer is one), so each of those has to produce the same digest.
+const ABC_SHA256 =
+    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+describe("contentSha256", () => {
+    it("matches the known digest for a Buffer", () => {
+        expect(contentSha256(Buffer.from("abc", "utf8"))).toBe(ABC_SHA256);
+    });
+
+    it("matches the known digest for a raw ArrayBuffer", () => {
+        const buf = Buffer.from("abc", "utf8");
+        const ab = buf.buffer.slice(
+            buf.byteOffset,
+            buf.byteOffset + buf.byteLength,
+        ) as ArrayBuffer;
+        expect(contentSha256(ab)).toBe(ABC_SHA256);
+    });
+
+    it("respects a view's offset and length rather than its backing buffer", () => {
+        const backing = Buffer.from("xxabcxx", "utf8");
+        const view = new Uint8Array(backing.buffer, backing.byteOffset + 2, 3);
+        expect(contentSha256(view)).toBe(ABC_SHA256);
+    });
+
+    it("hashes empty content without throwing", () => {
+        expect(contentSha256(Buffer.alloc(0))).toBe(
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        );
+    });
+
+    it("produces different digests for a one-byte difference", () => {
+        expect(contentSha256(Buffer.from("abc"))).not.toBe(
+            contentSha256(Buffer.from("abd")),
+        );
     });
 });

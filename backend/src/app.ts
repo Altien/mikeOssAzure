@@ -25,6 +25,8 @@ import { configRouter } from "./routes/config";
 import { caseLawRouter } from "./routes/caseLaw";
 import { helpRouter } from "./routes/help";
 import { diagRouter } from "./routes/diag";
+import { manifestPublicKey } from "./lib/manifestSigning";
+import { safeErrorLog } from "./lib/safeError";
 import { authorityTraceRouter } from "./altien/authorityTrace/router";
 import { skillsRouter } from "./altien/skills/router";
 
@@ -260,6 +262,7 @@ export function buildApp(): express.Express {
     uploadLimiter,
   );
   app.post("/api/projects/:projectId/documents", uploadLimiter);
+  app.get("/api/projects/:projectId/export", exportLimiter);
   app.post("/api/altien/skills/imports/zip", uploadLimiter);
   app.post("/api/altien/skills/imports/github", uploadLimiter);
   // Export / data-deletion limiters (upstream 3a10943). Dev mounts the user
@@ -298,6 +301,20 @@ export function buildApp(): express.Express {
   app.use("/diag", diagRouter);
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
+
+  // The Ed25519 public key this deployment signs project export manifests
+  // with, or null when no key is configured. Deliberately open: whoever checks
+  // a manifest is usually outside the workspace and needs the key from the
+  // server rather than the copy inside the file they were handed.
+  // (Dev: /api-prefixed; upstream serves it at /manifest-signing-key.)
+  app.get("/api/manifest-signing-key", (_req, res) => {
+    try {
+      res.json(manifestPublicKey());
+    } catch (err) {
+      console.error("[manifest-signing-key] failed", safeErrorLog(err));
+      res.status(500).json({ detail: "Manifest signing key is misconfigured" });
+    }
+  });
 
   // ── Static frontend ────────────────────────────────────────────────────────
   // In production the Dockerfile copies the Next.js static export to

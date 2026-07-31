@@ -75,6 +75,27 @@ credentials.
 - LibreOffice for DOC/DOCX-to-PDF conversion; it is included in the
   production image.
 
+## Tamper-evident export
+
+Mike hashes a document version's bytes (SHA-256) whenever it writes them.
+`GET /api/projects/:projectId/export` returns a manifest of those hashes plus
+the accept/reject trail. To check a file you were given, run
+`shasum -a 256 lease.docx` and compare it to the manifest. Versions written
+before this shipped carry a `null` hash, so they read as unverifiable rather
+than as falsely verified.
+
+The manifest also carries a SHA-256 `digest` over its own body (everything
+except `digest` and `signature`, serialised with object keys sorted, array
+order kept, no whitespace).
+
+Provision a `manifest-signing-key` secret in Key Vault (local dev:
+`MANIFEST_SIGNING_KEY`; a 32-byte hex Ed25519 seed, `openssl rand -hex 32`) to
+sign that digest. The signature is a raw Ed25519 signature over the bytes
+`mike-project-manifest-v1`, a NUL byte, then the digest bytes. Take the public
+key from `GET /api/manifest-signing-key`, not from the manifest: whoever edits a
+manifest can re-sign it with a key of their own, so the embedded copy shows
+consistency, never provenance.
+
 ## Validation
 
 ```bash

@@ -17,6 +17,7 @@ import { installProcessGuards } from "./lib/processGuards";
 installProcessGuards();
 import { buildApp } from "./app";
 import { initDownloadSigningSecret } from "./lib/downloadTokens";
+import { initManifestSigningKey } from "./lib/manifestSigning";
 import { checkSchemaVersion } from "./lib/schemaCheck";
 
 const PORT = process.env.PORT ?? 3001;
@@ -25,7 +26,11 @@ const PORT = process.env.PORT ?? 3001;
 // traffic — Azure deploys don't secretRef it into the env (040 Entry 19),
 // and the sync signing path needs it in process.env. resolveSecret never
 // rejects; .finally() is belt-and-braces so a bug there can't stop listen.
-initDownloadSigningSecret().finally(() => {
+// Same for the (optional) export-manifest signing key.
+Promise.all([
+  initDownloadSigningSecret(),
+  initManifestSigningKey().catch(() => {}),
+]).finally(() => {
   buildApp().listen(PORT, () => {
     console.log(`Mike backend running on port ${PORT}`);
     // After listen, and never awaited: a schema report must not delay or

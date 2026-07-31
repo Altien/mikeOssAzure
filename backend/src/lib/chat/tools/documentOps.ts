@@ -11,7 +11,10 @@ import {
   type EditInput,
 } from "../../docxTrackedChanges";
 import { buildDownloadUrl } from "../../downloadTokens";
-import { loadActiveVersion } from "../../documentVersions";
+import {
+  contentSha256,
+  loadActiveVersion,
+} from "../../documentVersions";
 import {
   type DocStore,
   type DocIndex,
@@ -551,6 +554,7 @@ export async function generateDocx(
         file_type: "docx",
         size_bytes: buf.byteLength,
         page_count: null,
+        content_sha256: contentSha256(buf),
       })
       .select("id")
       .single();
@@ -1002,6 +1006,7 @@ async function persistGeneratedFile(params: {
       file_type: extension,
       size_bytes: buffer.byteLength,
       page_count: null,
+      content_sha256: contentSha256(buffer),
     })
     .select("id")
     .single();
@@ -1179,6 +1184,16 @@ export async function runEditDocument(params: {
     newPath = reuseVersion.storagePath;
     versionRowId = reuseVersion.versionId;
     nextVersionNumber = reuseVersion.versionNumber;
+
+    // Clear the hash before the bytes change; the update below sets it again.
+    // Storage and Postgres cannot be written atomically, so a failure between
+    // the two leaves the version unhashed and therefore unverifiable, rather
+    // than hashed against content it no longer holds.
+    await db
+      .from("document_versions")
+      .update({ content_sha256: null })
+      .eq("id", versionRowId);
+
     await uploadFile(
       newPath,
       ab,
@@ -1190,6 +1205,7 @@ export async function runEditDocument(params: {
         file_type: "docx",
         size_bytes: editedBytes.byteLength,
         page_count: null,
+        content_sha256: contentSha256(editedBytes),
       })
       .eq("id", versionRowId);
   } else {
@@ -1241,6 +1257,7 @@ export async function runEditDocument(params: {
         file_type: "docx",
         size_bytes: editedBytes.byteLength,
         page_count: null,
+        content_sha256: contentSha256(editedBytes),
       })
       .select("id")
       .single();
