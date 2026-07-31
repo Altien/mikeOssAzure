@@ -89,6 +89,13 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=your-supabase-anon-key
 NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
 ```
 
+These three `NEXT_PUBLIC_*` variables are required when running
+`npm run build --prefix frontend`. Next.js embeds public environment values in
+the browser bundle at build time, so setting them only when starting or
+deploying an already-built application is too late. Production builds fail
+with a list of missing variables instead of producing a bundle that cannot
+connect to Supabase or the backend API.
+
 Supabase values come from the project dashboard. Use the project URL for `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL`, the service role key for the backend `SUPABASE_SECRET_KEY`, and the anon/public key for `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`. If your Supabase project shows multiple key formats, use the legacy JWT-style anon and service role keys expected by the Supabase client libraries.
 
 Provider keys are only needed for the models, legal research, and email features you plan to use. Model provider keys and the CourtListener token can be configured in `backend/.env` for the whole instance, or per user in **Account > Models & API Keys**. If a provider key is present in `backend/.env`, that provider is available by default and the matching browser API key field is read-only.
