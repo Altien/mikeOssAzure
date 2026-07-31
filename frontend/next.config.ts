@@ -17,6 +17,10 @@ const nextConfig: NextConfig = {
     // Upstream divergence (sync-log: 4728fd19): the sitemap `rewrites()` in
     // upstream's config is intentionally NOT carried -- dev is a static
     // export (rewrites are unsupported) and has no /api/sitemap route.
+    // Upstream divergence (sync-log: 3743f26d): upstream throws at build time
+    // when NEXT_PUBLIC_SUPABASE_* / NEXT_PUBLIC_API_BASE_URL are unset. NOT
+    // carried -- dev uses runtime config (GET /config via ConfigContext); the
+    // only build-time var is the optional NEXT_PUBLIC_API_BASE_URL (may be empty).
     skipTrailingSlashRedirect: true,
 };
 
