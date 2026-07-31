@@ -79,6 +79,10 @@ COURTLISTENER_API_TOKEN=your-courtlistener-token
 
 # Optional: use locally imported CourtListener bulk data for faster case reads.
 COURTLISTENER_BULK_DATA_ENABLED=false
+
+# Optional: Ed25519 seed (openssl rand -hex 32) used to sign project export
+# manifests. Unset means manifests export unsigned.
+MANIFEST_SIGNING_KEY=
 ```
 
 Create `frontend/.env.local`:
@@ -99,6 +103,35 @@ connect to Supabase or the backend API.
 Supabase values come from the project dashboard. Use the project URL for `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL`, the service role key for the backend `SUPABASE_SECRET_KEY`, and the anon/public key for `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`. If your Supabase project shows multiple key formats, use the legacy JWT-style anon and service role keys expected by the Supabase client libraries.
 
 Provider keys are only needed for the models, legal research, and email features you plan to use. Model provider keys and the CourtListener token can be configured in `backend/.env` for the whole instance, or per user in **Account > Models & API Keys**. If a provider key is present in `backend/.env`, that provider is available by default and the matching browser API key field is read-only.
+
+## Tamper-Evident Export
+
+Mike hashes a document version's bytes (SHA-256) whenever it writes them.
+`GET /projects/:projectId/export` returns a manifest of those hashes plus the
+accept/reject trail. To check a file you were given, run
+`shasum -a 256 lease.docx` and compare it to the manifest. Versions written
+before this shipped carry a `null` hash, so they read as unverifiable rather
+than as falsely verified.
+
+The manifest also carries a SHA-256 `digest` over its own body, meaning
+everything except `digest` and `signature`. Serialise that body with object
+keys sorted, array order kept, and no whitespace, and you can recompute the
+digest from parsed JSON.
+
+Set `MANIFEST_SIGNING_KEY` to sign that digest. The signature is a raw Ed25519
+signature over the bytes `mike-project-manifest-v1`, a NUL byte, then the
+digest bytes, checkable with any Ed25519 library:
+
+```js
+crypto.verify(null,
+  Buffer.concat([Buffer.from("mike-project-manifest-v1\0"),
+                 Buffer.from(manifest.digest.value, "hex")]),
+  publicKey, Buffer.from(manifest.signature.value, "hex"));
+```
+
+Take `publicKey` from `GET /manifest-signing-key`, not from the manifest.
+Whoever edits a manifest can re-sign it with a key of their own, so the
+embedded copy shows consistency, never provenance.
 
 ## CourtListener Integration
 
