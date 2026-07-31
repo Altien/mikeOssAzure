@@ -616,8 +616,29 @@ export function applyCapabilityAmendments(args: {
   ).map((mapping) => ({ ...(mapping as StoredContractMapping) }));
   const effects: string[] = [];
 
+  /**
+   * A structural gap is amendable; a behavioural verdict is not.
+   *
+   * Refusing every resolved status left the administrator unable to say what a
+   * gap should map onto, while the model could do exactly that whenever its
+   * decomposition happened to cover every behaviour — so the same skill,
+   * upgraded, silently lost verify_citation_sources because one atom of one
+   * requirement found nothing that run. Deciding a structural gap is the
+   * administrator's call to make (spec §9.1: analysis proposes, a TenantAdmin
+   * approves the final set), and the tools named are still checked against the
+   * catalogue and their availability below.
+   *
+   * `compatible` and the llm-verified statuses stay closed: overriding a
+   * behavioural comparison with an assertion is how a requirement gets mapped
+   * onto a tool that does not do the job.
+   */
+  const AMENDABLE_STATUSES = [
+    "needs_admin_selection",
+    "proposed",
+    ...STRUCTURAL_GAP_STATUSES,
+  ];
   const selectable = (mapping: StoredContractMapping, name: string) => {
-    if (!["needs_admin_selection", "proposed"].includes(mapping.status)) {
+    if (!AMENDABLE_STATUSES.includes(mapping.status)) {
       throw new Error(
         `Requirement '${name}' is already resolved as '${mapping.status}' and cannot be amended.`,
       );

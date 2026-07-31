@@ -729,6 +729,8 @@ describe("applyCapabilityAmendments", () => {
     ).toThrow("was not in the reviewed approved set");
   });
 
+  // "project documents" resolves `compatible` — a behavioural verdict, which
+  // stays closed to amendment however the structural gaps are treated.
   it("refuses a selection outside the catalogue or already resolved", () => {
     expect(() =>
       applyCapabilityAmendments({
@@ -758,6 +760,60 @@ describe("applyCapabilityAmendments", () => {
       }),
     ).toThrow("cannot be amended");
   });
+
+  it("lets an administrator decide what a structural gap maps onto", () => {
+    // Upgrading dingduff-citation-check by one patch version dropped
+    // verify_citation_sources — one behaviour of one requirement matched
+    // nothing that run, and partial cover grants nothing. The model may map a
+    // structural gap whenever its decomposition reaches full cover; refusing
+    // the administrator the same call left re-analysing until the wording came
+    // out favourably as the only route back.
+    const gap = resolveCapabilityContract({
+      analysis: {
+        summary: "Checks citations.",
+        risks: [],
+        unresolvedReferences: [],
+        capabilityRequirements: [
+          {
+            name: "Local shell with python3 (verify_anchors.py)",
+            kind: "first_party_tool",
+            required: true,
+            rationale: "Runs the bundled verification script.",
+          },
+        ],
+      },
+      catalogue: firstPartyToolCatalogue(),
+    }) as unknown as Record<string, unknown>;
+    expect(
+      (gap.mappings as Array<{ status: string }>)[0].status,
+    ).toBe("not_executed");
+
+    const amended = applyCapabilityAmendments({
+      contract: gap,
+      amendments: [
+        {
+          kind: "select_capability",
+          requirementName: "Local shell with python3 (verify_anchors.py)",
+          toolNames: ["extract_document_for_verification"],
+        },
+      ],
+      catalogue: firstPartyToolCatalogue(),
+    });
+    const mapping = (
+      amended.contract.mappings as Array<{
+        status: string;
+        mappedToolNames: string[];
+      }>
+    )[0];
+    expect(mapping.status).toBe("admin_selected");
+    expect(mapping.mappedToolNames).toEqual([
+      "extract_document_for_verification",
+    ]);
+    expect(amended.contract.approvedToolNames).toContain(
+      "extract_document_for_verification",
+    );
+  });
+
 });
 
 describe("multi-tool assessments", () => {

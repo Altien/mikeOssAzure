@@ -482,9 +482,33 @@ function enableDb(
     acquisitions?: Array<Record<string, unknown>>;
     unresolvedReferences?: string[];
     adaptedContentHash?: string;
+    /** Tools the already-enabled version of this skill holds. */
+    enabledVersionTools?: string[];
   } = {},
 ) {
   return makeFakeDb((call) => {
+    if (
+      call.table === "altien_skill_versions" &&
+      call.op === "select" &&
+      call.filters.some(
+        ([op, column, value]) =>
+          op === "eq" && column === "state" && value === "enabled",
+      )
+    ) {
+      return {
+        data: options.enabledVersionTools
+          ? [
+              {
+                id: "version-0",
+                approved_execution_contract: {
+                  approvedToolNames: options.enabledVersionTools,
+                },
+              },
+            ]
+          : [],
+        error: null,
+      };
+    }
     if (call.table === "altien_skill_versions" && call.op === "select") {
       return {
         data: [
@@ -610,6 +634,58 @@ function pendingRow(
     expires_at: new Date(Date.now() + 3_600_000).toISOString(),
   };
 }
+
+describe("what an upgrade takes away", () => {
+  it("says so in the proposal when the new contract grants less", async () => {
+    // Upgrading dingduff-citation-check by one patch version dropped
+    // verify_citation_sources — the anchor check its own instructions call
+    // load-bearing — because one behaviour of one requirement matched nothing
+    // that run. Every row read reasonably on its own, the package had not
+    // changed, and the reviewer approved the reduction without being told.
+    const fake = enableDb({
+      enabledVersionTools: [
+        "read_document",
+        "verify_citation_sources",
+        "export_citation_review",
+      ],
+    });
+    const result = await postSkillReviewMessage({
+      tenantId: "tenant-1",
+      versionId: "version-1",
+      userId: "admin-1",
+      message: "enable",
+      db: fake.db as never,
+      settings: fastModelSettings,
+    });
+    expect(result.outcome).toBe("proposed");
+    const content = fake
+      .callsFor("altien_skill_import_messages", "insert")
+      .map((call) => String((call.payload as Record<string, unknown>).content))
+      .join("\n");
+    expect(content).toContain("TAKES AWAY");
+    expect(content).toContain("verify_citation_sources");
+    expect(content).toContain("export_citation_review");
+    // read_document is granted by the new contract too, so it is not a loss.
+    expect(content).not.toMatch(/TAKES AWAY[^\n]*read_document/);
+  });
+
+  it("says nothing when there is no enabled version to compare against", async () => {
+    const fake = enableDb();
+    await postSkillReviewMessage({
+      tenantId: "tenant-1",
+      versionId: "version-1",
+      userId: "admin-1",
+      message: "enable",
+      db: fake.db as never,
+      settings: fastModelSettings,
+    });
+    const content = fake
+      .callsFor("altien_skill_import_messages", "insert")
+      .map((call) => String((call.payload as Record<string, unknown>).content))
+      .join("\n");
+    expect(content).not.toContain("TAKES AWAY");
+  });
+});
 
 describe("unresolved analysis references", () => {
   it("reviews them in the payload instead of dead-ending a first import", async () => {

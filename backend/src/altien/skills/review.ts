@@ -1176,6 +1176,13 @@ export async function postSkillReviewMessage(args: {
         .join(" "),
     );
   }
+  const withdrawn = await toolsAnUpgradeWouldWithdraw({
+    skillId: String(context.skill.id),
+    versionId: args.versionId,
+    approvedToolNames: contract.approvedToolNames,
+    toolLabels: contract.toolLabels,
+    db,
+  });
   return await proposePendingAction({
     tenantId: args.tenantId,
     versionId: args.versionId,
@@ -1196,6 +1203,11 @@ export async function postSkillReviewMessage(args: {
               .join(", ")
           : "none"
       }.`,
+      ...(withdrawn.length
+        ? [
+            `This replaces an enabled version and TAKES AWAY: ${withdrawn.join(", ")}. Approving accepts that loss — nothing in the package asks for it, so it is the analysis reading this version differently. Amend the proposal if the skill still needs them.`,
+          ]
+        : []),
       ...(unresolvedReferences.length
         ? [
             `The analysis could not resolve: ${unresolvedReferences.join("; ")}. These grant nothing and are part of what you are approving.`,
@@ -1215,6 +1227,47 @@ export async function postSkillReviewMessage(args: {
     ].join("\n"),
     db,
   });
+}
+
+/**
+ * Tools the currently enabled version of this skill holds that the version
+ * under review would not.
+ *
+ * An upgrade is reviewed on its own terms, so a contract that grants less than
+ * the one it replaces reads as perfectly reasonable — every row is defensible
+ * in isolation. Upgrading dingduff-citation-check by one patch version dropped
+ * verify_citation_sources, the anchor check its own instructions call
+ * load-bearing, because one behaviour of one requirement found no match that
+ * run and partial cover grants nothing. Nothing in the package changed. The
+ * reviewer had no way to see it and approved the reduction.
+ */
+async function toolsAnUpgradeWouldWithdraw(args: {
+  skillId: string;
+  versionId: string;
+  approvedToolNames: string[];
+  toolLabels?: Record<string, string>;
+  db: Db;
+}): Promise<string[]> {
+  const enabled = await args.db
+    .from("altien_skill_versions")
+    .select("id, approved_execution_contract")
+    .eq("skill_id", args.skillId)
+    .eq("state", "enabled");
+  throwOnDbError(enabled);
+  const previous = ((enabled.data ?? []) as Record<string, unknown>[]).find(
+    (row) => String(row.id) !== args.versionId,
+  );
+  if (!previous) return [];
+  const contract = previous.approved_execution_contract as {
+    approvedToolNames?: unknown;
+  } | null;
+  const held = Array.isArray(contract?.approvedToolNames)
+    ? contract.approvedToolNames.map(String)
+    : [];
+  const proposed = new Set(args.approvedToolNames);
+  return held
+    .filter((name) => !proposed.has(name))
+    .map((name) => labelForTool(name, args.toolLabels));
 }
 
 export async function getSkillReview(args: {
