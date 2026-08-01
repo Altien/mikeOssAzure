@@ -2,7 +2,7 @@ import Image, { type ImageProps } from "next/image";
 
 type IconProps = Omit<ImageProps, "alt" | "src" | "width" | "height" | "unoptimized">;
 
-/** History nav icon (Clue custom) — same asset pattern as AppSidebarSkeuoIcons. */
+/** History nav icon — same asset pattern as AppSidebarSkeuoIcons. */
 export function HistorySkeuoIcon({ className, ...props }: IconProps) {
     return (
         <Image

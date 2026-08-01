@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, Loader2, Search } from "lucide-react";
 import {
     getAuditHistory,
@@ -60,30 +60,53 @@ function HistoryTable() {
     const [total, setTotal] = useState(0);
     const [page, setPage] = useState(1);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(false);
     const [exporting, setExporting] = useState(false);
     const [q, setQ] = useState("");
     const [action, setAction] = useState("");
     const [from, setFrom] = useState("");
     const [to, setTo] = useState("");
 
+    // Tracks the in-flight request so a newer load can abort an older one.
+    // Without this, rapid filter changes race: a slow first response could land
+    // after a faster second one and overwrite it with stale rows, and a
+    // "Load more" issued mid-filter-change would append a page from the old
+    // filter (duplicate key={e.id} warnings and wrong rows).
+    const controllerRef = useRef<AbortController | null>(null);
+
     const load = useCallback(
         async (nextPage: number, append: boolean) => {
+            controllerRef.current?.abort();
+            const controller = new AbortController();
+            controllerRef.current = controller;
             setLoading(true);
             try {
-                const out = await getAuditHistory({
-                    q: q || undefined,
-                    action: action || undefined,
-                    from: from || undefined,
-                    to: to || undefined,
-                    page: nextPage,
-                });
+                const out = await getAuditHistory(
+                    {
+                        q: q || undefined,
+                        action: action || undefined,
+                        from: from || undefined,
+                        to: to || undefined,
+                        page: nextPage,
+                    },
+                    controller.signal,
+                );
+                if (controller.signal.aborted) return;
+                setError(false);
                 setEvents((cur) => (append ? [...cur, ...out.events] : out.events));
                 setTotal(out.total);
                 setPage(nextPage);
-            } catch {
-                if (!append) setEvents([]);
+            } catch (err) {
+                // A superseded request rejects with an AbortError — ignore it so
+                // it neither clears the newer results nor shows a false error.
+                if (controller.signal.aborted) return;
+                if (!append) {
+                    setEvents([]);
+                    setTotal(0);
+                }
+                setError(true);
             } finally {
-                setLoading(false);
+                if (controllerRef.current === controller) setLoading(false);
             }
         },
         [q, action, from, to],
@@ -91,6 +114,7 @@ function HistoryTable() {
 
     useEffect(() => {
         void load(1, false);
+        return () => controllerRef.current?.abort();
         // eslint-disable-next-line react-hooks/exhaustive-deps -- reload on filter change only
     }, [action, from, to]);
 
@@ -242,7 +266,24 @@ function HistoryTable() {
                                     </tr>
                                 );
                             })}
-                            {!loading && events.length === 0 && (
+                            {!loading && error && events.length === 0 && (
+                                <tr>
+                                    <td
+                                        colSpan={7}
+                                        className="px-4 py-8 text-center text-sm text-red-500"
+                                    >
+                                        Couldn&apos;t load your history.{" "}
+                                        <button
+                                            type="button"
+                                            onClick={() => void load(1, false)}
+                                            className="font-medium underline hover:text-red-600"
+                                        >
+                                            Try again
+                                        </button>
+                                    </td>
+                                </tr>
+                            )}
+                            {!loading && !error && events.length === 0 && (
                                 <tr>
                                     <td
                                         colSpan={7}
