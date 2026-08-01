@@ -260,20 +260,23 @@ export interface AuditEvent {
     detail: Record<string, unknown> | null;
 }
 
-export async function getAuditHistory(params: {
-    q?: string;
-    action?: string;
-    from?: string;
-    to?: string;
-    page?: number;
-}): Promise<{ events: AuditEvent[]; total: number; page: number; pageSize: number }> {
+export async function getAuditHistory(
+    params: {
+        q?: string;
+        action?: string;
+        from?: string;
+        to?: string;
+        page?: number;
+    },
+    signal?: AbortSignal,
+): Promise<{ events: AuditEvent[]; total: number; page: number; pageSize: number }> {
     const qs = new URLSearchParams();
     if (params.q) qs.set("q", params.q);
     if (params.action) qs.set("action", params.action);
     if (params.from) qs.set("from", params.from);
     if (params.to) qs.set("to", params.to);
     if (params.page) qs.set("page", String(params.page));
-    return apiRequest(`/audit?${qs.toString()}`);
+    return apiRequest(`/audit?${qs.toString()}`, { signal });
 }
 
 export async function exportAuditHistory(params: {
