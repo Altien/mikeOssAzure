@@ -180,6 +180,7 @@ export async function buildUserAccountExport(
         tabularReviews,
         sharedProjects,
         sharedTabularReviews,
+        auditEvents,
     ] = await Promise.all([
         selectAll(db, "user_profiles", (query) => query.eq("user_id", userId)),
         loadApiKeyStatus(db, userId),
@@ -238,6 +239,11 @@ export async function buildUserAccountExport(
                   "id, user_id, project_id, title, practice, created_at, updated_at",
               )
             : Promise.resolve([]),
+        selectAll(db, "audit_events", (query) =>
+            query
+                .eq("user_id", userId)
+                .order("created_at", { ascending: true }),
+        ),
     ]);
 
     const projectIds = idsFrom(projects);
@@ -281,5 +287,6 @@ export async function buildUserAccountExport(
             projects: sharedProjects,
             tabular_reviews: sharedTabularReviews,
         },
+        audit_events: auditEvents,
     };
 }
