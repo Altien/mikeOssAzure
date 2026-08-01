@@ -52,6 +52,14 @@ type TurnEvent = {
   document_id?: string;
   title?: string;
   workflow_id?: string;
+  // doc_replicated nests each produced copy under `copies` (see the
+  // AssistantEvent union in chat/streaming.ts); the top-level `filename` is the
+  // *source* document and there is no top-level document_id.
+  copies?: Array<{
+    new_filename?: string;
+    document_id?: string;
+    version_id?: string;
+  }>;
 };
 
 /**
@@ -87,16 +95,34 @@ export async function recordChatTurn(
   });
   for (const raw of events ?? []) {
     const ev = raw as TurnEvent;
+    // A single doc_replicated event can produce several copies; emit one
+    // document.generated row per copy, reading the copy's own new_filename and
+    // document_id rather than the (source) top-level filename / absent id.
+    if (ev?.type === "doc_replicated") {
+      for (const copy of ev.copies ?? []) {
+        await recordAudit(db, {
+          userId: base.userId,
+          userEmail: base.userEmail,
+          action: "document.generated",
+          title: copy.new_filename ?? null,
+          surface,
+          projectId: base.projectId ?? null,
+          chatId: base.chatId,
+          documentId: copy.document_id ?? null,
+          model: base.model,
+          detail: null,
+        });
+      }
+      continue;
+    }
     const action =
       ev?.type === "doc_created"
         ? "document.generated"
         : ev?.type === "doc_edited"
           ? "document.edited"
-          : ev?.type === "doc_replicated"
-            ? "document.generated"
-            : ev?.type === "workflow_applied"
-              ? "workflow.applied"
-              : null;
+          : ev?.type === "workflow_applied"
+            ? "workflow.applied"
+            : null;
     if (!action) continue;
     await recordAudit(db, {
       userId: base.userId,
