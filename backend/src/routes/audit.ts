@@ -3,7 +3,7 @@
 // that are shared with their email.
 
 import { Router } from "express";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth, requireMfaIfEnrolled } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 
 export const auditRouter = Router();
@@ -11,8 +11,13 @@ auditRouter.use(requireAuth);
 
 const PAGE_SIZE = 50;
 const EXPORT_LIMIT = 2000;
+// Clamp the requested page. Without a bound, ?page=99999999999999 produces an
+// offset of ~5e15, which PostgREST rejects and surfaces as a 500. Capping the
+// page keeps the offset well inside Postgres' integer range.
+const MAX_PAGE = 100_000;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-async function accessibleProjectIds(
+export async function accessibleProjectIds(
   db: ReturnType<typeof createServerSupabase>,
   userId: string,
   email: string | undefined,
@@ -39,21 +44,42 @@ type AuditQuery = {
   limit: number;
 };
 
-function parseQuery(raw: Record<string, unknown>, limit: number): AuditQuery {
+export type ParseQueryResult =
+  | { ok: true; query: AuditQuery }
+  | { ok: false; error: string };
+
+export function parseQuery(
+  raw: Record<string, unknown>,
+  limit: number,
+): ParseQueryResult {
   const str = (v: unknown) =>
     typeof v === "string" && v.trim() ? v.trim() : undefined;
-  const page = Math.max(Number.parseInt(String(raw.page ?? "1"), 10) || 1, 1);
+  // Clamp page into [1, MAX_PAGE] so a huge ?page= can't overflow the offset.
+  const parsedPage = Number.parseInt(String(raw.page ?? "1"), 10) || 1;
+  const page = Math.min(Math.max(parsedPage, 1), MAX_PAGE);
+  const from = str(raw.from);
+  const to = str(raw.to);
+  // Date filters come from <input type="date"> and are compared as calendar
+  // days. Reject anything that isn't a bare YYYY-MM-DD — a value like
+  // "2026-07-30T12:00:00Z" would become "...ZT23:59:59.999Z" (F8) and 500.
+  if (from && !DATE_RE.test(from))
+    return { ok: false, error: "Invalid 'from' date; expected YYYY-MM-DD" };
+  if (to && !DATE_RE.test(to))
+    return { ok: false, error: "Invalid 'to' date; expected YYYY-MM-DD" };
   return {
-    q: str(raw.q)?.slice(0, 200),
-    action: str(raw.action)?.slice(0, 60),
-    from: str(raw.from),
-    to: str(raw.to),
-    page,
-    limit,
+    ok: true,
+    query: {
+      q: str(raw.q)?.slice(0, 200),
+      action: str(raw.action)?.slice(0, 60),
+      from,
+      to,
+      page,
+      limit,
+    },
   };
 }
 
-async function queryEvents(
+export async function queryEvents(
   db: ReturnType<typeof createServerSupabase>,
   userId: string,
   email: string | undefined,
@@ -84,22 +110,32 @@ auditRouter.get("/", async (req, res) => {
   const userId = res.locals.userId as string;
   const email = res.locals.userEmail as string | undefined;
   const db = createServerSupabase();
-  const q = parseQuery(req.query as Record<string, unknown>, PAGE_SIZE);
+  const parsed = parseQuery(req.query as Record<string, unknown>, PAGE_SIZE);
+  if (!parsed.ok) return void res.status(400).json({ detail: parsed.error });
+  const q = parsed.query;
   const { data, error, count } = await queryEvents(db, userId, email, q);
   if (error) return void res.status(500).json({ detail: error.message });
   res.json({ events: data ?? [], total: count ?? 0, page: q.page, pageSize: PAGE_SIZE });
 });
 
-function csvCell(v: unknown): string {
-  const s = v == null ? "" : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+export function csvCell(v: unknown): string {
+  let s = v == null ? "" : String(v);
+  // Neutralize spreadsheet formula injection: Excel/Sheets evaluate any cell
+  // whose text begins with = + - @, a tab or a carriage return as a formula on
+  // open. Titles are attacker-controllable across shared projects, so an
+  // =HYPERLINK(...) payload would execute in the victim's spreadsheet. Prefix a
+  // single quote to force the value to be treated as literal text.
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-auditRouter.get("/export", async (req, res) => {
+auditRouter.get("/export", requireMfaIfEnrolled, async (req, res) => {
   const userId = res.locals.userId as string;
   const email = res.locals.userEmail as string | undefined;
   const db = createServerSupabase();
-  const q = parseQuery(req.query as Record<string, unknown>, EXPORT_LIMIT);
+  const parsed = parseQuery(req.query as Record<string, unknown>, EXPORT_LIMIT);
+  if (!parsed.ok) return void res.status(400).json({ detail: parsed.error });
+  const q = parsed.query;
   q.page = 1;
   const { data, error } = await queryEvents(db, userId, email, q);
   if (error) return void res.status(500).json({ detail: error.message });

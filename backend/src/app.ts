@@ -138,6 +138,7 @@ app.post("/projects/:projectId/documents", uploadLimiter);
 app.get("/user/export", exportLimiter);
 app.get("/user/chats/export", exportLimiter);
 app.get("/user/tabular-reviews/export", exportLimiter);
+app.get("/audit/export", exportLimiter);
 app.delete("/user/account", dataDeleteLimiter);
 app.delete("/user/chats", dataDeleteLimiter);
 app.delete("/user/projects", dataDeleteLimiter);
