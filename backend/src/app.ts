@@ -17,8 +17,8 @@ import { caseLawRouter } from "./routes/caseLaw";
 export const app = express();
 const isProduction = process.env.NODE_ENV === "production";
 
-// Ceiling for JSON request bodies. Generous because chat and tabular
-// routes post document text inline; uploads go through multer, not here.
+// Ceiling for JSON API requests. File uploads use multipart handling and
+// are governed by separate upload limits.
 const JSON_BODY_LIMIT = "50mb";
 
 function envInt(name: string, fallback: number): number {
