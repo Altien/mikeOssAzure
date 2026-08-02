@@ -17,6 +17,10 @@ import { caseLawRouter } from "./routes/caseLaw";
 export const app = express();
 const isProduction = process.env.NODE_ENV === "production";
 
+// Ceiling for JSON API requests. File uploads use multipart handling and
+// are governed by separate upload limits.
+const JSON_BODY_LIMIT = "50mb";
+
 function envInt(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw) return fallback;
@@ -83,10 +87,6 @@ const dataDeleteLimiter = makeLimiter({
   max: envInt("RATE_LIMIT_DATA_DELETE_MAX", 20),
   message: "Too many data deletion requests. Please try again later.",
 });
-
-function jsonLimitForPath(path: string): string {
-  return "50mb";
-}
 
 app.disable("x-powered-by");
 app.set("trust proxy", envInt("TRUST_PROXY_HOPS", 1));
@@ -157,9 +157,7 @@ app.delete("/user/chats", dataDeleteLimiter);
 app.delete("/user/projects", dataDeleteLimiter);
 app.delete("/user/tabular-reviews", dataDeleteLimiter);
 
-app.use((req, res, next) =>
-  express.json({ limit: jsonLimitForPath(req.path) })(req, res, next),
-);
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 app.use("/chat", chatRouter);
 app.use("/projects", projectsRouter);
