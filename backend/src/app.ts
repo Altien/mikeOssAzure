@@ -30,8 +30,8 @@ import { skillsRouter } from "./altien/skills/router";
 
 // ── Rate-limit configuration (from upstream ba6f771) ───────────────────────
 
-// Ceiling for JSON request bodies. Generous because chat and tabular
-// routes post document text inline; uploads go through multer, not here.
+// Ceiling for JSON API requests. File uploads use multipart handling and
+// are governed by separate upload limits.
 const JSON_BODY_LIMIT = "50mb";
 
 function envInt(name: string, fallback: number): number {
