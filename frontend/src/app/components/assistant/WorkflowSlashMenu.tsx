@@ -5,8 +5,6 @@ export const WORKFLOW_SLASH_MENU_ID = "workflow-slash-menu";
 interface Props {
     workflows: Workflow[];
     activeIndex: number;
-    loading: boolean;
-    empty: boolean;
     onActiveIndexChange: (index: number) => void;
     onSelect: (workflow: Workflow) => void;
 }
@@ -14,40 +12,9 @@ interface Props {
 export function WorkflowSlashMenu({
     workflows,
     activeIndex,
-    loading,
-    empty,
     onActiveIndexChange,
     onSelect,
 }: Props) {
-    if (loading) {
-        return (
-            <div
-                id={WORKFLOW_SLASH_MENU_ID}
-                role="status"
-                className="absolute bottom-full left-0 mb-2 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-500 shadow-lg"
-            >
-                Loading commands...
-            </div>
-        );
-    }
-
-    if (empty) {
-        return (
-            <div
-                id={WORKFLOW_SLASH_MENU_ID}
-                role="status"
-                className="absolute bottom-full left-0 mb-2 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-lg"
-            >
-                <p className="text-sm font-medium text-gray-900">
-                    No slash commands available
-                </p>
-                <p className="mt-0.5 text-xs text-gray-500">
-                    Add mike-slash-trigger to a workflow&apos;s SKILL.md.
-                </p>
-            </div>
-        );
-    }
-
     if (workflows.length === 0) return null;
 
     return (

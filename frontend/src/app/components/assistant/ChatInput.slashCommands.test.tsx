@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listWorkflows } from "@/app/lib/mikeApi";
@@ -89,8 +89,14 @@ describe("ChatInput workflow slash commands", () => {
         );
     });
 
-    it("explains when no workflows define slash commands", async () => {
-        vi.mocked(listWorkflows).mockResolvedValue([
+    it("treats slash as ordinary input when no workflows define commands", async () => {
+        let resolveWorkflows!: (workflows: Workflow[]) => void;
+        vi.mocked(listWorkflows).mockReturnValue(
+            new Promise((resolve) => {
+                resolveWorkflows = resolve;
+            }),
+        );
+        const workflowsWithoutCommands = [
             {
                 ...workflow,
                 metadata: {
@@ -98,25 +104,42 @@ describe("ChatInput workflow slash commands", () => {
                     slash_trigger: null,
                 },
             } as Workflow,
-        ]);
+        ];
+        const onSubmit = vi.fn();
         const user = userEvent.setup();
         render(
             <ChatInput
-                onSubmit={vi.fn()}
+                onSubmit={onSubmit}
                 onCancel={vi.fn()}
                 isLoading={false}
             />,
         );
 
-        await user.type(screen.getByRole("combobox"), "/");
+        const input = screen.getByRole("combobox");
+        await user.type(input, "/");
 
-        expect(
-            await screen.findByText("No slash commands available"),
-        ).toBeInTheDocument();
-        expect(
-            screen.getByText(
-                "Add mike-slash-trigger to a workflow's SKILL.md.",
+        expect(input).toHaveValue("/");
+        expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+        expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+        await act(async () => {
+            resolveWorkflows(workflowsWithoutCommands);
+        });
+
+        expect(input).toHaveValue("/");
+        expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+        expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+        await user.keyboard("{Enter}");
+
+        await waitFor(() =>
+            expect(onSubmit).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    role: "user",
+                    content: "/",
+                    workflow: undefined,
+                }),
             ),
-        ).toBeInTheDocument();
+        );
     });
 });
