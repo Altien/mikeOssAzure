@@ -1,5 +1,14 @@
 "use client";
 
+// Upstream divergence (sync-log: 9db99e1c): NOT SUPPORTED — the workflow
+// slash-command menu (typing "/" in the chat input to pick an assistant
+// workflow; upstream PR #280) was deferred. It is built on upstream's
+// metadata-shaped `Workflow` (`workflow.metadata.title`, `skill_md`) and the
+// refactored ChatInput, both part of the deferred workflow-sync engine and
+// frontend reconciliation (internal design notes §5). Keep dev's behaviour
+// during conflict resolution; do not re-enable this upstream feature until the
+// complete feature is intentionally adopted.
+
 import {
     useState,
     useCallback,
