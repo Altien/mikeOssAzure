@@ -21,6 +21,16 @@ Mike's system assistant and tabular review workflows are maintained in the
 [`Open-Legal-Products/mike-workflows`](https://github.com/Open-Legal-Products/mike-workflows)
 repository.
 
+An assistant workflow can define a slash command in its `SKILL.md` frontmatter:
+
+```yaml
+metadata:
+  mike-slash-trigger: "/contract-intake"
+```
+
+The trigger must begin with `/` and contain only lowercase letters, numbers,
+and hyphens.
+
 ## Prerequisites
 
 - Node.js 20 or newer

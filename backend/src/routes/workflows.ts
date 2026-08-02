@@ -7,6 +7,7 @@ import {
   type SystemWorkflow,
 } from "../lib/systemWorkflows";
 import { findMissingUserEmails } from "../lib/userLookup";
+import { workflowSlashTriggerFromSkillMd } from "../lib/workflowSlashTrigger";
 
 export const workflowsRouter = Router();
 
@@ -50,6 +51,7 @@ type WorkflowMetadata = {
   version: string | null;
   practice: string | null;
   jurisdictions: string[] | null;
+  slash_trigger: string | null;
 };
 type OpenSourceSubmissionStatus = "pending" | "approved" | "rejected";
 
@@ -137,10 +139,11 @@ function workflowTypeFrom(value: unknown): WorkflowType {
 }
 
 function metadataFromWorkflowRecord(workflow: WorkflowRecord): WorkflowMetadata {
+  const type = workflowTypeFrom(workflow.type);
   return {
     title: workflow.title ?? "",
     description: null,
-    type: workflowTypeFrom(workflow.type),
+    type,
     contributors:
       normalizeContributors(workflow.contributors) ?? [
         DEFAULT_WORKFLOW_CONTRIBUTOR,
@@ -149,6 +152,10 @@ function metadataFromWorkflowRecord(workflow: WorkflowRecord): WorkflowMetadata 
     version: workflow.version ?? null,
     practice: workflow.practice ?? DEFAULT_WORKFLOW_PRACTICE,
     jurisdictions: workflow.jurisdictions ?? DEFAULT_WORKFLOW_JURISDICTIONS,
+    slash_trigger:
+      type === "assistant"
+        ? workflowSlashTriggerFromSkillMd(workflow.prompt_md)
+        : null,
   };
 }
 

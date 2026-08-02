@@ -16,6 +16,7 @@ export type SystemWorkflowMetadata = {
     version: string;
     practice: string | null;
     jurisdictions: string[] | null;
+    slash_trigger?: string;
 };
 
 export type SystemWorkflow = {

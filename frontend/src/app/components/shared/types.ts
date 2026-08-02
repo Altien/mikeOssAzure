@@ -616,6 +616,7 @@ export interface Workflow {
     version: string | null;
     practice: string | null;
     jurisdictions: string[] | null;
+    slash_trigger?: string | null;
   };
   skill_md: string | null;
   columns_config: ColumnConfig[] | null;

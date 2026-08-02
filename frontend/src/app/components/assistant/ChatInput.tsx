@@ -22,6 +22,15 @@ import { UploadOverlay } from "./UploadOverlay";
 import { FileTypeIcon } from "../shared/FileTypeIcon";
 import { AddDocumentsModal } from "../modals/AddDocumentsModal";
 import { AssistantWorkflowModal } from "./AssistantWorkflowModal";
+import {
+    WORKFLOW_SLASH_MENU_ID,
+    WorkflowSlashMenu,
+} from "./WorkflowSlashMenu";
+import {
+    exactSlashWorkflow,
+    matchingSlashWorkflows,
+    slashCommandQuery,
+} from "./workflowSlashCommands";
 import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
 import { ModelToggle } from "./ModelToggle";
 import { useSelectedModel } from "@/app/hooks/useSelectedModel";
@@ -31,10 +40,11 @@ import {
     isModelAvailable,
     type ModelProvider,
 } from "@/app/lib/modelAvailability";
-import type { Document, Message } from "../shared/types";
+import type { Document, Message, Workflow } from "../shared/types";
 import type { DirectoryTab } from "../shared/useDirectoryData";
 import { cn } from "@/app/lib/utils";
 import {
+    listWorkflows,
     uploadProjectDocument,
     uploadStandaloneDocument,
 } from "@/app/lib/mikeApi";
@@ -100,7 +110,28 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     const [uploadingFilenames, setUploadingFilenames] = useState<string[]>([]);
     const [uploadWarning, setUploadWarning] = useState<string | null>(null);
     const [droppedDocuments, setDroppedDocuments] = useState<Document[]>([]);
+    const [slashWorkflows, setSlashWorkflows] = useState<Workflow[] | null>(
+        null,
+    );
+    const [activeSlashIndex, setActiveSlashIndex] = useState(0);
+    const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
     const dragDepthRef = useRef(0);
+
+    const slashQuery = slashCommandQuery(value);
+    const matchingWorkflows = matchingSlashWorkflows(
+        slashWorkflows ?? [],
+        slashQuery,
+    );
+    const slashCommandsLoading = slashQuery !== null && slashWorkflows === null;
+    const slashMenuOpen =
+        !slashMenuDismissed &&
+        !selectedWorkflow &&
+        slashQuery !== null &&
+        (slashCommandsLoading || matchingWorkflows.length > 0);
+    const resolvedSlashIndex = Math.min(
+        activeSlashIndex,
+        Math.max(0, matchingWorkflows.length - 1),
+    );
 
     useImperativeHandle(ref, () => ({
         addDoc: (doc: Document) => {
@@ -133,6 +164,23 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         observer.observe(el);
         return () => observer.disconnect();
     }, []);
+
+    useEffect(() => {
+        if (!slashCommandsLoading) return;
+
+        let cancelled = false;
+        listWorkflows("assistant")
+            .then((workflows) => {
+                if (!cancelled) setSlashWorkflows(workflows);
+            })
+            .catch(() => {
+                if (!cancelled) setSlashWorkflows([]);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [slashCommandsLoading]);
 
     const handleAddDocsFromSelector = useCallback(
         (selectedDocs: Document[]) => {
@@ -245,13 +293,17 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
 
     const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         setValue(e.target.value);
+        setActiveSlashIndex(0);
+        setSlashMenuDismissed(false);
         const el = e.target;
         el.style.height = "auto";
         el.style.height = `${el.scrollHeight}px`;
     };
 
-    const handleSubmit = () => {
-        const query = value.trim();
+    const submitMessage = (
+        query: string,
+        workflow: { id: string; title: string } | null,
+    ) => {
         if (!query || isLoading) return;
         if (apiKeys && !isModelAvailable(model, apiKeys)) {
             setApiKeyModalProvider(getModelProvider(model));
@@ -267,16 +319,38 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             document_id: d.id,
         }));
         setAttachedDocs([]);
-        const wf = selectedWorkflow;
         setSelectedWorkflow(null);
 
         onSubmit?.({
             role: "user",
             content: query,
             files: files.length > 0 ? files : undefined,
-            workflow: wf ?? undefined,
+            workflow: workflow ?? undefined,
             model,
         });
+    };
+
+    const executeSlashWorkflow = (workflow: Workflow) => {
+        const trigger = workflow.metadata.slash_trigger;
+        if (!trigger) return;
+        submitMessage(trigger, {
+            id: workflow.id,
+            title: workflow.metadata.title,
+        });
+    };
+
+    const handleSubmit = () => {
+        const query = value.trim();
+        if (slashCommandsLoading) return;
+        const slashWorkflow = exactSlashWorkflow(
+            slashWorkflows ?? [],
+            query,
+        );
+        if (slashWorkflow) {
+            executeSlashWorkflow(slashWorkflow);
+            return;
+        }
+        submitMessage(query, selectedWorkflow);
     };
 
     const handleActionClick = () => {
@@ -288,6 +362,33 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     };
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (slashMenuOpen && matchingWorkflows.length > 0) {
+            if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setActiveSlashIndex(
+                    (resolvedSlashIndex + 1) % matchingWorkflows.length,
+                );
+                return;
+            }
+            if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setActiveSlashIndex(
+                    (resolvedSlashIndex - 1 + matchingWorkflows.length) %
+                        matchingWorkflows.length,
+                );
+                return;
+            }
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                executeSlashWorkflow(matchingWorkflows[resolvedSlashIndex]);
+                return;
+            }
+        }
+        if (slashMenuOpen && e.key === "Escape") {
+            e.preventDefault();
+            setSlashMenuDismissed(true);
+            return;
+        }
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             handleSubmit();
@@ -296,7 +397,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
 
     return (
         <>
-            <div className="w-full">
+            <div className="relative w-full">
+                {slashMenuOpen && (
+                    <WorkflowSlashMenu
+                        workflows={matchingWorkflows}
+                        activeIndex={resolvedSlashIndex}
+                        loading={slashCommandsLoading}
+                        onActiveIndexChange={setActiveSlashIndex}
+                        onSelect={executeSlashWorkflow}
+                    />
+                )}
                 <div className="rounded-[18px] border border-white/65 bg-white/60 shadow-[0_4px_10px_rgba(15,23,42,0.12),inset_0_1px_0_rgba(255,255,255,0.85),inset_0_-6px_14px_rgba(255,255,255,0.18)] backdrop-blur-2xl md:rounded-[22px]">
                     {/* Attached chips */}
                     {(selectedWorkflow || attachedDocs.length > 0) && (
@@ -375,6 +485,19 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                             value={value}
                             onChange={handleChange}
                             onKeyDown={handleKeyDown}
+                            role="combobox"
+                            aria-autocomplete="list"
+                            aria-controls={
+                                slashMenuOpen
+                                    ? WORKFLOW_SLASH_MENU_ID
+                                    : undefined
+                            }
+                            aria-expanded={slashMenuOpen}
+                            aria-activedescendant={
+                                slashMenuOpen && matchingWorkflows.length > 0
+                                    ? `${WORKFLOW_SLASH_MENU_ID}-${resolvedSlashIndex}`
+                                    : undefined
+                            }
                             className="w-full resize-none text-sm overflow-hidden border-0 text-base p-0 bg-transparent outline-none placeholder:text-gray-400 leading-6 max-h-48"
                         />
                     </div>
@@ -440,7 +563,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                     "shadow-[0_5px_14px_rgba(15,23,42,0.18),inset_0_1px_0_rgba(255,255,255,0.24)]",
                                 )}
                                 onClick={handleActionClick}
-                                disabled={!isLoading && !value.trim()}
+                                disabled={
+                                    !isLoading &&
+                                    (!value.trim() || slashCommandsLoading)
+                                }
                             >
                                 {isLoading ? (
                                     <Square
