@@ -88,4 +88,35 @@ describe("ChatInput workflow slash commands", () => {
             ),
         );
     });
+
+    it("explains when no workflows define slash commands", async () => {
+        vi.mocked(listWorkflows).mockResolvedValue([
+            {
+                ...workflow,
+                metadata: {
+                    ...workflow.metadata,
+                    slash_trigger: null,
+                },
+            } as Workflow,
+        ]);
+        const user = userEvent.setup();
+        render(
+            <ChatInput
+                onSubmit={vi.fn()}
+                onCancel={vi.fn()}
+                isLoading={false}
+            />,
+        );
+
+        await user.type(screen.getByRole("combobox"), "/");
+
+        expect(
+            await screen.findByText("No slash commands available"),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByText(
+                "Add mike-slash-trigger to a workflow's SKILL.md.",
+            ),
+        ).toBeInTheDocument();
+    });
 });

@@ -123,11 +123,17 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         slashQuery,
     );
     const slashCommandsLoading = slashQuery !== null && slashWorkflows === null;
+    const slashCommandsEmpty =
+        slashQuery !== null &&
+        slashWorkflows !== null &&
+        !slashWorkflows.some((workflow) => workflow.metadata.slash_trigger);
     const slashMenuOpen =
         !slashMenuDismissed &&
         !selectedWorkflow &&
         slashQuery !== null &&
-        (slashCommandsLoading || matchingWorkflows.length > 0);
+        (slashCommandsLoading ||
+            slashCommandsEmpty ||
+            matchingWorkflows.length > 0);
     const resolvedSlashIndex = Math.min(
         activeSlashIndex,
         Math.max(0, matchingWorkflows.length - 1),
@@ -403,6 +409,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                         workflows={matchingWorkflows}
                         activeIndex={resolvedSlashIndex}
                         loading={slashCommandsLoading}
+                        empty={slashCommandsEmpty}
                         onActiveIndexChange={setActiveSlashIndex}
                         onSelect={executeSlashWorkflow}
                     />
