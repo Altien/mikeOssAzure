@@ -62,6 +62,12 @@ describe("validateRemoteMcpUrl", () => {
             "https://169.254.169.254/",
             "https://[::1]/",
             "https://[fd00::1]/",
+            "https://[fec0::1]/",
+            "https://[ff02::1]/",
+            "https://[100::1]/",
+            "https://[2001:db8::1]/",
+            "https://[3fff::1]/",
+            "https://[64:ff9b:1::1]/",
             // IPv4-compatible ::/96 embeds (deprecated per RFC 4291 but still
             // parseable) — `::127.0.0.1` in hex, uncompressed, and dotted forms
             "https://[::7f00:1]/",
@@ -110,7 +116,7 @@ describe("guardedFetch", () => {
         expect(fetchSpy).not.toHaveBeenCalled();
     });
 
-    it("pins the connection (undici dispatcher) and disables redirects for public hosts", async () => {
+    it("reuses a pinned dispatcher and disables redirects for public hosts", async () => {
         resolvesTo("93.184.216.34");
         const fetchSpy = vi
             .spyOn(globalThis, "fetch")
@@ -129,5 +135,11 @@ describe("guardedFetch", () => {
         expect(init.dispatcher).toBeInstanceOf(Agent);
         // Original request options are preserved.
         expect(init.method).toBe("GET");
+
+        await guardedFetch("https://public.example.com/y");
+        const nextInit = fetchSpy.mock.calls[1][1] as RequestInit & {
+            dispatcher?: unknown;
+        };
+        expect(nextInit.dispatcher).toBe(init.dispatcher);
     });
 });

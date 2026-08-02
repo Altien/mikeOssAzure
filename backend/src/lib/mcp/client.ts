@@ -329,43 +329,41 @@ export function authConfigPatch(config: McpConnectorAuthConfig): Record<string, 
     });
 }
 
-// A per-request undici dispatcher whose DNS lookup runs the private-IP guard at
-// the moment the socket is opened and returns ONLY validated addresses. Because
+// A shared undici dispatcher whose DNS lookup runs the private-IP guard at the
+// moment a socket is opened and returns ONLY validated addresses. Because
 // undici connects to exactly what this lookup yields, the address we validate is
 // the address we connect to — there is no second, unguarded resolution for an
-// attacker to race (DNS-rebinding / TOCTOU). The URL hostname is untouched, so
-// the Host header and TLS SNI still reflect the real host and HTTPS verifies
-// normally against legitimate public servers.
-function pinnedGuardAgent(): Agent {
-    return new Agent({
-        connect: {
-            lookup: (hostname, _options, callback) => {
-                dns.lookup(hostname, { all: true, verbatim: true })
-                    .then((addresses) => {
-                        if (
-                            !addresses.length ||
-                            addresses.some(({ address }) => isBlockedIp(address))
-                        ) {
-                            callback(
-                                new Error(
-                                    "MCP server URL resolves to a blocked network address.",
-                                ),
-                                [],
-                            );
-                            return;
-                        }
-                        callback(null, addresses);
-                    })
-                    .catch((err: unknown) =>
+// attacker to race (DNS-rebinding / TOCTOU). Reusing the dispatcher also lets
+// undici pool validated HTTPS connections instead of leaving a new Agent and
+// keep-alive socket behind for every MCP request.
+const guardedAgent = new Agent({
+    connect: {
+        lookup: (hostname, _options, callback) => {
+            dns.lookup(hostname, { all: true, verbatim: true })
+                .then((addresses) => {
+                    if (
+                        !addresses.length ||
+                        addresses.some(({ address }) => isBlockedIp(address))
+                    ) {
                         callback(
-                            err instanceof Error ? err : new Error(String(err)),
+                            new Error(
+                                "MCP server URL resolves to a blocked network address.",
+                            ),
                             [],
-                        ),
-                    );
-            },
+                        );
+                        return;
+                    }
+                    callback(null, addresses);
+                })
+                .catch((err: unknown) =>
+                    callback(
+                        err instanceof Error ? err : new Error(String(err)),
+                        [],
+                    ),
+                );
         },
-    });
-}
+    },
+});
 
 // The single guarded egress helper for every outbound MCP request (connector
 // transport, OAuth discovery/registration/refresh). It rejects non-HTTPS,
@@ -387,7 +385,7 @@ export async function guardedFetch(
     return fetch(input, {
         ...init,
         redirect: "manual",
-        dispatcher: pinnedGuardAgent(),
+        dispatcher: guardedAgent,
     } as RequestInit);
 }
 

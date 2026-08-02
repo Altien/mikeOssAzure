@@ -1,5 +1,38 @@
 import net from "net";
 
+const blockedIpv4 = new net.BlockList();
+for (const [network, prefix] of [
+    ["0.0.0.0", 8], // "This network" / unspecified
+    ["10.0.0.0", 8], // RFC 1918 private-use
+    ["100.64.0.0", 10], // Shared address space (carrier-grade NAT)
+    ["127.0.0.0", 8], // Loopback
+    ["169.254.0.0", 16], // Link-local
+    ["172.16.0.0", 12], // RFC 1918 private-use
+    ["192.0.0.0", 24], // IETF protocol assignments
+    ["192.0.2.0", 24], // Documentation (TEST-NET-1)
+    ["192.88.99.0", 24], // Deprecated 6to4 relay anycast
+    ["192.168.0.0", 16], // RFC 1918 private-use
+    ["198.18.0.0", 15], // Benchmarking
+    ["198.51.100.0", 24], // Documentation (TEST-NET-2)
+    ["203.0.113.0", 24], // Documentation (TEST-NET-3)
+    ["224.0.0.0", 4], // Multicast
+    ["240.0.0.0", 4], // Reserved (includes limited broadcast)
+] as const) {
+    blockedIpv4.addSubnet(network, prefix, "ipv4");
+}
+
+const blockedIpv6 = new net.BlockList();
+for (const [network, prefix] of [
+    ["2001::", 32], // Teredo
+    ["2001:2::", 48], // Benchmarking
+    ["2001:10::", 28], // Deprecated ORCHID
+    ["2001:db8::", 32], // Documentation
+    ["2002::", 16], // Deprecated 6to4 transition space
+    ["3fff::", 20], // Documentation
+] as const) {
+    blockedIpv6.addSubnet(network, prefix, "ipv6");
+}
+
 /**
  * SSRF guard helpers: classify an IP literal as private/reserved/unsafe.
  * Shared by the MCP connector egress checks so every caller rejects the same
@@ -7,23 +40,8 @@ import net from "net";
  * blocked.
  */
 export function isPrivateIpv4(ip: string): boolean {
-    const parts = ip.split(".").map((part) => Number.parseInt(part, 10));
-    if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part))) {
-        return true;
-    }
-    const [a, b] = parts;
-    return (
-        a === 0 ||
-        a === 10 ||
-        a === 127 ||
-        (a === 100 && b >= 64 && b <= 127) ||
-        (a === 169 && b === 254) ||
-        (a === 172 && b >= 16 && b <= 31) ||
-        (a === 192 && b === 168) ||
-        (a === 192 && b === 0) ||
-        (a === 198 && (b === 18 || b === 19)) ||
-        a >= 224
-    );
+    if (net.isIP(ip) !== 4) return true;
+    return blockedIpv4.check(ip, "ipv4");
 }
 
 /**
@@ -76,29 +94,25 @@ function embeddedIpv4(hi: number, lo: number): string {
 }
 
 export function isPrivateIpv6(ip: string): boolean {
-    const normalized = ip.toLowerCase();
-    if (normalized === "::1" || normalized === "::") return true;
-    if (normalized.startsWith("fc") || normalized.startsWith("fd")) return true;
-    // Link-local fe80::/10 — the first hextet ranges fe80..febf (four hex
-    // digits). The narrower /^fe[89ab]:/ form was a bug: it only matched the
-    // unrelated hextet "fe8:" and let fe80::1 through.
-    if (/^fe[89ab][0-9a-f]:/.test(normalized)) return true;
+    const normalized = ip.toLowerCase().split("%", 1)[0];
+    if (net.isIP(normalized) !== 6) return true;
 
     const groups = expandIpv6Groups(normalized);
-    if (!groups) return false;
+    if (!groups) return true;
 
-    // IPv4-mapped ::ffff:0:0/96 — covers both dotted (`::ffff:1.2.3.4`) and
-    // hex (`::ffff:c0a8:0001`) forms. The address *is* the embedded IPv4.
-    if (groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff) {
-        return isPrivateIpv4(embeddedIpv4(groups[6], groups[7]));
-    }
-    // IPv4-compatible ::/96 (deprecated, RFC 4291 §2.5.5.1) — `::a.b.c.d` /
-    // `::7f00:1`. `::` and `::1` were handled above, so anything else in this
-    // prefix embeds a routable-ish IPv4; classify by the embedded address.
+    // IPv4-compatible ::/96 and IPv4-mapped ::ffff:0:0/96 are not globally
+    // reachable IPv6 destinations. Block the entire ranges, even when their
+    // embedded IPv4 value would otherwise be public.
     if (groups.slice(0, 6).every((g) => g === 0)) {
-        return isPrivateIpv4(embeddedIpv4(groups[6], groups[7]));
+        return true;
     }
+    if (groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff) {
+        return true;
+    }
+
     // NAT64 well-known prefix 64:ff9b::/96 — last 32 bits are the target IPv4.
+    // This prefix is globally reachable, so permit it only when the embedded
+    // IPv4 destination is also globally reachable.
     if (
         groups[0] === 0x64 &&
         groups[1] === 0xff9b &&
@@ -109,11 +123,15 @@ export function isPrivateIpv6(ip: string): boolean {
     ) {
         return isPrivateIpv4(embeddedIpv4(groups[6], groups[7]));
     }
-    // 6to4 2002::/16 — the embedded IPv4 sits in the second and third hextets.
-    if (groups[0] === 0x2002) {
-        return isPrivateIpv4(embeddedIpv4(groups[1], groups[2]));
-    }
-    return false;
+
+    // Normal globally routable IPv6 unicast lives in 2000::/3. Everything
+    // outside it is fail-closed, including unique-local fc00::/7, link-local
+    // fe80::/10, deprecated site-local fec0::/10, multicast ff00::/8,
+    // discard-only 100::/64, and local-use translation 64:ff9b:1::/48.
+    const isGlobalUnicast = (groups[0] & 0xe000) === 0x2000;
+    if (!isGlobalUnicast) return true;
+
+    return blockedIpv6.check(normalized, "ipv6");
 }
 
 /**
