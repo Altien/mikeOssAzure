@@ -236,39 +236,12 @@ export function parseOptionalDocumentContext(value: unknown):
 }
 
 /**
- * Generates a random 16-byte hex nonce for use as the spotlighting fence.
- * A fresh nonce per request means injected content cannot predict the tag it
- * would need to forge in order to escape the fenced block.
- */
-export function generateSpotlightNonce(): string {
-  return crypto.randomBytes(16).toString("hex");
-}
-
-/**
- * Wraps untrusted user-controlled text in a nonce-fenced tag ("spotlighting"):
- * the accompanying instruction tells the LLM to treat everything inside the
- * fence as data, not instructions. The nonce is on BOTH the opening and
- * closing tags and is unpredictable per request, so the text cannot fabricate
- * a matching closing tag to escape the fence. As defense-in-depth, fence
- * tokens smuggled inside the text are neutralized: the `<` of any literal
- * `<untrusted-content>` / `</untrusted-content>` is HTML-encoded and any
- * echoed nonce is redacted, so the model never sees a clean boundary token
- * inside the data.
- */
-export function spotlight(text: string, nonce: string): string {
-  const neutralized = String(text)
-    .split(nonce)
-    .join("[redacted-nonce]")
-    .replace(/<(\/?)untrusted-content/gi, "&lt;$1untrusted-content");
-  return `<untrusted-content nonce="${nonce}">\n${neutralized}\n</untrusted-content nonce="${nonce}">`;
-}
-
-/**
  * Builds the system-prompt block that carries the Word add-in's active
  * document body to the model (via buildMessages's `systemPromptExtra`).
  * The document body is user-controlled text and a prompt-injection vector,
- * so it MUST enter the system prompt nonce-fenced via spotlight(), preceded
- * by an instruction that it is reference content only.
+ * so it MUST enter the system prompt nonce-fenced via spotlight() (the
+ * shared helper at the top of this module), preceded by an instruction
+ * that it is reference content only.
  */
 export function buildWordDocumentContextPrompt(documentContext: string): string {
   const nonce = generateSpotlightNonce();
