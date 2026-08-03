@@ -80,18 +80,45 @@ async function signedIn() {
 }
 
 if (mode === "login") {
-  const already = await signedIn();
-  if (already) {
+  if (await signedIn()) {
     console.log("Already signed in — profile is ready. Run with --record.");
-  } else {
-    console.log("Sign in to your Microsoft account in the opened window…");
-    await page.waitForURL((url) => !url.href.includes("login.microsoftonline.com"), {
-      timeout: 10 * 60 * 1000,
-    });
-    console.log("Session captured. Run with --record.");
+    await context.close();
+    process.exit(0);
   }
-  await context.close();
-  process.exit(0);
+
+  // Kick off the real login flow (the logged-out office.com page itself is
+  // NOT on a login domain, so "left the login domain" is useless as a done
+  // signal — poll for an actually signed-in home page instead).
+  console.log("Sign in to your Microsoft account in the opened window…");
+  console.log("(This window stays open until you finish — up to 10 minutes.)");
+  await page.goto(
+    "https://www.office.com/login?ru=%2F&es=Click&cs=ShellSignedOut",
+    { waitUntil: "domcontentloaded" },
+  );
+
+  const LOGIN_DOMAINS = ["login.microsoftonline.com", "login.live.com", "signup"];
+  const deadline = Date.now() + 10 * 60 * 1000;
+  let captured = false;
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(5000).catch(() => {});
+    if (page.isClosed()) break;
+    const url = page.url();
+    // Never re-navigate while the user is still typing on a login page.
+    if (LOGIN_DOMAINS.some((domain) => url.includes(domain))) continue;
+    if (await signedIn()) {
+      captured = true;
+      break;
+    }
+  }
+  if (captured) {
+    console.log("Session captured. Run with --record.");
+  } else {
+    console.log(
+      "No signed-in session detected (window closed or timed out). Re-run --login to try again.",
+    );
+  }
+  await context.close().catch(() => {});
+  process.exit(captured ? 0 : 1);
 }
 
 // ---- record mode -----------------------------------------------------------
