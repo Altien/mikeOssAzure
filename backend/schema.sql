@@ -734,10 +734,6 @@ create index if not exists idx_tabular_cells_review
 create index if not exists idx_tabular_cells_review_row
   on public.tabular_cells(review_id, row_id, column_index);
 
-drop function if exists public.get_tabular_reviews_overview(
-  text, text, text, integer, integer, text, text, text
-);
-
 create or replace function public.get_tabular_reviews_overview(
   p_user_id text,
   p_user_email text,
