@@ -1,11 +1,23 @@
 /// <reference types="office-js" />
 
 import { toWordParagraphs, toWordText } from "../lib/wordText";
+import type { RedlineEdit } from "../lib/redline";
 
 export interface WordSelectionAnchor {
   range: Word.Range;
   originalText: string;
 }
+
+export interface RedlineApplyReport {
+  /** Edits whose original text was found and replaced (every occurrence). */
+  applied: number;
+  skipped: { original: string; reason: "not-found" | "unsearchable" }[];
+}
+
+// Word's search API matches within a paragraph only and rejects long search
+// strings (~255-char limit), so longer or multi-paragraph originals cannot be
+// located and must be skipped rather than half-applied.
+const MAX_SEARCH_CHARS = 255;
 
 /**
  * Hook exposing document read/write helpers that wrap the Word JS API.
@@ -147,6 +159,62 @@ export function useWordDoc() {
     });
 
   /**
+   * Apply model-proposed edits to existing document text as tracked changes.
+   *
+   * Each edit's `original` is located with Word's search API (case-sensitive,
+   * every occurrence) and replaced while `changeTrackingMode` is TrackAll, so
+   * the result is a genuine redline — deletion struck through, insertion
+   * marked — that the user can accept or reject per change in Word's Review
+   * tab. Edits whose text can no longer be found (the user edited the
+   * document, or the model mis-copied) are reported, never guessed at.
+   */
+  const applyTrackedEdits = (edits: RedlineEdit[]): Promise<RedlineApplyReport> =>
+    Word.run(async (context) => {
+      const doc = context.document;
+      doc.load("changeTrackingMode");
+      await context.sync();
+
+      const originalMode = doc.changeTrackingMode;
+      const report: RedlineApplyReport = { applied: 0, skipped: [] };
+
+      try {
+        doc.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
+
+        for (const edit of edits) {
+          const original = edit.original;
+          if (
+            !original ||
+            original.includes("\n") ||
+            original.length > MAX_SEARCH_CHARS
+          ) {
+            report.skipped.push({ original, reason: "unsearchable" });
+            continue;
+          }
+
+          const matches = doc.body.search(original, { matchCase: true });
+          matches.load("items");
+          await context.sync();
+
+          if (matches.items.length === 0) {
+            report.skipped.push({ original, reason: "not-found" });
+            continue;
+          }
+
+          for (const match of matches.items) {
+            match.insertText(edit.replacement, Word.InsertLocation.replace);
+          }
+          await context.sync();
+          report.applied++;
+        }
+
+        return report;
+      } finally {
+        doc.changeTrackingMode = originalMode;
+        await context.sync();
+      }
+    });
+
+  /**
    * Insert generated content below the paragraph containing the current
    * selection. This never overwrites selected text. Each model paragraph is a
    * real Word paragraph and inherits the surrounding paragraph style and
@@ -209,6 +277,7 @@ export function useWordDoc() {
     captureSelection,
     releaseSelection,
     replaceSelection,
+    applyTrackedEdits,
     insertBelowSelection,
   };
 }

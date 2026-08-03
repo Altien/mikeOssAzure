@@ -4,8 +4,10 @@
  * The tab exposes four AI actions, all streamed from POST /chat:
  *   1. Improve Writing  — rewrites the current SELECTION; on success offers
  *      exact captured-range replacement, tracked or untracked.
- *   2. Proofread        — reads the WHOLE document body, lists issues.
- *   3. Anonymise        — reads the WHOLE document body, lists PII replacements.
+ *   2. Proofread        — reads the WHOLE document body, streams issues as
+ *      ORIGINAL/REPLACEMENT/REASON blocks, then offers to apply the parsed
+ *      corrections to the document as tracked changes (search + replace).
+ *   3. Anonymise        — same mechanism as Proofread, for PII redactions.
  *   4. Draft Clause     — drafts from a free-text prompt; offers "Insert at
  *      below cursor, tracked or untracked (insertParagraph after).
  *
@@ -236,6 +238,83 @@ test.describe("Proofread", () => {
     await expect(page.getByText("Missing Oxford comma.")).toBeVisible();
   });
 
+  test("applies parsed corrections to existing text as tracked changes", async ({
+    addin,
+    page,
+  }) => {
+    await addin.mockChatStream([
+      "ORIGINAL: teh Agreement\nREPLACEMENT: the Agreement\nREASON: Typo.\n\n",
+      "ORIGINAL: shall governed by\nREPLACEMENT: shall be governed by\nREASON: Missing verb.",
+    ]);
+    await gotoActions(addin, {
+      documentText: "teh Agreement shall governed by the laws of England.",
+    });
+
+    await page
+      .getByRole("button", { name: "Proofread entire document" })
+      .click();
+    await page
+      .getByRole("button", { name: "Apply 2 corrections (tracked)" })
+      .click();
+
+    await expect(
+      page.getByText("Applied 2 of 2 corrections as tracked changes.")
+    ).toBeVisible();
+    const calls = await addin.wordCalls();
+    expect(calls.trackedChanges).toEqual([
+      { text: "the Agreement", location: "Replace", original: "teh Agreement" },
+      {
+        text: "shall be governed by",
+        location: "Replace",
+        original: "shall governed by",
+      },
+    ]);
+    expect(calls.changeTrackingMode).toBe("TrackAll");
+    expect(calls.inserts).toEqual([]);
+    expect(calls.searches).toBe(2);
+  });
+
+  test("skips corrections whose text is no longer in the document", async ({
+    addin,
+    page,
+  }) => {
+    await addin.mockChatStream([
+      "ORIGINAL: teh Agreement\nREPLACEMENT: the Agreement\nREASON: Typo.\n\n",
+      "ORIGINAL: vanished text\nREPLACEMENT: replacement\nREASON: Stale.",
+    ]);
+    await gotoActions(addin, { documentText: "teh Agreement remains." });
+
+    await page
+      .getByRole("button", { name: "Proofread entire document" })
+      .click();
+    await page
+      .getByRole("button", { name: "Apply 2 corrections (tracked)" })
+      .click();
+
+    await expect(
+      page.getByText(/Applied 1 of 2 corrections as tracked changes\. 1 skipped/)
+    ).toBeVisible();
+    const calls = await addin.wordCalls();
+    expect(calls.trackedChanges).toEqual([
+      { text: "the Agreement", location: "Replace", original: "teh Agreement" },
+    ]);
+  });
+
+  test("offers no apply button when the model reports no issues", async ({
+    addin,
+    page,
+  }) => {
+    await addin.mockChatStream(["No issues found."]);
+    await gotoActions(addin, { documentText: "A flawless document." });
+
+    await page
+      .getByRole("button", { name: "Proofread entire document" })
+      .click();
+
+    await expect(page.getByText("No issues found.")).toBeVisible();
+    await expect(page.getByRole("button", { name: /Apply .* \(tracked\)/ })).toHaveCount(0);
+  });
+
   test("surfaces a streaming error message", async ({ addin, page }) => {
     await addin.mockChatStream([], { errorBefore: "proofread failed" });
     await gotoActions(addin, { documentText: "Some legal text." });
@@ -267,6 +346,39 @@ test.describe("Anonymise", () => {
     await expect(
       page.getByText("10 Downing Street -> [ADDRESS]")
     ).toBeVisible();
+  });
+
+  test("applies redactions to existing text as tracked changes", async ({
+    addin,
+    page,
+  }) => {
+    await addin.mockChatStream([
+      "ORIGINAL: John Smith\nREPLACEMENT: [PARTY A]\nREASON: Person name.\n\n",
+      "ORIGINAL: 10 Downing Street\nREPLACEMENT: [ADDRESS 1]\nREASON: Address.",
+    ]);
+    await gotoActions(addin, {
+      documentText: "Signed by John Smith of 10 Downing Street.",
+    });
+
+    await page.getByRole("button", { name: "Find & list PII" }).click();
+    await page
+      .getByRole("button", { name: "Apply 2 redactions (tracked)" })
+      .click();
+
+    await expect(
+      page.getByText("Applied 2 of 2 redactions as tracked changes.")
+    ).toBeVisible();
+    const calls = await addin.wordCalls();
+    expect(calls.trackedChanges).toEqual([
+      { text: "[PARTY A]", location: "Replace", original: "John Smith" },
+      {
+        text: "[ADDRESS 1]",
+        location: "Replace",
+        original: "10 Downing Street",
+      },
+    ]);
+    expect(calls.changeTrackingMode).toBe("TrackAll");
+    expect(calls.inserts).toEqual([]);
   });
 
   test("surfaces a streaming error message", async ({ addin, page }) => {
