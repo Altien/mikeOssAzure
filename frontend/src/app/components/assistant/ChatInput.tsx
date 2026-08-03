@@ -408,7 +408,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                     <WorkflowSlashMenu
                         workflows={matchingWorkflows}
                         activeIndex={resolvedSlashIndex}
-                        onActiveIndexChange={setActiveSlashIndex}
                         onSelect={selectSlashWorkflow}
                     />
                 )}
