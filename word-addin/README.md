@@ -11,9 +11,11 @@ The add-in talks to the **same backend as the web app**: sign-in is **Microsoft 
 ## Prerequisites
 
 - Node.js 22+
-- Microsoft Word desktop (macOS or Windows) **or** Word on the web — sideloading steps differ; see below
+- Microsoft Word desktop (macOS or Windows) **or** Word on the web — sideloading steps differ; see below (desktop is the smoother path for local development)
 - pnpm (the repo enforces it via `only-allow`)
 - The Mike API running locally (`pnpm dev` from `backend/`) with `AUTH_PROVIDER=entra` and the app registration set up per [Signing in](#signing-in) — or `AUTH_PROVIDER=local` (+ `JWT_SECRET`) for an Entra-free development login
+- A Mike user — with Entra, any user of the tenant the web app signs in with (the same account as the web app).
+- For real model responses, a model credential the backend can use (organisation keys in Key Vault / env, or Azure OpenAI).
 
 ---
 
@@ -117,6 +119,8 @@ Restart Word, then: **Insert → Add-ins → My Add-ins → Mike**
 
 **Insert → Add-ins → Upload My Add-in** → select `manifest.xml`
 
+> **Caveat — the pane will silently fail to load in a normal browser.** Word on the web is a *public* origin (`word-edit.officeapps.live.com`) and the dev pane is `https://localhost:3000`; Chrome's Local Network Access checks block a public page from embedding a localhost iframe, with no visible error — the pane simply never appears. This affects dev sideloads only (a deployed add-in on a public HTTPS host is unaffected). To test against real Word on the web locally, start a browser with those checks disabled. (Upstream ships a Playwright launcher for this in `e2e-live/`; it is not included in this fork.)
+
 The manifest requires `WordApi 1.4`, which includes the change-tracking APIs. Word will not activate the add-in on a host that does not satisfy that requirement set.
 
 ## Production build
@@ -208,8 +212,34 @@ Upstream's hermetic Playwright suite (`e2e/`) and live Word-on-the-web demo reco
 
 ## Troubleshooting
 
-**"Certificate not trusted" / blank white pane on load**
-Run `npx office-addin-dev-certs install` from `word-addin/`, then fully quit and restart Word.
+**Word shows "The content is blocked because it isn't signed by a valid security certificate" — including when it worked before**
+This is *certificate trust drift*, and it will eventually happen to every returning developer: the dev certificate expires after ~30 days, and the tooling then silently regenerates it **with a new signing CA** (the webpack dev server does this on startup). Your OS keychain still trusts only the *old* CA, so Word rejects the pane — while `npx office-addin-dev-certs verify` misleadingly reports "trusted", because it only checks that a CA *by that name* exists, not that it signed the current certificate. `npx office-addin-dev-certs install` then refuses to reinstall for the same reason.
+
+`bash scripts/dev.sh` now detects and repairs this automatically (it verifies the real chain against the OS trust store). To fix it by hand on macOS:
+
+```bash
+# 1. Ground truth — does the OS trust the cert actually being served?
+security verify-cert -c ~/.office-addin-dev-certs/localhost.crt -p ssl -s localhost
+
+# 2. If that fails: force a real reinstall (approve the keychain prompt)
+npx office-addin-dev-certs uninstall
+npx office-addin-dev-certs install
+
+# 3. Verify step 1 again; if still untrusted, trust the current CA directly:
+security add-trusted-cert -r trustRoot \
+  -k ~/Library/Keychains/login.keychain-db ~/.office-addin-dev-certs/ca.crt
+```
+
+Then **fully quit Word (Cmd-Q)** — its webview caches trust decisions — and relaunch with `pnpm start`.
+
+**`pnpm start` fails with `EEXIST: file already exists, link 'manifest.xml' -> …/wef/….manifest.xml`**
+A previous run exited without deregistering (crash, Ctrl-C) and left the sideload hard-link behind. `pnpm start` now clears this automatically via its `prestart` hook; if you hit it anyway, run `pnpm run stop` and retry.
+
+**`pnpm start` / `dev.sh` complains port 3000 is in use**
+The add-in dev server and the manifest are hardwired to `https://localhost:3000`, which collides with the Mike web app's dev server. Find the holder with `lsof -nP -iTCP:3000 -sTCP:LISTEN` and stop it (usually `pnpm dev` in `frontend/`).
+
+**The pane never appears in Word on the web**
+See the caveat under [Word on the web](#word-on-the-web) — Chrome's Local Network Access checks silently block the localhost iframe.
 
 **Add-in shows blank after the cert is trusted**
 Right-click the task pane → **Inspect** and check the console for errors. A common cause is a wrong `REACT_APP_API_BASE_URL` — the bundle falls back to `http://localhost:3001` if the env var was not exported before `pnpm start`.
