@@ -30,6 +30,7 @@ import {
     exactSlashWorkflow,
     matchingSlashWorkflows,
     slashCommandQuery,
+    workflowSlashCommand,
 } from "./workflowSlashCommands";
 import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
 import { ModelToggle } from "./ModelToggle";
@@ -330,13 +331,18 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         });
     };
 
-    const executeSlashWorkflow = (workflow: Workflow) => {
-        const trigger = workflow.metadata.slash_trigger;
-        if (!trigger) return;
-        submitMessage(trigger, {
+    const selectSlashWorkflow = (workflow: Workflow) => {
+        if (!workflowSlashCommand(workflow)) return;
+        setSelectedWorkflow({
             id: workflow.id,
             title: workflow.metadata.title,
         });
+        setValue("");
+        setSlashMenuDismissed(true);
+        if (textareaRef.current) {
+            textareaRef.current.style.height = "auto";
+            textareaRef.current.focus();
+        }
     };
 
     const handleSubmit = () => {
@@ -347,7 +353,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             query,
         );
         if (slashWorkflow) {
-            executeSlashWorkflow(slashWorkflow);
+            selectSlashWorkflow(slashWorkflow);
             return;
         }
         submitMessage(query, selectedWorkflow);
@@ -380,7 +386,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             }
             if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                executeSlashWorkflow(matchingWorkflows[resolvedSlashIndex]);
+                selectSlashWorkflow(matchingWorkflows[resolvedSlashIndex]);
                 return;
             }
         }
@@ -403,7 +409,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                         workflows={matchingWorkflows}
                         activeIndex={resolvedSlashIndex}
                         onActiveIndexChange={setActiveSlashIndex}
-                        onSelect={executeSlashWorkflow}
+                        onSelect={selectSlashWorkflow}
                     />
                 )}
                 <div className="rounded-[18px] border border-white/65 bg-white/60 shadow-[0_4px_10px_rgba(15,23,42,0.12),inset_0_1px_0_rgba(255,255,255,0.85),inset_0_-6px_14px_rgba(255,255,255,0.18)] backdrop-blur-2xl md:rounded-[22px]">

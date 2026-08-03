@@ -41,8 +41,8 @@ vi.mock("./ModelToggle", () => ({ ModelToggle: () => null }));
 const workflow = {
     id: "workflow-1",
     metadata: {
+        name: "contract-intake",
         title: "Contract Intake",
-        slash_trigger: "/contract-intake",
     },
 } as Workflow;
 
@@ -57,7 +57,7 @@ describe("ChatInput workflow slash commands", () => {
         vi.stubGlobal("ResizeObserver", ResizeObserverMock);
     });
 
-    it("executes the selected workflow command", async () => {
+    it("attaches the selected workflow without submitting", async () => {
         const onSubmit = vi.fn();
         const user = userEvent.setup();
         render(
@@ -75,11 +75,19 @@ describe("ChatInput workflow slash commands", () => {
         });
         await user.keyboard("{Enter}");
 
+        expect(onSubmit).not.toHaveBeenCalled();
+        expect(input).toHaveValue("");
+        expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+        expect(screen.getByText("Contract Intake")).toBeInTheDocument();
+
+        await user.type(input, "Review this agreement");
+        await user.keyboard("{Enter}");
+
         await waitFor(() =>
             expect(onSubmit).toHaveBeenCalledWith(
                 expect.objectContaining({
                     role: "user",
-                    content: "/contract-intake",
+                    content: "Review this agreement",
                     workflow: {
                         id: "workflow-1",
                         title: "Contract Intake",
@@ -101,7 +109,7 @@ describe("ChatInput workflow slash commands", () => {
                 ...workflow,
                 metadata: {
                     ...workflow.metadata,
-                    slash_trigger: null,
+                    name: null,
                 },
             } as Workflow,
         ];

@@ -1,4 +1,11 @@
 import type { Workflow } from "../shared/types";
+import {
+    LiquidDropdownButton,
+    LiquidDropdownSurface,
+} from "@/app/components/ui/liquid-dropdown";
+import { APP_SURFACE_ACTIVE_CLASS } from "@/app/components/ui/liquid-surface";
+import { cn } from "@/app/lib/utils";
+import { workflowSlashCommand } from "./workflowSlashCommands";
 
 export const WORKFLOW_SLASH_MENU_ID = "workflow-slash-menu";
 
@@ -18,28 +25,29 @@ export function WorkflowSlashMenu({
     if (workflows.length === 0) return null;
 
     return (
-        <div
+        <LiquidDropdownSurface
             id={WORKFLOW_SLASH_MENU_ID}
             role="listbox"
             aria-label="Workflow commands"
-            className="absolute bottom-full left-0 mb-2 w-full overflow-hidden rounded-xl border border-gray-200 bg-white p-1 shadow-lg"
+            className="absolute bottom-full left-0 mb-2 w-full overflow-hidden p-1"
         >
             {workflows.map((workflow, index) => {
-                const trigger = workflow.metadata.slash_trigger!;
+                const trigger = workflowSlashCommand(workflow);
+                if (!trigger) return null;
                 const active = index === activeIndex;
                 return (
-                    <button
+                    <LiquidDropdownButton
                         key={workflow.id}
                         id={`${WORKFLOW_SLASH_MENU_ID}-${index}`}
-                        type="button"
                         role="option"
                         aria-label={`${trigger} ${workflow.metadata.title}`}
                         aria-selected={active}
                         onMouseEnter={() => onActiveIndexChange(index)}
                         onClick={() => onSelect(workflow)}
-                        className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm ${
-                            active ? "bg-gray-100" : "hover:bg-gray-50"
-                        }`}
+                        className={cn(
+                            "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm",
+                            active && APP_SURFACE_ACTIVE_CLASS,
+                        )}
                     >
                         <span className="font-medium text-gray-900">
                             {trigger}
@@ -47,9 +55,9 @@ export function WorkflowSlashMenu({
                         <span className="truncate text-gray-500">
                             {workflow.metadata.title}
                         </span>
-                    </button>
+                    </LiquidDropdownButton>
                 );
             })}
-        </div>
+        </LiquidDropdownSurface>
     );
 }

@@ -4,17 +4,22 @@ import {
     exactSlashWorkflow,
     matchingSlashWorkflows,
     slashCommandQuery,
+    workflowSlashCommand,
 } from "./workflowSlashCommands";
 
 const workflow = {
     id: "workflow-1",
     metadata: {
+        name: "contract-intake",
         title: "Contract Intake",
-        slash_trigger: "/contract-intake",
     },
 } as Workflow;
 
 describe("workflow slash commands", () => {
+    it("derives the command from the workflow name", () => {
+        expect(workflowSlashCommand(workflow)).toBe("/contract-intake");
+    });
+
     it("recognizes a slash command without arguments", () => {
         expect(slashCommandQuery("/contract")).toBe("/contract");
         expect(slashCommandQuery("/contract run this")).toBeNull();

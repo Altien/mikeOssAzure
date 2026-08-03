@@ -21,15 +21,14 @@ Mike's system assistant and tabular review workflows are maintained in the
 [`Open-Legal-Products/mike-workflows`](https://github.com/Open-Legal-Products/mike-workflows)
 repository.
 
-An assistant workflow can define a slash command in its `SKILL.md` frontmatter:
+Every built assistant workflow gets a slash command from its `SKILL.md` name:
 
 ```yaml
-metadata:
-  mike-slash-trigger: "/contract-intake"
+name: contract-intake
 ```
 
-The trigger must begin with `/` and contain only lowercase letters, numbers,
-and hyphens.
+For example, `name: contract-intake` becomes `/contract-intake`. Workflow names
+must contain only lowercase letters, numbers, and hyphens.
 
 ## Prerequisites
 

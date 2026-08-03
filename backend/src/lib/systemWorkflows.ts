@@ -8,6 +8,7 @@ export type SystemWorkflowContributor = {
 };
 
 export type SystemWorkflowMetadata = {
+    name: string;
     title: string;
     description: string;
     type: "assistant" | "tabular";
@@ -16,7 +17,6 @@ export type SystemWorkflowMetadata = {
     version: string;
     practice: string | null;
     jurisdictions: string[] | null;
-    slash_trigger?: string;
 };
 
 export type SystemWorkflow = {
@@ -36,6 +36,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-change-of-control-tabular-review",
         "metadata": {
+            "name": "change-of-control-tabular-review",
             "title": "Change of Control Tabular Review",
             "description": "This workflow performs a change of control due diligence review across the selected documents.",
             "type": "tabular",
@@ -112,6 +113,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-commercial-agreement-tabular-review",
         "metadata": {
+            "name": "commercial-agreement-tabular-review",
             "title": "Commercial Agreement Tabular Review",
             "description": "Use this workflow to review uploaded documents and extract structured information into the tabular review columns defined in table-columns.yaml.",
             "type": "tabular",
@@ -248,6 +250,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-commercial-lease-review",
         "metadata": {
+            "name": "commercial-lease-review",
             "title": "Commercial Lease Review",
             "description": "Review the uploaded commercial lease and produce a comprehensive table-based legal review from the perspective of the party represented by the user/client.",
             "type": "assistant",
@@ -275,6 +278,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-commercial-lease-tabular-review",
         "metadata": {
+            "name": "commercial-lease-tabular-review",
             "title": "Commercial Lease Tabular Review",
             "description": "Use this workflow to review uploaded documents and extract structured information into the tabular review columns defined in table-columns.yaml.",
             "type": "tabular",
@@ -423,6 +427,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-compare-documents",
         "metadata": {
+            "name": "compare-documents",
             "title": "Compare Documents",
             "description": "Compare the uploaded documents in a structured table, highlighting key similarities, differences, risks, and follow-up points.",
             "type": "assistant",
@@ -450,6 +455,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-corporate-approvals-review",
         "metadata": {
+            "name": "corporate-approvals-review",
             "title": "Corporate Approvals Review",
             "description": "Review transaction documents, resolutions, authority materials, and corporate records to assess whether the relevant company approvals appear complete and internally consistent.",
             "type": "assistant",
@@ -477,6 +483,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-credit-agreement-review",
         "metadata": {
+            "name": "credit-agreement-review",
             "title": "Credit Agreement Review",
             "description": "Review the uploaded credit agreement and produce a comprehensive table-based legal review from the perspective of the party represented by the user/client.",
             "type": "assistant",
@@ -504,6 +511,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-credit-agreement-tabular-review",
         "metadata": {
+            "name": "credit-agreement-tabular-review",
             "title": "Credit Agreement Tabular Review",
             "description": "Use this workflow to review uploaded documents and extract structured information into the tabular review columns defined in table-columns.yaml.",
             "type": "tabular",
@@ -658,6 +666,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-draft-cp-checklist",
         "metadata": {
+            "name": "draft-cp-checklist",
             "title": "Draft CP Checklist",
             "description": "Review the uploaded credit agreement or financing document and generate a comprehensive Conditions Precedent (CP) checklist.",
             "type": "assistant",
@@ -685,6 +694,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-draft-from-template",
         "metadata": {
+            "name": "draft-from-template",
             "title": "Draft from Template",
             "description": "Edit a copy of an uploaded template using the user's instructions and source materials while preserving the original file.",
             "type": "assistant",
@@ -712,6 +722,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-draft-issues-list",
         "metadata": {
+            "name": "draft-issues-list",
             "title": "Draft Issues List",
             "description": "Review the uploaded agreement and draft a comprehensive issues list from the perspective of the party represented by the user/client.",
             "type": "assistant",
@@ -739,6 +750,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-e-discovery-tabular-review",
         "metadata": {
+            "name": "e-discovery-tabular-review",
             "title": "E-Discovery Tabular Review",
             "description": "Use this workflow to review uploaded documents and extract structured information into the tabular review columns defined in table-columns.yaml.",
             "type": "tabular",
@@ -809,6 +821,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-employment-agreement-review",
         "metadata": {
+            "name": "employment-agreement-review",
             "title": "Employment Agreement Review",
             "description": "Review the uploaded employment agreement and produce a comprehensive table-based legal review from the perspective of the party represented by the user/client.",
             "type": "assistant",
@@ -836,6 +849,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-employment-agreement-tabular-review",
         "metadata": {
+            "name": "employment-agreement-tabular-review",
             "title": "Employment Agreement Tabular Review",
             "description": "Use this workflow to review uploaded documents and extract structured information into the tabular review columns defined in table-columns.yaml.",
             "type": "tabular",
@@ -960,6 +974,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-extract-key-terms",
         "metadata": {
+            "name": "extract-key-terms",
             "title": "Extract Key Terms",
             "description": "Extract the key legal, commercial, and operational terms from the uploaded documents.",
             "type": "assistant",
@@ -987,6 +1002,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-guarantee-agreement-review",
         "metadata": {
+            "name": "guarantee-agreement-review",
             "title": "Guarantee Agreement Review",
             "description": "Review an uploaded guarantee, guaranty, or guarantee-and-indemnity agreement from the perspective of the party represented by the user.",
             "type": "assistant",
@@ -1014,6 +1030,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-limited-partnership-agreement-tabular-review",
         "metadata": {
+            "name": "limited-partnership-agreement-tabular-review",
             "title": "Limited Partnership Agreement Tabular Review",
             "description": "Use this workflow to review uploaded documents and extract structured information into the tabular review columns defined in table-columns.yaml.",
             "type": "tabular",
@@ -1162,6 +1179,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-nda-review",
         "metadata": {
+            "name": "nda-review",
             "title": "NDA Review",
             "description": "Review the uploaded non-disclosure agreement and produce a comprehensive table-based legal review from the perspective of the party represented by the user/client.",
             "type": "assistant",
@@ -1189,6 +1207,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-nda-tabular-review",
         "metadata": {
+            "name": "nda-tabular-review",
             "title": "NDA Tabular Review",
             "description": "Use this workflow to review uploaded documents and extract structured information into the tabular review columns defined in table-columns.yaml.",
             "type": "tabular",
@@ -1271,6 +1290,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-proofread",
         "metadata": {
+            "name": "proofread",
             "title": "Proofread",
             "description": "Review the uploaded document for drafting quality, internal consistency, and mechanical errors.",
             "type": "assistant",
@@ -1298,6 +1318,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-shareholder-agreement-review",
         "metadata": {
+            "name": "shareholder-agreement-review",
             "title": "Shareholder Agreement Review",
             "description": "Review the uploaded shareholder agreement and produce a comprehensive table-based legal review from the perspective of the party represented by the user/client.",
             "type": "assistant",
@@ -1325,6 +1346,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-shareholder-agreement-tabular-review",
         "metadata": {
+            "name": "shareholder-agreement-tabular-review",
             "title": "Shareholder Agreement Tabular Review",
             "description": "Use this workflow to review uploaded documents and extract structured information into the tabular review columns defined in table-columns.yaml.",
             "type": "tabular",
@@ -1473,6 +1495,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-spa-tabular-review",
         "metadata": {
+            "name": "spa-tabular-review",
             "title": "SPA Tabular Review",
             "description": "Use this workflow to review uploaded documents and extract structured information into the tabular review columns defined in table-columns.yaml.",
             "type": "tabular",
@@ -1579,6 +1602,7 @@ export const SYSTEM_WORKFLOWS: SystemWorkflow[] = [
         "created_at": "",
         "id": "builtin-supply-agreement-tabular-review",
         "metadata": {
+            "name": "supply-agreement-tabular-review",
             "title": "Supply Agreement Tabular Review",
             "description": "Use this workflow to review uploaded documents and extract structured information into the tabular review columns defined in table-columns.yaml.",
             "type": "tabular",
