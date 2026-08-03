@@ -570,7 +570,7 @@ export interface TabularReview {
 export interface TabularCell {
   id: string;
   review_id: string;
-  row_id?: string | null;
+  row_id: string;
   document_id: string | null;
   column_index: number;
   content: {
@@ -588,6 +588,7 @@ export interface TabularReviewRow {
   label: string;
   row_type: "document" | "folder";
   folder_id: string | null;
+  library_folder_id: string | null;
   document_id: string | null;
   sort_index: number;
   source_document_ids: string[];
@@ -650,6 +651,6 @@ export interface ChatDetailOut {
 export interface TabularReviewDetailOut {
   review: TabularReview;
   cells: TabularCell[];
-  rows?: TabularReviewRow[];
+  rows: TabularReviewRow[];
   documents: Document[];
 }

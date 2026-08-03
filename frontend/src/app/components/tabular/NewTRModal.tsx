@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Upload } from "lucide-react";
-import type { Document, Project, Workflow } from "../shared/types";
+import type { Document, Folder, Project, Workflow } from "../shared/types";
 import {
     getProject,
     listWorkflows,
@@ -14,11 +14,13 @@ import { Modal } from "../modals/Modal";
 import { ModalFieldLabel } from "../modals/ModalFieldLabel";
 import { ModalSelect } from "../modals/ModalSelect";
 import { ModalTextInput } from "../modals/ModalTextInput";
+import { ToggleSwitch } from "@/app/components/ui/toggle-switch";
 
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
     if (isDev) console.log(...args);
 };
+const TABULAR_DIRECTORY_TABS = ["files", "projects"] as const;
 
 interface Props {
     open: boolean;
@@ -33,6 +35,7 @@ interface Props {
     projects?: Project[];
     /** When provided, skip the project/directory picker and show only these docs */
     projectDocs?: Document[];
+    projectFolders?: Folder[];
     projectName?: string;
     projectCmNumber?: string | null;
 }
@@ -43,6 +46,7 @@ export function NewTRModal({
     onAdd,
     projects = [],
     projectDocs: fixedProjectDocs,
+    projectFolders: fixedProjectFolders,
     projectName,
     projectCmNumber,
 }: Props) {
@@ -54,6 +58,7 @@ export function NewTRModal({
 
     // Project-scoped docs (when underProject is true and no fixedProjectDocs)
     const [projectDocs, setProjectDocs] = useState<Document[]>([]);
+    const [projectFolders, setProjectFolders] = useState<Folder[]>([]);
     const [loadingDocs, setLoadingDocs] = useState(false);
 
     const [extraStandaloneDocs, setExtraStandaloneDocs] = useState<Document[]>(
@@ -115,6 +120,7 @@ export function NewTRModal({
         setUnderProject(false);
         setSelectedProjectId("");
         setProjectDocs([]);
+        setProjectFolders([]);
         setExtraStandaloneDocs([]);
         setSelectedDocuments([]);
         setGroupBySubfolder(false);
@@ -148,9 +154,7 @@ export function NewTRModal({
                 ? selectedDocuments.map((document) => document.id)
                 : undefined,
             selectedWorkflow?.columns_config ?? undefined,
-            groupBySubfolder && (isProjectMode || underProject)
-                ? "folder"
-                : "document",
+            groupBySubfolder ? "folder" : "document",
         );
         handleClose();
     }
@@ -158,6 +162,7 @@ export function NewTRModal({
     async function handleSelectProject(projectId: string) {
         setSelectedProjectId(projectId);
         setProjectDocs([]);
+        setProjectFolders([]);
         setSelectedDocuments([]);
         setLoadingDocs(true);
         try {
@@ -166,6 +171,7 @@ export function NewTRModal({
                 (d) => d.status === "ready",
             );
             setProjectDocs(docs);
+            setProjectFolders(proj.folders ?? []);
             setSelectedDocuments(docs);
         } finally {
             setLoadingDocs(false);
@@ -231,6 +237,11 @@ export function NewTRModal({
         : underProject
           ? projectDocs
           : extraStandaloneDocs;
+    const directoryFolders = isProjectMode
+        ? (fixedProjectFolders ?? [])
+        : underProject
+          ? projectFolders
+          : [];
     const directoryLoading = isProjectMode
         ? false
         : underProject
@@ -355,30 +366,20 @@ export function NewTRModal({
                                 <ModalFieldLabel as="p">
                                     Project
                                 </ModalFieldLabel>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        const next = !underProject;
+                                <ToggleSwitch
+                                    checked={underProject}
+                                    onCheckedChange={(next) => {
                                         setUnderProject(next);
                                         if (!next) {
                                             setSelectedProjectId("");
                                             setProjectDocs([]);
+                                            setProjectFolders([]);
                                             setSelectedDocuments([]);
                                         }
                                     }}
-                                    className="flex w-fit items-center gap-2.5"
                                 >
-                                    <span
-                                        className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors duration-200 ${underProject ? "bg-gray-900" : "bg-gray-100"}`}
-                                    >
-                                        <span
-                                            className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${underProject ? "translate-x-4" : "translate-x-0"}`}
-                                        />
-                                    </span>
-                                    <span className="text-sm text-gray-600">
-                                        Create under a project
-                                    </span>
-                                </button>
+                                    Create under a project
+                                </ToggleSwitch>
 
                                 {underProject && (
                                     <ModalSelect
@@ -396,30 +397,31 @@ export function NewTRModal({
                                 )}
                             </div>
                         )}
+
+                        <div>
+                            <ModalFieldLabel as="p">
+                                Document grouping
+                            </ModalFieldLabel>
+                            <ToggleSwitch
+                                checked={groupBySubfolder}
+                                onCheckedChange={setGroupBySubfolder}
+                            >
+                                Treat documents in the same folder as one review row
+                            </ToggleSwitch>
+                        </div>
                     </div>
                 ) : (
                     <div className="flex min-h-0 flex-1 flex-col">
                         {showDirectory && (
                             <FileDirectory
                                 documents={directoryDocuments}
+                                folders={directoryFolders}
                                 loading={directoryLoading}
                                 selectedDocuments={selectedDocuments}
                                 onChange={setSelectedDocuments}
                                 showTabs={!isProjectMode && !underProject}
+                                tabs={TABULAR_DIRECTORY_TABS}
                             />
-                        )}
-                        {(isProjectMode || underProject) && (
-                            <label className="mt-4 flex items-center gap-2.5 text-sm text-gray-600">
-                                <input
-                                    type="checkbox"
-                                    checked={groupBySubfolder}
-                                    onChange={(event) =>
-                                        setGroupBySubfolder(event.target.checked)
-                                    }
-                                    className="h-3.5 w-3.5 rounded border-gray-300 accent-gray-900"
-                                />
-                                Treat documents in the same project subfolder as one review row
-                            </label>
                         )}
                     </div>
                 )}

@@ -26,7 +26,7 @@ import {
     type TRChat,
     type TRCitationAnnotation,
 } from "@/app/lib/mikeApi";
-import type { AssistantEvent, ColumnConfig, Document } from "../shared/types";
+import type { AssistantEvent } from "../shared/types";
 import { ModelToggle } from "../assistant/ModelToggle";
 import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
 import { PreResponseWrapper } from "../assistant/PreResponseWrapper";
@@ -121,8 +121,6 @@ interface Props {
     reviewId: string;
     reviewTitle?: string | null;
     projectName?: string | null;
-    columns: ColumnConfig[];
-    documents: Document[];
     onCitationClick: (colIdx: number, rowIdx: number) => void;
     onClose: () => void;
     initialChatId?: string | null;
@@ -756,8 +754,6 @@ export function TRChatPanel({
     reviewId,
     reviewTitle,
     projectName,
-    columns: _columns,
-    documents: _documents,
     onCitationClick,
     onClose,
     initialChatId,

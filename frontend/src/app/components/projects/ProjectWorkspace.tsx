@@ -454,6 +454,7 @@ export function ProjectWorkspaceProvider({
                     projectDocs={project?.documents?.filter(
                         (d) => d.status === "ready",
                     )}
+                    projectFolders={folders}
                     projectName={project?.name}
                     projectCmNumber={project?.cm_number}
                 />

@@ -3,6 +3,7 @@
 const INLINE_METADATA_RE = /\[\[((?:[^\[\]]|\[[^\]]*\])+)\]\]/g;
 
 export interface ParsedCitation {
+    documentId?: string;
     page?: number;
     sheet?: string;
     cell?: string;
@@ -36,17 +37,18 @@ export function preprocessCitations(text: string): {
 }
 
 function parsePageCitation(metadata: string): ParsedCitation | null {
-    const match = metadata.match(/^page:(\d+)\|\|(?:quote:)?([\s\S]+)$/i);
+    const match = metadata.match(
+        /^(?:document:([^|]+)\|\|)?page:(\d+)\|\|(?:quote:)?([\s\S]+)$/i,
+    );
     if (!match) return null;
     return {
-        page: parseInt(match[1], 10),
-        quote: match[2].trim(),
+        documentId: match[1]?.trim() || undefined,
+        page: parseInt(match[2], 10),
+        quote: match[3].trim(),
     };
 }
 
 function parseSpreadsheetCitation(metadata: string): ParsedCitation | null {
-    if (!metadata.toLowerCase().startsWith("sheet:")) return null;
-
     const quoteSeparator = metadata.search(/\|\|quote:/i);
     if (quoteSeparator < 0) return null;
 
@@ -72,5 +74,10 @@ function parseSpreadsheetCitation(metadata: string): ParsedCitation | null {
     const cell = fields.get("cell") ?? (column && row ? `${column}${row}` : undefined);
     if (!sheet || !cell) return null;
 
-    return { sheet, cell, quote };
+    return {
+        documentId: fields.get("document"),
+        sheet,
+        cell,
+        quote,
+    };
 }

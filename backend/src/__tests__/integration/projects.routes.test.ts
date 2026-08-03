@@ -140,6 +140,46 @@ describe("projects.routes", () => {
             expect(res.body).toEqual([{ id: "p1", name: "Alpha" }]);
         });
 
+        it("includes documents and subfolders in the batched directory response", async () => {
+            supabaseState.rpc = {
+                data: [{ id: "p1", name: "Alpha" }],
+                error: null,
+            };
+            supabaseState.tables.documents = {
+                data: [
+                    {
+                        id: "d1",
+                        project_id: "p1",
+                        folder_id: "f1",
+                        filename: "Agreement.pdf",
+                    },
+                ],
+                error: null,
+            };
+            supabaseState.tables.project_subfolders = {
+                data: [
+                    {
+                        id: "f1",
+                        project_id: "p1",
+                        parent_folder_id: null,
+                        name: "Closing",
+                    },
+                ],
+                error: null,
+            };
+
+            const res = await request(app)
+                .get("/projects?include=documents")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body[0]).toMatchObject({
+                id: "p1",
+                documents: [{ id: "d1", folder_id: "f1" }],
+                folders: [{ id: "f1", name: "Closing" }],
+            });
+        });
+
         it("returns 500 with detail when the RPC errors", async () => {
             supabaseState.rpc = { data: null, error: { message: "boom" } };
 

@@ -687,6 +687,7 @@ create table if not exists public.tabular_review_rows (
   label text not null,
   row_type text not null check (row_type in ('document', 'folder')),
   folder_id uuid references public.project_subfolders(id) on delete set null,
+  library_folder_id uuid references public.library_folders(id) on delete set null,
   document_id uuid references public.documents(id) on delete set null,
   sort_index integer not null default 0,
   created_at timestamptz not null default now()
@@ -713,7 +714,7 @@ alter table public.tabular_review_row_sources enable row level security;
 create table if not exists public.tabular_cells (
   id uuid primary key default gen_random_uuid(),
   review_id uuid not null references public.tabular_reviews(id) on delete cascade,
-  row_id uuid references public.tabular_review_rows(id) on delete cascade,
+  row_id uuid not null references public.tabular_review_rows(id) on delete cascade,
   document_id uuid references public.documents(id) on delete cascade,
   column_index integer not null,
   content text,
