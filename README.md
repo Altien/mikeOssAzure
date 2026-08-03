@@ -21,6 +21,15 @@ Mike's system assistant and tabular review workflows are maintained in the
 [`Open-Legal-Products/mike-workflows`](https://github.com/Open-Legal-Products/mike-workflows)
 repository.
 
+Every built assistant workflow gets a slash command from its `SKILL.md` name:
+
+```yaml
+name: contract-intake
+```
+
+For example, `name: contract-intake` becomes `/contract-intake`. Workflow names
+must contain only lowercase letters, numbers, and hyphens.
+
 ## Prerequisites
 
 - Node.js 20 or newer

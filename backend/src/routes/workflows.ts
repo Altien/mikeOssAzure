@@ -7,6 +7,7 @@ import {
   type SystemWorkflow,
 } from "../lib/systemWorkflows";
 import { findMissingUserEmails } from "../lib/userLookup";
+import { workflowNameFromSkillMd } from "../lib/workflowName";
 
 export const workflowsRouter = Router();
 
@@ -42,6 +43,7 @@ type WorkflowContributor = {
 };
 
 type WorkflowMetadata = {
+  name: string | null;
   title: string;
   description: string | null;
   type: WorkflowType;
@@ -137,10 +139,12 @@ function workflowTypeFrom(value: unknown): WorkflowType {
 }
 
 function metadataFromWorkflowRecord(workflow: WorkflowRecord): WorkflowMetadata {
+  const type = workflowTypeFrom(workflow.type);
   return {
+    name: workflowNameFromSkillMd(workflow.prompt_md),
     title: workflow.title ?? "",
     description: null,
-    type: workflowTypeFrom(workflow.type),
+    type,
     contributors:
       normalizeContributors(workflow.contributors) ?? [
         DEFAULT_WORKFLOW_CONTRIBUTOR,

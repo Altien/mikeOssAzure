@@ -608,6 +608,7 @@ export interface Workflow {
   id: string;
   user_id: string | null;
   metadata: {
+    name?: string | null;
     title: string;
     description: string | null;
     type: "assistant" | "tabular";
