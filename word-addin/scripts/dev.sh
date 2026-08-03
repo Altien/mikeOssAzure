@@ -148,14 +148,47 @@ if [ "$SETUP_ONLY" != 1 ]; then
 fi
 
 # ── 7. Dev HTTPS certificate ─────────────────────────────────────────────────
+# office-addin-dev-certs regenerates the certificate (AND a new signing CA)
+# whenever the old one expires (~30 days) — the webpack dev server triggers
+# this silently on startup. The tool's own `verify` only checks that a CA *by
+# that name* exists in the trust store, so after a regeneration it reports
+# "trusted" while the OS actually trusts the OLD CA — and Word rejects the
+# pane with "content is blocked because it isn't signed by a valid security
+# certificate". Verify the ACTUAL chain against the OS trust store instead,
+# and force a real reinstall when it has drifted.
 step "Checking dev HTTPS certificate"
-if npx --no-install office-addin-dev-certs verify >/dev/null 2>&1; then
-    ok "dev certificate already trusted"
+CERT_DIR="$HOME/.office-addin-dev-certs"
+cert_trusted() {
+    [ -f "$CERT_DIR/localhost.crt" ] || return 1
+    if [ "$(uname)" = "Darwin" ]; then
+        # Ground truth: does macOS trust this exact leaf for SSL on localhost?
+        security verify-cert -c "$CERT_DIR/localhost.crt" -p ssl -s localhost >/dev/null 2>&1
+    else
+        npx --no-install office-addin-dev-certs verify >/dev/null 2>&1
+    fi
+}
+if cert_trusted; then
+    ok "dev certificate trusted (verified against the OS trust store)"
 else
-    warn "Installing the trusted dev cert (Word rejects untrusted HTTPS)."
-    warn "This may prompt for your keychain/admin password…"
-    npx office-addin-dev-certs install
-    warn "Cert installed — fully QUIT Word (Cmd-Q) before launching so it reloads trust."
+    warn "Dev certificate is missing, expired, or signed by a CA the OS no longer trusts."
+    warn "Reinstalling — this may prompt for your keychain/admin password…"
+    # `install` skips itself when its name-based verify passes — which is
+    # exactly the drift case — so uninstall first to force a real install.
+    npx office-addin-dev-certs uninstall >/dev/null 2>&1 || true
+    npx office-addin-dev-certs install || true
+    if ! cert_trusted && [ "$(uname)" = "Darwin" ] && [ -f "$CERT_DIR/ca.crt" ]; then
+        # Last resort: trust the current CA directly.
+        warn "Trusting the current dev CA directly (keychain prompt)…"
+        security add-trusted-cert -r trustRoot \
+            -k "$HOME/Library/Keychains/login.keychain-db" "$CERT_DIR/ca.crt" || true
+    fi
+    if cert_trusted; then
+        warn "Cert trusted — fully QUIT Word (Cmd-Q) before launching so it reloads trust."
+    else
+        warn "Certificate STILL not trusted — Word will refuse the pane."
+        warn "See word-addin/README.md → Troubleshooting → certificate trust drift."
+        exit 1
+    fi
 fi
 
 # ── 8. Launch ────────────────────────────────────────────────────────────────

@@ -6,6 +6,7 @@
     "dev": "webpack serve --mode development",
     "typecheck": "tsc --noEmit",
     "build": "webpack --mode production && node scripts/build-manifest.js",
+    "prestart": "node scripts/clear-sideload.js",
     "start": "office-addin-debugging start manifest.xml --dev-server \"npm run dev\" --dev-server-port 3000",
     "stop": "office-addin-debugging stop manifest.xml",
     "build:e2e": "REACT_APP_API_BASE_URL=http://localhost:3001 REACT_APP_SUPABASE_URL=http://localhost:54321 REACT_APP_SUPABASE_ANON_KEY=test-anon-key REACT_APP_WEB_APP_URL=http://localhost:3000 REACT_APP_DEFAULT_MODEL=claude-sonnet-4-6 webpack --mode production",

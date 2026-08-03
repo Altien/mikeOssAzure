@@ -9,8 +9,10 @@ The add-in talks to the **same API and Supabase project as the web app**: sign-i
 ## Prerequisites
 
 - Node.js 22+
-- Microsoft Word desktop (macOS or Windows) **or** Word on the web — sideloading steps differ; see below
+- Microsoft Word desktop (macOS or Windows) **or** Word on the web — sideloading steps differ; see below (desktop is the smoother path for local development)
 - The Mike API running locally (`npm run dev` from `backend/`) and Supabase configured per the root [README](../README.md) (`backend/.env` + `frontend/.env.local`)
+- A Mike user account — the pane signs in with the same credentials as the web app. Sign up through the web app once, or create a user in Supabase Auth (Dashboard → Authentication → Add user).
+- For real model responses, a funded LLM API key in `backend/.env` — or use the keyless stand-in described in [Testing without an LLM key](#testing-without-an-llm-key).
 
 ---
 
@@ -117,6 +119,13 @@ Restart Word, then: **Insert → Add-ins → My Add-ins → Mike**
 
 **Insert → Add-ins → Upload My Add-in** → select `manifest.xml`
 
+> **Caveat — the pane will silently fail to load in a normal browser.** Word on the web is a *public* origin (`word-edit.officeapps.live.com`) and the dev pane is `https://localhost:3000`; Chrome's Local Network Access checks block a public page from embedding a localhost iframe, with no visible error — the pane simply never appears. This affects dev sideloads only (a deployed add-in on a public HTTPS host is unaffected). To test against real Word on the web locally, use the ready-made launcher, which starts a browser with those checks disabled, sideloads the manifest, opens the pane, and hands you the window:
+>
+> ```bash
+> node e2e-live/word-web-session.mjs --login   # one-time Microsoft sign-in (persistent profile)
+> node e2e-live/manual-session.mjs             # opens Word online with the pane ready
+> ```
+
 The manifest requires `WordApi 1.4`, which includes the change-tracking APIs. Word will not activate the add-in on a host that does not satisfy that requirement set.
 
 ## Production build
@@ -188,10 +197,50 @@ It builds the bundle with test env vars, serves it over plain HTTP, injects an O
 
 ---
 
+## Testing without an LLM key
+
+No funded API key? `e2e-live/anthropic-stub.mjs` is a tiny local server that speaks the Anthropic Messages streaming protocol and returns scripted answers keyed to the add-in's prompts (chat redlines, proofread, anonymise, improve, draft). Everything else stays real — Supabase auth, the Mike backend, SSE streaming, and the Word JS API tracked changes:
+
+```bash
+node e2e-live/anthropic-stub.mjs &                          # listens on :4141
+# then start the backend pointed at it:
+(cd ../backend && ANTHROPIC_BASE_URL=http://127.0.0.1:4141 npm run dev)
+```
+
+The stub's answers are static, so exercise it with the document flaws it scripts against (see the constants at the top of `anthropic-stub.mjs` and `e2e-live/word-web-full-demo.mjs`). The full live demo — every button against real Word on the web, recorded to video — runs with `node e2e-live/word-web-full-demo.mjs`.
+
+---
+
 ## Troubleshooting
 
-**"Certificate not trusted" / blank white pane on load**
-Run `npx office-addin-dev-certs install` from `word-addin/`, then fully quit and restart Word.
+**Word shows "The content is blocked because it isn't signed by a valid security certificate" — including when it worked before**
+This is *certificate trust drift*, and it will eventually happen to every returning developer: the dev certificate expires after ~30 days, and the tooling then silently regenerates it **with a new signing CA** (the webpack dev server does this on startup). Your OS keychain still trusts only the *old* CA, so Word rejects the pane — while `npx office-addin-dev-certs verify` misleadingly reports "trusted", because it only checks that a CA *by that name* exists, not that it signed the current certificate. `npx office-addin-dev-certs install` then refuses to reinstall for the same reason.
+
+`bash scripts/dev.sh` now detects and repairs this automatically (it verifies the real chain against the OS trust store). To fix it by hand on macOS:
+
+```bash
+# 1. Ground truth — does the OS trust the cert actually being served?
+security verify-cert -c ~/.office-addin-dev-certs/localhost.crt -p ssl -s localhost
+
+# 2. If that fails: force a real reinstall (approve the keychain prompt)
+npx office-addin-dev-certs uninstall
+npx office-addin-dev-certs install
+
+# 3. Verify step 1 again; if still untrusted, trust the current CA directly:
+security add-trusted-cert -r trustRoot \
+  -k ~/Library/Keychains/login.keychain-db ~/.office-addin-dev-certs/ca.crt
+```
+
+Then **fully quit Word (Cmd-Q)** — its webview caches trust decisions — and relaunch with `npm start`.
+
+**`npm start` fails with `EEXIST: file already exists, link 'manifest.xml' -> …/wef/….manifest.xml`**
+A previous run exited without deregistering (crash, Ctrl-C) and left the sideload hard-link behind. `npm start` now clears this automatically via its `prestart` hook; if you hit it anyway, run `npm run stop` and retry.
+
+**`npm start` / `dev.sh` complains port 3000 is in use**
+The add-in dev server and the manifest are hardwired to `https://localhost:3000`, which collides with the Mike web app's dev server. Find the holder with `lsof -nP -iTCP:3000 -sTCP:LISTEN` and stop it (usually `npm run dev` in `frontend/`).
+
+**The pane never appears in Word on the web**
+See the caveat under [Word on the web](#word-on-the-web) — Chrome's Local Network Access checks silently block the localhost iframe; use `e2e-live/manual-session.mjs`.
 
 **Add-in shows blank after the cert is trusted**
 Right-click the task pane → **Inspect** and check the console for errors. A common cause is a missing or wrong `REACT_APP_SUPABASE_URL` / `REACT_APP_SUPABASE_ANON_KEY` — the bundle compiles with empty strings if the env vars were not exported before `npm start`.
