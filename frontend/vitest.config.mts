@@ -53,21 +53,22 @@ export default defineConfig({
             include: ["src/app/lib/**"],
             exclude: ["src/app/lib/**/*.test.*"],
             // No-regression RATCHET floor, not a target. The global number is
-            // dominated by mikeApi.ts: the request/error/stream plumbing and
-            // message mapping are tested, but most of its ~100 thin endpoint
-            // wrappers are not, so mikeApi sits around 40% while the small
-            // pure libs (documentUploadValidation, modelAvailability, utils)
-            // are at ~100%. Measured on this tree: 54.02% statements, 73.94%
-            // branches, 32.20% functions, 52.74% lines. These floors sit just
-            // below that (rounded down to whole percents) so CI fails on a
-            // *drop*. Floors only go up: when you add tests, raise them in
-            // the same PR. Backlog + per-area status:
+            // dominated by mikeApi.ts: the request/error/stream plumbing,
+            // message mapping, the paginated tabular-review queries, and the
+            // multipart upload error paths are tested; the remaining gap is
+            // thin endpoint wrappers (MCP connectors, workflow shares) that
+            // add functions faster than tests. Measured on this tree: 81.18%
+            // statements, 98.24% branches, 55.64% functions, 79.18% lines.
+            // These floors sit ~2 points below that so an innocently small
+            // untested addition doesn't instantly red-flag main, while a real
+            // drop still fails CI. Floors only go up: when you add tests,
+            // raise them in the same PR. Backlog + per-area status:
             // docs/frontend-testing.md.
             thresholds: {
-                statements: 54,
-                branches: 73,
-                functions: 32,
-                lines: 52,
+                statements: 79,
+                branches: 96,
+                functions: 53,
+                lines: 77,
             },
         },
     },
