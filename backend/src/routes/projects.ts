@@ -181,16 +181,26 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
     return void res.json(projects);
   }
 
-  const { data: docs, error: docsError } = await db
-    .from("documents")
-    .select("*")
-    .in(
-      "project_id",
-      projects.map((p) => p.id),
-    )
-    .order("created_at", { ascending: true });
+  const projectIds = projects.map((p) => p.id);
+  const [
+    { data: docs, error: docsError },
+    { data: folders, error: foldersError },
+  ] = await Promise.all([
+    db
+      .from("documents")
+      .select("*")
+      .in("project_id", projectIds)
+      .order("created_at", { ascending: true }),
+    db
+      .from("project_subfolders")
+      .select("*")
+      .in("project_id", projectIds)
+      .order("created_at", { ascending: true }),
+  ]);
   if (docsError)
     return void res.status(500).json({ detail: docsError.message });
+  if (foldersError)
+    return void res.status(500).json({ detail: foldersError.message });
 
   const docsTyped = (docs ?? []) as unknown as {
     id: string;
@@ -209,10 +219,18 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
     if (bucket) bucket.push(doc);
     else docsByProject.set(doc.project_id, [doc]);
   }
+  const foldersByProject = new Map<string, NonNullable<typeof folders>>();
+  for (const folder of folders ?? []) {
+    const projectId = folder.project_id as string;
+    const bucket = foldersByProject.get(projectId);
+    if (bucket) bucket.push(folder);
+    else foldersByProject.set(projectId, [folder]);
+  }
   res.json(
     projects.map((p) => ({
       ...p,
       documents: docsByProject.get(p.id) ?? [],
+      folders: foldersByProject.get(p.id) ?? [],
     })),
   );
 });

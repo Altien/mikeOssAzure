@@ -3,8 +3,8 @@
 import ExcelJS from "exceljs";
 import type {
     ColumnConfig,
-    Document,
     TabularCell,
+    TabularReviewRow,
 } from "../shared/types";
 import { preprocessCitations } from "./citation-utils";
 
@@ -35,20 +35,22 @@ function sanitizeFilename(name: string): string {
 export async function exportTabularReviewToExcel(params: {
     reviewTitle: string;
     columns: ColumnConfig[];
-    documents: Document[];
+    rows: TabularReviewRow[];
     cells: TabularCell[];
 }) {
-    const { reviewTitle, columns, documents, cells } = params;
+    const { reviewTitle, columns, rows, cells } = params;
 
     const sortedCols = [...columns].sort((a, b) => a.index - b.index);
     const cellMap = new Map<string, TabularCell>();
-    for (const c of cells) cellMap.set(`${c.document_id}:${c.column_index}`, c);
+    for (const cell of cells) {
+        cellMap.set(`${cell.row_id}:${cell.column_index}`, cell);
+    }
 
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet("Review");
 
     ws.columns = [
-        { header: "Document", width: 40 },
+        { header: "Folder / document", width: 40 },
         ...sortedCols.map((c) => ({ header: c.name, width: 40 })),
     ];
 
@@ -61,10 +63,14 @@ export async function exportTabularReviewToExcel(params: {
         fgColor: { argb: "FFF3F4F6" },
     };
 
-    for (const doc of documents) {
-        const row: string[] = [doc.filename];
+    for (const reviewRow of rows) {
+        const row: string[] = [reviewRow.label];
         for (const col of sortedCols) {
-            row.push(formatCellForExport(cellMap.get(`${doc.id}:${col.index}`)));
+            row.push(
+                formatCellForExport(
+                    cellMap.get(`${reviewRow.id}:${col.index}`),
+                ),
+            );
         }
         const excelRow = ws.addRow(row);
         excelRow.alignment = { vertical: "top", wrapText: true };

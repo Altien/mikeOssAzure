@@ -5,6 +5,7 @@ import { Modal } from "../modals/Modal";
 import { ModalFieldLabel } from "../modals/ModalFieldLabel";
 import { ModalSelect } from "../modals/ModalSelect";
 import { ModalTextInput } from "../modals/ModalTextInput";
+import { ToggleSwitch } from "@/app/components/ui/toggle-switch";
 import type { Project, TabularReview } from "../shared/types";
 
 interface TabularReviewDetailsModalProps {
@@ -152,35 +153,18 @@ export function TabularReviewDetailsModal({
                 {!lockProject && (
                     <div className="space-y-3">
                         <ModalFieldLabel as="p">Project</ModalFieldLabel>
-                        <button
-                            type="button"
-                            onClick={() => {
-                                if (!canEdit || saving) return;
-                                const next = !underProject;
+                        <ToggleSwitch
+                            checked={underProject}
+                            disabled={!canEdit || saving}
+                            onCheckedChange={(next) => {
                                 setUnderProject(next);
                                 if (!next) setSelectedProjectId("");
                                 setSaved(false);
                                 setError(null);
                             }}
-                            className="flex w-fit items-center gap-2.5"
                         >
-                            <span
-                                className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors duration-200 ${
-                                    underProject ? "bg-gray-900" : "bg-gray-100"
-                                }`}
-                            >
-                                <span
-                                    className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                                        underProject
-                                            ? "translate-x-4"
-                                            : "translate-x-0"
-                                    }`}
-                                />
-                            </span>
-                            <span className="text-sm text-gray-600">
-                                Move under a project
-                            </span>
-                        </button>
+                            Move under a project
+                        </ToggleSwitch>
 
                         {underProject && (
                             <ModalSelect

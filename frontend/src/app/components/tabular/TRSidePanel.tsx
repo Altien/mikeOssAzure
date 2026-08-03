@@ -20,7 +20,12 @@ import {
     RefreshCw,
     X,
 } from "lucide-react";
-import type { ColumnConfig, Document, TabularCell } from "../shared/types";
+import type {
+    ColumnConfig,
+    Document,
+    TabularCell,
+    TabularReviewRow,
+} from "../shared/types";
 import { isSpreadsheetFilename } from "../shared/types";
 import { preprocessCitations, type ParsedCitation } from "./citation-utils";
 import { getPillClass } from "./pillUtils";
@@ -28,6 +33,7 @@ import { PdfView } from "../shared/views/PdfView";
 import { SpreadsheetView } from "../shared/views/SpreadsheetView";
 import { DocxView } from "../shared/views/DocxView";
 import { FileTypeIcon } from "../shared/FileTypeIcon";
+import { SubfolderSvgIcon } from "../shared/FolderSvgIcon";
 import { CitationQuotesHeader } from "../assistant/CitationQuotesHeader";
 import { cn } from "@/app/lib/utils";
 import {
@@ -48,12 +54,14 @@ function isDocxDocument(d: {
 
 interface Props {
     cell: TabularCell;
-    document: Document;
-    documents: Document[];
+    row: TabularReviewRow;
+    rows: TabularReviewRow[];
+    document?: Document;
+    documents?: Document[];
     column: ColumnConfig;
     columns: ColumnConfig[];
     onClose: () => void;
-    onNavigate: (documentId: string, columnIndex: number) => void;
+    onNavigate: (rowId: string, columnIndex: number) => void;
     onRegenerate?: () => Promise<void>;
     /** If true, open the document panel immediately */
     displayDocument?: boolean;
@@ -65,11 +73,14 @@ interface Props {
     citationSheet?: string;
     /** Spreadsheet A1 cell address or range */
     citationCell?: string;
+    /** Source document encoded in a grouped-row citation. */
+    citationDocumentId?: string;
     /** One-based citation number shown in the cell content */
     citationRef?: number;
 }
 
 type TRPanelCitation = {
+    documentId?: string;
     quote: string;
     page?: number;
     sheet?: string;
@@ -95,8 +106,10 @@ const INFO_PANE_WIDTH = 300;
 
 export function TRSidePanel({
     cell,
-    document: doc,
-    documents,
+    row,
+    rows,
+    document: initialDocument,
+    documents = [],
     column,
     columns,
     onClose,
@@ -107,6 +120,7 @@ export function TRSidePanel({
     citationPage,
     citationSheet,
     citationCell,
+    citationDocumentId,
     citationRef,
 }: Props) {
     const sortedColumns = [...columns].sort((a, b) => a.index - b.index);
@@ -117,17 +131,34 @@ export function TRSidePanel({
         currentPos >= 0 && currentPos < sortedColumns.length - 1
             ? sortedColumns[currentPos + 1]
             : null;
-    const currentDocumentPos = documents.findIndex(
-        (candidate) => candidate.id === doc.id,
+    const currentRowPos = rows.findIndex(
+        (candidate) => candidate.id === row.id,
     );
-    const previousDocument =
-        currentDocumentPos > 0 ? documents[currentDocumentPos - 1] : null;
-    const nextDocument =
-        currentDocumentPos >= 0 && currentDocumentPos < documents.length - 1
-            ? documents[currentDocumentPos + 1]
+    const previousRow = currentRowPos > 0 ? rows[currentRowPos - 1] : null;
+    const nextRow =
+        currentRowPos >= 0 && currentRowPos < rows.length - 1
+            ? rows[currentRowPos + 1]
             : null;
+    const sourceDocuments = row.source_document_ids.flatMap((documentId) => {
+        const sourceDocument = documents.find(
+            (document) => document.id === documentId,
+        );
+        return sourceDocument ? [sourceDocument] : [];
+    });
     const [regenerating, setRegenerating] = useState(false);
-    const [documentPaneOpen, setDocumentPaneOpen] = useState(displayDocument);
+    const [folderExpanded, setFolderExpanded] = useState(false);
+    const [activeDocumentId, setActiveDocumentId] = useState(
+        citationDocumentId ?? initialDocument?.id,
+    );
+    const doc =
+        documents.find(
+            (document) =>
+                document.id === activeDocumentId &&
+                row.source_document_ids.includes(document.id),
+        ) ?? initialDocument;
+    const [documentPaneOpen, setDocumentPaneOpen] = useState(
+        displayDocument && !!doc,
+    );
     const [documentPaneWidth, setDocumentPaneWidth] = useState(
         DEFAULT_DOCUMENT_PANE_WIDTH,
     );
@@ -144,6 +175,7 @@ export function TRSidePanel({
                   page: citationPage,
                   sheet: citationSheet,
                   cell: citationCell,
+                  documentId: citationDocumentId,
                   citationRef,
               }
             : undefined,
@@ -158,19 +190,32 @@ export function TRSidePanel({
                       page: citationPage,
                       sheet: citationSheet,
                       cell: citationCell,
+                      documentId: citationDocumentId,
                       citationRef,
                   }
                 : undefined,
         );
-        setDocumentPaneOpen(displayDocument);
+        const nextDocument = citationDocumentId
+            ? documents.find(
+                  (document) =>
+                      document.id === citationDocumentId &&
+                      row.source_document_ids.includes(document.id),
+              )
+            : initialDocument;
+        setActiveDocumentId(nextDocument?.id);
+        setDocumentPaneOpen(displayDocument && !!nextDocument);
     }, [
         cell.id,
         displayDocument,
         citationCell,
+        citationDocumentId,
         citationPage,
         citationQuote,
         citationRef,
         citationSheet,
+        documents,
+        initialDocument,
+        row,
     ]);
 
     useEffect(
@@ -245,6 +290,22 @@ export function TRSidePanel({
 
     function handleCitationOpen(citation: TRPanelCitation) {
         setDocCitation(citation);
+        const citedDocument = citation.documentId
+            ? documents.find(
+                  (document) =>
+                      document.id === citation.documentId &&
+                      row.source_document_ids.includes(document.id),
+              )
+            : doc;
+        if (citedDocument) {
+            setActiveDocumentId(citedDocument.id);
+            setDocumentPaneOpen(true);
+        }
+    }
+
+    function handleSourceDocumentOpen(sourceDocument: Document) {
+        setActiveDocumentId(sourceDocument.id);
+        setDocCitation(undefined);
         setDocumentPaneOpen(true);
     }
 
@@ -263,7 +324,7 @@ export function TRSidePanel({
             )}
         >
             {/* Resizable document panel — left */}
-            {documentPaneOpen && (
+            {documentPaneOpen && doc && (
                 <div
                     className="relative flex shrink-0 flex-col border-r border-white/30 px-3 pb-3"
                     style={{ width: documentPaneWidth }}
@@ -355,27 +416,29 @@ export function TRSidePanel({
             <div className="flex w-[300px] shrink-0 flex-col overflow-hidden">
                 {/* Header */}
                 <div className="mb-2 flex min-h-11 shrink-0 items-center justify-end gap-1.5 border-b border-white/30 px-3">
-                    <button
-                        type="button"
-                        onClick={() => setDocumentPaneOpen((open) => !open)}
-                        className={cn(
-                            "mr-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-white/75 hover:text-gray-700",
-                            documentPaneOpen && "bg-white/55 text-gray-700",
-                        )}
-                        aria-label={
-                            documentPaneOpen
-                                ? "Collapse document pane"
-                                : "Expand document pane"
-                        }
-                        title={
-                            documentPaneOpen
-                                ? "Collapse document pane"
-                                : "Expand document pane"
-                        }
-                        aria-pressed={documentPaneOpen}
-                    >
-                        <PanelLeft className="h-4 w-4" />
-                    </button>
+                    {doc && (
+                        <button
+                            type="button"
+                            onClick={() => setDocumentPaneOpen((open) => !open)}
+                            className={cn(
+                                "mr-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-white/75 hover:text-gray-700",
+                                documentPaneOpen && "bg-white/55 text-gray-700",
+                            )}
+                            aria-label={
+                                documentPaneOpen
+                                    ? "Collapse document pane"
+                                    : "Expand document pane"
+                            }
+                            title={
+                                documentPaneOpen
+                                    ? "Collapse document pane"
+                                    : "Expand document pane"
+                            }
+                            aria-pressed={documentPaneOpen}
+                        >
+                            <PanelLeft className="h-4 w-4" />
+                        </button>
+                    )}
                     {onRegenerate && (
                         <button
                             onClick={async () => {
@@ -413,20 +476,98 @@ export function TRSidePanel({
                         {/* Document field */}
                         <div className="mb-4">
                             <div className="mb-3 text-xs font-medium text-gray-900">
-                                Document
+                                {row.row_type === "folder"
+                                    ? "Folder"
+                                    : "Document"}
                             </div>
-                            <div className="flex min-h-6 items-center gap-1.5">
-                                <FileTypeIcon
-                                    fileType={doc.file_type ?? doc.filename}
-                                    className="h-3 w-3"
-                                />
-                                <div
-                                    className="min-w-0 flex-1 truncate text-xs leading-6 text-gray-800"
-                                    title={doc.filename}
-                                >
-                                    {doc.filename}
+                            {row.row_type === "folder" ? (
+                                <div>
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            setFolderExpanded(
+                                                (expanded) => !expanded,
+                                            )
+                                        }
+                                        className={cn(
+                                            "flex min-h-6 w-full items-center gap-1.5 rounded-md px-1 text-left text-gray-800 transition-colors",
+                                            APP_SURFACE_HOVER_CLASS,
+                                            APP_SURFACE_PRESSED_CLASS,
+                                        )}
+                                        aria-expanded={folderExpanded}
+                                    >
+                                        <SubfolderSvgIcon
+                                            open={folderExpanded}
+                                            className="h-3 w-3 shrink-0"
+                                        />
+                                        <span
+                                            className="min-w-0 flex-1 truncate text-xs leading-6"
+                                            title={row.label}
+                                        >
+                                            {row.label}
+                                        </span>
+                                        <ChevronDown
+                                            className={cn(
+                                                "h-3 w-3 shrink-0 text-gray-500 transition-transform",
+                                                folderExpanded && "rotate-180",
+                                            )}
+                                        />
+                                    </button>
+                                    {folderExpanded && (
+                                        <div className="mt-1">
+                                            {sourceDocuments.map(
+                                                (sourceDocument) => (
+                                                    <button
+                                                        key={sourceDocument.id}
+                                                        type="button"
+                                                        onClick={() =>
+                                                            handleSourceDocumentOpen(
+                                                                sourceDocument,
+                                                            )
+                                                        }
+                                                        className={cn(
+                                                            "flex min-h-6 w-full items-center gap-1.5 rounded-md py-1 pl-5 pr-1 text-left text-xs text-gray-800 transition-colors",
+                                                            APP_SURFACE_HOVER_CLASS,
+                                                            APP_SURFACE_PRESSED_CLASS,
+                                                        )}
+                                                        title={
+                                                            sourceDocument.filename
+                                                        }
+                                                    >
+                                                        <FileTypeIcon
+                                                            fileType={
+                                                                sourceDocument.file_type ??
+                                                                sourceDocument.filename
+                                                            }
+                                                            className="h-3 w-3 shrink-0"
+                                                        />
+                                                        <span className="min-w-0 flex-1 truncate">
+                                                            {
+                                                                sourceDocument.filename
+                                                            }
+                                                        </span>
+                                                    </button>
+                                                ),
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
-                            </div>
+                            ) : (
+                                <div className="flex min-h-6 items-center gap-1.5">
+                                    <FileTypeIcon
+                                        fileType={
+                                            doc?.file_type ?? doc?.filename
+                                        }
+                                        className="h-3 w-3"
+                                    />
+                                    <div
+                                        className="min-w-0 flex-1 truncate text-xs leading-6 text-gray-800"
+                                        title={row.label}
+                                    >
+                                        {row.label}
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                         {/* Column field */}
@@ -495,12 +636,12 @@ export function TRSidePanel({
                     <div className="grid grid-cols-3 grid-rows-3 gap-0.5">
                         <CellNavigatorButton
                             className="col-start-2 row-start-1"
-                            label="Previous document"
-                            title={previousDocument?.filename}
-                            disabled={!previousDocument}
+                            label="Previous row"
+                            title={previousRow?.label}
+                            disabled={!previousRow}
                             onClick={() =>
-                                previousDocument &&
-                                onNavigate(previousDocument.id, column.index)
+                                previousRow &&
+                                onNavigate(previousRow.id, column.index)
                             }
                         >
                             <ChevronUp className="h-4 w-4" />
@@ -512,7 +653,7 @@ export function TRSidePanel({
                             disabled={!previousColumn}
                             onClick={() =>
                                 previousColumn &&
-                                onNavigate(doc.id, previousColumn.index)
+                                onNavigate(row.id, previousColumn.index)
                             }
                         >
                             <ChevronLeft className="h-4 w-4" />
@@ -525,19 +666,18 @@ export function TRSidePanel({
                             disabled={!nextColumn}
                             onClick={() =>
                                 nextColumn &&
-                                onNavigate(doc.id, nextColumn.index)
+                                onNavigate(row.id, nextColumn.index)
                             }
                         >
                             <ChevronRight className="h-4 w-4" />
                         </CellNavigatorButton>
                         <CellNavigatorButton
                             className="col-start-2 row-start-3"
-                            label="Next document"
-                            title={nextDocument?.filename}
-                            disabled={!nextDocument}
+                            label="Next row"
+                            title={nextRow?.label}
+                            disabled={!nextRow}
                             onClick={() =>
-                                nextDocument &&
-                                onNavigate(nextDocument.id, column.index)
+                                nextRow && onNavigate(nextRow.id, column.index)
                             }
                         >
                             <ChevronDown className="h-4 w-4" />
@@ -598,7 +738,7 @@ function citationKey(cellId: string, citation: ParsedCitation): string {
     const location = citation.sheet
         ? `${citation.sheet}:${citation.cell ?? ""}`
         : `page:${citation.page ?? 1}`;
-    return `tr-cell:${cellId}:${location}`;
+    return `tr-cell:${cellId}:${citation.documentId ?? "document"}:${location}`;
 }
 
 function CitationBadge({
@@ -616,6 +756,7 @@ function CitationBadge({
             data-page={citation.page}
             data-sheet={citation.sheet}
             data-cell={citation.cell}
+            data-document-id={citation.documentId}
             data-quote={citation.quote}
             title={`${formatCitationLocation(citation)}: "${citation.quote}"`}
             onClick={() =>
@@ -624,6 +765,7 @@ function CitationBadge({
                     page: citation.page,
                     sheet: citation.sheet,
                     cell: citation.cell,
+                    documentId: citation.documentId,
                     citationRef: index + 1,
                 })
             }

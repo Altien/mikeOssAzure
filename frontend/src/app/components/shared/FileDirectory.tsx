@@ -17,6 +17,11 @@ import {
     APP_SURFACE_HOVER_CLASS,
 } from "@/app/components/ui/liquid-surface";
 
+type DirectoryFolder = Pick<
+    LibraryFolder,
+    "id" | "name" | "parent_folder_id" | "created_at"
+>;
+
 const DIRECTORY_GRID_CLASS =
     "grid grid-cols-[14px_14px_minmax(0,1fr)_48px_84px_64px] items-center gap-2";
 
@@ -25,6 +30,7 @@ const DIRECTORY_TABS: { value: DirectoryTab; label: string }[] = [
     { value: "templates", label: "Templates" },
     { value: "projects", label: "Projects" },
 ];
+const ALL_DIRECTORY_TAB_VALUES = DIRECTORY_TABS.map((tab) => tab.value);
 
 const EMPTY_DOCUMENTS: Document[] = [];
 const EMPTY_FOLDERS: LibraryFolder[] = [];
@@ -64,7 +70,9 @@ interface FileDirectoryProps {
     uploadingFilenames?: string[];
     showTabs: boolean;
     initialTab?: DirectoryTab;
+    tabs?: readonly DirectoryTab[];
     excludeProjectId?: string;
+    folders?: DirectoryFolder[];
 }
 
 export function FileDirectory({
@@ -75,7 +83,9 @@ export function FileDirectory({
     uploadingFilenames = [],
     showTabs,
     initialTab = "files",
+    tabs = ALL_DIRECTORY_TAB_VALUES,
     excludeProjectId,
+    folders = EMPTY_FOLDERS,
 }: FileDirectoryProps) {
     const [expandedProjects, setExpandedProjects] = useState<Set<string>>(
         new Set(),
@@ -83,13 +93,20 @@ export function FileDirectory({
     const [expandedLibraryFolders, setExpandedLibraryFolders] = useState<
         Set<string>
     >(new Set());
-    const [selectedTab, setSelectedTab] = useState<DirectoryTab>(initialTab);
+    const initialDirectoryTab = tabs.includes(initialTab)
+        ? initialTab
+        : (tabs[0] ?? "files");
+    const availableTabs = DIRECTORY_TABS.filter((tab) =>
+        tabs.includes(tab.value),
+    );
+    const [selectedTab, setSelectedTab] =
+        useState<DirectoryTab>(initialDirectoryTab);
 
     // Follow initialTab changes so keep-mounted parents (which never remount
     // this component) can still steer the starting tab per open.
     useEffect(() => {
-        setSelectedTab(initialTab);
-    }, [initialTab]);
+        setSelectedTab(initialDirectoryTab);
+    }, [initialDirectoryTab]);
     const [search, setSearch] = useState("");
     const {
         loadingTabs,
@@ -99,12 +116,17 @@ export function FileDirectory({
         templateFolders: loadedTemplateFolders,
         projects,
         loadTab,
-    } = useDirectoryData(showTabs, initialTab);
+    } = useDirectoryData(showTabs, initialDirectoryTab);
 
     useEffect(() => {
-        if (!showTabs || initialTab === "templates") return;
+        if (
+            !showTabs ||
+            initialDirectoryTab === "templates" ||
+            !tabs.includes("templates")
+        )
+            return;
         void loadTab("templates");
-    }, [initialTab, showTabs, loadTab]);
+    }, [initialDirectoryTab, showTabs, loadTab, tabs]);
     const directoryStandaloneDocs = useMemo(
         () =>
             showTabs
@@ -125,7 +147,7 @@ export function FileDirectory({
         : EMPTY_DOCUMENTS;
     const directoryFileFolders = showTabs
         ? loadedFileFolders
-        : EMPTY_FOLDERS;
+        : folders;
     const directoryTemplateFolders = showTabs
         ? loadedTemplateFolders
         : EMPTY_FOLDERS;
@@ -243,7 +265,7 @@ export function FileDirectory({
     }
 
     function childFolders(
-        folders: LibraryFolder[],
+        folders: DirectoryFolder[],
         parentFolderId: string | null,
     ) {
         return folders.filter(
@@ -256,7 +278,7 @@ export function FileDirectory({
     }
 
     function collectFolderDocuments(
-        folders: LibraryFolder[],
+        folders: DirectoryFolder[],
         docs: Document[],
         folderId: string,
     ): Document[] {
@@ -285,8 +307,7 @@ export function FileDirectory({
     }
 
     function indentedRowPadding(depth: number) {
-        if (depth <= 0) return 8;
-        return 4 + depth * 20;
+        return 8 + Math.max(0, depth) * 22;
     }
 
     function renderDocumentRow(doc: Document, depth = 0) {
@@ -329,8 +350,8 @@ export function FileDirectory({
         );
     }
 
-    function renderLibraryFolderRows(
-        folders: LibraryFolder[],
+    function renderFolderRows(
+        folders: DirectoryFolder[],
         docs: Document[],
         parentFolderId: string | null,
         depth = 0,
@@ -391,7 +412,7 @@ export function FileDirectory({
                     </button>
                     {isExpanded && (
                         <div>
-                            {renderLibraryFolderRows(
+                            {renderFolderRows(
                                 folders,
                                 docs,
                                 folder.id,
@@ -434,6 +455,7 @@ export function FileDirectory({
                         onChange={handleTabChange}
                         selectedCount={selectedIds.size}
                         showTabs={showTabs}
+                        tabs={availableTabs}
                     />
                 )}
                 <div className="flex min-h-0 flex-1 flex-col">
@@ -481,6 +503,7 @@ export function FileDirectory({
                         onChange={handleTabChange}
                         selectedCount={selectedIds.size}
                         showTabs={showTabs}
+                        tabs={availableTabs}
                     />
                 )}
                 <div className="min-h-0 flex-1 overflow-y-auto">
@@ -507,6 +530,7 @@ export function FileDirectory({
                     onChange={handleTabChange}
                     selectedCount={selectedIds.size}
                     showTabs={showTabs}
+                    tabs={availableTabs}
                 />
             )}
             {activeTabHasNoResults ? (
@@ -539,7 +563,7 @@ export function FileDirectory({
                                 </div>
                             ))}
                             {!q &&
-                                renderLibraryFolderRows(
+                                renderFolderRows(
                                     directoryFileFolders,
                                     directoryStandaloneDocs,
                                     null,
@@ -562,7 +586,7 @@ export function FileDirectory({
                     {activeTab === "templates" && (
                         <>
                             {!q &&
-                                renderLibraryFolderRows(
+                                renderFolderRows(
                                     directoryTemplateFolders,
                                     directoryTemplateDocs,
                                     null,
@@ -586,6 +610,7 @@ export function FileDirectory({
                             const isExpanded =
                                 !!q || expandedProjects.has(project.id);
                             const docs = project.documents ?? [];
+                            const projectFolders = project.folders ?? [];
                             const projectDocIds = docs.map((doc) => doc.id);
                             const allProjectDocsSelected =
                                 projectDocIds.length > 0 &&
@@ -661,66 +686,33 @@ export function FileDirectory({
                                     </button>
                                     {isExpanded && (
                                         <div>
-                                            {docs.length === 0 ? (
+                                            {docs.length === 0 &&
+                                            projectFolders.length === 0 ? (
                                                 <p className="pl-7 py-1 text-xs text-gray-400">
                                                     Empty
                                                 </p>
                                             ) : (
-                                                docs.map((doc) => {
-                                                    const selected =
-                                                        selectedIds.has(doc.id);
-                                                    return (
-                                                        <button
-                                                            type="button"
-                                                            key={doc.id}
-                                                            onClick={() =>
-                                                                toggle(doc)
-                                                            }
-                                                            className={`w-full rounded-md ${DIRECTORY_GRID_CLASS} py-2 pl-7 pr-2 text-xs transition-all text-left  ${
-                                                                selected
-                                                                    ? APP_SURFACE_ACTIVE_CLASS
-                                                                    : APP_SURFACE_HOVER_CLASS
-                                                            }`}
-                                                        >
-                                                            <span
-                                                                className={`shrink-0 h-3.5 w-3.5 rounded border flex items-center justify-center ${
-                                                                    selected
-                                                                        ? "bg-gray-900 border-gray-900"
-                                                                        : "border-gray-300"
-                                                                }`}
-                                                            >
-                                                                {selected && (
-                                                                    <Check className="h-2.5 w-2.5 text-white" />
-                                                                )}
-                                                            </span>
-                                                            <DocFileIcon
-                                                                fileType={
-                                                                    doc.file_type
-                                                                }
-                                                            />
-                                                            <span
-                                                                className={`min-w-0 truncate ${
-                                                                    selected
-                                                                        ? "text-gray-900"
-                                                                        : "text-gray-700"
-                                                                }`}
-                                                            >
-                                                                {doc.filename}
-                                                            </span>
-                                                            <FileDirectoryMetaCells
-                                                                version={versionLabel(
-                                                                    doc,
-                                                                )}
-                                                                created={formatDate(
-                                                                    doc.created_at,
-                                                                )}
-                                                                size={formatBytes(
-                                                                    doc.size_bytes,
-                                                                )}
-                                                            />
-                                                        </button>
-                                                    );
-                                                })
+                                                <>
+                                                    {!q &&
+                                                        renderFolderRows(
+                                                            projectFolders,
+                                                            docs,
+                                                            null,
+                                                            1,
+                                                        )}
+                                                    {(q
+                                                        ? docs
+                                                        : folderDocuments(
+                                                              docs,
+                                                              null,
+                                                          )
+                                                    ).map((doc) =>
+                                                        renderDocumentRow(
+                                                            doc,
+                                                            1,
+                                                        ),
+                                                    )}
+                                                </>
                                             )}
                                         </div>
                                     )}
@@ -741,15 +733,12 @@ export function FileDirectory({
     );
 }
 
-function FileDirectoryHeader({ indented = false }: { indented?: boolean }) {
+function FileDirectoryHeader() {
     return (
         <div
-            className={`${DIRECTORY_GRID_CLASS} ${
-                indented ? "pl-7 pr-2" : "px-2"
-            } pb-1 pt-0.5 text-[11px] font-medium text-gray-400`}
+            className={`${DIRECTORY_GRID_CLASS} px-2 pb-1 pt-0.5 text-[11px] font-medium text-gray-400`}
         >
-            <span />
-            <span className="col-span-2">Name</span>
+            <span className="col-span-3">Name</span>
             <span>Version</span>
             <span>Created</span>
             <span className="text-right">Size</span>
@@ -782,17 +771,19 @@ function FileDirectoryControls({
     onChange,
     selectedCount,
     showTabs,
+    tabs,
 }: {
     activeTab: DirectoryTab;
     onChange: (tab: DirectoryTab) => void;
     selectedCount: number;
     showTabs: boolean;
+    tabs: typeof DIRECTORY_TABS;
 }) {
     return (
         <div className="flex items-center justify-between gap-3 pr-2">
             {showTabs ? (
                 <div className="flex items-center gap-1.5">
-                    {DIRECTORY_TABS.map((tab) => {
+                    {tabs.map((tab) => {
                         const active = activeTab === tab.value;
                         return (
                             <TabPillButton

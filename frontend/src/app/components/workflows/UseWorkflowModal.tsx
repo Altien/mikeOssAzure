@@ -343,6 +343,9 @@ export function UseWorkflowModal({ workflows, workflow, onClose, skipSelect = fa
                     <div className="flex min-h-0 flex-1 flex-col">
                         <FileDirectory
                             documents={inProject ? projectDocs : undefined}
+                            folders={
+                                inProject ? selectedProject?.folders : undefined
+                            }
                             selectedDocuments={selectedDocuments}
                             onChange={setSelectedDocuments}
                             showTabs={!inProject}
