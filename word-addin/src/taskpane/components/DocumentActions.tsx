@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
   Wand2,
   SpellCheck,
@@ -9,6 +9,8 @@ import {
 import { streamAssistant } from "../api/stream";
 import { useWordDoc } from "../hooks/useWordDoc";
 import type { WordSelectionAnchor } from "../hooks/useWordDoc";
+import { parseRedlineEdits } from "../lib/redline";
+import type { RedlineEdit } from "../lib/redline";
 import { Button } from "@mike/shared/ui/button";
 import { Input } from "@mike/shared/ui/input";
 import { Label } from "@mike/shared/ui/label";
@@ -33,6 +35,24 @@ const emptySection = (): ActionSectionState => ({
 // Cap document text folded into a prompt so a large file can't blow past the
 // model context / token budget (the backend also caps this defensively).
 const MAX_DOC_CHARS = 200_000;
+
+// Shared contract for edits Mike must be able to apply automatically: the
+// parser (parseRedlineEdits) and the Word search in applyTrackedEdits both
+// depend on ORIGINAL being a verbatim, single-paragraph snippet.
+const REDLINE_FORMAT = `Report each item in exactly this format, with one blank line between items:
+
+ORIGINAL: <text copied character-for-character from the document — a contiguous snippet from a single paragraph, under 200 characters>
+REPLACEMENT: <the new text>
+REASON: <one short sentence>
+
+Copy ORIGINAL exactly (including capitalisation and punctuation) so the change can be applied to the document automatically. Do not add any other commentary.`;
+
+interface RedlineApplyState {
+  busy: boolean;
+  summary: string | null;
+}
+
+const idleApply = (): RedlineApplyState => ({ busy: false, summary: null });
 
 function ResultBox({ children }: { children: React.ReactNode }): React.ReactElement {
   return (
@@ -77,12 +97,15 @@ export function DocumentActions(): React.ReactElement {
     captureSelection,
     releaseSelection,
     replaceSelection,
+    applyTrackedEdits,
     insertBelowSelection,
   } = useWordDoc();
 
   const [improve, setImprove] = useState<ActionSectionState>(emptySection());
   const [proof, setProof] = useState<ActionSectionState>(emptySection());
   const [anon, setAnon] = useState<ActionSectionState>(emptySection());
+  const [proofApply, setProofApply] = useState<RedlineApplyState>(idleApply());
+  const [anonApply, setAnonApply] = useState<RedlineApplyState>(idleApply());
   const [draft, setDraft] = useState<ActionSectionState>(emptySection());
   const [draftPrompt, setDraftPrompt] = useState("");
   const [applyError, setApplyError] = useState<string | null>(null);
@@ -162,11 +185,12 @@ export function DocumentActions(): React.ReactElement {
   // ------------------------------------------------------------------
   const handleProofread = async (): Promise<void> => {
     setProof({ loading: true, result: "" });
+    setProofApply(idleApply());
     const controller = new AbortController();
     controllersRef.current.add(controller);
     try {
       const docText = (await readDocumentText()).slice(0, MAX_DOC_CHARS);
-      const prompt = `Proofread the following legal document. List every grammatical error, typo, punctuation issue, and stylistic inconsistency. For each issue, state the original text and your suggested correction:\n\n${docText}`;
+      const prompt = `Proofread the following legal document. Identify every grammatical error, typo, punctuation issue, and stylistic inconsistency.\n\n${REDLINE_FORMAT}\n\nIf there are no issues, reply exactly: No issues found.\n\n${docText}`;
       let accumulated = "";
       await streamAssistant(
         {
@@ -196,11 +220,12 @@ export function DocumentActions(): React.ReactElement {
   // ------------------------------------------------------------------
   const handleAnonymise = async (): Promise<void> => {
     setAnon({ loading: true, result: "" });
+    setAnonApply(idleApply());
     const controller = new AbortController();
     controllersRef.current.add(controller);
     try {
       const docText = (await readDocumentText()).slice(0, MAX_DOC_CHARS);
-      const prompt = `Identify all personally identifiable information (PII) in the following document — names, addresses, phone numbers, email addresses, dates of birth, identification numbers, and any other identifying information. For each occurrence, list: (1) the original text, and (2) an anonymised replacement. Present as a numbered list:\n\n${docText}`;
+      const prompt = `Identify all personally identifiable information (PII) in the following document — names, addresses, phone numbers, email addresses, dates of birth, identification numbers, and any other identifying information.\n\n${REDLINE_FORMAT}\n\nUse anonymised placeholders such as [PARTY A] or [ADDRESS 1] as the REPLACEMENT, and reuse the same placeholder for repeated references to the same person or detail. If there is no PII, reply exactly: No personally identifiable information found.\n\n${docText}`;
       let accumulated = "";
       await streamAssistant(
         {
@@ -256,6 +281,51 @@ export function DocumentActions(): React.ReactElement {
       });
     } finally {
       controllersRef.current.delete(controller);
+    }
+  };
+
+  // Model output only becomes applyable once the stream has finished cleanly;
+  // a mid-stream parse could apply a half-received edit.
+  const proofEdits = useMemo<RedlineEdit[]>(
+    () =>
+      !proof.loading && !proof.error && proof.result
+        ? parseRedlineEdits(proof.result)
+        : [],
+    [proof]
+  );
+  const anonEdits = useMemo<RedlineEdit[]>(
+    () =>
+      !anon.loading && !anon.error && anon.result
+        ? parseRedlineEdits(anon.result)
+        : [],
+    [anon]
+  );
+
+  const applyRedlines = async (
+    edits: RedlineEdit[],
+    noun: string,
+    setApply: React.Dispatch<React.SetStateAction<RedlineApplyState>>
+  ): Promise<void> => {
+    setApply({ busy: true, summary: null });
+    try {
+      const report = await applyTrackedEdits(edits);
+      const parts = [
+        `Applied ${report.applied} of ${edits.length} ${noun} as tracked changes.`,
+      ];
+      if (report.skipped.length > 0) {
+        parts.push(
+          `${report.skipped.length} skipped — the quoted text was not found in the document (it may have changed since the scan).`
+        );
+      }
+      setApply({ busy: false, summary: parts.join(" ") });
+    } catch (error) {
+      setApply({
+        busy: false,
+        summary:
+          error instanceof Error
+            ? error.message
+            : "Word couldn't apply the changes.",
+      });
     }
   };
 
@@ -336,7 +406,7 @@ export function DocumentActions(): React.ReactElement {
       {/* --- Proofread --- */}
       <Section
         title="Proofread"
-        description="Scan the whole document for errors and inconsistencies."
+        description="Scan the whole document and apply corrections as tracked changes."
         icon={SpellCheck}
       >
         <Button
@@ -349,12 +419,28 @@ export function DocumentActions(): React.ReactElement {
         </Button>
         {proof.loading && <Spinner label="Analysing…" />}
         {proof.result && <ResultBox>{proof.result}</ResultBox>}
+        {proofEdits.length > 0 && (
+          <Button
+            size="sm"
+            onClick={() => void applyRedlines(proofEdits, "corrections", setProofApply)}
+            disabled={proofApply.busy}
+          >
+            {proofApply.busy
+              ? "Applying…"
+              : `Apply ${proofEdits.length} correction${proofEdits.length === 1 ? "" : "s"} (tracked)`}
+          </Button>
+        )}
+        {proofApply.summary && (
+          <p role="status" className="text-xs text-muted-foreground">
+            {proofApply.summary}
+          </p>
+        )}
       </Section>
 
       {/* --- Anonymise --- */}
       <Section
         title="Anonymise"
-        description="Find personally identifiable information and suggest redactions."
+        description="Find personally identifiable information and redact it as tracked changes."
         icon={EyeOff}
       >
         <Button
@@ -367,6 +453,22 @@ export function DocumentActions(): React.ReactElement {
         </Button>
         {anon.loading && <Spinner label="Scanning…" />}
         {anon.result && <ResultBox>{anon.result}</ResultBox>}
+        {anonEdits.length > 0 && (
+          <Button
+            size="sm"
+            onClick={() => void applyRedlines(anonEdits, "redactions", setAnonApply)}
+            disabled={anonApply.busy}
+          >
+            {anonApply.busy
+              ? "Applying…"
+              : `Apply ${anonEdits.length} redaction${anonEdits.length === 1 ? "" : "s"} (tracked)`}
+          </Button>
+        )}
+        {anonApply.summary && (
+          <p role="status" className="text-xs text-muted-foreground">
+            {anonApply.summary}
+          </p>
+        )}
       </Section>
 
       {/* --- Draft Clause --- */}

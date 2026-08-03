@@ -153,8 +153,8 @@ One-click AI operations, each streaming their result into a result box:
 | Action | What it does |
 |---|---|
 | **Improve Writing** | Captures the exact selected range and rewrites it for clarity and professionalism. The result can replace that captured range with or without tracking. It never searches for and replaces a different duplicate elsewhere, and it refuses to apply if the selected range changed while the model was responding. |
-| **Proofread** | Reviews the **entire document** for grammar, typos, punctuation, and stylistic issues. Lists each problem with the original text and a suggested correction. Result is read-only (review and copy manually). |
-| **Anonymise** | Scans the **entire document** for PII (names, addresses, phone numbers, dates of birth, IDs, etc.) and produces a numbered list of occurrences with proposed anonymised replacements. Result is read-only. |
+| **Proofread** | Reviews the **entire document** for grammar, typos, punctuation, and stylistic issues. Streams each problem as an `ORIGINAL` / `REPLACEMENT` / `REASON` block, then offers **Apply N corrections (tracked)**: each original snippet is located in the document (exact, case-sensitive search) and replaced under `TrackAll`, producing genuine redlines the user can accept or reject in Word's Review tab. Corrections whose text can no longer be found (e.g. the document was edited after the scan) are skipped and reported, never guessed at. |
+| **Anonymise** | Scans the **entire document** for PII (names, addresses, phone numbers, dates of birth, IDs, etc.) and streams proposed anonymised replacements in the same format. **Apply N redactions (tracked)** replaces every occurrence of each PII string as a tracked change. |
 | **Draft Clause** | Enter a description of the clause you need, then click **Draft clause**. The result is normalised from model Markdown into Word paragraphs and can be inserted below the cursor with or without tracking. |
 
 ### Workflows tab
