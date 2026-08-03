@@ -43,11 +43,27 @@ module.exports = async (_env, options) => {
 
   if (isDev) {
     // Dev-only: self-signed HTTPS cert for the webpack-dev-server on
-    // localhost:3000. Required lazily so production builds (`--mode production`)
-    // don't depend on this dev-only package at all.
-    const { getHttpsServerOptions } = require("office-addin-dev-certs");
-    const httpsOptions = await getHttpsServerOptions();
-    devServerConfig.server = { type: "https", options: httpsOptions };
+    // localhost:3000. office-addin-dev-certs installs its CA into the OS
+    // keychain, which pops an admin prompt — impossible to approve in
+    // automated/headless environments. DEV_HTTPS_CERT/DEV_HTTPS_KEY serve
+    // existing cert files directly instead (the driving browser must then
+    // tolerate the untrusted cert, e.g. --ignore-certificate-errors).
+    if (process.env.DEV_HTTPS_CERT && process.env.DEV_HTTPS_KEY) {
+      const fs = require("fs");
+      devServerConfig.server = {
+        type: "https",
+        options: {
+          cert: fs.readFileSync(process.env.DEV_HTTPS_CERT),
+          key: fs.readFileSync(process.env.DEV_HTTPS_KEY),
+        },
+      };
+    } else {
+      // Required lazily so production builds (`--mode production`) don't
+      // depend on this dev-only package at all.
+      const { getHttpsServerOptions } = require("office-addin-dev-certs");
+      const httpsOptions = await getHttpsServerOptions();
+      devServerConfig.server = { type: "https", options: httpsOptions };
+    }
 
     // Word loads the task pane over HTTPS, and its WebView blocks "mixed content"
     // (HTTP requests from an HTTPS page). The Mike API and local Supabase only
