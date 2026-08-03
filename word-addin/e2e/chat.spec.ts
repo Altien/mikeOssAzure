@@ -212,3 +212,95 @@ test("the composer swaps Send for a Stop control while streaming, then restores"
   await expect(input).toBeEnabled({ timeout: 5000 });
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
 });
+
+// ---------------------------------------------------------------------------
+// Suggest tracked edits (chat redline mode)
+// ---------------------------------------------------------------------------
+test("'Suggest tracked edits' forces document context and sends the format contract invisibly", async ({
+  addin,
+  page,
+}) => {
+  const docText = "The Suplier shall deliver the goods.";
+  await addin.mockChatStream(["ok"]);
+  await addin.gotoTaskpane({ documentText: docText });
+  await addin.expectAuthedShell();
+
+  await page.getByRole("switch", { name: "Suggest tracked edits" }).click();
+  // Redline mode implies document context; its switch reflects that and locks.
+  await expect(
+    page.getByRole("switch", { name: "Use document as context" })
+  ).toBeDisabled();
+
+  await page.getByPlaceholder("Ask Mike…").fill("Fix the typos");
+  const requestPromise = page.waitForRequest("**/chat");
+  await page.getByRole("button", { name: "Send" }).click();
+  const request = await requestPromise;
+
+  const body = request.postDataJSON();
+  expect(body.documentContext).toBe(docText);
+  const lastMessage = body.messages[body.messages.length - 1];
+  expect(lastMessage.content).toMatch(/^Fix the typos/);
+  expect(lastMessage.content).toContain("ORIGINAL:");
+  expect(lastMessage.content).toContain("character-for-character");
+
+  // The transcript shows only what the user typed, never the appended contract.
+  await expect(page.getByText("Fix the typos")).toBeVisible();
+  await expect(page.getByText("character-for-character")).toHaveCount(0);
+});
+
+test("applies chat-proposed edits to the document as tracked changes", async ({
+  addin,
+  page,
+}) => {
+  await addin.mockChatStream([
+    "Two issues found.\n\n",
+    "ORIGINAL: The Suplier\nREPLACEMENT: The Supplier\nREASON: Typo.\n\n",
+    "ORIGINAL: shall deliver goods\nREPLACEMENT: shall deliver the goods\nREASON: Missing article.",
+  ]);
+  await addin.gotoTaskpane({
+    documentText: "The Suplier shall deliver goods to the Buyer.",
+  });
+  await addin.expectAuthedShell();
+
+  await page.getByPlaceholder("Ask Mike…").fill("Propose edits");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await page.getByRole("button", { name: "Apply 2 tracked edits" }).click();
+  await expect(
+    page.getByText("Applied 2 of 2 edits as tracked changes.")
+  ).toBeVisible();
+
+  const calls = await addin.wordCalls();
+  expect(calls.trackedChanges).toEqual([
+    { text: "The Supplier", location: "Replace", original: "The Suplier" },
+    {
+      text: "shall deliver the goods",
+      location: "Replace",
+      original: "shall deliver goods",
+    },
+  ]);
+  expect(calls.changeTrackingMode).toBe("TrackAll");
+  expect(calls.inserts).toEqual([]);
+});
+
+test("plain prose answers offer insert options but no tracked-edit apply", async ({
+  addin,
+  page,
+}) => {
+  await addin.mockChatStream(["Delaware law governs this agreement."]);
+  await addin.gotoTaskpane();
+  await addin.expectAuthedShell();
+
+  await page.getByPlaceholder("Ask Mike…").fill("What law governs?");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(
+    page.getByText("Delaware law governs this agreement.")
+  ).toBeVisible();
+
+  await expect(
+    page.getByRole("button", { name: "Insert below cursor" })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Apply \d+ tracked edit/ })
+  ).toHaveCount(0);
+});

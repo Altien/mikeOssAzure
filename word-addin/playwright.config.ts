@@ -32,6 +32,9 @@ export default defineConfig({
     ignoreHTTPSErrors: true,
     screenshot: "only-on-failure",
     trace: "on-first-retry",
+    // PW_VIDEO=1 records a webm per test (for demo/review reels); off by
+    // default because videos slow the suite and bloat CI artifacts.
+    video: process.env.PW_VIDEO === "1" ? "on" : "off",
   },
 
   projects: [

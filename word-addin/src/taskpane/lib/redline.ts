@@ -9,6 +9,17 @@
  * `applyTrackedEdits` can locate in the document with Word's search API.
  */
 
+// Shared contract for edits Mike must be able to apply automatically: the
+// parser below and the Word search in applyTrackedEdits both depend on
+// ORIGINAL being a verbatim, single-paragraph snippet.
+export const REDLINE_FORMAT = `Report each item in exactly this format, with one blank line between items:
+
+ORIGINAL: <text copied character-for-character from the document — a contiguous snippet from a single paragraph, under 200 characters>
+REPLACEMENT: <the new text>
+REASON: <one short sentence>
+
+Copy ORIGINAL exactly (including capitalisation and punctuation) so the change can be applied to the document automatically.`;
+
 export interface RedlineEdit {
   /** Exact text to locate in the document (verbatim, case-sensitive). */
   original: string;

@@ -9,7 +9,7 @@ import {
 import { streamAssistant } from "../api/stream";
 import { useWordDoc } from "../hooks/useWordDoc";
 import type { WordSelectionAnchor } from "../hooks/useWordDoc";
-import { parseRedlineEdits } from "../lib/redline";
+import { parseRedlineEdits, REDLINE_FORMAT } from "../lib/redline";
 import type { RedlineEdit } from "../lib/redline";
 import { Button } from "@mike/shared/ui/button";
 import { Input } from "@mike/shared/ui/input";
@@ -35,17 +35,6 @@ const emptySection = (): ActionSectionState => ({
 // Cap document text folded into a prompt so a large file can't blow past the
 // model context / token budget (the backend also caps this defensively).
 const MAX_DOC_CHARS = 200_000;
-
-// Shared contract for edits Mike must be able to apply automatically: the
-// parser (parseRedlineEdits) and the Word search in applyTrackedEdits both
-// depend on ORIGINAL being a verbatim, single-paragraph snippet.
-const REDLINE_FORMAT = `Report each item in exactly this format, with one blank line between items:
-
-ORIGINAL: <text copied character-for-character from the document — a contiguous snippet from a single paragraph, under 200 characters>
-REPLACEMENT: <the new text>
-REASON: <one short sentence>
-
-Copy ORIGINAL exactly (including capitalisation and punctuation) so the change can be applied to the document automatically. Do not add any other commentary.`;
 
 interface RedlineApplyState {
   busy: boolean;
@@ -190,7 +179,7 @@ export function DocumentActions(): React.ReactElement {
     controllersRef.current.add(controller);
     try {
       const docText = (await readDocumentText()).slice(0, MAX_DOC_CHARS);
-      const prompt = `Proofread the following legal document. Identify every grammatical error, typo, punctuation issue, and stylistic inconsistency.\n\n${REDLINE_FORMAT}\n\nIf there are no issues, reply exactly: No issues found.\n\n${docText}`;
+      const prompt = `Proofread the following legal document. Identify every grammatical error, typo, punctuation issue, and stylistic inconsistency.\n\n${REDLINE_FORMAT} Do not add any other commentary.\n\nIf there are no issues, reply exactly: No issues found.\n\n${docText}`;
       let accumulated = "";
       await streamAssistant(
         {
@@ -225,7 +214,7 @@ export function DocumentActions(): React.ReactElement {
     controllersRef.current.add(controller);
     try {
       const docText = (await readDocumentText()).slice(0, MAX_DOC_CHARS);
-      const prompt = `Identify all personally identifiable information (PII) in the following document — names, addresses, phone numbers, email addresses, dates of birth, identification numbers, and any other identifying information.\n\n${REDLINE_FORMAT}\n\nUse anonymised placeholders such as [PARTY A] or [ADDRESS 1] as the REPLACEMENT, and reuse the same placeholder for repeated references to the same person or detail. If there is no PII, reply exactly: No personally identifiable information found.\n\n${docText}`;
+      const prompt = `Identify all personally identifiable information (PII) in the following document — names, addresses, phone numbers, email addresses, dates of birth, identification numbers, and any other identifying information.\n\n${REDLINE_FORMAT} Do not add any other commentary.\n\nUse anonymised placeholders such as [PARTY A] or [ADDRESS 1] as the REPLACEMENT, and reuse the same placeholder for repeated references to the same person or detail. If there is no PII, reply exactly: No personally identifiable information found.\n\n${docText}`;
       let accumulated = "";
       await streamAssistant(
         {
