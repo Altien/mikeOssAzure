@@ -39,6 +39,14 @@ import {
     findMissingUserEmails,
     loadProfileUsersByEmail,
 } from "../lib/userLookup";
+import { parsePaginationQuery } from "../lib/pagination";
+import { normalizeSearchTerm } from "../lib/search";
+import { parseTabularReviewSort } from "../lib/sort";
+import {
+    buildTabularReviewIdsOverviewRpcArgs,
+    buildTabularReviewsOverviewRpcArgs,
+    parseTabularReviewScope,
+} from "../lib/tabularReviewsOverview";
 
 function formatPromptSuffix(format?: string, tags?: string[]): string {
     switch (format) {
@@ -484,15 +492,80 @@ tabularRouter.get("/", requireAuth, async (req, res) => {
         typeof req.query.project_id === "string" && req.query.project_id
             ? (req.query.project_id as string)
             : null;
+    const pagination = parsePaginationQuery(req.query as Record<string, unknown>);
+    const searchTerm = normalizeSearchTerm(req.query.search);
+    const sort = parseTabularReviewSort(req.query as Record<string, unknown>);
+    const scope = parseTabularReviewScope(req.query.scope);
 
-    const { data, error } = await db.rpc("get_tabular_reviews_overview", {
-        p_user_id: userId,
-        p_user_email: userEmail ?? null,
-        p_project_id: projectIdFilter,
+    const rpcArgs = buildTabularReviewsOverviewRpcArgs({
+        userId,
+        userEmail,
+        projectIdFilter,
+        scope,
+        pagination,
+        searchTerm,
+        sort,
     });
+
+    const { data, error } = await db.rpc("get_tabular_reviews_overview", rpcArgs);
     if (error) return void res.status(500).json({ detail: error.message });
 
     res.json(data ?? []);
+});
+
+// GET /tabular-review/ids (must come before /:reviewId routes)
+// Lightweight id + owner list for every review matching the current
+// filters — backs "select all matching" bulk actions so the client doesn't
+// have to page through full review payloads just to collect checkboxes.
+//
+// PostgREST enforces its own row cap on every RPC response (db-max-rows),
+// independent of anything this route asks for, and truncates silently
+// (206 + a shorter array, no error) rather than failing. So this pages
+// through the RPC itself — server-side, same-datacenter round trips — until
+// a page comes back empty, rather than trusting one call to return
+// everything.
+const TABULAR_REVIEW_IDS_PAGE_SIZE = 1000;
+const TABULAR_REVIEW_IDS_MAX_PAGES = 200; // guards a runaway loop, not a product limit
+
+tabularRouter.get("/ids", requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const db = createServerSupabase();
+
+    const projectIdFilter =
+        typeof req.query.project_id === "string" && req.query.project_id
+            ? (req.query.project_id as string)
+            : null;
+    const searchTerm = normalizeSearchTerm(req.query.search);
+    const scope = parseTabularReviewScope(req.query.scope);
+
+    const ids: { id: string; user_id: string }[] = [];
+    let offset = 0;
+    for (let page = 0; page < TABULAR_REVIEW_IDS_MAX_PAGES; page++) {
+        const rpcArgs = buildTabularReviewIdsOverviewRpcArgs({
+            userId,
+            userEmail,
+            projectIdFilter,
+            scope,
+            searchTerm,
+            pagination: { limit: TABULAR_REVIEW_IDS_PAGE_SIZE, offset },
+        });
+        const { data, error } = await db.rpc(
+            "get_tabular_review_ids_overview",
+            rpcArgs,
+        );
+        if (error) return void res.status(500).json({ detail: error.message });
+
+        const rows = (data ?? []) as { id: string; user_id: string }[];
+        if (rows.length === 0) break;
+        ids.push(...rows);
+        // Advance by what actually came back, not the requested page size —
+        // if PostgREST's cap is lower than TABULAR_REVIEW_IDS_PAGE_SIZE this
+        // still converges correctly instead of skipping rows.
+        offset += rows.length;
+    }
+
+    res.json(ids);
 });
 
 // POST /tabular-review

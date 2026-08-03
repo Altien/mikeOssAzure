@@ -8,7 +8,7 @@ import {
     type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, Loader2, Plus, Search } from "lucide-react";
+import { ChevronLeft, Loader2, Plus, Search, X } from "lucide-react";
 import { usePageChrome } from "@/app/contexts/PageChromeContext";
 import { cn } from "@/app/lib/utils";
 import {
@@ -292,21 +292,22 @@ function PageHeaderSearchActionControl({
     const [open, setOpen] = useState(false);
     const ref = useRef<HTMLDivElement>(null);
     const placeholder = action.placeholder ?? "Search…";
+    const hasValue = action.value.length > 0;
+    const expanded = open || hasValue;
 
     useEffect(() => {
         function handleClick(e: MouseEvent) {
             if (ref.current && !ref.current.contains(e.target as Node)) {
                 setOpen(false);
-                action.onChange("");
             }
         }
         if (open) document.addEventListener("mousedown", handleClick);
         return () => document.removeEventListener("mousedown", handleClick);
-    }, [open, action]);
+    }, [open]);
 
     return (
         <div ref={ref} className="relative flex items-center">
-            {open ? (
+            {expanded ? (
                 <div
                     className={cn(
                         pageHeaderActionControlClassName({
@@ -318,14 +319,28 @@ function PageHeaderSearchActionControl({
                 >
                     <Search className="h-3.5 w-3.5 text-gray-400 shrink-0" />
                     <input
-                        autoFocus
-                        disabled={disabled}
+                        autoFocus={open}
                         type="text"
                         placeholder={placeholder}
                         value={action.value}
                         onChange={(e) => action.onChange(e.target.value)}
+                        onFocus={() => setOpen(true)}
                         className="flex-1 text-sm text-gray-700 placeholder:text-gray-400 outline-none bg-transparent"
                     />
+                    {hasValue && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                action.onChange("");
+                                setOpen(false);
+                            }}
+                            disabled={disabled}
+                            aria-label="Clear search"
+                            className="shrink-0 rounded-full p-0.5 text-gray-400 transition-colors hover:bg-black/5 hover:text-gray-600"
+                        >
+                            <X className="h-3.5 w-3.5" />
+                        </button>
+                    )}
                 </div>
             ) : (
                 <PageHeaderActionButton

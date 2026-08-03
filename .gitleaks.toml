@@ -1,0 +1,37 @@
+# gitleaks config for the Secret scan workflow (.github/workflows/gitleaks.yml).
+#
+# Default rules apply everywhere. The allowlist below suppresses EXACT known
+# fake secret values (anchored regexes tested against the found secret), not
+# files: every entry is one verified fixture string. A real credential added
+# anywhere — including to the files that hold these fixtures — would still
+# fail the scan, because its value cannot equal a known fake.
+#
+# Deliberately NOT path-based. Verified against gitleaks 8.30.1 by planting
+# a high-entropy secret in an allowlisted fixture file and scanning history:
+# a path-only allowlist swallows it (0 leaks reported), this config flags it.
+# Path entries also make `gitleaks dir` skip the whole file unread, so even
+# a path+value AND combination is a trap for anyone scanning the worktree.
+#
+# The scan covers full git history, so entries must keep matching fixtures
+# in old commits even if the files that hold them later move or change.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "safeError unit-test fixtures: fake OpenAI-style key and fake token used to prove secrets get scrubbed from error output (backend/src/lib/__tests__/safeError.test.ts)"
+regexes = [
+    '''^sk-proj-abc123def456ghi789\.?$''',
+    '''^abcdef123456$''',
+]
+
+[[allowlists]]
+description = "Word add-in e2e fixture: mocked session token for the hermetic auth spec (word-addin/e2e/auth.spec.ts)"
+regexes = ['''^valid-jwt-123$''']
+
+[[allowlists]]
+description = "Supabase's public demo JWTs (iss: supabase-demo, HS256-signed with the published demo secret — the well-known local-dev anon/service_role keys from Supabase's own docs) in .env.example / docker-compose.yml history"
+regexes = [
+    '''^eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9\.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0$''',
+    '''^eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0\.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU$''',
+]

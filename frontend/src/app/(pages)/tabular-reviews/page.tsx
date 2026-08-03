@@ -1,15 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useDebouncedValue } from "@/app/hooks/useDebouncedValue";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronDown, Plus } from "lucide-react";
+import { ChevronDown, Loader2, Plus } from "lucide-react";
 import {
     RowActionMenuItems,
     RowActions,
 } from "@/app/components/shared/RowActions";
 import {
     deleteTabularReview,
-    listTabularReviews,
     createTabularReview,
     listProjects,
     updateTabularReview,
@@ -19,6 +19,7 @@ import { TableToolbar } from "@/app/components/shared/TableToolbar";
 import { NewTRModal } from "@/app/components/tabular/NewTRModal";
 import { TabularReviewDetailsModal } from "@/app/components/tabular/TabularReviewDetailsModal";
 import { OwnerOnlyPopup } from "@/app/components/popups/OwnerOnlyPopup";
+import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import {
@@ -42,8 +43,13 @@ import { PillButton } from "@/app/components/ui/pill-button";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 import { TabularReviewSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import { LiquidDropdownSurface } from "@/app/components/ui/liquid-dropdown";
+import {
+    type TabularReviewScope,
+    usePaginatedTabularReviews,
+} from "@/app/hooks/usePaginatedTabularReviews";
+import { deleteTabularReviewsWithConcurrency } from "@/app/lib/deleteTabularReviewsWithConcurrency";
 
-type ReviewScope = "all" | "in-project" | "standalone";
+type ReviewScope = TabularReviewScope;
 type ReviewSortKey = "name" | "columns" | "documents" | "created";
 
 const REVIEW_SCOPES: { id: ReviewScope; label: string }[] = [
@@ -55,7 +61,6 @@ const SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
     { value: "asc", label: "Ascending" },
     { value: "desc", label: "Descending" },
 ];
-
 function formatDate(iso: string) {
     return new Date(iso).toLocaleDateString(undefined, {
         day: "numeric",
@@ -65,9 +70,7 @@ function formatDate(iso: string) {
 }
 
 export default function TabularReviewsPage() {
-    const [reviews, setReviews] = useState<TabularReview[]>([]);
     const [projects, setProjects] = useState<Project[]>([]);
-    const [loading, setLoading] = useState(true);
     const [creating, setCreating] = useState(false);
     const [newTROpen, setNewTROpen] = useState(false);
     const [detailsReview, setDetailsReview] = useState<TabularReview | null>(
@@ -80,9 +83,37 @@ export default function TabularReviewsPage() {
         direction: TableSortDirection;
     } | null>(null);
     const [search, setSearch] = useState("");
-    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const debouncedSearch = useDebouncedValue(search, 250);
+    const {
+        reviews,
+        setReviews,
+        loading,
+        loadingMore,
+        hasMore,
+        error: loadError,
+        loadMoreError,
+        loadMore,
+        retry,
+        selectedReviewIds: selectedIds,
+        setSelectedReviewIds: setSelectedIds,
+        selectAllMatching,
+        selectingAll,
+        getReviewOwnerId,
+    } = usePaginatedTabularReviews({
+        projectId: projectFilter ?? undefined,
+        search: debouncedSearch,
+        selectionKey: search,
+        scope: activeScope,
+        sort,
+    });
     const [actionsOpen, setActionsOpen] = useState(false);
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
+    const [bulkDeleteNotice, setBulkDeleteNotice] = useState<string | null>(
+        null,
+    );
+    const [deletingReviewIds, setDeletingReviewIds] = useState<Set<string>>(
+        () => new Set(),
+    );
     const actionsRef = useRef<HTMLDivElement>(null);
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -95,20 +126,30 @@ export default function TabularReviewsPage() {
     );
 
     useEffect(() => {
-        Promise.all([
-            listTabularReviews().catch(() => []),
-            listProjects().catch(() => []),
-        ])
-            .then(([r, p]) => {
-                setReviews(r);
-                setProjects(p);
+        let cancelled = false;
+        void listProjects()
+            .then((loadedProjects) => {
+                if (!cancelled) setProjects(loadedProjects);
             })
-            .finally(() => setLoading(false));
+            .catch(() => {
+                if (!cancelled) setProjects([]);
+            });
+        return () => {
+            cancelled = true;
+        };
     }, []);
 
-    useEffect(() => {
-        setSelectedIds([]);
-    }, [activeScope, projectFilter]);
+    function handleLoadMore() {
+        void loadMore();
+    }
+
+    function handleScroll(event: React.UIEvent<HTMLDivElement>) {
+        if (loading || loadingMore || !hasMore) return;
+        const el = event.currentTarget;
+        const distanceToBottom =
+            el.scrollHeight - el.scrollTop - el.clientHeight;
+        if (distanceToBottom < 200) void loadMore();
+    }
 
     useEffect(() => {
         function handleClick(e: MouseEvent) {
@@ -127,52 +168,7 @@ export default function TabularReviewsPage() {
         () => new Map(projects.map((project) => [project.id, project.name])),
         [projects],
     );
-    const q = search.toLowerCase();
-    const filtered = useMemo(() => {
-        const rows = visibleReviews
-            .filter((r) => {
-                if (activeScope === "in-project") return !!r.project_id;
-                if (activeScope === "standalone") return !r.project_id;
-                return true;
-            })
-            .filter((r) => !projectFilter || r.project_id === projectFilter)
-            .filter((r) => !q || (r.title ?? "").toLowerCase().includes(q));
-
-        if (!sort) return rows;
-
-        return [...rows].sort((a, b) => {
-            const multiplier = sort.direction === "asc" ? 1 : -1;
-
-            if (sort.key === "columns") {
-                return (
-                    ((a.columns_config?.length ?? 0) -
-                        (b.columns_config?.length ?? 0)) *
-                    multiplier
-                );
-            }
-
-            if (sort.key === "documents") {
-                return (
-                    ((a.document_count ?? 0) - (b.document_count ?? 0)) *
-                    multiplier
-                );
-            }
-
-            if (sort.key === "created") {
-                return (
-                    (new Date(a.created_at).getTime() -
-                        new Date(b.created_at).getTime()) *
-                    multiplier
-                );
-            }
-
-            return (
-                (a.title ?? "Untitled Review").localeCompare(
-                    b.title ?? "Untitled Review",
-                ) * multiplier
-            );
-        });
-    }, [activeScope, projectFilter, q, sort, visibleReviews]);
+    const filtered = visibleReviews;
 
     const allSelected =
         filtered.length > 0 &&
@@ -182,7 +178,7 @@ export default function TabularReviewsPage() {
 
     function toggleAll() {
         if (allSelected) setSelectedIds([]);
-        else setSelectedIds(filtered.map((r) => r.id));
+        else void selectAllMatching();
     }
 
     function toggleOne(id: string) {
@@ -271,20 +267,60 @@ export default function TabularReviewsPage() {
     async function handleDeleteSelected() {
         const ids = [...selectedIds];
         setActionsOpen(false);
+        setBulkDeleteNotice(null);
         const owned = ids.filter((id) => {
-            const r = reviews.find((rr) => rr.id === id);
-            return !r || !user?.id || r.user_id === user.id;
+            const ownerId = getReviewOwnerId(id);
+            return !!ownerId && (!user?.id || ownerId === user.id);
         });
         const blocked = ids.length - owned.length;
         setSelectedIds([]);
-        await Promise.all(
-            owned.map((id) => deleteTabularReview(id).catch(() => {})),
-        );
-        setReviews((prev) => prev.filter((r) => !owned.includes(r.id)));
-        if (blocked > 0) {
-            setOwnerOnlyAction(
-                `delete ${blocked} of the selected reviews — only the review creator can delete a review`,
+        setDeletingReviewIds((current) => {
+            const next = new Set(current);
+            for (const id of owned) next.add(id);
+            return next;
+        });
+        const { deletedIds, failedIds } =
+            await deleteTabularReviewsWithConcurrency(
+                owned,
+                deleteTabularReview,
             );
+        setDeletingReviewIds((current) => {
+            const next = new Set(current);
+            for (const id of owned) next.delete(id);
+            return next;
+        });
+        setSelectedIds(failedIds);
+        setReviews((prev) =>
+            prev.filter((review) => !deletedIds.includes(review.id)),
+        );
+        const notices = [
+            blocked > 0
+                ? `${blocked} selected review${blocked === 1 ? " was" : "s were"} skipped because only the review creator can delete them.`
+                : null,
+            failedIds.length > 0
+                ? `${failedIds.length} review${failedIds.length === 1 ? " was" : "s were"} not deleted because the request failed. ${failedIds.length === 1 ? "It remains" : "They remain"} selected so you can try again.`
+                : null,
+        ].filter((notice): notice is string => notice !== null);
+        if (notices.length > 0) setBulkDeleteNotice(notices.join(" "));
+    }
+
+    async function handleDeleteReviewRow(review: TabularReview) {
+        if (user?.id && review.user_id !== user.id) {
+            setOwnerOnlyAction("delete this tabular review");
+            return;
+        }
+        setDeletingReviewIds((current) => new Set(current).add(review.id));
+        try {
+            await deleteTabularReview(review.id);
+            setReviews((prev) =>
+                prev.filter((current) => current.id !== review.id),
+            );
+        } finally {
+            setDeletingReviewIds((current) => {
+                const next = new Set(current);
+                next.delete(review.id);
+                return next;
+            });
         }
     }
 
@@ -352,9 +388,7 @@ export default function TabularReviewsPage() {
     const toolbarActions =
         selectedIds.length > 0 ? (
             <div ref={actionsRef} className="relative">
-                <TabPillButton
-                    onClick={() => setActionsOpen((v) => !v)}
-                >
+                <TabPillButton onClick={() => setActionsOpen((v) => !v)}>
                     Actions
                     <ChevronDown className="h-3.5 w-3.5" />
                 </TabPillButton>
@@ -408,6 +442,7 @@ export default function TabularReviewsPage() {
 
             {/* Table */}
             <TableScrollArea
+                onScroll={handleScroll}
                 header={
                     <TableHeaderRow>
                         <TableStickyCell header>
@@ -417,6 +452,10 @@ export default function TabularReviewsPage() {
                                 <input
                                     type="checkbox"
                                     checked={allSelected}
+                                    disabled={
+                                        selectingAll ||
+                                        deletingReviewIds.size > 0
+                                    }
                                     ref={(el) => {
                                         if (el) el.indeterminate = someSelected;
                                     }}
@@ -458,10 +497,7 @@ export default function TabularReviewsPage() {
                 {effectiveLoading ? (
                     <TableBody>
                         {[1, 2, 3].map((i) => (
-                            <TableRow
-                                key={i}
-                                interactive={false}
-                            >
+                            <TableRow key={i} interactive={false}>
                                 <TableStickyCell
                                     hover={false}
                                     bgClassName="bg-transparent"
@@ -485,9 +521,28 @@ export default function TabularReviewsPage() {
                             </TableRow>
                         ))}
                     </TableBody>
+                ) : loadError ? (
+                    <TableEmptyState>
+                        <p className="text-lg font-medium font-serif text-gray-900">
+                            Unable to load reviews
+                        </p>
+                        <p className="mt-1 text-xs text-gray-400">
+                            Check your connection and try again.
+                        </p>
+                        <PillButton
+                            tone="black"
+                            size="sm"
+                            onClick={retry}
+                            className="mt-4 px-3"
+                        >
+                            Try again
+                        </PillButton>
+                    </TableEmptyState>
                 ) : filtered.length === 0 ? (
                     <TableEmptyState>
-                        {activeScope === "all" && !projectFilter ? (
+                        {activeScope === "all" &&
+                        !projectFilter &&
+                        !debouncedSearch ? (
                             <>
                                 <TabularReviewSkeuoIcon className="mb-4 h-8 w-8" />
                                 <p className="text-2xl font-medium font-serif text-gray-900">
@@ -520,51 +575,64 @@ export default function TabularReviewsPage() {
                             const projectName = review.project_id
                                 ? projectNameById.get(review.project_id)
                                 : null;
+                            const deleting = deletingReviewIds.has(review.id);
                             return (
                                 <TableRow
                                     key={review.id}
-                                    selected={selectedIds.includes(review.id)}
-                                    rightClickDropdown={(close, menuProps) => (
-                                        <RowActionMenuItems
-                                            onClose={close}
-                                            surfaceProps={menuProps}
-                                            onEditDetails={() => {
-                                                requestReviewDetails(review);
-                                            }}
-                                            onDelete={async () => {
-                                                if (
-                                                    user?.id &&
-                                                    review.user_id !== user.id
-                                                ) {
-                                                    setOwnerOnlyAction(
-                                                        "delete this tabular review",
-                                                    );
-                                                    return;
-                                                }
-                                                await deleteTabularReview(
-                                                    review.id,
-                                                );
-                                                setReviews((prev) =>
-                                                    prev.filter(
-                                                        (r) =>
-                                                            r.id !== review.id,
-                                                    ),
-                                                );
-                                            }}
-                                        />
-                                    )}
-                                    onClick={() => {
-                                        router.push(
-                                            review.project_id
-                                                ? `/projects/${review.project_id}/tabular-reviews/${review.id}`
-                                                : `/tabular-reviews/${review.id}`,
-                                        );
-                                    }}
+                                    interactive={!deleting}
+                                    selected={
+                                        !deleting &&
+                                        selectedIds.includes(review.id)
+                                    }
+                                    rightClickDropdown={
+                                        deleting
+                                            ? undefined
+                                            : (close, menuProps) => (
+                                                  <RowActionMenuItems
+                                                      onClose={close}
+                                                      surfaceProps={menuProps}
+                                                      onEditDetails={() => {
+                                                          requestReviewDetails(
+                                                              review,
+                                                          );
+                                                      }}
+                                                      onDelete={() =>
+                                                          handleDeleteReviewRow(
+                                                              review,
+                                                          )
+                                                      }
+                                                  />
+                                              )
+                                    }
+                                    onClick={
+                                        deleting
+                                            ? undefined
+                                            : () => {
+                                                  router.push(
+                                                      review.project_id
+                                                          ? `/projects/${review.project_id}/tabular-reviews/${review.id}`
+                                                          : `/tabular-reviews/${review.id}`,
+                                                  );
+                                              }
+                                    }
+                                    className={
+                                        deleting
+                                            ? "pointer-events-none opacity-50"
+                                            : undefined
+                                    }
                                 >
                                     <TablePrimaryCell
-                                        selected={selectedIds.includes(
-                                            review.id,
-                                        )}
+                                                selected={
+                                                    !deleting &&
+                                                    selectedIds.includes(
+                                                        review.id,
+                                                    )
+                                                }
+                                        selectionIndicator={
+                                            deleting ? (
+                                                <Loader2 className="mr-4 h-3 w-3 shrink-0 animate-spin text-gray-400" />
+                                            ) : undefined
+                                        }
                                         onSelectionChange={() =>
                                             toggleOne(review.id)
                                         }
@@ -604,32 +672,33 @@ export default function TabularReviewsPage() {
                                             onEditDetails={() => {
                                                 requestReviewDetails(review);
                                             }}
-                                            onDelete={async () => {
-                                                if (
-                                                    user?.id &&
-                                                    review.user_id !== user.id
-                                                ) {
-                                                    setOwnerOnlyAction(
-                                                        "delete this tabular review",
-                                                    );
-                                                    return;
-                                                }
-                                                await deleteTabularReview(
-                                                    review.id,
-                                                );
-                                                setReviews((prev) =>
-                                                    prev.filter(
-                                                        (r) =>
-                                                            r.id !== review.id,
-                                                    ),
-                                                );
-                                            }}
-                                            />
+                                            onDelete={() =>
+                                                handleDeleteReviewRow(review)
+                                            }
+                                        />
                                     </div>
                                 </TableRow>
                             );
                         })}
                     </TableBody>
+                )}
+                {!effectiveLoading && hasMore && filtered.length > 0 && (
+                    <div className="flex justify-center py-3">
+                        <button
+                            onClick={handleLoadMore}
+                            disabled={loadingMore}
+                            className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-gray-500 transition-colors hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                            {loadingMore && (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                            )}
+                            {loadingMore
+                                ? "Loading…"
+                                : loadMoreError
+                                  ? "Retry loading"
+                                  : "Load more"}
+                        </button>
+                    </div>
                 )}
             </TableScrollArea>
 
@@ -656,6 +725,12 @@ export default function TabularReviewsPage() {
                 open={!!ownerOnlyAction}
                 action={ownerOnlyAction ?? undefined}
                 onClose={() => setOwnerOnlyAction(null)}
+            />
+            <WarningPopup
+                open={!!bulkDeleteNotice}
+                title="Some reviews were not deleted"
+                message={bulkDeleteNotice}
+                onClose={() => setBulkDeleteNotice(null)}
             />
         </div>
     );

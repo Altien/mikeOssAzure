@@ -1,11 +1,17 @@
 import { Router } from "express";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth, requireMfaIfEnrolled } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import { createClient } from "@supabase/supabase-js";
 import {
   attachActiveVersionPaths,
   attachLatestVersionNumbers,
+  contentSha256,
 } from "../lib/documentVersions";
+import { safeErrorLog } from "../lib/safeError";
+import {
+  buildProjectExportManifest,
+  projectManifestFilename,
+} from "../lib/userDataExport";
 import {
   deleteFile,
   downloadFile,
@@ -479,6 +485,46 @@ projectsRouter.get("/:projectId/documents", requireAuth, async (req, res) => {
   res.json(docsTyped);
 });
 
+// GET /projects/:projectId/export — tamper-evident manifest of the project's
+// documents: every version with its content_sha256 plus the accept/reject
+// trail, under a SHA-256 digest that is Ed25519-signed when the deployment has
+// MANIFEST_SIGNING_KEY set. To check an export, recompute a downloaded file's
+// SHA-256 and compare, then check the manifest's signature against the key
+// served at GET /manifest-signing-key. See the README.
+projectsRouter.get(
+  "/:projectId/export",
+  requireAuth,
+  requireMfaIfEnrolled,
+  async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const { projectId } = req.params;
+    const db = createServerSupabase();
+
+    const access = await checkProjectAccess(projectId, userId, userEmail, db);
+    if (!access.ok)
+      return void res.status(404).json({ detail: "Project not found" });
+
+    try {
+      const data = await buildProjectExportManifest(db, projectId);
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${projectManifestFilename(projectId)}"`,
+      );
+      res.json(data);
+    } catch (err) {
+      console.error("[projects/export] failed", {
+        projectId,
+        error: safeErrorLog(err),
+      });
+      res
+        .status(500)
+        .json({ detail: "Failed to build project export manifest" });
+    }
+  },
+);
+
 // POST /projects/:projectId/documents/:documentId — assign or copy existing doc into project
 projectsRouter.post(
   "/:projectId/documents/:documentId",
@@ -619,6 +665,7 @@ projectsRouter.post(
               (srcV.size_bytes as number | null) ?? doc.size_bytes ?? null,
             page_count:
               (srcV.page_count as number | null) ?? doc.page_count ?? null,
+            content_sha256: contentSha256(srcBytes),
           })
           .select("id")
           .single();
@@ -1030,6 +1077,7 @@ export async function handleDocumentUpload(
         file_type: suffix,
         size_bytes: content.byteLength,
         page_count: pageCount,
+        content_sha256: contentSha256(content),
       })
       .select("id")
       .single();
