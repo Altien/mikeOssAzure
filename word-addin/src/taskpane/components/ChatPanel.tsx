@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { MessageSquareText } from "lucide-react";
 import { streamAssistant } from "../api/stream";
 import { useWordDoc } from "../hooks/useWordDoc";
+import { parseRedlineEdits, REDLINE_FORMAT } from "../lib/redline";
 import { UserBubble, AssistantBubble } from "@mike/shared/chat/ChatBubble";
 import { ChatInput } from "@mike/shared/chat/ChatInput";
 import { Button } from "@mike/shared/ui/button";
@@ -13,15 +14,24 @@ interface Message {
   content: string;
 }
 
+// Appended to the outgoing user turn (never shown in the transcript) while
+// "Suggest tracked edits" is on, so the answer parses into applyable edits.
+const REDLINE_CHAT_INSTRUCTION = `\n\nWhen your answer proposes changes to existing document text: ${REDLINE_FORMAT} You may explain your reasoning in prose around the items.`;
+
 export function ChatPanel(): React.ReactElement {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [useDocContext, setUseDocContext] = useState(false);
+  const [redlineMode, setRedlineMode] = useState(false);
+  const [applyByIndex, setApplyByIndex] = useState<
+    Record<number, { busy: boolean; summary: string | null }>
+  >({});
   const listRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
-  const { readDocumentText, insertBelowSelection } = useWordDoc();
+  const { readDocumentText, insertBelowSelection, applyTrackedEdits } =
+    useWordDoc();
 
   // Auto-scroll on new content
   useEffect(() => {
@@ -47,7 +57,9 @@ export function ChatPanel(): React.ReactElement {
     if (!text || streaming) return;
 
     let documentContext: string | undefined;
-    if (useDocContext) {
+    // Redline mode is meaningless without the document text: the model must
+    // copy ORIGINAL snippets verbatim from it for the edits to be findable.
+    if (useDocContext || redlineMode) {
       try {
         documentContext = await readDocumentText();
       } catch {
@@ -57,6 +69,14 @@ export function ChatPanel(): React.ReactElement {
 
     const userMsg: Message = { role: "user", content: text };
     const history: Message[] = [...messages, userMsg];
+    // The transcript shows what the user typed; the request carries the
+    // format contract so the answer parses into applyable edits.
+    const apiHistory: Message[] = redlineMode
+      ? [
+          ...messages,
+          { role: "user", content: text + REDLINE_CHAT_INSTRUCTION },
+        ]
+      : history;
 
     setMessages(history);
     setInput("");
@@ -74,7 +94,7 @@ export function ChatPanel(): React.ReactElement {
 
     try {
       await streamAssistant(
-        { messages: history, documentContext, signal: controller.signal },
+        { messages: apiHistory, documentContext, signal: controller.signal },
         (chunk) => {
           setMessages((prev) => {
             const next = [...prev];
@@ -111,6 +131,41 @@ export function ChatPanel(): React.ReactElement {
     }
   };
 
+  const applyMessageEdits = async (index: number, content: string): Promise<void> => {
+    const edits = parseRedlineEdits(content);
+    if (edits.length === 0) return;
+    setApplyByIndex((prev) => ({
+      ...prev,
+      [index]: { busy: true, summary: null },
+    }));
+    try {
+      const report = await applyTrackedEdits(edits);
+      const parts = [
+        `Applied ${report.applied} of ${edits.length} edit${edits.length === 1 ? "" : "s"} as tracked changes.`,
+      ];
+      if (report.skipped.length > 0) {
+        parts.push(
+          `${report.skipped.length} skipped — the quoted text was not found in the document.`
+        );
+      }
+      setApplyByIndex((prev) => ({
+        ...prev,
+        [index]: { busy: false, summary: parts.join(" ") },
+      }));
+    } catch (error) {
+      setApplyByIndex((prev) => ({
+        ...prev,
+        [index]: {
+          busy: false,
+          summary:
+            error instanceof Error
+              ? error.message
+              : "Word couldn't apply the changes.",
+        },
+      }));
+    }
+  };
+
   const hasMessages = messages.length > 0;
 
   return (
@@ -136,16 +191,34 @@ export function ChatPanel(): React.ReactElement {
           ref={listRef}
           className="flex flex-1 flex-col gap-4 overflow-y-auto px-3 py-4 @sm:px-4"
         >
-          {messages.map((msg, i) =>
-            msg.role === "user" ? (
-              <UserBubble key={i} content={msg.content} />
-            ) : (
+          {messages.map((msg, i) => {
+            if (msg.role === "user") {
+              return <UserBubble key={i} content={msg.content} />;
+            }
+            // Only completed answers are parsed: applying a half-streamed
+            // edit could redline the document with a truncated replacement.
+            const isComplete = !streaming || i < messages.length - 1;
+            const edits =
+              isComplete && msg.content ? parseRedlineEdits(msg.content) : [];
+            const applyState = applyByIndex[i];
+            return (
               <AssistantBubble
                 key={i}
                 content={msg.content}
                 actions={
                   msg.content ? (
                     <>
+                      {edits.length > 0 && (
+                        <Button
+                          size="sm"
+                          onClick={() => void applyMessageEdits(i, msg.content)}
+                          disabled={applyState?.busy}
+                        >
+                          {applyState?.busy
+                            ? "Applying…"
+                            : `Apply ${edits.length} tracked edit${edits.length === 1 ? "" : "s"}`}
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         variant="outline"
@@ -160,12 +233,20 @@ export function ChatPanel(): React.ReactElement {
                       >
                         Insert below (tracked)
                       </Button>
+                      {applyState?.summary && (
+                        <p
+                          role="status"
+                          className="w-full text-xs text-muted-foreground"
+                        >
+                          {applyState.summary}
+                        </p>
+                      )}
                     </>
                   ) : undefined
                 }
               />
-            )
-          )}
+            );
+          })}
           {streaming && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Spinner />
@@ -186,15 +267,26 @@ export function ChatPanel(): React.ReactElement {
           disabled={streaming}
           placeholder="Ask Mike…"
           leftSlot={
-            <label className="flex min-w-0 cursor-pointer items-center gap-2 text-xs text-muted-foreground select-none">
-              <Switch
-                checked={useDocContext}
-                onCheckedChange={(v) => setUseDocContext(!!v)}
-                disabled={streaming}
-                aria-label="Use document as context"
-              />
-              <span className="truncate">Use document as context</span>
-            </label>
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+              <label className="flex min-w-0 cursor-pointer items-center gap-2 text-xs text-muted-foreground select-none">
+                <Switch
+                  checked={useDocContext || redlineMode}
+                  onCheckedChange={(v) => setUseDocContext(!!v)}
+                  disabled={streaming || redlineMode}
+                  aria-label="Use document as context"
+                />
+                <span className="truncate">Use document as context</span>
+              </label>
+              <label className="flex min-w-0 cursor-pointer items-center gap-2 text-xs text-muted-foreground select-none">
+                <Switch
+                  checked={redlineMode}
+                  onCheckedChange={(v) => setRedlineMode(!!v)}
+                  disabled={streaming}
+                  aria-label="Suggest tracked edits"
+                />
+                <span className="truncate">Suggest tracked edits</span>
+              </label>
+            </div>
           }
         />
       </div>
