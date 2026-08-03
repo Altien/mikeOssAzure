@@ -12,6 +12,12 @@ export interface RedlineApplyReport {
   /** Edits whose original text was found and replaced (every occurrence). */
   applied: number;
   skipped: { original: string; reason: "not-found" | "unsearchable" }[];
+  /**
+   * One entry per edit that was actually searched for, in order, with how
+   * many occurrences Word found (0 for not-found). Drives the "Found …"
+   * event rows in the UI.
+   */
+  found: { original: string; matches: number }[];
 }
 
 // Word's search API matches within a paragraph only and rejects long search
@@ -175,7 +181,7 @@ export function useWordDoc() {
       await context.sync();
 
       const originalMode = doc.changeTrackingMode;
-      const report: RedlineApplyReport = { applied: 0, skipped: [] };
+      const report: RedlineApplyReport = { applied: 0, skipped: [], found: [] };
 
       try {
         doc.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
@@ -195,6 +201,7 @@ export function useWordDoc() {
           matches.load("items");
           await context.sync();
 
+          report.found.push({ original, matches: matches.items.length });
           if (matches.items.length === 0) {
             report.skipped.push({ original, reason: "not-found" });
             continue;

@@ -4,11 +4,13 @@ import { listWorkflows } from "../api/mikeApi";
 import { streamAssistant } from "../api/stream";
 import type { Workflow } from "@mike/core";
 import { useWordDoc } from "../hooks/useWordDoc";
-import { Button } from "@mike/shared/ui/button";
 import { Label } from "@mike/shared/ui/label";
 import { Spinner } from "@mike/shared/ui/spinner";
 import { Select } from "@mike/shared/ui/select";
 import { Markdown } from "@mike/shared/chat/Markdown";
+import { PillButton } from "./assistant/PillButton";
+import { EventBlock } from "./assistant/EventBlocks";
+import { RESPONSE_GLASS_SURFACE } from "./assistant/messageStyles";
 
 export function WorkflowPicker(): React.ReactElement {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
@@ -133,15 +135,21 @@ export function WorkflowPicker(): React.ReactElement {
         )}
       </div>
 
-      <Button
+      <PillButton
+        tone="black"
+        size="normal"
         className="w-full"
         onClick={() => void handleRun()}
         disabled={running || !selectedId}
       >
         {running ? "Running…" : "Run workflow on document"}
-      </Button>
+      </PillButton>
 
-      {running && <Spinner label="Running…" />}
+      {running && (
+        <EventBlock isStreaming dotColor="gray">
+          Running…
+        </EventBlock>
+      )}
 
       {runError && (
         <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -151,18 +159,19 @@ export function WorkflowPicker(): React.ReactElement {
 
       {result && (
         <div className="flex min-h-0 flex-1 flex-col gap-2">
-          <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border/70 bg-muted/40 p-3">
+          <div
+            className={`min-h-0 flex-1 overflow-y-auto p-3 font-serif text-[15px] leading-relaxed text-gray-900 ${RESPONSE_GLASS_SURFACE}`}
+          >
             <Markdown>{result}</Markdown>
           </div>
           {!running && (
-            <Button
-              size="sm"
-              variant="outline"
+            <PillButton
+              tone="white"
               className="self-start"
               onClick={() => void insertBelowSelection(result)}
             >
               Insert below cursor
-            </Button>
+            </PillButton>
           )}
         </div>
       )}

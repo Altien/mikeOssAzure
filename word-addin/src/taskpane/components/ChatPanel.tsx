@@ -2,21 +2,43 @@ import React, { useState, useRef, useEffect } from "react";
 import { MessageSquareText } from "lucide-react";
 import { streamAssistant } from "../api/stream";
 import { useWordDoc } from "../hooks/useWordDoc";
-import { parseRedlineEdits, REDLINE_FORMAT } from "../lib/redline";
-import { UserBubble, AssistantBubble } from "@mike/shared/chat/ChatBubble";
+import type { RedlineApplyReport } from "../hooks/useWordDoc";
+import {
+  parseRedlineEdits,
+  stripRedlineBlocks,
+  REDLINE_FORMAT,
+} from "../lib/redline";
+import { Markdown } from "@mike/shared/chat/Markdown";
 import { ChatInput } from "@mike/shared/chat/ChatInput";
-import { Button } from "@mike/shared/ui/button";
 import { Switch } from "@mike/shared/ui/switch";
-import { Spinner } from "@mike/shared/ui/spinner";
+import { UserMessage } from "./assistant/UserMessage";
+import { PreResponseWrapper } from "./assistant/PreResponseWrapper";
+import { DocReadBlock, DocFindBlock, EventBlock } from "./assistant/EventBlocks";
+import { EditCard } from "./assistant/EditCard";
+import { EditCardsSection } from "./assistant/EditCardsSection";
+import { PillButton } from "./assistant/PillButton";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
+  /**
+   * Assistant turns only: the pane read the live document before asking the
+   * model (doc-context or redline mode) — rendered as a "Read" event in the
+   * pre-response strip, mirroring the web app.
+   */
+  docRead?: boolean;
 }
 
 // Appended to the outgoing user turn (never shown in the transcript) while
 // "Suggest tracked edits" is on, so the answer parses into applyable edits.
 const REDLINE_CHAT_INSTRUCTION = `\n\nWhen your answer proposes changes to existing document text: ${REDLINE_FORMAT} You may explain your reasoning in prose around the items.`;
+
+interface ApplyState {
+  busy: boolean;
+  summary: string | null;
+  /** Per-edit Word search results from the last apply (drives "Found" rows). */
+  found: RedlineApplyReport["found"] | null;
+}
 
 export function ChatPanel(): React.ReactElement {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -24,9 +46,9 @@ export function ChatPanel(): React.ReactElement {
   const [streaming, setStreaming] = useState(false);
   const [useDocContext, setUseDocContext] = useState(false);
   const [redlineMode, setRedlineMode] = useState(false);
-  const [applyByIndex, setApplyByIndex] = useState<
-    Record<number, { busy: boolean; summary: string | null }>
-  >({});
+  const [applyByIndex, setApplyByIndex] = useState<Record<number, ApplyState>>(
+    {}
+  );
   const listRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
@@ -85,7 +107,7 @@ export function ChatPanel(): React.ReactElement {
     // Append empty assistant slot so the user sees it filling in
     const withPlaceholder: Message[] = [
       ...history,
-      { role: "assistant", content: "" },
+      { role: "assistant", content: "", docRead: documentContext !== undefined },
     ];
     setMessages(withPlaceholder);
 
@@ -94,7 +116,11 @@ export function ChatPanel(): React.ReactElement {
 
     try {
       await streamAssistant(
-        { messages: apiHistory, documentContext, signal: controller.signal },
+        {
+          messages: apiHistory.map(({ role, content }) => ({ role, content })),
+          documentContext,
+          signal: controller.signal,
+        },
         (chunk) => {
           setMessages((prev) => {
             const next = [...prev];
@@ -136,7 +162,7 @@ export function ChatPanel(): React.ReactElement {
     if (edits.length === 0) return;
     setApplyByIndex((prev) => ({
       ...prev,
-      [index]: { busy: true, summary: null },
+      [index]: { busy: true, summary: null, found: null },
     }));
     try {
       const report = await applyTrackedEdits(edits);
@@ -150,7 +176,7 @@ export function ChatPanel(): React.ReactElement {
       }
       setApplyByIndex((prev) => ({
         ...prev,
-        [index]: { busy: false, summary: parts.join(" ") },
+        [index]: { busy: false, summary: parts.join(" "), found: report.found },
       }));
     } catch (error) {
       setApplyByIndex((prev) => ({
@@ -161,6 +187,7 @@ export function ChatPanel(): React.ReactElement {
             error instanceof Error
               ? error.message
               : "Word couldn't apply the changes.",
+          found: null,
         },
       }));
     }
@@ -193,66 +220,107 @@ export function ChatPanel(): React.ReactElement {
         >
           {messages.map((msg, i) => {
             if (msg.role === "user") {
-              return <UserBubble key={i} content={msg.content} />;
+              return <UserMessage key={i} content={msg.content} />;
             }
+            const isLast = i === messages.length - 1;
+            const streamingThis = streaming && isLast;
             // Only completed answers are parsed: applying a half-streamed
             // edit could redline the document with a truncated replacement.
-            const isComplete = !streaming || i < messages.length - 1;
+            const isComplete = !streamingThis;
             const edits =
               isComplete && msg.content ? parseRedlineEdits(msg.content) : [];
+            const prose =
+              edits.length > 0 ? stripRedlineBlocks(msg.content) : msg.content;
             const applyState = applyByIndex[i];
+            const waitingForAnswer = streamingThis && !msg.content;
             return (
-              <AssistantBubble
-                key={i}
-                content={msg.content}
-                actions={
-                  msg.content ? (
-                    <>
-                      {edits.length > 0 && (
-                        <Button
-                          size="sm"
-                          onClick={() => void applyMessageEdits(i, msg.content)}
-                          disabled={applyState?.busy}
-                        >
-                          {applyState?.busy
-                            ? "Applying…"
-                            : `Apply ${edits.length} tracked edit${edits.length === 1 ? "" : "s"}`}
-                        </Button>
-                      )}
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => void insertBelowSelection(msg.content)}
+              <div key={i} className="flex w-full flex-col gap-3">
+                {/* Pre-response activity strip (matches the web assistant). */}
+                {(msg.docRead || waitingForAnswer) && (
+                  <PreResponseWrapper
+                    stepCount={msg.docRead ? 1 : 0}
+                    shouldMinimize={!!msg.content}
+                    isStreaming={waitingForAnswer}
+                  >
+                    {msg.docRead ? (
+                      <DocReadBlock
+                        filename="Current document"
+                        isStreaming={waitingForAnswer}
+                      />
+                    ) : (
+                      <EventBlock isStreaming dotColor="gray">
+                        Thinking...
+                      </EventBlock>
+                    )}
+                  </PreResponseWrapper>
+                )}
+                {prose && (
+                  <div className="font-serif text-[15px] leading-relaxed text-gray-900">
+                    <Markdown>{prose}</Markdown>
+                  </div>
+                )}
+                {edits.length > 0 && (
+                  <EditCardsSection
+                    summary={`${edits.length} tracked ${edits.length === 1 ? "change" : "changes"}`}
+                    actions={
+                      <PillButton
+                        tone="black"
+                        onClick={() => void applyMessageEdits(i, msg.content)}
+                        disabled={applyState?.busy}
                       >
-                        Insert below cursor
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => void insertBelowSelection(msg.content, true)}
-                      >
-                        Insert below (tracked)
-                      </Button>
-                      {applyState?.summary && (
-                        <p
-                          role="status"
-                          className="w-full text-xs text-muted-foreground"
-                        >
-                          {applyState.summary}
-                        </p>
-                      )}
-                    </>
-                  ) : undefined
-                }
-              />
+                        {applyState?.busy
+                          ? "Applying…"
+                          : `Apply ${edits.length} tracked edit${edits.length === 1 ? "" : "s"}`}
+                      </PillButton>
+                    }
+                    status={
+                      (applyState?.summary || applyState?.found) && (
+                        <div className="flex flex-col gap-2">
+                          {applyState?.found?.map((f, j) => (
+                            <DocFindBlock
+                              key={j}
+                              query={f.original}
+                              totalMatches={f.matches}
+                              filename="the document"
+                              showConnector={j < applyState.found!.length - 1}
+                            />
+                          ))}
+                          {applyState?.summary && (
+                            <p
+                              role="status"
+                              className="text-xs font-serif text-gray-500"
+                            >
+                              {applyState.summary}
+                            </p>
+                          )}
+                        </div>
+                      )
+                    }
+                  >
+                    {edits.map((edit, j) => (
+                      <EditCard key={j} edit={edit} changeNumber={j + 1} />
+                    ))}
+                  </EditCardsSection>
+                )}
+                {msg.content && isComplete && (
+                  <div className="flex flex-wrap gap-2">
+                    <PillButton
+                      tone="white"
+                      onClick={() => void insertBelowSelection(msg.content)}
+                    >
+                      Insert below cursor
+                    </PillButton>
+                    <PillButton
+                      tone="white"
+                      onClick={() => void insertBelowSelection(msg.content, true)}
+                    >
+                      Insert below (tracked)
+                    </PillButton>
+                  </div>
+                )}
+              </div>
             );
           })}
-          {streaming && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Spinner />
-              <span>Thinking…</span>
-            </div>
-          )}
         </div>
       )}
 

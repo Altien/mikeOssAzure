@@ -8,13 +8,16 @@ import {
 } from "lucide-react";
 import { streamAssistant } from "../api/stream";
 import { useWordDoc } from "../hooks/useWordDoc";
-import type { WordSelectionAnchor } from "../hooks/useWordDoc";
+import type { WordSelectionAnchor, RedlineApplyReport } from "../hooks/useWordDoc";
 import { parseRedlineEdits, REDLINE_FORMAT } from "../lib/redline";
 import type { RedlineEdit } from "../lib/redline";
-import { Button } from "@mike/shared/ui/button";
 import { Input } from "@mike/shared/ui/input";
 import { Label } from "@mike/shared/ui/label";
-import { Spinner } from "@mike/shared/ui/spinner";
+import { PillButton } from "./assistant/PillButton";
+import { EventBlock, DocFindBlock } from "./assistant/EventBlocks";
+import { EditCard } from "./assistant/EditCard";
+import { EditCardsSection } from "./assistant/EditCardsSection";
+import { RESPONSE_GLASS_SURFACE } from "./assistant/messageStyles";
 
 interface ActionSectionState {
   loading: boolean;
@@ -39,15 +42,30 @@ const MAX_DOC_CHARS = 200_000;
 interface RedlineApplyState {
   busy: boolean;
   summary: string | null;
+  /** Per-edit Word search results from the last apply (drives "Found" rows). */
+  found: RedlineApplyReport["found"] | null;
 }
 
-const idleApply = (): RedlineApplyState => ({ busy: false, summary: null });
+const idleApply = (): RedlineApplyState => ({
+  busy: false,
+  summary: null,
+  found: null,
+});
 
 function ResultBox({ children }: { children: React.ReactNode }): React.ReactElement {
   return (
-    <div className="max-h-48 overflow-y-auto rounded-lg border border-border/70 bg-muted/40 p-3 text-xs leading-relaxed whitespace-pre-wrap break-words text-foreground">
+    <div className="max-h-48 overflow-y-auto rounded-lg bg-gray-100/70 p-3 text-sm leading-relaxed whitespace-pre-wrap break-words font-serif text-gray-900">
       {children}
     </div>
+  );
+}
+
+/** Streaming/working indicator styled like the web's event rows. */
+function WorkingRow({ label }: { label: string }): React.ReactElement {
+  return (
+    <EventBlock isStreaming dotColor="gray">
+      {label}
+    </EventBlock>
   );
 }
 
@@ -63,20 +81,80 @@ function Section({
   children: React.ReactNode;
 }): React.ReactElement {
   return (
-    <section className="flex flex-col gap-3 rounded-xl border border-border/70 bg-card p-3 shadow-sm @sm:p-4">
+    <section className={`flex flex-col gap-3 p-3 @sm:p-4 ${RESPONSE_GLASS_SURFACE}`}>
       <div className="flex items-start gap-2.5">
-        <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+        <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-gray-100/80 text-gray-500">
           <Icon className="size-4" />
         </div>
         <div className="min-w-0 space-y-0.5">
-          <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-          <p className="text-xs leading-snug text-muted-foreground">
-            {description}
-          </p>
+          <h2 className="text-sm font-semibold text-gray-900">{title}</h2>
+          <p className="text-xs leading-snug text-gray-500">{description}</p>
         </div>
       </div>
       {children}
     </section>
+  );
+}
+
+/**
+ * Shared result rendering for the Proofread / Anonymise flows: raw text
+ * while streaming (or when the answer carries no parseable edits), and the
+ * web-style EditCardsSection with per-edit cards + "Found" rows once the
+ * completed answer parses into edits.
+ */
+function RedlineResult({
+  loading,
+  result,
+  edits,
+  noun,
+  apply,
+  applyLabel,
+  onApply,
+}: {
+  loading: boolean;
+  result: string;
+  edits: RedlineEdit[];
+  noun: string;
+  apply: RedlineApplyState;
+  applyLabel: string;
+  onApply: () => void;
+}): React.ReactElement | null {
+  if (edits.length === 0) {
+    return result ? <ResultBox>{result}</ResultBox> : null;
+  }
+  return (
+    <EditCardsSection
+      summary={`${edits.length} proposed ${noun}`}
+      actions={
+        <PillButton tone="black" onClick={onApply} disabled={apply.busy || loading}>
+          {apply.busy ? "Applying…" : applyLabel}
+        </PillButton>
+      }
+      status={
+        (apply.summary || apply.found) && (
+          <div className="flex flex-col gap-2">
+            {apply.found?.map((f, j) => (
+              <DocFindBlock
+                key={j}
+                query={f.original}
+                totalMatches={f.matches}
+                filename="the document"
+                showConnector={j < apply.found!.length - 1}
+              />
+            ))}
+            {apply.summary && (
+              <p role="status" className="text-xs font-serif text-gray-500">
+                {apply.summary}
+              </p>
+            )}
+          </div>
+        )
+      }
+    >
+      {edits.map((edit, j) => (
+        <EditCard key={j} edit={edit} changeNumber={j + 1} />
+      ))}
+    </EditCardsSection>
   );
 }
 
@@ -295,7 +373,7 @@ export function DocumentActions(): React.ReactElement {
     noun: string,
     setApply: React.Dispatch<React.SetStateAction<RedlineApplyState>>
   ): Promise<void> => {
-    setApply({ busy: true, summary: null });
+    setApply({ busy: true, summary: null, found: null });
     try {
       const report = await applyTrackedEdits(edits);
       const parts = [
@@ -306,7 +384,7 @@ export function DocumentActions(): React.ReactElement {
           `${report.skipped.length} skipped — the quoted text was not found in the document (it may have changed since the scan).`
         );
       }
-      setApply({ busy: false, summary: parts.join(" ") });
+      setApply({ busy: false, summary: parts.join(" "), found: report.found });
     } catch (error) {
       setApply({
         busy: false,
@@ -314,6 +392,7 @@ export function DocumentActions(): React.ReactElement {
           error instanceof Error
             ? error.message
             : "Word couldn't apply the changes.",
+        found: null,
       });
     }
   };
@@ -352,36 +431,28 @@ export function DocumentActions(): React.ReactElement {
         description="Rewrite the selected text for clarity and professionalism."
         icon={Wand2}
       >
-        <Button
-          variant="secondary"
+        <PillButton
+          tone="white"
+          size="normal"
           className="w-full"
           onClick={() => void handleImproveWriting()}
           disabled={improve.loading}
         >
           {improve.loading ? "Improving…" : "Improve selected text"}
-        </Button>
-        {improve.loading && <Spinner label="Working…" />}
+        </PillButton>
+        {improve.loading && <WorkingRow label="Working…" />}
         {improve.result && (
           <>
             <ResultBox>{improve.result}</ResultBox>
             {!improve.loading && improve.originalText && !improve.error && (
-              <>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    onClick={() => void applyRewrite(true)}
-                  >
-                    Replace selection (tracked)
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => void applyRewrite(false)}
-                  >
-                    Replace selection
-                  </Button>
-                </div>
-              </>
+              <div className="flex flex-wrap gap-2">
+                <PillButton tone="black" onClick={() => void applyRewrite(true)}>
+                  Replace selection (tracked)
+                </PillButton>
+                <PillButton tone="white" onClick={() => void applyRewrite(false)}>
+                  Replace selection
+                </PillButton>
+              </div>
             )}
             {applyError && (
               <p role="alert" className="text-xs text-destructive">
@@ -398,32 +469,27 @@ export function DocumentActions(): React.ReactElement {
         description="Scan the whole document and apply corrections as tracked changes."
         icon={SpellCheck}
       >
-        <Button
-          variant="secondary"
+        <PillButton
+          tone="white"
+          size="normal"
           className="w-full"
           onClick={() => void handleProofread()}
           disabled={proof.loading}
         >
           {proof.loading ? "Proofreading…" : "Proofread entire document"}
-        </Button>
-        {proof.loading && <Spinner label="Analysing…" />}
-        {proof.result && <ResultBox>{proof.result}</ResultBox>}
-        {proofEdits.length > 0 && (
-          <Button
-            size="sm"
-            onClick={() => void applyRedlines(proofEdits, "corrections", setProofApply)}
-            disabled={proofApply.busy}
-          >
-            {proofApply.busy
-              ? "Applying…"
-              : `Apply ${proofEdits.length} correction${proofEdits.length === 1 ? "" : "s"} (tracked)`}
-          </Button>
-        )}
-        {proofApply.summary && (
-          <p role="status" className="text-xs text-muted-foreground">
-            {proofApply.summary}
-          </p>
-        )}
+        </PillButton>
+        {proof.loading && <WorkingRow label="Analysing…" />}
+        <RedlineResult
+          loading={proof.loading}
+          result={proof.result}
+          edits={proofEdits}
+          noun={proofEdits.length === 1 ? "correction" : "corrections"}
+          apply={proofApply}
+          applyLabel={`Apply ${proofEdits.length} correction${proofEdits.length === 1 ? "" : "s"} (tracked)`}
+          onApply={() =>
+            void applyRedlines(proofEdits, "corrections", setProofApply)
+          }
+        />
       </Section>
 
       {/* --- Anonymise --- */}
@@ -432,32 +498,27 @@ export function DocumentActions(): React.ReactElement {
         description="Find personally identifiable information and redact it as tracked changes."
         icon={EyeOff}
       >
-        <Button
-          variant="secondary"
+        <PillButton
+          tone="white"
+          size="normal"
           className="w-full"
           onClick={() => void handleAnonymise()}
           disabled={anon.loading}
         >
           {anon.loading ? "Identifying PII…" : "Find & list PII"}
-        </Button>
-        {anon.loading && <Spinner label="Scanning…" />}
-        {anon.result && <ResultBox>{anon.result}</ResultBox>}
-        {anonEdits.length > 0 && (
-          <Button
-            size="sm"
-            onClick={() => void applyRedlines(anonEdits, "redactions", setAnonApply)}
-            disabled={anonApply.busy}
-          >
-            {anonApply.busy
-              ? "Applying…"
-              : `Apply ${anonEdits.length} redaction${anonEdits.length === 1 ? "" : "s"} (tracked)`}
-          </Button>
-        )}
-        {anonApply.summary && (
-          <p role="status" className="text-xs text-muted-foreground">
-            {anonApply.summary}
-          </p>
-        )}
+        </PillButton>
+        {anon.loading && <WorkingRow label="Scanning…" />}
+        <RedlineResult
+          loading={anon.loading}
+          result={anon.result}
+          edits={anonEdits}
+          noun={anonEdits.length === 1 ? "redaction" : "redactions"}
+          apply={anonApply}
+          applyLabel={`Apply ${anonEdits.length} redaction${anonEdits.length === 1 ? "" : "s"} (tracked)`}
+          onApply={() =>
+            void applyRedlines(anonEdits, "redactions", setAnonApply)
+          }
+        />
       </Section>
 
       {/* --- Draft Clause --- */}
@@ -476,33 +537,33 @@ export function DocumentActions(): React.ReactElement {
             disabled={draft.loading}
           />
         </div>
-        <Button
-          variant="secondary"
+        <PillButton
+          tone="white"
+          size="normal"
           className="w-full"
           onClick={() => void handleDraftClause()}
           disabled={draft.loading || !draftPrompt.trim()}
         >
           {draft.loading ? "Drafting…" : "Draft clause"}
-        </Button>
-        {draft.loading && <Spinner label="Drafting…" />}
+        </PillButton>
+        {draft.loading && <WorkingRow label="Drafting…" />}
         {draft.result && (
           <>
             <ResultBox>{draft.result}</ResultBox>
             {!draft.loading && !draft.error && (
               <div className="flex flex-wrap gap-2">
-                <Button
-                  size="sm"
+                <PillButton
+                  tone="white"
                   onClick={() => void insertBelowSelection(draft.result)}
                 >
                   Insert below cursor
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
+                </PillButton>
+                <PillButton
+                  tone="white"
                   onClick={() => void insertBelowSelection(draft.result, true)}
                 >
                   Insert below (tracked)
-                </Button>
+                </PillButton>
               </div>
             )}
           </>
