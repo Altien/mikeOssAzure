@@ -24,11 +24,11 @@ const CONTRACT = [
   "",
   "This Services Agreement is entered into between Acme Consulting Ltd and John Smith of 10 Downing Street, London.",
   "",
-  "1. The Suplier shall provide the consulting services described in Schedule 1 with reasonable skill and care.",
+  "1. The Suplier shall provide the consulting services described in Schedual 1 with reasonable skill and care.",
   "",
   "2. The Client shall pay all invoices within thirty (30) days of reciept.",
   "",
-  "3. Either party may terminate this agreement on sixty (60) days written notice.",
+  "3. Either party may terminate this agreement on sixty (60) days writen notice.",
 ].join("\n");
 
 async function openSignedIn(page: Page): Promise<void> {
