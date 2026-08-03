@@ -21,6 +21,12 @@ describe("diceCoefficient", () => {
         expect(diceCoefficient("anything", "")).toBe(0);
     });
 
+    it("returns 0 when a normalized side is too short to form a bigram", () => {
+        // "a!" normalizes to "a" — one character, no bigrams to compare.
+        expect(diceCoefficient("a!", "abc")).toBe(0);
+        expect(diceCoefficient("abc", "b")).toBe(0);
+    });
+
     it("returns a partial score for partially overlapping strings", () => {
         const score = diceCoefficient("night", "nacht");
         expect(score).toBeGreaterThan(0);
