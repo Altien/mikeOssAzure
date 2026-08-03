@@ -68,10 +68,25 @@ const shot = async (name) => {
     .catch(() => {});
 };
 
+// Hostname-anchored login-page detection. A bare substring test on the full
+// URL (CodeQL js/incomplete-url-substring-sanitization) would also match
+// attacker-shaped hosts like "login.microsoftonline.com.evil.test" or paths
+// that merely embed the domain string.
+function isLoginUrl(url) {
+  try {
+    const { hostname } = new URL(url);
+    return ["login.microsoftonline.com", "login.live.com"].some(
+      (domain) => hostname === domain || hostname.endsWith(`.${domain}`),
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function signedIn() {
   await page.goto("https://www.office.com/", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(5000);
-  if (page.url().includes("login.microsoftonline.com")) return false;
+  if (isLoginUrl(page.url())) return false;
   const signInButton = page
     .getByRole("button", { name: /^sign in$/i })
     .or(page.getByRole("link", { name: /^sign in$/i }));

@@ -72,13 +72,28 @@ const shot = async (name) =>
     .screenshot({ path: path.join(OUT_DIR, `${name}.png`), fullPage: false })
     .catch(() => {});
 
+// Hostname-anchored login-page detection. A bare substring test on the full
+// URL (CodeQL js/incomplete-url-substring-sanitization) would also match
+// attacker-shaped hosts like "login.microsoftonline.com.evil.test" or paths
+// that merely embed the domain string.
+function isLoginUrl(url) {
+  try {
+    const { hostname } = new URL(url);
+    return ["login.microsoftonline.com", "login.live.com"].some(
+      (domain) => hostname === domain || hostname.endsWith(`.${domain}`),
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function signedIn() {
   // Logged-out office.com does NOT redirect to login — it shows a marketing
   // page with prominent "Sign in" buttons. Treat their presence as no
   // session; the signed-in home never shows them.
   await page.goto("https://www.office.com/", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(5000);
-  if (page.url().includes("login.microsoftonline.com")) return false;
+  if (isLoginUrl(page.url())) return false;
   const signInButton = page
     .getByRole("button", { name: /^sign in$/i })
     .or(page.getByRole("link", { name: /^sign in$/i }));
@@ -102,15 +117,15 @@ if (mode === "login") {
     { waitUntil: "domcontentloaded" },
   );
 
-  const LOGIN_DOMAINS = ["login.microsoftonline.com", "login.live.com", "signup"];
   const deadline = Date.now() + 10 * 60 * 1000;
   let captured = false;
   while (Date.now() < deadline) {
     await page.waitForTimeout(5000).catch(() => {});
     if (page.isClosed()) break;
     const url = page.url();
-    // Never re-navigate while the user is still typing on a login page.
-    if (LOGIN_DOMAINS.some((domain) => url.includes(domain))) continue;
+    // Never re-navigate while the user is still typing on a login or
+    // signup page (same hostname-anchored check as isLoginUrl).
+    if (isLoginUrl(url) || /signup/i.test(url)) continue;
     if (await signedIn()) {
       captured = true;
       break;
