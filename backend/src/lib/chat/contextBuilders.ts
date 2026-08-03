@@ -60,6 +60,11 @@ export function spotlight(text: string, nonce: string): string {
   return `<untrusted-content nonce="${nonce}">\n${neutralized}\n</untrusted-content nonce="${nonce}">`;
 }
 
+/** Fences a user-controlled filename when spotlighting is enabled. */
+export function spotlightFilename(filename: string, nonce?: string): string {
+  return nonce ? spotlight(filename, nonce) : filename;
+}
+
 /**
  * Wraps a user-installed workflow body in the semi-trusted
  * `<workflow-instructions>` fence.
@@ -88,6 +93,7 @@ export async function enrichWithPriorEvents(
   chatId: string | null | undefined,
   db: ReturnType<typeof createServerSupabase>,
   docIndex: DocIndex,
+  nonce?: string,
 ): Promise<ChatMessage[]> {
   if (!chatId) return messages;
   const { data: rows } = await db
@@ -106,12 +112,17 @@ export async function enrichWithPriorEvents(
   for (const [slug, info] of Object.entries(docIndex)) {
     if (info.document_id) slugByDocumentId.set(info.document_id, slug);
   }
+  const untrustedRef = (value: unknown) => {
+    const text = typeof value === "string" ? value : String(value ?? "");
+    return nonce ? spotlight(text, nonce) : `"${text}"`;
+  };
   const refFor = (documentId: unknown, filename: unknown) => {
     const slug =
       typeof documentId === "string"
         ? slugByDocumentId.get(documentId)
         : undefined;
-    return slug ? `${slug} ("${filename}")` : `"${filename}"`;
+    const filenameRef = untrustedRef(filename);
+    return slug ? `${slug} (${filenameRef})` : filenameRef;
   };
 
   const lines: string[] = [];
@@ -127,7 +138,7 @@ export async function enrichWithPriorEvents(
       // can call edit_document / read_document on them. Emit one
       // line per copy, all attributed back to the same source.
       const srcLabel =
-        typeof ev.filename === "string" ? `"${ev.filename}"` : "";
+        typeof ev.filename === "string" ? untrustedRef(ev.filename) : "";
       const copies = Array.isArray(ev.copies)
         ? (ev.copies as {
             new_filename?: unknown;
@@ -143,7 +154,7 @@ export async function enrichWithPriorEvents(
         );
       }
     } else if (ev?.type === "workflow_applied") {
-      lines.push(`- applied workflow: "${ev.title}"`);
+      lines.push(`- applied workflow: ${untrustedRef(ev.title)}`);
     } else if (ev?.type === "ask_inputs") {
       const count = Array.isArray(ev.items) ? ev.items.length : 0;
       lines.push(`- asked user for ${count} input${count === 1 ? "" : "s"}`);
@@ -161,7 +172,11 @@ export async function enrichWithPriorEvents(
           Array.isArray(row.filenames)
         ) {
           lines.push(
-            `- user attached documents: ${row.filenames.join(", ") || "none"}`,
+            `- user attached documents: ${
+              row.filenames.length
+                ? row.filenames.map(untrustedRef).join(", ")
+                : "none"
+            }`,
           );
         }
       }
@@ -216,7 +231,7 @@ export function buildMessages(
       const rawLabel = doc.folder_path
         ? `${doc.folder_path} / ${doc.filename}`
         : doc.filename;
-      const label = nonce ? spotlight(rawLabel, nonce) : rawLabel;
+      const label = spotlightFilename(rawLabel, nonce);
       systemContent += `- ${doc.doc_id}: ${label}\n`;
     }
     systemContent +=
@@ -249,7 +264,7 @@ export function buildMessages(
           ? slugByDocumentId.get(f.document_id)
           : undefined;
         // Filenames are user-controlled; spotlight them.
-        const fname = nonce ? spotlight(f.filename, nonce) : f.filename;
+        const fname = spotlightFilename(f.filename, nonce);
         return slug ? `- ${slug}: ${fname}` : `- ${fname}`;
       });
       content = `[The user attached the following document(s) to this message:\n${lines.join("\n")}]\n\n${content}`;

@@ -538,20 +538,20 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         doc_id,
         filename: info.filename,
     }));
+    // Generate the nonce before enriching prior events so document filenames
+    // and workflow titles replayed from earlier turns are fenced as well.
+    const nonce = generateSpotlightNonce();
     const enrichedMessages = await enrichWithPriorEvents(
         messages,
         chatId,
         db,
         docIndex,
+        nonce,
     );
     const {
         api_keys: apiKeys,
         legal_research_us: legalResearchUs,
     } = await getUserModelSettings(userId, db);
-    // Per-request spotlighting nonce: the same nonce fences the untrusted
-    // content in the system prompt (filenames, workflow titles) and the
-    // document bodies returned by tools during the stream.
-    const nonce = generateSpotlightNonce();
     const apiMessages = buildMessages(
         enrichedMessages,
         docAvailability,
