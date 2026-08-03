@@ -13,6 +13,8 @@ import { workflowsRouter } from "./routes/workflows";
 import { userRouter } from "./routes/user";
 import { downloadsRouter } from "./routes/downloads";
 import { caseLawRouter } from "./routes/caseLaw";
+import { manifestPublicKey } from "./lib/manifestSigning";
+import { safeErrorLog } from "./lib/safeError";
 
 export const app = express();
 const isProduction = process.env.NODE_ENV === "production";
@@ -149,6 +151,7 @@ app.put(
   uploadLimiter,
 );
 app.post("/projects/:projectId/documents", uploadLimiter);
+app.get("/projects/:projectId/export", exportLimiter);
 app.get("/user/export", exportLimiter);
 app.get("/user/chats/export", exportLimiter);
 app.get("/user/tabular-reviews/export", exportLimiter);
@@ -172,3 +175,16 @@ app.use("/download", downloadsRouter);
 app.use("/case-law", caseLawRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
+
+// The Ed25519 public key this deployment signs project export manifests with,
+// or null when no key is configured. Deliberately open: whoever checks a
+// manifest is usually outside the workspace, and they need to get the key from
+// the server rather than trust the copy inside the file they were handed.
+app.get("/manifest-signing-key", (_req, res) => {
+  try {
+    res.json(manifestPublicKey());
+  } catch (err) {
+    console.error("[manifest-signing-key] failed", safeErrorLog(err));
+    res.status(500).json({ detail: "Manifest signing key is misconfigured" });
+  }
+});

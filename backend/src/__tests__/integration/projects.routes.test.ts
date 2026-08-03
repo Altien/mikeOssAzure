@@ -107,10 +107,15 @@ vi.mock("../../lib/userDataCleanup", () => ({
 vi.mock("../../lib/documentVersions", () => ({
     attachActiveVersionPaths: vi.fn(async () => {}),
     attachLatestVersionNumbers: vi.fn(async () => {}),
+    contentSha256: vi.fn(() => "0".repeat(64)),
     loadActiveVersion: vi.fn(async () => null),
 }));
 
 import { app } from "../../app";
+import crypto from "crypto";
+import { manifestPublicKey } from "../../lib/manifestSigning";
+
+const SIGNING_KEY = "3b".repeat(32);
 
 const AUTH = ["Authorization", "Bearer test"] as const;
 
@@ -409,6 +414,159 @@ describe("projects.routes", () => {
 
             expect(res.status).toBe(500);
             expect(res.body.detail).toBe("cascade failed");
+        });
+    });
+    // ── GET /projects/:projectId/export (tamper-evident manifest) ─────────
+    describe("GET /projects/:projectId/export", () => {
+        function seedProjectWithOneVersion() {
+            supabaseState.tables.projects = {
+                data: {
+                    id: "p1",
+                    name: "Alpha",
+                    cm_number: "CM-1",
+                    created_at: "2026-01-01T00:00:00Z",
+                },
+                error: null,
+            };
+            supabaseState.tables.documents = {
+                data: [
+                    {
+                        id: "d1",
+                        project_id: "p1",
+                        status: "ready",
+                        current_version_id: "v1",
+                        created_at: "2026-01-02T00:00:00Z",
+                    },
+                ],
+                error: null,
+            };
+            supabaseState.tables.document_versions = {
+                data: [
+                    {
+                        id: "v1",
+                        document_id: "d1",
+                        version_number: 1,
+                        source: "upload",
+                        filename: "lease.docx",
+                        file_type: "docx",
+                        size_bytes: 12,
+                        content_sha256: "a".repeat(64),
+                        deleted_at: null,
+                        created_at: "2026-01-02T00:00:00Z",
+                    },
+                ],
+                error: null,
+            };
+            supabaseState.tables.document_edits = {
+                data: [
+                    {
+                        id: "e1",
+                        document_id: "d1",
+                        version_id: "v1",
+                        change_id: "c1",
+                        status: "accepted",
+                        created_at: "2026-01-03T00:00:00Z",
+                        resolved_at: "2026-01-03T01:00:00Z",
+                    },
+                ],
+                error: null,
+            };
+        }
+
+        it("returns 404 when the caller cannot access the project", async () => {
+            checkProjectAccess.mockResolvedValue({ ok: false });
+
+            const res = await request(app)
+                .get("/projects/p1/export")
+                .set(...AUTH);
+
+            expect(res.status).toBe(404);
+            expect(res.body.detail).toBe("Project not found");
+        });
+
+        it("returns the version hashes and the edit trail as an attachment", async () => {
+            seedProjectWithOneVersion();
+
+            const res = await request(app)
+                .get("/projects/p1/export")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.headers["content-disposition"]).toMatch(
+                /attachment; filename="mike-project-manifest-p1-/,
+            );
+            expect(res.body.manifest_version).toBe(1);
+            expect(res.body.project.name).toBe("Alpha");
+            const doc = res.body.documents[0];
+            expect(doc.versions[0].content_sha256).toBe("a".repeat(64));
+            expect(doc.edits[0].status).toBe("accepted");
+        });
+
+        it("carries a digest and no signature when signing is not configured", async () => {
+            seedProjectWithOneVersion();
+
+            const res = await request(app)
+                .get("/projects/p1/export")
+                .set(...AUTH);
+
+            expect(res.body.signature).toBeNull();
+            expect(res.body.digest.algorithm).toBe("sha256");
+            expect(res.body.digest.value).toMatch(/^[0-9a-f]{64}$/);
+        });
+
+        it("signs the digest when MANIFEST_SIGNING_KEY is set", async () => {
+            process.env.MANIFEST_SIGNING_KEY = SIGNING_KEY;
+            try {
+                seedProjectWithOneVersion();
+
+                const res = await request(app)
+                    .get("/projects/p1/export")
+                    .set(...AUTH);
+
+                // Checked the way a recipient would: pin the published key,
+                // rebuild the signed payload, verify with plain Ed25519.
+                const published = manifestPublicKey()!;
+                expect(res.body.signature.algorithm).toBe("ed25519");
+                expect(res.body.signature.public_key).toBe(published.public_key);
+                const spki = Buffer.concat([
+                    Buffer.from("302a300506032b6570032100", "hex"),
+                    Buffer.from(published.public_key, "hex"),
+                ]);
+                const payload = Buffer.concat([
+                    Buffer.from("mike-project-manifest-v1\0", "utf8"),
+                    Buffer.from(res.body.digest.value, "hex"),
+                ]);
+                expect(
+                    crypto.verify(
+                        null,
+                        payload,
+                        crypto.createPublicKey({
+                            key: spki,
+                            format: "der",
+                            type: "spki",
+                        }),
+                        Buffer.from(res.body.signature.value, "hex"),
+                    ),
+                ).toBe(true);
+            } finally {
+                delete process.env.MANIFEST_SIGNING_KEY;
+            }
+        });
+
+        it("does not leak the underlying error when the manifest build fails", async () => {
+            supabaseState.tables.projects = {
+                data: null,
+                error: { message: "relation \"projects\" does not exist" },
+            };
+
+            const res = await request(app)
+                .get("/projects/p1/export")
+                .set(...AUTH);
+
+            expect(res.status).toBe(500);
+            expect(res.body.detail).toBe(
+                "Failed to build project export manifest",
+            );
         });
     });
 });
