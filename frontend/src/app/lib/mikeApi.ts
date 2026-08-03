@@ -1196,7 +1196,7 @@ export async function deleteTabularChat(
 
 export async function regenerateTabularCell(
     reviewId: string,
-    documentId: string,
+    rowId: string,
     columnIndex: number,
 ): Promise<{
     summary: string;
@@ -1207,7 +1207,7 @@ export async function regenerateTabularCell(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-            document_id: documentId,
+            row_id: rowId,
             column_index: columnIndex,
         }),
     });
@@ -1215,12 +1215,12 @@ export async function regenerateTabularCell(
 
 export async function clearTabularCells(
     reviewId: string,
-    documentIds: string[],
+    rowIds: string[],
 ): Promise<void> {
     await apiRequest(`/tabular-review/${reviewId}/clear-cells`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ document_ids: documentIds }),
+        body: JSON.stringify({ row_ids: rowIds }),
     });
 }
 

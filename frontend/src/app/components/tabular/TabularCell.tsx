@@ -8,12 +8,17 @@ import type { ColumnConfig, TabularCell as TCell } from "../shared/types";
 import { preprocessCitations, type ParsedCitation } from "./citation-utils";
 import { getPillClass } from "./pillUtils";
 import { SkeletonLine } from "../shared/TablePrimitive";
+import { TRExpandedCellSurface } from "./TRExpandedCellSurface";
 
 interface Props {
     cell: TCell;
     column?: ColumnConfig;
     onExpand: () => void;
-    onCitationClick?: (page: number, quote: string) => void;
+    onCitationClick?: (
+        page: number,
+        quote: string,
+        documentId?: string,
+    ) => void;
 }
 
 const FLAG_STYLES = {
@@ -62,7 +67,11 @@ function CellMarkdown({
     citations: ParsedCitation[];
     pills: string[];
     column?: ColumnConfig;
-    onCitationClick?: (page: number, quote: string) => void;
+    onCitationClick?: (
+        page: number,
+        quote: string,
+        documentId?: string,
+    ) => void;
     onExpand: () => void;
     inline?: boolean;
 }) {
@@ -114,6 +123,7 @@ function CellMarkdown({
                                             onCitationClick(
                                                 citation.page,
                                                 citation.quote,
+                                                citation.documentId,
                                             );
                                         } else {
                                             onExpand();
@@ -202,9 +212,13 @@ export function TabularCell({
     const firstLine = processed.split("\n").find((l) => l.trim()) ?? processed;
     const collapsedDisplay = firstLine.replace(/^[-*•]\s+/, "");
 
-    function handleCitationClickInOverlay(page: number, quote: string) {
+    function handleCitationClickInOverlay(
+        page: number,
+        quote: string,
+        documentId?: string,
+    ) {
         setInlineExpanded(false);
-        onCitationClick?.(page, quote);
+        onCitationClick?.(page, quote, documentId);
     }
 
     function handleSeeDetails() {
@@ -240,7 +254,7 @@ export function TabularCell({
 
             {/* Inline expanded overlay — absolutely positioned so it overlays without disrupting table layout */}
             {inlineExpanded && (
-                <div className="absolute left-0 top-0 z-50 w-full bg-white border border-gray-200 shadow-lg rounded-sm">
+                <TRExpandedCellSurface>
                     <div className="relative p-2 pr-4 text-xs text-gray-800 leading-relaxed">
                         {cell.content.flag && (
                             <span
@@ -266,7 +280,7 @@ export function TabularCell({
                             See details
                         </button>
                     </div>
-                </div>
+                </TRExpandedCellSurface>
             )}
         </div>
     );

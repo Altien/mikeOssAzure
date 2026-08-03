@@ -8,6 +8,8 @@ import {
     ChevronDown,
     ChevronLeft,
     ChevronRight,
+    Folder,
+    FolderOpen,
     Loader2,
     RefreshCw,
     X,
@@ -16,6 +18,7 @@ import type {
     ColumnConfig,
     Document,
     TabularCell,
+    TabularReviewRow,
 } from "../shared/types";
 import { preprocessCitations, type ParsedCitation } from "./citation-utils";
 import { getPillClass } from "./pillUtils";
@@ -35,7 +38,11 @@ function isDocxDocument(d: {
 
 interface Props {
     cell: TabularCell;
-    document: Document;
+    row: TabularReviewRow;
+    /** Document for a document row; undefined for a folder row. */
+    document?: Document;
+    /** Documents available to resolve a folder row's source documents. */
+    documents?: Document[];
     column: ColumnConfig;
     columns: ColumnConfig[];
     onClose: () => void;
@@ -47,7 +54,15 @@ interface Props {
     citationQuote?: string;
     /** Page to scroll to when opening document panel */
     citationPage?: number;
+    /** Source document encoded in a grouped-row citation. */
+    citationDocumentId?: string;
 }
+
+type TRPanelCitation = {
+    documentId?: string;
+    quote: string;
+    page: number;
+};
 
 const FLAG_BADGE: Record<string, string> = {
     green: "bg-emerald-600 backdrop-blur-md border border-emerald-300/20 text-white shadow-md",
@@ -62,7 +77,9 @@ const FLAG_BADGE: Record<string, string> = {
 
 export function TRSidePanel({
     cell,
-    document: doc,
+    row,
+    document: initialDocument,
+    documents = [],
     column,
     columns,
     onClose,
@@ -71,6 +88,7 @@ export function TRSidePanel({
     displayDocument = false,
     citationQuote,
     citationPage,
+    citationDocumentId,
 }: Props) {
     const sortedColumns = [...columns].sort((a, b) => a.index - b.index);
     const currentPos = sortedColumns.findIndex((c) => c.index === column.index);
@@ -82,14 +100,45 @@ export function TRSidePanel({
     const [regenerating, setRegenerating] = useState(false);
     const [quoteExpanded, setQuoteExpanded] = useState(false);
     const [isTruncated, setIsTruncated] = useState(false);
+    const [folderExpanded, setFolderExpanded] = useState(false);
     const quoteParagraphRef = useRef<HTMLParagraphElement>(null);
+
+    // A folder row groups several source documents; a citation (or a click on
+    // a listed source document) picks which one the document pane shows.
+    const sourceDocuments = row.source_document_ids.flatMap((documentId) => {
+        const sourceDocument = documents.find(
+            (candidate) => candidate.id === documentId,
+        );
+        return sourceDocument ? [sourceDocument] : [];
+    });
+    function resolveDocument(documentId?: string): Document | undefined {
+        if (!documentId) return initialDocument;
+        return (
+            documents.find(
+                (candidate) =>
+                    candidate.id === documentId &&
+                    row.source_document_ids.includes(candidate.id),
+            ) ??
+            (initialDocument?.id === documentId ? initialDocument : undefined)
+        );
+    }
+    const [activeDocumentId, setActiveDocumentId] = useState<
+        string | undefined
+    >(resolveDocument(citationDocumentId)?.id);
+    const doc =
+        (activeDocumentId ? resolveDocument(activeDocumentId) : undefined) ??
+        initialDocument;
 
     // Internal state — initialised from props, also toggled by badge clicks inside the panel
     const [docCitation, setDocCitation] = useState<
-        { quote: string; page: number } | undefined
+        TRPanelCitation | undefined
     >(
         displayDocument && citationQuote
-            ? { quote: citationQuote, page: citationPage ?? 1 }
+            ? {
+                  documentId: citationDocumentId,
+                  quote: citationQuote,
+                  page: citationPage ?? 1,
+              }
             : undefined,
     );
 
@@ -97,11 +146,34 @@ export function TRSidePanel({
     useEffect(() => {
         setDocCitation(
             displayDocument && citationQuote
-                ? { quote: citationQuote, page: citationPage ?? 1 }
+                ? {
+                      documentId: citationDocumentId,
+                      quote: citationQuote,
+                      page: citationPage ?? 1,
+                  }
                 : undefined,
         );
+        setActiveDocumentId(resolveDocument(citationDocumentId)?.id);
         setQuoteExpanded(false);
-    }, [cell.id, displayDocument, citationQuote, citationPage]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [
+        cell.id,
+        displayDocument,
+        citationQuote,
+        citationPage,
+        citationDocumentId,
+    ]);
+
+    function handleCitationOpen(citation: TRPanelCitation) {
+        const cited = resolveDocument(citation.documentId);
+        if (cited) setActiveDocumentId(cited.id);
+        setDocCitation(citation);
+    }
+
+    function handleSourceDocumentOpen(sourceDocument: Document) {
+        setActiveDocumentId(sourceDocument.id);
+        setDocCitation({ documentId: sourceDocument.id, quote: "", page: 1 });
+    }
 
     useEffect(() => {
         const el = quoteParagraphRef.current;
@@ -122,7 +194,7 @@ export function TRSidePanel({
             )}
         >
             {/* Document panel — left, 600px */}
-            {docCitation !== undefined && (
+            {docCitation !== undefined && doc && (
                 <div className="relative flex w-[600px] shrink-0 flex-col border-r border-white/30 px-3 pb-3">
                     {/* Doc header */}
                     <div className="flex items-center gap-2 pt-3 shrink-0 border-b border-white/30">
@@ -253,10 +325,62 @@ export function TRSidePanel({
                                 {column.name}
                             </span>
                         </div>
-                        {/* Document name */}
-                        <p className="text-xs mb-4">
-                            {doc.filename}
-                        </p>
+                        {/* Document / folder name */}
+                        {row.row_type === "folder" ? (
+                            <div className="mb-4 text-xs">
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        setFolderExpanded((expanded) => !expanded)
+                                    }
+                                    className="flex min-h-6 w-full items-center gap-1.5 rounded-md text-left text-slate-800 transition-colors hover:bg-slate-100"
+                                    aria-expanded={folderExpanded}
+                                >
+                                    {folderExpanded ? (
+                                        <FolderOpen className="h-3 w-3 shrink-0" />
+                                    ) : (
+                                        <Folder className="h-3 w-3 shrink-0" />
+                                    )}
+                                    <span
+                                        className="min-w-0 flex-1 truncate"
+                                        title={row.label}
+                                    >
+                                        {row.label}
+                                    </span>
+                                    <ChevronDown
+                                        className={cn(
+                                            "h-3 w-3 shrink-0 text-slate-500 transition-transform",
+                                            folderExpanded && "rotate-180",
+                                        )}
+                                    />
+                                </button>
+                                {folderExpanded && (
+                                    <div className="mt-1">
+                                        {sourceDocuments.map((sourceDocument) => (
+                                            <button
+                                                key={sourceDocument.id}
+                                                type="button"
+                                                onClick={() =>
+                                                    handleSourceDocumentOpen(
+                                                        sourceDocument,
+                                                    )
+                                                }
+                                                className="flex min-h-6 w-full items-center py-1 pl-5 pr-1 text-left text-xs text-slate-800 transition-colors hover:bg-slate-100 rounded-md"
+                                                title={sourceDocument.filename}
+                                            >
+                                                <span className="min-w-0 flex-1 truncate">
+                                                    {sourceDocument.filename}
+                                                </span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        ) : (
+                            <p className="text-xs mb-4">
+                                {row.label || initialDocument?.filename}
+                            </p>
+                        )}
 
                         {/* Flag section */}
                         {cell.content?.flag && (
@@ -281,7 +405,7 @@ export function TRSidePanel({
                             <div className="text-xs leading-relaxed text-slate-600">
                                 <MarkdownContent
                                     citations={summaryCitations}
-                                    onCitationClick={setDocCitation}
+                                    onCitationClick={handleCitationOpen}
                                     column={column}
                                 >
                                     {summaryText || "—"}
@@ -298,7 +422,7 @@ export function TRSidePanel({
                                 <div className="text-xs leading-relaxed text-slate-600">
                                     <MarkdownContent
                                         citations={reasoningCitations}
-                                        onCitationClick={setDocCitation}
+                                        onCitationClick={handleCitationOpen}
                                         citationOffset={summaryCitations.length}
                                         column={column}
                                         inline
@@ -326,16 +450,21 @@ function CitationBadge({
 }: {
     index: number;
     citation: ParsedCitation;
-    onClick: (c: { quote: string; page: number }) => void;
+    onClick: (c: TRPanelCitation) => void;
 }) {
     return (
         <button
             type="button"
             data-page={citation.page}
+            data-document-id={citation.documentId}
             data-quote={citation.quote}
             title={`Page ${citation.page}: "${citation.quote}"`}
             onClick={() =>
-                onClick({ quote: citation.quote, page: citation.page })
+                onClick({
+                    documentId: citation.documentId,
+                    quote: citation.quote,
+                    page: citation.page,
+                })
             }
             className="inline-flex items-center justify-center rounded-full bg-gray-200 w-3.5 h-3.5 text-[9px] font-medium text-gray-700 align-super cursor-pointer hover:bg-gray-300 transition-colors"
         >
@@ -354,7 +483,7 @@ function MarkdownContent({
 }: {
     children: string;
     citations: ParsedCitation[];
-    onCitationClick: (c: { quote: string; page: number }) => void;
+    onCitationClick: (c: TRPanelCitation) => void;
     inline?: boolean;
     citationOffset?: number;
     column?: ColumnConfig;

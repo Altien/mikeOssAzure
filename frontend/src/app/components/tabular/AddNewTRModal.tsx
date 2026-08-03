@@ -145,9 +145,7 @@ export function AddNewTRModal({
             underProject ? selectedProjectId : undefined,
             selectedDocIds.size > 0 ? [...selectedDocIds] : undefined,
             selectedWorkflow?.columns_config ?? undefined,
-            groupBySubfolder && (isProjectMode || underProject)
-                ? "folder"
-                : "document",
+            groupBySubfolder ? "folder" : "document",
         );
         handleClose();
     }
@@ -485,19 +483,17 @@ export function AddNewTRModal({
                                         }
                                     />
                                 </div>
-                                {(isProjectMode || underProject) && (
-                                    <label className="mt-4 flex items-center gap-2.5 text-sm text-gray-600">
-                                        <input
-                                            type="checkbox"
-                                            checked={groupBySubfolder}
-                                            onChange={(event) =>
-                                                setGroupBySubfolder(event.target.checked)
-                                            }
-                                            className="h-3.5 w-3.5 rounded border-gray-300 accent-gray-900"
-                                        />
-                                        Treat documents in the same project subfolder as one review row
-                                    </label>
-                                )}
+                                <label className="mt-4 flex items-center gap-2.5 text-sm text-gray-600">
+                                    <input
+                                        type="checkbox"
+                                        checked={groupBySubfolder}
+                                        onChange={(event) =>
+                                            setGroupBySubfolder(event.target.checked)
+                                        }
+                                        className="h-3.5 w-3.5 rounded border-gray-300 accent-gray-900"
+                                    />
+                                    Treat documents in the same folder as one review row
+                                </label>
                             </div>
                         )}
                 </div>
