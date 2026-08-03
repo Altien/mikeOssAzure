@@ -35,6 +35,33 @@ type FieldName = "original" | "replacement" | "reason";
 // in case the model decorates the mandated format.
 const FIELD_LINE = /^\s*(?:\d+[.)]\s*)?\*{0,2}(ORIGINAL|REPLACEMENT|REASON)\*{0,2}\s*:\s*(.*)$/;
 
+/**
+ * Remove the ORIGINAL / REPLACEMENT / REASON blocks from a completion,
+ * leaving only the surrounding prose. Used once a message's edits render
+ * as EditCards, so the same content isn't shown twice (matching the web
+ * app, which never shows the raw edit blocks inline).
+ */
+export function stripRedlineBlocks(text: string): string {
+  const kept: string[] = [];
+  let lastField: FieldName | null = null;
+  for (const line of text.split(/\r?\n/)) {
+    const match = line.match(FIELD_LINE);
+    if (match) {
+      lastField = match[1].toLowerCase() as FieldName;
+      continue;
+    }
+    if (!line.trim()) {
+      lastField = null;
+      kept.push(line);
+      continue;
+    }
+    // Continuation of a multi-line field value — part of the block.
+    if (lastField) continue;
+    kept.push(line);
+  }
+  return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 export function parseRedlineEdits(text: string): RedlineEdit[] {
   const edits: RedlineEdit[] = [];
   const seenOriginals = new Set<string>();
