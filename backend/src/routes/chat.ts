@@ -11,6 +11,7 @@ import {
     AssistantStreamError,
     buildCancelledAssistantMessage,
     extractCitations,
+    generateSpotlightNonce,
     isAbortError,
     runLLMStream,
     stripTransientAssistantEvents,
@@ -537,11 +538,15 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         doc_id,
         filename: info.filename,
     }));
+    // Generate the nonce before enriching prior events so document filenames
+    // and workflow titles replayed from earlier turns are fenced as well.
+    const nonce = generateSpotlightNonce();
     const enrichedMessages = await enrichWithPriorEvents(
         messages,
         chatId,
         db,
         docIndex,
+        nonce,
     );
     const {
         api_keys: apiKeys,
@@ -553,6 +558,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         undefined,
         undefined,
         legalResearchUs,
+        nonce,
     );
 
     const workflowStore = await buildWorkflowStore(userId, userEmail, db);
@@ -592,6 +598,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             apiKeys,
             signal: streamAbort.signal,
             projectId: resolvedProjectId,
+            nonce,
         });
 
         devLog("[chat/stream] LLM stream finished", {

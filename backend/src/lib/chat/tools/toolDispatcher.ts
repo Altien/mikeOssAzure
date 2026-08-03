@@ -58,6 +58,11 @@ import {
   type DocReplicatedResult,
   type TextMatch,
 } from "./documentOps";
+import {
+  spotlight,
+  spotlightFilename,
+  spotlightWorkflow,
+} from "../contextBuilders";
 
 
 type CourtlistenerCaseRecord = {
@@ -449,6 +454,7 @@ export async function runToolCalls(
   projectId?: string | null,
   courtlistenerState?: CourtlistenerTurnState,
   apiKeys?: import("../../llm").UserApiKeys,
+  nonce?: string,
 ): Promise<{
   toolResults: unknown[];
   docsRead: { filename: string; document_id?: string }[];
@@ -636,10 +642,11 @@ export async function runToolCalls(
         db,
       });
       if (readIdentity && turnReadState?.has(readIdentity.key)) {
+        const promptFilename = spotlightFilename(readIdentity.filename, nonce);
         toolResults.push({
           role: "tool",
           tool_call_id: tc.id,
-          content: duplicateReadDocumentResult(readIdentity),
+          content: `Document filename: ${promptFilename}\n\n${duplicateReadDocumentResult(readIdentity)}`,
         });
         continue;
       }
@@ -656,12 +663,16 @@ export async function runToolCalls(
         turnReadState.set(readIdentity.key, readIdentity);
       }
       if (filename) docsRead.push({ filename, document_id: documentId });
+      // Wrap document content in the spotlight fence: the document body
+      // is entirely user-controlled and may contain injected instructions.
+      const fencedContent = nonce ? spotlight(content, nonce) : content;
+      const promptFilename = spotlightFilename(filename ?? "", nonce);
       toolResults.push({
         role: "tool",
         tool_call_id: tc.id,
         content: filename
-          ? `${citationReminder(docId, filename)}\n\n${content}`
-          : content,
+          ? `${citationReminder(docId, filename, promptFilename)}\n\n${fencedContent}`
+          : fencedContent,
       });
     } else if (tc.function.name === "find_in_document") {
       const rawDocId = args.doc_id as string;
@@ -725,8 +736,9 @@ export async function runToolCalls(
         });
         if (readIdentity && turnReadState?.has(readIdentity.key)) {
           const filename = docStore.get(docId)?.filename ?? docId;
+          const promptFilename = spotlightFilename(filename, nonce);
           parts.push(
-            `--- ${filename} (${docId}) ---\n${duplicateReadDocumentResult(
+            `--- ${docId} ---\nDocument filename: ${promptFilename}\n\n${duplicateReadDocumentResult(
               readIdentity,
             )}`,
           );
@@ -743,8 +755,11 @@ export async function runToolCalls(
         if (readIdentity && turnReadState) {
           turnReadState.set(readIdentity.key, readIdentity);
         }
+        // Document body is user-controlled; spotlight it.
+        const fencedContent = nonce ? spotlight(content, nonce) : content;
+        const promptFilename = spotlightFilename(filename, nonce);
         parts.push(
-          `--- ${filename} (${docId}) ---\n${citationReminder(docId, filename)}\n\n${content}`,
+          `--- ${docId} ---\n${citationReminder(docId, filename, promptFilename)}\n\n${fencedContent}`,
         );
         if (docStore.get(docId)) {
           const documentId = docIndex?.[docId]?.document_id;
@@ -777,10 +792,16 @@ export async function runToolCalls(
         );
         workflowsApplied.push({ workflow_id: wfId, title: wf.title });
       }
+      // Workflow bodies are instructions the user installed to be FOLLOWED,
+      // so they get the semi-trusted <workflow-instructions> fence (follow,
+      // but never override system policy) rather than <untrusted-content>
+      // (data only) — wrapping instructions in a data-only fence would either
+      // break workflow execution or teach the model to ignore the fence.
+      const wfContent = wf ? wf.skill_md : `Workflow '${wfId}' not found.`;
       toolResults.push({
         role: "tool",
         tool_call_id: tc.id,
-        content: wf ? wf.skill_md : `Workflow '${wfId}' not found.`,
+        content: nonce && wf ? spotlightWorkflow(wfContent, nonce) : wfContent,
       });
     } else if (tc.function.name === "read_table_cells" && tabularStore) {
       const colIndices = args.col_indices as number[] | undefined;

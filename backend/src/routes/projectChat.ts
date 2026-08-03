@@ -11,8 +11,10 @@ import {
     AssistantStreamError,
     buildCancelledAssistantMessage,
     extractCitations,
+    generateSpotlightNonce,
     isAbortError,
     runLLMStream,
+    spotlightFilename,
     stripTransientAssistantEvents,
     PROJECT_EXTRA_TOOLS,
     parseAskInputsResponsePayload,
@@ -126,20 +128,47 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         filename: info.filename,
         folder_path: folderPaths.get(doc_id),
     }));
+    const documentsById = new Map(
+        Object.entries(docIndex).map(([slug, document]) => [
+            document.document_id,
+            { slug, filename: document.filename },
+        ] as const),
+    );
+    // Generate the nonce before adding request metadata or prior events so
+    // every document filename is fenced wherever it enters the prompt.
+    const nonce = generateSpotlightNonce();
+    const documentPromptRef = (
+        documentId: string,
+        requestFilename: string,
+    ) => {
+        const document = documentsById.get(documentId);
+        return {
+            slug: document?.slug,
+            filename: spotlightFilename(
+                document?.filename ?? requestFilename,
+                nonce,
+            ),
+        };
+    };
 
     const enrichedMessages = await enrichWithPriorEvents(
         messages,
         chatId,
         db,
         docIndex,
+        nonce,
     );
     const messagesForLLM: ChatMessage[] = displayed_doc
         ? enrichedMessages.map((m, i) => {
               if (i !== enrichedMessages.length - 1 || m.role !== "user")
                   return m;
+              const displayedDocument = documentPromptRef(
+                  displayed_doc.document_id,
+                  displayed_doc.filename,
+              );
               return {
                   ...m,
-                  content: `${m.content}\n\ndisplayed_doc: ${displayed_doc.filename}, displayed_doc_id: ${displayed_doc.document_id}`,
+                  content: `${m.content}\n\ndisplayed_doc: ${displayedDocument.filename}, displayed_doc_id: ${displayed_doc.document_id}`,
               };
           })
         : enrichedMessages;
@@ -151,14 +180,11 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     // the broader project doc list.
     let systemPromptExtra = PROJECT_SYSTEM_PROMPT_EXTRA;
     if (attached_documents?.length) {
-        const slugByDocumentId = new Map<string, string>();
-        for (const [slug, info] of Object.entries(docIndex)) {
-            if (info.document_id)
-                slugByDocumentId.set(info.document_id, slug);
-        }
         const lines = attached_documents.map((d) => {
-            const slug = slugByDocumentId.get(d.document_id);
-            return slug ? `- ${slug}: ${d.filename}` : `- ${d.filename}`;
+            const document = documentPromptRef(d.document_id, d.filename);
+            return document.slug
+                ? `- ${document.slug}: ${document.filename}`
+                : `- ${document.filename}`;
         });
         systemPromptExtra += `\n\nUSER-ATTACHED DOCUMENTS FOR THIS TURN:\nThe user has attached the following document(s) directly to their latest message. Treat these as the primary focus of the request unless their message clearly says otherwise.\n${lines.join("\n")}`;
     }
@@ -173,6 +199,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         systemPromptExtra,
         undefined,
         legalResearchUs,
+        nonce,
     );
 
     const workflowStore = await buildWorkflowStore(userId, userEmail, db);
@@ -207,6 +234,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             apiKeys,
             signal: streamAbort.signal,
             projectId,
+            nonce,
         });
 
         const persistedEvents = stripTransientAssistantEvents(events);
