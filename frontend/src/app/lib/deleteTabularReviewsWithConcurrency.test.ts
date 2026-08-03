@@ -32,6 +32,36 @@ describe("deleteTabularReviewsWithConcurrency", () => {
         expect(result.failedIds).toEqual(["review-3", "review-7"]);
     });
 
+    it("returns empty results for empty input without calling delete", async () => {
+        const deleteReview = vi.fn();
+
+        const result = await deleteTabularReviewsWithConcurrency(
+            [],
+            deleteReview,
+        );
+
+        expect(result).toEqual({ deletedIds: [], failedIds: [] });
+        expect(deleteReview).not.toHaveBeenCalled();
+    });
+
+    it("clamps a non-positive concurrency to a single worker and still deletes", async () => {
+        const order: string[] = [];
+        const deleteReview = vi.fn(async (id: string) => {
+            order.push(id);
+        });
+
+        const result = await deleteTabularReviewsWithConcurrency(
+            ["review-1", "review-2"],
+            deleteReview,
+            0,
+        );
+
+        // Math.max(1, floor(0)) keeps one worker alive; a naive 0 would spawn
+        // no workers and silently delete nothing.
+        expect(order).toEqual(["review-1", "review-2"]);
+        expect(result.deletedIds).toEqual(["review-1", "review-2"]);
+    });
+
     it("deduplicates ids before deleting", async () => {
         const deleteReview = vi.fn().mockResolvedValue(undefined);
 
