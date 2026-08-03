@@ -29,13 +29,13 @@ jobs:
       # Required to upload results to code scanning.
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/init@a2983b8bed1923f44751c5c43237f479442827b3 # v3.37.4
         with:
           languages: javascript-typescript
           build-mode: none
 
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@a2983b8bed1923f44751c5c43237f479442827b3 # v3.37.4
         with:
           category: "/language:javascript-typescript"

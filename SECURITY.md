@@ -2,9 +2,15 @@
 
 ## Supported versions
 
-There are no tagged releases yet; the only supported version is the tip of
-`main`. If you are self-hosting, please update to the latest `main` before
-reporting — the issue may already be fixed.
+| Version | Supported |
+| --- | --- |
+| tip of `main` | ✅ |
+| tagged releases (`v0.1.0`–`v0.4.0`) | ❌ |
+
+Security fixes land only on `main`; the existing tags are historical
+snapshots and do not receive backported fixes. If you are self-hosting,
+please update to the latest `main` before reporting — the issue may already
+be fixed.
 
 ## Reporting a vulnerability
 
@@ -20,10 +26,17 @@ This project has a solo maintainer. You can expect an acknowledgment within
 
 ## Scope
 
-- Mike is **self-hosted** — there is no hosted service operated by this
-  repository to test against. Reports about the code, default configuration,
-  and deployment guidance in this repo are all in scope. Findings that only
-  apply to a specific third-party deployment should go to whoever operates it.
+- Reports about the code, default configuration, and deployment guidance in
+  this repo are all in scope.
+- The **hosted service at `app.mikeoss.com`** (the cloud version offered from
+  the official Mike website) is in scope — report issues affecting it through
+  the same private channel above, and please keep testing non-destructive:
+  only accounts and data you own, no denial of service, no access to other
+  users' data beyond the minimum proof needed.
+- **Independent self-hosted installations** run by third parties are the one
+  exclusion: findings that only apply to how a specific outside operator has
+  deployed Mike (their infrastructure, their configuration) should go to
+  whoever operates that deployment.
 - Mike is an **LLM legal product**, so LLM-specific reports are explicitly
   welcome: prompt injection (including via uploaded documents), getting the
   model to ignore its guardrails, leaking another user's data or system
