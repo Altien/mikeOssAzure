@@ -3,6 +3,11 @@ import { FileTypeIcon } from "../../shared/FileTypeIcon";
 import { displayCitationQuote, formatCitationPage } from "../../shared/types";
 import type { Citation } from "../../shared/types";
 import { RESPONSE_GLASS_ANNOTATION, RESPONSE_GLASS_SURFACE } from "./messageStyles";
+import {
+    citationVerificationAriaLabel,
+    citationVerificationDescription,
+    citationVerificationPillClassName,
+} from "./citationVerification";
 
 type CitationSourceRow = {
     key: string;
@@ -31,7 +36,9 @@ function citationSourceLabel(annotation: Citation): string {
 export function citationTooltip(annotation: Citation): string {
     const locator = formatCitationPage(annotation);
     const quote = displayCitationQuote(annotation);
-    return locator ? `${locator}: "${quote}"` : `"${quote}"`;
+    const source = locator ? `${locator}: "${quote}"` : `"${quote}"`;
+    const verification = citationVerificationDescription(annotation);
+    return verification ? `${source} — ${verification}` : source;
 }
 
 function CitationSourceIcon({
@@ -184,7 +191,12 @@ export function CitationsBlock({
                                                     )
                                                 }
                                                 className={
-                                                    RESPONSE_GLASS_ANNOTATION
+                                                    `${RESPONSE_GLASS_ANNOTATION} ${citationVerificationPillClassName(annotation)}`
+                                                }
+                                                aria-label={
+                                                    citationVerificationAriaLabel(
+                                                        annotation,
+                                                    )
                                                 }
                                                 title={citationTooltip(
                                                     annotation,
@@ -203,4 +215,3 @@ export function CitationsBlock({
         </div>
     );
 }
-

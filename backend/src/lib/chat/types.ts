@@ -57,6 +57,18 @@ export type ChatMessage = {
   workflow?: { id: string; title: string };
 };
 
+/**
+ * Per-quote verification result. `start_char`/`end_char` index into the
+ * EXTRACTED source text (not the raw file bytes) and are only present for
+ * single-segment quotes that matched.
+ */
+export type QuoteVerification = {
+  verified: boolean;
+  start_char?: number;
+  end_char?: number;
+  source_excerpt?: string;
+};
+
 // ---------------------------------------------------------------------------
 // Doc resolution helpers (used by citations + documentOps)
 // ---------------------------------------------------------------------------

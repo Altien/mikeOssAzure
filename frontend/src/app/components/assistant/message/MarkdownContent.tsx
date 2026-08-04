@@ -7,6 +7,10 @@ import "katex/dist/katex.min.css";
 import type { AssistantEvent, Citation } from "../../shared/types";
 import { RESPONSE_GLASS_ANNOTATION, withoutMarkdownNode } from "./messageStyles";
 import { citationTooltip } from "./CitationSources";
+import {
+    citationVerificationAriaLabel,
+    citationVerificationPillClassName,
+} from "./citationVerification";
 import { internalCaseHref } from "./citationUtils";
 
 export function MarkdownContent({
@@ -181,7 +185,12 @@ export function MarkdownContent({
                                             onCitationClick?.(annotation)
                                         }
                                         data-citation-ref={annotation.ref}
-                                        className={`${RESPONSE_GLASS_ANNOTATION} mx-0.5 align-super`}
+                                        className={`${RESPONSE_GLASS_ANNOTATION} ${citationVerificationPillClassName(annotation)} mx-0.5 align-super`}
+                                        aria-label={
+                                            citationVerificationAriaLabel(
+                                                annotation,
+                                            )
+                                        }
                                         title={tooltipText}
                                     >
                                         {annotation.ref}
