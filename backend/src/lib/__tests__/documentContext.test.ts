@@ -10,7 +10,7 @@ import {
 
 // ---------------------------------------------------------------------------
 // parseOptionalDocumentContext — request parsing for POST /chat's
-// `documentContext` field (sent by the Word add-in)
+// `document_context` field (sent by the Word add-in)
 // ---------------------------------------------------------------------------
 
 describe("parseOptionalDocumentContext", () => {
@@ -30,7 +30,7 @@ describe("parseOptionalDocumentContext", () => {
             const parsed = parseOptionalDocumentContext(value);
             expect(parsed.ok).toBe(false);
             if (!parsed.ok) {
-                expect(parsed.detail).toBe("documentContext must be a string");
+                expect(parsed.detail).toBe("document_context must be a string");
             }
         }
     });
@@ -108,17 +108,23 @@ describe("spotlight", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildWordDocumentContextPrompt", () => {
-    it("labels the document as reference data and fences the body", () => {
-        const block = buildWordDocumentContextPrompt("CONTRACT BODY TEXT");
+    it("labels the document as reference data and fences the body with the request nonce", () => {
+        const nonce = generateSpotlightNonce();
+        const block = buildWordDocumentContextPrompt("CONTRACT BODY TEXT", nonce);
         expect(block).toContain("Microsoft Word");
         expect(block).toContain("reference content");
-        expect(block).toMatch(
-            /<untrusted-content nonce="[0-9a-f]{32}">\nCONTRACT BODY TEXT\n<\/untrusted-content nonce="[0-9a-f]{32}">/,
+        // The fence must carry the per-request nonce it was given — a request
+        // has exactly ONE nonce, shared with filenames and tool outputs.
+        expect(block).toContain(
+            `<untrusted-content nonce="${nonce}">\nCONTRACT BODY TEXT\n</untrusted-content nonce="${nonce}">`,
         );
     });
 
     it("reaches the model via buildMessages's system prompt", () => {
-        const block = buildWordDocumentContextPrompt("The quick brown clause.");
+        const block = buildWordDocumentContextPrompt(
+            "The quick brown clause.",
+            generateSpotlightNonce(),
+        );
         const apiMessages = buildMessages(
             [{ role: "user", content: "Summarize my document" }],
             [],
