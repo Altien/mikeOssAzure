@@ -21,6 +21,7 @@ import type {
     DocumentCitationAnnotation,
     EditAnnotation,
 } from "./types";
+import { quoteVerificationState } from "../assistant/message/citationVerification";
 
 function isDocxFilename(name: string): boolean {
     const ext = name.split(".").pop()?.toLowerCase();
@@ -103,8 +104,16 @@ export function DocPanel({
     // re-fetch every time they toggle. Tracked-change rendering still
     // only lives in DocxView, which is fine because edits are DOCX-only.
     const useDocxView = isDocxFilename(filename);
+    const firstCitationQuote =
+        mode.kind === "citation"
+            ? getDocumentCitationQuotes(mode.citation)[0]
+            : undefined;
     const citationQuoteId =
-        mode.kind === "citation" ? `document:${mode.citation.ref}:0` : null;
+        mode.kind === "citation" &&
+        firstCitationQuote &&
+        quoteVerificationState(firstCitationQuote) !== "unverified"
+            ? `document:${mode.citation.ref}:0`
+            : null;
     const [activeCitationQuoteId, setActiveCitationQuoteId] = useState<
         string | null
     >(citationQuoteId);
@@ -125,7 +134,7 @@ export function DocPanel({
             quote: selectedQuote.quote,
             quotes: [selectedQuote],
         });
-    }, [activeCitationQuoteId, citationQuoteId, mode]);
+    }, [activeCitationQuoteId, mode]);
 
     useEffect(() => {
         setActiveCitationQuoteId(citationQuoteId);
@@ -272,6 +281,7 @@ function RelevantQuoteSection({
                 quote: quote.quote.replaceAll("[[PAGE_BREAK]]", "..."),
                 inlineDetail: pageLabel,
                 citationText: [filename, pageLabel].filter(Boolean).join(", "),
+                verificationState: quoteVerificationState(quote),
             };
         },
     );
@@ -287,10 +297,16 @@ function RelevantQuoteSection({
             currentIndex={currentIndex}
             citationRef={citation.ref}
             citationText={citationText}
-            onSelect={(quote) => onQuoteSelect(quote.id)}
+            onSelect={(quote) => {
+                if (quote.verificationState !== "unverified") {
+                    onQuoteSelect(quote.id);
+                }
+            }}
             onIndexChange={(index) => {
                 const quote = relevantQuotes[index];
-                if (quote) onQuoteSelect(quote.id);
+                if (quote && quote.verificationState !== "unverified") {
+                    onQuoteSelect(quote.id);
+                }
             }}
         />
     );

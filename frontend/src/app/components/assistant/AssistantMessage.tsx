@@ -25,6 +25,11 @@ import type {
     EditAnnotation,
 } from "../shared/types";
 import { EditCard, applyOptimisticResolution } from "./EditCard";
+import {
+    citationVerificationAriaLabel,
+    citationVerificationDescription,
+    citationVerificationPillClassName,
+} from "./message/citationVerification";
 import { PreResponseWrapper } from "../shared/PreResponseWrapper";
 import { getBrowserAccessToken, bounceIfUnauthorized } from "@/lib/auth-token";
 
@@ -1189,14 +1194,17 @@ function MarkdownContent({
                             const idx = parseInt(citMatch[1]);
                             const annotation = citationsList[idx];
                             if (annotation) {
-                                const tooltipText = `${formatCitationPage(annotation)}: "${displayCitationQuote(annotation)}"`;
+                                const tooltipText = citationTooltip(annotation);
                                 return (
                                     <button
                                         onClick={() =>
                                             onCitationClick?.(annotation)
                                         }
                                         data-citation-ref={annotation.ref}
-                                        className={`${RESPONSE_GLASS_ANNOTATION} mx-0.5 align-super`}
+                                        className={`${RESPONSE_GLASS_ANNOTATION} ${citationVerificationPillClassName(annotation)} mx-0.5 align-super`}
+                                        aria-label={citationVerificationAriaLabel(
+                                            annotation,
+                                        )}
                                         title={tooltipText}
                                     >
                                         {annotation.ref}
@@ -1328,6 +1336,12 @@ function citationSourceLabel(annotation: CitationAnnotation): string {
 
 function documentExtension(filename?: string | null): string {
     return filename?.split(".").pop()?.toLowerCase() ?? "";
+}
+
+function citationTooltip(annotation: CitationAnnotation): string {
+    const source = `${formatCitationPage(annotation)}: "${displayCitationQuote(annotation)}"`;
+    const verification = citationVerificationDescription(annotation);
+    return verification ? `${source} — ${verification}` : source;
 }
 
 function CitationSourceIcon({
@@ -1479,10 +1493,13 @@ function CitationsBlock({
                                                         annotation,
                                                     )
                                                 }
-                                                className={
-                                                    RESPONSE_GLASS_ANNOTATION
-                                                }
-                                                title={`${formatCitationPage(annotation)}: "${displayCitationQuote(annotation)}"`}
+                                                className={`${RESPONSE_GLASS_ANNOTATION} ${citationVerificationPillClassName(annotation)}`}
+                                                aria-label={citationVerificationAriaLabel(
+                                                    annotation,
+                                                )}
+                                                title={citationTooltip(
+                                                    annotation,
+                                                )}
                                             >
                                                 {annotation.ref}
                                             </button>

@@ -51,7 +51,9 @@ describe("locateQuote", () => {
   });
 
   it("returns null when the quote is absent", () => {
-    expect(locateQuote(SOURCE, "the Tenant shall vacate immediately")).toBeNull();
+    expect(
+      locateQuote(SOURCE, "the Tenant shall vacate immediately"),
+    ).toBeNull();
   });
 });
 
@@ -59,82 +61,115 @@ describe("verifyQuoteAgainstSource", () => {
   it("exact match → verified with correct offsets into the source", () => {
     const quote = "The Landlord may terminate this Lease";
     const v = verifyQuoteAgainstSource(SOURCE, quote);
-    expect(v.status).toBe("verified");
+    expect(v.verified).toBe(true);
+    expect(v.needs_correction).toBe(false);
     expect(v.source_excerpt).toBe(quote);
     expect(SOURCE.slice(v.start_char, v.end_char)).toBe(quote);
   });
 
-  it("whitespace + case drift → repaired with the exact source excerpt", () => {
+  it("whitespace + case drift → verified with the exact source excerpt", () => {
     const drifted = "the  landlord   MAY terminate this lease";
     const v = verifyQuoteAgainstSource(SOURCE, drifted);
-    expect(v.status).toBe("repaired");
+    expect(v.verified).toBe(true);
+    expect(v.needs_correction).toBe(true);
     expect(v.source_excerpt).toBe("The Landlord may terminate this Lease");
     expect(SOURCE.slice(v.start_char, v.end_char)).toBe(v.source_excerpt);
   });
 
-  it("punctuation drift → repaired with corrected excerpt and offsets", () => {
+  it("punctuation drift → verified with corrected excerpt and offsets", () => {
     // Model inserted a stray comma the source does not contain.
     const drifted = "pay rent, on the first day";
     const v = verifyQuoteAgainstSource(SOURCE, drifted);
-    expect(v.status).toBe("repaired");
+    expect(v.verified).toBe(true);
+    expect(v.needs_correction).toBe(true);
     expect(v.source_excerpt).toBe("pay rent on the first day");
     expect(SOURCE.slice(v.start_char, v.end_char)).toBe(v.source_excerpt);
   });
 
   it("fabricated quote → unverified with no offsets", () => {
     const v = verifyQuoteAgainstSource(SOURCE, "The Tenant waives all rights.");
-    expect(v.status).toBe("unverified");
+    expect(v.verified).toBe(false);
     expect(v.start_char).toBeUndefined();
     expect(v.end_char).toBeUndefined();
     expect(v.source_excerpt).toBeUndefined();
   });
 
   it("empty / unreadable source → unverified", () => {
-    expect(verifyQuoteAgainstSource("", "anything").status).toBe("unverified");
+    expect(verifyQuoteAgainstSource("", "anything").verified).toBe(false);
     expect(
-      verifyQuoteAgainstSource("Document could not be read.", "anything").status,
-    ).toBe("unverified");
+      verifyQuoteAgainstSource("Document could not be read.", "anything")
+        .verified,
+    ).toBe(false);
   });
 
   it("cross-page [[PAGE_BREAK]] quote → each segment verified independently", () => {
     const src = "the first day of each month. The Landlord may terminate";
-    const quote = "the first day of each month[[PAGE_BREAK]]The Landlord may terminate";
+    const quote =
+      "the first day of each month[[PAGE_BREAK]]The Landlord may terminate";
     const v = verifyQuoteAgainstSource(src, quote);
-    expect(v.status).toBe("verified");
+    expect(v.verified).toBe(true);
     expect(v.source_excerpt).toContain("[[PAGE_BREAK]]");
   });
 
   it("cross-page quote with a missing segment → unverified", () => {
     const quote = "the first day of each month[[PAGE_BREAK]]never appears here";
     const v = verifyQuoteAgainstSource(SOURCE, quote);
-    expect(v.status).toBe("unverified");
+    expect(v.verified).toBe(false);
+  });
+
+  it.each(["...", "…"])(
+    "ellipsis-separated quote using %s verifies each excerpt independently",
+    (ellipsis) => {
+      const quote = `The Tenant shall pay rent${ellipsis}The Landlord may terminate this Lease`;
+      const v = verifyQuoteAgainstSource(SOURCE, quote);
+      expect(v.verified).toBe(true);
+      expect(v.source_excerpt).toBe(
+        "The Tenant shall pay rent ... The Landlord may terminate this Lease",
+      );
+    },
+  );
+
+  it("ellipsis-separated quote with a missing excerpt → unverified", () => {
+    const quote =
+      "The Tenant shall pay rent...the Tenant may sublet without consent";
+    const v = verifyQuoteAgainstSource(SOURCE, quote);
+    expect(v.verified).toBe(false);
+  });
+
+  it("supports ellipsis omissions inside a cross-page quote", () => {
+    const quote =
+      "The Tenant shall pay...first day of each month[[PAGE_BREAK]]The Landlord may terminate...written notice";
+    const v = verifyQuoteAgainstSource(SOURCE, quote);
+    expect(v.verified).toBe(true);
+    expect(v.source_excerpt).toContain("[[PAGE_BREAK]]");
   });
 });
 
 describe("verifyDocumentCitationAnnotation", () => {
   const fetcher = fetcherFor({ "doc-1": SOURCE });
 
-  it("marks a verified quote and attaches per-quote offsets + aggregate status", async () => {
+  it("marks a verified quote and attaches per-quote offsets", async () => {
     const ann = (await verifyDocumentCitationAnnotation(
       docAnnotation([{ page: 1, quote: "The Tenant shall pay rent" }]),
       fetcher,
     )) as Record<string, unknown>;
-    expect(ann.verification_status).toBe("verified");
-    const quotes = ann.quotes as { verification: { status: string } }[];
-    expect(quotes[0].verification.status).toBe("verified");
+    expect(ann.verified).toBe(true);
+    const quotes = ann.quotes as { verification: { verified: boolean } }[];
+    expect(quotes[0].verification.verified).toBe(true);
   });
 
-  it("repairs a drifted quote by swapping in the exact source excerpt", async () => {
+  it("corrects a drifted quote by swapping in the exact source excerpt", async () => {
     const ann = (await verifyDocumentCitationAnnotation(
       docAnnotation([{ page: 1, quote: "the  TENANT shall pay rent" }]),
       fetcher,
     )) as Record<string, unknown>;
-    expect(ann.verification_status).toBe("repaired");
+    expect(ann.verified).toBe(true);
     const quotes = ann.quotes as {
       quote: string;
-      verification: { status: string; source_excerpt: string };
+      verification: { verified: boolean; source_excerpt: string };
     }[];
-    expect(quotes[0].verification.status).toBe("repaired");
+    expect(quotes[0].verification.verified).toBe(true);
+    expect(quotes[0].verification).not.toHaveProperty("needs_correction");
     // The displayed quote is swapped to the true source text.
     expect(quotes[0].quote).toBe("The Tenant shall pay rent");
     // Legacy top-level quote mirror is updated too.
@@ -146,7 +181,7 @@ describe("verifyDocumentCitationAnnotation", () => {
       docAnnotation([{ page: 1, quote: "The Tenant may sublet freely." }]),
       fetcher,
     )) as Record<string, unknown>;
-    expect(ann.verification_status).toBe("unverified");
+    expect(ann.verified).toBe(false);
     const quotes = ann.quotes as { quote: string }[];
     expect(quotes[0].quote).toBe("The Tenant may sublet freely.");
   });
@@ -159,7 +194,7 @@ describe("verifyDocumentCitationAnnotation", () => {
       ]),
       fetcher,
     )) as Record<string, unknown>;
-    expect(ann.verification_status).toBe("unverified");
+    expect(ann.verified).toBe(false);
   });
 
   it("unreadable source → all quotes unverified", async () => {
@@ -167,7 +202,7 @@ describe("verifyDocumentCitationAnnotation", () => {
       docAnnotation([{ page: 1, quote: "The Tenant shall pay rent" }]),
       fetcherFor({ "doc-1": "Document could not be read." }),
     )) as Record<string, unknown>;
-    expect(ann.verification_status).toBe("unverified");
+    expect(ann.verified).toBe(false);
   });
 
   it("leaves case-law annotations untouched (no CourtListener regression)", async () => {
@@ -177,26 +212,32 @@ describe("verifyDocumentCitationAnnotation", () => {
       ref: 2,
       cluster_id: 42,
       case_name: "Roe v. Doe",
-      quotes: [{ opinionId: null, type: null, author: null, quote: "held that…" }],
+      quotes: [
+        { opinionId: null, type: null, author: null, quote: "held that…" },
+      ],
     };
     const out = await verifyDocumentCitationAnnotation(caseAnn, fetcher);
     expect(out).toBe(caseAnn);
-    expect(out as Record<string, unknown>).not.toHaveProperty(
-      "verification_status",
-    );
+    expect(out as Record<string, unknown>).not.toHaveProperty("verified");
   });
 });
 
 describe("verifyDocumentCitations (batch)", () => {
   it("verifies documents and passes case citations through unchanged", async () => {
-    const caseAnn = { type: "citation_data", kind: "case", ref: 2, cluster_id: 7 };
+    const caseAnn = {
+      type: "citation_data",
+      kind: "case",
+      ref: 2,
+      cluster_id: 7,
+    };
     const out = await verifyDocumentCitations(
-      [docAnnotation([{ page: 1, quote: "The Tenant shall pay rent" }]), caseAnn],
+      [
+        docAnnotation([{ page: 1, quote: "The Tenant shall pay rent" }]),
+        caseAnn,
+      ],
       fetcherFor({ "doc-1": SOURCE }),
     );
-    expect((out[0] as Record<string, unknown>).verification_status).toBe(
-      "verified",
-    );
+    expect((out[0] as Record<string, unknown>).verified).toBe(true);
     expect(out[1]).toBe(caseAnn);
   });
 });

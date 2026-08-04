@@ -274,9 +274,17 @@ export interface CitationQuote {
   quote: string;
 }
 
+export type QuoteVerification = {
+  verified: boolean;
+  source_excerpt?: string;
+  start_char?: number;
+  end_char?: number;
+};
+
 export type DocumentCitationQuote = {
   page: number | string;
   quote: string;
+  verification?: QuoteVerification;
 };
 
 export type DocumentCitationAnnotation = {
@@ -292,6 +300,8 @@ export type DocumentCitationAnnotation = {
   page: number | string;
   quote: string;
   quotes?: DocumentCitationQuote[];
+  /** True only when every quote was matched against the source. */
+  verified?: boolean;
 };
 
 export type CaseCitationAnnotation = {
