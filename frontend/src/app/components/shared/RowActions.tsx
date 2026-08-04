@@ -1,24 +1,39 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import {
+    forwardRef,
+    useEffect,
+    useRef,
+    useState,
+    type ComponentPropsWithoutRef,
+} from "react";
+import { createPortal } from "react-dom";
 import {
     Download,
     Eye,
     EyeOff,
     FolderMinus,
-    FolderPlus,
     Hash,
     History,
     Pencil,
     Trash2,
     Upload,
 } from "lucide-react";
+import { SubfolderSvgIcon } from "@/app/components/shared/FolderSvgIcon";
+import {
+    CLOSE_ROW_ACTIONS_EVENT,
+    closeRowActionMenus,
+} from "@/app/components/shared/TablePrimitive";
+import {
+    LiquidDropdownButton,
+    LiquidDropdownSurface,
+} from "@/app/components/ui/liquid-dropdown";
+import { cn } from "@/app/lib/utils";
+import { APP_SURFACE_HOVER_CLASS } from "@/app/components/ui/liquid-surface";
 
-const CLOSE_ROW_ACTIONS_EVENT = "mike:close-row-actions";
+export { CLOSE_ROW_ACTIONS_EVENT, closeRowActionMenus };
 
-export function closeRowActionMenus() {
-    document.dispatchEvent(new Event(CLOSE_ROW_ACTIONS_EVENT));
-}
+export type RowActionMenuSurfaceProps = ComponentPropsWithoutRef<"div">;
 
 interface Props {
     onDelete?: () => void;
@@ -30,6 +45,8 @@ interface Props {
     onUploadNewVersion?: () => void;
     onNewSubfolder?: () => void;
     deleting?: boolean;
+    deleteDisabled?: boolean;
+    onEditDetails?: () => void;
     onRename?: () => void;
     onUpdateCmNumber?: () => void;
     newSubfolderLabel?: string;
@@ -37,7 +54,19 @@ interface Props {
     deleteLabel?: string;
 }
 
-export function RowActionMenuItems({
+type RowActionMenuItemsProps = Props & {
+    onClose: () => void;
+    surfaceProps?: RowActionMenuSurfaceProps;
+};
+
+const ROW_ACTION_ITEM_CLASS =
+    "flex items-center gap-2 w-full px-3 py-2 text-gray-600";
+const ROW_ACTION_LEFT_ITEM_CLASS = `text-left ${ROW_ACTION_ITEM_CLASS}`;
+
+export const RowActionMenuItems = forwardRef<
+    HTMLDivElement,
+    RowActionMenuItemsProps
+>(function RowActionMenuItems({
     onDelete,
     onHide,
     onUnhide,
@@ -47,109 +76,136 @@ export function RowActionMenuItems({
     onUploadNewVersion,
     onNewSubfolder,
     deleting,
+    deleteDisabled = false,
+    onEditDetails,
     onRename,
     onUpdateCmNumber,
     newSubfolderLabel = "New subfolder",
     renameLabel = "Rename",
     deleteLabel = "Delete",
     onClose,
-}: Props & { onClose: () => void }) {
+    surfaceProps,
+}, ref) {
+    const { className: surfaceClassName, ...restSurfaceProps } =
+        surfaceProps ?? {};
+
     return (
-        <>
+        <LiquidDropdownSurface
+            ref={ref}
+            className={cn("w-48 overflow-hidden", surfaceClassName)}
+            {...restSurfaceProps}
+        >
             {onNewSubfolder && (
-                <button
+                <LiquidDropdownButton
                     onClick={() => { onClose(); onNewSubfolder(); }}
-                    className="flex items-center gap-2 w-full px-3 py-2 text-xs text-left text-gray-600 hover:bg-gray-50 transition-colors"
+                    className={ROW_ACTION_LEFT_ITEM_CLASS}
                 >
-                    <FolderPlus className="h-3.5 w-3.5 shrink-0" />
+                    <SubfolderSvgIcon className="h-3.5 w-3.5 shrink-0" />
                     {newSubfolderLabel}
-                </button>
+                </LiquidDropdownButton>
             )}
             {onRename && (
-                <button
+                <LiquidDropdownButton
                     onClick={() => { onClose(); onRename(); }}
-                    className="flex items-center gap-2 w-full px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
+                    className={ROW_ACTION_ITEM_CLASS}
                 >
                     <Pencil className="h-3.5 w-3.5" />
                     {renameLabel}
-                </button>
+                </LiquidDropdownButton>
+            )}
+            {onEditDetails && (
+                <LiquidDropdownButton
+                    onClick={() => { onClose(); onEditDetails(); }}
+                    className={ROW_ACTION_ITEM_CLASS}
+                >
+                    <Pencil className="h-3.5 w-3.5" />
+                    Edit details
+                </LiquidDropdownButton>
             )}
             {onUpdateCmNumber && (
-                <button
+                <LiquidDropdownButton
                     onClick={() => { onClose(); onUpdateCmNumber(); }}
-                    className="flex items-center gap-2 w-full px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
+                    className={ROW_ACTION_ITEM_CLASS}
                 >
                     <Hash className="h-3.5 w-3.5" />
                     Edit CM No.
-                </button>
+                </LiquidDropdownButton>
             )}
             {onDownload && (
-                <button
+                <LiquidDropdownButton
                     onClick={() => { onClose(); onDownload(); }}
-                    className="flex items-center gap-2 w-full px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
+                    className={ROW_ACTION_ITEM_CLASS}
                 >
                     <Download className="h-3.5 w-3.5" />
                     Download
-                </button>
+                </LiquidDropdownButton>
             )}
             {onShowAllVersions && (
-                <button
+                <LiquidDropdownButton
                     onClick={() => { onClose(); onShowAllVersions(); }}
-                    className="flex items-center gap-2 w-full px-3 py-2 text-xs text-left text-gray-600 hover:bg-gray-50 transition-colors"
+                    className={ROW_ACTION_LEFT_ITEM_CLASS}
                 >
                     <History className="h-3.5 w-3.5 shrink-0" />
                     Show all versions
-                </button>
+                </LiquidDropdownButton>
             )}
             {onUploadNewVersion && (
-                <button
+                <LiquidDropdownButton
                     onClick={() => { onClose(); onUploadNewVersion(); }}
-                    className="flex items-center gap-2 w-full px-3 py-2 text-xs text-left text-gray-600 hover:bg-gray-50 transition-colors"
+                    className={ROW_ACTION_LEFT_ITEM_CLASS}
                 >
                     <Upload className="h-3.5 w-3.5 shrink-0" />
                     Upload new version
-                </button>
+                </LiquidDropdownButton>
             )}
             {onRemoveFromFolder && (
-                <button
+                <LiquidDropdownButton
                     onClick={() => { onClose(); onRemoveFromFolder(); }}
-                    className="flex items-center gap-2 w-full px-3 py-2 text-xs text-left text-gray-600 hover:bg-gray-50 transition-colors"
+                    className={ROW_ACTION_LEFT_ITEM_CLASS}
                 >
                     <FolderMinus className="h-3.5 w-3.5 shrink-0" />
                     Remove from subfolder
-                </button>
+                </LiquidDropdownButton>
             )}
             {onUnhide && (
-                <button
+                <LiquidDropdownButton
                     onClick={() => { onClose(); onUnhide(); }}
-                    className="flex items-center gap-2 w-full px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
+                    className={ROW_ACTION_ITEM_CLASS}
                 >
                     <Eye className="h-3.5 w-3.5" />
-                    Unhide
-                </button>
+                    Activate
+                </LiquidDropdownButton>
             )}
             {onHide && (
-                <button
+                <LiquidDropdownButton
                     onClick={() => { onClose(); onHide(); }}
-                    className="flex items-center gap-2 w-full px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
+                    className={ROW_ACTION_ITEM_CLASS}
                 >
                     <EyeOff className="h-3.5 w-3.5" />
-                    Hide
-                </button>
+                    Deactivate
+                </LiquidDropdownButton>
             )}
             {onDelete && (
                 <button
-                    onClick={() => { onClose(); onDelete(); }}
-                    disabled={deleting}
-                    className="flex items-center gap-2 w-full px-3 py-2 text-xs text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40"
+                    onClick={() => {
+                        if (deleteDisabled || deleting) return;
+                        onClose();
+                        onDelete();
+                    }}
+                    disabled={deleting || deleteDisabled}
+                    className={`flex items-center gap-2 w-full px-3 py-2 text-xs text-red-500 transition-colors disabled:opacity-40 ${
+                        deleteDisabled
+                            ? "cursor-not-allowed opacity-40 hover:bg-transparent"
+                            : "hover:bg-red-500/10"
+                    }`}
                 >
                     <Trash2 className="h-3.5 w-3.5" />
                     {deleteLabel}
                 </button>
             )}
-        </>
+        </LiquidDropdownSurface>
     );
-}
+});
 
 export function RowActions(props: Props) {
     const [open, setOpen] = useState(false);
@@ -199,23 +255,28 @@ export function RowActions(props: Props) {
             <button
                 ref={btnRef}
                 onClick={handleToggle}
-                className="flex items-center justify-center w-6 h-6 rounded text-gray-700 hover:text-gray-900 hover:bg-gray-100 transition-colors leading-none"
+                className={`flex items-center justify-center w-6 h-6 rounded text-gray-700 hover:text-gray-900 transition-colors leading-none ${APP_SURFACE_HOVER_CLASS}`}
             >
                 <span className="tracking-widest text-xs">···</span>
             </button>
 
-            {open && (
-                <div
-                    style={{ position: "fixed", top: coords.top, right: coords.right }}
-                    className="z-[120] w-48 rounded-xl border border-gray-100 bg-white shadow-lg overflow-hidden"
-                    onClick={(e) => e.stopPropagation()}
-                >
+            {open &&
+                createPortal(
                     <RowActionMenuItems
                         {...props}
                         onClose={() => setOpen(false)}
-                    />
-                </div>
-            )}
+                        surfaceProps={{
+                            style: {
+                                position: "fixed",
+                                top: coords.top,
+                                right: coords.right,
+                            },
+                            className: "z-[120]",
+                            onClick: (e) => e.stopPropagation(),
+                        }}
+                    />,
+                    document.body,
+                )}
         </>
     );
 }

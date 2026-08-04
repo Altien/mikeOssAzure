@@ -13,21 +13,21 @@ import {
     Download,
     ExternalLink,
 } from "lucide-react";
-import { MikeIcon } from "@/components/chat/mike-icon";
+import { MikeIcon } from "@/app/components/chat/mike-icon";
 import type { CaseCitationQuote } from "../shared/types";
 import {
     clearDocxQuoteHighlights,
     highlightDocxQuote,
-} from "../shared/highlightDocxQuote";
+} from "../shared/views/highlightDocxQuote";
 import {
-    RelevantQuotes,
-    type RelevantQuoteItem,
-} from "../shared/RelevantQuotes";
+    CitationQuotesHeader,
+    type CitationQuoteHeaderItem,
+} from "./CitationQuotesHeader";
 import {
     getCourtlistenerOpinions,
     type CaseLawOpinion,
 } from "@/app/lib/mikeApi";
-import { cn } from "@/lib/utils";
+import { cn } from "@/app/lib/utils";
 
 export type CaseTab = {
     kind: "case";
@@ -216,6 +216,7 @@ export function CaseLawPanel({
 
     useEffect(() => {
         if (tab.opinions?.length) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect -- sync path of an async fetch effect: serve prop/cache data without a loading flash
             setOpinions(tab.opinions);
             setLoading(false);
             setError(null);
@@ -269,10 +270,12 @@ export function CaseLawPanel({
             orderOpinions(opinions).find(
                 ({ opinion }) => typeof opinion.opinionId === "number",
             )?.opinion.opinionId ?? null;
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- reset active opinion after opinions load
         setActiveOpinionId(firstOpinionId);
     }, [opinions]);
 
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- sync quote list when the tab prop changes
         setRelevantQuotes(tab.quotes ?? []);
     }, [tab.quotes]);
 
@@ -292,7 +295,7 @@ export function CaseLawPanel({
                   Math.max(relevantQuotes.length - 1, 0),
               )
             : 0;
-    const relevantQuoteItems: RelevantQuoteItem[] = relevantQuotes.map(
+    const relevantQuoteItems: CitationQuoteHeaderItem[] = relevantQuotes.map(
         (quote, index) => ({
             id: relevantQuoteKey(quote, index),
             quote: quote.quote,
@@ -321,6 +324,7 @@ export function CaseLawPanel({
     );
 
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- reset quote selection when the quote set changes
         setQuoteIndexState({ cacheKey: quoteCacheKey, index: 0 });
         const firstQuote = relevantQuotes[0];
         setActiveQuoteKey(firstQuote ? relevantQuoteKey(firstQuote, 0) : null);
@@ -432,7 +436,7 @@ export function CaseLawPanel({
                 </div>
             </div>
             {relevantQuoteItems.length > 0 && (
-                <RelevantQuotes
+                <CitationQuotesHeader
                     quotes={relevantQuoteItems}
                     activeQuoteId={activeQuoteKey}
                     currentIndex={currentQuoteIndex}

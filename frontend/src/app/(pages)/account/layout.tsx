@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth } from "@/app/contexts/AuthContext";
 import { accountTabButtonClassName } from "./accountStyles";
 
 interface TabDef {
@@ -14,6 +14,7 @@ interface TabDef {
 
 const TABS: TabDef[] = [
     { id: "general", label: "General", href: "/account" },
+    { id: "features", label: "Features", href: "/account/features" },
     {
         id: "privacy-data",
         label: "Privacy & Data",
@@ -22,6 +23,7 @@ const TABS: TabDef[] = [
     { id: "security", label: "Security", href: "/account/security" },
     { id: "models", label: "Model Preferences", href: "/account/models" },
     { id: "api-keys", label: "API Keys", href: "/account/api-keys" },
+    { id: "connectors", label: "Connectors", href: "/account/connectors" },
 ];
 
 export default function AccountLayout({

@@ -1,0 +1,8 @@
+# Lockfiles are generated files. Git's line-level text merge can combine
+# both sides' insertions into syntactically invalid JSON *without raising a
+# conflict* (this silently broke backend/package.json + package-lock.json in
+# PR #233). Merge them as binary so any concurrent change surfaces as an
+# explicit conflict; resolve by taking main's copy and regenerating:
+#   git checkout origin/main -- package-lock.json && npm install
+package-lock.json merge=binary
+bun.lock merge=binary

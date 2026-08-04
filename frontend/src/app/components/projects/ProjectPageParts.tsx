@@ -1,23 +1,27 @@
 "use client";
 
-import { type CSSProperties, useState } from "react";
+import { type CSSProperties, useRef, useState } from "react";
 import {
     CornerDownRight,
-    File,
-    FileText,
     Loader2,
-    MessageSquare,
-    Search,
-    Table2,
+    Pencil,
+    Plus,
+    Trash2,
+    Upload,
     Users,
 } from "lucide-react";
-import { PageHeader } from "@/app/components/shared/PageHeader";
-import { RenameableTitle } from "@/app/components/shared/RenameableTitle";
+import {
+    PageHeader,
+    type PageHeaderAction,
+} from "@/app/components/shared/PageHeader";
+import { FileTypeIcon } from "@/app/components/shared/FileTypeIcon";
 import type { Project } from "@/app/components/shared/types";
 import type { DocumentVersion } from "@/app/lib/mikeApi";
 import { RowActions } from "@/app/components/shared/RowActions";
+import { HeaderActionsMenu } from "@/app/components/shared/HeaderActionsMenu";
+import { TABLE_PRIMARY_CELL_WIDTH_CLASS } from "@/app/components/shared/TablePrimitive";
 
-export type ProjectTab = "documents" | "assistant" | "reviews";
+export type ProjectWorkspaceSection = "documents" | "assistant" | "reviews";
 
 export type ProjectContextMenu = {
     x: number;
@@ -27,11 +31,11 @@ export type ProjectContextMenu = {
     showFolderActions: boolean;
 };
 
-export const NAME_COL_W = "w-[332px] shrink-0";
+export const NAME_COL_W = TABLE_PRIMARY_CELL_WIDTH_CLASS;
 export const DOC_NAME_COL_W =
     "w-[292px] sm:w-[332px] md:w-[392px] lg:w-[452px] xl:w-[532px] 2xl:w-[592px] shrink-0";
 
-const TREE_CONTROL_WIDTH_PX = 32;
+const TREE_CONTROL_WIDTH_PX = 29;
 const TREE_NAME_PADDING_PX = 16;
 
 export function treeNameCellStyle(depth: number): CSSProperties | undefined {
@@ -55,18 +59,19 @@ export function formatDate(iso: string) {
     });
 }
 
-export function DocIcon({ fileType }: { fileType: string | null }) {
-    if (fileType === "pdf")
-        return <FileText className="h-4 w-4 text-red-600 shrink-0" />;
-    if (fileType === "docx" || fileType === "doc")
-        return <File className="h-4 w-4 text-blue-600 shrink-0" />;
-    return <File className="h-4 w-4 text-gray-500 shrink-0" />;
+export function DocIcon({
+    fileType,
+    muted = false,
+}: {
+    fileType: string | null;
+    muted?: boolean;
+}) {
+    return <FileTypeIcon fileType={fileType} className="h-4 w-4" muted={muted} />;
 }
 
 export function DocVersionHistory({
     docId,
     filename,
-    fileType,
     activeVersionNumber,
     currentVersionId,
     loading,
@@ -79,7 +84,6 @@ export function DocVersionHistory({
 }: {
     docId: string;
     filename: string;
-    fileType: string | null;
     activeVersionNumber: number | null;
     currentVersionId: string | null;
     loading: boolean;
@@ -101,8 +105,10 @@ export function DocVersionHistory({
         null,
     );
     const [editingValue, setEditingValue] = useState("");
+    const committingVersionId = useRef<string | null>(null);
 
     const commit = async (versionId: string) => {
+        if (committingVersionId.current === versionId) return;
         const trimmed = editingValue.trim();
         const previousFilename = versions
             .find((version) => version.id === versionId)
@@ -116,6 +122,7 @@ export function DocVersionHistory({
             return;
         }
 
+        committingVersionId.current = versionId;
         setEditingVersionId(null);
         const next = trimmed.length > 0 ? trimmed : null;
         await onRenameVersion?.(versionId, next);
@@ -182,6 +189,8 @@ export function DocVersionHistory({
     return (
         <>
             {ordered.map((v) => {
+                const versionFileType = v.file_type ?? null;
+                const isDeleted = v.deleted_at != null;
                 const numberLabel =
                     typeof v.version_number === "number" &&
                     v.version_number >= 1
@@ -190,6 +199,7 @@ export function DocVersionHistory({
                           ? "Original"
                           : "—";
                 const displayLabel = v.filename?.trim() || numberLabel;
+                const downloadFilename = v.filename?.trim() || filename;
                 const dt = new Date(v.created_at);
                 const dateLabel = Number.isNaN(dt.valueOf())
                     ? ""
@@ -201,28 +211,42 @@ export function DocVersionHistory({
                           minute: "2-digit",
                       });
                 const isEditing = editingVersionId === v.id;
-                const rowBg = "bg-gray-100";
+                const rowBg = isDeleted ? "bg-gray-50" : "bg-gray-100";
+                const hoverBg = isDeleted ? "hover:bg-gray-50" : "hover:bg-gray-200";
                 return (
                     <div
                         key={`ver-${docId}-${v.id}`}
                         onClick={() => {
-                            if (isEditing) return;
+                            if (isEditing || isDeleted) return;
                             onOpenVersion?.(v.id, displayLabel);
                         }}
-                        className={`group flex h-10 cursor-pointer items-center pr-8 text-sm text-gray-500 transition-colors hover:bg-gray-200 ${rowBg}`}
+                        className={`group flex h-10 items-center pr-8 text-sm transition-colors ${rowBg} ${hoverBg} ${
+                            isDeleted
+                                ? "cursor-default text-gray-300"
+                                : "cursor-pointer text-gray-500"
+                        }`}
                     >
                         <div
-                            className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${rowBg} py-2 pl-4 pr-2 transition-colors group-hover:bg-gray-200`}
+                            className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${rowBg} py-2 pl-4 pr-2 transition-colors ${
+                                isDeleted ? "group-hover:bg-gray-50" : "group-hover:bg-gray-200"
+                            }`}
                             style={treeNameCellStyle(depth)}
                         >
                             <div className="flex items-center gap-4">
                                 <span className="flex h-2.5 w-2.5 shrink-0 items-center justify-center">
                                     <CornerDownRight
-                                        className="h-3.5 w-3.5 text-gray-400"
+                                        className={`h-3.5 w-3.5 ${
+                                            isDeleted
+                                                ? "text-gray-300"
+                                                : "text-gray-400"
+                                        }`}
                                         aria-hidden="true"
                                     />
                                 </span>
-                                <DocIcon fileType={fileType} />
+                                <DocIcon
+                                    fileType={versionFileType}
+                                    muted={isDeleted}
+                                />
                                 {isEditing ? (
                                     <input
                                         autoFocus
@@ -236,6 +260,7 @@ export function DocVersionHistory({
                                                 e.preventDefault();
                                                 void commit(v.id);
                                             } else if (e.key === "Escape") {
+                                                committingVersionId.current = null;
                                                 setEditingVersionId(null);
                                             }
                                         }}
@@ -243,22 +268,47 @@ export function DocVersionHistory({
                                         className="min-w-0 flex-1 border-b border-gray-300 bg-transparent text-sm text-gray-800 outline-none focus:border-gray-500"
                                     />
                                 ) : (
-                                    <span className="truncate text-sm text-gray-700">
+                                    <span
+                                        className={`truncate text-sm ${
+                                            isDeleted
+                                                ? "text-gray-300"
+                                                : "text-gray-700"
+                                        }`}
+                                    >
+                                        {isDeleted && (
+                                            <span className="font-medium text-gray-500">
+                                                [Deleted]{" "}
+                                            </span>
+                                        )}
                                         {displayLabel}
                                     </span>
                                 )}
                             </div>
                         </div>
-                        <div className="ml-auto w-20 shrink-0 truncate text-xs uppercase text-gray-500">
-                            {fileType ?? <span className="text-gray-300">—</span>}
+                        <div
+                            className={`ml-auto w-20 shrink-0 truncate text-xs uppercase ${
+                                isDeleted ? "text-gray-300" : "text-gray-500"
+                            }`}
+                        >
+                            {versionFileType ?? (
+                                <span className="text-gray-300">—</span>
+                            )}
                         </div>
                         <div className="w-24 shrink-0 truncate text-sm text-gray-400">
                             —
                         </div>
-                        <div className="w-20 shrink-0 truncate pl-1 text-sm text-gray-500">
+                        <div
+                            className={`w-20 shrink-0 truncate pl-1 text-sm ${
+                                isDeleted ? "text-gray-300" : "text-gray-500"
+                            }`}
+                        >
                             {numberLabel}
                         </div>
-                        <div className="w-32 shrink-0 truncate text-sm text-gray-500">
+                        <div
+                            className={`w-32 shrink-0 truncate text-sm ${
+                                isDeleted ? "text-gray-300" : "text-gray-500"
+                            }`}
+                        >
                             {dateLabel ? formatDate(v.created_at) : <span className="text-gray-300">—</span>}
                         </div>
                         <div className="w-32 shrink-0 truncate text-sm text-gray-400">
@@ -268,20 +318,29 @@ export function DocVersionHistory({
                             className="w-8 shrink-0 flex justify-end"
                             onClick={(e) => e.stopPropagation()}
                         >
-                            <RowActions
-                                onRename={
-                                    onRenameVersion
-                                        ? () => {
-                                              setEditingVersionId(v.id);
-                                              setEditingValue(v.filename ?? "");
-                                          }
-                                        : undefined
-                                }
-                                renameLabel="Rename version"
-                                onDownload={() =>
-                                    onDownloadVersion(docId, v.id, filename)
-                                }
-                            />
+                            {!isDeleted && (
+                                <RowActions
+                                    onRename={
+                                        onRenameVersion
+                                            ? () => {
+                                                  committingVersionId.current = null;
+                                                  setEditingVersionId(v.id);
+                                                  setEditingValue(
+                                                      v.filename ?? "",
+                                                  );
+                                              }
+                                            : undefined
+                                    }
+                                    renameLabel="Rename version"
+                                    onDownload={() =>
+                                        onDownloadVersion(
+                                            docId,
+                                            v.id,
+                                            downloadFilename,
+                                        )
+                                    }
+                                />
+                            )}
                         </div>
                     </div>
                 );
@@ -290,116 +349,74 @@ export function DocVersionHistory({
     );
 }
 
-export function ProjectPageSkeleton() {
-    return (
-        <div className="flex-1 overflow-y-auto">
-            <PageHeader
-                align="start"
-                actionGap="lg"
-                breadcrumbs={[
-                    { label: "Projects" },
-                    { loading: true, skeletonClassName: "w-40" },
-                ]}
-                actionGroups={[
-                    [
-                        {
-                            disabled: true,
-                            iconOnly: true,
-                            title: "Search",
-                            icon: <Search className="h-4 w-4" />,
-                        },
-                        {
-                            disabled: true,
-                            iconOnly: true,
-                            title: "People with access",
-                            icon: <Users className="h-4 w-4" />,
-                        },
-                    ],
-                    [
-                        {
-                            disabled: true,
-                            icon: <MessageSquare className="h-4 w-4" />,
-                            label: <span className="hidden sm:inline">New Chat</span>,
-                        },
-                        {
-                            disabled: true,
-                            icon: <Table2 className="h-4 w-4" />,
-                            label: <span className="hidden sm:inline">New Review</span>,
-                        },
-                    ],
-                ]}
-            />
-            <div className="flex items-center h-10 px-4 md:px-10 border-b border-gray-200 gap-5">
-                <div className="h-3 w-20 rounded bg-gray-100 animate-pulse" />
-                <div className="h-3 w-10 rounded bg-gray-100 animate-pulse" />
-                <div className="h-3 w-24 rounded bg-gray-100 animate-pulse" />
-                <div className="ml-auto flex items-center gap-5">
-                    <div className="h-3 w-24 rounded bg-gray-100 animate-pulse" />
-                    <div className="h-3 w-24 rounded bg-gray-100 animate-pulse" />
-                </div>
-            </div>
-            <div className="flex items-center h-8 pr-3 md:pr-10 border-b border-gray-200">
-                <div className={`${DOC_NAME_COL_W} flex shrink-0 items-center gap-4 pl-4 pr-2`}>
-                    <div className="h-2.5 w-2.5 rounded bg-gray-100 animate-pulse" />
-                    <div className="h-2.5 w-8 rounded bg-gray-100 animate-pulse" />
-                </div>
-                <div className="w-20 shrink-0">
-                    <div className="h-2.5 w-8 rounded bg-gray-100 animate-pulse" />
-                </div>
-                <div className="w-24 shrink-0">
-                    <div className="h-2.5 w-8 rounded bg-gray-100 animate-pulse" />
-                </div>
-                <div className="w-8 shrink-0" />
-            </div>
-            {[1, 2, 3, 4, 5].map((i) => (
-                <div
-                    key={i}
-                    className="flex items-center h-10 pr-3 md:pr-10 border-b border-gray-50"
-                >
-                    <div className={`${DOC_NAME_COL_W} flex shrink-0 items-center gap-4 pl-4 pr-2`}>
-                        <div className="h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse" />
-                        <div className="h-3.5 w-56 rounded bg-gray-100 animate-pulse" />
-                    </div>
-                    <div className="w-20 shrink-0">
-                        <div className="h-3 w-8 rounded bg-gray-100 animate-pulse" />
-                    </div>
-                    <div className="w-24 shrink-0">
-                        <div className="h-3 w-12 rounded bg-gray-100 animate-pulse" />
-                    </div>
-                    <div className="w-8 shrink-0" />
-                </div>
-            ))}
-        </div>
-    );
-}
-
 export function ProjectPageHeader({
     project,
-    tab,
     search,
+    activeSection,
     creatingChat,
     creatingReview,
     docsCount,
+    isOwner,
     onBackToProjects,
-    onTitleCommit,
+    onOpenDetails,
+    onDeleteProject,
     onSearchChange,
     onOpenPeople,
     onNewChat,
     onNewReview,
+    onAddDocuments,
 }: {
-    project: Project;
-    tab: ProjectTab;
+    project: Project | null;
     search: string;
+    activeSection: ProjectWorkspaceSection;
     creatingChat: boolean;
     creatingReview: boolean;
     docsCount: number;
+    isOwner: boolean;
     onBackToProjects: () => void;
-    onTitleCommit: (newName: string) => void | Promise<void>;
+    onOpenDetails: () => void;
+    onDeleteProject: () => void;
     onSearchChange: (search: string) => void;
     onOpenPeople: () => void;
     onNewChat: () => void;
     onNewReview: () => void;
+    onAddDocuments?: (() => void) | null;
 }) {
+    const sectionAction: PageHeaderAction =
+        activeSection === "documents"
+            ? {
+                  onClick: onAddDocuments ?? undefined,
+                  disabled: !onAddDocuments,
+                  icon: <Upload className="h-4 w-4" />,
+                  label: <span className="hidden sm:inline">Documents</span>,
+                  title: "Add documents",
+              }
+            : activeSection === "assistant"
+              ? {
+                    onClick: onNewChat,
+                    disabled: creatingChat,
+                    icon: creatingChat ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                        <Plus className="h-4 w-4" />
+                    ),
+                    label: <span className="hidden sm:inline">Chat</span>,
+                    title: "Create chat",
+                }
+              : {
+                    onClick: onNewReview,
+                    disabled: docsCount === 0 || creatingReview,
+                    icon: creatingReview ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                        <Plus className="h-4 w-4" />
+                    ),
+                    label: <span className="hidden sm:inline">Review</span>,
+                    title: "Create review",
+                    tooltip:
+                        docsCount === 0 ? "Upload a document first" : null,
+                };
+
     return (
         <PageHeader
             breadcrumbs={[
@@ -409,21 +426,16 @@ export function ProjectPageHeader({
                     title: "Back to Projects",
                 },
                 {
-                    label: (
-                        <RenameableTitle
-                            value={project.name}
-                            onCommit={onTitleCommit}
-                        />
-                    ),
-                    suffix: project.cm_number ? (
-                        <span className="ml-1 text-gray-400">
-                            (#{project.cm_number})
-                        </span>
-                    ) : null,
+                    ...(project
+                        ? {
+                              label: project.name,
+                          }
+                        : {
+                              loading: true,
+                              skeletonClassName: "w-40",
+                          }),
                 },
             ]}
-            align="start"
-            actionGap="lg"
             actionGroups={[
                 [
                     {
@@ -438,34 +450,30 @@ export function ProjectPageHeader({
                         title: "People with access",
                         icon: <Users className="h-4 w-4" />,
                     },
-                ],
-                [
                     {
-                        onClick: onNewChat,
-                        disabled: creatingChat,
-                        icon: creatingChat ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                                <MessageSquare className="h-4 w-4" />
-                            ),
-                        label: <span className="hidden sm:inline">New Chat</span>,
-                    },
-                    {
-                        onClick: onNewReview,
-                        disabled: docsCount === 0 || creatingReview,
-                        icon: creatingReview ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                                <Table2 className="h-4 w-4" />
-                            ),
-                        label: (
-                            <span className="hidden sm:inline">
-                                New Review
-                            </span>
+                        type: "custom",
+                        render: (
+                            <HeaderActionsMenu
+                                items={[
+                                    {
+                                        label: isOwner
+                                            ? "Edit details"
+                                            : "View details",
+                                        icon: Pencil,
+                                        onSelect: onOpenDetails,
+                                    },
+                                    {
+                                        label: "Delete",
+                                        icon: Trash2,
+                                        onSelect: onDeleteProject,
+                                        variant: "danger",
+                                    },
+                                ]}
+                            />
                         ),
-                        tooltip: docsCount === 0 ? "Upload a document first" : null,
                     },
                 ],
+                [sectionAction],
             ]}
         />
     );

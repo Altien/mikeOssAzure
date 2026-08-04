@@ -16,9 +16,24 @@ import { docxToPdf, convertedPdfKey } from "../lib/convert";
 import { checkProjectAccess } from "../lib/access";
 import { singleFileUpload } from "../lib/upload";
 import { deleteUserProjects } from "../lib/userDataCleanup";
+import {
+  ALLOWED_DOCUMENT_TYPES,
+  ALLOWED_DOCUMENT_TYPES_LABEL,
+  contentTypeForDocumentType,
+  shouldConvertToPdf,
+} from "../lib/documentTypes";
+import {
+  findMissingUserEmails,
+  loadProfileUsersByEmail,
+} from "../lib/userLookup";
 
 export const projectsRouter = Router();
-const ALLOWED_TYPES = new Set(["pdf", "docx", "doc"]);
+
+function normalizeOptionalString(value: unknown) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
 
 function normalizeDocumentFilename(nextName: unknown, currentName: string) {
   if (typeof nextName !== "string") return null;
@@ -60,70 +75,150 @@ async function deleteProjectDocumentsAndVersionFiles(
   return error ?? null;
 }
 
+async function attachDocumentOwnerLabels(
+  db: ReturnType<typeof createServerSupabase>,
+  docs: { user_id?: string | null }[],
+) {
+  const ownerIds = docs
+    .map((doc) => doc.user_id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0)
+    .filter((id, index, arr) => arr.indexOf(id) === index);
+  if (ownerIds.length === 0) return;
+
+  const displayNameByUserId = new Map<string, string>();
+  const { data: profiles, error: profilesError } = await db
+    .from("user_profiles")
+    .select("user_id, display_name")
+    .in("user_id", ownerIds);
+  if (profilesError) {
+    console.warn("[projects] failed to load document owner profiles", profilesError);
+  }
+  for (const profile of profiles ?? []) {
+    const displayName =
+      typeof profile.display_name === "string"
+        ? profile.display_name.trim()
+        : "";
+    if (displayName) {
+      displayNameByUserId.set(profile.user_id as string, displayName);
+    }
+  }
+
+  for (const doc of docs as ({
+    user_id?: string | null;
+    owner_email?: string | null;
+    owner_display_name?: string | null;
+  })[]) {
+    if (!doc.user_id) continue;
+    doc.owner_email = null;
+    doc.owner_display_name = displayNameByUserId.get(doc.user_id) ?? null;
+  }
+}
+
+async function attachChatCreatorLabels(
+  db: ReturnType<typeof createServerSupabase>,
+  chats: { user_id?: string | null }[],
+) {
+  const creatorIds = chats
+    .map((chat) => chat.user_id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0)
+    .filter((id, index, arr) => arr.indexOf(id) === index);
+  if (creatorIds.length === 0) return;
+
+  const displayNameByUserId = new Map<string, string>();
+  const { data: profiles, error: profilesError } = await db
+    .from("user_profiles")
+    .select("user_id, display_name")
+    .in("user_id", creatorIds);
+  if (profilesError) {
+    console.warn("[projects] failed to load chat creator profiles", profilesError);
+  }
+  for (const profile of profiles ?? []) {
+    const displayName =
+      typeof profile.display_name === "string"
+        ? profile.display_name.trim()
+        : "";
+    if (displayName) {
+      displayNameByUserId.set(profile.user_id as string, displayName);
+    }
+  }
+
+  for (const chat of chats as ({
+    user_id?: string | null;
+    creator_display_name?: string | null;
+  })[]) {
+    if (!chat.user_id) continue;
+    chat.creator_display_name = displayNameByUserId.get(chat.user_id) ?? null;
+  }
+}
+
 // GET /projects
+// Pass ?include=documents to also receive each project's documents in the
+// same response. The directory pickers (useDirectoryData) previously fanned
+// out one GET /projects/:id per project to obtain those documents; with N
+// projects that burst — auth check plus several DB queries per request —
+// could overwhelm the Supabase gateway. Batching keeps it at one request
+// and a fixed number of queries regardless of project count.
 projectsRouter.get("/", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
-  const userEmail = res.locals.userEmail as string;
+  const userEmail = res.locals.userEmail as string | undefined;
+  const includeDocuments = req.query.include === "documents";
   const db = createServerSupabase();
 
-  const { data: ownProjects, error: ownError } = await db
-    .from("projects")
+  const { data, error } = await db.rpc("get_projects_overview", {
+    p_user_id: userId,
+    p_user_email: userEmail ?? null,
+  });
+  if (error) return void res.status(500).json({ detail: error.message });
+
+  const projects = (data ?? []) as { id: string }[];
+  if (!includeDocuments || projects.length === 0) {
+    return void res.json(projects);
+  }
+
+  const { data: docs, error: docsError } = await db
+    .from("documents")
     .select("*")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false });
-  if (ownError) return void res.status(500).json({ detail: ownError.message });
+    .in(
+      "project_id",
+      projects.map((p) => p.id),
+    )
+    .order("created_at", { ascending: true });
+  if (docsError)
+    return void res.status(500).json({ detail: docsError.message });
 
-  const { data: sharedProjects, error: sharedError } = userEmail
-    ? await db
-        .from("projects")
-        .select("*")
-        .filter("shared_with", "cs", JSON.stringify([userEmail]))
-        .neq("user_id", userId)
-        .order("created_at", { ascending: false })
-    : { data: [], error: null };
-  if (sharedError)
-    return void res.status(500).json({ detail: sharedError.message });
+  const docsTyped = (docs ?? []) as unknown as {
+    id: string;
+    project_id?: string | null;
+    user_id?: string | null;
+    current_version_id?: string | null;
+  }[];
+  await attachLatestVersionNumbers(db, docsTyped);
+  await attachActiveVersionPaths(db, docsTyped);
+  await attachDocumentOwnerLabels(db, docsTyped);
 
-  const projects = [...(ownProjects ?? []), ...(sharedProjects ?? [])].sort(
-    (a, b) =>
-      new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+  const docsByProject = new Map<string, typeof docsTyped>();
+  for (const doc of docsTyped) {
+    if (!doc.project_id) continue;
+    const bucket = docsByProject.get(doc.project_id);
+    if (bucket) bucket.push(doc);
+    else docsByProject.set(doc.project_id, [doc]);
+  }
+  res.json(
+    projects.map((p) => ({
+      ...p,
+      documents: docsByProject.get(p.id) ?? [],
+    })),
   );
-
-  const result = await Promise.all(
-    projects.map(async (p) => {
-      const [docs, chats, reviews] = await Promise.all([
-        db
-          .from("documents")
-          .select("id", { count: "exact", head: true })
-          .eq("project_id", p.id),
-        db
-          .from("chats")
-          .select("id", { count: "exact", head: true })
-          .eq("project_id", p.id),
-        db
-          .from("tabular_reviews")
-          .select("id", { count: "exact", head: true })
-          .eq("project_id", p.id),
-      ]);
-      return {
-        ...p,
-        is_owner: p.user_id === userId,
-        document_count: docs.count ?? 0,
-        chat_count: chats.count ?? 0,
-        review_count: reviews.count ?? 0,
-      };
-    }),
-  );
-  res.json(result);
 });
 
 // POST /projects
 projectsRouter.post("/", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
-  const { name, cm_number, shared_with } = req.body as {
+  const { name, cm_number, practice, shared_with } = req.body as {
     name: string;
     cm_number?: string;
+    practice?: string;
     shared_with?: string[];
   };
   if (!name?.trim())
@@ -147,12 +242,20 @@ projectsRouter.post("/", requireAuth, async (req, res) => {
   }
 
   const db = createServerSupabase();
+  const missingSharedUsers = await findMissingUserEmails(db, cleanedSharedWith);
+  if (missingSharedUsers.length > 0) {
+    return void res.status(400).json({
+      detail: `${missingSharedUsers[0]} does not belong to a Mike user.`,
+    });
+  }
+
   const { data, error } = await db
     .from("projects")
     .insert({
       user_id: userId,
       name: name.trim(),
-      cm_number: cm_number ?? null,
+      cm_number: normalizeOptionalString(cm_number),
+      practice: normalizeOptionalString(practice),
       shared_with: cleanedSharedWith,
     })
     .select("*")
@@ -190,10 +293,12 @@ projectsRouter.get("/:projectId", requireAuth, async (req, res) => {
   ]);
   const docsTyped = (docs ?? []) as unknown as {
     id: string;
+    user_id?: string | null;
     current_version_id?: string | null;
   }[];
   await attachLatestVersionNumbers(db, docsTyped);
   await attachActiveVersionPaths(db, docsTyped);
+  await attachDocumentOwnerLabels(db, docsTyped);
   res.json({
     ...project,
     is_owner: project.user_id === userId,
@@ -230,60 +335,18 @@ projectsRouter.get("/:projectId/people", requireAuth, async (req, res) => {
   if (!isOwner && !isShared)
     return void res.status(404).json({ detail: "Project not found" });
 
-  // Pull every auth user (matching the lookup endpoint's pattern). For
-  // larger deployments this should page or be replaced with a bulk-by-id
-  // RPC, but it keeps things simple while user counts are modest.
-  const { data: usersData } = await db.auth.admin.listUsers({ perPage: 1000 });
-  const allUsers = usersData?.users ?? [];
-  const userByEmail = new Map<string, { id: string; email: string }>();
-  const userById = new Map<string, { id: string; email: string }>();
-  for (const u of allUsers) {
-    if (!u.email) continue;
-    const lower = u.email.toLowerCase();
-    userByEmail.set(lower, { id: u.id, email: u.email });
-    userById.set(u.id, { id: u.id, email: u.email });
-  }
-
-  const memberUserIds: string[] = [];
-  for (const email of sharedWith) {
-    const u = userByEmail.get(email);
-    if (u) memberUserIds.push(u.id);
-  }
-
-  const profileIds = [
-    project.user_id as string,
-    ...memberUserIds,
-  ].filter((x, i, arr) => arr.indexOf(x) === i);
-
-  const profileByUserId = new Map<
-    string,
-    { display_name: string | null; organisation: string | null }
-  >();
-  if (profileIds.length > 0) {
-    const { data: profiles } = await db
-      .from("user_profiles")
-      .select("user_id, display_name, organisation")
-      .in("user_id", profileIds);
-    for (const p of profiles ?? []) {
-      profileByUserId.set(p.user_id as string, {
-        display_name: (p.display_name as string | null) ?? null,
-        organisation: (p.organisation as string | null) ?? null,
-      });
-    }
-  }
+  // Use the mirrored profile email so sharing checks do not scan auth.users.
+  const { userByEmail, userById } = await loadProfileUsersByEmail(db);
 
   const ownerInfo = userById.get(project.user_id as string);
   const owner = {
     user_id: project.user_id,
     email: ownerInfo?.email ?? null,
-    display_name:
-      profileByUserId.get(project.user_id as string)?.display_name ?? null,
+    display_name: ownerInfo?.display_name ?? null,
   };
   const members = sharedWith.map((email) => {
     const u = userByEmail.get(email);
-    const display_name = u
-      ? profileByUserId.get(u.id)?.display_name ?? null
-      : null;
+    const display_name = u?.display_name ?? null;
     return { email, display_name };
   });
 
@@ -298,6 +361,9 @@ projectsRouter.patch("/:projectId", requireAuth, async (req, res) => {
   const updates: Record<string, unknown> = {};
   if (req.body.name != null) updates.name = req.body.name;
   if (req.body.cm_number != null) updates.cm_number = req.body.cm_number;
+  if ("practice" in req.body) {
+    updates.practice = normalizeOptionalString(req.body.practice);
+  }
   if (Array.isArray(req.body.shared_with)) {
     // Normalise: lowercase + dedupe + drop empties.
     const normalizedUserEmail = userEmail?.trim().toLowerCase();
@@ -319,6 +385,18 @@ projectsRouter.patch("/:projectId", requireAuth, async (req, res) => {
   }
 
   const db = createServerSupabase();
+  if (Array.isArray(updates.shared_with)) {
+    const missingSharedUsers = await findMissingUserEmails(
+      db,
+      updates.shared_with as string[],
+    );
+    if (missingSharedUsers.length > 0) {
+      return void res.status(400).json({
+        detail: `${missingSharedUsers[0]} does not belong to a Mike user.`,
+      });
+    }
+  }
+
   const { data, error } = await db
     .from("projects")
     .update({ ...updates, updated_at: new Date().toISOString() })
@@ -335,9 +413,11 @@ projectsRouter.patch("/:projectId", requireAuth, async (req, res) => {
   ]);
   const docsTyped = (docs ?? []) as unknown as {
     id: string;
+    user_id?: string | null;
     current_version_id?: string | null;
   }[];
   await attachActiveVersionPaths(db, docsTyped);
+  await attachDocumentOwnerLabels(db, docsTyped);
   res.json({ ...data, documents: docsTyped, folders: folderData ?? [] });
 });
 
@@ -418,7 +498,11 @@ projectsRouter.post(
       // Standalone → assign project_id
       const { data: updated, error } = await db
         .from("documents")
-        .update({ project_id: projectId, updated_at: new Date().toISOString() })
+        .update({
+          project_id: projectId,
+          library_folder_id: null,
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", documentId)
         .select("*")
         .single();
@@ -481,10 +565,9 @@ projectsRouter.post(
       );
       let newPdfPath: string | null = null;
       try {
-        const contentType =
-          ((srcV.file_type as string | null) ?? doc.file_type) === "pdf"
-            ? "application/pdf"
-            : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        const contentType = contentTypeForDocumentType(
+          (srcV.file_type as string | null) ?? doc.file_type,
+        );
         await uploadFile(newKey, srcBytes, contentType);
 
         // PDFs share one object for source + display rendition. DOCX
@@ -663,7 +746,9 @@ projectsRouter.get("/:projectId/chats", requireAuth, async (req, res) => {
     .eq("project_id", projectId)
     .order("created_at", { ascending: false });
   if (error) return void res.status(500).json({ detail: error.message });
-  res.json(data ?? []);
+  const chats = data ?? [];
+  await attachChatCreatorLabels(db, chats);
+  res.json(chats);
 });
 
 // ── Folder routes ─────────────────────────────────────────────────────────────
@@ -743,6 +828,7 @@ projectsRouter.delete("/:projectId/folders/:folderId", requireAuth, async (req, 
 
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
   if (!access.ok) return void res.status(404).json({ detail: "Project not found" });
+  if (!access.isOwner) return void res.status(404).json({ detail: "Project not found" });
 
   const { data: allFolders, error: foldersError } = await db
     .from("project_subfolders")
@@ -845,11 +931,11 @@ export async function handleDocumentUpload(
   const suffix = filename.includes(".")
     ? filename.split(".").pop()!.toLowerCase()
     : "";
-  if (!ALLOWED_TYPES.has(suffix))
+  if (!ALLOWED_DOCUMENT_TYPES.has(suffix))
     return void res
       .status(400)
       .json({
-        detail: `Unsupported file type: ${suffix}. Allowed: pdf, docx, doc`,
+        detail: `Unsupported file type: ${suffix}. Allowed: ${ALLOWED_DOCUMENT_TYPES_LABEL}`,
       });
 
   const content = file.buffer;
@@ -871,10 +957,7 @@ export async function handleDocumentUpload(
   try {
     const docId = doc.id as string;
     const key = storageKey(userId, docId, filename);
-    const contentType =
-      suffix === "pdf"
-        ? "application/pdf"
-        : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    const contentType = contentTypeForDocumentType(suffix);
     await uploadFile(
       key,
       content.buffer.slice(
@@ -890,9 +973,9 @@ export async function handleDocumentUpload(
     ) as ArrayBuffer;
     const pageCount = suffix === "pdf" ? await countPdfPages(rawBuf) : null;
 
-    // Convert DOCX/DOC → PDF for display. PDFs are their own rendition.
+    // Convert Office files → PDF for display. PDFs are their own rendition.
     let pdfStoragePath: string | null = null;
-    if (suffix === "docx" || suffix === "doc") {
+    if (shouldConvertToPdf(suffix)) {
       try {
         const pdfBuf = await docxToPdf(content);
         const pdfKey = convertedPdfKey(userId, docId);
@@ -907,7 +990,7 @@ export async function handleDocumentUpload(
         pdfStoragePath = pdfKey;
       } catch (err) {
         console.error(
-          `[upload] DOCX→PDF conversion failed for ${filename}:`,
+          `[upload] Office→PDF conversion failed for ${filename}:`,
           err,
         );
       }

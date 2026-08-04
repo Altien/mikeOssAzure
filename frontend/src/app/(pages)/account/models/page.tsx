@@ -4,13 +4,15 @@ import { useEffect, useRef, useState } from "react";
 import { AlertCircle, Check, ChevronDown, Loader2 } from "lucide-react";
 import {
     DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
     DropdownMenuLabel,
     DropdownMenuSeparator,
     DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { useUserProfile } from "@/contexts/UserProfileContext";
+} from "@/app/components/ui/dropdown-menu";
+import {
+    LiquidDropdownContent,
+    LiquidDropdownItem,
+} from "@/app/components/ui/liquid-dropdown";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import type { ApiKeyState } from "@/app/lib/mikeApi";
 import {
     MODELS,
@@ -24,8 +26,8 @@ import {
 } from "@/app/lib/modelAvailability";
 import {
     accountGlassInputClassName,
-    accountGlassSectionClassName,
 } from "../accountStyles";
+import { AccountSection } from "../AccountSection";
 
 type ModelPreferenceField = "titleModel" | "tabularModel";
 
@@ -79,7 +81,7 @@ export default function ModelPreferencesPage() {
                     Model Preferences
                 </h2>
             </div>
-            <div className={accountGlassSectionClassName}>
+            <AccountSection>
                 <div className="px-4 py-5">
                     <label className="text-sm font-medium text-gray-700 block mb-2">
                         Title generation model
@@ -122,7 +124,7 @@ export default function ModelPreferencesPage() {
                         onChange={(id) => handleModelChange("tabularModel", id)}
                     />
                 </div>
-            </div>
+            </AccountSection>
         </div>
     );
 }
@@ -178,7 +180,7 @@ function ModelPreferenceDropdown({
                     )}
                 </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent
+            <LiquidDropdownContent
                 className="z-50"
                 style={{ width: "var(--radix-dropdown-menu-trigger-width)" }}
                 align="start"
@@ -198,7 +200,7 @@ function ModelPreferenceDropdown({
                                     ? isModelAvailable(m.id, apiKeys)
                                     : true;
                                 return (
-                                    <DropdownMenuItem
+                                    <LiquidDropdownItem
                                         key={m.id}
                                         className="cursor-pointer"
                                         onSelect={() => onChange(m.id)}
@@ -219,13 +221,13 @@ function ModelPreferenceDropdown({
                                         {m.id === value && available && (
                                             <Check className="h-3.5 w-3.5 text-gray-600 ml-1" />
                                         )}
-                                    </DropdownMenuItem>
+                                    </LiquidDropdownItem>
                                 );
                             })}
                         </div>
                     );
                 })}
-            </DropdownMenuContent>
+            </LiquidDropdownContent>
         </DropdownMenu>
     );
 }

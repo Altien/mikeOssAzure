@@ -2,9 +2,10 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useAuth } from "@/contexts/AuthContext";
-import { useUserProfile } from "@/contexts/UserProfileContext";
-import { needsMfaVerification } from "./MfaVerificationPopup";
+import { useAuth } from "@/app/contexts/AuthContext";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import { FullScreenLoader } from "@/app/components/shared/FullScreenLoader";
+import { needsMfaVerification } from "../popups/MfaVerificationPopup";
 
 type GateState = "idle" | "checking" | "required" | "verified";
 const MFA_VERIFIED_AT_KEY = "mike:mfa-verified-at";
@@ -21,6 +22,7 @@ export function MfaLoginGate({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         if (!user) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect -- sync fast paths of the async MFA check effect
             setGateState("idle");
             return;
         }
@@ -64,6 +66,7 @@ export function MfaLoginGate({ children }: { children: ReactNode }) {
 
         if (gateState === "required" && !isVerifyPage) {
             if (hasRecentMfaVerification()) {
+                // eslint-disable-next-line react-hooks/set-state-in-effect -- clear gate when a recent MFA verification exists instead of redirecting
                 setGateState("verified");
                 return;
             }
@@ -89,7 +92,7 @@ export function MfaLoginGate({ children }: { children: ReactNode }) {
         return gateState === "verified" ? (
             <>{children}</>
         ) : (
-            <FullScreenGateLoader />
+            <FullScreenLoader />
         );
     }
 
@@ -98,15 +101,15 @@ export function MfaLoginGate({ children }: { children: ReactNode }) {
             return <>{children}</>;
         }
         if (gateState === "verified" && isVerifyPage) {
-            return <FullScreenGateLoader />;
+            return <FullScreenLoader />;
         }
         if (gateState === "verified") {
             return <>{children}</>;
         }
         if (gateState === "required" && !isVerifyPage) {
-            return <FullScreenGateLoader />;
+            return <FullScreenLoader />;
         }
-        return <FullScreenGateLoader />;
+        return <FullScreenLoader />;
     }
 
     return <>{children}</>;
@@ -118,14 +121,6 @@ function safeNextPath(value: string | null) {
     }
     if (value.startsWith("/verify-mfa")) return "/assistant";
     return value;
-}
-
-function FullScreenGateLoader() {
-    return (
-        <div className="flex min-h-dvh items-center justify-center bg-gray-50/80">
-            <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-200 border-t-gray-700" />
-        </div>
-    );
 }
 
 export function markMfaVerifiedForGate() {

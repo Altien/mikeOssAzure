@@ -1,16 +1,47 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { FolderOpen, ChevronDown } from "lucide-react";
-import { listProjects, updateProject, deleteProject } from "@/app/lib/mikeApi";
-import { OwnerOnlyModal } from "@/app/components/shared/OwnerOnlyModal";
-import { useAuth } from "@/contexts/AuthContext";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ChevronDown, Plus } from "lucide-react";
+import {
+    listProjects,
+    updateProject,
+    deleteProject,
+} from "@/app/lib/mikeApi";
+import { OwnerOnlyPopup } from "@/app/components/popups/OwnerOnlyPopup";
+import { useAuth } from "@/app/contexts/AuthContext";
 import type { Project } from "@/app/components/shared/types";
 import { NewProjectModal } from "./NewProjectModal";
-import { ToolbarTabs } from "@/app/components/shared/ToolbarTabs";
-import { RowActions } from "@/app/components/shared/RowActions";
+import { ProjectDetailsModal } from "./ProjectDetailsModal";
+import { TableToolbar } from "@/app/components/shared/TableToolbar";
+import {
+    RowActionMenuItems,
+    RowActions,
+} from "@/app/components/shared/RowActions";
 import { PageHeader } from "@/app/components/shared/PageHeader";
+import {
+    ClosedProjectSvgIcon,
+    OpenProjectSvgIcon,
+} from "@/app/components/shared/FolderSvgIcon";
+import {
+    TABLE_CHECKBOX_CLASS,
+    SkeletonDot,
+    SkeletonLine,
+    TableBody,
+    TableCell,
+    TableEmptyState,
+    TableFilters,
+    type TableFilterOption,
+    TableHeaderCell,
+    TableHeaderRow,
+    TablePrimaryCell,
+    TableRow,
+    TableScrollArea,
+    type TableSortDirection,
+    TableStickyCell,
+} from "@/app/components/shared/TablePrimitive";
+import { PillButton } from "@/app/components/ui/pill-button";
+import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 
 function formatDate(iso: string) {
     return new Date(iso).toLocaleDateString(undefined, {
@@ -20,67 +51,96 @@ function formatDate(iso: string) {
     });
 }
 
-type Tab = "all" | "mine" | "shared-with-me";
+function getProjectOwnerLabel(project: Project, currentUserId?: string | null) {
+    if (project.is_owner ?? project.user_id === currentUserId) return "Me";
+    return (
+        project.owner_display_name?.trim() ||
+        project.owner_email?.trim() ||
+        "Shared"
+    );
+}
 
-const NAME_COL_W = "w-[332px] shrink-0";
+type ProjectFilter = "all" | "mine" | "shared-with-me";
+type ProjectSortKey =
+    | "name"
+    | "cm"
+    | "files"
+    | "chats"
+    | "reviews"
+    | "created";
+
+const SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
+    { value: "asc", label: "Ascending" },
+    { value: "desc", label: "Descending" },
+];
 
 export function ProjectsOverview() {
     const [projects, setProjects] = useState<Project[]>([]);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [modalOpen, setModalOpen] = useState(false);
-    const [activeTab, setActiveTab] = useState<Tab>("all");
-    const [renamingId, setRenamingId] = useState<string | null>(null);
-    const [renameValue, setRenameValue] = useState("");
-    const [cmEditingId, setCmEditingId] = useState<string | null>(null);
-    const [cmValue, setCmValue] = useState("");
+    const [detailsProject, setDetailsProject] = useState<Project | null>(null);
+    const [activeFilter, setActiveFilter] = useState<ProjectFilter>("all");
+    const [practiceFilter, setPracticeFilter] = useState<string | null>(null);
+    const [ownerFilter, setOwnerFilter] = useState<string | null>(null);
+    const [sort, setSort] = useState<{
+        key: ProjectSortKey;
+        direction: TableSortDirection;
+    } | null>(null);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [actionsOpen, setActionsOpen] = useState(false);
     const [search, setSearch] = useState("");
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
     const actionsRef = useRef<HTMLDivElement>(null);
     const router = useRouter();
+    const searchParams = useSearchParams();
     const { user, isAuthenticated, authLoading } = useAuth();
-    const stickyCellBg = "bg-[#fcfcfd]";
+    const previewEmptyStates = searchParams.get("emptyStates") === "1";
+    const effectiveLoading = loading && !previewEmptyStates;
+    const visibleProjects = useMemo(
+        () => (previewEmptyStates ? [] : projects),
+        [previewEmptyStates, projects],
+    );
 
     useEffect(() => {
-        if (authLoading) {
-            setLoading(true);
-            return;
-        }
-        if (!isAuthenticated) {
-            setProjects([]);
-            setLoadError(null);
-            setLoading(false);
-            return;
-        }
-
         let cancelled = false;
-        setLoading(true);
-        setLoadError(null);
-        listProjects()
-            .then((loaded) => {
+
+        async function loadProjects() {
+            await Promise.resolve();
+            if (cancelled) return;
+            if (authLoading) {
+                setLoading(true);
+                return;
+            }
+            if (!isAuthenticated) {
+                setProjects([]);
+                setLoadError(null);
+                setLoading(false);
+                return;
+            }
+
+            setLoading(true);
+            setLoadError(null);
+            try {
+                const loaded = await listProjects();
                 if (!cancelled) setProjects(loaded);
-            })
-            .catch((err) => {
+            } catch (err) {
                 console.error("[projects] failed to load projects", err);
                 if (!cancelled) {
                     setProjects([]);
                     setLoadError("Could not load projects.");
                 }
-            })
-            .finally(() => {
+            } finally {
                 if (!cancelled) setLoading(false);
-            });
+            }
+        }
+
+        void loadProjects();
 
         return () => {
             cancelled = true;
         };
     }, [authLoading, isAuthenticated, user?.id]);
-
-    useEffect(() => {
-        setSelectedIds([]);
-    }, [activeTab]);
 
     useEffect(() => {
         function handleClick(e: MouseEvent) {
@@ -95,18 +155,111 @@ export function ProjectsOverview() {
     }, [actionsOpen]);
 
     const q = search.toLowerCase();
-    const filtered = (
-        activeTab === "all"
-            ? projects
-            : activeTab === "mine"
-              ? projects.filter((p) => p.is_owner ?? p.user_id === user?.id)
-              : projects.filter((p) => !(p.is_owner ?? p.user_id === user?.id))
-    ).filter(
-        (p) =>
-            !q ||
-            p.name.toLowerCase().includes(q) ||
-            (p.cm_number ?? "").toLowerCase().includes(q),
+    const practices = useMemo(
+        () =>
+            Array.from(
+                new Set(
+                    visibleProjects
+                        .map((project) => project.practice?.trim())
+                        .filter((practice): practice is string => !!practice),
+                ),
+            ).sort((a, b) => a.localeCompare(b)),
+        [visibleProjects],
     );
+    const ownerOptions = useMemo(
+        () =>
+            Array.from(
+                new Set(
+                    visibleProjects.map((project) =>
+                        getProjectOwnerLabel(project, user?.id),
+                    ),
+                ),
+            )
+                .sort((a, b) => a.localeCompare(b))
+                .map((owner) => ({ value: owner, label: owner })),
+        [visibleProjects, user?.id],
+    );
+    const filtered = useMemo(() => {
+        const rows = (
+            activeFilter === "all"
+                ? visibleProjects
+                : activeFilter === "mine"
+                  ? visibleProjects.filter(
+                        (p) => p.is_owner ?? p.user_id === user?.id,
+                    )
+                  : visibleProjects.filter(
+                        (p) => !(p.is_owner ?? p.user_id === user?.id),
+                    )
+        )
+            .filter(
+                (p) =>
+                    !q ||
+                    p.name.toLowerCase().includes(q) ||
+                    (p.cm_number ?? "").toLowerCase().includes(q) ||
+                    (p.practice ?? "").toLowerCase().includes(q),
+            )
+            .filter(
+                (p) =>
+                    !practiceFilter ||
+                    (p.practice?.trim() ?? "") === practiceFilter,
+            )
+            .filter(
+                (p) =>
+                    !ownerFilter ||
+                    getProjectOwnerLabel(p, user?.id) === ownerFilter,
+            );
+
+        if (!sort) return rows;
+
+        return [...rows].sort((a, b) => {
+            const multiplier = sort.direction === "asc" ? 1 : -1;
+
+            if (sort.key === "cm") {
+                return (
+                    (a.cm_number ?? "").localeCompare(b.cm_number ?? "") *
+                    multiplier
+                );
+            }
+
+            if (sort.key === "files") {
+                return (
+                    ((a.document_count ?? 0) - (b.document_count ?? 0)) *
+                    multiplier
+                );
+            }
+
+            if (sort.key === "chats") {
+                return (
+                    ((a.chat_count ?? 0) - (b.chat_count ?? 0)) * multiplier
+                );
+            }
+
+            if (sort.key === "reviews") {
+                return (
+                    ((a.review_count ?? 0) - (b.review_count ?? 0)) *
+                    multiplier
+                );
+            }
+
+            if (sort.key === "created") {
+                return (
+                    (new Date(a.created_at).getTime() -
+                        new Date(b.created_at).getTime()) *
+                    multiplier
+                );
+            }
+
+            return a.name.localeCompare(b.name) * multiplier;
+        });
+    }, [
+        activeFilter,
+        ownerFilter,
+        practiceFilter,
+        q,
+        sort,
+        user?.id,
+        visibleProjects,
+    ]);
 
     const allSelected =
         filtered.length > 0 &&
@@ -128,31 +281,156 @@ export function ProjectsOverview() {
         );
     }
 
-    const tabs: { id: Tab; label: string }[] = [
+    function clearSelection() {
+        setSelectedIds([]);
+        setActionsOpen(false);
+    }
+
+    function handlePracticeFilterChange(value: string | null) {
+        setPracticeFilter(value);
+        clearSelection();
+    }
+
+    function handleOwnerFilterChange(value: string | null) {
+        setOwnerFilter(value);
+        clearSelection();
+    }
+
+    function handleSortChange(
+        key: ProjectSortKey,
+        direction: TableSortDirection | null,
+    ) {
+        setSort(direction ? { key, direction } : null);
+        clearSelection();
+    }
+
+    const filters: { id: ProjectFilter; label: string }[] = [
         { id: "all", label: "All" },
         { id: "mine", label: "Mine" },
         { id: "shared-with-me", label: "Shared with me" },
     ];
+    const nameSortDirection = sort?.key === "name" ? sort.direction : null;
+    const cmSortDirection = sort?.key === "cm" ? sort.direction : null;
+    const filesSortDirection = sort?.key === "files" ? sort.direction : null;
+    const chatsSortDirection = sort?.key === "chats" ? sort.direction : null;
+    const reviewsSortDirection =
+        sort?.key === "reviews" ? sort.direction : null;
+    const createdSortDirection =
+        sort?.key === "created" ? sort.direction : null;
+    const nameFilterButton = (
+        <TableFilters
+            label="Sort by project name"
+            value={nameSortDirection}
+            allLabel="Default Order"
+            widthClassName="w-40"
+            align="right"
+            options={SORT_OPTIONS}
+            onChange={(direction) => handleSortChange("name", direction)}
+        />
+    );
+    const cmFilterButton = (
+        <TableFilters
+            label="Sort by CM"
+            value={cmSortDirection}
+            allLabel="Default Order"
+            widthClassName="w-40"
+            options={SORT_OPTIONS}
+            onChange={(direction) => handleSortChange("cm", direction)}
+        />
+    );
+    const practiceFilterButton = (
+        <TableFilters
+            label="Filter by practice"
+            value={practiceFilter}
+            allLabel="All Practices"
+            options={practices.map((practice) => ({
+                value: practice,
+                label: practice,
+            }))}
+            onChange={handlePracticeFilterChange}
+        />
+    );
+    const ownerFilterButton = (
+        <TableFilters
+            label="Filter by owner"
+            value={ownerFilter}
+            allLabel="All Owners"
+            widthClassName="w-44"
+            options={ownerOptions}
+            onChange={handleOwnerFilterChange}
+        />
+    );
+    const filesFilterButton = (
+        <TableFilters
+            label="Sort by files"
+            value={filesSortDirection}
+            allLabel="Default Order"
+            widthClassName="w-40"
+            options={SORT_OPTIONS}
+            onChange={(direction) => handleSortChange("files", direction)}
+        />
+    );
+    const chatsFilterButton = (
+        <TableFilters
+            label="Sort by chats"
+            value={chatsSortDirection}
+            allLabel="Default Order"
+            widthClassName="w-40"
+            options={SORT_OPTIONS}
+            onChange={(direction) => handleSortChange("chats", direction)}
+        />
+    );
+    const reviewsFilterButton = (
+        <TableFilters
+            label="Sort by tabular reviews"
+            value={reviewsSortDirection}
+            allLabel="Default Order"
+            widthClassName="w-40"
+            options={SORT_OPTIONS}
+            onChange={(direction) => handleSortChange("reviews", direction)}
+        />
+    );
+    const createdFilterButton = (
+        <TableFilters
+            label="Sort by created date"
+            value={createdSortDirection}
+            allLabel="Default Order"
+            widthClassName="w-40"
+            options={SORT_OPTIONS}
+            onChange={(direction) => handleSortChange("created", direction)}
+        />
+    );
 
-    async function handleRenameSubmit(projectId: string) {
-        const trimmed = renameValue.trim();
-        setRenamingId(null);
-        if (!trimmed) return;
+    async function handleProjectDetailsSave(values: {
+        name: string;
+        cmNumber: string;
+        practice: string;
+    }) {
+        if (!detailsProject) return;
+        if (
+            detailsProject.is_owner === false ||
+            (user?.id && detailsProject.user_id !== user.id)
+        ) {
+            setOwnerOnlyAction("edit project details");
+            return;
+        }
+        const name = values.name.trim();
+        const cmNumber = values.cmNumber.trim();
+        const practice = values.practice.trim();
+        if (!name) return;
+        const updated = await updateProject(detailsProject.id, {
+            name,
+            cm_number: cmNumber,
+            practice: practice || null,
+        });
         setProjects((prev) =>
-            prev.map((p) => (p.id === projectId ? { ...p, name: trimmed } : p)),
-        );
-        await updateProject(projectId, { name: trimmed });
-    }
-
-    async function handleCmSubmit(projectId: string) {
-        const trimmed = cmValue.trim();
-        setCmEditingId(null);
-        setProjects((prev) =>
-            prev.map((p) =>
-                p.id === projectId ? { ...p, cm_number: trimmed || null } : p,
+            prev.map((project) =>
+                project.id === updated.id ? { ...project, ...updated } : project,
             ),
         );
-        await updateProject(projectId, { cm_number: trimmed || undefined });
+        setDetailsProject((current) =>
+            current?.id === updated.id ? { ...current, ...updated } : current,
+        );
     }
 
     async function handleDeleteSelected() {
@@ -160,7 +438,7 @@ export function ProjectsOverview() {
         setActionsOpen(false);
         // Only the project owner can delete; the per-row delete is hidden
         // for shared projects but the bulk action can still pick them up
-        // if a user toggled them across tabs. Filter and warn.
+        // if a user toggled them across filters. Filter and warn.
         const owned = ids.filter((id) => {
             const p = projects.find((pp) => pp.id === id);
             return !p || (p.is_owner ?? p.user_id === user?.id);
@@ -176,36 +454,33 @@ export function ProjectsOverview() {
         }
     }
 
-    const toolbarActions = (
-        <>
-            {selectedIds.length > 0 && (
-                <div ref={actionsRef} className="relative">
-                    <button
-                        onClick={() => setActionsOpen((v) => !v)}
-                        className="flex items-center gap-1 text-xs font-medium text-gray-700 hover:text-gray-900 transition-colors"
-                    >
-                        Actions
-                        <ChevronDown className="h-3.5 w-3.5" />
-                    </button>
-                    {actionsOpen && (
-                        <div className="absolute top-full right-0 mt-1 w-36 rounded-lg border border-gray-100 bg-white shadow-lg z-50 overflow-hidden">
-                            <button
-                                onClick={handleDeleteSelected}
-                                className="w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 transition-colors"
-                            >
-                                Delete
-                            </button>
-                        </div>
-                    )}
-                </div>
-            )}
-        </>
-    );
+    const toolbarActions =
+        selectedIds.length > 0 ? (
+            <div ref={actionsRef} className="relative">
+                <TabPillButton
+                    onClick={() => setActionsOpen((v) => !v)}
+                >
+                    Actions
+                    <ChevronDown className="h-3.5 w-3.5" />
+                </TabPillButton>
+                {actionsOpen && (
+                    <div className="absolute top-full right-0 mt-1 w-36 rounded-lg border border-gray-100 bg-white shadow-lg z-50 overflow-hidden">
+                        <button
+                            onClick={handleDeleteSelected}
+                            className="w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 transition-colors"
+                        >
+                            Delete
+                        </button>
+                    </div>
+                )}
+            </div>
+        ) : undefined;
 
     return (
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
             {/* Page header */}
             <PageHeader
+                loading={loading}
                 actions={[
                     {
                         type: "search",
@@ -225,89 +500,138 @@ export function ProjectsOverview() {
                 </h1>
             </PageHeader>
 
-            <ToolbarTabs
-                tabs={tabs}
-                active={activeTab}
-                onChange={setActiveTab}
+            <TableToolbar
+                items={filters}
+                active={activeFilter}
+                onChange={(nextFilter) => {
+                    setActiveFilter(nextFilter);
+                    clearSelection();
+                }}
                 actions={toolbarActions}
             />
 
             {/* Table */}
-            <div className="w-full overflow-x-auto">
-                <div className="min-w-max">
-                {/* Column headers */}
-                <div className="flex items-center h-8 pr-3 md:pr-10 border-b border-gray-200 text-xs text-gray-500 font-medium select-none">
-                    <div className={`sticky left-0 z-[60] ${NAME_COL_W} ${stickyCellBg} flex items-center gap-4 self-stretch pl-4 pr-2 text-left`}>
-                        {loading ? (
-                            <div className="h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse" />
-                        ) : (
-                            <input
-                                type="checkbox"
-                                checked={allSelected}
-                                ref={(el) => {
-                                    if (el) el.indeterminate = someSelected;
-                                }}
-                                onChange={toggleAll}
-                                className="h-2.5 w-2.5 rounded border-gray-200 cursor-pointer accent-black"
-                            />
-                        )}
-                        <span>Name</span>
-                    </div>
-                    <div className="ml-auto w-32 shrink-0 text-left">CM</div>
-                    <div className="w-24 shrink-0 text-left">Files</div>
-                    <div className="w-24 shrink-0 text-left">Chats</div>
-                    <div className="w-36 shrink-0 text-left">
-                        Tabular Reviews
-                    </div>
-                    <div className="w-32 shrink-0 text-left">Created</div>
-                    <div className="w-8 shrink-0" />
-                </div>
-
-                {loading ? (
-                    <div>
-                        {[1, 2, 3].map((i) => (
-                            <div
-                                key={i}
-                                className="flex items-center h-10 pr-3 md:pr-10 border-b border-gray-50"
-                            >
-                                <div className={`${NAME_COL_W} flex shrink-0 items-center gap-4 pl-4 pr-2`}>
-                                    <div className="h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse" />
-                                    <div className="h-3.5 w-48 rounded bg-gray-100 animate-pulse" />
-                                </div>
-                                <div className="w-32 shrink-0">
-                                    <div className="h-3 w-20 rounded bg-gray-100 animate-pulse" />
-                                </div>
-                                <div className="w-24 shrink-0">
-                                    <div className="h-3 w-8 rounded bg-gray-100 animate-pulse" />
-                                </div>
-                                <div className="w-24 shrink-0">
-                                    <div className="h-3 w-8 rounded bg-gray-100 animate-pulse" />
-                                </div>
-                                <div className="w-36 shrink-0">
-                                    <div className="h-3 w-8 rounded bg-gray-100 animate-pulse" />
-                                </div>
-                                <div className="w-32 shrink-0">
-                                    <div className="h-3 w-20 rounded bg-gray-100 animate-pulse" />
-                                </div>
-                                <div className="w-8 shrink-0" />
+            <TableScrollArea
+                header={
+                    <TableHeaderRow>
+                        <TableStickyCell header>
+                            {effectiveLoading ? (
+                                <SkeletonDot className="mr-4" />
+                            ) : (
+                                <input
+                                    type="checkbox"
+                                    checked={allSelected}
+                                    ref={(el) => {
+                                        if (el) el.indeterminate = someSelected;
+                                    }}
+                                    onChange={toggleAll}
+                                    className={TABLE_CHECKBOX_CLASS}
+                                />
+                            )}
+                            <span className="mr-1">Name</span>
+                            {!loading && nameFilterButton}
+                        </TableStickyCell>
+                        <TableHeaderCell className="ml-auto w-32">
+                            <div className="flex items-center gap-1">
+                                <span>CM</span>
+                                {!loading && cmFilterButton}
                             </div>
+                        </TableHeaderCell>
+                        <TableHeaderCell className="w-36">
+                            <div className="flex items-center gap-1">
+                                <span>Practice</span>
+                                {!loading && practiceFilterButton}
+                            </div>
+                        </TableHeaderCell>
+                        <TableHeaderCell className="w-32">
+                            <div className="flex items-center gap-1">
+                                <span>Owner</span>
+                                {!loading && ownerFilterButton}
+                            </div>
+                        </TableHeaderCell>
+                        <TableHeaderCell className="w-24">
+                            <div className="flex items-center gap-1">
+                                <span>Files</span>
+                                {!loading && filesFilterButton}
+                            </div>
+                        </TableHeaderCell>
+                        <TableHeaderCell className="w-24">
+                            <div className="flex items-center gap-1">
+                                <span>Chats</span>
+                                {!loading && chatsFilterButton}
+                            </div>
+                        </TableHeaderCell>
+                        <TableHeaderCell className="w-36">
+                            <div className="flex items-center gap-1">
+                                <span>Tabular Reviews</span>
+                                {!loading && reviewsFilterButton}
+                            </div>
+                        </TableHeaderCell>
+                        <TableHeaderCell className="w-32">
+                            <div className="flex items-center gap-1">
+                                <span>Created</span>
+                                {!loading && createdFilterButton}
+                            </div>
+                        </TableHeaderCell>
+                        <TableHeaderCell className="w-8" />
+                    </TableHeaderRow>
+                }
+            >
+                {effectiveLoading ? (
+                    <TableBody>
+                        {[1, 2, 3].map((i) => (
+                            <TableRow
+                                key={i}
+                                interactive={false}
+                            >
+                                <TableStickyCell
+                                    hover={false}
+                                    bgClassName="bg-transparent"
+                                >
+                                    <SkeletonDot className="mr-4" />
+                                    <div className="mr-2 h-4 w-4 shrink-0 rounded bg-gray-100 animate-pulse" />
+                                    <SkeletonLine className="h-3.5 w-48" />
+                                </TableStickyCell>
+                                <TableCell className="ml-auto w-32">
+                                    <SkeletonLine className="w-20" />
+                                </TableCell>
+                                <TableCell className="w-36">
+                                    <SkeletonLine className="w-20" />
+                                </TableCell>
+                                <TableCell className="w-32">
+                                    <SkeletonLine className="w-16" />
+                                </TableCell>
+                                <TableCell className="w-24">
+                                    <SkeletonLine className="w-8" />
+                                </TableCell>
+                                <TableCell className="w-24">
+                                    <SkeletonLine className="w-8" />
+                                </TableCell>
+                                <TableCell className="w-36">
+                                    <SkeletonLine className="w-8" />
+                                </TableCell>
+                                <TableCell className="w-32">
+                                    <SkeletonLine className="w-20" />
+                                </TableCell>
+                                <TableCell className="w-8" />
+                            </TableRow>
                         ))}
-                    </div>
+                    </TableBody>
                 ) : loadError ? (
-                    <div className="flex flex-col items-start py-24 w-full max-w-xs mx-auto">
-                        <FolderOpen className="h-8 w-8 text-gray-300 mb-4" />
+                    <TableEmptyState>
+                        <OpenProjectSvgIcon className="mb-4 h-8 w-8" />
                         <p className="text-2xl font-medium font-serif text-gray-900">
                             Projects
                         </p>
                         <p className="mt-1 text-xs text-red-500 max-w-xs">
                             {loadError}
                         </p>
-                    </div>
+                    </TableEmptyState>
                 ) : filtered.length === 0 ? (
-                    <div className="flex flex-col items-start py-24 w-full max-w-xs mx-auto">
-                        {activeTab === "all" || activeTab === "mine" ? (
+                    <TableEmptyState>
+                        {activeFilter === "all" || activeFilter === "mine" ? (
                             <>
-                                <FolderOpen className="h-8 w-8 text-gray-300 mb-4" />
+                                <OpenProjectSvgIcon className="mb-4 h-8 w-8" />
                                 <p className="text-2xl font-medium font-serif text-gray-900">
                                     Projects
                                 </p>
@@ -316,118 +640,101 @@ export function ProjectsOverview() {
                                     commence chats and tabular reviews with
                                     them.
                                 </p>
-                                <button
+                                <PillButton
+                                    tone="black"
+                                    size="sm"
                                     onClick={() => setModalOpen(true)}
-                                    className="mt-4 inline-flex items-center gap-1 rounded-full bg-gray-900 px-3 py-1 text-xs font-medium text-white hover:bg-gray-700 transition-colors shadow-md"
+                                    className="mt-4 px-3"
                                 >
-                                    + Create New
-                                </button>
+                                    <Plus className="h-3.5 w-3.5" />
+                                    Create
+                                </PillButton>
                             </>
                         ) : (
                             <p className="text-sm text-gray-400">
-                                No {activeTab} projects
+                                No {activeFilter} projects
                             </p>
                         )}
-                    </div>
+                    </TableEmptyState>
                 ) : (
-                    <div>
+                    <TableBody>
                         {filtered.map((project) => {
-                            const rowBg = selectedIds.includes(project.id)
-                                ? "bg-gray-50"
-                                : stickyCellBg;
                             return (
-                            <div
+                            <TableRow
                                 key={project.id}
+                                selected={selectedIds.includes(project.id)}
+                                rightClickDropdown={
+                                    (project.is_owner ??
+                                        project.user_id === user?.id)
+                                        ? (close, menuProps) => (
+                                              <RowActionMenuItems
+                                                  onClose={close}
+                                                  surfaceProps={menuProps}
+                                                  onEditDetails={() => {
+                                                      setDetailsProject(project);
+                                                  }}
+                                                  onDelete={async () => {
+                                                      await deleteProject(
+                                                          project.id,
+                                                      );
+                                                      setProjects((prev) =>
+                                                          prev.filter(
+                                                              (p) =>
+                                                                  p.id !==
+                                                                  project.id,
+                                                          ),
+                                                      );
+                                                  }}
+                                              />
+                                          )
+                                        : undefined
+                                }
                                 onClick={() => {
-                                    if (renamingId === project.id) return;
                                     router.push(`/projects/${project.id}`);
                                 }}
-                                className="group flex items-center h-10 pr-3 md:pr-10 border-b border-gray-50 hover:bg-gray-100 cursor-pointer transition-colors"
                             >
                                 {/* Project Name */}
-                                <div className={`sticky left-0 z-[60] ${NAME_COL_W} ${rowBg} py-2 pl-4 pr-2 transition-colors group-hover:bg-gray-100`}>
-                                    <div className="flex min-w-0 items-center gap-4">
-                                        <input
-                                            type="checkbox"
-                                            checked={selectedIds.includes(
-                                                project.id,
-                                            )}
-                                            onChange={() => toggleOne(project.id)}
-                                            onClick={(e) => e.stopPropagation()}
-                                            className="h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black"
-                                        />
-                                        {renamingId === project.id ? (
-                                            <input
-                                                autoFocus
-                                                value={renameValue}
-                                                onChange={(e) =>
-                                                    setRenameValue(e.target.value)
-                                                }
-                                                onKeyDown={(e) => {
-                                                    if (e.key === "Enter")
-                                                        handleRenameSubmit(
-                                                            project.id,
-                                                        );
-                                                    if (e.key === "Escape")
-                                                        setRenamingId(null);
-                                                }}
-                                                onBlur={() =>
-                                                    handleRenameSubmit(project.id)
-                                                }
-                                                onClick={(e) => e.stopPropagation()}
-                                                className="min-w-0 flex-1 text-sm text-gray-800 bg-transparent outline-none"
-                                            />
-                                        ) : (
-                                            <span className="min-w-0 flex-1 truncate text-sm text-gray-800">
-                                                {project.name}
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
-
-                                <div
-                                    className="ml-auto w-32 shrink-0 text-sm text-gray-500 truncate"
-                                    onClick={(e) => e.stopPropagation()}
+                                <TablePrimaryCell
+                                    selected={selectedIds.includes(project.id)}
+                                    onSelectionChange={() =>
+                                        toggleOne(project.id)
+                                    }
                                 >
-                                    {cmEditingId === project.id ? (
-                                        <input
-                                            autoFocus
-                                            value={cmValue}
-                                            onChange={(e) =>
-                                                setCmValue(e.target.value)
-                                            }
-                                            onKeyDown={(e) => {
-                                                if (e.key === "Enter")
-                                                    handleCmSubmit(project.id);
-                                                if (e.key === "Escape")
-                                                    setCmEditingId(null);
-                                            }}
-                                            onBlur={() =>
-                                                handleCmSubmit(project.id)
-                                            }
-                                            placeholder="CM #"
-                                            className="w-full text-sm text-gray-800 bg-transparent outline-none"
-                                        />
-                                    ) : (
-                                        (project.cm_number ?? (
-                                            <span className="text-gray-300">
-                                                —
-                                            </span>
-                                        ))
+                                    <ClosedProjectSvgIcon className="mr-2 h-4 w-4 shrink-0" />
+                                    <span className="min-w-0 flex-1 truncate text-sm text-gray-800">
+                                        {project.name}
+                                    </span>
+                                </TablePrimaryCell>
+
+                                <TableCell className="ml-auto w-32">
+                                    {project.cm_number ?? (
+                                        <span className="text-gray-300">
+                                            —
+                                        </span>
                                     )}
-                                </div>
-                                <div className="w-24 shrink-0 text-sm text-gray-500 truncate">
+                                </TableCell>
+                                <TableCell className="w-36">
+                                    {project.practice ?? (
+                                        <span className="text-gray-300">
+                                            —
+                                        </span>
+                                    )}
+                                </TableCell>
+                                <TableCell className="w-32">
+                                    {getProjectOwnerLabel(project, user?.id)}
+                                </TableCell>
+                                <TableCell className="w-24">
                                     {project.document_count ?? 0}
-                                </div>
-                                <div className="w-24 shrink-0 text-sm text-gray-500 truncate">
+                                </TableCell>
+                                <TableCell className="w-24">
                                     {project.chat_count ?? 0}
-                                </div>
-                                <div className="w-36 shrink-0 text-sm text-gray-500 truncate">
+                                </TableCell>
+                                <TableCell className="w-36">
                                     {project.review_count ?? 0}
-                                </div>
-                                <div className="w-32 shrink-0 text-sm text-gray-500 truncate">
+                                </TableCell>
+                                <TableCell className="w-32">
                                     {formatDate(project.created_at)}
-                                </div>
+                                </TableCell>
 
                                 <div
                                     className="w-8 shrink-0 flex justify-end"
@@ -436,15 +743,8 @@ export function ProjectsOverview() {
                                     {(project.is_owner ??
                                         project.user_id === user?.id) && (
                                         <RowActions
-                                            onRename={() => {
-                                                setRenameValue(project.name);
-                                                setRenamingId(project.id);
-                                            }}
-                                            onUpdateCmNumber={() => {
-                                                setCmValue(
-                                                    project.cm_number ?? "",
-                                                );
-                                                setCmEditingId(project.id);
+                                            onEditDetails={() => {
+                                                setDetailsProject(project);
                                             }}
                                             onDelete={async () => {
                                                 await deleteProject(project.id);
@@ -458,13 +758,12 @@ export function ProjectsOverview() {
                                         />
                                     )}
                                 </div>
-                            </div>
+                            </TableRow>
                             );
                         })}
-                    </div>
+                    </TableBody>
                 )}
-            </div>
-            </div>
+            </TableScrollArea>
 
             <NewProjectModal
                 open={modalOpen}
@@ -475,7 +774,19 @@ export function ProjectsOverview() {
                 }}
             />
 
-            <OwnerOnlyModal
+            <ProjectDetailsModal
+                open={!!detailsProject}
+                project={detailsProject}
+                canEdit={
+                    !!detailsProject &&
+                    detailsProject.is_owner !== false &&
+                    (!user?.id || detailsProject.user_id === user.id)
+                }
+                onClose={() => setDetailsProject(null)}
+                onSave={handleProjectDetailsSave}
+            />
+
+            <OwnerOnlyPopup
                 open={!!ownerOnlyAction}
                 action={ownerOnlyAction ?? undefined}
                 onClose={() => setOwnerOnlyAction(null)}

@@ -6,16 +6,21 @@ import {
     buildMessages,
     buildWorkflowStore,
     enrichWithPriorEvents,
+    appendAskInputsResponseToLastAssistantMessage,
+    appendAssistantEventsToLastAssistantMessage,
     AssistantStreamError,
     buildCancelledAssistantMessage,
-    extractAnnotations,
+    extractCitations,
     isAbortError,
     runLLMStream,
     stripTransientAssistantEvents,
     PROJECT_EXTRA_TOOLS,
+    parseAskInputsResponsePayload,
     type ChatMessage,
-} from "../lib/chatTools";
-import { getUserApiKeys } from "../lib/userSettings";
+} from "../lib/chat";
+import {
+    getUserModelSettings,
+} from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
 import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
 
@@ -34,14 +39,25 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { projectId } = req.params;
-    const { messages, chat_id, model, displayed_doc, attached_documents } =
+    const {
+        messages,
+        chat_id,
+        model,
+        displayed_doc,
+        attached_documents,
+        ask_inputs_response,
+    } =
         req.body as {
             messages: ChatMessage[];
             chat_id?: string;
             model?: string;
             displayed_doc?: { filename: string; document_id: string };
             attached_documents?: { filename: string; document_id: string }[];
+            ask_inputs_response?: unknown;
         };
+    const askInputsResponse = parseAskInputsResponsePayload(
+        ask_inputs_response,
+    );
 
     const db = createServerSupabase();
 
@@ -84,7 +100,13 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     }
 
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
-    if (lastUser) {
+    if (askInputsResponse) {
+        await appendAskInputsResponseToLastAssistantMessage(
+            db,
+            chatId,
+            askInputsResponse,
+        );
+    } else if (lastUser) {
         await db.from("chat_messages").insert({
             chat_id: chatId,
             role: "user",
@@ -141,10 +163,16 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         systemPromptExtra += `\n\nUSER-ATTACHED DOCUMENTS FOR THIS TURN:\nThe user has attached the following document(s) directly to their latest message. Treat these as the primary focus of the request unless their message clearly says otherwise.\n${lines.join("\n")}`;
     }
 
+    const {
+        api_keys: apiKeys,
+        legal_research_us: legalResearchUs,
+    } = await getUserModelSettings(userId, db);
     const apiMessages = buildMessages(
         messagesForLLM,
         docAvailability,
         systemPromptExtra,
+        undefined,
+        legalResearchUs,
     );
 
     const workflowStore = await buildWorkflowStore(userId, userEmail, db);
@@ -162,12 +190,10 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         if (!streamFinished) streamAbort.abort();
     });
 
-    const apiKeys = await getUserApiKeys(userId, db);
-
     try {
         write(`data: ${JSON.stringify({ type: "chat_id", chatId })}\n\n`);
 
-        const { events, annotations } = await runLLMStream({
+        const { events, citations } = await runLLMStream({
             apiMessages,
             docStore,
             docIndex,
@@ -176,6 +202,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             write,
             extraTools: PROJECT_EXTRA_TOOLS,
             workflowStore,
+            includeResearchTools: legalResearchUs,
             model,
             apiKeys,
             signal: streamAbort.signal,
@@ -183,12 +210,21 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         });
 
         const persistedEvents = stripTransientAssistantEvents(events);
-        await db.from("chat_messages").insert({
-            chat_id: chatId,
-            role: "assistant",
-            content: persistedEvents.length ? persistedEvents : null,
-            annotations: annotations.length ? annotations : null,
-        });
+        if (askInputsResponse) {
+            await appendAssistantEventsToLastAssistantMessage(
+                db,
+                chatId,
+                persistedEvents,
+                citations,
+            );
+        } else {
+            await db.from("chat_messages").insert({
+                chat_id: chatId,
+                role: "assistant",
+                content: persistedEvents.length ? persistedEvents : null,
+                citations: citations.length ? citations : null,
+            });
+        }
 
         if (!chatTitle && lastUser?.content) {
             await db
@@ -205,17 +241,31 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
                 const partial = buildCancelledAssistantMessage({
                     fullText: err.fullText,
                     events: err.events,
-                    buildAnnotations: (fullText, events) =>
-                        extractAnnotations(fullText, docIndex, events),
+                    buildCitations: (fullText, events) =>
+                        extractCitations(fullText, docIndex, events),
                 });
-                const { error: saveError } = await db.from("chat_messages").insert({
-                    chat_id: chatId,
-                    role: "assistant",
-                    content: partial.events.length ? partial.events : null,
-                    annotations: partial.annotations.length
-                        ? partial.annotations
-                        : null,
-                });
+                const saveError = askInputsResponse
+                    ? null
+                    : (
+                          await db.from("chat_messages").insert({
+                              chat_id: chatId,
+                              role: "assistant",
+                              content: partial.events.length
+                                  ? partial.events
+                                  : null,
+                              citations: partial.citations.length
+                                  ? partial.citations
+                                  : null,
+                          })
+                      ).error;
+                if (askInputsResponse) {
+                    await appendAssistantEventsToLastAssistantMessage(
+                        db,
+                        chatId,
+                        partial.events,
+                        partial.citations,
+                    );
+                }
                 if (saveError) {
                     console.error(
                         "[project-chat/stream] failed to save aborted stream",
@@ -233,17 +283,29 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         const errorFullText =
             err instanceof AssistantStreamError ? err.fullText : "";
         try {
-            const annotations = extractAnnotations(
+            const citations = extractCitations(
                 errorFullText,
                 docIndex,
                 errorEvents,
             );
-            const { error: saveError } = await db.from("chat_messages").insert({
-                chat_id: chatId,
-                role: "assistant",
-                content: errorEvents.length ? errorEvents : null,
-                annotations: annotations.length ? annotations : null,
-            });
+            const saveError = askInputsResponse
+                ? null
+                : (
+                      await db.from("chat_messages").insert({
+                          chat_id: chatId,
+                          role: "assistant",
+                          content: errorEvents.length ? errorEvents : null,
+                          citations: citations.length ? citations : null,
+                      })
+                  ).error;
+            if (askInputsResponse) {
+                await appendAssistantEventsToLastAssistantMessage(
+                    db,
+                    chatId,
+                    errorEvents,
+                    citations,
+                );
+            }
             if (saveError)
                 console.error("[project-chat/stream] failed to save error", saveError);
         } catch (saveErr) {

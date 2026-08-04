@@ -8,19 +8,20 @@ import {
     type KeyboardEvent,
 } from "react";
 import { Copy, Loader2 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
-import { Button } from "@/components/ui/button";
-import { useUserProfile } from "@/contexts/UserProfileContext";
+import { supabase } from "@/app/lib/supabase";
+import { Button } from "@/app/components/ui/button";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { isMfaRequiredError } from "@/app/lib/mikeApi";
-import { Modal } from "@/app/components/shared/Modal";
+import { Modal } from "@/app/components/modals/Modal";
 import {
     MfaVerificationPopup,
     needsMfaVerification,
-} from "@/app/components/shared/MfaVerificationPopup";
+} from "@/app/components/popups/MfaVerificationPopup";
 import {
     accountGlassPrimaryButtonClassName,
-    accountGlassSectionClassName,
 } from "../accountStyles";
+import { AccountSection } from "../AccountSection";
+import { AccountToggle } from "../AccountToggle";
 
 type MfaFactor = {
     id: string;
@@ -148,20 +149,18 @@ function VerificationCodeInput({
 function MfaSettingsSkeleton() {
     return (
         <div className="px-4 py-5">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="space-y-2">
+            <div className="space-y-1">
+                <div className="flex items-start justify-between gap-3">
                     <div className="h-4 w-36 animate-pulse rounded bg-gray-100" />
-                    <div className="h-3 w-72 max-w-full animate-pulse rounded bg-gray-100" />
+                    <div className="h-3 w-14 shrink-0 animate-pulse rounded bg-gray-100" />
                 </div>
-                <div className="h-8 w-20 animate-pulse rounded-lg bg-gray-100" />
+                <div className="space-y-1.5 pt-1">
+                    <div className="h-3 w-full max-w-md animate-pulse rounded bg-gray-100" />
+                    <div className="h-3 w-3/4 max-w-sm animate-pulse rounded bg-gray-100" />
+                </div>
             </div>
-            <div className="my-5 h-px bg-gray-100" />
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="space-y-2">
-                    <div className="h-4 w-32 animate-pulse rounded bg-gray-100" />
-                    <div className="h-3 w-64 max-w-full animate-pulse rounded bg-gray-100" />
-                </div>
-                <div className="h-7 w-12 animate-pulse rounded-full bg-gray-100" />
+            <div className="mt-3 flex justify-end">
+                <div className="h-9 w-20 animate-pulse rounded-lg bg-gray-100" />
             </div>
         </div>
     );
@@ -469,7 +468,7 @@ export default function SecurityPage() {
                 <h2 className="text-2xl font-medium font-serif text-gray-900">
                     Multi-Factor Authentication
                 </h2>
-                <div className={accountGlassSectionClassName}>
+                <AccountSection>
                     {loading ? (
                         <MfaSettingsSkeleton />
                     ) : (
@@ -537,28 +536,15 @@ export default function SecurityPage() {
                                                 only before sensitive actions.
                                             </p>
                                         </div>
-                                        <button
-                                            type="button"
-                                            role="switch"
-                                            aria-checked={loginMfaEnabled}
-                                            onClick={() =>
+                                        <AccountToggle
+                                            checked={loginMfaEnabled}
+                                            disabled={savingLoginPreference}
+                                            loading={savingLoginPreference}
+                                            size="md"
+                                            onChange={() =>
                                                 void handleLoginPreferenceToggle()
                                             }
-                                            disabled={savingLoginPreference}
-                                            className={`flex h-7 w-12 shrink-0 items-center rounded-full px-1 transition-colors ${
-                                                loginMfaEnabled
-                                                    ? "bg-gray-950"
-                                                    : "bg-gray-200"
-                                            } disabled:cursor-not-allowed disabled:opacity-45`}
-                                        >
-                                            <span
-                                                className={`h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
-                                                    loginMfaEnabled
-                                                        ? "translate-x-5"
-                                                        : "translate-x-0"
-                                                }`}
-                                            />
-                                        </button>
+                                        />
                                     </div>
                                     <div className="flex justify-end px-4 pb-4 pt-1">
                                         <button
@@ -587,12 +573,12 @@ export default function SecurityPage() {
                             </p>
                         </>
                     )}
-                </div>
+                </AccountSection>
             </section>
             <Modal
                 open={setupModalOpen}
                 onClose={() => void closeSetupModal()}
-                title="Set up authenticator app"
+                breadcrumbs={["Security", "Set up authenticator app"]}
                 cancelAction={{
                     label: enrollment ? "Back" : "Cancel",
                     onClick: enrollment
@@ -615,7 +601,13 @@ export default function SecurityPage() {
                           }
                 }
             >
-                <div className={enrollment ? "space-y-3 pt-2" : "space-y-5 pt-3"}>
+                <div
+                    className={
+                        enrollment
+                            ? "min-h-0 flex-1 space-y-3 overflow-y-auto pt-2"
+                            : "min-h-0 flex-1 space-y-5 overflow-y-auto pt-3"
+                    }
+                >
                     {!enrollment ? (
                         <>
                             <p className="text-xs font-medium uppercase tracking-wide text-gray-400">

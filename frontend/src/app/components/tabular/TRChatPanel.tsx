@@ -1,40 +1,57 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
-    Clock,
-    MessageSquarePlus,
+    MoreHorizontal,
+    Pencil,
+    Plus,
     Search,
     Square,
     ArrowRight,
     ChevronDown,
-    ChevronLeft,
     Trash2,
+    X,
 } from "lucide-react";
-import { MikeIcon } from "@/components/chat/mike-icon";
+import { MikeIcon } from "@/app/components/chat/mike-icon";
 import {
     streamTabularChat,
     getTabularChats,
     getTabularChatMessages,
     deleteTabularChat,
+    renameTabularChat,
     mapTRMessages,
     type TRChat,
     type TRCitationAnnotation,
 } from "@/app/lib/mikeApi";
 import type { AssistantEvent, ColumnConfig, Document } from "../shared/types";
 import { ModelToggle } from "../assistant/ModelToggle";
-import { ApiKeyMissingModal } from "../shared/ApiKeyMissingModal";
-import { PreResponseWrapper } from "../shared/PreResponseWrapper";
-import { useUserProfile } from "@/contexts/UserProfileContext";
+import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
+import { PreResponseWrapper } from "../assistant/PreResponseWrapper";
+import {
+    DocReadBlock,
+    EventBlock,
+    ReasoningBlock,
+} from "../assistant/message/EventBlocks";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import {
     getModelProvider,
     isModelAvailable,
     type ModelProvider,
 } from "@/app/lib/modelAvailability";
 import type { ApiKeyState } from "@/app/lib/mikeApi";
-import { cn } from "@/lib/utils";
+import {
+    APP_SURFACE_ACTIVE_CLASS,
+    APP_SURFACE_HOVER_CLASS,
+    LIQUID_PANEL_SURFACE_CLASS,
+} from "@/app/components/ui/liquid-surface";
+import {
+    LiquidDropdownButton,
+    LiquidDropdownSurface,
+} from "@/app/components/ui/liquid-dropdown";
+import { cn } from "@/app/lib/utils";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -113,165 +130,6 @@ interface Props {
 }
 
 // ---------------------------------------------------------------------------
-// Reasoning block
-// ---------------------------------------------------------------------------
-
-const THINKING_PHRASES = [
-    "Thinking...",
-    "Pondering...",
-    "Analyzing...",
-    "Reasoning...",
-];
-const REASONING_COLLAPSED_MAX_LINES = 6;
-const REASONING_COLLAPSED_MAX_HEIGHT_REM = 9;
-
-function ReasoningBlock({
-    text,
-    isStreaming,
-}: {
-    text: string;
-    isStreaming: boolean;
-}) {
-    const [isOpen, setIsOpen] = useState(false);
-    const [userToggled, setUserToggled] = useState(false);
-    const [isOverflowing, setIsOverflowing] = useState(false);
-    const [hasMeasured, setHasMeasured] = useState(false);
-    const [phraseIdx, setPhraseIdx] = useState(0);
-    const contentRef = useRef<HTMLDivElement | null>(null);
-
-    useEffect(() => {
-        if (!isStreaming) return;
-        const interval = setInterval(
-            () => setPhraseIdx((i) => (i + 1) % THINKING_PHRASES.length),
-            2000,
-        );
-        return () => clearInterval(interval);
-    }, [isStreaming]);
-
-    useEffect(() => {
-        const el = contentRef.current;
-        if (!el) return;
-        const lineHeight = parseFloat(getComputedStyle(el).lineHeight) || 24;
-        const maxHeight = lineHeight * REASONING_COLLAPSED_MAX_LINES;
-        const nextOverflowing = el.scrollHeight > maxHeight + 2;
-        setIsOverflowing(nextOverflowing);
-        setHasMeasured(true);
-        if (nextOverflowing && !userToggled) setIsOpen(false);
-    }, [text, userToggled]);
-
-    const showContent = isOpen || isStreaming || isOverflowing || !hasMeasured;
-    const isCollapsed = isOverflowing && !isOpen;
-
-    return (
-        <div className="ml-1">
-            <button
-                onClick={() => {
-                    if (isStreaming) return;
-                    setUserToggled(true);
-                    setIsOpen((v) => !v);
-                }}
-                className="flex items-center text-sm text-gray-400 hover:text-gray-500 transition-colors"
-            >
-                {isStreaming ? (
-                    <div className="w-1.5 h-1.5 rounded-full border border-gray-400 border-t-transparent animate-spin shrink-0" />
-                ) : (
-                    <div className="w-1.5 h-1.5 rounded-full bg-gray-300 shrink-0" />
-                )}
-                <span className="font-medium ml-2">
-                    {isStreaming
-                        ? THINKING_PHRASES[phraseIdx]
-                        : "Thought process"}
-                </span>
-                {!isStreaming && (
-                    <ChevronDown
-                        size={10}
-                        className={`ml-1.5 transition-transform duration-200 ${isOpen ? "" : "-rotate-90"}`}
-                    />
-                )}
-            </button>
-            {showContent && (
-                <div className="mt-1.5 ml-[14px]">
-                    <div
-                        className={`relative ${isCollapsed ? "overflow-hidden" : ""}`}
-                        style={
-                            isCollapsed
-                                ? {
-                                      maxHeight: `${REASONING_COLLAPSED_MAX_HEIGHT_REM}rem`,
-                                  }
-                                : undefined
-                        }
-                    >
-                        <div
-                            ref={contentRef}
-                            className="text-sm text-gray-400 prose prose-sm max-w-none [&>*]:text-gray-400 [&>*]:text-sm"
-                        >
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                {text}
-                            </ReactMarkdown>
-                        </div>
-                        {isCollapsed && (
-                            <>
-                                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-b from-white/0 to-white" />
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setUserToggled(true);
-                                        setIsOpen(true);
-                                    }}
-                                    className="absolute left-1/2 bottom-2 z-10 -translate-x-1/2 text-gray-400 transition-colors hover:text-gray-600"
-                                    aria-label="Expand thought process"
-                                >
-                                    <ChevronDown className="h-3.5 w-3.5" />
-                                </button>
-                            </>
-                        )}
-                    </div>
-                    {isOverflowing && isOpen && (
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setUserToggled(true);
-                                setIsOpen(false);
-                            }}
-                            className="mx-auto mt-2 flex text-gray-400 transition-colors hover:text-gray-600"
-                            aria-label="Minimise thought process"
-                        >
-                            <ChevronDown className="h-3.5 w-3.5 rotate-180" />
-                        </button>
-                    )}
-                </div>
-            )}
-        </div>
-    );
-}
-
-// ---------------------------------------------------------------------------
-// DocRead block
-// ---------------------------------------------------------------------------
-
-function DocReadBlock({
-    label,
-    isStreaming,
-}: {
-    label: string;
-    isStreaming?: boolean;
-}) {
-    return (
-        <div className="flex items-center text-sm text-gray-400 ml-1">
-            {isStreaming ? (
-                <div className="w-1.5 h-1.5 rounded-full border border-gray-400 border-t-transparent animate-spin shrink-0" />
-            ) : (
-                <div className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
-            )}
-            <span className="font-medium ml-2">
-                {isStreaming ? "Reading" : "Read"}
-            </span>
-            <span className="ml-1 text-gray-500">{label}</span>
-        </div>
-    );
-}
-
-// ---------------------------------------------------------------------------
 // Citation preprocessing (matches AssistantMessage.tsx pattern)
 // ---------------------------------------------------------------------------
 
@@ -306,6 +164,7 @@ function TRResponseStatus({ isActive }: { isActive: boolean }) {
 
     useEffect(() => {
         if (wasActiveRef.current && !isActive) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect -- timed 'Done' flash on the active->idle transition
             setShowDone(true);
             setDoneVisible(true);
             const t = setTimeout(() => setDoneVisible(false), 1500);
@@ -392,13 +251,23 @@ function TRAssistantMessage({
         return false;
     };
 
-    const renderPreEvent = (event: AssistantEvent, key: number) => {
+    const renderPreEvent = (
+        event: AssistantEvent,
+        index: number,
+        allEvents: AssistantEvent[],
+        key: number,
+    ) => {
+        const nextEvent = allEvents[index + 1];
+        const showConnector =
+            nextEvent !== undefined && nextEvent.type !== "content";
+
         if (event.type === "reasoning") {
             return (
                 <ReasoningBlock
                     key={key}
                     text={event.text}
                     isStreaming={!!event.isStreaming && !!msg.isStreaming}
+                    showConnector={showConnector}
                 />
             );
         }
@@ -406,20 +275,22 @@ function TRAssistantMessage({
             return (
                 <DocReadBlock
                     key={key}
-                    label={event.filename}
+                    filename={event.filename}
                     isStreaming={event.isStreaming}
+                    showConnector={showConnector}
+                    showFileIcon={false}
                 />
             );
         }
         if (event.type === "thinking") {
             return (
-                <div
+                <EventBlock
                     key={key}
-                    className="flex items-center text-sm text-gray-400 ml-1"
+                    showConnector={showConnector}
+                    isStreaming
                 >
-                    <div className="w-1.5 h-1.5 rounded-full border border-gray-400 border-t-transparent animate-spin shrink-0" />
-                    <span className="ml-2">Thinking...</span>
-                </div>
+                    <span>Thinking...</span>
+                </EventBlock>
             );
         }
         return null;
@@ -472,7 +343,7 @@ function TRAssistantMessage({
                                         title={`${cit.col_name} · ${cit.doc_name.replace(/\.[^.]+$/, "")}`}
                                         className="mx-0.5 inline-flex items-center justify-center rounded-full w-4 h-4 text-[10px] font-medium bg-gray-100 text-gray-900 hover:bg-gray-200 transition-colors align-super font-serif"
                                     >
-                                        {idx + 1}
+                                        {cit.ref}
                                     </button>
                                 );
                             }
@@ -521,7 +392,12 @@ function TRAssistantMessage({
                                 compact
                             >
                                 {g.events.map((event, i) =>
-                                    renderPreEvent(event, g.indices[i]),
+                                    renderPreEvent(
+                                        event,
+                                        i,
+                                        g.events,
+                                        g.indices[i],
+                                    ),
                                 )}
                             </PreResponseWrapper>
                         );
@@ -626,20 +502,20 @@ function TRChatInput({
         <div
             ref={rootRef}
             className={cn(
-                "absolute bottom-0 left-0 right-0 px-4 pb-3",
+                "absolute bottom-0 left-0 right-0 z-10 px-3 pb-3",
                 "bg-transparent",
             )}
         >
             <div
                 className={cn(
                     "pt-2 pb-1.5 flex flex-col gap-1",
-                    "rounded-[18px] border border-white/65 bg-white/60 shadow-[0_6px_18px_rgba(15,23,42,0.16),inset_0_1px_0_rgba(255,255,255,0.85),inset_0_-6px_14px_rgba(255,255,255,0.18)] backdrop-blur-2xl",
+                    "rounded-xl border border-white/65 bg-white/60 shadow-[0_4px_10px_rgba(15,23,42,0.12),inset_0_1px_0_rgba(255,255,255,0.85),inset_0_-6px_14px_rgba(255,255,255,0.18)] backdrop-blur-2xl",
                 )}
             >
                 <textarea
                     ref={textareaRef}
                     rows={1}
-                    placeholder="Ask a question about your documents..."
+                    placeholder="How can I help?"
                     value={value}
                     onChange={(e) => {
                         setValue(e.target.value);
@@ -653,7 +529,7 @@ function TRChatInput({
                     }}
                     className="w-full resize-none text-sm bg-transparent outline-none placeholder:text-gray-400 leading-6 max-h-48 overflow-hidden border-0 p-0 pl-3 pr-2 pt-0.5"
                 />
-                <div className="flex items-center justify-between pl-1 pr-2">
+                <div className="flex items-center justify-end gap-1.5 pl-1 pr-2">
                     <ModelToggle
                         value={model}
                         onChange={onModelChange}
@@ -692,12 +568,23 @@ function HistoryDropdown({
     chats,
     currentChatId,
     onLoad,
+    onRename,
+    onDelete,
 }: {
     chats: TRChat[];
     currentChatId: string | null;
     onLoad: (chatId: string) => void;
+    onRename: (chatId: string, title: string) => void;
+    onDelete: (chatId: string) => void;
 }) {
     const [query, setQuery] = useState("");
+    const [menu, setMenu] = useState<{
+        chatId: string;
+        top: number;
+        left: number;
+    } | null>(null);
+    const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
+    const [renameValue, setRenameValue] = useState("");
     const filtered = chats
         .filter((c) => c.id !== currentChatId)
         .filter((c) => {
@@ -705,9 +592,15 @@ function HistoryDropdown({
             return label.toLowerCase().includes(query.toLowerCase());
         });
 
+    function commitRename(chatId: string) {
+        const trimmed = renameValue.trim();
+        setRenamingChatId(null);
+        if (trimmed) onRename(chatId, trimmed);
+    }
+
     return (
         <>
-            <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-gray-100">
+            <div className="flex items-center gap-1.5 px-3 py-2 border-b border-white/40">
                 <Search className="h-3 w-3 text-gray-400 shrink-0" />
                 <input
                     autoFocus
@@ -718,9 +611,12 @@ function HistoryDropdown({
                     className="flex-1 text-xs bg-transparent outline-none placeholder:text-gray-400 text-gray-700"
                 />
             </div>
-            <div className="max-h-48 overflow-y-auto">
+            <div
+                className="max-h-48 overflow-y-auto p-1"
+                onScroll={() => setMenu(null)}
+            >
                 {filtered.length === 0 ? (
-                    <p className="px-3 py-2 text-xs text-gray-400">
+                    <p className="px-2 py-1.5 text-xs text-gray-400">
                         {chats.filter((c) => c.id !== currentChatId).length ===
                         0
                             ? "No previous chats."
@@ -729,14 +625,102 @@ function HistoryDropdown({
                 ) : (
                     filtered.map((chat) => {
                         const label = chat.title ?? "Chat";
+                        if (renamingChatId === chat.id) {
+                            return (
+                                <input
+                                    key={chat.id}
+                                    autoFocus
+                                    type="text"
+                                    value={renameValue}
+                                    onChange={(e) =>
+                                        setRenameValue(e.target.value)
+                                    }
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter")
+                                            commitRename(chat.id);
+                                        if (e.key === "Escape")
+                                            setRenamingChatId(null);
+                                    }}
+                                    onBlur={() => commitRename(chat.id)}
+                                    className={`w-full rounded-lg px-2 py-1.5 text-xs text-gray-700 outline-none ${APP_SURFACE_ACTIVE_CLASS}`}
+                                />
+                            );
+                        }
                         return (
-                            <button
+                            <div
                                 key={chat.id}
-                                onClick={() => onLoad(chat.id)}
-                                className="w-full px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-50 transition-colors truncate"
+                                className="group relative flex items-center"
                             >
-                                {label}
-                            </button>
+                                <LiquidDropdownButton
+                                    onClick={() => onLoad(chat.id)}
+                                    className="w-full min-w-0 rounded-lg px-2 py-1.5 pr-7 text-left truncate"
+                                >
+                                    {label}
+                                </LiquidDropdownButton>
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        const rect =
+                                            e.currentTarget.getBoundingClientRect();
+                                        setMenu((v) =>
+                                            v?.chatId === chat.id
+                                                ? null
+                                                : {
+                                                      chatId: chat.id,
+                                                      top: rect.bottom + 4,
+                                                      left: rect.right - 112,
+                                                  },
+                                        );
+                                    }}
+                                    title="Chat options"
+                                    className={cn(
+                                        `absolute right-1.5 flex h-5 w-5 items-center justify-center rounded-full text-gray-400 transition-colors hover:text-gray-700 ${APP_SURFACE_HOVER_CLASS}`,
+                                        menu?.chatId === chat.id
+                                            ? "opacity-100"
+                                            : "opacity-0 group-hover:opacity-100",
+                                    )}
+                                >
+                                    <MoreHorizontal className="h-3.5 w-3.5" />
+                                </button>
+                                {menu?.chatId === chat.id &&
+                                    createPortal(
+                                    <LiquidDropdownSurface
+                                        onMouseDown={(e) =>
+                                            e.stopPropagation()
+                                        }
+                                        className="fixed z-[130] w-28 p-1"
+                                        style={{
+                                            top: menu.top,
+                                            left: menu.left,
+                                        }}
+                                    >
+                                        <LiquidDropdownButton
+                                            onClick={() => {
+                                                setMenu(null);
+                                                setRenameValue(
+                                                    chat.title ?? "",
+                                                );
+                                                setRenamingChatId(chat.id);
+                                            }}
+                                            className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left"
+                                        >
+                                            <Pencil className="h-3 w-3" />
+                                            Rename
+                                        </LiquidDropdownButton>
+                                        <LiquidDropdownButton
+                                            onClick={() => {
+                                                setMenu(null);
+                                                onDelete(chat.id);
+                                            }}
+                                            className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-red-600 hover:text-red-600 focus:text-red-600"
+                                        >
+                                            <Trash2 className="h-3 w-3" />
+                                            Delete
+                                        </LiquidDropdownButton>
+                                    </LiquidDropdownSurface>,
+                                    document.body,
+                                )}
+                            </div>
                         );
                     })
                 )}
@@ -755,6 +739,14 @@ function findLastContentIndex(events: AssistantEvent[]): number {
     }
     return -1;
 }
+
+// ---------------------------------------------------------------------------
+// Header pills (matches PageHeader action group styling)
+// ---------------------------------------------------------------------------
+
+const HEADER_PILL_CLASS =
+    "flex shrink-0 items-center gap-1 rounded-full border border-white/70 bg-app-surface px-1 py-0.5 shadow-[0_8px_24px_rgba(15,23,42,0.06)] backdrop-blur-2xl";
+const HEADER_PILL_BUTTON_CLASS = `flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-gray-500 transition-colors hover:text-gray-900 ${APP_SURFACE_HOVER_CLASS}`;
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -793,12 +785,20 @@ export function TRChatPanel({
     const [isResizing, setIsResizing] = useState(false);
     const [inputHeight, setInputHeight] = useState(96);
 
+    const resizeStartRef = useRef({ x: 0, width: 380 });
+
     useEffect(() => {
         if (!isResizing) return;
         const MIN_WIDTH = 280;
         const MAX_WIDTH = 800;
         function onMove(e: MouseEvent) {
-            setPanelWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, e.clientX)));
+            const delta = resizeStartRef.current.x - e.clientX;
+            setPanelWidth(
+                Math.min(
+                    MAX_WIDTH,
+                    Math.max(MIN_WIDTH, resizeStartRef.current.width + delta),
+                ),
+            );
         }
         function onUp() {
             setIsResizing(false);
@@ -1084,15 +1084,27 @@ export function TRChatPanel({
         setHistoryOpen(false);
     }
 
-    async function handleDeleteChat() {
-        if (!currentChatId) return;
-        const chatIdToDelete = currentChatId;
-        setChats((prev) => prev.filter((c) => c.id !== chatIdToDelete));
-        setCurrentChatId(null);
-        setCurrentChatTitle(null);
-        setMessages([]);
+    async function handleDeleteChat(chatId: string) {
+        setChats((prev) => prev.filter((c) => c.id !== chatId));
+        if (chatId === currentChatId) {
+            setCurrentChatId(null);
+            setCurrentChatTitle(null);
+            setMessages([]);
+        }
         try {
-            await deleteTabularChat(reviewId, chatIdToDelete);
+            await deleteTabularChat(reviewId, chatId);
+        } catch {
+            /* ignore */
+        }
+    }
+
+    async function handleRenameChat(chatId: string, title: string) {
+        setChats((prev) =>
+            prev.map((c) => (c.id === chatId ? { ...c, title } : c)),
+        );
+        if (chatId === currentChatId) setCurrentChatTitle(title);
+        try {
+            await renameTabularChat(reviewId, chatId, title);
         } catch {
             /* ignore */
         }
@@ -1444,9 +1456,7 @@ export function TRChatPanel({
                             continue;
                         }
 
-                        if (
-                            data.type === "courtlistener_find_in_case_start"
-                        ) {
+                        if (data.type === "courtlistener_find_in_case_start") {
                             const searches = parseCourtlistenerCaseSearches(
                                 data.searches,
                             );
@@ -1472,8 +1482,7 @@ export function TRChatPanel({
                             );
                             updateMatchingEvent(
                                 (e) =>
-                                    e.type ===
-                                        "courtlistener_find_in_case" &&
+                                    e.type === "courtlistener_find_in_case" &&
                                     (searches?.length
                                         ? Array.isArray(e.searches)
                                         : e.cluster_id ===
@@ -1481,8 +1490,7 @@ export function TRChatPanel({
                                               "number"
                                                   ? (data.cluster_id as number)
                                                   : null) &&
-                                          e.query ===
-                                              (data.query as string)) &&
+                                          e.query === (data.query as string)) &&
                                     !!e.isStreaming,
                                 () => ({
                                     type: "courtlistener_find_in_case",
@@ -1755,109 +1763,99 @@ export function TRChatPanel({
 
     return (
         <div
-            style={{ width: panelWidth }}
+            style={
+                {
+                    "--tr-chat-panel-width": `${panelWidth}px`,
+                } as CSSProperties
+            }
             className={cn(
-                "shrink-0 flex flex-col border-r border-gray-200 h-full relative",
-                "bg-transparent",
+                "flex flex-col relative",
+                // Mobile: replaces the table, filling the row minus margins.
+                // md+: fixed width beside the table, top-aligned with it
+                // (below the toolbar).
+                "flex-1 min-w-0 mx-3 mb-3 md:flex-none md:w-[var(--tr-chat-panel-width)] md:mt-12 md:-ml-4 md:mr-6",
+                LIQUID_PANEL_SURFACE_CLASS,
+                "overflow-hidden",
             )}
         >
             {/* Resize handle */}
             <div
                 onMouseDown={(e) => {
                     e.preventDefault();
+                    resizeStartRef.current = { x: e.clientX, width: panelWidth };
                     setIsResizing(true);
                 }}
-                className={`absolute top-0 right-0 h-full w-1 cursor-col-resize z-20 transition-colors ${
+                className={`absolute top-0 left-0 h-full w-1 cursor-col-resize z-20 transition-colors hidden md:block ${
                     isResizing
-                        ? "bg-blue-500"
-                        : "bg-transparent hover:bg-blue-500"
+                        ? "bg-blue-400/70"
+                        : "bg-transparent hover:bg-blue-400/70"
                 }`}
             />
-            {/* Header */}
-            <div className="flex items-center justify-between h-8 pr-2 border-b border-gray-200 shrink-0">
-                <div className="flex items-center gap-1 pl-2 pr-2 min-w-0">
-                    <button
-                        onClick={onClose}
-                        title="Close"
-                        className="flex items-center justify-center h-7 w-7 shrink-0 rounded-md text-gray-600 hover:text-gray-900 transition-colors"
-                    >
-                        <ChevronLeft className="h-3.5 w-3.5" />
-                    </button>
-                    <div
-                        onMouseEnter={(e) => {
-                            const el = e.currentTarget;
-                            const overflow = el.scrollWidth - el.clientWidth;
-                            if (overflow > 0)
-                                el.scrollTo({
-                                    left: overflow,
-                                    behavior: "smooth",
-                                });
-                        }}
-                        onMouseLeave={(e) => {
-                            e.currentTarget.scrollTo({
-                                left: 0,
-                                behavior: "smooth",
-                            });
-                        }}
-                        className="min-w-0 overflow-x-hidden whitespace-nowrap scrollbar-none"
-                    >
-                        <span className="text-xs font-medium text-gray-700">
-                            {currentChatTitle ?? "New chat"}
-                        </span>
-                    </div>
-                </div>
-                <div className="flex items-center">
-                    <div ref={historyRef} className="relative">
+            {/* Header — fixed, overlaid on top of the messages */}
+            <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between gap-2 px-2 py-2">
+                {/* Title pill — opens chat history */}
+                <div ref={historyRef} className="relative shrink min-w-0">
+                    <div className={cn(HEADER_PILL_CLASS, "min-w-0")}>
                         <button
                             onClick={() => setHistoryOpen((v) => !v)}
                             title="Chat history"
-                            className={`flex items-center justify-center h-7 w-7 rounded-md transition-colors ${historyOpen ? "text-gray-900" : "text-gray-600 hover:text-gray-900"}`}
+                            className={`flex h-5 min-w-0 items-center gap-1 rounded-full px-1.5 text-gray-700 transition-colors ${APP_SURFACE_HOVER_CLASS}`}
                         >
-                            <Clock className="h-3.5 w-3.5" />
+                            <span className="min-w-0 truncate text-xs font-medium">
+                                {currentChatTitle ?? "New chat"}
+                            </span>
+                            <ChevronDown
+                                className={cn(
+                                    "h-3 w-3 shrink-0 text-gray-400 transition-transform duration-200",
+                                    historyOpen && "rotate-180",
+                                )}
+                            />
                         </button>
-                        {historyOpen && (
-                            <div className="absolute top-full right-0 mt-1 w-64 rounded-lg border border-gray-100 bg-white shadow-lg z-50 overflow-hidden">
-                                <HistoryDropdown
-                                    chats={chats}
-                                    currentChatId={currentChatId}
-                                    onLoad={handleLoadChat}
-                                />
-                            </div>
-                        )}
                     </div>
-                    <button
-                        onClick={handleNewChat}
-                        title="New chat"
-                        className="flex items-center justify-center h-7 w-7 rounded-md text-gray-600 hover:text-gray-900 transition-colors"
-                    >
-                        <MessageSquarePlus className="h-3.5 w-3.5" />
-                    </button>
-                    {currentChatId && (
-                        <button
-                            onClick={handleDeleteChat}
-                            title="Delete chat"
-                            className="flex items-center justify-center h-7 w-7 rounded-md text-gray-600 hover:text-red-600 transition-colors"
-                        >
-                            <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                    {historyOpen && (
+                        <LiquidDropdownSurface className="absolute top-full left-0 z-50 mt-2 w-64 overflow-hidden">
+                            <HistoryDropdown
+                                chats={chats}
+                                currentChatId={currentChatId}
+                                onLoad={handleLoadChat}
+                                onRename={handleRenameChat}
+                                onDelete={handleDeleteChat}
+                            />
+                        </LiquidDropdownSurface>
                     )}
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                    {/* New chat circle — only once a chat has started */}
+                    {messages.length > 0 && (
+                        <div className={cn(HEADER_PILL_CLASS, "px-0.5")}>
+                            <button
+                                onClick={handleNewChat}
+                                title="New chat"
+                                className={HEADER_PILL_BUTTON_CLASS}
+                            >
+                                <Plus className="h-3.5 w-3.5" />
+                            </button>
+                        </div>
+                    )}
+                    {/* Close circle */}
+                    <div className={cn(HEADER_PILL_CLASS, "px-0.5")}>
+                        <button
+                            onClick={onClose}
+                            title="Close"
+                            className={HEADER_PILL_BUTTON_CLASS}
+                        >
+                            <X className="h-3.5 w-3.5" />
+                        </button>
+                    </div>
                 </div>
             </div>
 
             {/* Messages */}
             <div
                 ref={messagesContainerRef}
-                className="flex-1 overflow-y-auto px-4 pt-4 flex flex-col"
+                className="flex-1 overflow-y-auto px-4 pt-12 flex flex-col"
                 style={{ paddingBottom: Math.ceil(inputHeight + 16) }}
             >
-                {messages.length === 0 && !isLoadingMessages && (
-                    <div className="flex flex-1 flex-col items-center justify-center gap-2">
-                        <MikeIcon size={24} />
-                        <p className="text-gray-400 font-serif text-center">
-                            Ask a question about this tabular review.
-                        </p>
-                    </div>
-                )}
                 {isLoadingMessages && (
                     <div className="flex flex-col gap-4">
                         <div className="flex justify-end">
@@ -1904,6 +1902,12 @@ export function TRChatPanel({
                 )}
             </div>
 
+            {/* Top blur overlay — messages fade out under the header */}
+            <div className="pointer-events-none absolute top-0 left-0 right-2 z-[5] h-10 backdrop-blur-2xl bg-gradient-to-b from-white/80 to-transparent [mask-image:linear-gradient(to_bottom,black_65%,transparent)]" />
+
+            {/* Bottom blur overlay — messages fade out under the input */}
+            <div className="pointer-events-none absolute bottom-0 left-0 right-2 z-[5] h-32 backdrop-blur-2xl bg-gradient-to-t from-white/80 to-transparent [mask-image:linear-gradient(to_top,black_65%,transparent)]" />
+
             {/* Input */}
             <TRChatInput
                 isLoading={isLoading}
@@ -1917,7 +1921,7 @@ export function TRChatPanel({
                 onHeightChange={setInputHeight}
             />
 
-            <ApiKeyMissingModal
+            <ApiKeyMissingPopup
                 open={apiKeyModalProvider !== null}
                 provider={apiKeyModalProvider}
                 onClose={() => setApiKeyModalProvider(null)}

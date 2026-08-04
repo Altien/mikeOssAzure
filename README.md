@@ -1,6 +1,10 @@
 # Mike
 
-Mike is a legal document assistant with a Next.js frontend, an Express backend, Supabase Auth/Postgres, and Cloudflare R2-compatible object storage.
+![Mike](https://mikeoss.com/link-image.jpg)
+
+Mike or MIkeOSS is a legal AI platform that is able to assist you with document review, drafting and legal research.
+
+It has a Next.js frontend, an Express backend, Supabase Auth/Postgres, and Cloudflare R2-compatible object storage.
 
 Website: [mikeoss.com](https://mikeoss.com)
 
@@ -9,7 +13,13 @@ Website: [mikeoss.com](https://mikeoss.com)
 - `frontend/` - Next.js application
 - `backend/` - Express API, Supabase access, document processing, and database schema
 - `backend/schema.sql` - Supabase schema for fresh databases
-- `backend/oss-migrations/` - OSS-specific migrations that should be applied to existing open-source deployments
+- `backend/migrations/` - dated, incremental schema migrations; on an existing database, apply the files dated after the Mike version you deployed
+
+## System Workflows
+
+Mike's system assistant and tabular review workflows are maintained in the
+[`Open-Legal-Products/mike-workflows`](https://github.com/Open-Legal-Products/mike-workflows)
+repository.
 
 ## Prerequisites
 
@@ -33,7 +43,7 @@ For a new Supabase database, open the Supabase SQL editor and run:
 
 The schema file is for fresh deployments and already includes the latest database shape.
 
-For an existing database, do not run the full schema file over production data. Apply the relevant incremental files in `backend/oss-migrations/` instead; these capture schema changes for open-source deployments.
+For an existing database, do not run the full schema file over production data. Instead, apply the incremental files in `backend/migrations/`: run the migrations dated **after** the version of Mike you currently have deployed, in filename order. Each file is named `YYYYMMDD_<name>.sql` (the date is also recorded in a comment at the top of the file) and is written to be safe to re-run, so when unsure you can re-apply the most recent migrations without harm.
 
 ## Environment
 
@@ -79,6 +89,13 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=your-supabase-anon-key
 NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
 ```
 
+These three `NEXT_PUBLIC_*` variables are required when running
+`npm run build --prefix frontend`. Next.js embeds public environment values in
+the browser bundle at build time, so setting them only when starting or
+deploying an already-built application is too late. Production builds fail
+with a list of missing variables instead of producing a bundle that cannot
+connect to Supabase or the backend API.
+
 Supabase values come from the project dashboard. Use the project URL for `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL`, the service role key for the backend `SUPABASE_SECRET_KEY`, and the anon/public key for `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`. If your Supabase project shows multiple key formats, use the legacy JWT-style anon and service role keys expected by the Supabase client libraries.
 
 Provider keys are only needed for the models, legal research, and email features you plan to use. Model provider keys and the CourtListener token can be configured in `backend/.env` for the whole instance, or per user in **Account > Models & API Keys**. If a provider key is present in `backend/.env`, that provider is available by default and the matching browser API key field is read-only.
@@ -89,7 +106,7 @@ Mike can use CourtListener for US case law citation verification, case fetching,
 
 To enable live CourtListener access, set `COURTLISTENER_API_TOKEN` in `backend/.env` and restart the backend. Users can also add their own CourtListener token from **Account > Models & API Keys** when the instance does not provide one globally.
 
-Fresh databases created from `backend/schema.sql` already include the CourtListener support tables. Existing OSS deployments should apply the matching migration in `backend/oss-migrations/` before enabling the feature.
+Fresh databases created from `backend/schema.sql` already include the CourtListener support tables. Existing deployments should apply the matching dated migration in `backend/migrations/` before enabling the feature.
 
 Bulk data is optional. When `COURTLISTENER_BULK_DATA_ENABLED=true`, Mike first tries local Supabase/R2 data before falling back to CourtListener's API:
 
