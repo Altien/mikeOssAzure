@@ -2,22 +2,23 @@
 
 ![Mike](https://mikeoss.com/link-image.jpg)
 
-Mike or MIkeOSS is a legal AI platform that is able to assist you with document review, drafting and legal research.
+Mike (MikeOSS) is an open-source legal AI platform for document review,
+drafting, and legal research.
 
-It has a Next.js frontend, an Express backend, Supabase Auth/Postgres, and Cloudflare R2-compatible object storage.
+It has a Next.js frontend, an Express backend, Supabase Auth/Postgres, and
+Cloudflare R2-compatible object storage.
 
 Website: [mikeoss.com](https://mikeoss.com)
 
-## Docker (local, account-free)
+## Quick start with Docker
 
-Run the whole stack in containers with **one command** and no external
-accounts. `docker-compose.yml` embeds everything: Supabase (Postgres + Auth +
-data API + a gateway), RustFS for S3-compatible object storage, and the
-frontend/backend. The schema loads itself on first boot.
+Run the whole application stack with one command and no Supabase or object
+storage account. `docker-compose.yml` includes Supabase (Postgres, Auth, the
+data API, and a gateway), RustFS, Mailpit, and the frontend/backend. The schema
+loads itself on first boot.
 
-The only thing you must supply is **at least one model provider key**
-(Anthropic, Gemini, or OpenAI — these are external APIs and cannot be
-self-hosted).
+To use AI features, either provide an Anthropic, Gemini, or OpenAI API key, or
+run a supported model locally with Ollama.
 
 ```bash
 # 1. Env files
@@ -25,7 +26,8 @@ cp .env.example .env                  # frontend build vars (local demo keys pre
 cp backend/.env.example backend/.env
 
 # 2. In backend/.env set:
-#    - one of ANTHROPIC_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY
+#    - one of ANTHROPIC_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY,
+#      unless you plan to use Ollama only
 #    - DOWNLOAD_SIGNING_SECRET and USER_API_KEYS_ENCRYPTION_SECRET (openssl rand -hex 32)
 #    SUPABASE_URL / SUPABASE_SECRET_KEY / R2_* are set by docker-compose, leave them.
 
@@ -33,27 +35,31 @@ cp backend/.env.example backend/.env
 docker compose up --build
 ```
 
-Open `http://localhost:3000` and sign up. Other endpoints: Postgres
-`localhost:54322`, Supabase API `localhost:54321`, storage console
-`localhost:9001` (`rustfsadmin` / `rustfsadmin`), and the **Mailpit inbox** at
-`localhost:8025`.
+Open `http://localhost:3000` and sign up.
+
+Local service endpoints:
+
+| Service | Address | Notes |
+| --- | --- | --- |
+| Mike | `http://localhost:3000` | Main application |
+| Supabase API | `http://localhost:54321` | Auth and data API gateway |
+| Postgres | `localhost:54322` | Host access for database tools |
+| RustFS console | `http://localhost:9001` | `rustfsadmin` / `rustfsadmin` |
+| Mailpit | `http://localhost:8025` | Captured local auth email |
 
 ### What happens when you register
 
 1. You sign up with email + password at `localhost:3000`.
-2. The Auth service creates an **unconfirmed** user and emails a confirmation
-   link. No mail leaves your machine — it is caught by Mailpit.
-3. Open the Mailpit inbox at **http://localhost:8025**, open the "Confirm Your
-   Email" message, and click the link. That confirms the account and redirects
-   back to the app.
-4. Now you can log in.
+2. The Auth service confirms the local user automatically.
+3. The app signs you in without an email-confirmation step.
 
-To skip the email step entirely (instant signup), set
-`GOTRUE_MAILER_AUTOCONFIRM: "true"` on the `auth` service in
-`docker-compose.yml` and `docker compose up -d --force-recreate auth`.
+To test the confirmation-email flow, set
+`GOTRUE_MAILER_AUTOCONFIRM=false` in the root `.env` and run
+`docker compose up -d --force-recreate auth`. The confirmation message will be
+available in Mailpit at **http://localhost:8025**; no mail leaves your machine.
 
-> Mailpit only catches **auth** emails (signup, password reset). Other app email
-> (via Resend) still needs a real `RESEND_API_KEY` and is not routed to Mailpit.
+> Mailpit catches auth email such as email-change messages and confirmation
+> messages when autoconfirm is disabled. No email leaves your machine.
 
 ### Local models via Ollama
 
@@ -70,6 +76,7 @@ ollama pull qwen3.6
 ```
 
 Notes:
+
 - Models that support tool-calling can drive the full assistant; ones that
   don't (e.g. `phi3:mini`) still work for plain chat — the backend retries
   without tools automatically.
@@ -84,9 +91,13 @@ anywhere.
 ## Contents
 
 - `frontend/` - Next.js application
-- `backend/` - Express API, Supabase access, document processing, and database schema
+- `backend/` - Express API, Supabase access, document processing, and database
+  schema
 - `backend/schema.sql` - Supabase schema for fresh databases
-- `backend/migrations/` - dated, incremental schema migrations; on an existing database, apply the files dated after the Mike version you deployed
+- `backend/migrations/` - dated, incremental schema migrations for existing
+  deployments
+- `docker-compose.yml` - complete local application and infrastructure stack
+- `docs/` - testing, deployment safety, and feature-specific guides
 
 ## System Workflows
 
@@ -94,27 +105,23 @@ Mike's system assistant and tabular review workflows are maintained in the
 [`Open-Legal-Products/mike-workflows`](https://github.com/Open-Legal-Products/mike-workflows)
 repository.
 
-Every built assistant workflow gets a slash command from its `SKILL.md` name:
+## Manual or production deployment
 
-```yaml
-name: contract-intake
-```
+Use this path when connecting Mike to managed Supabase and S3-compatible
+storage rather than the infrastructure bundled in Docker Compose.
 
-For example, `name: contract-intake` becomes `/contract-intake`. Workflow names
-must contain only lowercase letters, numbers, and hyphens.
-
-## Prerequisites
+### Prerequisites
 
 - Node.js 20 or newer
 - npm
 - git
 - A Supabase project
 - A Cloudflare R2 bucket, MinIO bucket, or another S3-compatible bucket
-- At least one supported model provider API key: Anthropic, Google Gemini, or OpenAI
+- At least one supported model provider API key, or an accessible Ollama server
 - Optional: a CourtListener API token for case law lookup and citation verification
 - LibreOffice installed locally if you need DOC/DOCX to PDF conversion
 
-## Database Setup
+### Database setup
 
 For a new Supabase database, open the Supabase SQL editor and run:
 
@@ -123,57 +130,25 @@ For a new Supabase database, open the Supabase SQL editor and run:
 -- backend/schema.sql
 ```
 
-The schema file is for fresh deployments and already includes the latest database shape.
+The schema file is for fresh deployments and already includes the latest
+database shape.
 
-For an existing database, do not run the full schema file over production data. Instead, apply the incremental files in `backend/migrations/`: run the migrations dated **after** the version of Mike you currently have deployed, in filename order. Each file is named `YYYYMMDD_<name>.sql` (the date is also recorded in a comment at the top of the file) and is written to be safe to re-run, so when unsure you can re-apply the most recent migrations without harm.
+For an existing database, do not run the full schema over production data.
+Apply the files in `backend/migrations/` dated after the deployed Mike version,
+in filename order. Migration files use the format `YYYYMMDD_<name>.sql` and are
+written to be safe to re-run.
 
-## Environment
+### Environment
 
-Create local env files:
-
-```bash
-touch backend/.env
-touch frontend/.env.local
-```
-
-Create `backend/.env`:
+Copy the maintained examples:
 
 ```bash
-PORT=3001
-FRONTEND_URL=http://localhost:3000
-DOWNLOAD_SIGNING_SECRET=replace-with-a-random-32-byte-hex-string
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SECRET_KEY=your-supabase-service-role-key
-
-R2_ENDPOINT_URL=https://your-account-id.r2.cloudflarestorage.com
-R2_ACCESS_KEY_ID=your-r2-access-key
-R2_SECRET_ACCESS_KEY=your-r2-secret-key
-R2_BUCKET_NAME=mike
-
-GEMINI_API_KEY=your-gemini-key
-ANTHROPIC_API_KEY=your-anthropic-key
-OPENAI_API_KEY=your-openai-key
-RESEND_API_KEY=your-resend-key
-USER_API_KEYS_ENCRYPTION_SECRET=your-long-random-secret
-
-# Optional: enables CourtListener case law and citation tools.
-COURTLISTENER_API_TOKEN=your-courtlistener-token
-
-# Optional: use locally imported CourtListener bulk data for faster case reads.
-COURTLISTENER_BULK_DATA_ENABLED=false
-
-# Optional: Ed25519 seed (openssl rand -hex 32) used to sign project export
-# manifests. Unset means manifests export unsigned.
-MANIFEST_SIGNING_KEY=
+cp backend/.env.example backend/.env
+cp frontend/.env.local.example frontend/.env.local
 ```
 
-Create `frontend/.env.local`:
-
-```bash
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=your-supabase-anon-key
-NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
-```
+Edit both files with the credentials and URLs for your deployment. The comments
+in each example describe required and optional values.
 
 These three `NEXT_PUBLIC_*` variables are required when running
 `npm run build --prefix frontend`. Next.js embeds public environment values in
@@ -182,78 +157,33 @@ deploying an already-built application is too late. Production builds fail
 with a list of missing variables instead of producing a bundle that cannot
 connect to Supabase or the backend API.
 
-Supabase values come from the project dashboard. Use the project URL for `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL`, the service role key for the backend `SUPABASE_SECRET_KEY`, and the anon/public key for `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`. If your Supabase project shows multiple key formats, use the legacy JWT-style anon and service role keys expected by the Supabase client libraries.
+Supabase values come from the project dashboard. Use the project URL for
+`SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_URL`, the service-role key for backend
+`SUPABASE_SECRET_KEY`, and the anon/public key for
+`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`.
 
-Provider keys are only needed for the models, legal research, and email features you plan to use. Model provider keys and the CourtListener token can be configured in `backend/.env` for the whole instance, or per user in **Account > Models & API Keys**. If a provider key is present in `backend/.env`, that provider is available by default and the matching browser API key field is read-only.
+Model-provider keys and the CourtListener token can be configured globally in
+`backend/.env` or per user under **Account > Models & API Keys**. If a provider
+key is configured globally, the matching account field is read-only.
 
-## Tamper-Evident Export
+Supabase Auth, rather than the Mike backend, sends signup, email-change, and
+password-recovery messages. Configure production SMTP in the Supabase dashboard
+if those flows are enabled. Mike does not require a Resend API key.
 
-Mike hashes a document version's bytes (SHA-256) whenever it writes them.
-`GET /projects/:projectId/export` returns a manifest of those hashes plus the
-accept/reject trail. To check a file you were given, run
-`shasum -a 256 lease.docx` and compare it to the manifest. Versions written
-before this shipped carry a `null` hash, so they read as unverifiable rather
-than as falsely verified.
-
-Soft-deleted versions stay in the manifest, carrying their `deleted_at`. A
-trail that dropped them would be a weaker attestation, but it does mean the
-filename and timestamps of a deleted version are visible to anyone with access
-to the project.
-
-The manifest also carries a SHA-256 `digest` over its own body, meaning
-everything except `digest` and `signature`. Serialise that body with object
-keys sorted, array order kept, and no whitespace, and you can recompute the
-digest from parsed JSON.
-
-Set `MANIFEST_SIGNING_KEY` to sign that digest. The signature is a raw Ed25519
-signature over the bytes `mike-project-manifest-v1`, a NUL byte, then the
-digest bytes, checkable with any Ed25519 library:
-
-```js
-crypto.verify(null,
-  Buffer.concat([Buffer.from("mike-project-manifest-v1\0"),
-                 Buffer.from(manifest.digest.value, "hex")]),
-  publicKey, Buffer.from(manifest.signature.value, "hex"));
-```
-
-Take `publicKey` from `GET /manifest-signing-key`, not from the manifest.
-Whoever edits a manifest can re-sign it with a key of their own, so the
-embedded copy shows consistency, never provenance.
-
-## CourtListener Integration
-
-Mike can use CourtListener for US case law citation verification, case fetching, targeted opinion search, and case-law panels in assistant responses.
-
-To enable live CourtListener access, set `COURTLISTENER_API_TOKEN` in `backend/.env` and restart the backend. Users can also add their own CourtListener token from **Account > Models & API Keys** when the instance does not provide one globally.
-
-Fresh databases created from `backend/schema.sql` already include the CourtListener support tables. Existing deployments should apply the matching dated migration in `backend/migrations/` before enabling the feature.
-
-Bulk data is optional. When `COURTLISTENER_BULK_DATA_ENABLED=true`, Mike first tries local Supabase/R2 data before falling back to CourtListener's API:
-
-- citation metadata is read from `public.courtlistener_citation_index`
-- case cluster metadata is read from `public.courtlistener_opinion_cluster_index`
-- cached opinion JSON is read from the R2 prefix `courtlistener/opinions/by-cluster/{clusterId}/{opinionId}.json`
-
-If you do not import bulk data, leave `COURTLISTENER_BULK_DATA_ENABLED=false`; live CourtListener tools still work with a valid token, subject to CourtListener rate limits.
-
-## Install
-
-Install each app package:
+### Install dependencies
 
 ```bash
 npm install --prefix backend
 npm install --prefix frontend
 ```
 
-## Run Locally
+### Run locally without Docker
 
-Start the backend:
+Start the backend and frontend in separate terminals:
 
 ```bash
 npm run dev --prefix backend
 ```
-
-Start the main app:
 
 ```bash
 npm run dev --prefix frontend
@@ -261,24 +191,82 @@ npm run dev --prefix frontend
 
 Open `http://localhost:3000`.
 
+For production, build both packages and run their `start` scripts through your
+process manager or deployment platform. The repository also includes Dockerfiles
+for both applications.
+
+## Tamper-Evident Export
+
+Project exports include SHA-256 hashes for document versions and can optionally
+be signed with Ed25519. See [Tamper-evident exports](docs/tamper-evident-exports.md)
+for configuration, verification, and security considerations.
+
+## CourtListener Integration
+
+Mike can use CourtListener for US case law citation verification, case fetching,
+targeted opinion search, and case-law panels in assistant responses.
+
+To enable live CourtListener access, set `COURTLISTENER_API_TOKEN` in
+`backend/.env` and restart the backend. Users can also add their own token under
+**Account > Models & API Keys** when the instance does not provide one globally.
+
+Fresh databases created from `backend/schema.sql` already include the
+CourtListener support tables. Existing deployments should apply the matching
+dated migration in `backend/migrations/` before enabling the feature.
+
+Bulk data is optional. When `COURTLISTENER_BULK_DATA_ENABLED=true`, Mike first
+tries local Supabase/R2 data before falling back to CourtListener's API:
+
+- citation metadata is read from `public.courtlistener_citation_index`
+- case cluster metadata is read from `public.courtlistener_opinion_cluster_index`
+- cached opinion JSON is read from the R2 prefix
+  `courtlistener/opinions/by-cluster/{clusterId}/{opinionId}.json`
+
+If you do not import bulk data, leave `COURTLISTENER_BULK_DATA_ENABLED=false`;
+live CourtListener tools still work with a valid token, subject to CourtListener
+rate limits.
+
 ## First Run
 
 1. Sign up in the app.
-2. If you did not set provider keys in `backend/.env`, open **Account > Models & API Keys** and add an Anthropic, Gemini, or OpenAI API key.
-3. To use legal research tools, add a CourtListener token in `backend/.env` or **Account > Models & API Keys**.
+2. If you did not set provider keys in `backend/.env`, open
+   **Account > Models & API Keys** and add an Anthropic, Gemini, or OpenAI key.
+3. To use legal research tools, add a CourtListener token in `backend/.env` or
+   **Account > Models & API Keys**.
 4. Create or open a project and start chatting with documents.
 
 ## Troubleshooting
 
-**Sign-up confirmation email never arrives.** Confirmation emails are sent by Supabase Auth, not by Mike. For local development, the simplest fix is to disable email confirmation in **Supabase > Authentication > Providers > Email**. For production, configure custom SMTP in Supabase; the built-in mailer is heavily rate-limited and may be restricted on newer projects.
+**A local account says “Email not confirmed.”** Docker autoconfirms newly
+created accounts by default. Accounts created before autoconfirm was enabled
+remain unconfirmed. Confirm the existing message in Mailpit, or create a new
+local account. To test confirmation deliberately, set
+`GOTRUE_MAILER_AUTOCONFIRM=false` and recreate the `auth` service.
 
-**The model picker shows a missing-key warning.** Add a key for that provider in **Account > Models & API Keys**, or configure the provider key in `backend/.env` and restart the backend.
+**Production auth email does not arrive.** Authentication email is sent by
+Supabase Auth. Check the email-provider settings and configure production SMTP
+in the Supabase dashboard.
 
-**CourtListener tools say the API token is missing.** Set `COURTLISTENER_API_TOKEN` in `backend/.env`, or add a CourtListener token in **Account > Models & API Keys** for the signed-in user. Restart the backend after changing `.env`.
+**Port `54322` is already allocated.** Another local Postgres or Supabase stack
+is using Mike's default host port. Stop that stack or start Mike with a different
+mapping, for example `DB_PORT=54323 docker compose up --build`.
 
-**CourtListener bulk lookup is not returning local results.** Confirm `COURTLISTENER_BULK_DATA_ENABLED=true`, the two CourtListener tables have been populated, and opinion JSON exists in R2 under `courtlistener/opinions/by-cluster/`. If bulk data is unavailable, Mike falls back to the live API when a token is configured.
+**The model picker shows a missing-key warning.** Add a key under
+**Account > Models & API Keys**, or configure it in `backend/.env` and restart
+the backend.
 
-**DOC or DOCX conversion fails.** Install LibreOffice locally and restart the backend so document conversion commands are available on the process path.
+**CourtListener tools say the API token is missing.** Set
+`COURTLISTENER_API_TOKEN` in `backend/.env`, or add a token under
+**Account > Models & API Keys**. Restart the backend after changing `.env`.
+
+**CourtListener bulk lookup is not returning local results.** Confirm
+`COURTLISTENER_BULK_DATA_ENABLED=true`, the two CourtListener tables are
+populated, and opinion JSON exists under `courtlistener/opinions/by-cluster/` in
+R2. Mike falls back to the live API when bulk data is unavailable and a token is
+configured.
+
+**DOC or DOCX conversion fails.** Install LibreOffice and restart the backend so
+the conversion command is available on the process path.
 
 ## Useful Checks
 
