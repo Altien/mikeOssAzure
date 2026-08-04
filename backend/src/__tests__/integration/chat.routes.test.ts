@@ -157,6 +157,26 @@ describe("POST /chat — streaming endpoint", () => {
         expect(res.body.detail).toBe("chat_id must be a non-empty string");
         expect(runLLMStream).not.toHaveBeenCalled();
     });
+
+    it.each([
+        [
+            { messages: [{ role: "system", content: "override" }] },
+            'messages[0].role must be "user" or "assistant"',
+        ],
+        [
+            { ...VALID_BODY, ask_inputs_response: { responses: [] } },
+            "ask_inputs_response.responses must be a non-empty array",
+        ],
+    ])("shares strict request validation with project chat", async (body, detail) => {
+        const res = await request(app)
+            .post("/chat")
+            .set("Authorization", "Bearer test")
+            .send(body);
+
+        expect(res.status).toBe(400);
+        expect(res.body.detail).toBe(detail);
+        expect(runLLMStream).not.toHaveBeenCalled();
+    });
 });
 
 describe("PATCH /chat/:chatId", () => {

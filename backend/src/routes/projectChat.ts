@@ -17,7 +17,12 @@ import {
     spotlightFilename,
     stripTransientAssistantEvents,
     PROJECT_EXTRA_TOOLS,
-    parseAskInputsResponsePayload,
+    parseChatMessages,
+    parseOptionalAskInputsResponse,
+    parseOptionalAttachedDocuments,
+    parseOptionalChatId,
+    parseOptionalDisplayedDoc,
+    parseOptionalModel,
     type ChatMessage,
 } from "../lib/chat";
 import {
@@ -41,25 +46,49 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { projectId } = req.params;
-    const {
-        messages,
-        chat_id,
-        model,
-        displayed_doc,
-        attached_documents,
-        ask_inputs_response,
-    } =
-        req.body as {
-            messages: ChatMessage[];
-            chat_id?: string;
-            model?: string;
-            displayed_doc?: { filename: string; document_id: string };
-            attached_documents?: { filename: string; document_id: string }[];
-            ask_inputs_response?: unknown;
-        };
-    const askInputsResponse = parseAskInputsResponsePayload(
-        ask_inputs_response,
+    const body =
+        req.body && typeof req.body === "object" && !Array.isArray(req.body)
+            ? (req.body as Record<string, unknown>)
+            : {};
+    const parsedMessages = parseChatMessages(body.messages);
+    if (!parsedMessages.ok) {
+        return void res.status(400).json({ detail: parsedMessages.detail });
+    }
+    const parsedChatId = parseOptionalChatId(body.chat_id);
+    if (!parsedChatId.ok) {
+        return void res.status(400).json({ detail: parsedChatId.detail });
+    }
+    const parsedModel = parseOptionalModel(body.model);
+    if (!parsedModel.ok) {
+        return void res.status(400).json({ detail: parsedModel.detail });
+    }
+    const parsedDisplayedDoc = parseOptionalDisplayedDoc(body.displayed_doc);
+    if (!parsedDisplayedDoc.ok) {
+        return void res.status(400).json({ detail: parsedDisplayedDoc.detail });
+    }
+    const parsedAttachedDocuments = parseOptionalAttachedDocuments(
+        body.attached_documents,
     );
+    if (!parsedAttachedDocuments.ok) {
+        return void res
+            .status(400)
+            .json({ detail: parsedAttachedDocuments.detail });
+    }
+    const parsedAskInputsResponse = parseOptionalAskInputsResponse(
+        body.ask_inputs_response,
+    );
+    if (!parsedAskInputsResponse.ok) {
+        return void res
+            .status(400)
+            .json({ detail: parsedAskInputsResponse.detail });
+    }
+
+    const messages = parsedMessages.value;
+    const chat_id = parsedChatId.value;
+    const model = parsedModel.value;
+    const displayed_doc = parsedDisplayedDoc.value;
+    const attached_documents = parsedAttachedDocuments.value;
+    const askInputsResponse = parsedAskInputsResponse.value;
 
     const db = createServerSupabase();
 
