@@ -53,14 +53,22 @@ export function WorkflowPicker(): React.ReactElement {
     try {
       const docText = await readDocumentText();
       let accumulated = "";
-      // POST /chat does not read a `systemPrompt` field. The workflow
-      // instruction is sent as the user message and the document body is
-      // passed via `documentContext` (which the API folds into the system
-      // prompt as a spotlighted block). The model is injected by streamAssistant.
+      // The workflow travels as a reference, exactly like the web app: the
+      // backend resolves skill_md server-side (read_workflow tool) and fences
+      // it as <workflow-instructions>, so the body is never pasted into the
+      // user turn. The document goes via `document_context`, which the API
+      // folds into the system prompt as a spotlighted block.
       await streamAssistant(
         {
           messages: [
-            { role: "user", content: selectedWorkflow.skill_md ?? "" },
+            {
+              role: "user",
+              content: `Run the "${selectedWorkflow.metadata.title}" workflow on my document.`,
+              workflow: {
+                id: selectedWorkflow.id,
+                title: selectedWorkflow.metadata.title,
+              },
+            },
           ],
           documentContext: docText,
         },

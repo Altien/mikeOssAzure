@@ -17,7 +17,13 @@ const DEFAULT_MODEL: string =
 
 export async function streamAssistant(
   params: {
-    messages: { role: string; content: string }[];
+    messages: {
+      role: string;
+      content: string;
+      // Workflow runs travel as a reference — the backend resolves the body
+      // server-side (inside the <workflow-instructions> fence), same as the web.
+      workflow?: { id: string; title: string };
+    }[];
     documentContext?: string;
     model?: string;
     signal?: AbortSignal;
@@ -27,7 +33,7 @@ export async function streamAssistant(
   const res = await streamChat({
     messages: params.messages,
     model: params.model ?? DEFAULT_MODEL,
-    documentContext: params.documentContext,
+    document_context: params.documentContext,
     signal: params.signal,
   });
   if (!res.ok) {

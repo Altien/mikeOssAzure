@@ -1171,7 +1171,7 @@ export async function streamChat(payload: {
     chat_id?: string;
     project_id?: string;
     model?: string;
-    documentContext?: string;
+    document_context?: string;
     ask_inputs_response?: {
         responses: (
             | {
