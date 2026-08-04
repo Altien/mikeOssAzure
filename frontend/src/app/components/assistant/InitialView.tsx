@@ -115,11 +115,13 @@ export function InitialView({ onSubmit }: InitialViewProps) {
         projectId?: string,
         documentIds?: string[],
         columnsConfig?: Workflow["columns_config"],
+        documentGrouping?: "document" | "folder",
     ) {
         const review = await createTabularReview({
             title,
             document_ids: documentIds ?? [],
             columns_config: columnsConfig ?? [],
+            document_grouping: documentGrouping,
             ...(projectId && { project_id: projectId }),
         });
         setNewTROpen(false);

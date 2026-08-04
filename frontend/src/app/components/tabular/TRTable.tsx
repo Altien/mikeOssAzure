@@ -11,6 +11,7 @@ import type {
     ColumnConfig,
     Document,
     TabularCell,
+    TabularReviewRow,
 } from "../shared/types";
 import { TabularCell as TabularCellComponent } from "./TabularCell";
 import { TREditColumnMenu } from "./TREditColumnMenu";
@@ -22,6 +23,7 @@ import {
 } from "../shared/TablePrimitive";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { TabularReviewSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
+import { TRFirstColumnCell } from "./TRFirstColumnCell";
 import {
     APP_SURFACE_ACTIVE_CLASS,
     APP_SURFACE_GROUP_HOVER_CLASS,
@@ -47,12 +49,14 @@ export interface TRTableHandle {
 
 interface Props {
     loading: boolean;
+    documentGrouping: "document" | "folder";
     columns: ColumnConfig[];
+    rows: TabularReviewRow[];
     documents: Document[];
     cells: TabularCell[];
     savingColumn: boolean;
     savingColumnsConfig: boolean;
-    selectedDocIds: string[];
+    selectedRowIds: string[];
     uploadingFilenames?: string[];
     dragOverFiles?: boolean;
     highlightedCell?: { colIdx: number; rowIdx: number } | null;
@@ -65,6 +69,7 @@ interface Props {
         citationRef: number,
         sheet?: string,
         citationCell?: string,
+        documentId?: string,
     ) => void;
     onUpdateColumn: (col: ColumnConfig) => void;
     onDeleteColumn: (colIndex: number) => void;
@@ -75,12 +80,14 @@ interface Props {
 export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
     {
         loading,
+        documentGrouping,
         columns,
+        rows,
         documents,
         cells,
         savingColumn,
         savingColumnsConfig,
-        selectedDocIds,
+        selectedRowIds,
         uploadingFilenames = [],
         dragOverFiles = false,
         highlightedCell,
@@ -109,6 +116,11 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
     }
 
     const sortedColumns = [...columns].sort((a, b) => a.index - b.index);
+    const documentsById = new Map(
+        documents.map((document) => [document.id, document]),
+    );
+    const firstColumnLabel =
+        documentGrouping === "folder" ? "Folder / Document" : "Document";
     const totalContentWidth =
         DOC_COL_W_PX + sortedColumns.length * DATA_COL_W_PX + 32;
     const skeletonContentWidth =
@@ -140,31 +152,31 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
         },
     }));
 
-    function getCell(docId: string, colIdx: number) {
+    function getCell(row: TabularReviewRow, colIdx: number) {
         return cells.find(
-            (c) => c.document_id === docId && c.column_index === colIdx,
+            (cell) =>
+                cell.row_id === row.id && cell.column_index === colIdx,
         );
     }
 
     const allSelected =
-        documents.length > 0 &&
-        documents.every((d) => selectedDocIds.includes(d.id));
+        rows.length > 0 && rows.every((row) => selectedRowIds.includes(row.id));
     const someSelected =
-        !allSelected && documents.some((d) => selectedDocIds.includes(d.id));
+        !allSelected && rows.some((row) => selectedRowIds.includes(row.id));
 
     function toggleAll() {
         if (allSelected) {
             onSelectionChange([]);
         } else {
-            onSelectionChange(documents.map((d) => d.id));
+            onSelectionChange(rows.map((row) => row.id));
         }
     }
 
-    function toggleDoc(id: string) {
-        if (selectedDocIds.includes(id)) {
-            onSelectionChange(selectedDocIds.filter((x) => x !== id));
+    function toggleRow(id: string) {
+        if (selectedRowIds.includes(id)) {
+            onSelectionChange(selectedRowIds.filter((x) => x !== id));
         } else {
-            onSelectionChange([...selectedDocIds, id]);
+            onSelectionChange([...selectedRowIds, id]);
         }
     }
 
@@ -180,7 +192,7 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                             className={`sticky left-0 z-[80] ${DOC_COL_W} ${TR_STICKY_CELL_BG} flex items-center border-b border-r border-gray-200 py-2 pl-4 pr-2 text-xs font-medium text-gray-500`}
                         >
                             <SkeletonDot className="mr-4" />
-                            <span>Document</span>
+                            <span>{firstColumnLabel}</span>
                         </div>
                         {Array.from({ length: SKELETON_COLS }).map((_, i) => (
                             <div
@@ -221,7 +233,7 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
 
     if (
         columns.length === 0 &&
-        documents.length === 0 &&
+        rows.length === 0 &&
         uploadingFilenames.length === 0
     ) {
         return (
@@ -231,7 +243,7 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                         <div
                             className={`${DOC_COL_W} ${TR_STICKY_CELL_BG} flex items-center border-r border-gray-200 py-2 pl-4 pr-2 text-xs font-medium text-gray-500 select-none`}
                         >
-                            Document
+                            {firstColumnLabel}
                         </div>
                         <div className="flex-1" />
                     </div>
@@ -296,7 +308,7 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                             onChange={toggleAll}
                             className={TABLE_CHECKBOX_CLASS}
                         />
-                        <span>Document</span>
+                        <span>{firstColumnLabel}</span>
                     </div>
                     {columns.map((col) => (
                         <div
@@ -362,8 +374,13 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                         <div className="flex-1 border-b border-gray-200 min-h-8 min-w-8" />
                     </div>
                     ))}
-                    {documents.map((doc, docIdx) => {
-                    const isSelected = selectedDocIds.includes(doc.id);
+                    {rows.map((row, rowIdx) => {
+                    const isSelected = selectedRowIds.includes(row.id);
+                    const sourceDocuments = row.source_document_ids
+                        .map((documentId) => documentsById.get(documentId))
+                        .filter(
+                            (document): document is Document => !!document,
+                        );
                     const rowBg = isSelected
                         ? APP_SURFACE_ACTIVE_CLASS
                         : APP_SURFACE_HOVER_CLASS;
@@ -372,34 +389,26 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                         : TR_STICKY_CELL_BG;
                     return (
                         <div
-                            key={doc.id}
+                            key={row.id}
                             className={`group flex transition-colors ${rowBg}`}
                             style={{ minWidth: totalContentWidth }}
                         >
-                            <div
+                            <TRFirstColumnCell
+                                row={row}
+                                sourceDocuments={sourceDocuments}
+                                selected={isSelected}
+                                closeSignal={scrollCloseSignal}
+                                onToggleSelection={() => toggleRow(row.id)}
                                 className={`sticky left-0 z-[60] ${DOC_COL_W} border-b border-r border-gray-200 py-2 pl-4 pr-2 text-xs text-gray-800 flex items-center transition-colors ${stickyRowBg} ${isSelected ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
-                            >
-                                <input
-                                    type="checkbox"
-                                    checked={selectedDocIds.includes(doc.id)}
-                                    onChange={() => toggleDoc(doc.id)}
-                                    className={TABLE_CHECKBOX_CLASS}
-                                />
-                                <span
-                                    className="line-clamp-1"
-                                    title={doc.filename}
-                                >
-                                    {doc.filename}
-                                </span>
-                            </div>
+                            />
                             {columns.map((col) => {
-                                const cell = getCell(doc.id, col.index);
+                                const cell = getCell(row, col.index);
                                 const colPos = sortedColumns.findIndex(
                                     (c) => c.index === col.index,
                                 );
                                 const isHighlighted =
                                     highlightedCell?.colIdx === colPos &&
-                                    highlightedCell?.rowIdx === docIdx;
+                                    highlightedCell?.rowIdx === rowIdx;
                                 return (
                                     <div
                                         key={col.index}
@@ -417,6 +426,7 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                                                     citationRef,
                                                     sheet,
                                                     citationCell,
+                                                    documentId,
                                                 ) =>
                                                     onCitationClick(
                                                         cell,
@@ -425,6 +435,7 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                                                         citationRef,
                                                         sheet,
                                                         citationCell,
+                                                        documentId,
                                                     )
                                                 }
                                             />

@@ -41,5 +41,35 @@ export default defineConfig({
         // Generous timeouts to absorb cold-start jsdom + transform latency on CI.
         testTimeout: 20000,
         hookTimeout: 20000,
+        coverage: {
+            provider: "v8",
+            reporter: ["text", "lcov"],
+            // Ratchet the lib layer only, mirroring the backend's decision to
+            // gate src/lib/**: components/hooks are exercised by their own
+            // suites but not floor-gated (their coverage is UI-shaped and
+            // noisy). src/app/lib/** is the client library: mikeApi (the
+            // frontend half of the SSE contract), upload validation, model
+            // availability, utils, and the supabase wrapper.
+            include: ["src/app/lib/**"],
+            exclude: ["src/app/lib/**/*.test.*"],
+            // No-regression RATCHET floor, not a target. The global number is
+            // dominated by mikeApi.ts: the request/error/stream plumbing,
+            // message mapping, the paginated tabular-review queries, and the
+            // multipart upload error paths are tested; the remaining gap is
+            // thin endpoint wrappers (MCP connectors, workflow shares) that
+            // add functions faster than tests. Measured on this tree: 81.18%
+            // statements, 98.24% branches, 55.64% functions, 79.18% lines.
+            // Keep the floors as practical regression guardrails rather than
+            // near-perfect global targets. In particular, an 80% branch floor
+            // leaves room for defensive and endpoint-specific paths while
+            // still failing substantial coverage regressions. Backlog +
+            // per-area status: docs/frontend-testing.md.
+            thresholds: {
+                statements: 79,
+                branches: 80,
+                functions: 53,
+                lines: 77,
+            },
+        },
     },
 });

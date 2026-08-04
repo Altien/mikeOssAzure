@@ -3,10 +3,7 @@ import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import { recordAudit } from "../lib/audit";
 import { downloadFile } from "../lib/storage";
-import {
-    attachActiveVersionPaths,
-    loadActiveVersion,
-} from "../lib/documentVersions";
+import { attachActiveVersionPaths } from "../lib/documentVersions";
 import { docxToPdf, normalizeDocxZipPaths } from "../lib/convert";
 import {
     isPresentationDocumentType,
@@ -43,6 +40,14 @@ import {
     findMissingUserEmails,
     loadProfileUsersByEmail,
 } from "../lib/userLookup";
+import { parsePaginationQuery } from "../lib/pagination";
+import { normalizeSearchTerm } from "../lib/search";
+import { parseTabularReviewSort } from "../lib/sort";
+import {
+    buildTabularReviewIdsOverviewRpcArgs,
+    buildTabularReviewsOverviewRpcArgs,
+    parseTabularReviewScope,
+} from "../lib/tabularReviewsOverview";
 
 function formatPromptSuffix(format?: string, tags?: string[]): string {
     switch (format) {
@@ -57,12 +62,12 @@ function formatPromptSuffix(format?: string, tags?: string[]): string {
         case "currency":
             return ' The "summary" field in your JSON response must contain only the currency code(s). Wrap each code in double square brackets, e.g. [[USD]] or [[EUR]]. No other text.';
         case "yes_no":
-            return ' The "summary" field in your JSON response must be [[Yes]] or [[No]] only. The "reasoning" field MUST include an inline citation [[page:N||quote:verbatim excerpt ≤25 words]] pointing to the exact language in the document that supports the Yes/No answer.';
+            return ' The "summary" field in your JSON response must be [[Yes]] or [[No]] only. The "reasoning" field MUST include an inline citation [[document:SOURCE_DOCUMENT_ID||page:N||quote:verbatim excerpt ≤25 words]] pointing to the exact language in the document that supports the Yes/No answer.';
         case "date":
-            return ' The "summary" field in your JSON response must be the date only in DD Month YYYY format (e.g. 1 January 2024). If a range, give both dates separated by an em dash. The "reasoning" field MUST include an inline citation [[page:N||quote:verbatim excerpt ≤25 words]] pointing to the exact place in the document where the date is found.';
+            return ' The "summary" field in your JSON response must be the date only in DD Month YYYY format (e.g. 1 January 2024). If a range, give both dates separated by an em dash. The "reasoning" field MUST include an inline citation [[document:SOURCE_DOCUMENT_ID||page:N||quote:verbatim excerpt ≤25 words]] pointing to the exact place in the document where the date is found.';
         case "tag":
             return tags?.length
-                ? ` The \"summary\" field in your JSON response must contain exactly one tag wrapped in double square brackets. Available tags: ${tags.map((t) => `[[${t}]]`).join(", ")}. No other text. The \"reasoning\" field MUST include an inline citation [[page:N||quote:verbatim excerpt ≤25 words]] pointing to the exact language in the document that supports the chosen tag.`
+                ? ` The \"summary\" field in your JSON response must contain exactly one tag wrapped in double square brackets. Available tags: ${tags.map((t) => `[[${t}]]`).join(", ")}. No other text. The \"reasoning\" field MUST include an inline citation [[document:SOURCE_DOCUMENT_ID||page:N||quote:verbatim excerpt ≤25 words]] pointing to the exact language in the document that supports the chosen tag.`
                 : "";
         default:
             return "";
@@ -70,6 +75,397 @@ function formatPromptSuffix(format?: string, tags?: string[]): string {
 }
 
 export const tabularRouter = Router();
+
+type DocumentGrouping = "document" | "folder";
+type ReviewRow = {
+    id: string;
+    review_id: string;
+    label: string;
+    row_type: "document" | "folder";
+    folder_id: string | null;
+    library_folder_id: string | null;
+    document_id: string | null;
+    sort_index: number;
+    source_document_ids?: string[];
+};
+type SourceDocument = {
+    id: string;
+    filename: string;
+    file_type: string | null;
+    current_version_id?: string | null;
+    project_id?: string | null;
+    folder_id?: string | null;
+    library_folder_id?: string | null;
+};
+type SupabaseDb = ReturnType<typeof createServerSupabase>;
+
+function normalizeGrouping(value: unknown): DocumentGrouping {
+    return value === "folder" ? "folder" : "document";
+}
+
+async function fetchSourceDocuments(
+    db: SupabaseDb,
+    documentIds: string[],
+): Promise<SourceDocument[]> {
+    if (documentIds.length === 0) return [];
+    const { data, error } = await db
+        .from("documents")
+        .select(
+            "id, current_version_id, project_id, folder_id, library_folder_id",
+        )
+        .in("id", documentIds);
+    if (error) throw new Error(error.message);
+    const docs = (data ?? []) as (Omit<
+        SourceDocument,
+        "filename" | "file_type"
+    > & {
+        filename?: string | null;
+        file_type?: string | null;
+    })[];
+    await attachActiveVersionPaths(db, docs);
+    const position = new Map(documentIds.map((id, index) => [id, index]));
+    return docs
+        .map((doc) => ({
+            ...doc,
+            filename: doc.filename?.trim() || "Untitled document",
+            file_type: doc.file_type ?? null,
+        }))
+        .sort((a, b) => (position.get(a.id) ?? 0) - (position.get(b.id) ?? 0));
+}
+
+function buildFolderPathMap(
+    folders: {
+        id: string;
+        name: string;
+        parent_folder_id: string | null;
+    }[],
+): Map<string, string> {
+    const byId = new Map(folders.map((folder) => [folder.id, folder]));
+    const paths = new Map<string, string>();
+    const resolve = (id: string): string => {
+        const existing = paths.get(id);
+        if (existing) return existing;
+        const folder = byId.get(id);
+        if (!folder) return "Unknown folder";
+        const path = folder.parent_folder_id
+            ? `${resolve(folder.parent_folder_id)} / ${folder.name}`
+            : folder.name;
+        paths.set(id, path);
+        return path;
+    };
+    for (const folder of folders) resolve(folder.id);
+    return paths;
+}
+
+async function getFolderPathMaps(
+    db: SupabaseDb,
+    userId: string,
+    docs: SourceDocument[],
+): Promise<{
+    project: Map<string, string>;
+    library: Map<string, string>;
+}> {
+    const projectIds = [
+        ...new Set(
+            docs
+                .map((doc) => doc.project_id)
+                .filter((id): id is string => !!id),
+        ),
+    ];
+    const [projectResult, libraryResult] = await Promise.all([
+        projectIds.length
+            ? db
+                  .from("project_subfolders")
+                  .select("id, name, parent_folder_id")
+                  .in("project_id", projectIds)
+            : Promise.resolve({ data: [] }),
+        db
+            .from("library_folders")
+            .select("id, name, parent_folder_id")
+            .eq("user_id", userId),
+    ]);
+    return {
+        project: buildFolderPathMap(projectResult.data ?? []),
+        library: buildFolderPathMap(libraryResult.data ?? []),
+    };
+}
+
+async function createRowsForReview(
+    db: SupabaseDb,
+    reviewId: string,
+    userId: string,
+    documentIds: string[],
+    columns: Column[],
+    grouping: DocumentGrouping,
+): Promise<void> {
+    const docs = await fetchSourceDocuments(db, documentIds);
+    const folderPaths = await getFolderPathMaps(db, userId, docs);
+    const inputs: {
+        label: string;
+        row_type: "document" | "folder";
+        folder_id: string | null;
+        library_folder_id: string | null;
+        document_id: string | null;
+        sourceIds: string[];
+    }[] = [];
+
+    if (grouping === "folder") {
+        const byFolder = new Map<
+            string,
+            {
+                folder_id: string | null;
+                library_folder_id: string | null;
+                docs: SourceDocument[];
+            }
+        >();
+        for (const doc of docs) {
+            const folderKey = doc.folder_id
+                ? `project:${doc.folder_id}`
+                : doc.library_folder_id
+                  ? `library:${doc.library_folder_id}`
+                  : null;
+            if (!folderKey) {
+                inputs.push({
+                    label: doc.filename,
+                    row_type: "document",
+                    folder_id: null,
+                    library_folder_id: null,
+                    document_id: doc.id,
+                    sourceIds: [doc.id],
+                });
+                continue;
+            }
+            const existing = byFolder.get(folderKey);
+            if (existing) {
+                existing.docs.push(doc);
+            } else {
+                byFolder.set(folderKey, {
+                    folder_id: doc.folder_id ?? null,
+                    library_folder_id: doc.library_folder_id ?? null,
+                    docs: [doc],
+                });
+            }
+        }
+        for (const folder of byFolder.values()) {
+            const label = folder.folder_id
+                ? folderPaths.project.get(folder.folder_id)
+                : folder.library_folder_id
+                  ? folderPaths.library.get(folder.library_folder_id)
+                  : null;
+            inputs.push({
+                label: label ?? "Unknown folder",
+                row_type: "folder",
+                folder_id: folder.folder_id,
+                library_folder_id: folder.library_folder_id,
+                document_id: null,
+                sourceIds: folder.docs.map((doc) => doc.id),
+            });
+        }
+    } else {
+        for (const doc of docs) {
+            inputs.push({
+                label: doc.filename,
+                row_type: "document",
+                folder_id: null,
+                library_folder_id: null,
+                document_id: doc.id,
+                sourceIds: [doc.id],
+            });
+        }
+    }
+
+    inputs.sort((a, b) => a.label.localeCompare(b.label));
+    if (inputs.length === 0) return;
+
+    const { data, error } = await db
+        .from("tabular_review_rows")
+        .insert(
+            inputs.map((input, sort_index) => ({
+                review_id: reviewId,
+                label: input.label,
+                row_type: input.row_type,
+                folder_id: input.folder_id,
+                library_folder_id: input.library_folder_id,
+                document_id: input.document_id,
+                sort_index,
+            })),
+        )
+        .select("*");
+    if (error) throw new Error(error.message);
+    const rows = ((data ?? []) as ReviewRow[]).sort(
+        (a, b) => a.sort_index - b.sort_index,
+    );
+    const sources = rows.flatMap((row) =>
+        (inputs[row.sort_index]?.sourceIds ?? []).map(
+            (document_id, sort_index) => ({
+                row_id: row.id,
+                document_id,
+                sort_index,
+            }),
+        ),
+    );
+    if (sources.length) {
+        const { error: sourceError } = await db
+            .from("tabular_review_row_sources")
+            .insert(sources);
+        if (sourceError) throw new Error(sourceError.message);
+    }
+    const cells = rows.flatMap((row) =>
+        columns.map((column) => ({
+            review_id: reviewId,
+            row_id: row.id,
+            document_id: row.document_id,
+            column_index: column.index,
+            status: "pending",
+        })),
+    );
+    if (cells.length) {
+        const { error: cellError } = await db
+            .from("tabular_cells")
+            .insert(cells);
+        if (cellError) throw new Error(cellError.message);
+    }
+}
+
+async function rebuildRowsForReview(
+    db: SupabaseDb,
+    reviewId: string,
+    userId: string,
+    documentIds: string[],
+    columns: Column[],
+    grouping: DocumentGrouping,
+): Promise<void> {
+    const { error } = await db
+        .from("tabular_review_rows")
+        .delete()
+        .eq("review_id", reviewId);
+    if (error) throw new Error(error.message);
+    await createRowsForReview(
+        db,
+        reviewId,
+        userId,
+        documentIds,
+        columns,
+        grouping,
+    );
+}
+
+async function syncCellsForReviewRows(
+    db: SupabaseDb,
+    reviewId: string,
+    columns: Column[],
+): Promise<void> {
+    const { data: rows, error: rowsError } = await db
+        .from("tabular_review_rows")
+        .select("id,document_id")
+        .eq("review_id", reviewId);
+    if (rowsError) throw new Error(rowsError.message);
+    const { data: cells, error: cellsError } = await db
+        .from("tabular_cells")
+        .select("id,row_id,column_index")
+        .eq("review_id", reviewId);
+    if (cellsError) throw new Error(cellsError.message);
+
+    const activeColumnIndexes = new Set(columns.map((column) => column.index));
+    const staleCellIds = (cells ?? [])
+        .filter((cell) => !activeColumnIndexes.has(cell.column_index))
+        .map((cell) => cell.id);
+    if (staleCellIds.length) {
+        const { error } = await db
+            .from("tabular_cells")
+            .delete()
+            .in("id", staleCellIds);
+        if (error) throw new Error(error.message);
+    }
+
+    const existingKeys = new Set(
+        (cells ?? [])
+            .filter((cell) => activeColumnIndexes.has(cell.column_index))
+            .map((cell) => `${cell.row_id}:${cell.column_index}`),
+    );
+    const missingCells = (rows ?? []).flatMap((row) =>
+        columns
+            .filter((column) => !existingKeys.has(`${row.id}:${column.index}`))
+            .map((column) => ({
+                review_id: reviewId,
+                row_id: row.id,
+                document_id: row.document_id,
+                column_index: column.index,
+                status: "pending",
+            })),
+    );
+    if (missingCells.length) {
+        const { error } = await db.from("tabular_cells").insert(missingCells);
+        if (error) throw new Error(error.message);
+    }
+}
+
+async function loadReviewRows(
+    db: SupabaseDb,
+    reviewId: string,
+): Promise<ReviewRow[]> {
+    const { data, error } = await db
+        .from("tabular_review_rows")
+        .select("*")
+        .eq("review_id", reviewId)
+        .order("sort_index", { ascending: true });
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as ReviewRow[];
+    if (!rows.length) return rows;
+    const { data: sources, error: sourceError } = await db
+        .from("tabular_review_row_sources")
+        .select("row_id, document_id")
+        .in("row_id", rows.map((row) => row.id))
+        .order("sort_index", { ascending: true });
+    if (sourceError) throw new Error(sourceError.message);
+    const byRow = new Map<string, string[]>();
+    for (const source of sources ?? []) {
+        byRow.set(source.row_id, [
+            ...(byRow.get(source.row_id) ?? []),
+            source.document_id,
+        ]);
+    }
+    return rows.map((row) => ({
+        ...row,
+        source_document_ids:
+            byRow.get(row.id) ?? (row.document_id ? [row.document_id] : []),
+    }));
+}
+
+async function loadRowDocumentText(
+    db: SupabaseDb,
+    row: ReviewRow,
+): Promise<string> {
+    const sourceIds =
+        row.source_document_ids ?? (row.document_id ? [row.document_id] : []);
+    const docs = await fetchSourceDocuments(db, sourceIds);
+    const sections: string[] = [];
+    for (const doc of docs) {
+        const storagePath = (doc as SourceDocument & { storage_path?: string })
+            .storage_path;
+        let markdown = "";
+        if (storagePath) {
+            const buf = await downloadFile(storagePath);
+            if (buf) {
+                try {
+                    markdown = await extractDocumentMarkdown(
+                        buf,
+                        doc.file_type,
+                    );
+                } catch (error) {
+                    console.error(
+                        `[tabular] extraction error doc=${doc.id}`,
+                        safeErrorLog(error),
+                    );
+                }
+            }
+        }
+        sections.push(
+            `## Source document: ${doc.filename}\nSource document ID: ${doc.id}\n\n${markdown}`,
+        );
+    }
+    return sections.join("\n\n---\n\n");
+}
 
 function providerLabel(provider: Provider): string {
     if (provider === "claude") return "Anthropic";
@@ -79,6 +475,7 @@ function providerLabel(provider: Provider): string {
 
 function missingModelApiKey(model: string, apiKeys: UserApiKeys) {
     const provider = providerForModel(model);
+    if (provider === "ollama") return null; // local, no key
     if (apiKeys[provider]?.trim()) return null;
     return {
         provider,
@@ -97,29 +494,101 @@ tabularRouter.get("/", requireAuth, async (req, res) => {
         typeof req.query.project_id === "string" && req.query.project_id
             ? (req.query.project_id as string)
             : null;
+    const pagination = parsePaginationQuery(req.query as Record<string, unknown>);
+    const searchTerm = normalizeSearchTerm(req.query.search);
+    const sort = parseTabularReviewSort(req.query as Record<string, unknown>);
+    const scope = parseTabularReviewScope(req.query.scope);
 
-    const { data, error } = await db.rpc("get_tabular_reviews_overview", {
-        p_user_id: userId,
-        p_user_email: userEmail ?? null,
-        p_project_id: projectIdFilter,
+    const rpcArgs = buildTabularReviewsOverviewRpcArgs({
+        userId,
+        userEmail,
+        projectIdFilter,
+        scope,
+        pagination,
+        searchTerm,
+        sort,
     });
+
+    const { data, error } = await db.rpc("get_tabular_reviews_overview", rpcArgs);
     if (error) return void res.status(500).json({ detail: error.message });
 
     res.json(data ?? []);
+});
+
+// GET /tabular-review/ids (must come before /:reviewId routes)
+// Lightweight id + owner list for every review matching the current
+// filters — backs "select all matching" bulk actions so the client doesn't
+// have to page through full review payloads just to collect checkboxes.
+//
+// PostgREST enforces its own row cap on every RPC response (db-max-rows),
+// independent of anything this route asks for, and truncates silently
+// (206 + a shorter array, no error) rather than failing. So this pages
+// through the RPC itself — server-side, same-datacenter round trips — until
+// a page comes back empty, rather than trusting one call to return
+// everything.
+const TABULAR_REVIEW_IDS_PAGE_SIZE = 1000;
+const TABULAR_REVIEW_IDS_MAX_PAGES = 200; // guards a runaway loop, not a product limit
+
+tabularRouter.get("/ids", requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const db = createServerSupabase();
+
+    const projectIdFilter =
+        typeof req.query.project_id === "string" && req.query.project_id
+            ? (req.query.project_id as string)
+            : null;
+    const searchTerm = normalizeSearchTerm(req.query.search);
+    const scope = parseTabularReviewScope(req.query.scope);
+
+    const ids: { id: string; user_id: string }[] = [];
+    let offset = 0;
+    for (let page = 0; page < TABULAR_REVIEW_IDS_MAX_PAGES; page++) {
+        const rpcArgs = buildTabularReviewIdsOverviewRpcArgs({
+            userId,
+            userEmail,
+            projectIdFilter,
+            scope,
+            searchTerm,
+            pagination: { limit: TABULAR_REVIEW_IDS_PAGE_SIZE, offset },
+        });
+        const { data, error } = await db.rpc(
+            "get_tabular_review_ids_overview",
+            rpcArgs,
+        );
+        if (error) return void res.status(500).json({ detail: error.message });
+
+        const rows = (data ?? []) as { id: string; user_id: string }[];
+        if (rows.length === 0) break;
+        ids.push(...rows);
+        // Advance by what actually came back, not the requested page size —
+        // if PostgREST's cap is lower than TABULAR_REVIEW_IDS_PAGE_SIZE this
+        // still converges correctly instead of skipping rows.
+        offset += rows.length;
+    }
+
+    res.json(ids);
 });
 
 // POST /tabular-review
 tabularRouter.post("/", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
-    const { title, document_ids, columns_config, workflow_id, project_id } =
-        req.body as {
-            title?: string;
-            document_ids: string[];
-            columns_config: { index: number; name: string; prompt: string }[];
-            workflow_id?: string;
-            project_id?: string;
-        };
+    const {
+        title,
+        document_ids,
+        columns_config,
+        workflow_id,
+        project_id,
+        document_grouping,
+    } = req.body as {
+        title?: string;
+        document_ids: string[];
+        columns_config: { index: number; name: string; prompt: string }[];
+        workflow_id?: string;
+        project_id?: string;
+        document_grouping?: DocumentGrouping;
+    };
 
     const db = createServerSupabase();
     if (project_id) {
@@ -133,13 +602,9 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
             return void res.status(404).json({ detail: "Project not found" });
     }
     const allowedDocumentIds = Array.isArray(document_ids)
-        ? await filterAccessibleDocumentIds(
-              document_ids,
-              userId,
-              userEmail,
-              db,
-          )
+        ? await filterAccessibleDocumentIds(document_ids, userId, userEmail, db)
         : [];
+    const grouping = normalizeGrouping(document_grouping);
     const { data: review, error } = await db
         .from("tabular_reviews")
         .insert({
@@ -149,6 +614,7 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
             document_ids: allowedDocumentIds,
             project_id: project_id ?? null,
             workflow_id: workflow_id ?? null,
+            document_grouping: grouping,
         })
         .select("*")
         .single();
@@ -157,15 +623,24 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
             .status(500)
             .json({ detail: error?.message ?? "Failed to create review" });
 
-    const cells = allowedDocumentIds.flatMap((docId) =>
-        columns_config.map((col) => ({
-            review_id: review.id,
-            document_id: docId,
-            column_index: col.index,
-            status: "pending",
-        })),
-    );
-    if (cells.length) await db.from("tabular_cells").insert(cells);
+    try {
+        await createRowsForReview(
+            db,
+            review.id,
+            userId,
+            allowedDocumentIds,
+            columns_config,
+            grouping,
+        );
+    } catch (error) {
+        await db.from("tabular_reviews").delete().eq("id", review.id);
+        return void res.status(500).json({
+            detail:
+                error instanceof Error
+                    ? error.message
+                    : "Failed to create review rows",
+        });
+    }
 
     void recordAudit(db, {
         userId,
@@ -268,19 +743,17 @@ tabularRouter.get("/:reviewId", requireAuth, async (req, res) => {
     if (!access.ok)
         return void res.status(404).json({ detail: "Review not found" });
 
-    const { data: cells } = await db
+    const { data: cells, error: cellsError } = await db
         .from("tabular_cells")
         .select("*")
         .eq("review_id", reviewId);
-    const cellDocIds = [...new Set((cells ?? []).map((c) => c.document_id))];
-    const hasExplicitDocIds = Array.isArray(review.document_ids);
-    const explicitDocIds = hasExplicitDocIds
+    if (cellsError)
+        return void res.status(500).json({ detail: cellsError.message });
+    const rows = await loadReviewRows(db, reviewId);
+    const rowDocIds = rows.flatMap((row) => row.source_document_ids ?? []);
+    const docIds = Array.isArray(review.document_ids)
         ? (review.document_ids as string[])
-        : [];
-    const docIds =
-        hasExplicitDocIds
-            ? explicitDocIds
-            : cellDocIds;
+        : rowDocIds;
     const docsResult =
         docIds.length > 0
             ? await db.from("documents").select("*").in("id", docIds)
@@ -297,6 +770,7 @@ tabularRouter.get("/:reviewId", requireAuth, async (req, res) => {
             ...cell,
             content: parseCellContent(cell.content),
         })),
+        rows,
         documents: docs,
     });
 });
@@ -406,7 +880,9 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
     if (!access.ok)
         return void res.status(404).json({ detail: "Review not found" });
     if (
-        (req.body.title != null || req.body.document_ids != null) &&
+        (req.body.title != null ||
+            req.body.document_ids != null ||
+            req.body.document_grouping != null) &&
         !access.isOwner
     ) {
         return void res.status(403).json({
@@ -420,6 +896,25 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
             });
         }
         updates.columns_config = req.body.columns_config;
+    }
+    if (req.body.document_grouping != null) {
+        if (
+            req.body.document_grouping !== "document" &&
+            req.body.document_grouping !== "folder"
+        ) {
+            return void res.status(400).json({
+                detail: "document_grouping must be document or folder",
+            });
+        }
+        updates.document_grouping = req.body.document_grouping;
+    }
+    if (Array.isArray(req.body.document_ids)) {
+        updates.document_ids = await filterAccessibleDocumentIds(
+            req.body.document_ids,
+            userId,
+            userEmail,
+            db,
+        );
     }
     if (sharedWithUpdate !== undefined) {
         if (!access.isOwner)
@@ -470,116 +965,34 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
             detail: updateError?.message ?? "Failed to update review",
         });
 
-    let persistedDocumentIds: string[] | undefined;
-    if (
-        Array.isArray(req.body.columns_config) ||
-        Array.isArray(req.body.document_ids)
-    ) {
-        const { data: existingCells } = await db
-            .from("tabular_cells")
-            .select("document_id,column_index")
-            .eq("review_id", reviewId);
-        const existingKeys = new Set(
-            (existingCells ?? []).map(
-                (cell) => `${cell.document_id}:${cell.column_index}`,
-            ),
-        );
-
-        let documentIds: string[];
-
-        if (Array.isArray(req.body.document_ids)) {
-            // document_ids is the new source of truth — delete removed docs' cells
-            const requestedDocIds = req.body.document_ids as string[];
-            const existingDocIds = (existingCells ?? []).map(
-                (cell) => cell.document_id,
-            );
-            const existingDocIdSet = new Set(existingDocIds);
-            const newDocCandidates = requestedDocIds.filter(
-                (id) => !existingDocIdSet.has(id),
-            );
-            const newDocAllowed = await filterAccessibleDocumentIds(
-                newDocCandidates,
-                userId,
-                userEmail,
+    const rowShapeChanged =
+        Array.isArray(req.body.document_ids) ||
+        req.body.document_grouping != null ||
+        projectIdUpdateProvided;
+    try {
+        const activeColumns = (updatedReview.columns_config ?? []) as Column[];
+        if (rowShapeChanged) {
+            await rebuildRowsForReview(
                 db,
+                reviewId,
+                userId,
+                (updatedReview.document_ids ?? []) as string[],
+                activeColumns,
+                normalizeGrouping(updatedReview.document_grouping),
             );
-            const newDocAllowedSet = new Set(newDocAllowed);
-            const newDocIds = requestedDocIds.filter(
-                (id) => existingDocIdSet.has(id) || newDocAllowedSet.has(id),
-            );
-            const removedDocIds = existingDocIds.filter(
-                (id) => !newDocIds.includes(id),
-            );
-
-            if (removedDocIds.length > 0) {
-                const { error: deleteError } = await db
-                    .from("tabular_cells")
-                    .delete()
-                    .eq("review_id", reviewId)
-                    .in("document_id", removedDocIds);
-                if (deleteError)
-                    return void res
-                        .status(500)
-                        .json({ detail: deleteError.message });
-            }
-
-            documentIds = newDocIds;
-        } else {
-            // No document change — derive from existing cells
-            documentIds = [
-                ...new Set(
-                    (existingCells ?? []).map((cell) => cell.document_id),
-                ),
-            ];
+        } else if (Array.isArray(req.body.columns_config)) {
+            await syncCellsForReviewRows(db, reviewId, activeColumns);
         }
-
-        if (Array.isArray(req.body.document_ids)) {
-            persistedDocumentIds = documentIds;
-            const { error: documentIdsError } = await db
-                .from("tabular_reviews")
-                .update({
-                    document_ids: documentIds,
-                    updated_at: new Date().toISOString(),
-                })
-                .eq("id", reviewId);
-            if (documentIdsError)
-                return void res.status(500).json({
-                    detail: documentIdsError.message,
-                });
-        }
-
-        const activeColumns = Array.isArray(req.body.columns_config)
-            ? req.body.columns_config
-            : (updatedReview.columns_config ?? []);
-        const newCells = documentIds.flatMap((documentId) =>
-            activeColumns
-                .filter(
-                    (column: { index: number }) =>
-                        !existingKeys.has(`${documentId}:${column.index}`),
-                )
-                .map((column: { index: number }) => ({
-                    review_id: reviewId,
-                    document_id: documentId,
-                    column_index: column.index,
-                    status: "pending",
-                })),
-        );
-
-        if (newCells.length > 0) {
-            const { error: insertError } = await db
-                .from("tabular_cells")
-                .insert(newCells);
-            if (insertError)
-                return void res
-                    .status(500)
-                    .json({ detail: insertError.message });
-        }
+    } catch (error) {
+        return void res.status(500).json({
+            detail:
+                error instanceof Error
+                    ? error.message
+                    : "Failed to synchronize review rows",
+        });
     }
 
-    res.json({
-        ...updatedReview,
-        ...(persistedDocumentIds ? { document_ids: persistedDocumentIds } : {}),
-    });
+    res.json(updatedReview);
 });
 
 // DELETE /tabular-review/:reviewId
@@ -597,18 +1010,16 @@ tabularRouter.delete("/:reviewId", requireAuth, async (req, res) => {
 });
 
 // POST /tabular-review/:reviewId/clear-cells
-// Reset cells to an empty/pending state for the given document_ids. Does not
+// Reset cells to an empty/pending state for the given row_ids. Does not
 // delete the rows — it blanks `content` and sets `status` back to "pending".
 tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { reviewId } = req.params;
-    const { document_ids } = req.body as { document_ids?: string[] };
+    const { row_ids } = req.body as { row_ids?: string[] };
 
-    if (!Array.isArray(document_ids) || document_ids.length === 0)
-        return void res
-            .status(400)
-            .json({ detail: "document_ids is required" });
+    if (!Array.isArray(row_ids) || row_ids.length === 0)
+        return void res.status(400).json({ detail: "row_ids is required" });
 
     const db = createServerSupabase();
     const { data: review, error: reviewError } = await db
@@ -626,7 +1037,7 @@ tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
         .from("tabular_cells")
         .update({ content: null, status: "pending" })
         .eq("review_id", reviewId)
-        .in("document_id", document_ids);
+        .in("row_id", row_ids);
     if (error) return void res.status(500).json({ detail: error.message });
     res.status(204).send();
 });
@@ -639,15 +1050,15 @@ tabularRouter.post(
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
         const { reviewId } = req.params;
-        const { document_id, column_index } = req.body as {
-            document_id: string;
+        const { row_id, column_index } = req.body as {
+            row_id?: string;
             column_index: number;
         };
 
-        if (!document_id || column_index == null)
+        if (!row_id || column_index == null)
             return void res
                 .status(400)
-                .json({ detail: "document_id and column_index are required" });
+                .json({ detail: "row_id and column_index are required" });
 
         const db = createServerSupabase();
         const { data: review, error: reviewError } = await db
@@ -673,22 +1084,23 @@ tabularRouter.post(
         if (!column)
             return void res.status(400).json({ detail: "Column not found" });
 
-        const docAllowed = await filterAccessibleDocumentIds(
-            [document_id],
+        const rows = await loadReviewRows(db, reviewId);
+        const row = rows.find((candidate) => candidate.id === row_id);
+        if (!row)
+            return void res
+                .status(404)
+                .json({ detail: "Review row not found" });
+        const sourceIds = row.source_document_ids ?? [];
+        const allowedSourceIds = await filterAccessibleDocumentIds(
+            sourceIds,
             userId,
             userEmail,
             db,
         );
-        if (docAllowed.length === 0)
-            return void res.status(404).json({ detail: "Document not found" });
-        const { data: doc } = await db
-            .from("documents")
-            .select("id, current_version_id")
-            .eq("id", document_id)
-            .single();
-        if (!doc)
-            return void res.status(404).json({ detail: "Document not found" });
-        const docActive = await loadActiveVersion(document_id, db);
+        if (allowedSourceIds.length !== sourceIds.length)
+            return void res
+                .status(404)
+                .json({ detail: "Review row not found" });
 
         const { tabular_model, api_keys } = await getUserModelSettings(
             userId,
@@ -706,30 +1118,14 @@ tabularRouter.post(
             .from("tabular_cells")
             .update({ status: "generating", content: null })
             .eq("review_id", reviewId)
-            .eq("document_id", document_id)
+            .eq("row_id", row.id)
             .eq("column_index", column_index);
 
-        let markdown = "";
-        if (docActive) {
-            const buf = await downloadFile(docActive.storage_path);
-            if (buf) {
-                try {
-                    markdown = await extractDocumentMarkdown(
-                        buf,
-                        docActive.file_type,
-                    );
-                } catch (err) {
-                    console.error(
-                        `[regenerate-cell] extraction error doc=${document_id}`,
-                        err,
-                    );
-                }
-            }
-        }
+        const markdown = await loadRowDocumentText(db, row);
 
         const result = await queryTabularCell(
             tabular_model,
-            docActive?.filename?.trim() || "Untitled document",
+            row.label,
             markdown,
             column.prompt,
             column.format,
@@ -742,7 +1138,7 @@ tabularRouter.post(
                 .from("tabular_cells")
                 .update({ status: "error" })
                 .eq("review_id", reviewId)
-                .eq("document_id", document_id)
+                .eq("row_id", row.id)
                 .eq("column_index", column_index);
             return void res.status(500).json({ detail: "Generation failed" });
         }
@@ -751,7 +1147,7 @@ tabularRouter.post(
             .from("tabular_cells")
             .update({ content: JSON.stringify(result), status: "done" })
             .eq("review_id", reviewId)
-            .eq("document_id", document_id)
+            .eq("row_id", row.id)
             .eq("column_index", column_index);
 
         res.json(result);
@@ -786,43 +1182,26 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     if (columns.length === 0)
         return void res.status(400).json({ detail: "No columns configured" });
 
-    const { data: cells } = await db
+    let rows = await loadReviewRows(db, reviewId);
+
+    const { data: cells, error: cellsError } = await db
         .from("tabular_cells")
         .select("*")
         .eq("review_id", reviewId);
+    if (cellsError)
+        return void res.status(500).json({ detail: cellsError.message });
     const cellMap = new Map<string, Record<string, unknown>>();
     for (const cell of cells ?? [])
-        cellMap.set(`${cell.document_id}:${cell.column_index}`, cell);
+        cellMap.set(`${cell.row_id}:${cell.column_index}`, cell);
 
-    const docIds = [...new Set((cells ?? []).map((c) => c.document_id))];
-    const allowedDocIds = new Set(
-        await filterAccessibleDocumentIds(docIds, userId, userEmail, db),
+    const sourceIds = [
+        ...new Set(rows.flatMap((row) => row.source_document_ids ?? [])),
+    ];
+    const allowedSourceIds = new Set(
+        await filterAccessibleDocumentIds(sourceIds, userId, userEmail, db),
     );
-    let docs: Record<string, unknown>[] = [];
-    if (docIds.length > 0) {
-        const filteredIds = docIds.filter((id) => allowedDocIds.has(id));
-        const { data } =
-            filteredIds.length > 0
-                ? await db
-                      .from("documents")
-                      .select("id, current_version_id")
-                      .in("id", filteredIds)
-                : { data: [] as Record<string, unknown>[] };
-        docs = data ?? [];
-    } else if (review.project_id) {
-        const { data } = await db
-            .from("documents")
-            .select("id, current_version_id")
-            .eq("project_id", review.project_id)
-            .order("created_at", { ascending: true });
-        docs = data ?? [];
-    }
-    await attachActiveVersionPaths(
-        db,
-        docs as {
-            id: string;
-            current_version_id?: string | null;
-        }[],
+    rows = rows.filter((row) =>
+        (row.source_document_ids ?? []).every((id) => allowedSourceIds.has(id)),
     );
 
     const { tabular_model, api_keys } = await getUserModelSettings(userId, db);
@@ -844,38 +1223,15 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
 
     try {
         await Promise.all(
-            docs.map(async (doc) => {
-                const docId = doc.id as string;
-                let markdown = "";
-
-                const filename =
-                    (typeof doc.filename === "string" && doc.filename.trim()
-                        ? doc.filename.trim()
-                        : "Untitled document");
-                const storagePath =
-                    typeof doc.storage_path === "string" ? doc.storage_path : "";
-                const fileType =
-                    typeof doc.file_type === "string" ? doc.file_type : "";
-                if (storagePath) {
-                    const buf = await downloadFile(storagePath);
-                    if (buf) {
-                        try {
-                            markdown = await extractDocumentMarkdown(
-                                buf,
-                                fileType,
-                            );
-                        } catch (err) {
-                            console.error(
-                                `[tabular/generate] extraction error doc=${docId}`,
-                                err,
-                            );
-                        }
-                    }
-                }
+            rows.map(async (row) => {
+                const markdown = await loadRowDocumentText(
+                    db,
+                    row,
+                );
 
                 // Filter to only columns that need processing
                 const columnsToProcess = columns.filter((col) => {
-                    const cell = cellMap.get(`${docId}:${col.index}`);
+                    const cell = cellMap.get(`${row.id}:${col.index}`);
                     return !(cell?.status === "done" && cell?.content);
                 });
                 if (columnsToProcess.length === 0) return;
@@ -883,9 +1239,9 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                 // Mark all as generating upfront
                 for (const col of columnsToProcess) {
                     write(
-                        `data: ${JSON.stringify({ type: "cell_update", document_id: docId, column_index: col.index, content: null, status: "generating" })}\n\n`,
+                        `data: ${JSON.stringify({ type: "cell_update", row_id: row.id, column_index: col.index, content: null, status: "generating" })}\n\n`,
                     );
-                    const existingCell = cellMap.get(`${docId}:${col.index}`);
+                    const existingCell = cellMap.get(`${row.id}:${col.index}`);
                     if (existingCell) {
                         await db
                             .from("tabular_cells")
@@ -894,7 +1250,8 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                     } else {
                         await db.from("tabular_cells").insert({
                             review_id: reviewId,
-                            document_id: docId,
+                            row_id: row.id,
+                            document_id: row.document_id,
                             column_index: col.index,
                             status: "generating",
                         });
@@ -906,7 +1263,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                 try {
                     await queryTabularAllColumns(
                         tabular_model,
-                        filename,
+                        row.label,
                         markdown,
                         columnsToProcess,
                         async (columnIndex, result) => {
@@ -918,17 +1275,17 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                                     status: "done",
                                 })
                                 .eq("review_id", reviewId)
-                                .eq("document_id", docId)
+                                .eq("row_id", row.id)
                                 .eq("column_index", columnIndex);
                             write(
-                                `data: ${JSON.stringify({ type: "cell_update", document_id: docId, column_index: columnIndex, content: result, status: "done" })}\n\n`,
+                                `data: ${JSON.stringify({ type: "cell_update", row_id: row.id, column_index: columnIndex, content: result, status: "done" })}\n\n`,
                             );
                         },
                         api_keys,
                     );
                 } catch (err) {
                     console.error(
-                        `[tabular/generate] queryTabularAllColumns error doc=${docId}`,
+                        `[tabular/generate] queryTabularAllColumns error row=${row.id}`,
                         safeErrorLog(err),
                     );
                 }
@@ -940,10 +1297,10 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                             .from("tabular_cells")
                             .update({ status: "error" })
                             .eq("review_id", reviewId)
-                            .eq("document_id", docId)
+                            .eq("row_id", row.id)
                             .eq("column_index", col.index);
                         write(
-                            `data: ${JSON.stringify({ type: "cell_update", document_id: docId, column_index: col.index, content: null, status: "error" })}\n\n`,
+                            `data: ${JSON.stringify({ type: "cell_update", row_id: row.id, column_index: col.index, content: null, status: "error" })}\n\n`,
                         );
                     }
                 }
@@ -1226,39 +1583,12 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
     if (!reviewAccess.ok)
         return void res.status(404).json({ detail: "Review not found" });
 
-    // Fetch all cells and documents for this review
+    // Fetch all cells and logical review rows for this review.
     const { data: cells } = await db
         .from("tabular_cells")
         .select("*")
         .eq("review_id", reviewId);
-
-    const docIds = [
-        ...new Set((cells ?? []).map((c: any) => c.document_id as string)),
-    ];
-    let docs: {
-        id: string;
-        filename: string;
-        current_version_id?: string | null;
-    }[] = [];
-    if (docIds.length > 0) {
-        const { data } = await db
-            .from("documents")
-            .select("id, current_version_id")
-            .in("id", docIds)
-            .order("created_at", { ascending: true });
-        const attachedDocs = (data ?? []) as {
-            id: string;
-            current_version_id?: string | null;
-            filename?: string | null;
-        }[];
-        await attachActiveVersionPaths(db, attachedDocs);
-        docs = attachedDocs.map((doc) => ({
-            ...doc,
-            filename:
-                (typeof doc.filename === "string" && doc.filename.trim()) ||
-                "Untitled document",
-        }));
-    }
+    const rows = await loadReviewRows(db, reviewId);
 
     const sortedColumns = (
         (review.columns_config ?? []) as { index: number; name: string }[]
@@ -1266,10 +1596,13 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
 
     const tabularStore: TabularCellStore = {
         columns: sortedColumns,
-        documents: docs,
+        documents: rows.map((row) => ({
+            id: row.id,
+            filename: row.label,
+        })),
         cells: new Map(
             (cells ?? []).map((c: any) => [
-                `${c.column_index}:${c.document_id}`,
+                `${c.column_index}:${c.row_id}`,
                 parseCellContent(c.content),
             ]),
         ),
@@ -1540,14 +1873,14 @@ async function queryTabularCell(
 
 The "summary" and "reasoning" field values may use markdown formatting (bullets, bold, italics, etc.) — the values are still plain JSON strings (escape newlines as \\n), but the text inside will be rendered as markdown in the UI.
 
-The "summary" field must contain only the extracted value with inline citations — no explanation or reasoning. Every factual claim in "summary" must be followed immediately by a citation in the format [[page:N||quote:exact quoted text]], where N is the page number and the quote is a short verbatim excerpt (≤ 25 words). The quote must be narrowly scoped to the specific claim it supports — extract only the exact words that support that statement, not the surrounding sentence or paragraph. Do not have multiple claims share the same long quote; if two different statements need different evidence, give each its own short, narrowly-scoped quote. All reasoning and explanation belongs in "reasoning" only, which may also contain citations.`;
+The "summary" field must contain only the extracted value with inline citations — no explanation or reasoning. Every factual claim in "summary" must be followed immediately by a citation in the format [[document:SOURCE_DOCUMENT_ID||page:N||quote:exact quoted text]], using the exact source document ID shown before the supporting document. For spreadsheets, use [[document:SOURCE_DOCUMENT_ID||sheet:SHEET_NAME||cell:A1||quote:exact cell text]]. The quote must be a short verbatim excerpt (≤ 25 words) narrowly scoped to the specific claim. Do not have multiple claims share the same long quote; if two different statements need different evidence, give each its own short, precise quote. All reasoning and explanation belongs in "reasoning" only, which may also contain citations.`;
 
     let raw: string;
     try {
         raw = await completeText({
             model,
             systemPrompt: EXTRACTION_SYSTEM,
-            user: `Document: ${filename}\n\n${documentText.slice(0, 120_000)}\n\n---\nInstruction: ${fullPrompt}`,
+            user: `Document: ${filename}\n\n${documentText}\n\n---\nInstruction: ${fullPrompt}`,
             maxTokens: 2048,
             apiKeys,
         });
@@ -1617,54 +1950,6 @@ async function generateChatTitle(
     }
 }
 
-function buildTabularContext(
-    columns: any[],
-    docs: any[],
-    cells: any[],
-): string {
-    const lines: string[] = [
-        "# Tabular Review Context\n",
-        "Columns (0-based index):",
-    ];
-    columns.forEach((col: any, i: number) =>
-        lines.push(`- COL:${i} → "${col.name}"`),
-    );
-    lines.push("", "Documents (0-based row index):");
-    docs.forEach((doc: any, i: number) =>
-        lines.push(`- ROW:${i} → "${doc.filename}"`),
-    );
-    lines.push("", "## Table Data\n");
-    lines.push(`| Document | ${columns.map((c: any) => c.name).join(" | ")} |`);
-    lines.push(`|---|${columns.map(() => "---").join("|")}|`);
-    docs.forEach((doc: any, rowIdx: number) => {
-        const rowCells = columns.map((col: any, colPos: number) => {
-            const cell = cells.find(
-                (c: any) =>
-                    c.document_id === doc.id && c.column_index === col.index,
-            ) as any;
-            if (
-                !cell ||
-                cell.status === "pending" ||
-                cell.status === "generating"
-            ) {
-                return `(pending) [[COL:${colPos}||ROW:${rowIdx}]]`;
-            }
-            if (cell.status === "error") {
-                return `(error) [[COL:${colPos}||ROW:${rowIdx}]]`;
-            }
-            const content = parseCellContent(cell.content);
-            const summary = content?.summary?.trim() || "(not yet generated)";
-            const truncated =
-                summary.length > 400 ? summary.slice(0, 400) + "…" : summary;
-            return `${truncated} [[COL:${colPos}||ROW:${rowIdx}]]`;
-        });
-        lines.push(
-            `| ROW:${rowIdx} ${doc.filename} | ${rowCells.join(" | ")} |`,
-        );
-    });
-    return lines.join("\n");
-}
-
 type CellResult = {
     summary: string;
     flag: "green" | "grey" | "yellow" | "red";
@@ -1702,13 +1987,13 @@ Line format:
 {"column_index": <N>, "summary": <string>, "flag": <"green"|"grey"|"yellow"|"red">, "reasoning": <string>}
 
 Rules:
-- "summary": the extracted value with inline citations [[page:N||quote:verbatim excerpt ≤25 words]] after every factual claim. No explanation or reasoning here. Quotes must be narrowly scoped to the specific claim — extract only the exact supporting words, not the full surrounding sentence. Do not reuse one long quote across multiple statements; give each claim its own short, precise quote.
+- "summary": the extracted value with inline citations [[document:SOURCE_DOCUMENT_ID||page:N||quote:verbatim excerpt ≤25 words]] after every factual claim, using the exact source document ID shown before the supporting document. For spreadsheets, use [[document:SOURCE_DOCUMENT_ID||sheet:SHEET_NAME||cell:A1||quote:exact cell text]]. No explanation or reasoning here. Quotes must be narrowly scoped to the specific claim — extract only the exact supporting words, not the full surrounding sentence. Do not reuse one long quote across multiple statements; give each claim its own short, precise quote.
 - "flag": green = standard/favorable, yellow = needs attention, red = problematic/unfavorable, grey = neutral/not found
 - "reasoning": brief explanation of the extraction
 - The "summary" and "reasoning" string VALUES may use markdown (bullets, bold, italics, etc.) — escape newlines as \\n inside the JSON string. This markdown is rendered in the UI.
 - Output ONLY the JSON lines themselves. Do NOT wrap the response in markdown code fences (e.g. \`\`\`json), and do not add any preamble or summary.`;
 
-    const USER = `Document: ${filename}\n\n${documentText.slice(0, 120_000)}\n\n---\nColumns to extract:\n${columnsDesc}`;
+    const USER = `Document: ${filename}\n\n${documentText}\n\n---\nColumns to extract:\n${columnsDesc}`;
 
     let contentBuffer = "";
     const pending: Promise<unknown>[] = [];

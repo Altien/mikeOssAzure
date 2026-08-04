@@ -3,6 +3,10 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Minus, RectangleHorizontal, Rows3 } from "lucide-react";
 import { CiteButton } from "@/app/components/ui/cite-button";
+import {
+    CitationVerificationBadge,
+    type CitationVerificationDisplayState,
+} from "./message/citationVerification";
 
 export type CitationQuoteHeaderItem = {
     id: string;
@@ -11,6 +15,7 @@ export type CitationQuoteHeaderItem = {
     inlineDetail?: string | null;
     detail?: string | null;
     citationText?: string | null;
+    verificationState?: CitationVerificationDisplayState;
 };
 
 const QUOTE_GLASS_SURFACE =
@@ -72,21 +77,36 @@ export function CitationQuotesHeader({
                                 <span className="mr-0.5 text-xs font-medium text-gray-500">
                                     Quotes
                                 </span>
-                                {quotes.map((quote, index) => (
-                                    <button
-                                        key={quote.id}
-                                        type="button"
-                                        onClick={() => onIndexChange?.(index)}
-                                        className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] transition-colors ${
-                                            currentIndex === index
-                                                ? "bg-white font-medium text-gray-800 shadow-[0_1px_3px_rgba(0,0,0,0.22)]"
-                                                : "bg-gray-200 text-gray-500 hover:bg-gray-300 hover:text-gray-700"
-                                        }`}
-                                    >
-                                        {index + 1}
-                                    </button>
-                                ))}
+                                {quotes.map((quote, index) => {
+                                    const isUnverified =
+                                        quote.verificationState ===
+                                        "unverified";
+                                    return (
+                                        <button
+                                            key={quote.id}
+                                            type="button"
+                                            disabled={isUnverified}
+                                            onClick={() =>
+                                                !isUnverified &&
+                                                onIndexChange?.(index)
+                                            }
+                                            className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] transition-colors ${
+                                                currentIndex === index &&
+                                                !isUnverified
+                                                    ? "bg-white font-medium text-gray-800 shadow-[0_1px_3px_rgba(0,0,0,0.22)]"
+                                                    : isUnverified
+                                                      ? "cursor-not-allowed bg-red-100/55 text-red-600"
+                                                      : "bg-gray-200 text-gray-500 hover:bg-gray-300 hover:text-gray-700"
+                                            }`}
+                                        >
+                                            {index + 1}
+                                        </button>
+                                    );
+                                })}
                             </div>
+                        )}
+                        {currentQuote?.verificationState === "unverified" && (
+                            <CitationVerificationBadge state="unverified" />
                         )}
                         {currentQuote && (
                             <CiteButton
@@ -254,19 +274,27 @@ function QuoteItem({
     isActive: boolean;
     onClick: () => void;
 }) {
+    const isUnverified = quote.verificationState === "unverified";
+    const isSelected = isActive && !isUnverified;
+
     return (
         <button
             type="button"
-            onClick={onClick}
+            disabled={isUnverified}
+            onClick={isUnverified ? undefined : onClick}
             className={`w-full rounded-xl px-3 py-2.5 text-left transition-colors ${
-                isActive ? "bg-blue-100/70" : "bg-gray-100 hover:bg-gray-200/70"
+                isSelected
+                    ? "bg-blue-100/70"
+                    : isUnverified
+                      ? "cursor-not-allowed bg-gray-100"
+                      : "bg-gray-100 hover:bg-gray-200/70"
             }`}
         >
             <div className="flex flex-col gap-1.5">
                 {quote.eyebrow && (
                     <p
                         className={`font-serif text-xs ${
-                            isActive ? "text-blue-900" : "text-gray-500"
+                            isSelected ? "text-blue-900" : "text-gray-500"
                         }`}
                     >
                         {quote.eyebrow}
@@ -274,14 +302,16 @@ function QuoteItem({
                 )}
                 <p
                     className={`font-serif text-sm leading-6 ${
-                        isActive ? "text-blue-950" : "text-gray-700"
+                        isSelected ? "text-blue-950" : "text-gray-700"
                     }`}
                 >
                     &ldquo;{quote.quote.replace(/"/g, "'")}&rdquo;
                     {quote.inlineDetail && (
                         <span
                             className={`text-sm ${
-                                isActive ? "text-blue-900" : "text-gray-500"
+                                isSelected
+                                    ? "text-blue-900"
+                                    : "text-gray-500"
                             }`}
                         >
                             {" "}
@@ -292,7 +322,7 @@ function QuoteItem({
                 {quote.detail && (
                     <p
                         className={`font-serif text-xs ${
-                            isActive ? "text-blue-900" : "text-gray-500"
+                            isSelected ? "text-blue-900" : "text-gray-500"
                         }`}
                     >
                         {quote.detail}

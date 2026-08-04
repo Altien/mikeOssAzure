@@ -11,12 +11,19 @@ import { libraryRouter } from "./routes/library";
 import { tabularRouter } from "./routes/tabular";
 import { workflowsRouter } from "./routes/workflows";
 import { userRouter } from "./routes/user";
+import { modelsRouter } from "./routes/models";
 import { downloadsRouter } from "./routes/downloads";
 import { caseLawRouter } from "./routes/caseLaw";
 import { auditRouter } from "./routes/audit";
+import { manifestPublicKey } from "./lib/manifestSigning";
+import { safeErrorLog } from "./lib/safeError";
 
 export const app = express();
 const isProduction = process.env.NODE_ENV === "production";
+
+// Ceiling for JSON API requests. File uploads use multipart handling and
+// are governed by separate upload limits.
+const JSON_BODY_LIMIT = "50mb";
 
 function envInt(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -85,10 +92,6 @@ const dataDeleteLimiter = makeLimiter({
   message: "Too many data deletion requests. Please try again later.",
 });
 
-function jsonLimitForPath(path: string): string {
-  return "50mb";
-}
-
 app.disable("x-powered-by");
 app.set("trust proxy", envInt("TRUST_PROXY_HOPS", 1));
 
@@ -112,10 +115,25 @@ app.use(
   }),
 );
 
+const allowedOrigins = new Set<string>([
+  process.env.FRONTEND_URL ?? "http://localhost:3000",
+]);
+
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL ?? "http://localhost:3000",
+    origin: (origin, callback) => {
+      // Allow server-to-server requests (no Origin header) and any
+      // explicitly listed origin. A disallowed origin resolves to `false`
+      // (cors omits the Access-Control-Allow-Origin header and the browser
+      // blocks the response) rather than calling back with an Error —
+      // throwing here would propagate to Express's default handler and turn
+      // every disallowed cross-origin request, including preflight, into an
+      // HTTP 500.
+      callback(null, !origin || allowedOrigins.has(origin));
+    },
     credentials: true,
+    allowedHeaders: ["Authorization", "Content-Type"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   }),
 );
 
@@ -135,6 +153,7 @@ app.put(
   uploadLimiter,
 );
 app.post("/projects/:projectId/documents", uploadLimiter);
+app.get("/projects/:projectId/export", exportLimiter);
 app.get("/user/export", exportLimiter);
 app.get("/user/chats/export", exportLimiter);
 app.get("/user/tabular-reviews/export", exportLimiter);
@@ -144,11 +163,10 @@ app.delete("/user/chats", dataDeleteLimiter);
 app.delete("/user/projects", dataDeleteLimiter);
 app.delete("/user/tabular-reviews", dataDeleteLimiter);
 
-app.use((req, res, next) =>
-  express.json({ limit: jsonLimitForPath(req.path) })(req, res, next),
-);
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 app.use("/chat", chatRouter);
+app.use("/models", modelsRouter);
 app.use("/projects", projectsRouter);
 app.use("/projects/:projectId/chat", projectChatRouter);
 app.use("/single-documents", documentsRouter);
@@ -162,3 +180,16 @@ app.use("/case-law", caseLawRouter);
 app.use("/audit", auditRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
+
+// The Ed25519 public key this deployment signs project export manifests with,
+// or null when no key is configured. Deliberately open: whoever checks a
+// manifest is usually outside the workspace, and they need to get the key from
+// the server rather than trust the copy inside the file they were handed.
+app.get("/manifest-signing-key", (_req, res) => {
+  try {
+    res.json(manifestPublicKey());
+  } catch (err) {
+    console.error("[manifest-signing-key] failed", safeErrorLog(err));
+    res.status(500).json({ detail: "Manifest signing key is misconfigured" });
+  }
+});

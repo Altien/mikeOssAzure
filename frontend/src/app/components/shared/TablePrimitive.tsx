@@ -178,8 +178,18 @@ export function TableScrollArea({
     const headerViewportRef = useRef<HTMLDivElement>(null);
 
     return (
-        <div className={cn("mx-4 mb-2 min-h-0 min-w-0 flex-1 rounded-2xl md:mx-6 md:mb-3", className)}>
-            <div className={cn("flex h-full min-h-0 min-w-0 flex-col overflow-hidden", LIQUID_TABLE_SURFACE_CLASS)}>
+        <div
+            className={cn(
+                "mx-4 mb-2 min-h-0 min-w-0 flex-1 rounded-2xl md:mx-6 md:mb-3",
+                className,
+            )}
+        >
+            <div
+                className={cn(
+                    "flex h-full min-h-0 min-w-0 flex-col overflow-hidden",
+                    LIQUID_TABLE_SURFACE_CLASS,
+                )}
+            >
                 {header && (
                     <div
                         ref={headerViewportRef}
@@ -249,7 +259,10 @@ export function TableRow({
             setMenuCoords(null);
         }
         document.addEventListener("click", handleClick);
-        document.addEventListener(CLOSE_ROW_ACTIONS_EVENT, handleCloseRowActions);
+        document.addEventListener(
+            CLOSE_ROW_ACTIONS_EVENT,
+            handleCloseRowActions,
+        );
         return () => {
             document.removeEventListener("click", handleClick);
             document.removeEventListener(
@@ -282,9 +295,7 @@ export function TableRow({
                 className={cn(
                     "group flex h-10 min-w-max items-center pr-3 transition-colors",
                     interactive && "cursor-pointer",
-                    interactive &&
-                        !selected &&
-                        APP_SURFACE_HOVER_CLASS,
+                    interactive && !selected && APP_SURFACE_HOVER_CLASS,
                     selected && APP_SURFACE_ACTIVE_CLASS,
                     className,
                 )}
@@ -353,6 +364,7 @@ export function TablePrimaryCell({
     bgClassName,
     selected,
     onSelectionChange,
+    selectionIndicator,
     checkboxTitle,
     label,
     editing = false,
@@ -365,6 +377,7 @@ export function TablePrimaryCell({
     bgClassName?: string;
     selected: boolean;
     onSelectionChange: () => void;
+    selectionIndicator?: ReactNode;
     checkboxTitle?: string;
     label?: ReactNode;
     editing?: boolean;
@@ -400,21 +413,21 @@ export function TablePrimaryCell({
     return (
         <TableStickyCell
             widthClassName={widthClassName}
-            bgClassName={
-                selected ? APP_SURFACE_ACTIVE_CLASS : bgClassName
-            }
+            bgClassName={selected ? APP_SURFACE_ACTIVE_CLASS : bgClassName}
             className={className}
             hover={!selected}
         >
             <div className="flex min-w-0 items-center">
-                <input
-                    type="checkbox"
-                    checked={selected}
-                    onChange={onSelectionChange}
-                    onClick={(e) => e.stopPropagation()}
-                    className={TABLE_CHECKBOX_CLASS}
-                    title={checkboxTitle}
-                />
+                {selectionIndicator ?? (
+                    <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={onSelectionChange}
+                        onClick={(e) => e.stopPropagation()}
+                        className={TABLE_CHECKBOX_CLASS}
+                        title={checkboxTitle}
+                    />
+                )}
                 {content}
             </div>
         </TableStickyCell>

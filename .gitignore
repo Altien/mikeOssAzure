@@ -25,4 +25,5 @@ e2e/.auth/
 
 # Local Supabase scaffold (supabase init output) — the local stack is a test
 # harness only; CI scaffolds its own fresh copy on every run
+/supabase/
 backend/supabase/

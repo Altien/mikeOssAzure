@@ -6,6 +6,7 @@ import {
     useEffect,
     useLayoutEffect,
     useMemo,
+    useReducer,
     useRef,
     useState,
 } from "react";
@@ -41,6 +42,7 @@ import type { ChatInputHandle } from "@/app/components/assistant/ChatInput";
 import { ProjectExplorer } from "@/app/components/projects/ProjectExplorer";
 import { PdfView } from "@/app/components/shared/views/PdfView";
 import { SpreadsheetView } from "@/app/components/shared/views/SpreadsheetView";
+import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import { OwnerOnlyPopup } from "@/app/components/popups/OwnerOnlyPopup";
 import { DocxView } from "@/app/components/shared/views/DocxView";
 import { MikeIcon } from "@/app/components/chat/mike-icon";
@@ -62,6 +64,13 @@ import {
     isDocxFilename,
     isSpreadsheetFilename,
 } from "@/app/components/shared/types";
+import {
+    INITIAL_FOLDER_DELETE_DIALOG_STATE,
+    clearDeletedDocumentId,
+    clearDeletedDocumentTarget,
+    folderDeleteDialogReducer,
+    removeDeletedDocumentTabs,
+} from "@/app/lib/folderDeleteState";
 
 interface Props {
     params: Promise<{ id: string; chatId: string }>;
@@ -216,6 +225,13 @@ export default function ProjectAssistantChatPage({ params }: Props) {
     const [chatLoaded, setChatLoaded] = useState(false);
     const [creatingChat, setCreatingChat] = useState(false);
     const [deletingChat, setDeletingChat] = useState(false);
+    const [folderDeleteDialog, dispatchFolderDeleteDialog] = useReducer(
+        folderDeleteDialogReducer,
+        INITIAL_FOLDER_DELETE_DIALOG_STATE,
+    );
+    const pendingDeleteFolder = folderDeleteDialog.pending;
+    const pendingDeleteFolderStatus = folderDeleteDialog.status;
+    const folderDeleteDismissTimerRef = useRef<number | null>(null);
 
     // Panel widths
     const [explorerWidth, setExplorerWidth] = useState(EXPLORER_DEFAULT);
@@ -270,6 +286,22 @@ export default function ProjectAssistantChatPage({ params }: Props) {
     const hasLoaded = useRef(false);
     const hasAutoSent = useRef(false);
     const hasInitialScrolled = useRef(false);
+
+    const clearFolderDeleteDismissTimer = useCallback(() => {
+        if (folderDeleteDismissTimerRef.current === null) return;
+        clearTimeout(folderDeleteDismissTimerRef.current);
+        folderDeleteDismissTimerRef.current = null;
+    }, []);
+
+    useEffect(() => {
+        return () => clearFolderDeleteDismissTimer();
+    }, [clearFolderDeleteDismissTimer]);
+
+    useEffect(() => {
+        if (activeTabId) return;
+        setActiveQuotes(null);
+        setEditScrollTarget(null);
+    }, [activeTabId]);
 
     useEffect(() => {
         setSidebarOpen(false);
@@ -687,31 +719,135 @@ export default function ProjectAssistantChatPage({ params }: Props) {
         );
     };
 
-    const handleDeleteFolder = async (folderId: string) => {
-        const toDelete = new Set<string>();
-        function collectIds(id: string) {
-            toDelete.add(id);
-            (project?.folders ?? [])
-                .filter((f) => f.parent_folder_id === id)
-                .forEach((f) => collectIds(f.id));
+    const folderDeleteImpact = useCallback(
+        (folderId: string) => {
+            const childrenByParent = new Map<string, string[]>();
+            for (const folder of project?.folders ?? []) {
+                if (!folder.parent_folder_id) continue;
+                const children =
+                    childrenByParent.get(folder.parent_folder_id) ?? [];
+                children.push(folder.id);
+                childrenByParent.set(folder.parent_folder_id, children);
+            }
+
+            const toDelete = new Set<string>();
+            const stack = [folderId];
+            while (stack.length > 0) {
+                const id = stack.pop();
+                if (!id || toDelete.has(id)) continue;
+                toDelete.add(id);
+                stack.push(...(childrenByParent.get(id) ?? []));
+            }
+
+            const folderIds = [...toDelete];
+            const documentIds = (project?.documents ?? [])
+                .filter((document) =>
+                    document.folder_id
+                        ? toDelete.has(document.folder_id)
+                        : false,
+                )
+                .map((document) => document.id);
+            return {
+                folderIds,
+                documentIds,
+                documentCount: documentIds.length,
+            };
+        },
+        [project?.documents, project?.folders],
+    );
+
+    const requestDeleteFolder = useCallback(
+        async (folderId: string) => {
+            const folder = (project?.folders ?? []).find(
+                (candidate) => candidate.id === folderId,
+            );
+            if (!folder) return;
+
+            const impact = folderDeleteImpact(folderId);
+            clearFolderDeleteDismissTimer();
+            dispatchFolderDeleteDialog({
+                type: "request",
+                pending: {
+                    folder,
+                    folderIds: impact.folderIds,
+                    documentIds: impact.documentIds,
+                    documentCount: impact.documentCount,
+                },
+            });
+        },
+        [
+            clearFolderDeleteDismissTimer,
+            folderDeleteImpact,
+            project?.folders,
+        ],
+    );
+
+    const confirmDeletePendingFolder = async () => {
+        const pending = pendingDeleteFolder;
+        if (!pending || pendingDeleteFolderStatus === "deleting") return;
+
+        dispatchFolderDeleteDialog({
+            type: "start",
+            folderId: pending.folder.id,
+        });
+
+        const folderIds = new Set(pending.folderIds);
+        const deletedDocumentIds = new Set(pending.documentIds);
+
+        try {
+            await deleteProjectFolder(projectId, pending.folder.id);
+            setProject((currentProject) =>
+                currentProject
+                    ? {
+                          ...currentProject,
+                          folders: (currentProject.folders ?? []).filter(
+                              (folder) => !folderIds.has(folder.id),
+                          ),
+                          documents: (currentProject.documents ?? []).filter(
+                              (document) =>
+                                  !deletedDocumentIds.has(document.id),
+                          ),
+                      }
+                    : currentProject,
+            );
+            setTabs((currentTabs) =>
+                removeDeletedDocumentTabs(
+                    currentTabs,
+                    deletedDocumentIds,
+                ),
+            );
+            setActiveTabId((currentId) =>
+                clearDeletedDocumentId(currentId, deletedDocumentIds),
+            );
+            setSelectedDocId((currentId) =>
+                clearDeletedDocumentId(currentId, deletedDocumentIds),
+            );
+            setEditScrollTarget((currentTarget) =>
+                clearDeletedDocumentTarget(
+                    currentTarget,
+                    deletedDocumentIds,
+                ),
+            );
+            dispatchFolderDeleteDialog({
+                type: "complete",
+                folderId: pending.folder.id,
+            });
+
+            clearFolderDeleteDismissTimer();
+            folderDeleteDismissTimerRef.current = window.setTimeout(() => {
+                dispatchFolderDeleteDialog({
+                    type: "dismiss-completed",
+                    folderId: pending.folder.id,
+                });
+                folderDeleteDismissTimerRef.current = null;
+            }, 650);
+        } catch (error) {
+            console.error("delete folder failed", error);
+            dispatchFolderDeleteDialog({
+                type: "failed",
+                folderId: pending.folder.id,
+            });
         }
-        collectIds(folderId);
-        await deleteProjectFolder(projectId, folderId);
-        setProject((prev) =>
-            prev
-                ? {
-                      ...prev,
-                      folders: (prev.folders ?? []).filter(
-                          (f) => !toDelete.has(f.id),
-                      ),
-                      documents: (prev.documents ?? []).map((d) =>
-                          d.folder_id && toDelete.has(d.folder_id)
-                              ? { ...d, folder_id: null }
-                              : d,
-                      ),
-                  }
-                : prev,
-        );
     };
 
     const handleMoveDoc = async (
@@ -965,7 +1101,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                                     onDocClick={handleDocClick}
                                     onCreateFolder={handleCreateFolder}
                                     onRenameFolder={handleRenameFolder}
-                                    onDeleteFolder={handleDeleteFolder}
+                                    onDeleteFolder={requestDeleteFolder}
                                     onDeleteDoc={handleDeleteDoc}
                                     onMoveDoc={handleMoveDoc}
                                     onMoveFolder={handleMoveFolder}
@@ -1286,6 +1422,61 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                 open={!!ownerOnlyAction}
                 action={ownerOnlyAction ?? undefined}
                 onClose={() => setOwnerOnlyAction(null)}
+            />
+            <ConfirmPopup
+                open={!!pendingDeleteFolder}
+                title="Delete folder?"
+                message={
+                    pendingDeleteFolder ? (
+                        <div className="space-y-2">
+                            <p>
+                                This will permanently delete{" "}
+                                <span className="font-medium text-gray-950">
+                                    {pendingDeleteFolder.folderIds.length}{" "}
+                                    {pendingDeleteFolder.folderIds.length === 1
+                                        ? "folder"
+                                        : "folders"}
+                                </span>
+                                , including{" "}
+                                <span className="font-medium text-gray-950">
+                                    {pendingDeleteFolder.folder.name}
+                                </span>
+                                {pendingDeleteFolder.folderIds.length > 1
+                                    ? " and its nested subfolders"
+                                    : ""}
+                                .
+                            </p>
+                            {pendingDeleteFolder.documentCount > 0 && (
+                                <p>
+                                    {pendingDeleteFolder.documentCount}{" "}
+                                    {pendingDeleteFolder.documentCount === 1
+                                        ? "document"
+                                        : "documents"}{" "}
+                                    in the deleted{" "}
+                                    {pendingDeleteFolder.folderIds.length === 1
+                                        ? "folder"
+                                        : "folders"}{" "}
+                                    will also be permanently deleted.
+                                </p>
+                            )}
+                        </div>
+                    ) : undefined
+                }
+                confirmLabel="Delete"
+                confirmStatus={
+                    pendingDeleteFolderStatus === "deleting"
+                        ? "loading"
+                        : pendingDeleteFolderStatus === "deleted"
+                          ? "complete"
+                          : "idle"
+                }
+                cancelLabel="Cancel"
+                onCancel={() => {
+                    if (pendingDeleteFolderStatus === "deleting") return;
+                    clearFolderDeleteDismissTimer();
+                    dispatchFolderDeleteDialog({ type: "cancel" });
+                }}
+                onConfirm={() => void confirmDeletePendingFolder()}
             />
         </div>
     );

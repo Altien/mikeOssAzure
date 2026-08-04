@@ -8,6 +8,7 @@ import type { ColumnConfig, TabularCell as TCell } from "../shared/types";
 import { preprocessCitations, type ParsedCitation } from "./citation-utils";
 import { getPillClass } from "./pillUtils";
 import { SkeletonLine } from "../shared/TablePrimitive";
+import { TRExpandedCellSurface } from "./TRExpandedCellSurface";
 
 interface Props {
     cell: TCell;
@@ -20,6 +21,7 @@ interface Props {
         citationRef: number,
         sheet?: string,
         cell?: string,
+        documentId?: string,
     ) => void;
 }
 
@@ -75,6 +77,7 @@ function CellMarkdown({
         citationRef: number,
         sheet?: string,
         cell?: string,
+        documentId?: string,
     ) => void;
     onExpand: () => void;
     inline?: boolean;
@@ -130,6 +133,7 @@ function CellMarkdown({
                                                 idx + 1,
                                                 citation.sheet,
                                                 citation.cell,
+                                                citation.documentId,
                                             );
                                         } else {
                                             onExpand();
@@ -238,9 +242,17 @@ export function TabularCell({
         citationRef: number,
         sheet?: string,
         citationCell?: string,
+        documentId?: string,
     ) {
         setInlineExpanded(false);
-        onCitationClick?.(page, quote, citationRef, sheet, citationCell);
+        onCitationClick?.(
+            page,
+            quote,
+            citationRef,
+            sheet,
+            citationCell,
+            documentId,
+        );
     }
 
     function handleSeeDetails() {
@@ -276,7 +288,7 @@ export function TabularCell({
 
             {/* Inline expanded overlay — absolutely positioned so it overlays without disrupting table layout */}
             {inlineExpanded && (
-                <div className="absolute left-0 top-0 z-50 w-full rounded-xl bg-gray-50/95 shadow-[0_4px_12px_rgba(15,23,42,0.08),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-10px_24px_rgba(255,255,255,0.18)] backdrop-blur-2xl">
+                <TRExpandedCellSurface>
                     <div className="relative p-2 pr-4 text-xs text-gray-800 leading-relaxed">
                         {cell.content.flag && (
                             <span
@@ -302,7 +314,7 @@ export function TabularCell({
                             See details
                         </button>
                     </div>
-                </div>
+                </TRExpandedCellSurface>
             )}
         </div>
     );
