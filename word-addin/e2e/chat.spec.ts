@@ -68,7 +68,7 @@ test("a pre-[DONE] error event surfaces as 'Error: ...' in the assistant bubble"
   await expect(page.getByText("Error: model rate limited")).toBeVisible();
 });
 
-test("'Use document as context' reads the document and includes documentContext in the request", async ({
+test("'Use document as context' reads the document and includes document_context in the request", async ({
   addin,
   page,
 }) => {
@@ -88,10 +88,10 @@ test("'Use document as context' reads the document and includes documentContext 
   const request = await requestPromise;
 
   const body = request.postDataJSON();
-  expect(body.documentContext).toBe(docText);
+  expect(body.document_context).toBe(docText);
 });
 
-test("the request omits documentContext when the context switch is off", async ({
+test("the request omits document_context when the context switch is off", async ({
   addin,
   page,
 }) => {
@@ -106,7 +106,7 @@ test("the request omits documentContext when the context switch is off", async (
   const request = await requestPromise;
 
   const body = request.postDataJSON();
-  expect(body.documentContext).toBeUndefined();
+  expect(body.document_context).toBeUndefined();
 });
 
 test("'Insert below cursor' adds a paragraph without replacing the selection", async ({
@@ -237,7 +237,7 @@ test("'Suggest tracked edits' forces document context and sends the format contr
   const request = await requestPromise;
 
   const body = request.postDataJSON();
-  expect(body.documentContext).toBe(docText);
+  expect(body.document_context).toBe(docText);
   const lastMessage = body.messages[body.messages.length - 1];
   expect(lastMessage.content).toMatch(/^Fix the typos/);
   expect(lastMessage.content).toContain("ORIGINAL:");

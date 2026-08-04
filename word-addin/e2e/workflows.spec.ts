@@ -6,9 +6,11 @@
  *   - GET /workflows           -> list, filtered to metadata.type==="assistant"
  *                                 with non-empty skill_md
  *   - Run workflow on document -> reads the doc body, POST /chat (SSE) with the
- *                                 workflow's skill_md as the user message and the
- *                                 document text as documentContext; streams the
- *                                 answer into a result box
+ *                                 workflow as a `{ id, title }` reference on the
+ *                                 user message (the backend resolves and fences
+ *                                 skill_md server-side, same as the web app) and
+ *                                 the document text as document_context; streams
+ *                                 the answer into a result box
  *   - Insert below cursor      -> paragraph insertion after the current paragraph
  *                                 with track-changes OFF -> wordCalls.inserts
  *
@@ -156,11 +158,14 @@ test("runs the selected workflow and streams the result", async ({
     .click();
   const request = await requestPromise;
   const body = request.postDataJSON();
+  // The workflow body is NOT pasted into the message — it travels as a
+  // reference the backend resolves inside the <workflow-instructions> fence.
   expect(body.messages[0]).toEqual({
     role: "user",
-    content: "Summarize the document.",
+    content: 'Run the "Summarize document" workflow on my document.',
+    workflow: { id: "wf-summary", title: "Summarize document" },
   });
-  expect(body.documentContext).toBe(
+  expect(body.document_context).toBe(
     "This Agreement is between Acme and Beta."
   );
 

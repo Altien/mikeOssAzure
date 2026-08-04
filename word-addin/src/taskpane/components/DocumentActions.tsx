@@ -257,11 +257,15 @@ export function DocumentActions(): React.ReactElement {
     controllersRef.current.add(controller);
     try {
       const docText = (await readDocumentText()).slice(0, MAX_DOC_CHARS);
-      const prompt = `Proofread the following legal document. Identify every grammatical error, typo, punctuation issue, and stylistic inconsistency.\n\n${REDLINE_FORMAT} Do not add any other commentary.\n\nIf there are no issues, reply exactly: No issues found.\n\n${docText}`;
+      // The document travels as `document_context` — the backend fences it as
+      // untrusted reference data (same spotlighting the web app's document
+      // flows get) — never pasted into the user turn.
+      const prompt = `Proofread the legal document provided as document context. Identify every grammatical error, typo, punctuation issue, and stylistic inconsistency.\n\n${REDLINE_FORMAT} Do not add any other commentary.\n\nIf there are no issues, reply exactly: No issues found.`;
       let accumulated = "";
       await streamAssistant(
         {
           messages: [{ role: "user", content: prompt }],
+          documentContext: docText,
           signal: controller.signal,
         },
         (chunk) => {
@@ -292,11 +296,13 @@ export function DocumentActions(): React.ReactElement {
     controllersRef.current.add(controller);
     try {
       const docText = (await readDocumentText()).slice(0, MAX_DOC_CHARS);
-      const prompt = `Identify all personally identifiable information (PII) in the following document — names, addresses, phone numbers, email addresses, dates of birth, identification numbers, and any other identifying information.\n\n${REDLINE_FORMAT} Do not add any other commentary.\n\nUse anonymised placeholders such as [PARTY A] or [ADDRESS 1] as the REPLACEMENT, and reuse the same placeholder for repeated references to the same person or detail. If there is no PII, reply exactly: No personally identifiable information found.\n\n${docText}`;
+      // Document via `document_context` (fenced server-side), not the prompt.
+      const prompt = `Identify all personally identifiable information (PII) in the document provided as document context — names, addresses, phone numbers, email addresses, dates of birth, identification numbers, and any other identifying information.\n\n${REDLINE_FORMAT} Do not add any other commentary.\n\nUse anonymised placeholders such as [PARTY A] or [ADDRESS 1] as the REPLACEMENT, and reuse the same placeholder for repeated references to the same person or detail. If there is no PII, reply exactly: No personally identifiable information found.`;
       let accumulated = "";
       await streamAssistant(
         {
           messages: [{ role: "user", content: prompt }],
+          documentContext: docText,
           signal: controller.signal,
         },
         (chunk) => {
