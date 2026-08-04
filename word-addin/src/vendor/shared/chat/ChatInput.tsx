@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ArrowUp, Square } from "lucide-react";
+import { ArrowRight, Square } from "lucide-react";
 
 import { cn } from "../lib/utils";
 
@@ -19,10 +19,12 @@ interface ChatInputProps {
 }
 
 /**
- * Presentational chat composer shell shared across surfaces. A rounded
- * textarea with a send / stop button, matching the web app's composer look,
+ * Presentational chat composer shell shared across surfaces, duplicated from
+ * the web app's composer (frontend/src/app/components/assistant/ChatInput.tsx):
+ * the same liquid-glass container and gradient-black square action button,
  * laid out to fit a narrow task-pane column. Enter submits; Shift+Enter
- * inserts a newline.
+ * inserts a newline. The action button flips between send (arrow) and stop
+ * (square) exactly like the web's single action button.
  */
 export function ChatInput({
     value,
@@ -59,42 +61,40 @@ export function ChatInput({
     return (
         <div
             className={cn(
-                "rounded-2xl border border-border bg-card shadow-sm transition-colors focus-within:border-ring/60 focus-within:ring-[3px] focus-within:ring-ring/15",
+                "rounded-[18px] border border-white/65 bg-white/60 shadow-[0_4px_10px_rgba(15,23,42,0.12),inset_0_1px_0_rgba(255,255,255,0.85),inset_0_-6px_14px_rgba(255,255,255,0.18)] backdrop-blur-2xl",
                 className
             )}
         >
-            <textarea
-                ref={textareaRef}
-                rows={1}
-                value={value}
-                onChange={(e) => onValueChange(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder={placeholder}
-                disabled={disabled}
-                className="block w-full resize-none bg-transparent px-3.5 pt-3 pb-1.5 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground outline-none disabled:opacity-60"
-            />
-            <div className="flex items-center justify-between gap-2 pb-2 pl-3.5 pr-2">
+            <div className="px-3.5 pt-3">
+                <textarea
+                    ref={textareaRef}
+                    rows={1}
+                    value={value}
+                    onChange={(e) => onValueChange(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder={placeholder}
+                    disabled={disabled}
+                    className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-sm leading-6 text-gray-900 outline-none placeholder:text-gray-400 disabled:opacity-60"
+                />
+            </div>
+            <div className="flex items-center justify-between gap-2 p-2 pl-3.5">
                 <div className="flex min-w-0 items-center gap-2">{leftSlot}</div>
-                {isLoading ? (
-                    <button
-                        type="button"
-                        onClick={onCancel}
-                        aria-label="Stop"
-                        className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-colors hover:bg-primary/85"
-                    >
-                        <Square className="size-3 fill-current" />
-                    </button>
-                ) : (
-                    <button
-                        type="button"
-                        onClick={() => canSend && onSubmit()}
-                        disabled={!canSend}
-                        aria-label="Send"
-                        className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-colors hover:bg-primary/85 disabled:cursor-not-allowed disabled:opacity-25"
-                    >
-                        <ArrowUp className="size-4" />
-                    </button>
-                )}
+                <button
+                    type="button"
+                    onClick={() => (isLoading ? onCancel?.() : canSend && onSubmit())}
+                    disabled={!isLoading && !canSend}
+                    aria-label={isLoading ? "Stop" : "Send"}
+                    className={cn(
+                        "relative flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-white/30 bg-gradient-to-b from-neutral-700 to-black text-white backdrop-blur-xl transition-all duration-150 cursor-pointer active:enabled:scale-95 disabled:cursor-default disabled:from-neutral-600 disabled:to-black",
+                        "shadow-[0_5px_14px_rgba(15,23,42,0.18),inset_0_1px_0_rgba(255,255,255,0.24)]"
+                    )}
+                >
+                    {isLoading ? (
+                        <Square className="h-4 w-4" fill="currentColor" strokeWidth={0} />
+                    ) : (
+                        <ArrowRight className="h-4 w-4" />
+                    )}
+                </button>
             </div>
         </div>
     );

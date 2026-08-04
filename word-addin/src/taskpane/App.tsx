@@ -8,8 +8,8 @@ import { WorkflowPicker } from "./components/WorkflowPicker";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { Button } from "@mike/shared/ui/button";
 import { Spinner } from "@mike/shared/ui/spinner";
+import { TabPillButton } from "@mike/shared/ui/tab-pill-button";
 import { MikeIcon } from "@mike/shared/chat/mike-icon";
-import { cn } from "@mike/shared/lib/utils";
 
 type TabValue = "chat" | "actions" | "workflows" | "projects";
 
@@ -73,36 +73,24 @@ export default function App(): React.ReactElement {
       {/* Setup nudge when no AI provider key is configured */}
       <ApiKeyBanner />
 
-      {/* Tab bar */}
+      {/* Tab bar — the web app's glass pill tabs, wrapped to fit the pane */}
       <nav
         role="tablist"
         aria-label="Mike sections"
-        className="flex shrink-0 items-stretch gap-0.5 border-b border-border/70 px-1.5"
+        className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border/70 px-3 py-2"
       >
         {TABS.map((tab) => {
           const active = selectedTab === tab.value;
           return (
-            <button
+            <TabPillButton
               key={tab.value}
               role="tab"
-              type="button"
               aria-selected={active}
+              active={active}
               onClick={() => setSelectedTab(tab.value)}
-              className={cn(
-                "relative flex-1 rounded-t-md px-1.5 py-2.5 text-center text-xs font-medium transition-colors @sm:text-sm",
-                active
-                  ? "text-foreground"
-                  : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-              )}
             >
               {tab.label}
-              <span
-                className={cn(
-                  "absolute inset-x-1.5 -bottom-px h-0.5 rounded-full bg-foreground transition-opacity",
-                  active ? "opacity-100" : "opacity-0"
-                )}
-              />
-            </button>
+            </TabPillButton>
           );
         })}
       </nav>

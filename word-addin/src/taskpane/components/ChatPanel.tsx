@@ -10,7 +10,7 @@ import {
 } from "../lib/redline";
 import { Markdown } from "@mike/shared/chat/Markdown";
 import { ChatInput } from "@mike/shared/chat/ChatInput";
-import { Switch } from "@mike/shared/ui/switch";
+import { ToggleSwitch } from "@mike/shared/ui/toggle-switch";
 import { UserMessage } from "./assistant/UserMessage";
 import { PreResponseWrapper } from "./assistant/PreResponseWrapper";
 import { DocReadBlock, DocFindBlock, EventBlock } from "./assistant/EventBlocks";
@@ -336,24 +336,24 @@ export function ChatPanel(): React.ReactElement {
           placeholder="Ask Mike…"
           leftSlot={
             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-              <label className="flex min-w-0 cursor-pointer items-center gap-2 text-xs text-muted-foreground select-none">
-                <Switch
-                  checked={useDocContext || redlineMode}
-                  onCheckedChange={(v) => setUseDocContext(!!v)}
-                  disabled={streaming || redlineMode}
-                  aria-label="Use document as context"
-                />
-                <span className="truncate">Use document as context</span>
-              </label>
-              <label className="flex min-w-0 cursor-pointer items-center gap-2 text-xs text-muted-foreground select-none">
-                <Switch
-                  checked={redlineMode}
-                  onCheckedChange={(v) => setRedlineMode(!!v)}
-                  disabled={streaming}
-                  aria-label="Suggest tracked edits"
-                />
-                <span className="truncate">Suggest tracked edits</span>
-              </label>
+              <ToggleSwitch
+                checked={useDocContext || redlineMode}
+                onCheckedChange={(v) => setUseDocContext(v)}
+                disabled={streaming || redlineMode}
+                aria-label="Use document as context"
+                className="min-w-0 gap-2 text-xs"
+              >
+                Use document as context
+              </ToggleSwitch>
+              <ToggleSwitch
+                checked={redlineMode}
+                onCheckedChange={(v) => setRedlineMode(v)}
+                disabled={streaming}
+                aria-label="Suggest tracked edits"
+                className="min-w-0 gap-2 text-xs"
+              >
+                Suggest tracked edits
+              </ToggleSwitch>
             </div>
           }
         />

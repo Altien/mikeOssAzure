@@ -1,9 +1,11 @@
 /*
  * Shared design tokens for the Mike design system.
  *
- * Consumed by both the web app (frontend/src/app/globals.css) and the Word
- * add-in (word-addin/src/taskpane/styles.css). Import AFTER `@import
- * "tailwindcss";` so the `@theme` mappings and base layer apply.
+ * A verbatim subset of the web app's tokens (frontend/src/app/globals.css),
+ * consumed today only by the Word add-in (word-addin/src/taskpane/styles.css);
+ * the web app still keeps its own copy until the shared package lands. Keep
+ * values in sync with globals.css. Import AFTER `@import "tailwindcss";` so
+ * the `@theme` mappings and base layer apply.
  *
  * Fonts: `--font-inter` / `--font-eb-garamond` are provided by the host app
  * (the web supplies them via next/font; the add-in via a Google Fonts <link>

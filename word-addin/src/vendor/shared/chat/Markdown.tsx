@@ -5,11 +5,13 @@ import remarkGfm from "remark-gfm";
 import { cn } from "../lib/utils";
 
 /**
- * Shared markdown renderer for chat content. A trimmed, dependency-light
- * version of the web assistant's renderer (react-markdown + remark-gfm)
- * with explicit element styling so it looks identical without depending on
- * a Tailwind typography plugin. Used by assistant message bubbles in both
- * the web app and the Word add-in.
+ * Markdown renderer for the Word add-in's chat content. A trimmed,
+ * dependency-light adaptation of the web assistant's renderer
+ * (frontend/src/app/components/assistant/message/MarkdownContent.tsx:
+ * react-markdown + remark-gfm) with explicit element styling instead of the
+ * Tailwind typography plugin, and without the web's math/citation handling.
+ * Not yet consumed by the web app — candidate for the shared package once
+ * the two renderers are reconciled.
  */
 export function Markdown({
     children,
