@@ -326,9 +326,17 @@ export interface CitationQuote {
   quote: string;
 }
 
+export type QuoteVerification = {
+  verified: boolean;
+  source_excerpt?: string;
+  start_char?: number;
+  end_char?: number;
+};
+
 export type DocumentCitationQuote = {
   page: number | string;
   quote: string;
+  verification?: QuoteVerification;
   /**
    * Spreadsheet citations are located by cell, not page: `sheet` is the
    * worksheet name and `cell` is an A1 address or range (e.g. "B7", "B7:C9").
@@ -352,6 +360,8 @@ export type DocumentCitation = {
   sheet?: string;
   cell?: string;
   quotes?: DocumentCitationQuote[];
+  /** True only when every quote was matched against the source. */
+  verified?: boolean;
 };
 
 export type CaseCitation = {

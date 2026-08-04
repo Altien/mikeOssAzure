@@ -1,13 +1,11 @@
-import type {
-  CitationVerificationStatus,
-  QuoteVerification,
-} from "./types";
+import type { QuoteVerification } from "./types";
 import { normalizeWithMap } from "./tools/documentOps";
 
 // Mirrors the frontend: cross-page quotes join two page segments with this
 // sentinel (see expandDocumentQuoteEntry in
 // frontend/src/app/components/shared/types.ts).
 const PAGE_BREAK_SENTINEL = "[[PAGE_BREAK]]";
+const ELLIPSIS_PATTERN = /\.{3}|…/;
 
 // Source-text sentinels returned by readDocumentContent when a document can't
 // be read. Treat these as "no source" so every quote falls back to unverified
@@ -18,6 +16,9 @@ const UNREADABLE_SOURCES = new Set([
 ]);
 
 type QuoteLocation = { start: number; end: number; excerpt: string };
+type QuoteVerificationResult = QuoteVerification & {
+  needs_correction: boolean;
+};
 
 /**
  * Locate `quote` inside `source`, returning the exact original substring
@@ -28,7 +29,10 @@ type QuoteLocation = { start: number; end: number; excerpt: string };
  *   3. whitespace + case + punctuation normalized (tolerant/fuzzy)
  * Offsets index into the EXTRACTED source text, not the raw file bytes.
  */
-export function locateQuote(source: string, quote: string): QuoteLocation | null {
+export function locateQuote(
+  source: string,
+  quote: string,
+): QuoteLocation | null {
   if (!source || !quote) return null;
 
   // Tier 1: exact.
@@ -65,16 +69,16 @@ function locateNormalized(
 
 /**
  * Verify a single model quote against the source text, returning the
- * per-quote verification record. Cross-page quotes (containing the
- * `[[PAGE_BREAK]]` sentinel) are split and each segment verified independently;
- * char offsets are only attached for single-segment quotes.
+ * per-quote verification record. Cross-page quotes and quotes abbreviated with
+ * `...` or `…` are split and each segment verified independently; char offsets
+ * are only attached for contiguous single-segment quotes.
  */
 export function verifyQuoteAgainstSource(
   source: string,
   quote: string,
-): QuoteVerification {
+): QuoteVerificationResult {
   if (!source || UNREADABLE_SOURCES.has(source)) {
-    return { status: "unverified" };
+    return { verified: false, needs_correction: false };
   }
 
   if (quote.includes(PAGE_BREAK_SENTINEL)) {
@@ -82,35 +86,61 @@ export function verifyQuoteAgainstSource(
       .split(PAGE_BREAK_SENTINEL)
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
-    if (!segments.length) return { status: "unverified" };
-    const located = segments.map((seg) => ({ seg, loc: locateQuote(source, seg) }));
-    if (located.some((l) => !l.loc)) return { status: "unverified" };
-    const anyRepaired = located.some((l) => l.loc!.excerpt !== l.seg);
+    if (!segments.length) return { verified: false, needs_correction: false };
+    const verified = segments.map((seg) =>
+      verifyQuoteAgainstSource(source, seg),
+    );
+    if (verified.some((result) => !result.verified)) {
+      return { verified: false, needs_correction: false };
+    }
     return {
-      status: anyRepaired ? "repaired" : "verified",
-      source_excerpt: located
-        .map((l) => l.loc!.excerpt)
+      verified: true,
+      needs_correction: verified.some((result) => result.needs_correction),
+      source_excerpt: verified
+        .map((result, index) => result.source_excerpt ?? segments[index])
         .join(` ${PAGE_BREAK_SENTINEL} `),
     };
   }
 
+  // The document viewers treat ASCII and Unicode ellipses as omission
+  // separators and highlight each quoted segment independently. Mirror that
+  // behavior here so a legitimate abbreviated quote is not rejected merely
+  // because text was intentionally omitted between its verbatim segments.
+  if (ELLIPSIS_PATTERN.test(quote)) {
+    const segments = quote
+      .split(ELLIPSIS_PATTERN)
+      .map((segment) => segment.trim())
+      // Match the viewers' normalization: punctuation-only remnants (for
+      // example, the fourth dot in "....") do not form quoted segments.
+      .filter((segment) => /[\p{L}\p{N}]/u.test(segment));
+    if (!segments.length) return { verified: false, needs_correction: false };
+    const located = segments.map((segment) => ({
+      segment,
+      location: locateQuote(source, segment),
+    }));
+    if (located.some(({ location }) => !location)) {
+      return { verified: false, needs_correction: false };
+    }
+    return {
+      verified: true,
+      needs_correction: located.some(
+        ({ segment, location }) => location!.excerpt !== segment,
+      ),
+      source_excerpt: located
+        .map(({ location }) => location!.excerpt)
+        .join(" ... "),
+    };
+  }
+
   const loc = locateQuote(source, quote);
-  if (!loc) return { status: "unverified" };
+  if (!loc) return { verified: false, needs_correction: false };
   return {
-    status: loc.excerpt === quote ? "verified" : "repaired",
+    verified: true,
+    needs_correction: loc.excerpt !== quote,
     start_char: loc.start,
     end_char: loc.end,
     source_excerpt: loc.excerpt,
   };
-}
-
-/** Aggregate a list of per-quote statuses: unverified beats repaired beats verified. */
-function aggregateStatus(
-  statuses: CitationVerificationStatus[],
-): CitationVerificationStatus {
-  if (statuses.some((s) => s === "unverified")) return "unverified";
-  if (statuses.some((s) => s === "repaired")) return "repaired";
-  return "verified";
 }
 
 type DocQuoteEntry = { page: number | string; quote: string };
@@ -120,7 +150,7 @@ type DocQuoteEntry = { page: number | string; quote: string };
  * Case-law annotations (kind === "case") are returned untouched — their
  * existence is verified upstream via CourtListener and must never be
  * re-marked. For document annotations, source text is fetched once via
- * `getSourceText(doc_id)` and each quote is located in it; repaired quotes
+ * `getSourceText(doc_id)` and each quote is located in it; corrected quotes
  * have the exact source excerpt swapped in so the UI never shows drifted text.
  */
 export async function verifyDocumentCitationAnnotation(
@@ -148,25 +178,24 @@ export async function verifyDocumentCitationAnnotation(
   }
 
   const verifiedQuotes = entries.map((entry) => {
-    const verification = verifyQuoteAgainstSource(source, entry.quote);
-    // Swap the exact source text into the displayed quote when we repaired it,
+    const result = verifyQuoteAgainstSource(source, entry.quote);
+    const { needs_correction, ...verification } = result;
+    // Swap the exact source text into the displayed quote when it drifted,
     // so a drifted quote is never surfaced as the source's words.
     const quote =
-      verification.status === "repaired" && verification.source_excerpt
+      needs_correction && verification.source_excerpt
         ? verification.source_excerpt
         : entry.quote;
     return { ...entry, quote, verification };
   });
 
-  const verificationStatus = aggregateStatus(
-    verifiedQuotes.map((q) => q.verification.status),
-  );
+  const verified = verifiedQuotes.every((q) => q.verification.verified);
 
   return {
     ...a,
     quote: verifiedQuotes[0]?.quote ?? a.quote,
     quotes: verifiedQuotes,
-    verification_status: verificationStatus,
+    verified,
   };
 }
 

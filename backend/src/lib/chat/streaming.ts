@@ -532,8 +532,7 @@ export async function runLLMStream(params: {
     parseCitationsWithDiagnostics(fullText);
   let citations: unknown[];
   if (buildCitations) {
-    // Custom builders (tabular) bypass verification; annotations carry no
-    // verification_status and the UI treats a missing status as untrusted.
+    // Custom builders (tabular) bypass document-citation verification.
     citations = buildCitations(fullText);
   } else {
     const rawCitations = parsedCitations.map((c) =>
