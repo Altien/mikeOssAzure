@@ -52,23 +52,21 @@ export default defineConfig({
             // availability, utils, and the supabase wrapper.
             include: ["src/app/lib/**"],
             exclude: ["src/app/lib/**/*.test.*"],
-            // No-regression RATCHET floor, not a target. The global number is
-            // dominated by mikeApi.ts: the request/error/stream plumbing,
-            // message mapping, the paginated tabular-review queries, and the
-            // multipart upload error paths are tested; the remaining gap is
-            // thin endpoint wrappers (MCP connectors, workflow shares) that
-            // add functions faster than tests. Measured on this tree: 81.18%
-            // statements, 98.24% branches, 55.64% functions, 79.18% lines.
-            // Keep the floors as practical regression guardrails rather than
-            // near-perfect global targets. In particular, an 80% branch floor
-            // leaves room for defensive and endpoint-specific paths while
-            // still failing substantial coverage regressions. Backlog +
-            // per-area status: docs/frontend-testing.md.
+            // No-regression RATCHET floor, not a target. The lib layer is
+            // effectively fully tested: every mikeApi endpoint wrapper has a
+            // route/method/body assertion, and the remaining gap is only the
+            // dev-logging branch and a couple of `?? null` default arms.
+            // Measured on this tree: 99.69% statements, 98.53% branches,
+            // 100% functions, 100% lines. These floors sit ~2 points below
+            // that so an innocently small untested addition doesn't
+            // instantly red-flag main, while a real drop still fails CI.
+            // Floors only go up: when you add tests, raise them in the same
+            // PR. Backlog + per-area status: docs/frontend-testing.md.
             thresholds: {
-                statements: 79,
-                branches: 80,
-                functions: 53,
-                lines: 77,
+                statements: 97,
+                branches: 96,
+                functions: 98,
+                lines: 98,
             },
         },
     },
