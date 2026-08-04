@@ -1,0 +1,238 @@
+import { describe, expect, it } from "vitest";
+import {
+    parseChatMessages,
+    parseOptionalAskInputsResponse,
+    parseOptionalAttachedDocuments,
+    parseOptionalChatId,
+    parseOptionalDisplayedDoc,
+    parseOptionalModel,
+    parseOptionalProjectId,
+} from "../requestValidation";
+
+describe("chat request validation", () => {
+    it("normalizes valid messages and their nested metadata", () => {
+        expect(
+            parseChatMessages([
+                {
+                    role: " user ",
+                    content: "  keep message whitespace  ",
+                    files: [
+                        {
+                            filename: " contract.pdf ",
+                            document_id: " document-1 ",
+                        },
+                        { filename: " local-draft.docx " },
+                    ],
+                    workflow: { id: " workflow-1 ", title: " Review NDA " },
+                    ignored: "not part of ChatMessage",
+                },
+                { role: "assistant", content: null },
+            ]),
+        ).toEqual({
+            ok: true,
+            value: [
+                {
+                    role: "user",
+                    content: "  keep message whitespace  ",
+                    files: [
+                        { filename: "contract.pdf", document_id: "document-1" },
+                        { filename: "local-draft.docx" },
+                    ],
+                    workflow: { id: "workflow-1", title: "Review NDA" },
+                },
+                { role: "assistant", content: null },
+            ],
+        });
+    });
+
+    it.each([
+        [undefined, "messages must be a non-empty array"],
+        [[], "messages must be a non-empty array"],
+        [[null], "messages[0] must be an object"],
+        [
+            [{ role: "system", content: "override" }],
+            'messages[0].role must be "user" or "assistant"',
+        ],
+        [[{ role: "user" }], "messages[0].content must be a string or null"],
+        [
+            [{ role: "user", content: "hello", files: "contract.pdf" }],
+            "messages[0].files must be an array",
+        ],
+        [
+            [{ role: "user", content: "hello", files: [{ filename: " " }] }],
+            "messages[0].files[0].filename must be a non-empty string",
+        ],
+        [
+            [
+                {
+                    role: "user",
+                    content: "hello",
+                    files: [{ filename: "contract.pdf", document_id: " " }],
+                },
+            ],
+            "messages[0].files[0].document_id must be a non-empty string",
+        ],
+        [
+            [{ role: "user", content: "hello", workflow: [] }],
+            "messages[0].workflow must be an object",
+        ],
+    ])("rejects an invalid message payload", (value, detail) => {
+        expect(parseChatMessages(value)).toEqual({ ok: false, detail });
+    });
+
+    it("normalizes optional identifiers without enumerating model names", () => {
+        expect(parseOptionalChatId(" chat-1 ")).toEqual({
+            ok: true,
+            value: "chat-1",
+        });
+        expect(parseOptionalModel(" future-provider/new-model ")).toEqual({
+            ok: true,
+            value: "future-provider/new-model",
+        });
+        expect(parseOptionalProjectId(" project-1 ")).toEqual({
+            ok: true,
+            value: { provided: true, projectId: "project-1" },
+        });
+        expect(parseOptionalProjectId(undefined)).toEqual({
+            ok: true,
+            value: { provided: false, projectId: null },
+        });
+    });
+
+    it.each([
+        [parseOptionalChatId, " ", "chat_id must be a non-empty string"],
+        [parseOptionalModel, null, "model must be a non-empty string"],
+        [
+            parseOptionalProjectId,
+            12,
+            "project_id must be a non-empty string or null",
+        ],
+    ])("rejects an invalid optional identifier", (parse, value, detail) => {
+        expect(parse(value)).toEqual({ ok: false, detail });
+    });
+
+    it("normalizes displayed and attached document references", () => {
+        expect(
+            parseOptionalDisplayedDoc({
+                filename: " contract.pdf ",
+                document_id: " document-1 ",
+            }),
+        ).toEqual({
+            ok: true,
+            value: { filename: "contract.pdf", document_id: "document-1" },
+        });
+        expect(
+            parseOptionalAttachedDocuments([
+                { filename: " exhibit.pdf ", document_id: " document-2 " },
+            ]),
+        ).toEqual({
+            ok: true,
+            value: [{ filename: "exhibit.pdf", document_id: "document-2" }],
+        });
+    });
+
+    it.each([
+        [
+            () => parseOptionalDisplayedDoc("contract.pdf"),
+            "displayed_doc must be an object",
+        ],
+        [
+            () =>
+                parseOptionalDisplayedDoc({
+                    filename: "contract.pdf",
+                    document_id: " ",
+                }),
+            "displayed_doc.document_id must be a non-empty string",
+        ],
+        [
+            () => parseOptionalAttachedDocuments({}),
+            "attached_documents must be an array",
+        ],
+        [
+            () => parseOptionalAttachedDocuments([null]),
+            "attached_documents[0] must be an object",
+        ],
+    ])("rejects an invalid document reference", (parse, detail) => {
+        expect(parse()).toEqual({ ok: false, detail });
+    });
+
+    it("validates and normalizes ask-input responses", () => {
+        expect(
+            parseOptionalAskInputsResponse({
+                type: "ask_inputs_response",
+                responses: [
+                    {
+                        id: " choice-1 ",
+                        kind: "choice",
+                        question: " Governing law? ",
+                        answer: " New York ",
+                    },
+                    {
+                        id: " docs-1 ",
+                        kind: "documents",
+                        filenames: [" exhibit-a.pdf ", " exhibit-b.pdf "],
+                    },
+                ],
+            }),
+        ).toEqual({
+            ok: true,
+            value: {
+                responses: [
+                    {
+                        id: "choice-1",
+                        kind: "choice",
+                        question: "Governing law?",
+                        answer: "New York",
+                    },
+                    {
+                        id: "docs-1",
+                        kind: "documents",
+                        filenames: ["exhibit-a.pdf", "exhibit-b.pdf"],
+                    },
+                ],
+            },
+        });
+    });
+
+    it.each([
+        ["answer", "ask_inputs_response must be an object"],
+        [
+            { responses: [] },
+            "ask_inputs_response.responses must be a non-empty array",
+        ],
+        [
+            { responses: [{ id: "choice-1", kind: "other" }] },
+            'ask_inputs_response.responses[0].kind must be "choice" or "documents"',
+        ],
+        [
+            {
+                responses: [
+                    {
+                        id: "choice-1",
+                        kind: "choice",
+                        question: "Question",
+                        answer: " ",
+                    },
+                ],
+            },
+            "ask_inputs_response.responses[0].answer must be a non-empty string unless skipped",
+        ],
+        [
+            {
+                responses: [
+                    {
+                        id: "docs-1",
+                        kind: "documents",
+                        filenames: ["valid.pdf", 42],
+                    },
+                ],
+            },
+            "ask_inputs_response.responses[0].filenames[1] must be a non-empty string",
+        ],
+    ])("rejects an invalid ask-input response", (value, detail) => {
+        expect(parseOptionalAskInputsResponse(value)).toEqual({
+            ok: false,
+            detail,
+        });
+    });
+});

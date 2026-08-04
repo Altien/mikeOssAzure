@@ -15,8 +15,11 @@ import {
     isAbortError,
     runLLMStream,
     stripTransientAssistantEvents,
-    parseAskInputsResponsePayload,
-    type ChatMessage,
+    parseChatMessages,
+    parseOptionalAskInputsResponse,
+    parseOptionalChatId,
+    parseOptionalModel,
+    parseOptionalProjectId,
 } from "../lib/chat";
 import { completeText } from "../lib/llm";
 import {
@@ -29,11 +32,13 @@ import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
 export const chatRouter = Router();
 
 // Adopted from upstream 44e868e (title normalization + devLog, used by
-// the abort-aware stream error path). The rest of upstream's helper
-// block in this region (AccessibleChat, parseOptionalProjectId /
-// parseChatMessages validation, getAccessibleChat) remains rejected —
-// dev's request validation and access checks live inline and in
-// lib/access.ts (earlier sync decisions).
+// the abort-aware stream error path). Upstream 3f76761b centralized the
+// request-body validators (parseChatMessages / parseOptional*) in
+// lib/chat/requestValidation.ts; dev ADOPTS those validators. Upstream's
+// AccessibleChat / getAccessibleChat / validateAccessibleProjectId helper
+// block (404-on-inaccessible-chat semantics) remains rejected — dev's
+// access checks live inline below and in lib/access.ts (an inaccessible
+// chat_id silently starts a fresh chat; earlier sync decisions).
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
     if (isDev) console.log(...args);
@@ -72,7 +77,11 @@ chatRouter.get("/", requireAuth, async (req, res) => {
 // POST /chat/create
 chatRouter.post("/create", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
-    const projectId: string | null = req.body.project_id ?? null;
+    const parsedProjectId = parseOptionalProjectId(req.body?.project_id);
+    if (!parsedProjectId.ok) {
+        return void res.status(400).json({ detail: parsedProjectId.detail });
+    }
+    const projectId = parsedProjectId.value.projectId;
     const db = createServerSupabase();
     const { data, error } = await db
         .from("chats")
@@ -364,20 +373,40 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
 // POST /chat — streaming
 chatRouter.post("/", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
-    const { messages, chat_id, project_id, model } = req.body as {
-        messages: ChatMessage[];
-        chat_id?: string;
-        project_id?: string;
-        model?: string;
-    };
-    // Upstream a5fe6d6 wrapped this handler's request parsing in the
-    // parseChatMessages/parseOptional* validation helpers. Dev keeps its
-    // standing rejection of those helpers (see the region comment above),
-    // but DOES adopt a5fe6d6's "ask inputs" response feature — parse it off
-    // the raw body so the streaming path below can replay it.
-    const askInputsResponse = parseAskInputsResponsePayload(
-        (req.body as { ask_inputs_response?: unknown }).ask_inputs_response,
+    const body =
+        req.body && typeof req.body === "object" && !Array.isArray(req.body)
+            ? (req.body as Record<string, unknown>)
+            : {};
+    const parsedMessages = parseChatMessages(body.messages);
+    if (!parsedMessages.ok) {
+        return void res.status(400).json({ detail: parsedMessages.detail });
+    }
+    const parsedChatId = parseOptionalChatId(body.chat_id);
+    if (!parsedChatId.ok) {
+        return void res.status(400).json({ detail: parsedChatId.detail });
+    }
+    const parsedProjectId = parseOptionalProjectId(body.project_id);
+    if (!parsedProjectId.ok) {
+        return void res.status(400).json({ detail: parsedProjectId.detail });
+    }
+    const parsedModel = parseOptionalModel(body.model);
+    if (!parsedModel.ok) {
+        return void res.status(400).json({ detail: parsedModel.detail });
+    }
+    const parsedAskInputsResponse = parseOptionalAskInputsResponse(
+        body.ask_inputs_response,
     );
+    if (!parsedAskInputsResponse.ok) {
+        return void res
+            .status(400)
+            .json({ detail: parsedAskInputsResponse.detail });
+    }
+
+    const messages = parsedMessages.value;
+    const chat_id = parsedChatId.value;
+    const project_id = parsedProjectId.value.projectId;
+    const model = parsedModel.value;
+    const askInputsResponse = parsedAskInputsResponse.value;
 
     console.log("[chat/stream] incoming request", {
         userId,
