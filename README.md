@@ -17,21 +17,24 @@ storage account. `docker-compose.yml` includes Supabase (Postgres, Auth, the
 data API, and a gateway), RustFS, Mailpit, and the frontend/backend. The schema
 loads itself on first boot.
 
-To use AI features, either provide an Anthropic, Gemini, or OpenAI API key, or
-run a supported model locally with Ollama.
+Copy the local environment templates:
 
 ```bash
-# 1. Env files
-cp .env.example .env                  # frontend build vars (local demo keys prefilled)
+cp .env.example .env
 cp backend/.env.example backend/.env
+```
 
-# 2. In backend/.env set:
-#    - one of ANTHROPIC_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY,
-#      unless you plan to use Ollama only
-#    - DOWNLOAD_SIGNING_SECRET and USER_API_KEYS_ENCRYPTION_SECRET (openssl rand -hex 32)
-#    SUPABASE_URL / SUPABASE_SECRET_KEY / R2_* are set by docker-compose, leave them.
+Edit `backend/.env`:
 
-# 3. Up
+- Set `DOWNLOAD_SIGNING_SECRET` and `USER_API_KEYS_ENCRYPTION_SECRET` to separate
+  values generated with `openssl rand -hex 32`.
+- Add an Anthropic, Gemini, or OpenAI API key, unless you plan to use Ollama
+  exclusively.
+
+Docker Compose supplies the local Supabase and object-storage settings, so
+leave those values unchanged. Then start the stack:
+
+```bash
 docker compose up --build
 ```
 
