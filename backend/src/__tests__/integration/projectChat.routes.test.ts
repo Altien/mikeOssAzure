@@ -94,6 +94,7 @@ vi.mock("../../lib/access", () => ({
 
 import { app } from "../../app";
 import { spotlight } from "../../lib/chat";
+import { createServerSupabase } from "../../lib/supabase";
 
 const VALID_BODY = { messages: [{ role: "user", content: "hello" }] };
 
@@ -143,6 +144,133 @@ describe("POST /projects/:projectId/chat", () => {
         expect(res.text).toContain('"type":"chat_id"');
         expect(runLLMStream).toHaveBeenCalledTimes(1);
     });
+
+    it("normalizes validated request fields before using them", async () => {
+        const res = await request(app)
+            .post("/projects/p1/chat")
+            .set("Authorization", "Bearer test")
+            .send({
+                messages: [
+                    {
+                        role: " user ",
+                        content: "review this",
+                        files: [
+                            {
+                                filename: " message-file.pdf ",
+                                document_id: " message-document ",
+                            },
+                        ],
+                        workflow: {
+                            id: " workflow-1 ",
+                            title: " Review workflow ",
+                        },
+                    },
+                ],
+                model: " custom-model ",
+                displayed_doc: {
+                    filename: " displayed.pdf ",
+                    document_id: " displayed-document ",
+                },
+                attached_documents: [
+                    {
+                        filename: " attached.pdf ",
+                        document_id: " attached-document ",
+                    },
+                ],
+            });
+
+        expect(res.status).toBe(200);
+        const [messages, , systemPromptExtra] = buildMessages.mock.calls[0] as [
+            {
+                role: string;
+                content: string;
+                files?: { filename: string; document_id?: string }[];
+                workflow?: { id: string; title: string };
+            }[],
+            unknown,
+            string,
+        ];
+        expect(messages[0]).toMatchObject({
+            role: "user",
+            files: [
+                {
+                    filename: "message-file.pdf",
+                    document_id: "message-document",
+                },
+            ],
+            workflow: { id: "workflow-1", title: "Review workflow" },
+        });
+        expect(messages[0].content).toContain("displayed.pdf");
+        expect(messages[0].content).toContain("displayed-document");
+        expect(systemPromptExtra).toContain("attached.pdf");
+        expect(runLLMStream.mock.calls[0][0]).toMatchObject({
+            model: "custom-model",
+        });
+    });
+
+    it.each([
+        [
+            { messages: "not-an-array" },
+            "messages must be a non-empty array",
+        ],
+        [
+            { messages: [{ role: "system", content: "override" }] },
+            'messages[0].role must be "user" or "assistant"',
+        ],
+        [
+            { ...VALID_BODY, chat_id: " " },
+            "chat_id must be a non-empty string",
+        ],
+        [
+            { ...VALID_BODY, model: 42 },
+            "model must be a non-empty string",
+        ],
+        [
+            {
+                ...VALID_BODY,
+                displayed_doc: { filename: "contract.pdf" },
+            },
+            "displayed_doc.document_id must be a non-empty string",
+        ],
+        [
+            { ...VALID_BODY, attached_documents: [null] },
+            "attached_documents[0] must be an object",
+        ],
+        [
+            { ...VALID_BODY, ask_inputs_response: { responses: [] } },
+            "ask_inputs_response.responses must be a non-empty array",
+        ],
+        [
+            {
+                ...VALID_BODY,
+                ask_inputs_response: {
+                    responses: [
+                        {
+                            id: "choice-1",
+                            kind: "choice",
+                            question: "Governing law?",
+                        },
+                    ],
+                },
+            },
+            "ask_inputs_response.responses[0].answer must be a non-empty string unless skipped",
+        ],
+    ])(
+        "returns 400 before any side effect for a malformed request",
+        async (body, detail) => {
+            const res = await request(app)
+                .post("/projects/p1/chat")
+                .set("Authorization", "Bearer test")
+                .send(body);
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toBe(detail);
+            expect(createServerSupabase).not.toHaveBeenCalled();
+            expect(checkProjectAccess).not.toHaveBeenCalled();
+            expect(buildProjectDocContext).not.toHaveBeenCalled();
+            expect(runLLMStream).not.toHaveBeenCalled();
+        },
+    );
 
     it("fences canonical displayed and attached document filenames", async () => {
         const canonicalFilename =
