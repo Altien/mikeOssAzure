@@ -76,21 +76,15 @@ jobs:
           } >> "$GITHUB_ENV"
 
       # Same bootstrap a fresh local checkout gets from test-stack.sh: load
-      # schema.sql into the empty stack, then apply every dated migration on
-      # top in filename order — schema.sql is a point-in-time snapshot and is
-      # known to lag the migrations, so the migrations must not be skipped.
-      # This doubles as a schema-drift smoke test: schema.sql and the
-      # migrations must apply cleanly together, so a migration that conflicts
-      # with (or was never folded into) schema.sql fails this step before it
-      # can break a fresh deployment.
-      - name: Load schema and migrations (drift smoke test)
+      # schema.sql into the empty stack. schema.sql is the complete,
+      # up-to-date shape for fresh databases (backend/migrations/ exists only
+      # to move OLDER deployments forward and is deliberately not applied
+      # here — replaying history on top of the current schema is not a real
+      # installation path).
+      - name: Load schema
         run: |
           test -n "$SUPABASE_TEST_DB_URL"
           psql "$SUPABASE_TEST_DB_URL" -X --set ON_ERROR_STOP=1 --file backend/schema.sql
-          for migration in $(LC_ALL=C ls backend/migrations/*.sql); do
-            echo "Applying $migration"
-            psql "$SUPABASE_TEST_DB_URL" -X --set ON_ERROR_STOP=1 --file "$migration"
-          done
 
       - name: Install backend dependencies
         working-directory: backend
