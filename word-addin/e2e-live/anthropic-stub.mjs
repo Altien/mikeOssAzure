@@ -26,7 +26,9 @@ function pickResponse(body) {
           .map((block) => (typeof block === "string" ? block : block.text ?? ""))
           .join("\n");
 
-  if (text.includes("Proofread the following legal document")) {
+  // The proofread prompt is instruction-only; the document body arrives via
+  // the fenced document_context in the system prompt, not the user turn.
+  if (text.includes("Proofread the legal document provided as document context")) {
     return [
       "ORIGINAL: described in Schedual 1",
       "REPLACEMENT: described in Schedule 1",
