@@ -27,7 +27,7 @@
 -- GRANT execution order, which differs between the two build paths.
 
 \echo === tables ===
-select 'table|' || c.relname || '|kind=' || c.relkind
+select 'table|' || c.relname || '|kind=' || c.relkind::text
     || '|rls=' || c.relrowsecurity || '|forcerls=' || c.relforcerowsecurity
 from pg_class c
 join pg_namespace n on n.oid = c.relnamespace
@@ -38,8 +38,8 @@ order by 1;
 select 'column|' || c.relname || '|' || a.attname
     || '|' || format_type(a.atttypid, a.atttypmod)
     || '|notnull=' || a.attnotnull
-    || '|identity=' || coalesce(nullif(a.attidentity, ''), '-')
-    || '|generated=' || coalesce(nullif(a.attgenerated, ''), '-')
+    || '|identity=' || coalesce(nullif(a.attidentity::text, ''), '-')
+    || '|generated=' || coalesce(nullif(a.attgenerated::text, ''), '-')
     || '|default=' || coalesce(pg_get_expr(d.adbin, d.adrelid), '-')
 from pg_attribute a
 join pg_class c on c.oid = a.attrelid
@@ -133,7 +133,7 @@ where n.nspname = 'public'
 order by 1;
 
 \echo === default privileges ===
-select 'dacl|objtype=' || d.defaclobjtype
+select 'dacl|objtype=' || d.defaclobjtype::text
     || '|grantee=' || case when acl.grantee = 0 then 'PUBLIC' else pg_get_userbyid(acl.grantee) end
     || '|' || acl.privilege_type
 from pg_default_acl d
