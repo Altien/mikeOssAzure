@@ -386,10 +386,8 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     // Optional plain-text document context supplied by the Word add-in (the
     // active document body, read via Word.run() — no upload, no stored
     // document record). Injected into the LLM system prompt below.
-    // `documentContext` is a deprecated alias for add-in builds that shipped
-    // before the field was aligned with the route's snake_case contract.
     const parsedDocumentContext = parseOptionalDocumentContext(
-        body.document_context ?? body.documentContext,
+        body.document_context,
     );
     if (!parsedDocumentContext.ok) {
         return void res

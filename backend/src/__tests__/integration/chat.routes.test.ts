@@ -211,17 +211,6 @@ describe("POST /chat — streaming endpoint", () => {
         );
     });
 
-    it("accepts the deprecated documentContext alias", async () => {
-        const chatLib = await import("../../lib/chat");
-        const res = await request(app)
-            .post("/chat")
-            .set("Authorization", "Bearer test")
-            .send({ ...VALID_BODY, documentContext: "legacy field body" });
-
-        expect(res.status).toBe(200);
-        const call = vi.mocked(chatLib.buildMessages).mock.calls[0];
-        expect(call[2] as string).toContain("legacy field body");
-    });
 });
 
 describe("PATCH /chat/:chatId", () => {
