@@ -1,5 +1,5 @@
 /// <reference types="office-js" />
-import React, { useState, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { FolderOpen, FileText, AlertCircle, CheckCircle2 } from "lucide-react";
 import {
   listProjects,
@@ -31,19 +31,36 @@ export function ProjectPicker(): React.ReactElement {
 
   const { getDocxBlob } = useWordDoc();
 
+  // Mounted guard, mirroring ChatPanel/DocumentActions: an upload that resolves
+  // after the user switched tabs must not setState on an unmounted component.
+  // (The upload request itself cannot be aborted mid-flight — the shared
+  // uploadProjectDocument() takes no AbortSignal — but unlike an LLM stream it
+  // is cheap and idempotent-ish, so discarding the response is enough.)
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   // Load project list on mount
   useEffect(() => {
     listProjects()
       .then((data) => {
+        if (!mountedRef.current) return;
         setProjects(data);
         if (data.length > 0) setSelectedProjectId(data[0].id);
       })
       .catch((e: unknown) => {
+        if (!mountedRef.current) return;
         setProjectsError(
           e instanceof Error ? e.message : "Failed to load projects"
         );
       })
-      .finally(() => setLoadingProjects(false));
+      .finally(() => {
+        if (mountedRef.current) setLoadingProjects(false);
+      });
   }, []);
 
   // Reload document list when selected project changes
@@ -111,15 +128,17 @@ export function ProjectPicker(): React.ReactElement {
       const file = new File([blob], fileName, { type: blob.type });
       await uploadProjectDocument(selectedProjectId, file);
 
+      if (!mountedRef.current) return;
       setUploadSuccess(true);
 
       // Refresh document list
       const updated = await listProjectDocuments(selectedProjectId);
-      setDocs(updated);
+      if (mountedRef.current) setDocs(updated);
     } catch (e) {
+      if (!mountedRef.current) return;
       setUploadError(e instanceof Error ? e.message : "Upload failed.");
     } finally {
-      setUploading(false);
+      if (mountedRef.current) setUploading(false);
     }
   };
 
