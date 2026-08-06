@@ -20,6 +20,16 @@
 -- Safe to re-run: REVOKE of an absent privilege and GRANT of a present one
 -- are both no-ops, and on a database already at the fresh-install grants
 -- the net effect is nothing.
+--
+-- Wrapped in an explicit transaction: migrations are applied with plain
+-- `psql --set ON_ERROR_STOP=1` (no -1), so without begin/commit each
+-- statement autocommits and the moment between "revoke all" and the
+-- re-grant would be a real zero-privilege window on a live deployment,
+-- during which every backend query against these tables fails. Inside one
+-- transaction the revoke+grant become visible to other sessions atomically
+-- at commit, so running traffic never observes the intermediate state.
+begin;
+
 revoke all privileges on all tables in schema public from service_role;
 grant select, insert, update, delete
   on all tables in schema public
@@ -29,3 +39,5 @@ revoke all privileges on all sequences in schema public from service_role;
 grant usage, select
   on all sequences in schema public
   to service_role;
+
+commit;
