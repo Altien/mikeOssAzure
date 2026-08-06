@@ -1394,6 +1394,10 @@ export async function listStandaloneDocuments(): Promise<Document[]> {
     return apiRequest<Document[]>("/single-documents");
 }
 
+export async function getDocument(documentId: string): Promise<Document> {
+    return apiRequest<Document>(`/single-documents/${documentId}`);
+}
+
 export async function deleteDocument(documentId: string): Promise<void> {
     await apiRequest(`/single-documents/${documentId}`, { method: "DELETE" });
 }
@@ -1871,6 +1875,21 @@ export async function streamTabularGeneration(
     return response;
 }
 
+/**
+ * Reconnect to a generation that is already running (GET, not POST): a pure
+ * observer that takes no generation lease and enqueues nothing, so resuming a
+ * run can never 409 or restart it. Used when a stream drops mid-run and when
+ * the view mounts on a review that is already `is_running`.
+ */
+export async function streamTabularGenerationResume(
+    reviewId: string,
+    signal?: AbortSignal,
+): Promise<Response> {
+    return apiFetch(`${API_BASE}/tabular-review/${reviewId}/generate/stream`, {
+        signal: signal ?? undefined,
+    });
+}
+
 export async function streamTabularChat(
     reviewId: string,
     messages: { role: string; content: string }[],
@@ -2041,11 +2060,15 @@ export async function regenerateTabularCell(
     reviewId: string,
     rowId: string,
     columnIndex: number,
-): Promise<{
-    summary: string;
-    flag: "green" | "grey" | "yellow" | "red";
-    reasoning: string;
-}> {
+): Promise<
+    | {
+          summary: string;
+          flag: "green" | "grey" | "yellow" | "red";
+          reasoning: string;
+      }
+    // HTTP 202 — regeneration continues in the background
+    | { status: "generating" }
+> {
     return apiRequest(`/tabular-review/${reviewId}/regenerate-cell`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

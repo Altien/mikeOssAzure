@@ -41,9 +41,11 @@ import {
     prepareTabularGenerate,
 } from "../lib/tabular/tabular.generate";
 import {
+    awaitCellTerminal,
     streamTabularGenerateAsync,
     streamTabularRunView,
 } from "../lib/tabular/tabular.generateStream";
+import { enqueueExtraction } from "../lib/queue/extractionQueue";
 import {
     fetchSourceDocuments,
     loadReviewRows,
@@ -1236,6 +1238,13 @@ tabularRouter.post(
             })();
         }, TABULAR_GENERATION_HEARTBEAT_MS);
 
+        // Async path only: once the job is enqueued the queue owns the lease —
+        // the worker renews it while it extracts and releases it through
+        // `finishGenerationIfIdle` when the cell reaches a terminal state. This
+        // request must then not release it on its way out, because on the 202
+        // branch the job is still running.
+        let leaseHandedOff = false;
+
         try {
             const { data: claimed, error: generatingError } = await db.rpc(
                 "claim_tabular_review_cell",
@@ -1257,6 +1266,68 @@ tabularRouter.post(
                     code: "review_stale",
                     detail: "The tabular review generation lease expired.",
                 });
+
+            // Async path: enqueue a single-cell job (deduped on
+            // extract:<review>:<row>:<col>, so it never collides with a
+            // full-row job) and wait for the cell to reach a terminal state, so
+            // the response keeps its synchronous JSON shape. The work itself is
+            // durable: if this request drops or times out the worker still
+            // finishes and the client catches up via the DB or the GET
+            // generate/stream view.
+            if (process.env.ASYNC_TABULAR_EXTRACTION === "true") {
+                // The worker renews the lease from here on — two renewers would
+                // only race each other.
+                clearInterval(leaseHeartbeat);
+                try {
+                    await enqueueExtraction({
+                        reviewId,
+                        userId,
+                        rowId: row.id,
+                        columnIndex: column_index,
+                        generationId,
+                    });
+                    leaseHandedOff = true;
+                } catch (err) {
+                    // Nothing will ever run this cell, so we still own both the
+                    // cell's terminal state and the lease (released in finally).
+                    console.error(
+                        "[tabular/regenerate-cell] enqueue failed",
+                        err,
+                    );
+                    await finalizeCell(db, {
+                        reviewId,
+                        rowId: row.id,
+                        columnIndex: column_index,
+                        status: "error",
+                        generationId,
+                    });
+                    return void res
+                        .status(500)
+                        .json({ detail: "Generation failed" });
+                }
+
+                const terminal = await awaitCellTerminal({
+                    db,
+                    reviewId,
+                    rowId: row.id,
+                    columnIndex: column_index,
+                    log: console,
+                });
+                if (terminal === null)
+                    // Still running after the wait budget — the job survives
+                    // this response and still holds the lease; the client keeps
+                    // the cell "generating" and picks the result up from the
+                    // resume stream or a reload.
+                    return void res.status(202).json({
+                        status: "generating",
+                        detail: "Extraction still running",
+                    });
+                if (terminal.status === "error")
+                    return void res
+                        .status(500)
+                        .json({ detail: "Generation failed" });
+                return void res.json(terminal.content);
+            }
 
             const markdown = await loadRowDocumentText(db, row);
             const result = await queryTabularCell(
@@ -1314,15 +1385,24 @@ tabularRouter.post(
             }
         } finally {
             clearInterval(leaseHeartbeat);
-            const { error } = await db.rpc("finish_tabular_review_generation", {
-                target_review_id: reviewId,
-                target_generation_id: generationId,
-            });
-            if (error) {
-                console.error(
-                    "[tabular/regenerate-cell] failed to release generation lease",
-                    error,
+            // On the async path the lease now belongs to the worker running the
+            // enqueued job — including on the 202 branch, where the job is
+            // still going after this response. It releases it itself once the
+            // cell is terminal (`finishGenerationIfIdle`).
+            if (!leaseHandedOff) {
+                const { error } = await db.rpc(
+                    "finish_tabular_review_generation",
+                    {
+                        target_review_id: reviewId,
+                        target_generation_id: generationId,
+                    },
                 );
+                if (error) {
+                    console.error(
+                        "[tabular/regenerate-cell] failed to release generation lease",
+                        error,
+                    );
+                }
             }
         }
     },

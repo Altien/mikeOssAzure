@@ -28,6 +28,7 @@ import {
     listProjects,
     regenerateTabularCell,
     streamTabularGeneration,
+    streamTabularGenerationResume,
     updateTabularReview,
     uploadReviewDocument,
     MikeApiError,
@@ -150,6 +151,9 @@ export function TRView({ reviewId, projectId }: Props) {
     const tableRef = useRef<TRTableHandle>(null);
     const generationAbortRef = useRef<AbortController | null>(null);
     const stopRequestedRef = useRef(false);
+    // Only one resume stream may be open at a time — mount, a 202 regenerate
+    // and a dropped generate stream can all ask for one.
+    const resumeStreamOpenRef = useRef(false);
 
     useEffect(
         () => () => {
@@ -205,6 +209,20 @@ export function TRView({ reviewId, projectId }: Props) {
                     setRows(rows);
                     setDocuments(documents);
                     setColumns(review.columns_config || []);
+                    // A run may still be executing server-side (e.g. after a
+                    // refresh, or in another tab) — reattach to it through the
+                    // resumable stream instead of showing a spinner nothing will
+                    // ever resolve. `is_running` is the review's live generation
+                    // lease; cells left "generating" cover a run whose lease has
+                    // lapsed but whose terminal states are still landing.
+                    if (
+                        review.is_running ||
+                        cells.some((c) => c.status === "generating")
+                    ) {
+                        resumeGenerationStream().catch((err) =>
+                            console.error("Generation resume failed", err),
+                        );
+                    }
                 },
             ),
         ];
@@ -323,6 +341,15 @@ export function TRView({ reviewId, projectId }: Props) {
                 rowId,
                 colIndex,
             );
+            if ("status" in result) {
+                // HTTP 202 — the work continues in the background. Leave the
+                // cell "generating" and pick up the terminal state from the
+                // resumable stream.
+                resumeGenerationStream().catch((err) =>
+                    console.error("Generation resume failed", err),
+                );
+                return;
+            }
             setCells((prev) =>
                 prev.map((c) =>
                     c.row_id === rowId && c.column_index === colIndex
@@ -369,6 +396,88 @@ export function TRView({ reviewId, projectId }: Props) {
                 return;
             }
             await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+    }
+
+    // Reads an SSE response and applies cell_update frames until [DONE].
+    // Shared by the POST /generate stream and the GET resume stream, which
+    // emit the identical frame shape.
+    async function consumeGenerationStream(response: Response) {
+        if (!response.body) throw new Error("No body");
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let finished = false;
+
+        while (!finished) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+
+            for (const line of lines) {
+                if (!line.startsWith("data:")) continue;
+                const dataStr = line.slice(5).trim();
+                if (dataStr === "[DONE]") {
+                    finished = true;
+                    break;
+                }
+                try {
+                    const data = JSON.parse(dataStr);
+                    if (data.type === "cell_update") {
+                        setCells((prev) =>
+                            prev.map((c) =>
+                                c.row_id === data.row_id &&
+                                c.column_index === data.column_index
+                                    ? {
+                                          ...c,
+                                          content: data.content,
+                                          status: data.status,
+                                      }
+                                    : c,
+                            ),
+                        );
+                    }
+                } catch {}
+            }
+        }
+    }
+
+    // Reattach to a run still executing server-side through the reconnectable
+    // GET view. It takes no generation lease, so it can never 409 a run or
+    // restart one; it only tails what the workers are already doing.
+    //
+    // Abort ownership follows the same `generationAbortRef` pattern as
+    // `handleGenerate`: when a generate run is in flight we borrow ITS
+    // controller, so the stop button and unmount abort the reconnect too.
+    // Otherwise (mount on a running review, or a 202 regenerate) the resume
+    // owns a controller for its own lifetime and clears it on the way out —
+    // it never overwrites a live run's controller, which `handleGenerate`'s
+    // `finally` identity-checks.
+    async function resumeGenerationStream() {
+        if (resumeStreamOpenRef.current) return;
+        resumeStreamOpenRef.current = true;
+        const ownedAbort = generationAbortRef.current
+            ? null
+            : new AbortController();
+        if (ownedAbort) generationAbortRef.current = ownedAbort;
+        const abort = generationAbortRef.current;
+        try {
+            const response = await streamTabularGenerationResume(
+                reviewId,
+                abort?.signal,
+            );
+            if (!response.ok) {
+                throw new Error(`Resume failed: ${response.status}`);
+            }
+            await consumeGenerationStream(response);
+        } catch (err) {
+            if (!ownedAbort?.signal.aborted) throw err;
+        } finally {
+            resumeStreamOpenRef.current = false;
+            if (ownedAbort && generationAbortRef.current === ownedAbort)
+                generationAbortRef.current = null;
         }
     }
 
@@ -464,39 +573,20 @@ export function TRView({ reviewId, projectId }: Props) {
                 ),
             );
 
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = "";
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split("\n");
-                buffer = lines.pop() ?? "";
-
-                for (const line of lines) {
-                    if (!line.startsWith("data:")) continue;
-                    const dataStr = line.slice(5).trim();
-                    if (dataStr === "[DONE]") break;
-                    try {
-                        const data = JSON.parse(dataStr);
-                        if (data.type === "cell_update") {
-                            setCells((prev) =>
-                                prev.map((c) =>
-                                    c.row_id === data.row_id &&
-                                    c.column_index === data.column_index
-                                        ? {
-                                              ...c,
-                                              content: data.content,
-                                              status: data.status,
-                                          }
-                                        : c,
-                                ),
-                            );
-                        }
-                    } catch {}
-                }
+            try {
+                await consumeGenerationStream(response);
+            } catch (streamErr) {
+                // A stop (or unmount) aborted this on purpose — rethrow so the
+                // outer handler runs main's stop/refresh path untouched.
+                if (generationAbort.signal.aborted) throw streamErr;
+                // Otherwise the stream dropped on its own while the run keeps
+                // executing server-side: reconnect once before giving up. The
+                // resume borrows this run's controller, so a stop still stops.
+                console.error(
+                    "Generation stream interrupted, reconnecting",
+                    streamErr,
+                );
+                await resumeGenerationStream();
             }
         } catch (err) {
             if (!generationAbort.signal.aborted) {

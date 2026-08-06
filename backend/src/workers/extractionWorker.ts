@@ -58,7 +58,7 @@ export async function runExtractionJob(
     data: ExtractionJobData,
     deps: ExtractionDeps = defaultDeps(),
 ): Promise<void> {
-    const { reviewId, userId, rowId, generationId } = data;
+    const { reviewId, userId, rowId, generationId, columnIndex } = data;
     const { db, publish } = deps;
 
     const leaseHeartbeat = generationId
@@ -87,13 +87,17 @@ export async function runExtractionJob(
     // row's cells must keep their stamp so the lease stays held.
     let settled = false;
     try {
-        // 1. Columns configured on the review.
+        // 1. Columns configured on the review. A single-cell job (regenerate)
+        //    narrows to its one column; the cell was already flipped off "done"
+        //    by the enqueuing route, so the shared core will re-extract it.
         const { data: review } = await db
             .from("tabular_reviews")
             .select("columns_config, model")
             .eq("id", reviewId)
             .single();
-        const columns: Column[] = (review?.columns_config as Column[]) ?? [];
+        let columns: Column[] = (review?.columns_config as Column[]) ?? [];
+        if (columnIndex != null)
+            columns = columns.filter((c) => c.index === columnIndex);
         if (columns.length === 0) {
             settled = true;
             return;
@@ -189,7 +193,13 @@ export async function runExtractionJob(
         if (leaseHeartbeat) clearInterval(leaseHeartbeat);
         if (generationId) {
             if (settled)
-                await clearRowGenerationStamp(db, reviewId, rowId, generationId);
+                await clearRowGenerationStamp(
+                    db,
+                    reviewId,
+                    rowId,
+                    generationId,
+                    columnIndex,
+                );
             await finishGenerationIfIdle(
                 db,
                 reviewId,
@@ -206,19 +216,25 @@ export async function runExtractionJob(
  * Terminal writes already clear their own stamp; this catches the cells the job
  * skipped (already `done` when it started), so "no cell carries this generation
  * id" is an exact test for "the run is over".
+ *
+ * A single-cell job (regenerate) narrows to its own column: it never owned the
+ * row's other cells, so it must not un-stamp work that is still outstanding.
  */
 async function clearRowGenerationStamp(
     db: Db,
     reviewId: string,
     rowId: string,
     generationId: string,
+    columnIndex?: number,
 ): Promise<void> {
-    const { error } = await db
+    let query = db
         .from("tabular_cells")
         .update({ generation_id: null })
         .eq("review_id", reviewId)
         .eq("row_id", rowId)
         .eq("generation_id", generationId);
+    if (columnIndex != null) query = query.eq("column_index", columnIndex);
+    const { error } = await query;
     if (error)
         console.error("[extraction-worker] failed to clear generation stamp", {
             reviewId,
@@ -247,7 +263,7 @@ export async function markExtractionFailed(
     data: ExtractionJobData,
     deps: ExtractionDeps = defaultDeps(),
 ): Promise<void> {
-    const { reviewId, rowId, generationId } = data;
+    const { reviewId, rowId, generationId, columnIndex } = data;
     const { db, publish } = deps;
 
     const { data: cells } = await db
@@ -257,6 +273,8 @@ export async function markExtractionFailed(
         .eq("row_id", rowId);
 
     for (const cell of (cells ?? []) as Record<string, unknown>[]) {
+        // Single-cell jobs only ever own their one column's terminal state.
+        if (columnIndex != null && cell.column_index !== columnIndex) continue;
         if (cell.status === "done" && cell.content) continue;
         if (
             generationId &&
@@ -284,7 +302,13 @@ export async function markExtractionFailed(
     }
 
     if (generationId) {
-        await clearRowGenerationStamp(db, reviewId, rowId, generationId);
+        await clearRowGenerationStamp(
+            db,
+            reviewId,
+            rowId,
+            generationId,
+            columnIndex,
+        );
         await finishGenerationIfIdle(
             db,
             reviewId,

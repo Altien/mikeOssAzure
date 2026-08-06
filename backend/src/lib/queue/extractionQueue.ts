@@ -29,6 +29,12 @@ export interface ExtractionJobData {
      * Absent only for a job enqueued outside a leased run.
      */
     generationId?: string;
+    /**
+     * When set, the job targets ONE cell (regenerate-cell) instead of every
+     * outstanding column of the row. Single-cell jobs get their own jobId
+     * suffix so they never dedupe against a full-row job for the same row.
+     */
+    columnIndex?: number;
 }
 
 let queue: Queue<ExtractionJobData> | null = null;
@@ -42,9 +48,15 @@ export function getExtractionQueue(): Queue<ExtractionJobData> {
     return queue;
 }
 
-/** Deterministic BullMQ jobId for one (review, row) extraction. */
-export function extractionJobId(reviewId: string, rowId: string): string {
-    return `extract:${reviewId}:${rowId}`;
+/** Deterministic BullMQ jobId for one (review, row[, column]) extraction. */
+export function extractionJobId(
+    reviewId: string,
+    rowId: string,
+    columnIndex?: number,
+): string {
+    return columnIndex == null
+        ? `extract:${reviewId}:${rowId}`
+        : `extract:${reviewId}:${rowId}:${columnIndex}`;
 }
 
 /**
@@ -60,7 +72,7 @@ export function extractionJobId(reviewId: string, rowId: string): string {
  */
 export function enqueueExtraction(data: ExtractionJobData) {
     return getExtractionQueue().add("extract", data, {
-        jobId: extractionJobId(data.reviewId, data.rowId),
+        jobId: extractionJobId(data.reviewId, data.rowId, data.columnIndex),
         attempts: 3,
         backoff: { type: "exponential", delay: 2000 },
         removeOnComplete: true,

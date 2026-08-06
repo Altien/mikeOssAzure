@@ -21,6 +21,7 @@ import { initManifestSigningKey, manifestPublicKey } from "./lib/manifestSigning
 import { checkSchemaVersion } from "./lib/schemaCheck";
 import { initServerSessionKeys } from "./lib/serverSession";
 import { anyWorkerEnabled, startWorkers, stopWorkers } from "./workers";
+import { runStaleWorkSweep } from "./lib/maintenance/staleWork";
 
 const PORT = process.env.PORT ?? 3001;
 
@@ -59,10 +60,21 @@ async function start(): Promise<void> {
     void checkSchemaVersion().catch(() => {});
   });
 
+  const sweepInterval = Number(process.env.STALE_SWEEP_INTERVAL_MS) || 600_000;
+  const runSweep = () => void runStaleWorkSweep().catch((error) =>
+    console.error("[stale-sweep] failed", error),
+  );
+  const initialSweep = setTimeout(runSweep, 30_000);
+  initialSweep.unref();
+  const sweepTimer = setInterval(runSweep, sweepInterval);
+  sweepTimer.unref();
+
   let shuttingDown = false;
   async function shutdown(signal: string): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
+    clearTimeout(initialSweep);
+    clearInterval(sweepTimer);
     const forced = setTimeout(() => process.exit(1), 15_000);
     forced.unref();
     try {
