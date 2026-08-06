@@ -118,7 +118,15 @@ select 'acl|' || c.relname
     || '|grantable=' || acl.is_grantable
 from pg_class c
 join pg_namespace n on n.oid = c.relnamespace
-cross join lateral aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) acl
+-- acldefault's first argument selects which built-in default ACL to
+-- synthesize when relacl is null: 'r' for tables/views, 's' for sequences
+-- (whose privilege set is USAGE/SELECT/UPDATE, not the table set). The
+-- relkind filter admits sequences ('S'), so pick the matching kind per row
+-- rather than hard-coding 'r' — otherwise a sequence with a null relacl
+-- would be fingerprinted with table privileges it cannot actually hold.
+cross join lateral aclexplode(coalesce(c.relacl,
+    acldefault((case when c.relkind = 'S' then 's' else 'r' end)::"char",
+               c.relowner))) acl
 where n.nspname = 'public' and c.relkind in ('r', 'p', 'S', 'v', 'm')
 order by 1;
 
