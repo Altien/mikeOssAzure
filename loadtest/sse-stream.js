@@ -3,7 +3,9 @@
 // This is the product's hot path and the source of past incidents (stream
 // timeouts on long tool calls), so it gets a dedicated harness. It is
 // ON-DEMAND tooling — run it by hand or via .github/workflows/loadtest.yml
-// pointed at a staging stack (see PR #210). Never point it at production:
+// pointed at any non-production deployment of the backend API you own
+// (it must serve POST /chat behind Supabase bearer auth, with real LLM
+// provider keys configured). Never point it at production:
 // every iteration creates a real chat row and burns real LLM tokens on the
 // target stack.
 //
