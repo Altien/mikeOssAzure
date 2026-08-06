@@ -28,7 +28,7 @@ backend's decision to gate `src/lib/**`. Components and hooks have their own
 suites (they run in the same `npm test`), but their coverage is UI-shaped and
 noisy, so they are exercised without being floor-gated.
 
-## Current coverage (measured 2026-07)
+## Current coverage (measured 2026-08)
 
 Per-file statement coverage of the gated lib layer from
 `npm run test:coverage`:
@@ -36,17 +36,19 @@ Per-file statement coverage of the gated lib layer from
 | Lib file | % statements | Tested? |
 | --- | ---: | :---: |
 | `lib/documentUploadValidation.ts` | 100 | ✓ |
+| `lib/deleteTabularReviewsWithConcurrency.ts` | 100 | ✓ |
+| `lib/folderDeleteState.ts` | 100 | ✓ |
 | `lib/modelAvailability.ts` | 100 | ✓ |
-| `lib/utils.ts` | 96 | ✓ |
-| `lib/supabase.ts` | 100 | thin wrapper — loaded, not asserted |
-| `lib/mikeApi.ts` | 40 | partial — plumbing, mapping, streaming |
+| `lib/utils.ts` | 100 | ✓ |
+| `lib/supabase.ts` | 100 | ✓ |
+| `lib/mikeApi.ts` | 99 | ✓ — every endpoint wrapper asserted |
 
-Global (lib layer): **54.02% statements / 73.94% branches / 32.20% functions /
-52.74% lines**. The global number is dominated by `mikeApi.ts`: its request /
-auth-header / error-mapping plumbing, `getChat` / `mapTRMessages` message
-mapping, blob downloads, and all four streaming endpoints are tested, but most
-of its ~100 thin per-endpoint wrappers (folders, library, workflows, MCP
-connectors, versions) are not.
+Global (lib layer): **99.69% statements / 98.53% branches / 100% functions /
+100% lines**. The only uncovered code is the dev-only logging branch and a
+couple of `?? null` default arms. `mikeApi.ts` now has a route/method/body
+assertion for every thin endpoint wrapper (folders, library, workflows, MCP
+connectors, document versions) on top of the earlier plumbing, mapping, and
+streaming suites.
 
 Outside the gate, the SSE **parse** loop — the frontend half of the SSE
 contract with the backend (`data: <json>\n\n` lines) — is covered in
@@ -71,9 +73,9 @@ numbers. Size guess: S ≈ an hour, M ≈ an afternoon.
       streams the way `useAssistantChat.sse.test.ts` does. Consider extracting
       the duplicated parse loop into a shared lib helper first, which would
       also pull it under the coverage gate. (M)
-- [ ] `lib/mikeApi.ts` (rest) — the remaining thin wrappers: folders/library
-      moves, workflows share/hide, MCP connectors, document versions. Mostly
-      URL/method/body assertions with the existing fetch-mock helpers. (M)
+- [x] `lib/mikeApi.ts` (rest) — the remaining thin wrappers: folders/library
+      moves, workflows share/hide, MCP connectors, document versions. Done as
+      a table-driven `it.each` suite of URL/method/body assertions. (M)
 - [ ] `hooks/useSelectedModel.ts` — model choice persistence and fallback to
       `DEFAULT_MODEL_ID` when the stored model is unavailable. (S)
 - [ ] `hooks/useGenerateChatTitle.ts` — title generation trigger and failure
@@ -91,8 +93,8 @@ are mostly composition.
 ## Ratchet policy
 
 `frontend/vitest.config.mts` enforces global coverage **floors** over
-`src/app/lib/**` (currently statements 54 / branches 73 / functions 32 /
-lines 52). Same rules as the backend
+`src/app/lib/**` (currently statements 97 / branches 96 / functions 98 /
+lines 98). Same rules as the backend
 ([testing-coverage.md](testing-coverage.md#ratchet-policy)):
 
 - **Floors only go up.** Never lower them to get a PR green — that means your
