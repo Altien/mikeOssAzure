@@ -19,41 +19,97 @@ vi.mock("@/app/lib/supabase", () => ({
 
 import {
     MikeApiError,
+    addDocumentToProject,
     clearTabularCells,
+    copyDocumentVersionFromDocument,
     createChat,
     createLibraryFolder,
+    createMcpConnector,
+    createProject,
     createProjectFolder,
     createTabularReview,
+    createWorkflow,
+    deleteAccount,
     deleteAllChats,
+    deleteAllProjects,
+    deleteAllTabularReviews,
+    deleteChat,
+    deleteDocument,
+    deleteDocumentVersion,
+    deleteLibraryFolder,
+    deleteMcpConnector,
+    deleteProject,
+    deleteProjectFolder,
     deleteTabularChat,
     deleteTabularReview,
+    deleteWorkflow,
+    deleteWorkflowShare,
     downloadDocumentsZip,
     exportAccountData,
+    exportChatData,
+    exportTabularReviewsData,
+    generateChatTitle,
     generateTabularColumnPrompt,
+    getApiKeyStatus,
     getChat,
+    getCourtlistenerOpinions,
     getDocumentUrl,
+    getLibrary,
+    getMcpConnector,
+    getOllamaModels,
+    getProject,
+    getProjectPeople,
     getTabularChatMessages,
     getTabularChats,
+    getTabularReview,
+    getTabularReviewPeople,
     getUserProfile,
+    getWorkflow,
     hideWorkflow,
     isMfaRequiredError,
     listChats,
+    listDocumentVersions,
     listHiddenWorkflows,
+    listMcpConnectors,
+    listProjectChats,
     listProjects,
+    listStandaloneDocuments,
     listTabularReviewIds,
     listTabularReviews,
+    listWorkflowShares,
     listWorkflows,
     lookupUserByEmail,
     mapTRMessages,
+    moveDocumentToFolder,
+    moveLibraryDocument,
+    moveLibraryFolder,
+    moveSubfolderToFolder,
+    openSourceWorkflow,
+    refreshMcpConnectorTools,
     regenerateTabularCell,
+    renameChat,
+    renameDocumentVersion,
+    renameLibraryDocument,
+    renameLibraryFolder,
+    renameProjectDocument,
+    renameProjectFolder,
     renameTabularChat,
     replaceDocumentVersionFile,
+    saveApiKey,
+    setMcpToolEnabled,
+    shareWorkflow,
+    startMcpConnectorOAuth,
     streamChat,
     streamProjectChat,
     streamTabularChat,
     streamTabularGeneration,
     unhideWorkflow,
+    updateMcpConnector,
+    updateProject,
     updateTabularReview,
+    updateUserMfaOnLogin,
+    updateUserProfile,
+    updateWorkflow,
     uploadDocumentVersion,
     uploadLibraryDocument,
     uploadProjectDocument,
@@ -1115,6 +1171,491 @@ describe("workflow endpoints", () => {
         await expect(listHiddenWorkflows()).resolves.toEqual(["w2"]);
         expect(lastFetchCall().url).toBe(
             "http://localhost:3001/workflows/hidden",
+        );
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Thin endpoint wrappers. Each is a one-liner over apiRequest, so the only
+// things that can break are the route, the HTTP method, and the payload
+// shape — a wrong route or a camelCase key that should be snake_case fails
+// silently in TypeScript and only surfaces as a runtime 404/422. Assert
+// exactly those three things for every wrapper.
+// ---------------------------------------------------------------------------
+
+describe("thin endpoint wrappers", () => {
+    type WrapperCase = {
+        name: string;
+        call: () => Promise<unknown>;
+        url: string;
+        method?: string; // defaults to GET (fetch's default when unset)
+        body?: unknown; // absent means the request must not carry a body
+    };
+
+    const cases: WrapperCase[] = [
+        // Account & profile
+        {
+            name: "createProject",
+            call: () => createProject("Acme v. Zenith", "CM-42", "litigation", ["a@b.c"]),
+            url: "/projects",
+            method: "POST",
+            body: {
+                name: "Acme v. Zenith",
+                cm_number: "CM-42",
+                practice: "litigation",
+                shared_with: ["a@b.c"],
+            },
+        },
+        {
+            name: "deleteAccount",
+            call: () => deleteAccount(),
+            url: "/user/account",
+            method: "DELETE",
+        },
+        {
+            name: "deleteAllProjects",
+            call: () => deleteAllProjects(),
+            url: "/user/projects",
+            method: "DELETE",
+        },
+        {
+            name: "deleteAllTabularReviews",
+            call: () => deleteAllTabularReviews(),
+            url: "/user/tabular-reviews",
+            method: "DELETE",
+        },
+        {
+            name: "updateUserProfile",
+            call: () => updateUserProfile({ displayName: "Amal", titleModel: "m1" }),
+            url: "/user/profile",
+            method: "PATCH",
+            body: { displayName: "Amal", titleModel: "m1" },
+        },
+        {
+            name: "updateUserMfaOnLogin",
+            call: () => updateUserMfaOnLogin(true),
+            url: "/user/security/mfa-login",
+            method: "PATCH",
+            body: { enabled: true },
+        },
+        {
+            name: "getApiKeyStatus",
+            call: () => getApiKeyStatus(),
+            url: "/user/api-keys",
+        },
+        {
+            name: "saveApiKey",
+            call: () => saveApiKey("claude", "sk-ant-1"),
+            url: "/user/api-keys/claude",
+            method: "PUT",
+            body: { api_key: "sk-ant-1" },
+        },
+        {
+            // null is the delete-my-key signal and must survive
+            // JSON.stringify rather than dropping the field.
+            name: "saveApiKey (clear)",
+            call: () => saveApiKey("openai", null),
+            url: "/user/api-keys/openai",
+            method: "PUT",
+            body: { api_key: null },
+        },
+        // MCP connectors
+        {
+            name: "listMcpConnectors",
+            call: () => listMcpConnectors(),
+            url: "/user/mcp-connectors",
+        },
+        {
+            name: "getMcpConnector",
+            call: () => getMcpConnector("m1"),
+            url: "/user/mcp-connectors/m1",
+        },
+        {
+            name: "createMcpConnector",
+            call: () =>
+                createMcpConnector({
+                    name: "Drive",
+                    serverUrl: "https://mcp.example/mcp/v1",
+                    bearerToken: "tok",
+                }),
+            url: "/user/mcp-connectors",
+            method: "POST",
+            body: {
+                name: "Drive",
+                serverUrl: "https://mcp.example/mcp/v1",
+                bearerToken: "tok",
+            },
+        },
+        {
+            name: "updateMcpConnector",
+            call: () => updateMcpConnector("m1", { enabled: false }),
+            url: "/user/mcp-connectors/m1",
+            method: "PATCH",
+            body: { enabled: false },
+        },
+        {
+            name: "deleteMcpConnector",
+            call: () => deleteMcpConnector("m1"),
+            url: "/user/mcp-connectors/m1",
+            method: "DELETE",
+        },
+        {
+            name: "refreshMcpConnectorTools",
+            call: () => refreshMcpConnectorTools("m1"),
+            url: "/user/mcp-connectors/m1/refresh-tools",
+            method: "POST",
+        },
+        {
+            name: "startMcpConnectorOAuth",
+            call: () => startMcpConnectorOAuth("m1"),
+            url: "/user/mcp-connectors/m1/oauth/start",
+            method: "POST",
+        },
+        {
+            name: "setMcpToolEnabled",
+            call: () => setMcpToolEnabled("m1", "t1", true),
+            url: "/user/mcp-connectors/m1/tools/t1",
+            method: "PATCH",
+            body: { enabled: true },
+        },
+        // Projects
+        {
+            name: "getProject",
+            call: () => getProject("p1"),
+            url: "/projects/p1",
+        },
+        {
+            name: "updateProject",
+            call: () => updateProject("p1", { name: "Renamed", practice: null }),
+            url: "/projects/p1",
+            method: "PATCH",
+            body: { name: "Renamed", practice: null },
+        },
+        {
+            name: "deleteProject",
+            call: () => deleteProject("p1"),
+            url: "/projects/p1",
+            method: "DELETE",
+        },
+        {
+            name: "getProjectPeople",
+            call: () => getProjectPeople("p1"),
+            url: "/projects/p1/people",
+        },
+        {
+            name: "listProjectChats",
+            call: () => listProjectChats("p1"),
+            url: "/projects/p1/chats",
+        },
+        // Project folders & documents
+        {
+            name: "renameProjectFolder",
+            call: () => renameProjectFolder("p1", "f1", "Discovery"),
+            url: "/projects/p1/folders/f1",
+            method: "PATCH",
+            body: { name: "Discovery" },
+        },
+        {
+            name: "deleteProjectFolder",
+            call: () => deleteProjectFolder("p1", "f1"),
+            url: "/projects/p1/folders/f1",
+            method: "DELETE",
+        },
+        {
+            // Moving to the root sends an explicit null parent, on the same
+            // PATCH route as rename — only the body distinguishes them.
+            name: "moveSubfolderToFolder",
+            call: () => moveSubfolderToFolder("p1", "f1", null),
+            url: "/projects/p1/folders/f1",
+            method: "PATCH",
+            body: { parent_folder_id: null },
+        },
+        {
+            name: "moveDocumentToFolder",
+            call: () => moveDocumentToFolder("p1", "d1", "f2"),
+            url: "/projects/p1/documents/d1/folder",
+            method: "PATCH",
+            body: { folder_id: "f2" },
+        },
+        {
+            name: "renameProjectDocument",
+            call: () => renameProjectDocument("p1", "d1", "renamed.pdf"),
+            url: "/projects/p1/documents/d1",
+            method: "PATCH",
+            body: { filename: "renamed.pdf" },
+        },
+        {
+            name: "addDocumentToProject",
+            call: () => addDocumentToProject("p1", "d1"),
+            url: "/projects/p1/documents/d1",
+            method: "POST",
+        },
+        // Library
+        {
+            name: "getLibrary",
+            call: () => getLibrary("templates"),
+            url: "/library/templates",
+        },
+        {
+            name: "renameLibraryFolder",
+            call: () => renameLibraryFolder("files", "f1", "Precedents"),
+            url: "/library/files/folders/f1",
+            method: "PATCH",
+            body: { name: "Precedents" },
+        },
+        {
+            name: "deleteLibraryFolder",
+            call: () => deleteLibraryFolder("files", "f1"),
+            url: "/library/files/folders/f1",
+            method: "DELETE",
+        },
+        {
+            name: "moveLibraryFolder",
+            call: () => moveLibraryFolder("templates", "f1", "parent-1"),
+            url: "/library/templates/folders/f1",
+            method: "PATCH",
+            body: { parent_folder_id: "parent-1" },
+        },
+        {
+            name: "moveLibraryDocument",
+            call: () => moveLibraryDocument("files", "d1", null),
+            url: "/library/files/documents/d1/folder",
+            method: "PATCH",
+            body: { folder_id: null },
+        },
+        {
+            name: "renameLibraryDocument",
+            call: () => renameLibraryDocument("files", "d1", "renamed.docx"),
+            url: "/library/files/documents/d1",
+            method: "PATCH",
+            body: { filename: "renamed.docx" },
+        },
+        // Standalone documents & versions
+        {
+            name: "listStandaloneDocuments",
+            call: () => listStandaloneDocuments(),
+            url: "/single-documents",
+        },
+        {
+            name: "deleteDocument",
+            call: () => deleteDocument("d1"),
+            url: "/single-documents/d1",
+            method: "DELETE",
+        },
+        {
+            name: "listDocumentVersions",
+            call: () => listDocumentVersions("d1"),
+            url: "/single-documents/d1/versions",
+        },
+        {
+            name: "copyDocumentVersionFromDocument",
+            call: () => copyDocumentVersionFromDocument("d1", "src-1", "copy.pdf"),
+            url: "/single-documents/d1/versions/from-document",
+            method: "POST",
+            body: { source_document_id: "src-1", filename: "copy.pdf" },
+        },
+        {
+            // null clears the per-version name so the document name shows.
+            name: "renameDocumentVersion",
+            call: () => renameDocumentVersion("d1", "v1", null),
+            url: "/single-documents/d1/versions/v1",
+            method: "PATCH",
+            body: { filename: null },
+        },
+        {
+            name: "deleteDocumentVersion",
+            call: () => deleteDocumentVersion("d1", "v1"),
+            url: "/single-documents/d1/versions/v1",
+            method: "DELETE",
+        },
+        // Chat
+        {
+            name: "renameChat",
+            call: () => renameChat("c1", "New title"),
+            url: "/chat/c1",
+            method: "PATCH",
+            body: { title: "New title" },
+        },
+        {
+            name: "deleteChat",
+            call: () => deleteChat("c1"),
+            url: "/chat/c1",
+            method: "DELETE",
+        },
+        {
+            name: "generateChatTitle",
+            call: () => generateChatTitle("c1", "first message"),
+            url: "/chat/c1/generate-title",
+            method: "POST",
+            body: { message: "first message" },
+        },
+        // Tabular review
+        {
+            name: "getTabularReview",
+            call: () => getTabularReview("r1"),
+            url: "/tabular-review/r1",
+        },
+        {
+            name: "getTabularReviewPeople",
+            call: () => getTabularReviewPeople("r1"),
+            url: "/tabular-review/r1/people",
+        },
+        // Workflows
+        {
+            name: "getWorkflow",
+            call: () => getWorkflow("w1"),
+            url: "/workflows/w1",
+        },
+        {
+            name: "createWorkflow",
+            call: () =>
+                createWorkflow({
+                    metadata: { title: "NDA review", type: "assistant" },
+                    skill_md: "# Steps",
+                }),
+            url: "/workflows",
+            method: "POST",
+            body: {
+                metadata: { title: "NDA review", type: "assistant" },
+                skill_md: "# Steps",
+            },
+        },
+        {
+            name: "updateWorkflow",
+            call: () => updateWorkflow("w1", { metadata: { title: "Renamed" } }),
+            url: "/workflows/w1",
+            method: "PATCH",
+            body: { metadata: { title: "Renamed" } },
+        },
+        {
+            name: "deleteWorkflow",
+            call: () => deleteWorkflow("w1"),
+            url: "/workflows/w1",
+            method: "DELETE",
+        },
+        {
+            name: "openSourceWorkflow",
+            call: () =>
+                openSourceWorkflow("w1", {
+                    contributor_mode: "named",
+                    contributor: {
+                        name: "Amal",
+                        organisation: null,
+                        role: null,
+                        linkedin: null,
+                    },
+                }),
+            url: "/workflows/w1/open-source",
+            method: "POST",
+            body: {
+                contributor_mode: "named",
+                contributor: {
+                    name: "Amal",
+                    organisation: null,
+                    role: null,
+                    linkedin: null,
+                },
+            },
+        },
+        {
+            name: "shareWorkflow",
+            call: () =>
+                shareWorkflow("w1", { emails: ["a@b.c"], allow_edit: false }),
+            url: "/workflows/w1/share",
+            method: "POST",
+            body: { emails: ["a@b.c"], allow_edit: false },
+        },
+        {
+            name: "listWorkflowShares",
+            call: () => listWorkflowShares("w1"),
+            url: "/workflows/w1/shares",
+        },
+        {
+            name: "deleteWorkflowShare",
+            call: () => deleteWorkflowShare("w1", "s1"),
+            url: "/workflows/w1/shares/s1",
+            method: "DELETE",
+        },
+    ];
+
+    it.each(cases)("$name → $method $url", async ({ call, url, method, body }) => {
+        fetchMock.mockResolvedValue(jsonResponse({}));
+
+        await call();
+
+        const { url: actualUrl, init } = lastFetchCall();
+        expect(actualUrl).toBe(`http://localhost:3001${url}`);
+        expect(init.method ?? "GET").toBe(method ?? "GET");
+        if (body !== undefined) {
+            expect(JSON.parse(init.body as string)).toEqual(body);
+            expect(init.headers).toMatchObject({
+                "Content-Type": "application/json",
+            });
+        } else {
+            expect(init.body).toBeUndefined();
+        }
+        expect(init.headers).toMatchObject({
+            Authorization: "Bearer token-123",
+        });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Wrappers with response mapping — the ones the table above can't cover
+// because they unwrap an envelope or hit the blob path.
+// ---------------------------------------------------------------------------
+
+describe("unwrapping and blob wrappers", () => {
+    it("getOllamaModels unwraps the models envelope", async () => {
+        const models = [
+            { id: "ollama/llama3.2", label: "Llama 3.2", group: "Local" },
+        ];
+        fetchMock.mockResolvedValue(jsonResponse({ models }));
+
+        await expect(getOllamaModels()).resolves.toEqual(models);
+        expect(lastFetchCall().url).toBe("http://localhost:3001/models/ollama");
+    });
+
+    it("getCourtlistenerOpinions posts the cluster id and unwraps opinions", async () => {
+        const opinions = [
+            {
+                opinionId: 7,
+                type: "majority",
+                author: "Judge X",
+                url: "https://example.test/op/7",
+            },
+        ];
+        fetchMock.mockResolvedValue(jsonResponse({ opinions }));
+
+        await expect(getCourtlistenerOpinions(123)).resolves.toEqual(opinions);
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/case-law/case-opinions");
+        expect(init.method).toBe("POST");
+        expect(JSON.parse(init.body as string)).toEqual({ clusterId: 123 });
+    });
+
+    it("exportChatData and exportTabularReviewsData hit their export routes", async () => {
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(
+                new Response("bytes", {
+                    status: 200,
+                    headers: {
+                        "content-disposition": 'attachment; filename="x.zip"',
+                    },
+                }),
+            ),
+        );
+
+        const chats = await exportChatData();
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/user/chats/export",
+        );
+        expect(chats.filename).toBe("x.zip");
+        expect(await chats.blob.text()).toBe("bytes");
+
+        await exportTabularReviewsData();
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/user/tabular-reviews/export",
         );
     });
 });

@@ -72,6 +72,59 @@ describe("folderDeleteDialogReducer", () => {
         ).toBe(secondRequested);
     });
 
+    it("returns to idle when a delete fails, keeping the dialog open for retry", () => {
+        const pending = pendingFolder("folder-1");
+        const deleting = {
+            pending,
+            status: "deleting" as const,
+        };
+
+        const failed = folderDeleteDialogReducer(deleting, {
+            type: "failed",
+            folderId: pending.folder.id,
+        });
+
+        expect(failed).toEqual({ pending, status: "idle" });
+    });
+
+    it("ignores start and failed actions targeting a folder that is no longer pending", () => {
+        const current = {
+            pending: pendingFolder("folder-2"),
+            status: "idle" as const,
+        };
+
+        expect(
+            folderDeleteDialogReducer(current, {
+                type: "start",
+                folderId: "folder-1",
+            }),
+        ).toBe(current);
+        expect(
+            folderDeleteDialogReducer(current, {
+                type: "failed",
+                folderId: "folder-1",
+            }),
+        ).toBe(current);
+    });
+
+    it("cancel closes an idle dialog but not one mid-delete", () => {
+        const pending = pendingFolder("folder-1");
+
+        expect(
+            folderDeleteDialogReducer(
+                { pending, status: "idle" },
+                { type: "cancel" },
+            ),
+        ).toEqual(INITIAL_FOLDER_DELETE_DIALOG_STATE);
+
+        // Mid-delete the request is already in flight; closing the dialog
+        // here would hide the outcome from the user.
+        const deleting = { pending, status: "deleting" as const };
+        expect(
+            folderDeleteDialogReducer(deleting, { type: "cancel" }),
+        ).toBe(deleting);
+    });
+
     it("ignores a stale async completion after another folder is requested", () => {
         const first = pendingFolder("folder-1");
         const second = pendingFolder("folder-2");
@@ -113,13 +166,21 @@ describe("deleted document reconciliation", () => {
         expect(clearDeletedDocumentId("document-1", deletedDocumentIds)).toBe(
             "document-1",
         );
+        expect(clearDeletedDocumentId(null, deletedDocumentIds)).toBeNull();
     });
 
-    it("clears a deleted document edit target", () => {
-        const target = { key: "edit-1", documentId: "document-2" };
+    it("clears a deleted document edit target, passing others through", () => {
+        const deleted = { key: "edit-1", documentId: "document-2" };
+        const surviving = { key: "edit-2", documentId: "document-1" };
 
         expect(
-            clearDeletedDocumentTarget(target, deletedDocumentIds),
+            clearDeletedDocumentTarget(deleted, deletedDocumentIds),
+        ).toBeNull();
+        expect(
+            clearDeletedDocumentTarget(surviving, deletedDocumentIds),
+        ).toBe(surviving);
+        expect(
+            clearDeletedDocumentTarget(null, deletedDocumentIds),
         ).toBeNull();
     });
 });

@@ -29,6 +29,13 @@ describe("getModelProvider", () => {
         expect(getModelProvider("gpt-5.4-lite")).toBe("openai");
     });
 
+    it("resolves any ollama/-prefixed id without consulting SETTINGS_MODELS", () => {
+        // Ollama models are discovered at runtime, so they can never appear
+        // in the static list — the prefix alone must be enough.
+        expect(getModelProvider("ollama/llama3.2")).toBe("ollama");
+        expect(getModelProvider("ollama/some-brand-new-model")).toBe("ollama");
+    });
+
     it("resolves a provider for every model in SETTINGS_MODELS", () => {
         for (const model of SETTINGS_MODELS) {
             expect(getModelProvider(model.id)).not.toBeNull();
@@ -58,6 +65,10 @@ describe("isModelAvailable", () => {
             ),
         ).toBe(false);
     });
+
+    it("is true for ollama models even with no keys configured", () => {
+        expect(isModelAvailable("ollama/llama3.2", keys({}))).toBe(true);
+    });
 });
 
 describe("isProviderAvailable", () => {
@@ -73,12 +84,20 @@ describe("isProviderAvailable", () => {
             isProviderAvailable("claude", {} as unknown as ApiKeyState),
         ).toBe(false);
     });
+
+    it("treats ollama as always available — local models need no API key", () => {
+        expect(isProviderAvailable("ollama", keys({}))).toBe(true);
+        expect(
+            isProviderAvailable("ollama", {} as unknown as ApiKeyState),
+        ).toBe(true);
+    });
 });
 
 describe("providerLabel", () => {
     it("returns the display label for each provider", () => {
         expect(providerLabel("claude")).toBe("Anthropic (Claude)");
         expect(providerLabel("openai")).toBe("OpenAI");
+        expect(providerLabel("ollama")).toBe("Local (Ollama)");
         expect(providerLabel("gemini")).toBe("Google (Gemini)");
     });
 });
@@ -87,6 +106,7 @@ describe("modelGroupToProvider", () => {
     it("maps every model group to its provider id", () => {
         expect(modelGroupToProvider("Anthropic")).toBe("claude");
         expect(modelGroupToProvider("OpenAI")).toBe("openai");
+        expect(modelGroupToProvider("Local")).toBe("ollama");
         expect(modelGroupToProvider("Google")).toBe("gemini");
     });
 });
