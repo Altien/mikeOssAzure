@@ -17,8 +17,15 @@ export default defineConfig({
     forbidOnly: !!process.env.CI,
     /* Retry on CI only */
     retries: process.env.CI ? 2 : 0,
-    /* Reporter */
-    reporter: process.env.CI ? "github" : "list",
+    /* Reporter. On CI, "github" alone would REPLACE Playwright's default html
+       reporter, so playwright-report/ would never be written and the workflow's
+       artifact upload (docs/e2e-ci.md, "Failure artifacts") would have nothing
+       to ship. Listing both keeps the inline PR annotations AND generates the
+       HTML report; `open: "never"` stops the reporter from trying to launch a
+       browser on the CI box after the run. */
+    reporter: process.env.CI
+        ? [["github"], ["html", { open: "never" }]]
+        : "list",
     /* Shared settings for all the projects below */
     use: {
         baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000",
