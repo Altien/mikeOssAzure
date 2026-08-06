@@ -109,7 +109,8 @@ Tune with `VUS`, `RAMP_DURATION`, `HOLD_DURATION`, `PROMPT`.
 
 The **SSE load test** workflow (`.github/workflows/loadtest.yml`) is
 manual-only and boots nothing itself: give it the base URL of an already
-running stack — the staging stack from PR #210 is the intended target —
+running non-production stack you deployed — anything serving the backend
+API (`POST /chat` behind Supabase bearer auth) with real provider keys —
 and store a test user's token in the `LOADTEST_AUTH_TOKEN` repository
 secret. **Never point it at production.**
 
