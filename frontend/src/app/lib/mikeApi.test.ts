@@ -119,6 +119,7 @@ import {
     streamProjectChat,
     streamTabularChat,
     streamTabularGeneration,
+    streamTabularGenerationResume,
     syncUserPasswordSet,
     tabularChatSelectionKey,
     parseTabularChatSelectionKey,
@@ -845,6 +846,23 @@ describe("streamTabularGeneration", () => {
     });
 });
 
+describe("streamTabularGenerationResume", () => {
+    it("GETs the resumable stream view (no body, no lease taken)", async () => {
+        fetchMock.mockResolvedValue(streamResponse([]));
+        const controller = new AbortController();
+
+        await streamTabularGenerationResume("r1", controller.signal);
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("/api/tabular-review/r1/generate/stream");
+        // A GET with no expected_updated_at: resuming observes a run, it never
+        // starts one, so it cannot 409 review_running/review_stale.
+        expect(init.method).toBeUndefined();
+        expect(init.body).toBeUndefined();
+        expect(init.signal).toBe(controller.signal);
+    });
+});
+
 // ---------------------------------------------------------------------------
 // Tabular review listing. This is the query-building half of the paginated
 // review list (PR #263 db-pagination + PR #274 folder grouping): the backend
@@ -1566,7 +1584,7 @@ describe("tabular cell operations", () => {
 
         const cell = await regenerateTabularCell("r1", "row-1", 2);
 
-        expect(cell.flag).toBe("green");
+        expect(cell).toEqual({ summary: "s", flag: "green", reasoning: "r" });
         const { url, init } = lastFetchCall();
         expect(url).toBe("/api/tabular-review/r1/regenerate-cell");
         expect(JSON.parse(init.body as string)).toEqual({
