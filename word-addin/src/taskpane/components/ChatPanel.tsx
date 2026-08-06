@@ -302,17 +302,22 @@ export function ChatPanel(): React.ReactElement {
                     ))}
                   </EditCardsSection>
                 )}
-                {msg.content && isComplete && (
+                {/* Insert the SAME text the transcript shows: when the answer
+                    carried redline edits, `prose` is the answer with the
+                    ORIGINAL:/REPLACEMENT:/REASON: scaffolding stripped — those
+                    blocks belong in the Apply flow above, never pasted verbatim
+                    into a legal document. */}
+                {prose && isComplete && (
                   <div className="flex flex-wrap gap-2">
                     <PillButton
                       tone="white"
-                      onClick={() => void insertBelowSelection(msg.content)}
+                      onClick={() => void insertBelowSelection(prose)}
                     >
                       Insert below cursor
                     </PillButton>
                     <PillButton
                       tone="white"
-                      onClick={() => void insertBelowSelection(msg.content, true)}
+                      onClick={() => void insertBelowSelection(prose, true)}
                     >
                       Insert below (tracked)
                     </PillButton>
