@@ -3,7 +3,6 @@ import {
   getSessionState,
   initialize,
   signIn,
-  signInAsGuest,
   signOut,
   subscribe,
 } from "./session";
@@ -19,7 +18,6 @@ export interface AuthState {
   loading: boolean;
   error: string | null;
   login: (email: string, password: string) => Promise<void>;
-  loginAsGuest: () => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -38,9 +36,8 @@ export function useAuth(): AuthState {
     (email: string, password: string) => signIn(email, password),
     []
   );
-  const loginAsGuest = useCallback(() => signInAsGuest(), []);
   const logout = useCallback(() => signOut(), []);
 
   const { token, loading, error } = getSessionState();
-  return { token, loading, error, login, loginAsGuest, logout };
+  return { token, loading, error, login, logout };
 }
