@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { Workflow as WorkflowIcon, AlertCircle } from "lucide-react";
 import { listWorkflows } from "../api/mikeApi";
 import { streamAssistant } from "../api/stream";
@@ -22,6 +22,20 @@ export function WorkflowPicker(): React.ReactElement {
   const [runError, setRunError] = useState<string | null>(null);
   const { readDocumentText, insertBelowSelection } = useWordDoc();
 
+  // Track mount + the in-flight run so switching tabs mid-run aborts the SSE
+  // stream (the backend stops the LLM call instead of billing tokens for a
+  // result nobody will see) and no setState fires on an unmounted component.
+  // Same discipline as ChatPanel/DocumentActions.
+  const abortRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      abortRef.current?.abort();
+    };
+  }, []);
+
   useEffect(() => {
     listWorkflows("assistant")
       .then((all) => {
@@ -32,24 +46,32 @@ export function WorkflowPicker(): React.ReactElement {
         const data = (all ?? []).filter(
           (w) => w.metadata.type === "assistant" && (w.skill_md ?? "").trim()
         );
+        if (!mountedRef.current) return;
         setWorkflows(data);
         if (data.length > 0) setSelectedId(data[0].id);
       })
       .catch((e: unknown) => {
+        if (!mountedRef.current) return;
         setFetchError(
           e instanceof Error ? e.message : "Failed to load workflows"
         );
       })
-      .finally(() => setFetchLoading(false));
+      .finally(() => {
+        if (mountedRef.current) setFetchLoading(false);
+      });
   }, []);
 
   const selectedWorkflow = workflows.find((w) => w.id === selectedId);
+
+  const handleCancel = (): void => abortRef.current?.abort();
 
   const handleRun = async (): Promise<void> => {
     if (!selectedWorkflow) return;
     setRunning(true);
     setResult("");
     setRunError(null);
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
       const docText = await readDocumentText();
       let accumulated = "";
@@ -71,16 +93,21 @@ export function WorkflowPicker(): React.ReactElement {
             },
           ],
           documentContext: docText,
+          signal: controller.signal,
         },
         (chunk) => {
           accumulated += chunk;
-          setResult(accumulated);
+          if (mountedRef.current) setResult(accumulated);
         }
       );
     } catch (e) {
+      // A user-initiated stop or an unmount aborts the request — keep whatever
+      // partial answer streamed in, don't render it as an error.
+      if (controller.signal.aborted || !mountedRef.current) return;
       setRunError(e instanceof Error ? e.message : "Workflow run failed.");
     } finally {
-      setRunning(false);
+      if (abortRef.current === controller) abortRef.current = null;
+      if (mountedRef.current) setRunning(false);
     }
   };
 
@@ -143,15 +170,28 @@ export function WorkflowPicker(): React.ReactElement {
         )}
       </div>
 
-      <PillButton
-        tone="black"
-        size="normal"
-        className="w-full"
-        onClick={() => void handleRun()}
-        disabled={running || !selectedId}
-      >
-        {running ? "Running…" : "Run workflow on document"}
-      </PillButton>
+      {running ? (
+        // Swap the run button for a stop button while streaming, so a run
+        // started by mistake can be cancelled instead of burning tokens.
+        <PillButton
+          tone="white"
+          size="normal"
+          className="w-full"
+          onClick={handleCancel}
+        >
+          Stop
+        </PillButton>
+      ) : (
+        <PillButton
+          tone="black"
+          size="normal"
+          className="w-full"
+          onClick={() => void handleRun()}
+          disabled={!selectedId}
+        >
+          Run workflow on document
+        </PillButton>
+      )}
 
       {running && (
         <EventBlock isStreaming dotColor="gray">
