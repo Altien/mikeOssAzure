@@ -40,15 +40,6 @@ export function useWordDoc() {
       return body.text;
     });
 
-  /** Read the full OOXML of the document body. */
-  const readDocumentOoxml = (): Promise<string> =>
-    Word.run(async (context) => {
-      const body = context.document.body;
-      const ooxml = body.getOoxml();
-      await context.sync();
-      return ooxml.value;
-    });
-
   /**
    * Return the current document as a real binary .docx Blob by reading it
    * via the Office compressed-file API.  The file is streamed in 64 KB slices
@@ -279,7 +270,6 @@ export function useWordDoc() {
 
   return {
     readDocumentText,
-    readDocumentOoxml,
     getDocxBlob,
     captureSelection,
     releaseSelection,
