@@ -11,7 +11,7 @@
  *   - Office.context.document.getFileAsync     -> getDocxBlob() (slice reassembly)
  *   - Office.FileType / Office.AsyncResultStatus enums
  *   - OfficeRuntime.storage.get/set/removeItem -> token storage, backed by a Map
- *   - Word.run(ctx) with a fake context: body.load/text/getOoxml()/search();
+ *   - Word.run(ctx) with a fake context: body.load/text/search();
  *     tracked selection ranges, paragraph insertion/formatting, context.sync();
  *     document.changeTrackingMode; Word.InsertLocation; Word.ChangeTrackingMode
  *
@@ -48,8 +48,6 @@ export interface WordCalls {
   trackedChanges: WordCall[];
   /** The change-tracking mode at the time of the last recorded write. */
   changeTrackingMode: string;
-  /** Number of times body.getOoxml() was read. */
-  ooxmlReads: number;
   /** Number of ambiguous whole-body searches requested by write code. */
   searches: number;
 }
@@ -73,7 +71,6 @@ export function installOfficeMock(seed: OfficeSeed): void {
     inserts: [],
     trackedChanges: [],
     changeTrackingMode: "Off",
-    ooxmlReads: 0,
     searches: 0,
   };
   w.__WORD_CALLS__ = wordCalls;
@@ -178,18 +175,6 @@ export function installOfficeMock(seed: OfficeSeed): void {
         return w.__OFFICE_SEED__.documentText as string;
       },
       load: (_p?: any) => undefined,
-      getOoxml: () => {
-        wordCalls.ooxmlReads++;
-        return {
-          get value() {
-            return (
-              '<?xml version="1.0"?><w:document>' +
-              w.__OFFICE_SEED__.documentText +
-              "</w:document>"
-            );
-          },
-        };
-      },
       search: (query: string, _opts?: any) => {
         wordCalls.searches++;
         const docText: string = w.__OFFICE_SEED__.documentText || "";
