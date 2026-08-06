@@ -7,9 +7,9 @@
 # this job "e2e / playwright" as a required status check in branch protection —
 # see docs/e2e-ci.md ("Make it merge-blocking").
 #
-# The suite is green with NO secret: the 4 LLM-dependent specs (chat + critical
-# path) skip themselves when ANTHROPIC_API_KEY is absent (see e2e/llm.ts), so a
-# keyless run passes the other 23 specs. The gate exists because the app has no
+# The suite is green with NO secret: of the 31 specs, the 4 LLM-dependent ones
+# (chat + critical path) skip themselves when ANTHROPIC_API_KEY is absent (see
+# e2e/llm.ts), so a keyless run passes the other 27 specs. The gate exists because the app has no
 # keyless model — with no provider key configured, ChatInput blocks every send —
 # not because of the (best-effort) title-generation call. To run and enforce
 # those 4, set the ANTHROPIC_API_KEY repository secret; exact steps, the
@@ -56,7 +56,7 @@ jobs:
       # specs can skip themselves when no key is present — see e2e/llm.ts. When the
       # secret is set they run and are enforced; when absent they skip, so a keyless
       # run (e.g. a fork PR, which never receives this secret) is still green on
-      # the other 23 specs. Setup: docs/e2e-ci.md, "Enable the LLM specs".
+      # the other 27 of the 31 specs. Setup: docs/e2e-ci.md, "Enable the LLM specs".
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - uses: actions/checkout@v4
