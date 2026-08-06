@@ -177,6 +177,40 @@ describe("POST /chat — streaming endpoint", () => {
         expect(res.body.detail).toBe(detail);
         expect(runLLMStream).not.toHaveBeenCalled();
     });
+
+    it("returns 400 when document_context is not a string", async () => {
+        const res = await request(app)
+            .post("/chat")
+            .set("Authorization", "Bearer test")
+            .send({ ...VALID_BODY, document_context: 42 });
+
+        expect(res.status).toBe(400);
+        expect(res.body.detail).toBe("document_context must be a string");
+        expect(runLLMStream).not.toHaveBeenCalled();
+    });
+
+    it("fences document_context with the per-request nonce and passes it to buildMessages", async () => {
+        const chatLib = await import("../../lib/chat");
+        const res = await request(app)
+            .post("/chat")
+            .set("Authorization", "Bearer test")
+            .send({
+                ...VALID_BODY,
+                document_context: "GOVERNED BY DELAWARE LAW",
+            });
+
+        expect(res.status).toBe(200);
+        const call = vi.mocked(chatLib.buildMessages).mock.calls[0];
+        const systemPromptExtra = call[2] as string;
+        const nonce = call[5] as string;
+        // The Word document body enters the system prompt only inside the
+        // untrusted-content fence, and that fence carries the SAME nonce the
+        // rest of the request uses — one nonce per request, no second fence.
+        expect(systemPromptExtra).toContain(
+            `<untrusted-content nonce="${nonce}">\nGOVERNED BY DELAWARE LAW\n</untrusted-content nonce="${nonce}">`,
+        );
+    });
+
 });
 
 describe("PATCH /chat/:chatId", () => {
