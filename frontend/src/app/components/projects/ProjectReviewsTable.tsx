@@ -6,6 +6,7 @@ import {
     RowActionMenuItems,
     RowActions,
 } from "@/app/components/shared/RowActions";
+import { TableLoadMoreRow } from "@/app/components/shared/TableLoadMoreRow";
 import {
     TABLE_CHECKBOX_CLASS,
     SkeletonDot,
@@ -376,24 +377,14 @@ export function ProjectReviewsTable({
                     })}
                 </TableBody>
             )}
-            {!loading && hasMore && reviews.length > 0 && (
-                <div className="flex justify-center py-3">
-                    <button
-                        onClick={onLoadMore}
-                        disabled={loadingMore}
-                        className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-gray-500 transition-colors hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                        {loadingMore && (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                        )}
-                        {loadingMore
-                            ? "Loading…"
-                            : loadMoreError
-                              ? "Retry loading"
-                              : "Load more"}
-                    </button>
-                </div>
-            )}
+            <TableLoadMoreRow
+                loading={loading}
+                hasMore={hasMore}
+                itemCount={reviews.length}
+                loadingMore={loadingMore}
+                hasError={!!loadMoreError}
+                onLoadMore={onLoadMore}
+            />
         </TableScrollArea>
     );
 }
