@@ -114,10 +114,28 @@ vi.mock("../../lib/documentVersions", () => ({
 import { app } from "../../app";
 import crypto from "crypto";
 import { manifestPublicKey } from "../../lib/manifestSigning";
+import { createServerSupabase } from "../../lib/supabase";
 
 const SIGNING_KEY = "3b".repeat(32);
 
 const AUTH = ["Authorization", "Bearer test"] as const;
+
+// Wraps mockSupabase()'s rpc so the next request's exact RPC call args can be
+// asserted on — the shared mock otherwise only lets tests control the
+// *response*, not inspect what was sent.
+function captureRpcArgs(): { args: unknown } {
+    const captured: { args: unknown } = { args: undefined };
+    vi.mocked(createServerSupabase).mockImplementationOnce(() => {
+        const db = mockSupabase();
+        const originalRpc = db.rpc;
+        db.rpc = vi.fn((name: string, args: unknown) => {
+            captured.args = args;
+            return originalRpc(name, args as never);
+        });
+        return db as unknown as ReturnType<typeof createServerSupabase>;
+    });
+    return captured;
+}
 
 describe("projects.routes", () => {
     beforeEach(() => {
@@ -189,6 +207,82 @@ describe("projects.routes", () => {
             supabaseState.rpc = { data: null, error: { message: "boom" } };
 
             const res = await request(app).get("/projects").set(...AUTH);
+
+            expect(res.status).toBe(500);
+            expect(res.body.detail).toBe("boom");
+        });
+
+        // Regression guard: the sidebar nav, the document-picker directory
+        // view, and the tabular-review project pickers all call GET /projects
+        // with no query params and need the full, unpaginated list back. If
+        // this ever silently switched to the paginated RPC shape by default,
+        // those callers would start seeing a truncated list with no error.
+        it("calls the legacy 2-arg RPC shape when no pagination params are present", async () => {
+            const captured = captureRpcArgs();
+            supabaseState.rpc = { data: [], error: null };
+
+            await request(app).get("/projects").set(...AUTH);
+
+            expect(captured.args).toEqual({
+                p_user_id: "u1",
+                p_user_email: "u1@test.local",
+            });
+        });
+
+        it("calls the paginated RPC shape with every filter parsed once any pagination param is present", async () => {
+            const captured = captureRpcArgs();
+            supabaseState.rpc = { data: [], error: null };
+
+            await request(app)
+                .get(
+                    "/projects?limit=10&scope=mine&sort_key=name&sort_direction=asc" +
+                        "&search=acme&practice=Litigation&owner_user_id=u2",
+                )
+                .set(...AUTH);
+
+            expect(captured.args).toEqual({
+                p_user_id: "u1",
+                p_user_email: "u1@test.local",
+                p_scope: "mine",
+                p_limit: 10,
+                p_offset: 0,
+                p_search_term: "acme",
+                p_sort_key: "name",
+                p_sort_direction: "asc",
+                p_practice: "Litigation",
+                p_owner_user_id: "u2",
+            });
+        });
+    });
+
+    // ── GET /projects/ids (select-all-matching support) ──────────────────
+    describe("GET /projects/ids", () => {
+        it("pages through the RPC until an empty page is returned", async () => {
+            const rpcMock = vi
+                .fn()
+                .mockResolvedValueOnce({
+                    data: [{ id: "p1", user_id: "u1" }],
+                    error: null,
+                })
+                .mockResolvedValueOnce({ data: [], error: null });
+            vi.mocked(createServerSupabase).mockImplementationOnce(() => {
+                const db = mockSupabase();
+                db.rpc = rpcMock;
+                return db as unknown as ReturnType<typeof createServerSupabase>;
+            });
+
+            const res = await request(app).get("/projects/ids").set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual([{ id: "p1", user_id: "u1" }]);
+            expect(rpcMock).toHaveBeenCalledTimes(2);
+            expect(rpcMock.mock.calls[0][0]).toBe("get_project_ids_overview");
+        });
+
+        it("returns 500 with detail when the RPC errors", async () => {
+            supabaseState.rpc = { data: null, error: { message: "boom" } };
+
+            const res = await request(app).get("/projects/ids").set(...AUTH);
 
             expect(res.status).toBe(500);
             expect(res.body.detail).toBe("boom");

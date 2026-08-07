@@ -170,6 +170,60 @@ export async function listProjects(options?: {
     return apiRequest<Project[]>(`/projects${query}`);
 }
 
+// Paginated sibling of listProjects() used only by ProjectsOverview.tsx.
+// Deliberately a separate function, not an overload of listProjects — the
+// backend route decides whether to paginate based on whether any of these
+// query params are present at all, so listProjects() must keep sending none
+// of them (every other caller — the sidebar, the document-picker directory
+// view, the tabular-review project pickers — needs the full unpaginated list).
+export async function listProjectsPage(pagination?: {
+    limit?: number;
+    offset?: number;
+    search?: string;
+    sortKey?: string;
+    sortDirection?: "asc" | "desc";
+    scope?: "all" | "mine" | "shared";
+    practice?: string;
+    ownerUserId?: string;
+    signal?: AbortSignal;
+}): Promise<Project[]> {
+    const params = new URLSearchParams();
+    if (pagination?.limit) params.set("limit", String(pagination.limit));
+    if (pagination?.offset) params.set("offset", String(pagination.offset));
+    if (pagination?.search) params.set("search", pagination.search);
+    if (pagination?.sortKey) params.set("sort_key", pagination.sortKey);
+    if (pagination?.sortDirection) params.set("sort_direction", pagination.sortDirection);
+    if (pagination?.scope && pagination.scope !== "all")
+        params.set("scope", pagination.scope);
+    if (pagination?.practice) params.set("practice", pagination.practice);
+    if (pagination?.ownerUserId) params.set("owner_user_id", pagination.ownerUserId);
+
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    return apiRequest<Project[]>(`/projects${qs}`, {
+        signal: pagination?.signal,
+    });
+}
+
+export async function listProjectIds(options?: {
+    search?: string;
+    scope?: "all" | "mine" | "shared";
+    practice?: string;
+    ownerUserId?: string;
+    signal?: AbortSignal;
+}): Promise<{ id: string; user_id: string }[]> {
+    const params = new URLSearchParams();
+    if (options?.search) params.set("search", options.search);
+    if (options?.scope && options.scope !== "all") params.set("scope", options.scope);
+    if (options?.practice) params.set("practice", options.practice);
+    if (options?.ownerUserId) params.set("owner_user_id", options.ownerUserId);
+
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    return apiRequest<{ id: string; user_id: string }[]>(
+        `/projects/ids${qs}`,
+        { signal: options?.signal },
+    );
+}
+
 export async function createProject(
     name: string,
     cm_number?: string,

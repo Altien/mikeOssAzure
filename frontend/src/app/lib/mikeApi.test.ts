@@ -72,7 +72,9 @@ import {
     listHiddenWorkflows,
     listMcpConnectors,
     listProjectChats,
+    listProjectIds,
     listProjects,
+    listProjectsPage,
     listStandaloneDocuments,
     listTabularReviewIds,
     listTabularReviews,
@@ -258,6 +260,21 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         expect(lastFetchCall().url).toBe(
             "http://localhost:3001/projects?include=documents",
         );
+    });
+
+    // Regression guard: the sidebar nav, the document-picker directory view,
+    // and the tabular-review project pickers all call listProjects() with no
+    // arguments and need every project back. The backend route decides
+    // whether to paginate purely by checking whether pagination-related
+    // query params are present at all — if listProjects() ever started
+    // sending one, those callers would silently start seeing a truncated
+    // list instead of an error.
+    it("sends no query string at all, so the backend never paginates it", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listProjects();
+
+        expect(lastFetchCall().url).toBe("http://localhost:3001/projects");
     });
 
     it("returns undefined for 204 responses", async () => {
@@ -784,6 +801,95 @@ describe("listTabularReviewIds", () => {
         expect(lastFetchCall().url).toBe(
             "http://localhost:3001/tabular-review/ids",
         );
+    });
+});
+
+describe("listProjectsPage", () => {
+    it("requests the bare collection when no filters are given", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listProjectsPage();
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/projects");
+        expect(init.signal).toBeUndefined();
+    });
+
+    it("serializes every pagination knob and forwards the abort signal", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+        const controller = new AbortController();
+
+        await listProjectsPage({
+            limit: 30,
+            offset: 60,
+            search: "acquisitions",
+            sortKey: "files",
+            sortDirection: "desc",
+            scope: "mine",
+            practice: "Litigation",
+            ownerUserId: "user-2",
+            signal: controller.signal,
+        });
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe(
+            "http://localhost:3001/projects" +
+                "?limit=30&offset=60&search=acquisitions" +
+                "&sort_key=files&sort_direction=desc&scope=mine" +
+                "&practice=Litigation&owner_user_id=user-2",
+        );
+        expect(init.signal).toBe(controller.signal);
+    });
+
+    it('omits the scope param for "all" — the backend default', async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listProjectsPage({ scope: "all", limit: 10 });
+
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/projects?limit=10",
+        );
+    });
+});
+
+describe("listProjectIds", () => {
+    it("requests the bare id list when no filters are given", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listProjectIds();
+
+        expect(lastFetchCall().url).toBe("http://localhost:3001/projects/ids");
+    });
+
+    it("scopes ids by search, scope, practice, and owner so select-all matches the visible filter", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([{ id: "p1", user_id: "u1" }]));
+        const controller = new AbortController();
+
+        const ids = await listProjectIds({
+            search: "nda",
+            scope: "mine",
+            practice: "Litigation",
+            ownerUserId: "user-2",
+            signal: controller.signal,
+        });
+
+        expect(ids).toEqual([{ id: "p1", user_id: "u1" }]);
+        const { url, init } = lastFetchCall();
+        // Select-all-then-delete deletes whatever this returns; if the query
+        // here is broader than the list query, users delete unseen projects.
+        expect(url).toBe(
+            "http://localhost:3001/projects/ids?search=nda&scope=mine" +
+                "&practice=Litigation&owner_user_id=user-2",
+        );
+        expect(init.signal).toBe(controller.signal);
+    });
+
+    it('omits the scope param for "all"', async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listProjectIds({ scope: "all" });
+
+        expect(lastFetchCall().url).toBe("http://localhost:3001/projects/ids");
     });
 });
 

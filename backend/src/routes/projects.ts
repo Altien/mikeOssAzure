@@ -32,6 +32,14 @@ import {
   findMissingUserEmails,
   loadProfileUsersByEmail,
 } from "../lib/userLookup";
+import { parsePaginationQuery } from "../lib/pagination";
+import { normalizeSearchTerm } from "../lib/search";
+import { parseProjectSort } from "../lib/sort";
+import {
+  buildProjectIdsOverviewRpcArgs,
+  buildProjectsOverviewRpcArgs,
+  parseProjectScope,
+} from "../lib/projectsOverview";
 
 export const projectsRouter = Router();
 
@@ -164,16 +172,50 @@ async function attachChatCreatorLabels(
 // projects that burst — auth check plus several DB queries per request —
 // could overwhelm the Supabase gateway. Batching keeps it at one request
 // and a fixed number of queries regardless of project count.
+//
+// Pagination is opt-in via query params (limit/offset/search/sort_key or
+// key/scope) — only ProjectsOverview.tsx sends them. Every other caller
+// (sidebar nav, document-picker directory view, tabular-review project
+// pickers) calls this with no query params at all and must keep getting the
+// full, unpaginated list back, so the branch below must never default to
+// paginating a request that didn't ask for it.
+const PROJECT_PAGINATION_QUERY_KEYS = [
+  "limit",
+  "offset",
+  "search",
+  "sort_key",
+  "key",
+  "sort_direction",
+  "direction",
+  "scope",
+  "practice",
+  "owner_user_id",
+];
+
 projectsRouter.get("/", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const includeDocuments = req.query.include === "documents";
   const db = createServerSupabase();
 
-  const { data, error } = await db.rpc("get_projects_overview", {
-    p_user_id: userId,
-    p_user_email: userEmail ?? null,
-  });
+  const hasPaginationParams = PROJECT_PAGINATION_QUERY_KEYS.some(
+    (key) => req.query[key] !== undefined,
+  );
+
+  const rpcArgs = hasPaginationParams
+    ? buildProjectsOverviewRpcArgs({
+        userId,
+        userEmail,
+        scope: parseProjectScope(req.query.scope),
+        pagination: parsePaginationQuery(req.query as Record<string, unknown>),
+        searchTerm: normalizeSearchTerm(req.query.search),
+        sort: parseProjectSort(req.query as Record<string, unknown>),
+        practice: normalizeSearchTerm(req.query.practice),
+        ownerUserId: normalizeSearchTerm(req.query.owner_user_id),
+      })
+    : { p_user_id: userId, p_user_email: userEmail ?? null };
+
+  const { data, error } = await db.rpc("get_projects_overview", rpcArgs);
   if (error) return void res.status(500).json({ detail: error.message });
 
   const projects = (data ?? []) as { id: string }[];
@@ -286,6 +328,56 @@ projectsRouter.post("/", requireAuth, async (req, res) => {
     .single();
   if (error) return void res.status(500).json({ detail: error.message });
   res.status(201).json({ ...data, documents: [] });
+});
+
+// GET /projects/ids (must come before /:projectId routes)
+// Lightweight id + owner list for every project matching the current
+// filters — backs "select all matching" bulk actions so the client doesn't
+// have to page through full project payloads just to collect checkboxes.
+//
+// PostgREST enforces its own row cap on every RPC response (db-max-rows),
+// independent of anything this route asks for, and truncates silently
+// rather than failing. So this pages through the RPC itself — server-side,
+// same-datacenter round trips — until a page comes back empty, rather than
+// trusting one call to return everything.
+const PROJECT_IDS_PAGE_SIZE = 1000;
+const PROJECT_IDS_MAX_PAGES = 200; // guards a runaway loop, not a product limit
+
+projectsRouter.get("/ids", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string | undefined;
+  const db = createServerSupabase();
+
+  const searchTerm = normalizeSearchTerm(req.query.search);
+  const scope = parseProjectScope(req.query.scope);
+  const practice = normalizeSearchTerm(req.query.practice);
+  const ownerUserId = normalizeSearchTerm(req.query.owner_user_id);
+
+  const ids: { id: string; user_id: string }[] = [];
+  let offset = 0;
+  for (let page = 0; page < PROJECT_IDS_MAX_PAGES; page++) {
+    const rpcArgs = buildProjectIdsOverviewRpcArgs({
+      userId,
+      userEmail,
+      scope,
+      searchTerm,
+      practice,
+      ownerUserId,
+      pagination: { limit: PROJECT_IDS_PAGE_SIZE, offset },
+    });
+    const { data, error } = await db.rpc("get_project_ids_overview", rpcArgs);
+    if (error) return void res.status(500).json({ detail: error.message });
+
+    const rows = (data ?? []) as { id: string; user_id: string }[];
+    if (rows.length === 0) break;
+    ids.push(...rows);
+    // Advance by what actually came back, not the requested page size — if
+    // PostgREST's cap is lower than PROJECT_IDS_PAGE_SIZE this still
+    // converges correctly instead of skipping rows.
+    offset += rows.length;
+  }
+
+  res.json(ids);
 });
 
 // GET /projects/:projectId
