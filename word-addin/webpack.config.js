@@ -146,6 +146,13 @@ module.exports = async (_env, options) => {
           test: /\.css$/,
           use: ["style-loader", "css-loader", "postcss-loader"],
         },
+        {
+          test: /\.svg$/i,
+          type: "asset/resource",
+          generator: {
+            filename: "icons/[name].[contenthash][ext]",
+          },
+        },
       ],
     },
     plugins: [
@@ -168,7 +175,9 @@ module.exports = async (_env, options) => {
       new webpack.EnvironmentPlugin({
         // Backend ORIGIN (no /api suffix) — same meaning as the web
         // frontend's NEXT_PUBLIC_API_BASE_URL.
-        REACT_APP_API_BASE_URL: isDev ? "http://localhost:3001" : undefined,
+        // Upstream divergence (sync-log: 148635e3): same-origin /api and
+        // /config retain the Entra runtime configuration boundary.
+        REACT_APP_API_BASE_URL: isDev ? "" : undefined,
         REACT_APP_DEFAULT_MODEL: "claude-sonnet-4-6",
         // The Mike web app origin — the task pane links here (e.g. the
         // account/api-keys page); it never fetches from it.

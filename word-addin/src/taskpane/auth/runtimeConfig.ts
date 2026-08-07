@@ -28,7 +28,7 @@ export interface RuntimeConfig {
 // that throws "process is not defined" in the browser.
 const RAW_API_ORIGIN: string =
   (typeof process !== "undefined" && process.env.REACT_APP_API_BASE_URL) ||
-  "http://localhost:3001";
+  "";
 
 /** Backend origin, no trailing slash (same meaning as NEXT_PUBLIC_API_BASE_URL). */
 export const API_ORIGIN: string = RAW_API_ORIGIN.replace(/\/+$/, "");

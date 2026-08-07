@@ -69,3 +69,20 @@ export async function listProjectDocuments(
   }
   return res.json() as Promise<Document[]>;
 }
+
+export interface AzureModelOption {
+  id: string;
+  label: string;
+  group: "Azure OpenAI";
+}
+
+/** Upstream divergence (sync-log: 148635e3): dev discovers Azure deployments instead of Ollama. */
+export async function getAzureModels(): Promise<AzureModelOption[]> {
+  const res = await fetchWithRefresh(`${BASE_URL}/llm/azure-openai/deployments`, {
+    cache: "no-store",
+    headers: { Accept: "application/json", ...(await getAuthHeaders()) },
+  });
+  if (!res.ok) return [];
+  const body = (await res.json()) as { deployments?: { name: string; model?: string | null }[] };
+  return (body.deployments ?? []).map((d) => ({ id: `aoai:${d.name}`, label: d.model ? `${d.name} (${d.model})` : d.name, group: "Azure OpenAI" }));
+}

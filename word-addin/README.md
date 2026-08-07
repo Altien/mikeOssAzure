@@ -1,6 +1,6 @@
 # Mike Word Add-in
 
-An Office.js task pane add-in that brings the Mike legal AI platform directly into Microsoft Word. From the task pane you can chat with an AI about the open document (with optional full-document context), apply AI suggestions as tracked-change redlines, run one-click actions (improve writing, proofread, anonymise, draft clause), execute saved Mike workflows against the document, and browse or upload to Mike projects — all without leaving Word.
+An Office.js task pane add-in that brings the Mike legal AI platform directly into Microsoft Word. From the task pane you can chat with an AI about the open document, attach additional documents and workflows, choose a model, apply AI suggestions as tracked-change redlines, run quick actions (improve writing, proofread, anonymise, draft clause), and execute saved Mike workflows against the document — all without leaving Word.
 
 The add-in talks to the **same backend as the web app**: sign-in is **Microsoft Entra** via MSAL.js (Nested App Authentication, with an Office-dialog fallback — see [Signing in](#signing-in)), configured at runtime from the backend's `GET /config`; chat, actions, workflows, projects, and uploads call the Mike API under `/api` (`http://localhost:3001` in local development).
 
@@ -100,7 +100,7 @@ The sections below explain each step the script automates, and the manual / web 
    pnpm start
    ```
 
-   This runs `office-addin-debugging start manifest.xml`, which starts the webpack dev server on `https://localhost:3000` **and** automatically opens Word with the add-in sideloaded. The task pane appears under **Home → Mike Legal AI → Open Mike**.
+   This runs `office-addin-debugging start manifest.xml`, which starts the webpack dev server on `https://localhost:3000` **and** automatically opens Word with the add-in sideloaded. The task pane appears under **Home → Mike Legal AI → Mike**.
 
 ---
 
@@ -143,14 +143,24 @@ If the add-in is hosted on a different origin than `FRONTEND_URL`, the backend's
 
 ## Features
 
-### Chat tab
+### Chat
 
-Ask any question about the open document. Toggle **Use document as context** to send the full document text to the AI with each message (posted to the backend as `documentContext`, which `POST /chat` nonce-fences into the system prompt as reference data). Responses stream in real time. On any AI response you can:
+Ask any question about the open document. The add-in always reads the current document into `document_context` and always asks the model to return applyable tracked-edit blocks when it proposes textual changes. Responses stream in real time.
+
+The composer mirrors the web assistant controls:
+
+- **Add documents** opens the same library-style selector used by the web assistant. Search and select files, templates, or project documents, or upload new files from inside the modal; confirmed documents appear as removable chips and are attached to the next message.
+- **Add workflows** opens the assistant workflow picker. The selected workflow appears as a removable chip and is attached to the next message.
+- **Model** opens the same grouped Anthropic, Google, OpenAI, and dynamically discovered Azure OpenAI choices used by the web app.
+
+The chat header and composer float over the message surface. Use **New chat** to clear the current conversation, **Chat history** to reopen a saved conversation, and the hamburger menu to access Quick Actions, Workflows, or Sign out.
+
+On any AI response you can:
 
 - **Insert below cursor** — inserts one or more real paragraphs after the paragraph containing the current selection; selected text is never overwritten
 - **Insert below (tracked)** — performs the same paragraph-aware insertion with change tracking enabled, then restores the user's prior tracking mode
 
-### Actions tab
+### Quick Actions
 
 One-click AI operations, each streaming their result into a result box:
 
@@ -161,13 +171,9 @@ One-click AI operations, each streaming their result into a result box:
 | **Anonymise** | Scans the **entire document** for PII (names, addresses, phone numbers, dates of birth, IDs, etc.) and streams proposed anonymised replacements in the same format. **Apply N redactions (tracked)** replaces every occurrence of each PII string as a tracked change. |
 | **Draft Clause** | Enter a description of the clause you need, then click **Draft clause**. The result is normalised from model Markdown into Word paragraphs and can be inserted below the cursor with or without tracking. |
 
-### Workflows tab
+### Workflows
 
 Select a saved Mike workflow from the dropdown and click **Run workflow on document**. The workflow instruction and document context are sent to the API. Results stream in and can be inserted as paragraphs below the cursor.
-
-### Projects tab
-
-Browse Mike projects you have access to. Selecting a project shows all documents currently in it. Click **Upload current document to project** to export the open Word document as a `.docx` file and upload it to the selected project via the Mike backend.
 
 ---
 
