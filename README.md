@@ -122,3 +122,7 @@ AGPL-3.0-only. See [LICENSE](LICENSE).
 The application is derived from
 [`willchen96/mike`](https://github.com/willchen96/mike). The Azure adaptation
 is maintained by Altien.
+
+## Microsoft Word add-in (Beta)
+
+The Mike Word add-in brings Mike into a Word task pane for document chat, quick actions, workflows, supporting files, and tracked edits. See [the Word add-in guide](word-addin/README.md) for setup and Entra sign-in.
