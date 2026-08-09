@@ -9,6 +9,7 @@ import fs from "node:fs";
 // ("Sync security and backend profile updates"). Adapted to dev's
 // `/api/` route prefix for per-route limiter decorators.
 import { chatRouter } from "./routes/chat";
+import { wordChatRouter } from "./routes/wordChat";
 import { projectsRouter } from "./routes/projects";
 import { projectChatRouter } from "./routes/projectChat";
 import { documentsRouter } from "./routes/documents";
@@ -270,6 +271,7 @@ export function buildApp(): express.Express {
   // /api/ prefix). Must be registered before the corresponding router
   // mounts so express runs them ahead of the route handler.
   app.post("/api/chat", chatLimiter);
+  app.post("/api/word-chat", chatLimiter);
   app.post("/api/projects/:projectId/chat", chatLimiter);
   app.post("/api/tabular-review/:reviewId/chat", chatLimiter);
   app.post("/api/tabular-review/:reviewId/generate", chatLimiter);
@@ -300,6 +302,7 @@ export function buildApp(): express.Express {
   }
 
   app.use("/api/chat", chatRouter);
+  app.use("/api/word-chat", wordChatRouter);
   app.use("/api/projects", projectsRouter);
   app.use("/api/projects/:projectId/chat", projectChatRouter);
   app.use("/api/single-documents", documentsRouter);

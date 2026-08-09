@@ -172,6 +172,8 @@ export async function runLLMStream(params: {
   fastModel?: string;
   apiKeys?: import("../llm").UserApiKeys;
   signal?: AbortSignal;
+  /** Let a route persist the completed turn before it signals stream success. */
+  emitDone?: boolean;
   /**
    * If set, generate_docx will attach created docs to this project so
    * they appear in the project sidebar. Leave null for general chats —
@@ -638,7 +640,9 @@ export async function runLLMStream(params: {
   write(
     `data: ${JSON.stringify({ type: "citations", status: "final", citations })}\n\n`,
   );
-  write("data: [DONE]\n\n");
+  if (params.emitDone !== false) {
+    write("data: [DONE]\n\n");
+  }
 
   return { fullText, events, citations };
 }

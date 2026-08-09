@@ -1,4 +1,3 @@
-import { GoogleGenAI } from "@google/genai";
 import type {
   StreamChatParams,
   StreamChatResult,
@@ -47,8 +46,9 @@ async function apiKey(override?: string | null): Promise<string> {
     return key;
 }
 
-async function client(override?: string | null): Promise<GoogleGenAI> {
-    return new GoogleGenAI({ apiKey: await apiKey(override) });
+async function client(override?: string | null) {
+  const { GoogleGenAI } = await import("@google/genai");
+  return new GoogleGenAI({ apiKey: await apiKey(override) });
 }
 
 function toNativeContents(
