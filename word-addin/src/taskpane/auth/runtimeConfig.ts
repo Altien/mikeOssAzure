@@ -27,7 +27,7 @@ export interface RuntimeConfig {
 // registered vars, and a stale dev server can leave a literal `process.env...`
 // that throws "process is not defined" in the browser.
 const RAW_API_ORIGIN: string =
-  (typeof process !== "undefined" && process.env.REACT_APP_API_BASE_URL) ||
+  process.env.REACT_APP_API_BASE_URL ||
   "";
 
 /** Backend origin, no trailing slash (same meaning as NEXT_PUBLIC_API_BASE_URL). */

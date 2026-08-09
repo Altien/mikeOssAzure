@@ -5,12 +5,12 @@
  * apps/web/src/app/lib/mikeApi.ts, but its auth comes from ../auth/session
  * (Entra via MSAL in this fork) instead of a browser SDK session.
  *
- * Components import API functions FROM THIS MODULE (not from "@mike/api-client"
+ * Components import API functions FROM THIS MODULE (not from the base client
  * directly) so that importing any of them runs the side-effecting
  * configureMikeApiClient() below before the first request leaves.
  */
-import { configureMikeApiClient } from "@mike/api-client";
-import type { Document } from "@mike/core";
+import { configureMikeApiClient } from "./client";
+import type { Chat, Document, Message } from "../types";
 import { getFreshAccessToken, refreshSession } from "../auth/session";
 import { API_BASE_URL } from "../auth/runtimeConfig";
 
@@ -23,8 +23,8 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-// Reactive 401 recovery in ONE place (replaces the old client.ts replay): if a
-// request is rejected, refresh the session once and replay with the new token.
+// Centralized reactive 401 recovery: refresh the session once, then replay the
+// rejected request with the new token.
 const fetchWithRefresh: typeof fetch = async (input, init) => {
   const res = await fetch(input, init);
   if (res.status !== 401) return res;
@@ -41,10 +41,22 @@ configureMikeApiClient({
   fetchImpl: fetchWithRefresh,
 });
 
-export * from "@mike/api-client";
+export {
+  createWorkflow,
+  getApiKeyStatus,
+  getLibrary,
+  getUserProfile,
+  listProjects,
+  listWorkflows,
+  readSSE,
+  streamWordChat,
+  updateWorkflow,
+  uploadStandaloneDocument,
+} from "./client";
+export type { ApiKeyStatus } from "./client";
 
 /**
- * List a project's documents (GET /projects/:id/documents). @mike/api-client
+ * List a project's documents (GET /projects/:id/documents). The base client
  * exposes no wrapper for this endpoint (the web app reads project.documents off
  * GET /projects/:id instead), so this thin helper reuses the SAME configured
  * auth + 401-refresh transport as the rest of the client rather than
@@ -85,4 +97,94 @@ export async function getAzureModels(): Promise<AzureModelOption[]> {
   if (!res.ok) return [];
   const body = (await res.json()) as { deployments?: { name: string; model?: string | null }[] };
   return (body.deployments ?? []).map((d) => ({ id: `aoai:${d.name}`, label: d.model ? `${d.name} (${d.model})` : d.name, group: "Azure OpenAI" }));
+}
+
+interface WordChatServerMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string | WordChatServerEvent[] | null;
+  files?: { filename: string; document_id?: string }[] | null;
+  workflow?: { id: string; title: string } | null;
+}
+
+interface WordChatServerEvent {
+  type?: unknown;
+  text?: unknown;
+}
+
+async function throwWordChatResponseError(
+  response: Response,
+  fallback: string
+): Promise<never> {
+  const body = await response.text().catch(() => "");
+  throw new Error(body || `${fallback} (${response.status}).`);
+}
+
+export async function listCloudWordChats(
+  documentId: string,
+  limit: number,
+  signal?: AbortSignal
+): Promise<Chat[]> {
+  const params = new URLSearchParams({
+    document_id: documentId,
+    limit: String(limit),
+  });
+  const res = await fetchWithRefresh(`${BASE_URL}/word-chat?${params}`, {
+    cache: "no-store",
+    signal,
+    headers: { Accept: "application/json", ...(await getAuthHeaders()) },
+  });
+  if (!res.ok) {
+    await throwWordChatResponseError(res, "Failed to load Word chats");
+  }
+  return res.json() as Promise<Chat[]>;
+}
+
+export async function getCloudWordChat(
+  documentId: string,
+  chatId: string
+): Promise<{ chat: Chat; messages: Message[] }> {
+  const params = new URLSearchParams({ document_id: documentId });
+  const res = await fetchWithRefresh(
+    `${BASE_URL}/word-chat/${encodeURIComponent(chatId)}?${params}`,
+    {
+      cache: "no-store",
+      headers: { Accept: "application/json", ...(await getAuthHeaders()) },
+    }
+  );
+  if (!res.ok) {
+    await throwWordChatResponseError(res, "Failed to open Word chat");
+  }
+  const raw = (await res.json()) as {
+    chat: Chat;
+    messages: WordChatServerMessage[];
+  };
+  return {
+    chat: raw.chat,
+    messages: raw.messages.map((message): Message => {
+      if (message.role === "user") {
+        return {
+          id: message.id,
+          role: "user",
+          content: typeof message.content === "string" ? message.content : "",
+          files: message.files ?? undefined,
+          workflow: message.workflow ?? undefined,
+        };
+      }
+      return {
+        id: message.id,
+        role: "assistant",
+        content:
+          (Array.isArray(message.content)
+            ? message.content
+                .filter(
+                  (event) =>
+                    event.type === "content" && typeof event.text === "string"
+                )
+                .map((event) => event.text)
+                .join("")
+            : message.content) ?? "",
+      };
+    }),
+  };
 }

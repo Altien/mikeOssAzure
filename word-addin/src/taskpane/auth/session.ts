@@ -51,7 +51,7 @@ async function storageGet(key: string): Promise<string | null> {
   }
 }
 
-async function storageSet(key: string, value: string | null): Promise<void> {
+async function writeStorage(key: string, value: string | null): Promise<void> {
   try {
     if (typeof OfficeRuntime !== "undefined" && OfficeRuntime.storage) {
       if (value === null) await OfficeRuntime.storage.removeItem(key);
@@ -66,10 +66,20 @@ async function storageSet(key: string, value: string | null): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+function storageSet(key: string, value: string | null): Promise<void> {
+  const next = _storageOperation.then(() => writeStorage(key, value));
+  _storageOperation = next.catch(() => undefined);
+  return next;
+}
+
 // Module-level shared state. Every useAuth() instance and the API client read
 // through these, and broadcast() re-renders all subscribed hooks on change.
 // ---------------------------------------------------------------------------
 
+// Upstream divergence (sync-log: 169ec3e4): apply session race protection
+// around Entra/MSAL and local login instead of Supabase refresh tokens.
+let _sessionGeneration = 0;
+let _storageOperation: Promise<void> = Promise.resolve();
 let _mode: AuthMode | null = null;
 let _entra: EntraAuth | null = null;
 let _token: string | null = null;
@@ -126,6 +136,7 @@ function isExpiring(): boolean {
 // ---------------------------------------------------------------------------
 
 async function prepare(): Promise<void> {
+  const generation = _sessionGeneration;
   let cfg;
   try {
     cfg = await loadRuntimeConfig();
@@ -137,7 +148,7 @@ async function prepare(): Promise<void> {
   if (cfg.authProvider === "local") {
     _mode = "local";
     const stored = await storageGet(LOCAL_TOKEN_KEY);
-    if (stored) setToken({ accessToken: stored, expiresOn: null });
+    if (generation === _sessionGeneration && stored) setToken({ accessToken: stored, expiresOn: null });
     return;
   }
 
@@ -156,7 +167,8 @@ async function prepare(): Promise<void> {
   if (_setupError) return;
   _entra = await EntraAuth.create(cfg);
   if ((await storageGet(SIGNED_OUT_KEY)) === "1") return;
-  setToken(await _entra.acquireSilent());
+  const token = await _entra.acquireSilent();
+  if (generation === _sessionGeneration) setToken(token);
 }
 
 /** Resolve once the mode is known; a failed /config read is retried next call. */
@@ -193,9 +205,11 @@ export function initialize(): void {
  */
 export async function getFreshAccessToken(): Promise<string | null> {
   await ensureReady();
+  const generation = _sessionGeneration;
   if (_token && !isExpiring()) return _token;
   if (_mode === "entra" && _entra && _token) {
     const renewed = await _entra.acquireSilent();
+    if (generation !== _sessionGeneration) return null;
     if (renewed) {
       setToken(renewed);
       return renewed.accessToken;
@@ -221,15 +235,18 @@ export function refreshSession(): Promise<string | null> {
 
 async function doRefresh(): Promise<string | null> {
   await ensureReady();
+  const generation = _sessionGeneration;
+  if (!_token) return null;
   if (_mode === "entra" && _entra) {
     const renewed = await _entra.acquireSilent(true);
+    if (generation !== _sessionGeneration) return null;
     if (renewed) {
       setToken(renewed);
       return renewed.accessToken;
     }
   }
   if (_mode === "local") await storageSet(LOCAL_TOKEN_KEY, null);
-  setToken(null);
+  if (generation === _sessionGeneration) setToken(null);
   return null;
 }
 
@@ -237,7 +254,7 @@ async function doRefresh(): Promise<string | null> {
 // React-hook-facing auth actions
 // ---------------------------------------------------------------------------
 
-async function signInLocal(email: string): Promise<void> {
+async function signInLocal(email: string, generation: number): Promise<void> {
   const res = await fetch(`${API_BASE_URL}/auth/local-login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -249,7 +266,9 @@ async function signInLocal(email: string): Promise<void> {
   }
   const data = (await res.json()) as { token?: string };
   if (!data.token) throw new Error("Local login returned no token");
+  if (generation !== _sessionGeneration) return;
   await storageSet(LOCAL_TOKEN_KEY, data.token);
+  if (generation !== _sessionGeneration) return;
   setToken({ accessToken: data.token, expiresOn: null });
 }
 
@@ -258,6 +277,7 @@ async function signInLocal(email: string): Promise<void> {
  * must run from a user gesture. Local: `email` is required.
  */
 export async function signIn(email?: string): Promise<void> {
+  const generation = ++_sessionGeneration;
   _loading = true;
   _error = null;
   broadcast();
@@ -266,29 +286,35 @@ export async function signIn(email?: string): Promise<void> {
     await ensureReady();
     // A setup problem (unreachable server, unsupported mode, missing Entra
     // config) is already surfaced via getSessionState().error.
-    if (_setupError) return;
+    if (_setupError || generation !== _sessionGeneration) return;
     if (_mode === "entra" && _entra) {
       const token = await _entra.acquireInteractive();
+      if (generation !== _sessionGeneration) return;
       await storageSet(SIGNED_OUT_KEY, null);
+      if (generation !== _sessionGeneration) return;
       setToken(token);
     } else if (_mode === "local") {
       if (!email) throw new Error("Enter an email address");
-      await signInLocal(email);
+      await signInLocal(email, generation);
     }
   } catch (e) {
+    if (generation !== _sessionGeneration) return;
     _error = e instanceof Error ? e.message : "Sign-in failed";
   } finally {
+    if (generation !== _sessionGeneration) return;
     _loading = false;
     broadcast();
   }
 }
 
 export async function signOut(): Promise<void> {
+  ++_sessionGeneration;
+  _loading = false;
   _error = null;
+  setToken(null);
   if (_mode === "entra") {
     await storageSet(SIGNED_OUT_KEY, "1");
     await _entra?.signOut();
   }
   if (_mode === "local") await storageSet(LOCAL_TOKEN_KEY, null);
-  setToken(null);
 }
