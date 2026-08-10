@@ -6,14 +6,16 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "webpack serve --mode development",
+    "dev": "office-addin-debugging start manifest.xml --dev-server \"pnpm run dev:server\" --dev-server-port 3000",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "typecheck:app": "tsc --noEmit -p tsconfig.json",
     "build": "pnpm typecheck && webpack --mode production && node scripts/build-manifest.js",
     "prestart": "node scripts/clear-sideload.js",
-    "start": "office-addin-debugging start manifest.xml --dev-server \"pnpm run dev\" --dev-server-port 3000",
+    "start": "office-addin-debugging start manifest.xml --dev-server \"pnpm run dev:server\" --dev-server-port 3000",
     "stop": "office-addin-debugging stop manifest.xml",
-    "preinstall": "npx only-allow pnpm"
+    "preinstall": "npx only-allow pnpm",
+    "predev": "node scripts/clear-sideload.js",
+    "dev:server": "webpack serve --mode development"
   },
   "dependencies": {
     "@azure/msal-browser": "^4.30.0",

@@ -21,7 +21,7 @@ The add-in talks to the **same backend as the web app**: sign-in is **Microsoft 
 
 ## Quick start (one command)
 
-If the API is already running, this script does everything below for you — reads the backend origin (`NEXT_PUBLIC_API_BASE_URL` in `frontend/.env.local`, default `http://localhost:3001`), writes `.env.development`, installs dependencies, installs the trusted dev certificate, and launches the add-in into Word:
+If the API is already running, this script does everything below for you — reads the backend origin (`NEXT_PUBLIC_API_BASE_URL` in `frontend/.env.local`, default `http://localhost:3001`), writes `.env`, installs dependencies, installs the trusted dev certificate, and launches the add-in into Word:
 
 ```bash
 bash word-addin/scripts/dev.sh
@@ -62,7 +62,7 @@ The sections below explain each step the script automates, and the manual / web 
    Webpack loads `word-addin/.env` automatically for local development. Copy the example file or create it directly:
 
    ```bash
-   # word-addin/.env.development
+   # word-addin/.env
    REACT_APP_API_BASE_URL=https://localhost:3000
    ```
 
@@ -98,7 +98,7 @@ The sections below explain each step the script automates, and the manual / web 
    pnpm start
    ```
 
-   This runs `office-addin-debugging start manifest.xml`, which starts the webpack dev server on `https://localhost:3000` **and** automatically opens Word with the add-in sideloaded. The task pane appears under **Home → Mike Legal AI → Mike**.
+   Both commands run `office-addin-debugging start manifest.xml`, which starts the webpack dev server on `https://localhost:3000` **and** automatically opens Word with the add-in sideloaded. The task pane appears under **Home → Mike Legal AI → Mike**. Use `pnpm run dev:server` only when you intentionally want the raw webpack server without sideloading Word.
 
 ---
 
@@ -145,7 +145,7 @@ If the add-in is hosted on a different origin than `FRONTEND_URL`, the backend's
 
 Ask any question about the open document. The add-in sends Word conversations to the dedicated `POST /word-chat` route with the active document in `document_context`. That route adds the Word-specific system prompt server-side, while persisted user messages contain only the text the user typed. Responses stream in real time.
 
-Chat storage defaults to **Cloud**. Open **Settings** from the hamburger menu to switch to **This device only**, which bypasses server chat persistence and stores document-scoped conversations in IndexedDB. Switching locations does not copy or delete existing conversations; Chat History displays the currently selected location. Cloud storage requires the `20260809_01_word_addin_chats.sql` backend migration on existing databases (fresh databases receive the same tables from `backend/schema.sql`).
+Chat storage defaults to **Cloud**. Open **Settings** from the hamburger menu to switch to **This device only**, which bypasses server chat persistence and stores document-scoped conversations in IndexedDB. Switching locations does not copy or delete existing conversations; Chat History displays the currently selected location. Cloud storage requires the `0048_word_addin_chats.sql` backend migration on existing databases.
 
 The composer mirrors the web assistant controls:
 

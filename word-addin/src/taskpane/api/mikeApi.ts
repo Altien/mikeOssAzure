@@ -13,6 +13,11 @@ import { configureMikeApiClient } from "./client";
 import type { Chat, Document, Message } from "../types";
 import { getFreshAccessToken, refreshSession } from "../auth/session";
 import { API_BASE_URL } from "../auth/runtimeConfig";
+import {
+  assistantContentFromEvents,
+  documentReadsFromAssistantEvents,
+  normalizeStoredAssistantEvents,
+} from "../lib/wordChatEvents";
 
 // Dev fork: every backend router is mounted under /api (upstream's are at the
 // root), so the client's base is `${REACT_APP_API_BASE_URL}/api`.
@@ -64,19 +69,19 @@ export type { ApiKeyStatus } from "./client";
  * endpoint it has always called.
  */
 export async function listProjectDocuments(
-  projectId: string
+  projectId: string,
 ): Promise<Document[]> {
   const res = await fetchWithRefresh(
     `${BASE_URL}/projects/${projectId}/documents`,
     {
       cache: "no-store",
       headers: { Accept: "application/json", ...(await getAuthHeaders()) },
-    }
+    },
   );
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(
-      `GET /projects/${projectId}/documents failed (${res.status}): ${body}`
+      `GET /projects/${projectId}/documents failed (${res.status}): ${body}`,
     );
   }
   return res.json() as Promise<Document[]>;
@@ -102,19 +107,14 @@ export async function getAzureModels(): Promise<AzureModelOption[]> {
 interface WordChatServerMessage {
   id: string;
   role: "user" | "assistant";
-  content: string | WordChatServerEvent[] | null;
+  content: string | unknown[] | null;
   files?: { filename: string; document_id?: string }[] | null;
   workflow?: { id: string; title: string } | null;
 }
 
-interface WordChatServerEvent {
-  type?: unknown;
-  text?: unknown;
-}
-
 async function throwWordChatResponseError(
   response: Response,
-  fallback: string
+  fallback: string,
 ): Promise<never> {
   const body = await response.text().catch(() => "");
   throw new Error(body || `${fallback} (${response.status}).`);
@@ -123,7 +123,7 @@ async function throwWordChatResponseError(
 export async function listCloudWordChats(
   documentId: string,
   limit: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<Chat[]> {
   const params = new URLSearchParams({
     document_id: documentId,
@@ -142,7 +142,7 @@ export async function listCloudWordChats(
 
 export async function getCloudWordChat(
   documentId: string,
-  chatId: string
+  chatId: string,
 ): Promise<{ chat: Chat; messages: Message[] }> {
   const params = new URLSearchParams({ document_id: documentId });
   const res = await fetchWithRefresh(
@@ -150,7 +150,7 @@ export async function getCloudWordChat(
     {
       cache: "no-store",
       headers: { Accept: "application/json", ...(await getAuthHeaders()) },
-    }
+    },
   );
   if (!res.ok) {
     await throwWordChatResponseError(res, "Failed to open Word chat");
@@ -171,19 +171,20 @@ export async function getCloudWordChat(
           workflow: message.workflow ?? undefined,
         };
       }
+      const hasEventContent = Array.isArray(message.content);
+      const events = normalizeStoredAssistantEvents(message.content);
+      const content = hasEventContent
+        ? assistantContentFromEvents(events)
+        : typeof message.content === "string"
+          ? message.content
+          : "";
+      const docReads = documentReadsFromAssistantEvents(events);
       return {
         id: message.id,
         role: "assistant",
-        content:
-          (Array.isArray(message.content)
-            ? message.content
-                .filter(
-                  (event) =>
-                    event.type === "content" && typeof event.text === "string"
-                )
-                .map((event) => event.text)
-                .join("")
-            : message.content) ?? "",
+        content,
+        docReads: docReads.length > 0 ? docReads : undefined,
+        events: hasEventContent ? events : undefined,
       };
     }),
   };
