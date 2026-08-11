@@ -201,7 +201,7 @@ function ProjectTableLoadingHeader({ stickyCellBg }: { stickyCellBg: string }) {
                 widthClassName={DOC_NAME_COL_W}
                 bgClassName={stickyCellBg}
             >
-                <div className="mr-4 h-2.5 w-2.5 rounded bg-gray-100 animate-pulse" />
+                <div className="mr-3 h-2.5 w-2.5 rounded bg-gray-100 animate-pulse" />
                 <span className="mr-1">Name</span>
             </TableStickyCell>
             <TableHeaderCell className="ml-auto flex w-20 items-center gap-1">
@@ -229,9 +229,9 @@ function ProjectTableLoading({ stickyCellBg }: { stickyCellBg: string }) {
         <div className="flex-1 flex flex-col min-h-0">
             {[1, 2, 3, 4, 5].map((i) => (
                 <div key={i} className="flex h-10 min-w-max items-center pr-3">
-                    <div className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${stickyCellBg} py-2 pl-4 pr-2`}>
+                    <div className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${stickyCellBg} py-2 pl-3 pr-2`}>
                         <div className="flex items-center">
-                            <div className="mr-4 h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse" />
+                            <div className="mr-3 h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse" />
                             <div className="mr-2 h-4 w-4 shrink-0 rounded bg-gray-100 animate-pulse" />
                             <div
                                 className="h-3.5 rounded bg-gray-100 animate-pulse"
@@ -1170,11 +1170,11 @@ export function DocTable({
                 key={`new-folder-${parentId ?? "root"}`}
             >
                 <div
-                    className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${stickyCellBg} py-2 pl-4 pr-2`}
+                    className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${stickyCellBg} py-2 pl-3 pr-2`}
                     style={treeNameCellStyle(depth)}
                 >
                     <div className="flex items-center">
-                        <span className="mr-4 flex h-2.5 w-2.5 shrink-0 items-center justify-center">
+                        <span className="mr-3 flex h-2.5 w-2.5 shrink-0 items-center justify-center">
                             <ChevronRight className="h-3.5 w-3.5 text-gray-300" />
                         </span>
                         <SubfolderSvgIcon className="mr-2 h-4 w-4 shrink-0" />
@@ -1221,11 +1221,11 @@ export function DocTable({
         return (
             <div key={key} className="group flex h-10 min-w-max items-center pr-3">
                 <div
-                    className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${stickyCellBg} py-2 pl-4 pr-2`}
+                    className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${stickyCellBg} py-2 pl-3 pr-2`}
                     style={treeNameCellStyle(depth)}
                 >
                     <div className="flex items-center">
-                        <Loader2 className="mr-4 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
+                        <Loader2 className="mr-3 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
                         <span className="mr-2 shrink-0">
                             <DocIcon fileType={fileType ?? filename} muted />
                         </span>
@@ -1335,12 +1335,12 @@ export function DocTable({
                                     return (
                                         <>
                                             <div
-                                                className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${rowBg} py-2 pl-4 pr-2 transition-colors ${isVersionDragOver || isSelected ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
+                                                className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${rowBg} py-2 pl-3 pr-2 transition-colors ${isVersionDragOver || isSelected ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
                                                 style={treeNameCellStyle(depth)}
                                             >
                                                 <div className="flex items-center">
                                                     {isProcessing || isUploadingVersion ? (
-                                                        <Loader2 className="mr-4 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
+                                                        <Loader2 className="mr-3 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
                                                     ) : (
                                                         <input
                                                             type="checkbox"
@@ -1353,7 +1353,7 @@ export function DocTable({
                                                                 );
                                                             }}
                                                             onClick={(e) => e.stopPropagation()}
-                                                            className="mr-4 h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black"
+                                                            className="mr-3 h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black"
                                                         />
                                                     )}
                                                     <span className="mr-2 shrink-0">
@@ -1559,11 +1559,11 @@ export function DocTable({
                                 className={`group flex h-10 min-w-max items-center pr-3 ${APP_SURFACE_HOVER_CLASS} cursor-pointer transition-colors ${isRenaming ? "" : "select-none"} ${dragOverFolderId === folder.id ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : ""}`}
                             >
                                 <div
-                                    className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} py-2 pl-4 pr-2 ${dragOverFolderId === folder.id ? "bg-blue-50" : stickyCellBg} transition-colors ${dragOverFolderId === folder.id ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
+                                    className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} py-2 pl-3 pr-2 ${dragOverFolderId === folder.id ? "bg-blue-50" : stickyCellBg} transition-colors ${dragOverFolderId === folder.id ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
                                     style={treeNameCellStyle(depth)}
                                 >
                                     <div className="flex items-center">
-                                        <span className="mr-4 flex h-2.5 w-2.5 shrink-0 items-center justify-center">
+                                        <span className="mr-3 flex h-2.5 w-2.5 shrink-0 items-center justify-center">
                                             {isLoadingChildren ? (
                                                 <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
                                             ) : isExpanded ? (
@@ -2304,11 +2304,11 @@ export function DocTable({
                                                             className={`group flex h-10 min-w-max items-center pr-3 cursor-pointer transition-colors ${isVersionDragOver ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : isSelected ? APP_SURFACE_ACTIVE_CLASS : APP_SURFACE_HOVER_CLASS}`}
                                                         >
                                                             <div
-                                                                className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${isVersionDragOver ? "bg-blue-50" : isSelected ? APP_SURFACE_ACTIVE_CLASS : stickyCellBg} py-2 pl-4 pr-2 transition-colors ${isVersionDragOver || isSelected ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
+                                                                className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${isVersionDragOver ? "bg-blue-50" : isSelected ? APP_SURFACE_ACTIVE_CLASS : stickyCellBg} py-2 pl-3 pr-2 transition-colors ${isVersionDragOver || isSelected ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
                                                             >
                                                                 <div className="flex items-center">
                                                                     {isProcessing || isUploadingVersion ? (
-                                                                        <Loader2 className="mr-4 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
+                                                                        <Loader2 className="mr-3 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
                                                                     ) : (
                                                                         <input
                                                                             type="checkbox"
@@ -2323,7 +2323,7 @@ export function DocTable({
                                                                                 );
                                                                             }}
                                                                             onClick={(e) => e.stopPropagation()}
-                                                                            className="mr-4 h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black"
+                                                                            className="mr-3 h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black"
                                                                         />
                                                                     )}
                                                                     <span className="mr-2 shrink-0">
