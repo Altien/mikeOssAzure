@@ -166,7 +166,7 @@ function BulkEditActions({
                 Accept all
             </PillButton>
             <PillButton
-                tone="black"
+                tone="white"
                 size="sm"
                 onClick={() => handleAll("reject")}
                 disabled={!!busy}
