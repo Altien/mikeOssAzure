@@ -43,11 +43,17 @@ type LibraryWorkspaceContextValue = {
     loadingByKind: Record<LibraryKind, boolean>;
     searchByKind: Record<LibraryKind, string>;
     loadedFolderIdsByKind: Record<LibraryKind, Set<string>>;
+    documentsHasMoreByKind: Record<LibraryKind, Record<string, boolean>>;
+    loadingMoreDocumentsByKind: Record<LibraryKind, Record<string, boolean>>;
     loadLibrary: (
         kind: LibraryKind,
         options?: { showLoading?: boolean },
     ) => Promise<void>;
     loadFolderChildren: (kind: LibraryKind, folderId: string) => Promise<void>;
+    loadMoreDocuments: (
+        kind: LibraryKind,
+        parentId: string | null,
+    ) => Promise<void>;
     setSearchForKind: (kind: LibraryKind, value: string) => void;
     setDocumentsForKind: (
         kind: LibraryKind,
@@ -68,6 +74,16 @@ const EMPTY_COLLECTION: LibraryViewCollection = {
     documents: [],
     folders: [],
 };
+
+// Sentinel key identifying the root level in the per-level pagination maps
+// below (folder levels are keyed by their real folder id, which is always a
+// uuid and so can never collide with this).
+const ROOT_LEVEL_KEY = "root";
+const DOCUMENT_PAGE_SIZE = 50;
+
+function libraryLevelKey(parentId: string | null): string {
+    return parentId ?? ROOT_LEVEL_KEY;
+}
 
 const LibraryWorkspaceContext =
     createContext<LibraryWorkspaceContextValue | null>(null);
@@ -111,13 +127,32 @@ export function LibraryWorkspaceProvider({
         files: new Set(),
         templates: new Set(),
     });
+    // Per-level (root or folder id) document paging state: how many
+    // documents are currently requested for that level, whether the server
+    // has more beyond that, and whether a "load more" fetch is in flight.
+    const [documentLimitByKind, setDocumentLimitByKind] = useState<
+        Record<LibraryKind, Record<string, number>>
+    >({ files: {}, templates: {} });
+    const [documentsHasMoreByKind, setDocumentsHasMoreByKind] = useState<
+        Record<LibraryKind, Record<string, boolean>>
+    >({ files: {}, templates: {} });
+    const [loadingMoreDocumentsByKind, setLoadingMoreDocumentsByKind] =
+        useState<Record<LibraryKind, Record<string, boolean>>>({
+            files: {},
+            templates: {},
+        });
     const folderChildrenRequestsRef = useRef<Map<string, Promise<void>>>(
+        new Map(),
+    );
+    const loadMoreDocumentsRequestsRef = useRef<Map<string, Promise<void>>>(
         new Map(),
     );
 
     // Refetches root-level content plus every folder level already lazy-loaded
-    // for this kind, so a refresh (e.g. after uploading a new document
-    // version) doesn't drop the contents of folders the user has expanded.
+    // for this kind (each level re-requested at its current page size), so a
+    // refresh (e.g. after uploading a new document version) doesn't drop the
+    // contents of folders the user has expanded, or documents loaded beyond
+    // the first page.
     const loadLibrary = useCallback(
         async (kind: LibraryKind, options: { showLoading?: boolean } = {}) => {
             if (options.showLoading) {
@@ -125,11 +160,16 @@ export function LibraryWorkspaceProvider({
             }
             try {
                 const loadedFolderIds = [...loadedFolderIdsByKind[kind]];
+                const limits = documentLimitByKind[kind];
                 const [root, childResults] = await Promise.all([
-                    getLibrary(kind),
+                    getLibrary(kind, {
+                        limit: limits[ROOT_LEVEL_KEY] ?? DOCUMENT_PAGE_SIZE,
+                    }),
                     Promise.allSettled(
                         loadedFolderIds.map((folderId) =>
-                            getLibraryFolderChildren(kind, folderId),
+                            getLibraryFolderChildren(kind, folderId, {
+                                limit: limits[folderId] ?? DOCUMENT_PAGE_SIZE,
+                            }),
                         ),
                     ),
                 ]);
@@ -139,10 +179,15 @@ export function LibraryWorkspaceProvider({
                 const seenDocIds = new Set(documents.map((d) => d.id));
                 const seenFolderIds = new Set(folders.map((f) => f.id));
                 const stillLoaded = new Set<string>();
+                const nextHasMore: Record<string, boolean> = {
+                    [ROOT_LEVEL_KEY]: root.documentsHasMore,
+                };
 
                 childResults.forEach((settled, index) => {
                     if (settled.status !== "fulfilled") return;
-                    stillLoaded.add(loadedFolderIds[index]);
+                    const folderId = loadedFolderIds[index];
+                    stillLoaded.add(folderId);
+                    nextHasMore[folderId] = settled.value.documentsHasMore;
                     for (const doc of settled.value.documents) {
                         if (seenDocIds.has(doc.id)) continue;
                         seenDocIds.add(doc.id);
@@ -163,6 +208,10 @@ export function LibraryWorkspaceProvider({
                     ...prev,
                     [kind]: stillLoaded,
                 }));
+                setDocumentsHasMoreByKind((prev) => ({
+                    ...prev,
+                    [kind]: nextHasMore,
+                }));
             } catch (error) {
                 console.error("[library] failed to load", error);
                 setCollections((prev) => ({
@@ -173,13 +222,15 @@ export function LibraryWorkspaceProvider({
                     ...prev,
                     [kind]: new Set(),
                 }));
+                setDocumentLimitByKind((prev) => ({ ...prev, [kind]: {} }));
+                setDocumentsHasMoreByKind((prev) => ({ ...prev, [kind]: {} }));
             } finally {
                 if (options.showLoading) {
                     setLoadingByKind((prev) => ({ ...prev, [kind]: false }));
                 }
             }
         },
-        [loadedFolderIdsByKind],
+        [loadedFolderIdsByKind, documentLimitByKind],
     );
 
     const loadFolderChildren = useCallback(
@@ -194,6 +245,7 @@ export function LibraryWorkspaceProvider({
                     const children = await getLibraryFolderChildren(
                         kind,
                         folderId,
+                        { limit: DOCUMENT_PAGE_SIZE },
                     );
                     setCollections((prev) => {
                         const current = prev[kind] ?? EMPTY_COLLECTION;
@@ -226,6 +278,17 @@ export function LibraryWorkspaceProvider({
                         next.add(folderId);
                         return { ...prev, [kind]: next };
                     });
+                    setDocumentLimitByKind((prev) => ({
+                        ...prev,
+                        [kind]: { ...prev[kind], [folderId]: DOCUMENT_PAGE_SIZE },
+                    }));
+                    setDocumentsHasMoreByKind((prev) => ({
+                        ...prev,
+                        [kind]: {
+                            ...prev[kind],
+                            [folderId]: children.documentsHasMore,
+                        },
+                    }));
                 } catch (error) {
                     console.error(
                         "[library] failed to load folder children",
@@ -239,6 +302,80 @@ export function LibraryWorkspaceProvider({
             return request;
         },
         [loadedFolderIdsByKind],
+    );
+
+    // Fetches the next page of documents for a single level (root or one
+    // folder), replacing just that level's documents/folders in place —
+    // everything belonging to other levels is left untouched.
+    const loadMoreDocuments = useCallback(
+        async (kind: LibraryKind, parentId: string | null) => {
+            const levelKey = libraryLevelKey(parentId);
+            const requestKey = `${kind}:${levelKey}`;
+            const inFlight = loadMoreDocumentsRequestsRef.current.get(requestKey);
+            if (inFlight) return inFlight;
+
+            const nextLimit =
+                (documentLimitByKind[kind][levelKey] ?? DOCUMENT_PAGE_SIZE) +
+                DOCUMENT_PAGE_SIZE;
+            setLoadingMoreDocumentsByKind((prev) => ({
+                ...prev,
+                [kind]: { ...prev[kind], [levelKey]: true },
+            }));
+
+            const request = (async () => {
+                try {
+                    const page =
+                        parentId === null
+                            ? await getLibrary(kind, { limit: nextLimit })
+                            : await getLibraryFolderChildren(kind, parentId, {
+                                  limit: nextLimit,
+                              });
+
+                    setCollections((prev) => {
+                        const current = prev[kind] ?? EMPTY_COLLECTION;
+                        const documents = [
+                            ...current.documents.filter(
+                                (d) => (d.folder_id ?? null) !== parentId,
+                            ),
+                            ...page.documents,
+                        ];
+                        const folders = [
+                            ...current.folders.filter(
+                                (f) =>
+                                    (f.parent_folder_id ?? null) !== parentId,
+                            ),
+                            ...page.folders,
+                        ];
+                        return { ...prev, [kind]: { documents, folders } };
+                    });
+                    setDocumentLimitByKind((prev) => ({
+                        ...prev,
+                        [kind]: { ...prev[kind], [levelKey]: nextLimit },
+                    }));
+                    setDocumentsHasMoreByKind((prev) => ({
+                        ...prev,
+                        [kind]: {
+                            ...prev[kind],
+                            [levelKey]: page.documentsHasMore,
+                        },
+                    }));
+                } catch (error) {
+                    console.error(
+                        "[library] failed to load more documents",
+                        error,
+                    );
+                } finally {
+                    setLoadingMoreDocumentsByKind((prev) => ({
+                        ...prev,
+                        [kind]: { ...prev[kind], [levelKey]: false },
+                    }));
+                    loadMoreDocumentsRequestsRef.current.delete(requestKey);
+                }
+            })();
+            loadMoreDocumentsRequestsRef.current.set(requestKey, request);
+            return request;
+        },
+        [documentLimitByKind],
     );
 
     const setSearchForKind = useCallback((kind: LibraryKind, value: string) => {
@@ -291,8 +428,11 @@ export function LibraryWorkspaceProvider({
             loadingByKind,
             searchByKind,
             loadedFolderIdsByKind,
+            documentsHasMoreByKind,
+            loadingMoreDocumentsByKind,
             loadLibrary,
             loadFolderChildren,
+            loadMoreDocuments,
             setSearchForKind,
             setDocumentsForKind,
             setFoldersForKind,
@@ -301,8 +441,11 @@ export function LibraryWorkspaceProvider({
             collections,
             loadingByKind,
             loadedFolderIdsByKind,
+            documentsHasMoreByKind,
+            loadingMoreDocumentsByKind,
             loadLibrary,
             loadFolderChildren,
+            loadMoreDocuments,
             searchByKind,
             setDocumentsForKind,
             setFoldersForKind,
@@ -327,8 +470,11 @@ export function LibraryCollectionPage({ kind }: { kind: LibraryKind }) {
         collections,
         loadingByKind,
         searchByKind,
+        documentsHasMoreByKind,
+        loadingMoreDocumentsByKind,
         loadLibrary,
         loadFolderChildren,
+        loadMoreDocuments,
         setSearchForKind,
         setDocumentsForKind,
         setFoldersForKind,
@@ -376,6 +522,11 @@ export function LibraryCollectionPage({ kind }: { kind: LibraryKind }) {
     const handleExpandFolder = useCallback(
         (folderId: string) => loadFolderChildren(kind, folderId),
         [kind, loadFolderChildren],
+    );
+
+    const handleLoadMoreDocuments = useCallback(
+        (parentId: string | null) => loadMoreDocuments(kind, parentId),
+        [kind, loadMoreDocuments],
     );
 
     const operations = useMemo(
@@ -465,6 +616,11 @@ export function LibraryCollectionPage({ kind }: { kind: LibraryKind }) {
                         handleCreateFolderActionChange
                     }
                     onExpandFolder={handleExpandFolder}
+                    documentsHasMoreByLevel={documentsHasMoreByKind[kind]}
+                    loadingMoreDocumentsByLevel={
+                        loadingMoreDocumentsByKind[kind]
+                    }
+                    onLoadMoreDocuments={handleLoadMoreDocuments}
                     enableHeaderFilters
                     emptyDropLabel={
                         kind === "templates"
