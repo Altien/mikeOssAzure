@@ -139,6 +139,10 @@ interface DocTableProps {
     onSelectionActionsChange?: (actions: DocTableSelectionActions | null) => void;
     onOwnerOnlyAction?: Dispatch<SetStateAction<string | null>>;
     enableHeaderFilters?: boolean;
+    // When provided, folder contents are fetched on demand as folders are
+    // expanded (instead of the whole tree being loaded and auto-expanded
+    // up front). Called once per folder id the first time it's expanded.
+    onExpandFolder?: (folderId: string) => void | Promise<void>;
 }
 
 function apiErrorDetail(error: unknown): string | null {
@@ -272,6 +276,7 @@ export function DocTable({
     onSelectionActionsChange,
     onOwnerOnlyAction,
     enableHeaderFilters = false,
+    onExpandFolder,
 }: DocTableProps) {
     const [addDocsOpen, setAddDocsOpen] = useState(false);
     const { user } = useAuth();
@@ -539,6 +544,9 @@ export function DocTable({
     const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(
         new Set(),
     );
+    const [loadingChildFolderIds, setLoadingChildFolderIds] = useState<
+        Set<string>
+    >(() => new Set());
     // undefined = not creating; null = creating at root; string = creating inside that folder id
     const [creatingFolderIn, setCreatingFolderIn] = useState<
         string | null | undefined
@@ -617,9 +625,11 @@ export function DocTable({
     }, [onCreateFolderActionChange, openCreateFolder]);
 
     useEffect(() => {
-        if (loading) return;
+        // In lazy mode, folders start collapsed and their contents are
+        // fetched via onExpandFolder as the user opens them.
+        if (loading || onExpandFolder) return;
         setExpandedFolderIds(new Set(folders.map((f) => f.id)));
-    }, [loading, folders]);
+    }, [loading, folders, onExpandFolder]);
 
     useEffect(() => {
         setSelectedDocIds([]);
@@ -667,13 +677,31 @@ export function DocTable({
 
     // ── Folder handlers ───────────────────────────────────────────────────────
 
+    async function expandFolderChildren(folderId: string) {
+        if (!onExpandFolder) return;
+        setLoadingChildFolderIds((prev) => new Set([...prev, folderId]));
+        try {
+            await onExpandFolder(folderId);
+        } catch (e) {
+            console.error("expand folder failed", e);
+        } finally {
+            setLoadingChildFolderIds((prev) => {
+                const next = new Set(prev);
+                next.delete(folderId);
+                return next;
+            });
+        }
+    }
+
     function toggleFolder(id: string) {
+        const opening = !expandedFolderIds.has(id);
         setExpandedFolderIds((prev) => {
             const next = new Set(prev);
             if (next.has(id)) next.delete(id);
             else next.add(id);
             return next;
         });
+        if (opening) void expandFolderChildren(id);
     }
 
     async function handleCreateFolder(parentId: string | null) {
@@ -697,8 +725,11 @@ export function DocTable({
         } as DocTableFolder;
         setFolders((prev) => [...prev, optimistic]);
         setExpandedFolderIds((prev) => new Set([...prev, tempId]));
-        if (parentId)
+        if (parentId) {
+            const wasExpanded = expandedFolderIds.has(parentId);
             setExpandedFolderIds((prev) => new Set([...prev, parentId]));
+            if (!wasExpanded) void expandFolderChildren(parentId);
+        }
 
         // Replace with real folder from API
         const folder = await operations.createFolder(name, parentId ?? null);
@@ -1768,6 +1799,9 @@ export function DocTable({
                 {childFolders.map((folder) => {
                     const isExpanded = expandedFolderIds.has(folder.id);
                     const isRenaming = renamingFolderId === folder.id;
+                    const isLoadingChildren = loadingChildFolderIds.has(
+                        folder.id,
+                    );
                     return (
                         <div key={`folder-${folder.id}`}>
                             <div
@@ -1827,7 +1861,9 @@ export function DocTable({
                                 >
                                     <div className="flex items-center">
                                         <span className="mr-4 flex h-2.5 w-2.5 shrink-0 items-center justify-center">
-                                            {isExpanded ? (
+                                            {isLoadingChildren ? (
+                                                <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
+                                            ) : isExpanded ? (
                                                 <ChevronDown className="h-3.5 w-3.5 text-gray-400" />
                                             ) : (
                                                 <ChevronRight className="h-3.5 w-3.5 text-gray-400" />
@@ -3074,6 +3110,14 @@ export function DocTable({
                                                         if (
                                                             contextMenu.folderId
                                                         ) {
+                                                            const wasExpanded =
+                                                                expandedFolderIds.has(
+                                                                    contextMenu.folderId,
+                                                                );
+                                                            if (!wasExpanded)
+                                                                void expandFolderChildren(
+                                                                    contextMenu.folderId,
+                                                                );
                                                             setExpandedFolderIds(
                                                                 (prev) =>
                                                                     new Set([

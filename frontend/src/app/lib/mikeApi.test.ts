@@ -55,6 +55,7 @@ import {
     getCourtlistenerOpinions,
     getDocumentUrl,
     getLibrary,
+    getLibraryFolderChildren,
     getMcpConnector,
     getOllamaModels,
     getProject,
@@ -1623,6 +1624,11 @@ describe("thin endpoint wrappers", () => {
             name: "getLibrary",
             call: () => getLibrary("templates"),
             url: "/library/templates",
+        },
+        {
+            name: "getLibraryFolderChildren",
+            call: () => getLibraryFolderChildren("files", "f1"),
+            url: "/library/files/folders/f1/children",
         },
         {
             name: "renameLibraryFolder",

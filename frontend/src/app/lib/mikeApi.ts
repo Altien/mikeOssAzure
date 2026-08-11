@@ -635,6 +635,15 @@ export async function getLibrary(
     return apiRequest<LibraryCollection>(`/library/${kind}`);
 }
 
+export async function getLibraryFolderChildren(
+    kind: LibraryKind,
+    folderId: string,
+): Promise<LibraryCollection> {
+    return apiRequest<LibraryCollection>(
+        `/library/${kind}/folders/${folderId}/children`,
+    );
+}
+
 export async function uploadLibraryDocument(
     kind: LibraryKind,
     file: File,
