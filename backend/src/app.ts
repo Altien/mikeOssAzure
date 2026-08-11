@@ -16,6 +16,8 @@ import { documentsRouter } from "./routes/documents";
 import { libraryRouter } from "./routes/library";
 import { tabularRouter } from "./routes/tabular";
 import { workflowsRouter } from "./routes/workflows";
+import { quickActionsRouter } from "./routes/quickActions";
+import { workflowAddonsRouter } from "./routes/workflowAddons";
 import { userRouter } from "./routes/user";
 import { downloadsRouter } from "./routes/downloads";
 import { authRouter } from "./routes/auth";
@@ -281,6 +283,8 @@ export function buildApp(): express.Express {
   app.post("/api/single-documents", uploadLimiter);
   app.post("/api/library/:kind/documents", uploadLimiter);
   app.post("/api/single-documents/:documentId/versions", uploadLimiter);
+  app.post("/api/workflows/:workflowId/reference-files", uploadLimiter);
+  app.put("/api/workflows/:workflowId/reference-files/:referenceId", uploadLimiter);
   app.put(
     "/api/single-documents/:documentId/versions/:versionId/file",
     uploadLimiter,
@@ -310,6 +314,8 @@ export function buildApp(): express.Express {
   app.use("/api/library", libraryRouter);
   app.use("/api/tabular-review", tabularRouter);
   app.use("/api/workflows", workflowsRouter);
+  app.use("/api/quick-actions", quickActionsRouter);
+  app.use("/api/workflow-addons", workflowAddonsRouter);
   app.use("/api/user", userRouter);
   app.use("/api/users", userRouter);
   app.use("/api/download", downloadsRouter);
