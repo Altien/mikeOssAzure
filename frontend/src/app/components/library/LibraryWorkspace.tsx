@@ -9,6 +9,7 @@ import {
     useContext,
     useEffect,
     useMemo,
+    useRef,
     useState,
 } from "react";
 import { useRouter } from "next/navigation";
@@ -22,6 +23,7 @@ import {
     createLibraryFolder,
     deleteLibraryFolder,
     getLibrary,
+    getLibraryFolderChildren,
     moveLibraryDocument,
     moveLibraryFolder,
     renameLibraryDocument,
@@ -40,10 +42,12 @@ type LibraryWorkspaceContextValue = {
     collections: Record<LibraryKind, LibraryViewCollection | null>;
     loadingByKind: Record<LibraryKind, boolean>;
     searchByKind: Record<LibraryKind, string>;
+    loadedFolderIdsByKind: Record<LibraryKind, Set<string>>;
     loadLibrary: (
         kind: LibraryKind,
         options?: { showLoading?: boolean },
     ) => Promise<void>;
+    loadFolderChildren: (kind: LibraryKind, folderId: string) => Promise<void>;
     setSearchForKind: (kind: LibraryKind, value: string) => void;
     setDocumentsForKind: (
         kind: LibraryKind,
@@ -101,20 +105,63 @@ export function LibraryWorkspaceProvider({
         files: "",
         templates: "",
     });
+    const [loadedFolderIdsByKind, setLoadedFolderIdsByKind] = useState<
+        Record<LibraryKind, Set<string>>
+    >({
+        files: new Set(),
+        templates: new Set(),
+    });
+    const folderChildrenRequestsRef = useRef<Map<string, Promise<void>>>(
+        new Map(),
+    );
 
+    // Refetches root-level content plus every folder level already lazy-loaded
+    // for this kind, so a refresh (e.g. after uploading a new document
+    // version) doesn't drop the contents of folders the user has expanded.
     const loadLibrary = useCallback(
         async (kind: LibraryKind, options: { showLoading?: boolean } = {}) => {
             if (options.showLoading) {
                 setLoadingByKind((prev) => ({ ...prev, [kind]: true }));
             }
             try {
-                const loaded = await getLibrary(kind);
+                const loadedFolderIds = [...loadedFolderIdsByKind[kind]];
+                const [root, childResults] = await Promise.all([
+                    getLibrary(kind),
+                    Promise.allSettled(
+                        loadedFolderIds.map((folderId) =>
+                            getLibraryFolderChildren(kind, folderId),
+                        ),
+                    ),
+                ]);
+
+                const documents = [...root.documents];
+                const folders = [...root.folders];
+                const seenDocIds = new Set(documents.map((d) => d.id));
+                const seenFolderIds = new Set(folders.map((f) => f.id));
+                const stillLoaded = new Set<string>();
+
+                childResults.forEach((settled, index) => {
+                    if (settled.status !== "fulfilled") return;
+                    stillLoaded.add(loadedFolderIds[index]);
+                    for (const doc of settled.value.documents) {
+                        if (seenDocIds.has(doc.id)) continue;
+                        seenDocIds.add(doc.id);
+                        documents.push(doc);
+                    }
+                    for (const folder of settled.value.folders) {
+                        if (seenFolderIds.has(folder.id)) continue;
+                        seenFolderIds.add(folder.id);
+                        folders.push(folder);
+                    }
+                });
+
                 setCollections((prev) => ({
                     ...prev,
-                    [kind]: {
-                        documents: loaded.documents,
-                        folders: loaded.folders,
-                    },
+                    [kind]: { documents, folders },
+                }));
+                setLoadedFolderIdsByKind((prev) => ({
+                    ...prev,
+                    [kind]: stillLoaded,
                 }));
             } catch (error) {
                 console.error("[library] failed to load", error);
@@ -122,13 +169,76 @@ export function LibraryWorkspaceProvider({
                     ...prev,
                     [kind]: EMPTY_COLLECTION,
                 }));
+                setLoadedFolderIdsByKind((prev) => ({
+                    ...prev,
+                    [kind]: new Set(),
+                }));
             } finally {
                 if (options.showLoading) {
                     setLoadingByKind((prev) => ({ ...prev, [kind]: false }));
                 }
             }
         },
-        [],
+        [loadedFolderIdsByKind],
+    );
+
+    const loadFolderChildren = useCallback(
+        async (kind: LibraryKind, folderId: string) => {
+            if (loadedFolderIdsByKind[kind].has(folderId)) return;
+            const key = `${kind}:${folderId}`;
+            const inFlight = folderChildrenRequestsRef.current.get(key);
+            if (inFlight) return inFlight;
+
+            const request = (async () => {
+                try {
+                    const children = await getLibraryFolderChildren(
+                        kind,
+                        folderId,
+                    );
+                    setCollections((prev) => {
+                        const current = prev[kind] ?? EMPTY_COLLECTION;
+                        const existingDocIds = new Set(
+                            current.documents.map((d) => d.id),
+                        );
+                        const existingFolderIds = new Set(
+                            current.folders.map((f) => f.id),
+                        );
+                        return {
+                            ...prev,
+                            [kind]: {
+                                documents: [
+                                    ...current.documents,
+                                    ...children.documents.filter(
+                                        (d) => !existingDocIds.has(d.id),
+                                    ),
+                                ],
+                                folders: [
+                                    ...current.folders,
+                                    ...children.folders.filter(
+                                        (f) => !existingFolderIds.has(f.id),
+                                    ),
+                                ],
+                            },
+                        };
+                    });
+                    setLoadedFolderIdsByKind((prev) => {
+                        const next = new Set(prev[kind]);
+                        next.add(folderId);
+                        return { ...prev, [kind]: next };
+                    });
+                } catch (error) {
+                    console.error(
+                        "[library] failed to load folder children",
+                        error,
+                    );
+                } finally {
+                    folderChildrenRequestsRef.current.delete(key);
+                }
+            })();
+            folderChildrenRequestsRef.current.set(key, request);
+            return request;
+        },
+        [loadedFolderIdsByKind],
     );
 
     const setSearchForKind = useCallback((kind: LibraryKind, value: string) => {
@@ -180,7 +290,9 @@ export function LibraryWorkspaceProvider({
             collections,
             loadingByKind,
             searchByKind,
+            loadedFolderIdsByKind,
             loadLibrary,
+            loadFolderChildren,
             setSearchForKind,
             setDocumentsForKind,
             setFoldersForKind,
@@ -188,7 +300,9 @@ export function LibraryWorkspaceProvider({
         [
             collections,
             loadingByKind,
+            loadedFolderIdsByKind,
             loadLibrary,
+            loadFolderChildren,
             searchByKind,
             setDocumentsForKind,
             setFoldersForKind,
@@ -214,6 +328,7 @@ export function LibraryCollectionPage({ kind }: { kind: LibraryKind }) {
         loadingByKind,
         searchByKind,
         loadLibrary,
+        loadFolderChildren,
         setSearchForKind,
         setDocumentsForKind,
         setFoldersForKind,
@@ -256,6 +371,11 @@ export function LibraryCollectionPage({ kind }: { kind: LibraryKind }) {
             setCreateFolderAction(() => action);
         },
         [],
+    );
+
+    const handleExpandFolder = useCallback(
+        (folderId: string) => loadFolderChildren(kind, folderId),
+        [kind, loadFolderChildren],
     );
 
     const operations = useMemo(
@@ -344,6 +464,7 @@ export function LibraryCollectionPage({ kind }: { kind: LibraryKind }) {
                     onCreateFolderActionChange={
                         handleCreateFolderActionChange
                     }
+                    onExpandFolder={handleExpandFolder}
                     enableHeaderFilters
                     emptyDropLabel={
                         kind === "templates"
