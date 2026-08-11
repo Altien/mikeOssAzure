@@ -1631,6 +1631,17 @@ describe("thin endpoint wrappers", () => {
             url: "/library/files/folders/f1/children",
         },
         {
+            name: "getLibrary with pagination",
+            call: () => getLibrary("files", { limit: 50, offset: 100 }),
+            url: "/library/files?limit=50&offset=100",
+        },
+        {
+            name: "getLibraryFolderChildren with pagination",
+            call: () =>
+                getLibraryFolderChildren("files", "f1", { limit: 50 }),
+            url: "/library/files/folders/f1/children?limit=50",
+        },
+        {
             name: "renameLibraryFolder",
             call: () => renameLibraryFolder("files", "f1", "Precedents"),
             url: "/library/files/folders/f1",

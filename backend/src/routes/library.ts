@@ -8,6 +8,7 @@ import {
 } from "../lib/documentVersions";
 import { singleFileUpload } from "../lib/upload";
 import { handleDocumentUpload } from "./documents";
+import { parsePaginationQuery, type PaginationParams } from "../lib/pagination";
 
 export const libraryRouter = Router();
 
@@ -91,11 +92,17 @@ async function deleteLibraryDocumentsAndVersionFiles(
   return error ?? null;
 }
 
+// Folders per level are assumed to stay small (organizational containers,
+// not user data that grows unbounded) and are always returned in full.
+// Documents are the part that can grow into the thousands, so only they're
+// paginated — one extra row is fetched over `limit` to detect `hasMore`
+// without a separate count query.
 async function loadLibraryLevel(
   db: ReturnType<typeof createServerSupabase>,
   userId: string,
   kind: LibraryKind,
   parentFolderId: string | null,
+  pagination: PaginationParams,
 ) {
   let documentsQuery = db
     .from("documents")
@@ -110,6 +117,10 @@ async function loadLibraryLevel(
     kind === "file"
       ? documentsQuery.or("library_kind.eq.file,library_kind.is.null")
       : documentsQuery.eq("library_kind", kind);
+  documentsQuery = documentsQuery.range(
+    pagination.offset,
+    pagination.offset + pagination.limit,
+  );
 
   let foldersQuery = db
     .from("library_folders")
@@ -126,17 +137,39 @@ async function loadLibraryLevel(
       documentsQuery.order("created_at", { ascending: true }),
       foldersQuery.order("created_at", { ascending: true }),
     ]);
-  if (docsError) return { error: docsError.message, documents: [], folders: [] };
+  if (docsError)
+    return {
+      error: docsError.message,
+      documents: [],
+      folders: [],
+      documentsHasMore: false,
+    };
   if (foldersError)
-    return { error: foldersError.message, documents: [], folders: [] };
+    return {
+      error: foldersError.message,
+      documents: [],
+      folders: [],
+      documentsHasMore: false,
+    };
 
-  const docsTyped = (docs ?? []).map(mapLibraryDocument) as {
+  const rawDocs = docs ?? [];
+  const documentsHasMore = rawDocs.length > pagination.limit;
+  const pageDocs = documentsHasMore
+    ? rawDocs.slice(0, pagination.limit)
+    : rawDocs;
+
+  const docsTyped = pageDocs.map(mapLibraryDocument) as {
     id: string;
     current_version_id?: string | null;
   }[];
   await attachLatestVersionNumbers(db, docsTyped);
   await attachActiveVersionPaths(db, docsTyped);
-  return { error: null, documents: docsTyped, folders: folders ?? [] };
+  return {
+    error: null,
+    documents: docsTyped,
+    folders: folders ?? [],
+    documentsHasMore,
+  };
 }
 
 // GET /library/:kind
@@ -146,9 +179,14 @@ libraryRouter.get("/:kind", requireAuth, async (req, res) => {
   if (!kind) return void res.status(404).json({ detail: "Library not found" });
 
   const db = createServerSupabase();
-  const result = await loadLibraryLevel(db, userId, kind, null);
+  const pagination = parsePaginationQuery(req.query as Record<string, unknown>);
+  const result = await loadLibraryLevel(db, userId, kind, null, pagination);
   if (result.error) return void res.status(500).json({ detail: result.error });
-  res.json({ documents: result.documents, folders: result.folders });
+  res.json({
+    documents: result.documents,
+    folders: result.folders,
+    documentsHasMore: result.documentsHasMore,
+  });
 });
 
 // GET /library/:kind/folders/:folderId/children
@@ -164,9 +202,20 @@ libraryRouter.get(
     const folder = await loadLibraryFolder(db, userId, kind, req.params.folderId);
     if (!folder) return void res.status(404).json({ detail: "Folder not found" });
 
-    const result = await loadLibraryLevel(db, userId, kind, folder.id);
+    const pagination = parsePaginationQuery(req.query as Record<string, unknown>);
+    const result = await loadLibraryLevel(
+      db,
+      userId,
+      kind,
+      folder.id,
+      pagination,
+    );
     if (result.error) return void res.status(500).json({ detail: result.error });
-    res.json({ documents: result.documents, folders: result.folders });
+    res.json({
+      documents: result.documents,
+      folders: result.folders,
+      documentsHasMore: result.documentsHasMore,
+    });
   },
 );
 

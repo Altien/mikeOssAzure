@@ -627,20 +627,39 @@ export type LibraryKind = "files" | "templates";
 export interface LibraryCollection {
     documents: Document[];
     folders: LibraryFolder[];
+    documentsHasMore: boolean;
+}
+
+export interface LibraryPagination {
+    limit?: number;
+    offset?: number;
+}
+
+function libraryPaginationQuery(pagination?: LibraryPagination): string {
+    const params = new URLSearchParams();
+    if (pagination?.limit != null) params.set("limit", String(pagination.limit));
+    if (pagination?.offset != null)
+        params.set("offset", String(pagination.offset));
+    const qs = params.toString();
+    return qs ? `?${qs}` : "";
 }
 
 export async function getLibrary(
     kind: LibraryKind,
+    pagination?: LibraryPagination,
 ): Promise<LibraryCollection> {
-    return apiRequest<LibraryCollection>(`/library/${kind}`);
+    return apiRequest<LibraryCollection>(
+        `/library/${kind}${libraryPaginationQuery(pagination)}`,
+    );
 }
 
 export async function getLibraryFolderChildren(
     kind: LibraryKind,
     folderId: string,
+    pagination?: LibraryPagination,
 ): Promise<LibraryCollection> {
     return apiRequest<LibraryCollection>(
-        `/library/${kind}/folders/${folderId}/children`,
+        `/library/${kind}/folders/${folderId}/children${libraryPaginationQuery(pagination)}`,
     );
 }
 

@@ -63,6 +63,7 @@ import {
     type ProjectContextMenu,
 } from "@/app/components/projects/ProjectPageParts";
 import { DocumentSidePanel } from "@/app/components/shared/DocumentSidePanel";
+import { TableLoadMoreRow } from "@/app/components/shared/TableLoadMoreRow";
 import { LibrarySkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import {
     APP_SURFACE_ACTIVE_CLASS,
@@ -143,6 +144,12 @@ interface DocTableProps {
     // expanded (instead of the whole tree being loaded and auto-expanded
     // up front). Called once per folder id the first time it's expanded.
     onExpandFolder?: (folderId: string) => void | Promise<void>;
+    // Per-level document pagination, keyed by parent folder id (root uses
+    // the sentinel "root"). When onLoadMoreDocuments is provided, a level
+    // with more documents than are currently loaded shows a "load more" row.
+    documentsHasMoreByLevel?: Record<string, boolean>;
+    loadingMoreDocumentsByLevel?: Record<string, boolean>;
+    onLoadMoreDocuments?: (parentId: string | null) => void;
 }
 
 function apiErrorDetail(error: unknown): string | null {
@@ -277,6 +284,9 @@ export function DocTable({
     onOwnerOnlyAction,
     enableHeaderFilters = false,
     onExpandFolder,
+    documentsHasMoreByLevel,
+    loadingMoreDocumentsByLevel,
+    onLoadMoreDocuments,
 }: DocTableProps) {
     const [addDocsOpen, setAddDocsOpen] = useState(false);
     const { user } = useAuth();
@@ -1794,6 +1804,29 @@ export function DocTable({
                         </div>
                     );
                 })}
+
+                {onLoadMoreDocuments && (
+                    <div style={treeNameCellStyle(depth)}>
+                        <TableLoadMoreRow
+                            loading={false}
+                            hasMore={
+                                !!documentsHasMoreByLevel?.[
+                                    parentId ?? "root"
+                                ]
+                            }
+                            itemCount={childDocs.length}
+                            loadingMore={
+                                !!loadingMoreDocumentsByLevel?.[
+                                    parentId ?? "root"
+                                ]
+                            }
+                            hasError={false}
+                            onLoadMore={() =>
+                                onLoadMoreDocuments(parentId)
+                            }
+                        />
+                    </div>
+                )}
 
                 {/* Subfolders after files, sorted alphabetically */}
                 {childFolders.map((folder) => {
