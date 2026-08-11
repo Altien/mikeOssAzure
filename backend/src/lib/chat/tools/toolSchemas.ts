@@ -34,36 +34,6 @@ export const PROJECT_EXTRA_TOOLS = [
   {
     type: "function",
     function: {
-      name: "replicate_document",
-      description:
-        "Make byte-for-byte copies of an existing project document as new project documents. Use when the user wants standalone copies to edit (e.g. 'use this NDA as a template', 'give me three drafts I can adapt') without modifying the original. Pass `count` to create multiple copies in a single call rather than calling the tool repeatedly. Returns the new doc_id slugs so you can immediately call edit_document / read_document on them.",
-      parameters: {
-        type: "object",
-        properties: {
-          doc_id: {
-            type: "string",
-            description: "ID of the source document to copy (e.g. 'doc-0').",
-          },
-          count: {
-            type: "integer",
-            description:
-              "How many copies to create. Defaults to 1. Maximum 20.",
-            minimum: 1,
-            maximum: 20,
-          },
-          new_filename: {
-            type: "string",
-            description:
-              "Optional base filename. With count > 1, copies are suffixed (e.g. 'Foo (1).docx', 'Foo (2).docx'). Extension is forced to match the source.",
-          },
-        },
-        required: ["doc_id"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
       name: "write_project_document",
       description:
         "Write a text document into the current project — notes, extracted data, an intermediate working file you will read back later, or a rendered HTML/Markdown report. Creates the document the first time; writing the same filename again adds a new version of that same document rather than a second copy. Returns a download link, plus the doc_id to read it back with. Text only (md, markdown, txt, json, csv, html, xml, yaml, yml), 1 MiB per write, and it never overwrites a document it did not write itself — a user upload, a generated file, or a skill package file with that filename is refused. For Word, Excel, PowerPoint or PDF output use generate_docx, generate_excel or generate_ppt instead.",
@@ -146,6 +116,37 @@ export const WORKFLOW_TOOLS = [
 ];
 
 export const TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "replicate_document",
+      description:
+        "Copy an available document, Library Template, or workflow asset without changing the source. In a project chat, copies are saved to Project Documents; otherwise they are saved to Library Files. Always use this before editing or drafting from a Library Template or workflow asset. For an ordinary document, use it only when the user specifically asks for a copy/duplicate or a new document based on that file. Returns new doc_id slugs for read_document and edit_document.",
+      parameters: {
+        type: "object",
+        properties: {
+          doc_id: {
+            type: "string",
+            description:
+              "Chat-local ID of the source document, Library Template, or workflow asset.",
+          },
+          count: {
+            type: "integer",
+            description:
+              "How many copies to create. Defaults to 1. Maximum 20.",
+            minimum: 1,
+            maximum: 20,
+          },
+          new_filename: {
+            type: "string",
+            description:
+              "New base filename. Required for Library Templates and workflow assets. With count > 1, copies are numbered. The extension is forced to match the source.",
+          },
+        },
+        required: ["doc_id"],
+      },
+    },
+  },
   {
     type: "function",
     function: {
