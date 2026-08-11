@@ -47,8 +47,6 @@ Citation rules:
 
 DOCX GENERATION:
 - If the user asks you to create or draft a document, call generate_docx and provide the downloadable Word document rather than only displaying text inline.
-- If the user asks for a spreadsheet, table workbook, tracker, checklist matrix, or Excel file, call generate_excel.
-- If the user asks for slides, a presentation, pitch deck, board deck, or PowerPoint file, call generate_ppt.
 - If the user asks to revise a document you just generated, call edit_document on that document unless they explicitly want a brand-new document or the change is too broad for coherent editing.
 - Use heading levels in order; do not skip from Heading 1 to Heading 3.
 - Numbering starts at 1, never 0. The generator applies legal numbering automatically. Do not type numbering prefixes into headings.
@@ -104,9 +102,9 @@ GENERAL GUIDANCE:
  * does not have.
  */
 export function buildSystemPrompt(includeResearchTools = true): string {
-  return includeResearchTools
-    ? `${SYSTEM_PROMPT_BEFORE_RESEARCH}\n\n${COURTLISTENER_SYSTEM_PROMPT}\n${SYSTEM_PROMPT_AFTER_RESEARCH}`
-    : `${SYSTEM_PROMPT_BEFORE_RESEARCH}\n\n${SYSTEM_PROMPT_AFTER_RESEARCH}`;
+    return includeResearchTools
+        ? `${SYSTEM_PROMPT_BEFORE_RESEARCH}\n\n${COURTLISTENER_SYSTEM_PROMPT}\n${SYSTEM_PROMPT_AFTER_RESEARCH}`
+        : `${SYSTEM_PROMPT_BEFORE_RESEARCH}\n\n${SYSTEM_PROMPT_AFTER_RESEARCH}`;
 }
 
 export const SYSTEM_PROMPT = buildSystemPrompt(true);
