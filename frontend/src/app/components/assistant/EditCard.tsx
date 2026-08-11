@@ -314,7 +314,7 @@ export function EditCard({
                     {status === "accepted" ? "Accepted" : "Accept"}
                 </PillButton>
                 <PillButton
-                    tone="white"
+                    tone="black"
                     size="sm"
                     onClick={() => handle("reject")}
                     disabled={inFlight || resolved}
