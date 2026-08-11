@@ -7,6 +7,7 @@ import {
 } from "@/app/lib/auth-token";
 import { PillButton } from "@/app/components/ui/pill-button";
 import type { EditAnnotation } from "../shared/types";
+import { RESPONSE_GLASS_SURFACE } from "./message/messageStyles";
 
 function normalizeText(s: string) {
     return s.replace(/\s+/g, " ").trim();
@@ -283,7 +284,7 @@ export function EditCard({
     };
 
     return (
-        <div className="rounded-xl bg-white/55 shadow-[0_3px_9px_rgba(15,23,42,0.05),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-4px_9px_rgba(255,255,255,0.05)] backdrop-blur-2xl p-3">
+        <div className={`${RESPONSE_GLASS_SURFACE} p-3`}>
             {changeNumber !== undefined && (
                 <p className="text-xs text-gray-400 mb-1.5">{changeNumber}</p>
             )}
