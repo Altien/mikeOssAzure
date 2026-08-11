@@ -1971,6 +1971,20 @@ revoke all on public.user_mcp_tool_audit_logs from anon, authenticated;
 revoke all on public.courtlistener_citation_index from anon, authenticated;
 revoke all on public.courtlistener_opinion_cluster_index from anon, authenticated;
 revoke all on public.audit_events from anon, authenticated;
+revoke all on function public.install_missing_default_workflows(text, jsonb)
+  from public, anon, authenticated;
+
+grant select, insert, update, delete
+  on public.default_workflow_installations,
+     public.quick_actions,
+     public.workflow_addons,
+     public.workflow_reference_documents,
+     public.workflow_addon_reference_files
+  to service_role;
+
+grant execute
+  on function public.install_missing_default_workflows(text, jsonb)
+  to service_role;
 
 -- Tables created by this file are owned by the database bootstrap role. The
 -- backend connects as service_role, so grant it only the data privileges that

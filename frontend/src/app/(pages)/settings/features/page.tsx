@@ -1,16 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ApiKeyField } from "@/app/components/settings/ApiKeyField";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
-import { useQuickActionsPreference } from "@/app/components/assistant/quickActionsPreferences";
+import { listQuickActions, updateQuickAction } from "@/app/lib/mikeApi";
+import type { QuickAction } from "@/app/components/shared/types";
 import { SettingsSection } from "../SettingsSection";
 import { SettingsToggle } from "../SettingsToggle";
 
 export default function FeaturesPage() {
     const { profile, updateApiKey, updateLegalResearchUs } = useUserProfile();
-    const { visibleActions, showAllQuickActions, hideAllQuickActions } =
-        useQuickActionsPreference();
+    const [quickActions, setQuickActions] = useState<QuickAction[]>([]);
     const [saving, setSaving] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
     const [optimisticLegalResearchUs, setOptimisticLegalResearchUs] = useState<
@@ -20,7 +20,28 @@ export default function FeaturesPage() {
     const persistedLegalResearchUs = profile?.legalResearchUs ?? true;
     const courtListenerEnabled =
         optimisticLegalResearchUs ?? persistedLegalResearchUs;
-    const quickActionsEnabled = Object.values(visibleActions).some(Boolean);
+    const quickActionsEnabled = quickActions.some((action) => action.enabled);
+
+    useEffect(() => {
+        void listQuickActions().then(setQuickActions).catch(() => {});
+    }, []);
+
+    const updateAllQuickActions = async (enabled: boolean) => {
+        const previous = quickActions;
+        setQuickActions((current) =>
+            current.map((action) => ({ ...action, enabled })),
+        );
+        try {
+            const updated = await Promise.all(
+                previous.map((action) =>
+                    updateQuickAction(action.id, { enabled }),
+                ),
+            );
+            setQuickActions(updated);
+        } catch {
+            setQuickActions(previous);
+        }
+    };
 
     const handleCourtListenerChange = async (enabled: boolean) => {
         if (saving) return;
@@ -58,11 +79,7 @@ export default function FeaturesPage() {
                             checked={quickActionsEnabled}
                             size="md"
                             onChange={(checked) => {
-                                if (checked) {
-                                    showAllQuickActions();
-                                } else {
-                                    hideAllQuickActions();
-                                }
+                                void updateAllQuickActions(checked);
                             }}
                         />
                     </div>
