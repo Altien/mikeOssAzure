@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { Document, Workflow } from "../shared/types";
-import { createTabularReview } from "@/app/lib/mikeApi";
+import { createTabularReview, listWorkflows } from "@/app/lib/mikeApi";
 import { useRouter } from "next/navigation";
 import { useDirectoryData } from "../shared/useDirectoryData";
 import { FileDirectory } from "../shared/FileDirectory";
@@ -16,7 +16,6 @@ import { WorkflowPickerContent } from "./WorkflowPickerContent";
 import { workflowDetailPath } from "./workflowRoutes";
 
 interface Props {
-    workflows: Workflow[];
     workflow: Workflow | null;
     onClose: () => void;
     skipSelect?: boolean;
@@ -38,10 +37,32 @@ function SelectedWorkflowSummary({ workflow }: { workflow: Workflow }) {
 // ---------------------------------------------------------------------------
 // UseWorkflowModal
 // ---------------------------------------------------------------------------
-export function UseWorkflowModal({ workflows, workflow, onClose, skipSelect = false }: Props) {
+export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Props) {
     const [screen, setScreen] = useState<"select" | "details" | "documents">("select");
     const [selected, setSelected] = useState<Workflow | null>(workflow);
     const [listSearch, setListSearch] = useState("");
+    // Self-fetched rather than received from the parent's (now paginated,
+    // partial) workflow list — mirrors WorkflowPickerModal.tsx's existing
+    // independent fetch pattern. Merges both types since this modal's
+    // "switch workflow" screen supports any workflow, unlike
+    // WorkflowPickerModal which is always scoped to one type.
+    const [pickerWorkflows, setPickerWorkflows] = useState<Workflow[]>([]);
+
+    useEffect(() => {
+        if (!workflow) return;
+        let cancelled = false;
+        Promise.all([listWorkflows("assistant"), listWorkflows("tabular")])
+            .then(([assistant, tabular]) => {
+                if (!cancelled) setPickerWorkflows([...assistant, ...tabular]);
+            })
+            .catch(() => {
+                if (!cancelled) setPickerWorkflows([]);
+            });
+        return () => {
+            cancelled = true;
+        };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [workflow?.id]);
 
     // Configure screen state
     const [inProject, setInProject] = useState(false);
@@ -259,7 +280,7 @@ export function UseWorkflowModal({ workflows, workflow, onClose, skipSelect = fa
             {/* ── SELECT SCREEN ── */}
             {screen === "select" && (
                 <WorkflowPickerContent
-                    workflows={workflows}
+                    workflows={pickerWorkflows}
                     selected={wf}
                     onSelect={(next) => {
                         if (next) setSelected(next);

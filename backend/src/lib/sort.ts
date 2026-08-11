@@ -45,3 +45,27 @@ export function parseProjectSort(value: Record<string, unknown>): ProjectSort {
 
     return { key, direction };
 }
+
+export type WorkflowSortKey = "name" | "type" | "created";
+export type WorkflowSortDirection = "asc" | "desc";
+
+export interface WorkflowSort {
+    key: WorkflowSortKey;
+    direction: WorkflowSortDirection;
+}
+
+const WORKFLOW_SUPPORTED_KEYS: WorkflowSortKey[] = ["name", "type", "created"];
+
+export function parseWorkflowSort(value: Record<string, unknown>): WorkflowSort {
+    const rawKey = typeof value.sort_key === "string"
+        ? value.sort_key
+        : typeof value.key === "string"
+            ? value.key
+            : null;
+    const key = rawKey && WORKFLOW_SUPPORTED_KEYS.includes(rawKey as WorkflowSortKey)
+        ? (rawKey as WorkflowSortKey)
+        : "created";
+    const direction = value.sort_direction === "asc" || value.direction === "asc" ? "asc" : "desc";
+
+    return { key, direction };
+}
