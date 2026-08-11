@@ -86,13 +86,15 @@ export interface DocTableSelectionActions {
 
 export type DocumentSortKey = "name" | "size" | "version" | "created" | "updated";
 
+export type DocumentSort = {
+    key: DocumentSortKey;
+    direction: TableSortDirection;
+};
+
 export interface DocTableQuery {
     search: string;
     fileType: string | null;
-    sort: {
-        key: DocumentSortKey;
-        direction: TableSortDirection;
-    } | null;
+    sort: DocumentSort | null;
 }
 
 const SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
@@ -153,6 +155,7 @@ interface DocTableProps {
     onSelectAllMatching?: (query: DocTableQuery) => Promise<string[]>;
     documentTypeOptions?: TableFilterOption<string>[];
     autoLoadOnScroll?: boolean;
+    defaultSort?: DocumentSort | null;
 }
 
 function apiErrorDetail(error: unknown): string | null {
@@ -290,6 +293,7 @@ export function DocTable({
     onSelectAllMatching,
     documentTypeOptions,
     autoLoadOnScroll = false,
+    defaultSort = null,
 }: DocTableProps) {
     const [addDocsOpen, setAddDocsOpen] = useState(false);
     const { user } = useAuth();
@@ -304,10 +308,7 @@ export function DocTable({
     const [selectingAllDocuments, setSelectingAllDocuments] = useState(false);
     const [confirmDeleteAllOpen, setConfirmDeleteAllOpen] = useState(false);
     const [typeFilter, setTypeFilter] = useState<string | null>(null);
-    const [sort, setSort] = useState<{
-        key: DocumentSortKey;
-        direction: TableSortDirection;
-    } | null>(null);
+    const [sort, setSort] = useState<DocumentSort | null>(null);
     const serverQueryActive = serverDocuments !== null;
     const documentUploadInputRef = useRef<HTMLInputElement>(null);
     const autoLoadTriggeredRef = useRef(false);
@@ -1805,30 +1806,31 @@ export function DocTable({
             .filter((doc) => !q || doc.filename.toLowerCase().includes(q))
             .filter((doc) => !enableHeaderFilters || !typeFilter || documentTypeValue(doc) === typeFilter);
 
-        if (!enableHeaderFilters || !sort) return rows;
+        const effectiveSort = sort ?? defaultSort;
+        if (!enableHeaderFilters || !effectiveSort) return rows;
 
         return [...rows].sort((a, b) => {
-            const multiplier = sort.direction === "asc" ? 1 : -1;
+            const multiplier = effectiveSort.direction === "asc" ? 1 : -1;
 
-            if (sort.key === "size") {
+            if (effectiveSort.key === "size") {
                 return ((a.size_bytes ?? 0) - (b.size_bytes ?? 0)) * multiplier;
             }
 
-            if (sort.key === "version") {
+            if (effectiveSort.key === "version") {
                 return ((documentVersionNumber(a) ?? 0) - (documentVersionNumber(b) ?? 0)) * multiplier;
             }
 
-            if (sort.key === "created") {
+            if (effectiveSort.key === "created") {
                 return (dateTimeValue(a.created_at) - dateTimeValue(b.created_at)) * multiplier;
             }
 
-            if (sort.key === "updated") {
+            if (effectiveSort.key === "updated") {
                 return (dateTimeValue(a.updated_at) - dateTimeValue(b.updated_at)) * multiplier;
             }
 
             return a.filename.localeCompare(b.filename) * multiplier;
         });
-    }, [docs, enableHeaderFilters, q, serverQueryActive, sort, typeFilter]);
+    }, [defaultSort, docs, enableHeaderFilters, q, serverQueryActive, sort, typeFilter]);
 
     const nameSortDirection = sort?.key === "name" ? sort.direction : null;
     const sizeSortDirection = sort?.key === "size" ? sort.direction : null;

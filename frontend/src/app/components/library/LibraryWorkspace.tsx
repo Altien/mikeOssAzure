@@ -814,6 +814,7 @@ export function LibraryCollectionPage({ kind }: { kind: LibraryKind }) {
           }))}
           autoLoadOnScroll
                     enableHeaderFilters
+                    defaultSort={{ key: "updated", direction: "desc" }}
                     emptyDropLabel={
                         kind === "templates"
                             ? "Drop template files here"
