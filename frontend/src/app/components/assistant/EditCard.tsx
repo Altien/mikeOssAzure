@@ -306,7 +306,7 @@ export function EditCard({
             </div>
             <div className="flex gap-2 mt-3">
                 <PillButton
-                    tone="black"
+                    tone="blue"
                     size="sm"
                     onClick={() => handle("accept")}
                     disabled={inFlight || resolved}
@@ -323,7 +323,7 @@ export function EditCard({
                 </PillButton>
                 {onViewClick && (
                     <PillButton
-                        tone="blue"
+                        tone="white"
                         size="sm"
                         onClick={() => onViewClick(annotation)}
                         disabled={resolved}
