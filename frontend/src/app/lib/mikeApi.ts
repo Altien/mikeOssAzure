@@ -1415,6 +1415,80 @@ export async function listWorkflows(
     return apiRequest<Workflow[]>(`/workflows?type=${type}`);
 }
 
+// Paginated sibling of listWorkflows() used only by WorkflowList.tsx.
+// Deliberately a separate function, not an overload — the backend route
+// decides whether to paginate based on whether any of these query params
+// are present at all, so listWorkflows() must keep sending none of them
+// (every other caller — the workflow picker modal, the chat slash-menu
+// picker, UseWorkflowModal's own independent fetch — needs the exact legacy
+// response shape, system workflows included). Returns DB-backed rows only
+// (always is_system: false) — system workflows come from listSystemWorkflows.
+export async function listWorkflowsPage(pagination?: {
+    limit?: number;
+    offset?: number;
+    search?: string;
+    sortKey?: string;
+    sortDirection?: "asc" | "desc";
+    scope?: "all" | "owned" | "shared";
+    type?: WorkflowType;
+    practice?: string;
+    language?: string;
+    jurisdiction?: string;
+    signal?: AbortSignal;
+}): Promise<Workflow[]> {
+    const params = new URLSearchParams();
+    if (pagination?.type) params.set("type", pagination.type);
+    if (pagination?.limit) params.set("limit", String(pagination.limit));
+    if (pagination?.offset) params.set("offset", String(pagination.offset));
+    if (pagination?.search) params.set("search", pagination.search);
+    if (pagination?.sortKey) params.set("sort_key", pagination.sortKey);
+    if (pagination?.sortDirection) params.set("sort_direction", pagination.sortDirection);
+    if (pagination?.scope && pagination.scope !== "all")
+        params.set("scope", pagination.scope);
+    if (pagination?.practice) params.set("practice", pagination.practice);
+    if (pagination?.language) params.set("language", pagination.language);
+    if (pagination?.jurisdiction) params.set("jurisdiction", pagination.jurisdiction);
+
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    return apiRequest<Workflow[]>(`/workflows${qs}`, {
+        signal: pagination?.signal,
+    });
+}
+
+export async function listWorkflowIds(options?: {
+    search?: string;
+    scope?: "all" | "owned" | "shared";
+    type?: WorkflowType;
+    practice?: string;
+    language?: string;
+    jurisdiction?: string;
+    signal?: AbortSignal;
+}): Promise<{ id: string; user_id: string }[]> {
+    const params = new URLSearchParams();
+    if (options?.type) params.set("type", options.type);
+    if (options?.search) params.set("search", options.search);
+    if (options?.scope && options.scope !== "all") params.set("scope", options.scope);
+    if (options?.practice) params.set("practice", options.practice);
+    if (options?.language) params.set("language", options.language);
+    if (options?.jurisdiction) params.set("jurisdiction", options.jurisdiction);
+
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    return apiRequest<{ id: string; user_id: string }[]>(
+        `/workflows/ids${qs}`,
+        { signal: options?.signal },
+    );
+}
+
+// Always-unpaginated: the static, code-generated system-workflow list (37
+// entries, zero user-data growth). Fetched once by usePaginatedWorkflows and
+// kept fully in memory rather than folded into the paginated RPC above.
+export async function listSystemWorkflows(
+    type?: WorkflowType,
+): Promise<Workflow[]> {
+    const qs = type ? `?type=${type}` : "";
+    return apiRequest<Workflow[]>(`/workflows/system${qs}`);
+}
+
 export async function getWorkflow(workflowId: string): Promise<Workflow> {
     return apiRequest<Workflow>(`/workflows/${workflowId}`);
 }

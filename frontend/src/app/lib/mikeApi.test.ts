@@ -76,10 +76,13 @@ import {
     listProjects,
     listProjectsPage,
     listStandaloneDocuments,
+    listSystemWorkflows,
     listTabularReviewIds,
     listTabularReviews,
+    listWorkflowIds,
     listWorkflowShares,
     listWorkflows,
+    listWorkflowsPage,
     lookupUserByEmail,
     mapTRMessages,
     moveDocumentToFolder,
@@ -890,6 +893,125 @@ describe("listProjectIds", () => {
         await listProjectIds({ scope: "all" });
 
         expect(lastFetchCall().url).toBe("http://localhost:3001/projects/ids");
+    });
+});
+
+describe("listWorkflows", () => {
+    // Regression guard: the workflow picker modal, the chat slash-menu
+    // picker, and UseWorkflowModal's own independent fetch all rely on this
+    // function sending zero pagination-related query params — the backend
+    // route decides whether to paginate purely on their presence. If this
+    // ever grew a stray param, those callers would start getting a
+    // truncated, system-workflow-free list back with no error.
+    it("sends only the type param, never a pagination knob", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listWorkflows("assistant");
+
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/workflows?type=assistant",
+        );
+    });
+});
+
+describe("listWorkflowsPage", () => {
+    it("requests the bare collection when no filters are given", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listWorkflowsPage();
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/workflows");
+        expect(init.signal).toBeUndefined();
+    });
+
+    it("serializes every pagination knob and forwards the abort signal", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+        const controller = new AbortController();
+
+        await listWorkflowsPage({
+            limit: 30,
+            offset: 60,
+            search: "nda",
+            sortKey: "name",
+            sortDirection: "desc",
+            scope: "owned",
+            type: "assistant",
+            practice: "Litigation",
+            language: "English",
+            jurisdiction: "NSW",
+            signal: controller.signal,
+        });
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe(
+            "http://localhost:3001/workflows" +
+                "?type=assistant&limit=30&offset=60&search=nda" +
+                "&sort_key=name&sort_direction=desc&scope=owned" +
+                "&practice=Litigation&language=English&jurisdiction=NSW",
+        );
+        expect(init.signal).toBe(controller.signal);
+    });
+
+    it('omits the scope param for "all" — the backend default', async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listWorkflowsPage({ scope: "all", limit: 10 });
+
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/workflows?limit=10",
+        );
+    });
+});
+
+describe("listWorkflowIds", () => {
+    it("requests the bare id list when no filters are given", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listWorkflowIds();
+
+        expect(lastFetchCall().url).toBe("http://localhost:3001/workflows/ids");
+    });
+
+    it("scopes ids by every active filter so select-all matches the visible list", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([{ id: "w1", user_id: "u1" }]));
+
+        const ids = await listWorkflowIds({
+            search: "nda",
+            scope: "owned",
+            type: "tabular",
+            practice: "Litigation",
+            language: "English",
+            jurisdiction: "NSW",
+        });
+
+        expect(ids).toEqual([{ id: "w1", user_id: "u1" }]);
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/workflows/ids?type=tabular&search=nda" +
+                "&scope=owned&practice=Litigation&language=English&jurisdiction=NSW",
+        );
+    });
+});
+
+describe("listSystemWorkflows", () => {
+    it("requests the unfiltered system list when no type is given", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listSystemWorkflows();
+
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/workflows/system",
+        );
+    });
+
+    it("appends the type filter when given", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listSystemWorkflows("tabular");
+
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/workflows/system?type=tabular",
+        );
     });
 });
 

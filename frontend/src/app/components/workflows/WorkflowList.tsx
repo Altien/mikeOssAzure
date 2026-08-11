@@ -14,15 +14,19 @@ import {
     hideWorkflow,
     unhideWorkflow,
 } from "@/app/lib/mikeApi";
+import { useDebouncedValue } from "@/app/hooks/useDebouncedValue";
+import { usePaginatedWorkflows } from "@/app/hooks/usePaginatedWorkflows";
 import type { Workflow } from "../shared/types";
 import { UseWorkflowModal } from "./UseWorkflowModal";
 import { NewWorkflowModal } from "./NewWorkflowModal";
 import { TableToolbar } from "../shared/TableToolbar";
 import { RowActionMenuItems, RowActions } from "../shared/RowActions";
+import { OwnerOnlyPopup } from "@/app/components/popups/OwnerOnlyPopup";
 import { MikeIcon } from "@/app/components/chat/mike-icon";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
+import { TableLoadMoreRow } from "@/app/components/shared/TableLoadMoreRow";
 import {
     LiquidDropdownButton,
     LiquidDropdownSurface,
@@ -66,23 +70,15 @@ const SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
     { value: "desc", label: "Descending" },
 ];
 
-const isDev = process.env.NODE_ENV !== "production";
-const devLog = (...args: Parameters<typeof console.log>) => {
-    if (isDev) console.log(...args);
-};
-
 export function WorkflowList() {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const [workflows, setWorkflows] = useState<Workflow[]>([]);
-    const [loading, setLoading] = useState(true);
     const [selected, setSelected] = useState<Workflow | null>(null);
     const [newModalOpen, setNewModalOpen] = useState(false);
     const [editingWorkflow, setEditingWorkflow] = useState<Workflow | null>(
         null,
     );
     const [hiddenSystemIds, setHiddenSystemIds] = useState<string[]>([]);
-    const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [actionsOpen, setActionsOpen] = useState(false);
     const [activeTab, setActiveTab] = useState<WorkflowListTab>("all");
     const [practiceFilter, setPracticeFilter] = useState<string | null>(null);
@@ -97,47 +93,57 @@ export function WorkflowList() {
         direction: TableSortDirection;
     } | null>(null);
     const [search, setSearch] = useState("");
+    const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
+    // A separate, always-unpaginated fetch used only to enumerate the
+    // practice/jurisdiction/language filter dropdown options — the paginated
+    // owned+shared rows below won't necessarily include every distinct
+    // value once there's more than one page.
+    const [filterOptionsWorkflows, setFilterOptionsWorkflows] = useState<
+        Workflow[]
+    >([]);
     const actionsRef = useRef<HTMLDivElement>(null);
     const previewEmptyStates = searchParams.get("emptyStates") === "1";
+    const debouncedSearch = useDebouncedValue(search, 250);
+
+    const {
+        systemWorkflows,
+        dbWorkflows,
+        setDbWorkflows,
+        loading,
+        loadingMore,
+        hasMore,
+        loadMoreError,
+        loadMore,
+        selectedWorkflowIds: selectedIds,
+        setSelectedWorkflowIds: setSelectedIds,
+        selectAllMatchingOwned,
+    } = usePaginatedWorkflows({
+        type: activeTab === "assistant" || activeTab === "tabular" ? activeTab : undefined,
+        search: debouncedSearch,
+        selectionKey: search,
+        scope: sourceFilter === "shared" ? "shared" : sourceFilter === "user" ? "owned" : "all",
+        practiceFilter,
+        languageFilter,
+        jurisdictionFilter,
+        sort,
+    });
     const effectiveLoading = loading && !previewEmptyStates;
-    const visibleWorkflows = previewEmptyStates ? [] : workflows;
 
     useEffect(() => {
-        Promise.all([
-            listWorkflows("assistant"),
-            listWorkflows("tabular"),
-            listHiddenWorkflows(),
-        ])
-            .then(([assistant, tabular, hidden]) => {
-                devLog("[workflows/ui:list] loaded", {
-                    assistantCount: assistant.length,
-                    tabularCount: tabular.length,
-                    hiddenCount: hidden.length,
-                    assistantSample: assistant.slice(0, 5).map((workflow) => ({
-                        id: workflow.id,
-                        title: workflow.metadata.title,
-                        type: workflow.metadata.type,
-                        user_id: workflow.user_id,
-                        is_system: workflow.is_system,
-                        is_owner: workflow.is_owner,
-                    })),
-                    tabularSample: tabular.slice(0, 5).map((workflow) => ({
-                        id: workflow.id,
-                        title: workflow.metadata.title,
-                        type: workflow.metadata.type,
-                        user_id: workflow.user_id,
-                        is_system: workflow.is_system,
-                        is_owner: workflow.is_owner,
-                    })),
-                });
-                setWorkflows([...assistant, ...tabular]);
-                setHiddenSystemIds(hidden);
-            })
-            .catch((error) => {
-                devLog("[workflows/ui:list] failed; showing no workflows", error);
-                setWorkflows([]);
-            })
-            .finally(() => setLoading(false));
+        listHiddenWorkflows()
+            .then(setHiddenSystemIds)
+            .catch(() => setHiddenSystemIds([]));
+    }, []);
+
+    useEffect(() => {
+        Promise.all([listWorkflows("assistant"), listWorkflows("tabular")])
+            .then(([assistant, tabular]) =>
+                setFilterOptionsWorkflows([...assistant, ...tabular]),
+            )
+            .catch(() => {
+                // Filter option lists degrade to "no options" — not worth a
+                // user-facing error for purely cosmetic dropdowns.
+            });
     }, []);
 
     useEffect(() => {
@@ -153,22 +159,19 @@ export function WorkflowList() {
         return () => document.removeEventListener("mousedown", handleClick);
     }, [actionsOpen]);
 
-    const systemWorkflows = visibleWorkflows.filter((wf) => wf.is_system);
-    const userWorkflows = visibleWorkflows.filter(
-        (wf) => !wf.is_system && wf.is_owner !== false,
-    );
-    const sharedWorkflows = visibleWorkflows.filter(
-        (wf) => !wf.is_system && wf.is_owner === false,
-    );
-    const hiddenSystem = systemWorkflows.filter((wf) =>
+    const visibleDbWorkflows = previewEmptyStates ? [] : dbWorkflows;
+    const visibleSystemAll = previewEmptyStates ? [] : systemWorkflows;
+
+    const userWorkflows = visibleDbWorkflows.filter((wf) => wf.is_owner !== false);
+    const sharedWorkflows = visibleDbWorkflows.filter((wf) => wf.is_owner === false);
+    const hiddenSystem = visibleSystemAll.filter((wf) =>
         hiddenSystemIds.includes(wf.id),
     );
-    const visibleSystem = systemWorkflows.filter(
+    const visibleSystem = visibleSystemAll.filter(
         (wf) => !hiddenSystemIds.includes(wf.id),
     );
     const systemRows = [...visibleSystem, ...hiddenSystem];
     const activeRows = [...userWorkflows, ...sharedWorkflows, ...visibleSystem];
-    const allRows = [...userWorkflows, ...sharedWorkflows, ...systemRows];
     const tabRows =
         activeTab === "all"
             ? activeRows
@@ -181,25 +184,59 @@ export function WorkflowList() {
             : tabRows.filter(
                   (workflow) => getWorkflowSource(workflow) === sourceFilter,
               );
+
+    // Parallel derivation over the always-complete filterOptionsWorkflows
+    // fetch, purely to enumerate dropdown options — mirrors the render
+    // pipeline above exactly (same tab/source bucketing rules) but never
+    // sees a partial page, so options stay complete regardless of how many
+    // pages of owned/shared workflows have been loaded.
+    const optSystem = filterOptionsWorkflows.filter((wf) => wf.is_system);
+    const optUser = filterOptionsWorkflows.filter(
+        (wf) => !wf.is_system && wf.is_owner !== false,
+    );
+    const optShared = filterOptionsWorkflows.filter(
+        (wf) => !wf.is_system && wf.is_owner === false,
+    );
+    const optVisibleSystem = optSystem.filter(
+        (wf) => !hiddenSystemIds.includes(wf.id),
+    );
+    const optHiddenSystem = optSystem.filter((wf) =>
+        hiddenSystemIds.includes(wf.id),
+    );
+    const optActiveRows = [...optUser, ...optShared, ...optVisibleSystem];
+    const optAllRows = [...optUser, ...optShared, ...optVisibleSystem, ...optHiddenSystem];
+    const optTabRows =
+        activeTab === "all"
+            ? optActiveRows
+            : activeTab === "system"
+              ? [...optVisibleSystem, ...optHiddenSystem]
+              : optActiveRows.filter((workflow) => workflow.metadata.type === activeTab);
+    const optSourceRows =
+        sourceFilter === null
+            ? optTabRows
+            : optTabRows.filter(
+                  (workflow) => getWorkflowSource(workflow) === sourceFilter,
+              );
     const practices = Array.from(
         new Set(
-            sourceRows.map((wf) => wf.metadata.practice).filter((p): p is string => !!p),
+            optSourceRows.map((wf) => wf.metadata.practice).filter((p): p is string => !!p),
         ),
     ).sort();
     const jurisdictions = Array.from(
         new Set(
-            allRows
+            optAllRows
                 .flatMap((wf) => wf.metadata.jurisdictions ?? [])
                 .filter((jurisdiction): jurisdiction is string => !!jurisdiction),
         ),
     ).sort();
     const languages = Array.from(
         new Set(
-            allRows
+            optAllRows
                 .map((wf) => wf.metadata.language)
                 .filter((language): language is string => !!language),
         ),
     ).sort();
+
     const q = search.toLowerCase();
     const filtered = sourceRows
         .filter((wf) => !practiceFilter || wf.metadata.practice === practiceFilter)
@@ -219,8 +256,19 @@ export function WorkflowList() {
         !allSelected && filtered.some((wf) => selectedIds.includes(wf.id));
 
     function toggleAll() {
-        if (allSelected) setSelectedIds([]);
-        else setSelectedIds(filtered.map((wf) => wf.id));
+        if (allSelected) {
+            setSelectedIds([]);
+            return;
+        }
+        // If everything currently displayable is already fully in memory
+        // (a pure-system view, or every DB page has already been loaded),
+        // just select what's visible — no network round-trip needed.
+        const allSystemView = filtered.length > 0 && filtered.every((wf) => wf.is_system);
+        if (allSystemView || !hasMore) {
+            setSelectedIds(filtered.map((wf) => wf.id));
+        } else {
+            void selectAllMatchingOwned();
+        }
     }
 
     function toggleOne(id: string) {
@@ -285,10 +333,21 @@ export function WorkflowList() {
         const ids = [...selectedIds];
         setActionsOpen(false);
         setSelectedIds([]);
-        const systemIds = ids.filter(
-            (id) => workflows.find((workflow) => workflow.id === id)?.is_system,
+        const systemIds = ids.filter((id) =>
+            systemWorkflows.some((workflow) => workflow.id === id),
         );
-        const customIds = ids.filter((id) => !systemIds.includes(id));
+        const nonSystemIds = ids.filter((id) => !systemIds.includes(id));
+        // Any non-system id still loaded in dbWorkflows carries its own
+        // is_owner flag — trust it directly. Any id NOT found there can only
+        // have arrived via selectAllMatchingOwned (scope-restricted to
+        // owned rows), so it's safe to treat as owned without a lookup.
+        const ownedIds = nonSystemIds.filter((id) => {
+            const loaded = dbWorkflows.find((workflow) => workflow.id === id);
+            return loaded ? loaded.is_owner !== false : true;
+        });
+        const blockedSharedIds = nonSystemIds.filter(
+            (id) => !ownedIds.includes(id),
+        );
         if (systemIds.length > 0) {
             setHiddenSystemIds((prev) => [
                 ...prev,
@@ -298,12 +357,17 @@ export function WorkflowList() {
                 systemIds.map((id) => hideWorkflow(id).catch(() => {})),
             );
         }
-        if (customIds.length > 0) {
+        if (ownedIds.length > 0) {
             await Promise.all(
-                customIds.map((id) => deleteWorkflow(id).catch(() => {})),
+                ownedIds.map((id) => deleteWorkflow(id).catch(() => {})),
             );
-            setWorkflows((prev) =>
-                prev.filter((w) => !customIds.includes(w.id)),
+            setDbWorkflows((prev) =>
+                prev.filter((w) => !ownedIds.includes(w.id)),
+            );
+        }
+        if (blockedSharedIds.length > 0) {
+            setOwnerOnlyAction(
+                `delete ${blockedSharedIds.length} of the selected workflows — only the workflow owner can delete a workflow`,
             );
         }
     }
@@ -409,8 +473,8 @@ export function WorkflowList() {
     const selectedHiddenSystemIds = selectedIds.filter((id) =>
         hiddenSystemIds.includes(id),
     );
-    const selectedSystemIds = selectedIds.filter(
-        (id) => workflows.find((workflow) => workflow.id === id)?.is_system,
+    const selectedSystemIds = selectedIds.filter((id) =>
+        systemWorkflows.some((workflow) => workflow.id === id),
     );
     const selectedOnlySystem =
         selectedIds.length > 0 && selectedIds.length === selectedSystemIds.length;
@@ -483,6 +547,13 @@ export function WorkflowList() {
 
             {/* Table */}
             <TableScrollArea
+                onScroll={(event) => {
+                    if (loading || loadingMore || !hasMore) return;
+                    const el = event.currentTarget;
+                    const distanceToBottom =
+                        el.scrollHeight - el.scrollTop - el.clientHeight;
+                    if (distanceToBottom < 200) void loadMore();
+                }}
                 header={
                     <TableHeaderRow>
                         <TableStickyCell header>
@@ -668,7 +739,7 @@ export function WorkflowList() {
                                                         await deleteWorkflow(
                                                             wf.id,
                                                         );
-                                                        setWorkflows((prev) =>
+                                                        setDbWorkflows((prev) =>
                                                             prev.filter(
                                                                 (w) =>
                                                                     w.id !==
@@ -783,7 +854,7 @@ export function WorkflowList() {
                                             }
                                             onDelete={async () => {
                                                 await deleteWorkflow(wf.id);
-                                                setWorkflows((prev) =>
+                                                setDbWorkflows((prev) =>
                                                     prev.filter(
                                                         (w) => w.id !== wf.id,
                                                     ),
@@ -797,10 +868,17 @@ export function WorkflowList() {
                         })}
                         </TableBody>
                     )}
+                    <TableLoadMoreRow
+                        loading={effectiveLoading}
+                        hasMore={hasMore}
+                        itemCount={filtered.length}
+                        loadingMore={loadingMore}
+                        hasError={!!loadMoreError}
+                        onLoadMore={() => void loadMore()}
+                    />
             </TableScrollArea>
 
             <UseWorkflowModal
-                workflows={allRows}
                 workflow={selected}
                 onClose={() => setSelected(null)}
             />
@@ -809,7 +887,7 @@ export function WorkflowList() {
                 open={newModalOpen}
                 onClose={() => setNewModalOpen(false)}
                 onCreated={(wf) => {
-                    setWorkflows((prev) => [wf, ...prev]);
+                    setDbWorkflows((prev) => [wf, ...prev]);
                     setNewModalOpen(false);
                     router.push(workflowDetailPath(wf));
                 }}
@@ -821,7 +899,7 @@ export function WorkflowList() {
                 onCreated={() => undefined}
                 editWorkflow={editingWorkflow ?? undefined}
                 onUpdated={(updated) => {
-                    setWorkflows((prev) =>
+                    setDbWorkflows((prev) =>
                         prev.map((workflow) =>
                             workflow.id === updated.id
                                 ? { ...workflow, ...updated }
@@ -830,6 +908,12 @@ export function WorkflowList() {
                     );
                     setEditingWorkflow(null);
                 }}
+            />
+
+            <OwnerOnlyPopup
+                open={!!ownerOnlyAction}
+                action={ownerOnlyAction ?? undefined}
+                onClose={() => setOwnerOnlyAction(null)}
             />
         </div>
     );

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseProjectSort, parseTabularReviewSort } from "../sort";
+import { parseProjectSort, parseTabularReviewSort, parseWorkflowSort } from "../sort";
 
 describe("parseTabularReviewSort", () => {
     it("accepts a supported sort key and direction", () => {
@@ -33,6 +33,28 @@ describe("parseProjectSort", () => {
 
     it("falls back to created desc for unsupported values", () => {
         expect(parseProjectSort({ key: "unknown", direction: "sideways" })).toEqual({
+            key: "created",
+            direction: "desc",
+        });
+    });
+});
+
+describe("parseWorkflowSort", () => {
+    it("accepts a supported sort key and direction", () => {
+        expect(parseWorkflowSort({ key: "type", direction: "asc" })).toEqual({
+            key: "type",
+            direction: "asc",
+        });
+    });
+
+    it("accepts sort_key/sort_direction as well as key/direction", () => {
+        expect(
+            parseWorkflowSort({ sort_key: "name", sort_direction: "asc" }),
+        ).toEqual({ key: "name", direction: "asc" });
+    });
+
+    it("falls back to created desc for unsupported values", () => {
+        expect(parseWorkflowSort({ key: "unknown", direction: "sideways" })).toEqual({
             key: "created",
             direction: "desc",
         });

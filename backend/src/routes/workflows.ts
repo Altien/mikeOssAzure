@@ -8,6 +8,14 @@ import {
 } from "../lib/systemWorkflows";
 import { findMissingUserEmails } from "../lib/userLookup";
 import { workflowNameFromSkillMd } from "../lib/workflowName";
+import { parsePaginationQuery } from "../lib/pagination";
+import { normalizeSearchTerm } from "../lib/search";
+import { parseWorkflowSort } from "../lib/sort";
+import {
+  buildWorkflowIdsOverviewRpcArgs,
+  buildWorkflowsOverviewRpcArgs,
+  parseWorkflowScope,
+} from "../lib/workflowsOverview";
 
 export const workflowsRouter = Router();
 
@@ -309,12 +317,64 @@ function validateOpenSourceWorkflow(workflow: WorkflowRecord): string | null {
 }
 
 // GET /workflows
+// Pagination is opt-in via query params (limit/offset/search/sort_key or
+// key/scope/practice/language/jurisdiction) — only WorkflowList.tsx sends
+// them. Every other caller (the workflow picker modal, the chat slash-menu
+// picker, UseWorkflowModal's own independent fetch) calls this with no
+// query params at all and must keep getting the exact legacy response shape
+// (system workflows prepended, full unpaginated owned+shared set) back, so
+// the branch below must never default to paginating a request that didn't
+// ask for it.
+const WORKFLOW_PAGINATION_QUERY_KEYS = [
+  "limit",
+  "offset",
+  "search",
+  "sort_key",
+  "key",
+  "sort_direction",
+  "direction",
+  "scope",
+  "practice",
+  "language",
+  "jurisdiction",
+];
+
 workflowsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { type } = req.query as { type?: string };
   const db = createServerSupabase();
   const workflowType = typeof type === "string" && type ? type : null;
+
+  const hasPaginationParams = WORKFLOW_PAGINATION_QUERY_KEYS.some(
+    (key) => req.query[key] !== undefined,
+  );
+
+  if (hasPaginationParams) {
+    // Paginated path: DB-backed owned+shared workflows only. System
+    // workflows are deliberately NOT prepended here — the hybrid design
+    // keeps them fetched separately (GET /workflows/system) and merged
+    // client-side, since there are only 37 of them and they never grow
+    // from user data.
+    const rpcArgs = buildWorkflowsOverviewRpcArgs({
+      userId,
+      userEmail,
+      type: workflowType,
+      scope: parseWorkflowScope(req.query.scope),
+      pagination: parsePaginationQuery(req.query as Record<string, unknown>),
+      searchTerm: normalizeSearchTerm(req.query.search),
+      sort: parseWorkflowSort(req.query as Record<string, unknown>),
+      practice: normalizeSearchTerm(req.query.practice),
+      language: normalizeSearchTerm(req.query.language),
+      jurisdiction: normalizeSearchTerm(req.query.jurisdiction),
+    });
+    const { data, error } = await db.rpc("get_workflows_overview", rpcArgs);
+    if (error) return void res.status(500).json({ detail: error.message });
+    const databaseWorkflows = ((data ?? []) as WorkflowRecord[])
+      .filter((workflow) => !SYSTEM_WORKFLOW_IDS.has(workflow.id))
+      .map(withDatabaseWorkflow);
+    return void res.json(databaseWorkflows);
+  }
 
   const { data, error } = await db.rpc("get_workflows_overview", {
     p_user_id: userId,
@@ -333,6 +393,76 @@ workflowsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
   ).map(withDatabaseWorkflow);
 
   res.json([...systemWorkflows, ...databaseWorkflows]);
+}));
+
+// GET /workflows/system (must come before /:workflowId routes)
+// Returns just the static system-workflow list, with no RPC call — the
+// hybrid pagination design keeps this bucket always fully loaded client-side
+// (only 37 entries, code-generated, zero user-data growth) rather than
+// trying to fold it into the paginated RPC above.
+workflowsRouter.get("/system", requireAuth, asyncRoute(async (req, res) => {
+  const { type } = req.query as { type?: string };
+  const workflowType = typeof type === "string" && type ? type : null;
+  const systemWorkflows = SYSTEM_WORKFLOWS.filter(
+    (workflow) => !workflowType || workflow.metadata.type === workflowType,
+  ).map(withSystemWorkflowAccess);
+  res.json(systemWorkflows);
+}));
+
+// GET /workflows/ids (must come before /:workflowId routes)
+// Lightweight id + owner list for every owned/shared workflow matching the
+// current filters — backs "select all matching" bulk actions so the client
+// doesn't have to page through full workflow payloads just to collect
+// checkboxes. System workflows never need this (always fully in memory).
+//
+// PostgREST enforces its own row cap on every RPC response (db-max-rows),
+// independent of anything this route asks for, and truncates silently
+// rather than failing. So this pages through the RPC itself — server-side,
+// same-datacenter round trips — until a page comes back empty, rather than
+// trusting one call to return everything.
+const WORKFLOW_IDS_PAGE_SIZE = 1000;
+const WORKFLOW_IDS_MAX_PAGES = 200; // guards a runaway loop, not a product limit
+
+workflowsRouter.get("/ids", requireAuth, asyncRoute(async (req, res) => {
+  const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string | undefined;
+  const db = createServerSupabase();
+
+  const { type } = req.query as { type?: string };
+  const workflowType = typeof type === "string" && type ? type : null;
+  const searchTerm = normalizeSearchTerm(req.query.search);
+  const scope = parseWorkflowScope(req.query.scope);
+  const practice = normalizeSearchTerm(req.query.practice);
+  const language = normalizeSearchTerm(req.query.language);
+  const jurisdiction = normalizeSearchTerm(req.query.jurisdiction);
+
+  const ids: { id: string; user_id: string }[] = [];
+  let offset = 0;
+  for (let page = 0; page < WORKFLOW_IDS_MAX_PAGES; page++) {
+    const rpcArgs = buildWorkflowIdsOverviewRpcArgs({
+      userId,
+      userEmail,
+      type: workflowType,
+      scope,
+      searchTerm,
+      practice,
+      language,
+      jurisdiction,
+      pagination: { limit: WORKFLOW_IDS_PAGE_SIZE, offset },
+    });
+    const { data, error } = await db.rpc("get_workflow_ids_overview", rpcArgs);
+    if (error) return void res.status(500).json({ detail: error.message });
+
+    const rows = (data ?? []) as { id: string; user_id: string }[];
+    if (rows.length === 0) break;
+    ids.push(...rows);
+    // Advance by what actually came back, not the requested page size — if
+    // PostgREST's cap is lower than WORKFLOW_IDS_PAGE_SIZE this still
+    // converges correctly instead of skipping rows.
+    offset += rows.length;
+  }
+
+  res.json(ids);
 }));
 
 // POST /workflows
