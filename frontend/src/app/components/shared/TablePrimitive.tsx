@@ -474,7 +474,7 @@ export function TableEmptyState({
     return (
         <div
             className={cn(
-                "mx-auto flex w-full max-w-xs flex-1 flex-col items-start justify-center py-24",
+                "mx-auto flex w-full max-w-xs flex-1 flex-col items-center justify-center py-24 text-center",
                 className,
             )}
         >

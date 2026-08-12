@@ -29,6 +29,7 @@ import {
     TabularReviewSkeuoIcon,
     WorkflowSkeuoIcon,
 } from "@/app/components/shared/AppSidebarSkeuoIcons";
+import { HistorySkeuoIcon } from "@/app/components/shared/HistorySkeuoIcon";
 import { ProjectSvgIcon } from "@/app/components/shared/FolderSvgIcon";
 import { listProjectSummaries } from "@/app/lib/mikeApi";
 import type { Project } from "@/app/components/shared/types";
@@ -496,7 +497,9 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                     "flex items-center transition-colors w-full px-2.5 py-3 border-t",
                                     "rounded-xl border-white/60",
                                     !isOpen ? "hidden md:flex" : "",
-                                    pathname === "/account" || isDropdownOpen
+                                    pathname.startsWith("/account") ||
+                                        pathname === "/history" ||
+                                        isDropdownOpen
                                         ? APP_SURFACE_ACTIVE_CLASS
                                         : APP_SURFACE_HOVER_CLASS,
                                 )}
@@ -532,6 +535,21 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                         "bg-app-floating rounded-xl shadow-[0_6px_17px_rgba(15,23,42,0.1)] border border-white/70 backdrop-blur-xl",
                                     )}
                                 >
+                                    <button
+                                        onClick={() => {
+                                            router.push("/history");
+                                            setIsDropdownOpen(false);
+                                        }}
+                                        className={cn(
+                                            "flex w-full items-center gap-2 rounded-md px-4 py-2 text-left text-sm text-gray-700",
+                                            "hover:bg-white",
+                                            pathname === "/history" &&
+                                                APP_SURFACE_ACTIVE_CLASS,
+                                        )}
+                                    >
+                                        <HistorySkeuoIcon className="h-4 w-4" />
+                                        History
+                                    </button>
                                     <button
                                         onClick={() => {
                                             router.push("/account");
