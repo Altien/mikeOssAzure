@@ -37,9 +37,25 @@ function resultForTable(table: string): QueryResult {
 function makeQuery(table: string) {
     const q: Record<string, unknown> = {};
     const chain = [
-        "select", "update", "delete", "upsert",
-        "eq", "neq", "in", "is", "or", "not", "lt", "gt", "gte", "lte",
-        "filter", "order", "limit", "range", "contains",
+    "select",
+    "update",
+    "delete",
+    "upsert",
+    "eq",
+    "neq",
+    "in",
+    "is",
+    "or",
+    "not",
+    "lt",
+    "gt",
+    "gte",
+    "lte",
+    "filter",
+    "order",
+    "limit",
+    "range",
+    "contains",
     ];
     for (const m of chain) q[m] = vi.fn(() => q);
     q.insert = vi.fn((payload: unknown) => {
@@ -48,8 +64,10 @@ function makeQuery(table: string) {
     });
     q.single = vi.fn(() => Promise.resolve(resultForTable(table)));
     q.maybeSingle = vi.fn(() => Promise.resolve(resultForTable(table)));
-    q.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) =>
-        Promise.resolve(resultForTable(table)).then(resolve, reject);
+  q.then = (
+    resolve: (v: unknown) => unknown,
+    reject?: (e: unknown) => unknown,
+  ) => Promise.resolve(resultForTable(table)).then(resolve, reject);
     return q;
 }
 
@@ -168,7 +186,9 @@ describe("workflows.routes", () => {
             const captured = captureRpcArgs();
             supabaseState.rpc = { data: [], error: null };
 
-            await request(app).get("/workflows?type=tabular").set(...AUTH);
+      await request(app)
+        .get("/workflows?type=tabular")
+        .set(...AUTH);
 
             expect(captured.name).toBe("get_workflows_overview");
             expect(captured.args).toEqual({
@@ -211,7 +231,9 @@ describe("workflows.routes", () => {
         it("returns 500 with detail when the RPC errors", async () => {
             supabaseState.rpc = { data: null, error: { message: "boom" } };
 
-            const res = await request(app).get("/workflows?type=assistant").set(...AUTH);
+      const res = await request(app)
+        .get("/workflows?type=assistant")
+        .set(...AUTH);
 
             expect(res.status).toBe(500);
             expect(res.body.detail).toBe("boom");
@@ -236,9 +258,12 @@ describe("workflows.routes", () => {
             expect(res.status).toBe(200);
             expect(Array.isArray(res.body)).toBe(true);
             expect(res.body.length).toBeGreaterThan(0);
-            expect(res.body.every((w: { is_system: boolean; metadata: { type: string } }) =>
+      expect(
+        res.body.every(
+          (w: { is_system: boolean; metadata: { type: string } }) =>
                 w.is_system && w.metadata.type === "assistant",
-            )).toBe(true);
+        ),
+      ).toBe(true);
             expect(createServerSupabase).not.toHaveBeenCalled();
         });
     });
@@ -259,7 +284,9 @@ describe("workflows.routes", () => {
                 return db as unknown as ReturnType<typeof createServerSupabase>;
             });
 
-            const res = await request(app).get("/workflows/ids").set(...AUTH);
+      const res = await request(app)
+        .get("/workflows/ids")
+        .set(...AUTH);
 
             expect(res.status).toBe(200);
             expect(res.body).toEqual([{ id: "w1", user_id: "u1" }]);
@@ -270,10 +297,46 @@ describe("workflows.routes", () => {
         it("returns 500 with detail when the RPC errors", async () => {
             supabaseState.rpc = { data: null, error: { message: "boom" } };
 
-            const res = await request(app).get("/workflows/ids").set(...AUTH);
+      const res = await request(app)
+        .get("/workflows/ids")
+        .set(...AUTH);
 
             expect(res.status).toBe(500);
             expect(res.body.detail).toBe("boom");
         });
     });
+
+  describe("GET /workflows/filter-options", () => {
+    it("passes type and scope to the facet RPC", async () => {
+      const captured = captureRpcArgs();
+      supabaseState.rpc = {
+        data: [
+          {
+            practices: ["Disputes"],
+            languages: ["English"],
+            jurisdictions: ["Singapore"],
+          },
+        ],
+        error: null,
+      };
+
+      const res = await request(app)
+        .get("/workflows/filter-options?type=assistant&scope=shared")
+        .set(...AUTH);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        practices: ["Disputes"],
+        languages: ["English"],
+        jurisdictions: ["Singapore"],
+      });
+      expect(captured.name).toBe("get_workflow_filter_options");
+      expect(captured.args).toEqual({
+        p_user_id: "u1",
+        p_user_email: "u1@test.local",
+        p_type: "assistant",
+        p_scope: "shared",
+      });
+    });
+  });
 });

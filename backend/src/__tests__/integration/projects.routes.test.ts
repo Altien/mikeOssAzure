@@ -39,9 +39,25 @@ function resultForTable(table: string): QueryResult {
 function makeQuery(table: string) {
     const q: Record<string, unknown> = {};
     const chain = [
-        "select", "update", "delete", "upsert",
-        "eq", "neq", "in", "is", "or", "not", "lt", "gt", "gte", "lte",
-        "filter", "order", "limit", "range", "contains",
+    "select",
+    "update",
+    "delete",
+    "upsert",
+    "eq",
+    "neq",
+    "in",
+    "is",
+    "or",
+    "not",
+    "lt",
+    "gt",
+    "gte",
+    "lte",
+    "filter",
+    "order",
+    "limit",
+    "range",
+    "contains",
     ];
     for (const m of chain) q[m] = vi.fn(() => q);
     q.insert = vi.fn((payload: unknown) => {
@@ -50,8 +66,10 @@ function makeQuery(table: string) {
     });
     q.single = vi.fn(() => Promise.resolve(resultForTable(table)));
     q.maybeSingle = vi.fn(() => Promise.resolve(resultForTable(table)));
-    q.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) =>
-        Promise.resolve(resultForTable(table)).then(resolve, reject);
+  q.then = (
+    resolve: (v: unknown) => unknown,
+    reject?: (e: unknown) => unknown,
+  ) => Promise.resolve(resultForTable(table)).then(resolve, reject);
     return q;
 }
 
@@ -123,12 +141,16 @@ const AUTH = ["Authorization", "Bearer test"] as const;
 // Wraps mockSupabase()'s rpc so the next request's exact RPC call args can be
 // asserted on — the shared mock otherwise only lets tests control the
 // *response*, not inspect what was sent.
-function captureRpcArgs(): { args: unknown } {
-    const captured: { args: unknown } = { args: undefined };
+function captureRpcArgs(): { args: unknown; name: string | undefined } {
+  const captured: { args: unknown; name: string | undefined } = {
+    args: undefined,
+    name: undefined,
+  };
     vi.mocked(createServerSupabase).mockImplementationOnce(() => {
         const db = mockSupabase();
         const originalRpc = db.rpc;
         db.rpc = vi.fn((name: string, args: unknown) => {
+      captured.name = name;
             captured.args = args;
             return originalRpc(name, args as never);
         });
@@ -157,7 +179,9 @@ describe("projects.routes", () => {
                 error: null,
             };
 
-            const res = await request(app).get("/projects").set(...AUTH);
+      const res = await request(app)
+        .get("/projects")
+        .set(...AUTH);
 
             expect(res.status).toBe(200);
             expect(res.body).toEqual([{ id: "p1", name: "Alpha" }]);
@@ -206,22 +230,23 @@ describe("projects.routes", () => {
         it("returns 500 with detail when the RPC errors", async () => {
             supabaseState.rpc = { data: null, error: { message: "boom" } };
 
-            const res = await request(app).get("/projects").set(...AUTH);
+      const res = await request(app)
+        .get("/projects")
+        .set(...AUTH);
 
             expect(res.status).toBe(500);
             expect(res.body.detail).toBe("boom");
         });
 
-        // Regression guard: the sidebar nav, the document-picker directory
-        // view, and the tabular-review project pickers all call GET /projects
-        // with no query params and need the full, unpaginated list back. If
-        // this ever silently switched to the paginated RPC shape by default,
-        // those callers would start seeing a truncated list with no error.
+    // Regression guard: legacy project pickers call GET /projects with no
+    // query params and need the full, unpaginated list back.
         it("calls the legacy 2-arg RPC shape when no pagination params are present", async () => {
             const captured = captureRpcArgs();
             supabaseState.rpc = { data: [], error: null };
 
-            await request(app).get("/projects").set(...AUTH);
+      await request(app)
+        .get("/projects")
+        .set(...AUTH);
 
             expect(captured.args).toEqual({
                 p_user_id: "u1",
@@ -253,6 +278,47 @@ describe("projects.routes", () => {
                 p_owner_user_id: "u2",
             });
         });
+
+    it("uses the lightweight summary RPC for view=summary", async () => {
+      const captured = captureRpcArgs();
+      supabaseState.rpc = {
+        data: [{ id: "p1", name: "Recently updated" }],
+        error: null,
+      };
+
+      const res = await request(app)
+        .get("/projects?view=summary&limit=11&offset=10")
+        .set(...AUTH);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([
+        { id: "p1", name: "Recently updated" },
+      ]);
+      expect(captured.name).toBe("get_project_summaries");
+      expect(captured.args).toEqual({
+        p_user_id: "u1",
+        p_user_email: "u1@test.local",
+        p_limit: 11,
+        p_offset: 10,
+      });
+    });
+
+    it("uses the projects collection for directory search", async () => {
+      const res = await request(app)
+        .get("/projects?view=directory-search")
+        .set(...AUTH);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
+    });
+
+    it("no longer exposes a separate project directory search route", async () => {
+      const res = await request(app)
+        .get("/projects/directory/search?search=Agreement")
+        .set(...AUTH);
+
+      expect(res.status).toBe(404);
+    });
     });
 
     // ── GET /projects/ids (select-all-matching support) ──────────────────
@@ -271,7 +337,9 @@ describe("projects.routes", () => {
                 return db as unknown as ReturnType<typeof createServerSupabase>;
             });
 
-            const res = await request(app).get("/projects/ids").set(...AUTH);
+      const res = await request(app)
+        .get("/projects/ids")
+        .set(...AUTH);
 
             expect(res.status).toBe(200);
             expect(res.body).toEqual([{ id: "p1", user_id: "u1" }]);
@@ -282,12 +350,114 @@ describe("projects.routes", () => {
         it("returns 500 with detail when the RPC errors", async () => {
             supabaseState.rpc = { data: null, error: { message: "boom" } };
 
-            const res = await request(app).get("/projects/ids").set(...AUTH);
+      const res = await request(app)
+        .get("/projects/ids")
+        .set(...AUTH);
 
             expect(res.status).toBe(500);
             expect(res.body.detail).toBe("boom");
         });
     });
+
+  describe("GET /projects/filter-options", () => {
+    it("returns lightweight practice and owner facets", async () => {
+      const captured = captureRpcArgs();
+      supabaseState.rpc = {
+        data: [
+          {
+            practices: ["Litigation"],
+            owners: [{ value: "u1", label: "Me" }],
+          },
+        ],
+        error: null,
+      };
+
+      const res = await request(app)
+        .get("/projects/filter-options")
+        .set(...AUTH);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        practices: ["Litigation"],
+        owners: [{ value: "u1", label: "Me" }],
+      });
+      expect(captured.args).toEqual({
+        p_user_id: "u1",
+        p_user_email: "u1@test.local",
+      });
+    });
+  });
+
+  describe("Library query endpoints", () => {
+    it("returns a flat paginated search result", async () => {
+      const captured = captureRpcArgs();
+      supabaseState.rpc = {
+        data: [
+          { id: "d1", filename: "Agreement.docx" },
+          { id: "d2", filename: "Agreement schedule.docx" },
+        ],
+        error: null,
+      };
+
+      const res = await request(app)
+        .get(
+          "/library/templates?view=search&limit=1&offset=2&search=Agreement" +
+            "&file_type=docx&sort_key=name&sort_direction=asc",
+        )
+        .set(...AUTH);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        documents: [
+          {
+            id: "d1",
+            filename: "Agreement.docx",
+            folder_id: null,
+          },
+        ],
+        documentsHasMore: true,
+      });
+      expect(captured.name).toBe("search_library_documents");
+      expect(captured.args).toEqual({
+        p_user_id: "u1",
+        p_library_kind: "template",
+        p_limit: 2,
+        p_offset: 2,
+        p_search_term: "Agreement",
+        p_file_type: "docx",
+        p_sort_key: "name",
+        p_sort_direction: "asc",
+      });
+    });
+
+    it("no longer exposes a separate Library search route", async () => {
+      const res = await request(app)
+        .get("/library/templates/search?search=Agreement")
+        .set(...AUTH);
+
+      expect(res.status).toBe(404);
+    });
+
+    it("returns only the file-type facet payload", async () => {
+      const captured = captureRpcArgs();
+      supabaseState.rpc = {
+        data: [{ file_types: ["docx", "pdf"] }],
+        error: null,
+      };
+
+      const res = await request(app)
+        .get("/library/files/filter-options")
+        .set(...AUTH);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ fileTypes: ["docx", "pdf"] });
+      expect(captured.name).toBe("get_library_filter_options");
+      expect(captured.args).toEqual({
+        p_user_id: "u1",
+        p_library_kind: "file",
+      });
+    });
+  });
 
     // ── POST /projects (create) ───────────────────────────────────────────
     describe("POST /projects", () => {
@@ -310,9 +480,7 @@ describe("projects.routes", () => {
                 .send({ name: "Beta", shared_with: ["U1@Test.Local"] });
 
             expect(res.status).toBe(400);
-            expect(res.body.detail).toBe(
-                "You cannot share a project with yourself.",
-            );
+      expect(res.body.detail).toBe("You cannot share a project with yourself.");
         });
 
         it("creates the project (201) and normalises shared_with", async () => {
@@ -346,9 +514,7 @@ describe("projects.routes", () => {
 
             // The insert payload should be lowercased, deduped, trimmed and
             // the name trimmed.
-            const insert = supabaseState.inserts.find(
-                (i) => i.table === "projects",
-            );
+      const insert = supabaseState.inserts.find((i) => i.table === "projects");
             expect(insert?.payload).toMatchObject({
                 name: "Gamma",
                 shared_with: ["a@x.com", "b@x.com"],
@@ -393,7 +559,9 @@ describe("projects.routes", () => {
         it("returns 404 when the project does not exist", async () => {
             supabaseState.tables.projects = { data: null, error: null };
 
-            const res = await request(app).get("/projects/p1").set(...AUTH);
+      const res = await request(app)
+        .get("/projects/p1")
+        .set(...AUTH);
 
             expect(res.status).toBe(404);
             expect(res.body.detail).toBe("Project not found");
@@ -409,7 +577,9 @@ describe("projects.routes", () => {
                 error: null,
             };
 
-            const res = await request(app).get("/projects/p1").set(...AUTH);
+      const res = await request(app)
+        .get("/projects/p1")
+        .set(...AUTH);
 
             expect(res.status).toBe(404);
             expect(res.body.detail).toBe("Project not found");
@@ -427,7 +597,9 @@ describe("projects.routes", () => {
             supabaseState.tables.documents = { data: [], error: null };
             supabaseState.tables.project_subfolders = { data: [], error: null };
 
-            const res = await request(app).get("/projects/p1").set(...AUTH);
+      const res = await request(app)
+        .get("/projects/p1")
+        .set(...AUTH);
 
             expect(res.status).toBe(200);
             expect(res.body).toMatchObject({ id: "p1", is_owner: false });
@@ -447,7 +619,9 @@ describe("projects.routes", () => {
                 error: null,
             };
 
-            const res = await request(app).get("/projects/p1").set(...AUTH);
+      const res = await request(app)
+        .get("/projects/p1")
+        .set(...AUTH);
 
             expect(res.status).toBe(200);
             expect(res.body).toMatchObject({
@@ -498,9 +672,7 @@ describe("projects.routes", () => {
                 .send({ shared_with: ["u1@test.local"] });
 
             expect(res.status).toBe(400);
-            expect(res.body.detail).toBe(
-                "You cannot share a project with yourself.",
-            );
+      expect(res.body.detail).toBe("You cannot share a project with yourself.");
         });
 
         it("returns 404 when the update matches no owned project", async () => {
@@ -521,7 +693,9 @@ describe("projects.routes", () => {
         it("returns 404 when nothing was deleted", async () => {
             deleteUserProjects.mockResolvedValue(0);
 
-            const res = await request(app).delete("/projects/p1").set(...AUTH);
+      const res = await request(app)
+        .delete("/projects/p1")
+        .set(...AUTH);
 
             expect(res.status).toBe(404);
             expect(res.body.detail).toBe("Project not found");
@@ -530,21 +704,23 @@ describe("projects.routes", () => {
         it("returns 204 when the project is deleted", async () => {
             deleteUserProjects.mockResolvedValue(1);
 
-            const res = await request(app).delete("/projects/p1").set(...AUTH);
+      const res = await request(app)
+        .delete("/projects/p1")
+        .set(...AUTH);
 
             expect(res.status).toBe(204);
             // Signature is deleteUserProjects(db, userId, [projectId]).
-            expect(deleteUserProjects).toHaveBeenCalledWith(
-                expect.anything(),
-                "u1",
-                ["p1"],
-            );
+      expect(deleteUserProjects).toHaveBeenCalledWith(expect.anything(), "u1", [
+        "p1",
+      ]);
         });
 
         it("returns 500 when deletion throws", async () => {
             deleteUserProjects.mockRejectedValue(new Error("cascade failed"));
 
-            const res = await request(app).delete("/projects/p1").set(...AUTH);
+      const res = await request(app)
+        .delete("/projects/p1")
+        .set(...AUTH);
 
             expect(res.status).toBe(500);
             expect(res.body.detail).toBe("cascade failed");
@@ -690,7 +866,7 @@ describe("projects.routes", () => {
         it("does not leak the underlying error when the manifest build fails", async () => {
             supabaseState.tables.projects = {
                 data: null,
-                error: { message: "relation \"projects\" does not exist" },
+        error: { message: 'relation "projects" does not exist' },
             };
 
             const res = await request(app)
@@ -698,9 +874,7 @@ describe("projects.routes", () => {
                 .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe(
-                "Failed to build project export manifest",
-            );
+      expect(res.body.detail).toBe("Failed to build project export manifest");
         });
     });
 });

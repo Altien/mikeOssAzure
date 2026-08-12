@@ -1,4 +1,9 @@
-import { Router, type NextFunction, type Request, type Response } from "express";
+import {
+  Router,
+  type NextFunction,
+  type Request,
+  type Response,
+} from "express";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import {
@@ -97,13 +102,11 @@ const DEFAULT_WORKFLOW_JURISDICTIONS = ["General"];
 const WORKFLOW_CONTRIBUTIONS_ENABLED =
   process.env.WORKFLOW_CONTRIBUTIONS_ENABLED === "true";
 
-type WorkflowAccess =
-  | {
+type WorkflowAccess = {
       workflow: WorkflowRecord;
       allowEdit: boolean;
       isOwner: boolean;
-    }
-  | null;
+} | null;
 
 type AsyncRoute = (req: Request, res: Response) => Promise<unknown>;
 
@@ -115,7 +118,11 @@ function asyncRoute(handler: AsyncRoute) {
 
 function withWorkflowAccess<T extends object>(
   workflow: T,
-  access: { allowEdit: boolean; isOwner: boolean; sharedByName?: string | null },
+  access: {
+    allowEdit: boolean;
+    isOwner: boolean;
+    sharedByName?: string | null;
+  },
 ) {
   return {
     ...workflow,
@@ -146,15 +153,16 @@ function workflowTypeFrom(value: unknown): WorkflowType {
   return value === "tabular" ? "tabular" : "assistant";
 }
 
-function metadataFromWorkflowRecord(workflow: WorkflowRecord): WorkflowMetadata {
+function metadataFromWorkflowRecord(
+  workflow: WorkflowRecord,
+): WorkflowMetadata {
   const type = workflowTypeFrom(workflow.type);
   return {
     name: workflowNameFromSkillMd(workflow.prompt_md),
     title: workflow.title ?? "",
     description: null,
     type,
-    contributors:
-      normalizeContributors(workflow.contributors) ?? [
+    contributors: normalizeContributors(workflow.contributors) ?? [
         DEFAULT_WORKFLOW_CONTRIBUTOR,
       ],
     language: workflow.language ?? DEFAULT_WORKFLOW_LANGUAGE,
@@ -181,6 +189,16 @@ function withDatabaseWorkflow(workflow: WorkflowRecord) {
     metadata: metadataFromWorkflowRecord(workflow),
     skill_md: prompt_md ?? null,
     is_system: false,
+  };
+}
+
+function withDatabaseWorkflowSummary(workflow: WorkflowRecord) {
+  return {
+    ...withDatabaseWorkflow(workflow),
+    // List pages render metadata only. Full instructions/columns are loaded
+    // from GET /workflows/:id when a workflow is opened.
+    skill_md: null,
+    columns_config: null,
   };
 }
 
@@ -252,7 +270,11 @@ async function resolveWorkflowAccess(
     .maybeSingle();
   if (!share) return null;
 
-  return { workflow: workflowRecord, allowEdit: !!share.allow_edit, isOwner: false };
+  return {
+    workflow: workflowRecord,
+    allowEdit: !!share.allow_edit,
+    isOwner: false,
+  };
 }
 
 function toOpenSourceSubmissionSummary(
@@ -281,7 +303,9 @@ async function getLatestOpenSourceSubmission(
     .limit(1)
     .maybeSingle();
   if (error) throw error;
-  return data ? toOpenSourceSubmissionSummary(data as OpenSourceSubmissionRow) : null;
+  return data
+    ? toOpenSourceSubmissionSummary(data as OpenSourceSubmissionRow)
+    : null;
 }
 
 function buildOpenSourceSnapshot(
@@ -309,22 +333,14 @@ function validateOpenSourceWorkflow(workflow: WorkflowRecord): string | null {
       : "Assistant workflows need instructions before they can be opened source.";
   }
   if (workflow.type === "tabular") {
-    return Array.isArray(workflow.columns_config) && workflow.columns_config.length > 0
+    return Array.isArray(workflow.columns_config) &&
+      workflow.columns_config.length > 0
       ? null
       : "Tabular workflows need at least one column before they can be opened source.";
   }
   return "Workflow type must be 'assistant' or 'tabular'.";
 }
 
-// GET /workflows
-// Pagination is opt-in via query params (limit/offset/search/sort_key or
-// key/scope/practice/language/jurisdiction) — only WorkflowList.tsx sends
-// them. Every other caller (the workflow picker modal, the chat slash-menu
-// picker, UseWorkflowModal's own independent fetch) calls this with no
-// query params at all and must keep getting the exact legacy response shape
-// (system workflows prepended, full unpaginated owned+shared set) back, so
-// the branch below must never default to paginating a request that didn't
-// ask for it.
 const WORKFLOW_PAGINATION_QUERY_KEYS = [
   "limit",
   "offset",
@@ -342,20 +358,14 @@ const WORKFLOW_PAGINATION_QUERY_KEYS = [
 workflowsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
-  const { type } = req.query as { type?: string };
   const db = createServerSupabase();
+  const { type } = req.query as { type?: string };
   const workflowType = typeof type === "string" && type ? type : null;
-
   const hasPaginationParams = WORKFLOW_PAGINATION_QUERY_KEYS.some(
     (key) => req.query[key] !== undefined,
   );
 
   if (hasPaginationParams) {
-    // Paginated path: DB-backed owned+shared workflows only. System
-    // workflows are deliberately NOT prepended here — the hybrid design
-    // keeps them fetched separately (GET /workflows/system) and merged
-    // client-side, since there are only 37 of them and they never grow
-    // from user data.
     const rpcArgs = buildWorkflowsOverviewRpcArgs({
       userId,
       userEmail,
@@ -372,7 +382,7 @@ workflowsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
     if (error) return void res.status(500).json({ detail: error.message });
     const databaseWorkflows = ((data ?? []) as WorkflowRecord[])
       .filter((workflow) => !SYSTEM_WORKFLOW_IDS.has(workflow.id))
-      .map(withDatabaseWorkflow);
+      .map(withDatabaseWorkflowSummary);
     return void res.json(databaseWorkflows);
   }
 
@@ -388,9 +398,9 @@ workflowsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
   const systemWorkflows = SYSTEM_WORKFLOWS.filter(
     (workflow) => !workflowType || workflow.metadata.type === workflowType,
   ).map(withSystemWorkflowAccess);
-  const databaseWorkflows = ((data ?? []) as WorkflowRecord[]).filter(
-    (workflow) => !SYSTEM_WORKFLOW_IDS.has(workflow.id),
-  ).map(withDatabaseWorkflow);
+  const databaseWorkflows = ((data ?? []) as WorkflowRecord[])
+    .filter((workflow) => !SYSTEM_WORKFLOW_IDS.has(workflow.id))
+    .map(withDatabaseWorkflow);
 
   res.json([...systemWorkflows, ...databaseWorkflows]);
 }));
@@ -400,14 +410,52 @@ workflowsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
 // hybrid pagination design keeps this bucket always fully loaded client-side
 // (only 37 entries, code-generated, zero user-data growth) rather than
 // trying to fold it into the paginated RPC above.
-workflowsRouter.get("/system", requireAuth, asyncRoute(async (req, res) => {
+workflowsRouter.get(
+  "/system",
+  requireAuth,
+  asyncRoute(async (req, res) => {
   const { type } = req.query as { type?: string };
   const workflowType = typeof type === "string" && type ? type : null;
   const systemWorkflows = SYSTEM_WORKFLOWS.filter(
     (workflow) => !workflowType || workflow.metadata.type === workflowType,
   ).map(withSystemWorkflowAccess);
   res.json(systemWorkflows);
-}));
+  }),
+);
+
+// GET /workflows/filter-options (must come before /:workflowId routes)
+workflowsRouter.get(
+  "/filter-options",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const type =
+      req.query.type === "assistant" || req.query.type === "tabular"
+        ? req.query.type
+        : null;
+    const scope = parseWorkflowScope(req.query.scope);
+    const db = createServerSupabase();
+    const { data, error } = await db.rpc("get_workflow_filter_options", {
+      p_user_id: userId,
+      p_user_email: userEmail ?? null,
+      p_type: type,
+      p_scope: scope,
+    });
+    if (error) return void res.status(500).json({ detail: error.message });
+
+    const row = (data?.[0] ?? {}) as Record<string, unknown>;
+    const strings = (value: unknown) =>
+      Array.isArray(value)
+        ? value.filter((item): item is string => typeof item === "string")
+        : [];
+    res.json({
+      practices: strings(row.practices),
+      languages: strings(row.languages),
+      jurisdictions: strings(row.jurisdictions),
+    });
+  }),
+);
 
 // GET /workflows/ids (must come before /:workflowId routes)
 // Lightweight id + owner list for every owned/shared workflow matching the
@@ -423,7 +471,10 @@ workflowsRouter.get("/system", requireAuth, asyncRoute(async (req, res) => {
 const WORKFLOW_IDS_PAGE_SIZE = 1000;
 const WORKFLOW_IDS_MAX_PAGES = 200; // guards a runaway loop, not a product limit
 
-workflowsRouter.get("/ids", requireAuth, asyncRoute(async (req, res) => {
+workflowsRouter.get(
+  "/ids",
+  requireAuth,
+  asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const db = createServerSupabase();
@@ -456,23 +507,20 @@ workflowsRouter.get("/ids", requireAuth, asyncRoute(async (req, res) => {
     const rows = (data ?? []) as { id: string; user_id: string }[];
     if (rows.length === 0) break;
     ids.push(...rows);
-    // Advance by what actually came back, not the requested page size — if
-    // PostgREST's cap is lower than WORKFLOW_IDS_PAGE_SIZE this still
-    // converges correctly instead of skipping rows.
     offset += rows.length;
   }
 
   res.json(ids);
-}));
+  }),
+);
 
 // POST /workflows
-workflowsRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
+workflowsRouter.post(
+  "/",
+  requireAuth,
+  asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
-  const {
-    metadata,
-    skill_md,
-    columns_config,
-  } = req.body as {
+    const { metadata, skill_md, columns_config } = req.body as {
     metadata?: Partial<WorkflowMetadata>;
     skill_md?: string;
     columns_config?: unknown;
@@ -480,7 +528,9 @@ workflowsRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
   const title = metadata?.title;
   const type = metadata?.type;
   if (!title?.trim())
-    return void res.status(400).json({ detail: "metadata.title is required" });
+      return void res
+        .status(400)
+        .json({ detail: "metadata.title is required" });
   if (type !== "assistant" && type !== "tabular")
     return void res
       .status(400)
@@ -494,7 +544,8 @@ workflowsRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
     hasSkill: typeof skill_md === "string" && skill_md.length > 0,
     columnCount: Array.isArray(columns_config) ? columns_config.length : null,
     language:
-      normalizeOptionalString(metadata?.language) ?? DEFAULT_WORKFLOW_LANGUAGE,
+        normalizeOptionalString(metadata?.language) ??
+        DEFAULT_WORKFLOW_LANGUAGE,
     practice: metadata?.practice ?? null,
     jurisdictions:
       normalizeJurisdictions(metadata?.jurisdictions) ??
@@ -509,9 +560,11 @@ workflowsRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
       prompt_md: skill_md ?? null,
       columns_config: columns_config ?? null,
       language:
-        normalizeOptionalString(metadata?.language) ?? DEFAULT_WORKFLOW_LANGUAGE,
+          normalizeOptionalString(metadata?.language) ??
+          DEFAULT_WORKFLOW_LANGUAGE,
       practice:
-        normalizeOptionalString(metadata?.practice) ?? DEFAULT_WORKFLOW_PRACTICE,
+          normalizeOptionalString(metadata?.practice) ??
+          DEFAULT_WORKFLOW_PRACTICE,
       jurisdictions:
         normalizeJurisdictions(metadata?.jurisdictions) ??
         DEFAULT_WORKFLOW_JURISDICTIONS,
@@ -537,7 +590,8 @@ workflowsRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
     type: data?.type,
   });
   res.status(201).json(withDatabaseWorkflow(data as WorkflowRecord));
-}));
+  }),
+);
 
 async function handleWorkflowUpdate(req: Request, res: Response) {
   const userId = res.locals.userId as string;
@@ -582,13 +636,24 @@ async function handleWorkflowUpdate(req: Request, res: Response) {
 }
 
 // PUT /workflows/:workflowId
-workflowsRouter.put("/:workflowId", requireAuth, asyncRoute(handleWorkflowUpdate));
+workflowsRouter.put(
+  "/:workflowId",
+  requireAuth,
+  asyncRoute(handleWorkflowUpdate),
+);
 
 // PATCH /workflows/:workflowId
-workflowsRouter.patch("/:workflowId", requireAuth, asyncRoute(handleWorkflowUpdate));
+workflowsRouter.patch(
+  "/:workflowId",
+  requireAuth,
+  asyncRoute(handleWorkflowUpdate),
+);
 
 // DELETE /workflows/:workflowId
-workflowsRouter.delete("/:workflowId", requireAuth, asyncRoute(async (req, res) => {
+workflowsRouter.delete(
+  "/:workflowId",
+  requireAuth,
+  asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const { workflowId } = req.params;
   const systemWorkflow = SYSTEM_WORKFLOWS.find(
@@ -606,10 +671,14 @@ workflowsRouter.delete("/:workflowId", requireAuth, asyncRoute(async (req, res) 
     .eq("user_id", userId);
   if (error) return void res.status(500).json({ detail: error.message });
   res.status(204).send();
-}));
+  }),
+);
 
 // GET /workflows/hidden
-workflowsRouter.get("/hidden", requireAuth, asyncRoute(async (req, res) => {
+workflowsRouter.get(
+  "/hidden",
+  requireAuth,
+  asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const db = createServerSupabase();
   const { data, error } = await db
@@ -618,10 +687,14 @@ workflowsRouter.get("/hidden", requireAuth, asyncRoute(async (req, res) => {
     .eq("user_id", userId);
   if (error) return void res.status(500).json({ detail: error.message });
   res.json((data ?? []).map((r) => r.workflow_id));
-}));
+  }),
+);
 
 // POST /workflows/hidden
-workflowsRouter.post("/hidden", requireAuth, asyncRoute(async (req, res) => {
+workflowsRouter.post(
+  "/hidden",
+  requireAuth,
+  asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const { workflow_id } = req.body as { workflow_id: string };
   if (!workflow_id?.trim())
@@ -629,13 +702,20 @@ workflowsRouter.post("/hidden", requireAuth, asyncRoute(async (req, res) => {
   const db = createServerSupabase();
   const { error } = await db
     .from("hidden_workflows")
-    .upsert({ user_id: userId, workflow_id }, { onConflict: "user_id,workflow_id" });
+      .upsert(
+        { user_id: userId, workflow_id },
+        { onConflict: "user_id,workflow_id" },
+      );
   if (error) return void res.status(500).json({ detail: error.message });
   res.status(204).send();
-}));
+  }),
+);
 
 // DELETE /workflows/hidden/:workflowId
-workflowsRouter.delete("/hidden/:workflowId", requireAuth, asyncRoute(async (req, res) => {
+workflowsRouter.delete(
+  "/hidden/:workflowId",
+  requireAuth,
+  asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const { workflowId } = req.params;
   const db = createServerSupabase();
@@ -646,12 +726,18 @@ workflowsRouter.delete("/hidden/:workflowId", requireAuth, asyncRoute(async (req
     .eq("workflow_id", workflowId);
   if (error) return void res.status(500).json({ detail: error.message });
   res.status(204).send();
-}));
+  }),
+);
 
 // POST /workflows/:workflowId/open-source
-workflowsRouter.post("/:workflowId/open-source", requireAuth, asyncRoute(async (req, res) => {
+workflowsRouter.post(
+  "/:workflowId/open-source",
+  requireAuth,
+  asyncRoute(async (req, res) => {
   if (!WORKFLOW_CONTRIBUTIONS_ENABLED) {
-    return void res.status(404).json({ detail: "Workflow contributions are disabled" });
+      return void res
+        .status(404)
+        .json({ detail: "Workflow contributions are disabled" });
   }
 
   const userId = res.locals.userId as string;
@@ -662,9 +748,7 @@ workflowsRouter.post("/:workflowId/open-source", requireAuth, asyncRoute(async (
     contributor?: unknown;
   };
   const requestedContributorMode =
-    openSourceBody.contributor_mode === "named"
-      ? "named"
-      : "anonymous";
+      openSourceBody.contributor_mode === "named" ? "named" : "anonymous";
   const db = createServerSupabase();
 
   const { data: workflow, error: workflowError } = await db
@@ -773,10 +857,14 @@ workflowsRouter.post("/:workflowId/open-source", requireAuth, asyncRoute(async (
     ...toOpenSourceSubmissionSummary(created as OpenSourceSubmissionRow),
     mode: "created",
   });
-}));
+  }),
+);
 
 // GET /workflows/:workflowId
-workflowsRouter.get("/:workflowId", requireAuth, asyncRoute(async (req, res) => {
+workflowsRouter.get(
+  "/:workflowId",
+  requireAuth,
+  asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { workflowId } = req.params;
@@ -788,7 +876,12 @@ workflowsRouter.get("/:workflowId", requireAuth, asyncRoute(async (req, res) => 
   }
 
   const db = createServerSupabase();
-  const access = await resolveWorkflowAccess(workflowId, userId, userEmail, db);
+    const access = await resolveWorkflowAccess(
+      workflowId,
+      userId,
+      userEmail,
+      db,
+    );
   if (!access)
     return void res.status(404).json({ detail: "Workflow not found" });
   const openSourceSubmission = access.isOwner
@@ -803,10 +896,14 @@ workflowsRouter.get("/:workflowId", requireAuth, asyncRoute(async (req, res) => 
       openSourceSubmission,
     ),
   );
-}));
+  }),
+);
 
 // GET /workflows/:workflowId/shares
-workflowsRouter.get("/:workflowId/shares", requireAuth, asyncRoute(async (req, res) => {
+workflowsRouter.get(
+  "/:workflowId/shares",
+  requireAuth,
+  asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const { workflowId } = req.params;
   const db = createServerSupabase();
@@ -817,7 +914,10 @@ workflowsRouter.get("/:workflowId/shares", requireAuth, asyncRoute(async (req, r
     .eq("id", workflowId)
     .eq("user_id", userId)
     .single();
-  if (!wf) return void res.status(404).json({ detail: "Workflow not found or not editable" });
+    if (!wf)
+      return void res
+        .status(404)
+        .json({ detail: "Workflow not found or not editable" });
 
   const { data: shares, error } = await db
     .from("workflow_shares")
@@ -827,10 +927,14 @@ workflowsRouter.get("/:workflowId/shares", requireAuth, asyncRoute(async (req, r
   if (error) return void res.status(500).json({ detail: error.message });
 
   res.json(shares ?? []);
-}));
+  }),
+);
 
 // DELETE /workflows/:workflowId/shares/:shareId
-workflowsRouter.delete("/:workflowId/shares/:shareId", requireAuth, asyncRoute(async (req, res) => {
+workflowsRouter.delete(
+  "/:workflowId/shares/:shareId",
+  requireAuth,
+  asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const { workflowId, shareId } = req.params;
   const db = createServerSupabase();
@@ -843,23 +947,33 @@ workflowsRouter.delete("/:workflowId/shares/:shareId", requireAuth, asyncRoute(a
     .single();
   if (!wf) return void res.status(404).json({ detail: "Workflow not found" });
 
-  await db.from("workflow_shares").delete().eq("id", shareId).eq("workflow_id", workflowId);
+    await db
+      .from("workflow_shares")
+      .delete()
+      .eq("id", shareId)
+      .eq("workflow_id", workflowId);
   res.status(204).send();
-}));
+  }),
+);
 
 // POST /workflows/:workflowId/share
-workflowsRouter.post("/:workflowId/share", requireAuth, asyncRoute(async (req, res) => {
+workflowsRouter.post(
+  "/:workflowId/share",
+  requireAuth,
+  asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { workflowId } = req.params;
-  const { emails, allow_edit } = req.body as { emails: string[]; allow_edit: boolean };
+    const { emails, allow_edit } = req.body as {
+      emails: string[];
+      allow_edit: boolean;
+    };
 
-  if (!emails?.length) return void res.status(400).json({ detail: "emails is required" });
+    if (!emails?.length)
+      return void res.status(400).json({ detail: "emails is required" });
   const normalizedEmails = [
     ...new Set(
-      emails
-        .map((email) => email.trim().toLowerCase())
-        .filter(Boolean),
+        emails.map((email) => email.trim().toLowerCase()).filter(Boolean),
     ),
   ];
   if (normalizedEmails.length === 0) {
@@ -873,7 +987,10 @@ workflowsRouter.post("/:workflowId/share", requireAuth, asyncRoute(async (req, r
   }
 
   const db = createServerSupabase();
-  const missingSharedUsers = await findMissingUserEmails(db, normalizedEmails);
+    const missingSharedUsers = await findMissingUserEmails(
+      db,
+      normalizedEmails,
+    );
   if (missingSharedUsers.length > 0) {
     return void res.status(400).json({
       detail: `${missingSharedUsers[0]} does not belong to a Mike user.`,
@@ -887,7 +1004,10 @@ workflowsRouter.post("/:workflowId/share", requireAuth, asyncRoute(async (req, r
     .eq("id", workflowId)
     .eq("user_id", userId)
     .single();
-  if (!wf) return void res.status(404).json({ detail: "Workflow not found or not editable" });
+    if (!wf)
+      return void res
+        .status(404)
+        .json({ detail: "Workflow not found or not editable" });
 
   const rows = normalizedEmails.map((email: string) => ({
     workflow_id: workflowId,
@@ -903,7 +1023,8 @@ workflowsRouter.post("/:workflowId/share", requireAuth, asyncRoute(async (req, r
   if (error) return void res.status(500).json({ detail: error.message });
 
   res.status(204).send();
-}));
+  }),
+);
 
 workflowsRouter.use(
   (err: unknown, _req: Request, res: Response, next: NextFunction) => {

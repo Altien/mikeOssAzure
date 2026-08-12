@@ -8,25 +8,19 @@ import {
 } from "react";
 import type { Project } from "@/app/components/shared/types";
 import { listProjectIds, listProjectsPage } from "@/app/lib/mikeApi";
+import { appendUniqueRows, paginationError, splitOverfetchedPage } from "@/app/lib/paginatedRows";
 
-export type ProjectSortKey = "name" | "cm" | "files" | "chats" | "reviews" | "created";
+export type ProjectSortKey =
+  | "name"
+  | "cm"
+  | "files"
+  | "chats"
+  | "reviews"
+  | "created";
 export type ProjectSortDirection = "asc" | "desc";
 export type ProjectScope = "all" | "mine" | "shared";
 
 const PAGE_SIZE = 30;
-
-function pageRows(rows: Project[]) {
-    return {
-        hasMore: rows.length > PAGE_SIZE,
-        rows: rows.slice(0, PAGE_SIZE),
-    };
-}
-
-function asError(value: unknown) {
-    return value instanceof Error
-        ? value
-        : new Error("Unable to load projects");
-}
 
 // Server-side-paginated projects list, cloned from usePaginatedTabularReviews
 // (same shape: limit+1 over-fetch to derive hasMore without a count query,
@@ -85,14 +79,11 @@ export function usePaginatedProjects(options: {
     }>({ queryKey, ids: [] });
     const selectedProjectIds =
         selection.queryKey === queryKey ? selection.ids : [];
-    const setSelectedProjectIds: Dispatch<SetStateAction<string[]>> =
-        useCallback(
+  const setSelectedProjectIds: Dispatch<SetStateAction<string[]>> = useCallback(
             (value) => {
                 setSelection((current) => {
-                    const currentIds =
-                        current.queryKey === queryKey ? current.ids : [];
-                    const ids =
-                        typeof value === "function" ? value(currentIds) : value;
+        const currentIds = current.queryKey === queryKey ? current.ids : [];
+        const ids = typeof value === "function" ? value(currentIds) : value;
                     return { queryKey, ids };
                 });
             },
@@ -142,7 +133,7 @@ export function usePaginatedProjects(options: {
         })
             .then((rows) => {
                 if (requestVersion !== requestVersionRef.current) return;
-                const firstPage = pageRows(rows);
+        const firstPage = splitOverfetchedPage(rows, PAGE_SIZE);
                 setProjects(firstPage.rows);
                 setHasMore(firstPage.hasMore);
             })
@@ -153,7 +144,7 @@ export function usePaginatedProjects(options: {
                 )
                     return;
                 console.error("[projects] failed to load", error);
-                setError(asError(error));
+        setError(paginationError(error, "Unable to load projects"));
                 setHasMore(false);
             })
             .finally(() => {
@@ -203,16 +194,8 @@ export function usePaginatedProjects(options: {
             });
             if (requestVersion !== requestVersionRef.current) return;
 
-            const nextPage = pageRows(rows);
-            setProjects((current) => {
-                const existingIds = new Set(current.map((project) => project.id));
-                return [
-                    ...current,
-                    ...nextPage.rows.filter(
-                        (project) => !existingIds.has(project.id),
-                    ),
-                ];
-            });
+      const nextPage = splitOverfetchedPage(rows, PAGE_SIZE);
+      setProjects((current) => appendUniqueRows(current, nextPage.rows));
             setHasMore(nextPage.hasMore);
         } catch (error) {
             if (
@@ -220,7 +203,7 @@ export function usePaginatedProjects(options: {
                 requestVersion === requestVersionRef.current
             ) {
                 console.error("[projects] failed to load more", error);
-                setLoadMoreError(asError(error));
+        setLoadMoreError(paginationError(error, "Unable to load projects"));
             }
         } finally {
             if (
@@ -273,9 +256,7 @@ export function usePaginatedProjects(options: {
 
             setSelectAllOwners({
                 queryKey,
-                ownerById: Object.fromEntries(
-                    rows.map((row) => [row.id, row.user_id]),
-                ),
+        ownerById: Object.fromEntries(rows.map((row) => [row.id, row.user_id])),
             });
             setSelectedProjectIds(rows.map((row) => row.id));
         } finally {

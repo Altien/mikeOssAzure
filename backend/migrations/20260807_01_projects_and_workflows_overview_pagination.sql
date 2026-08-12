@@ -14,8 +14,8 @@
 --     scope/search/practice/owner filters, server-side sort, and limit/offset
 --   * the existing 2-arg get_projects_overview (from 20260703_02_project_practice.sql)
 --     is left completely untouched as the back-compat path for every caller
---     that doesn't ask for pagination (sidebar nav, document-picker directory
---     view, tabular-review project pickers) — see backend/src/routes/projects.ts
+--     that doesn't ask for pagination (document-picker directory view and
+--     tabular-review project pickers) — see backend/src/routes/projects.ts
 --     for the routing logic that decides which overload to call.
 --   * a lightweight get_project_ids_overview companion for "select all
 --     matching" bulk actions.
@@ -24,6 +24,9 @@ create extension if not exists pg_trgm;
 
 create index if not exists projects_name_trgm_idx
   on public.projects using gin (lower(name) gin_trgm_ops);
+
+create index if not exists projects_updated_at_idx
+  on public.projects(updated_at desc, id);
 
 create or replace function public.get_projects_overview(
   p_user_id text,
@@ -143,6 +146,8 @@ as $$
     case when p_sort_key = 'reviews' and p_sort_direction = 'desc' then coalesce(rc.review_count, 0) else null end desc,
     case when p_sort_key = 'created' and p_sort_direction = 'asc' then vp.created_at else null end asc,
     case when p_sort_key = 'created' and p_sort_direction = 'desc' then vp.created_at else null end desc,
+    case when p_sort_key = 'updated' and p_sort_direction = 'asc' then vp.updated_at else null end asc,
+    case when p_sort_key = 'updated' and p_sort_direction = 'desc' then vp.updated_at else null end desc,
     vp.created_at desc,
     vp.id asc
   limit greatest(coalesce(p_limit, 20), 1)

@@ -6,9 +6,16 @@ export interface TabularReviewSort {
     direction: TabularReviewSortDirection;
 }
 
-const SUPPORTED_KEYS: TabularReviewSortKey[] = ["name", "columns", "documents", "created"];
+const SUPPORTED_KEYS: TabularReviewSortKey[] = [
+  "name",
+  "columns",
+  "documents",
+  "created",
+];
 
-export function parseTabularReviewSort(value: Record<string, unknown>): TabularReviewSort {
+export function parseTabularReviewSort(
+  value: Record<string, unknown>,
+): TabularReviewSort {
     const rawKey = typeof value.sort_key === "string"
         ? value.sort_key
         : typeof value.key === "string"
@@ -22,7 +29,14 @@ export function parseTabularReviewSort(value: Record<string, unknown>): TabularR
     return { key, direction };
 }
 
-export type ProjectSortKey = "name" | "cm" | "files" | "chats" | "reviews" | "created";
+export type ProjectSortKey =
+  | "name"
+  | "cm"
+  | "files"
+  | "chats"
+  | "reviews"
+  | "created"
+  | "updated";
 export type ProjectSortDirection = "asc" | "desc";
 
 export interface ProjectSort {
@@ -30,7 +44,15 @@ export interface ProjectSort {
     direction: ProjectSortDirection;
 }
 
-const PROJECT_SUPPORTED_KEYS: ProjectSortKey[] = ["name", "cm", "files", "chats", "reviews", "created"];
+const PROJECT_SUPPORTED_KEYS: ProjectSortKey[] = [
+  "name",
+  "cm",
+  "files",
+  "chats",
+  "reviews",
+  "created",
+  "updated",
+];
 
 export function parseProjectSort(value: Record<string, unknown>): ProjectSort {
     const rawKey = typeof value.sort_key === "string"
@@ -56,7 +78,9 @@ export interface WorkflowSort {
 
 const WORKFLOW_SUPPORTED_KEYS: WorkflowSortKey[] = ["name", "type", "created"];
 
-export function parseWorkflowSort(value: Record<string, unknown>): WorkflowSort {
+export function parseWorkflowSort(
+  value: Record<string, unknown>,
+): WorkflowSort {
     const rawKey = typeof value.sort_key === "string"
         ? value.sort_key
         : typeof value.key === "string"

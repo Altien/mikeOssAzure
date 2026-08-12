@@ -1,11 +1,4 @@
-import {
-    afterEach,
-    beforeEach,
-    describe,
-    expect,
-    it,
-    vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssistantEvent, Chat } from "@/app/components/shared/types";
 
 // mikeApi resolves the auth header through the module-level Supabase client,
@@ -55,10 +48,12 @@ import {
     getCourtlistenerOpinions,
     getDocumentUrl,
     getLibrary,
+  getLibraryFilterOptions,
     getLibraryFolderChildren,
     getMcpConnector,
     getOllamaModels,
     getProject,
+  getProjectFilterOptions,
     getProjectPeople,
     getTabularChatMessages,
     getTabularChats,
@@ -66,6 +61,7 @@ import {
     getTabularReviewPeople,
     getUserProfile,
     getWorkflow,
+  getWorkflowFilterOptions,
     hideWorkflow,
     isMfaRequiredError,
     listChats,
@@ -74,6 +70,7 @@ import {
     listMcpConnectors,
     listProjectChats,
     listProjectIds,
+  listProjectSummaries,
     listProjects,
     listProjectsPage,
     listStandaloneDocuments,
@@ -101,7 +98,9 @@ import {
     renameProjectFolder,
     renameTabularChat,
     replaceDocumentVersionFile,
-    saveApiKey,
+  saveApiKey,
+  searchProjectDirectory,
+  searchLibraryDocuments,
     setMcpToolEnabled,
     shareWorkflow,
     startMcpConnectorOAuth,
@@ -266,8 +265,8 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         );
     });
 
-    // Regression guard: the sidebar nav, the document-picker directory view,
-    // and the tabular-review project pickers all call listProjects() with no
+  // Regression guard: legacy tabular-review project pickers call
+  // listProjects() with no
     // arguments and need every project back. The backend route decides
     // whether to paginate purely by checking whether pagination-related
     // query params are present at all — if listProjects() ever started
@@ -357,8 +356,10 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         );
 
         fetchMock.mockResolvedValue(jsonResponse([]));
-        await listChats({ limit: 5 });
-        expect(lastFetchCall().url).toBe("http://localhost:3001/chat?limit=5");
+    await listChats({ limit: 5, offset: 10 });
+    expect(lastFetchCall().url).toBe(
+      "http://localhost:3001/chat?limit=5&offset=10",
+    );
     });
 });
 
@@ -529,9 +530,7 @@ describe("getChat message mapping", () => {
 
 describe("mapTRMessages", () => {
     it("maps user and assistant rows including annotations", () => {
-        const events: AssistantEvent[] = [
-            { type: "content", text: "Answer" },
-        ];
+    const events: AssistantEvent[] = [{ type: "content", text: "Answer" }];
         const mapped = mapTRMessages([
             {
                 id: "m1",
@@ -639,10 +638,7 @@ describe("streamChat", () => {
     });
 
     it("returns the streaming Response body unconsumed", async () => {
-        const chunks = [
-            'data: {"type":"content_delta","text":"Hel',
-            'lo"}\n\n',
-        ];
+    const chunks = ['data: {"type":"content_delta","text":"Hel', 'lo"}\n\n'];
         fetchMock.mockResolvedValue(streamResponse(chunks));
 
         const response = await streamChat({
@@ -850,10 +846,40 @@ describe("listProjectsPage", () => {
 
         await listProjectsPage({ scope: "all", limit: 10 });
 
+    expect(lastFetchCall().url).toBe("http://localhost:3001/projects?limit=10");
+  });
+});
+
+describe("listProjectSummaries", () => {
+  it("uses the projects collection with the summary view", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([]));
+
+    await listProjectSummaries({ limit: 11, offset: 10 });
+
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/projects?limit=10",
+      "http://localhost:3001/projects?limit=11&offset=10&view=summary",
         );
     });
+});
+
+describe("searchProjectDirectory", () => {
+  it("uses the projects collection directory-search view", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([]));
+    const controller = new AbortController();
+
+    await searchProjectDirectory({
+      search: "agreement",
+      limit: 51,
+      offset: 10,
+      signal: controller.signal,
+    });
+
+    const { url, init } = lastFetchCall();
+    expect(url).toBe(
+      "http://localhost:3001/projects?view=directory-search&search=agreement&limit=51&offset=10",
+    );
+    expect(init.signal).toBe(controller.signal);
+  });
 });
 
 describe("listProjectIds", () => {
@@ -897,13 +923,22 @@ describe("listProjectIds", () => {
     });
 });
 
+describe("getProjectFilterOptions", () => {
+  it("loads lightweight project facets and forwards cancellation", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ practices: ["Litigation"], owners: [] }),
+    );
+    const controller = new AbortController();
+
+    await getProjectFilterOptions(controller.signal);
+
+    const { url, init } = lastFetchCall();
+    expect(url).toBe("http://localhost:3001/projects/filter-options");
+    expect(init.signal).toBe(controller.signal);
+  });
+});
+
 describe("listWorkflows", () => {
-    // Regression guard: the workflow picker modal, the chat slash-menu
-    // picker, and UseWorkflowModal's own independent fetch all rely on this
-    // function sending zero pagination-related query params — the backend
-    // route decides whether to paginate purely on their presence. If this
-    // ever grew a stray param, those callers would start getting a
-    // truncated, system-workflow-free list back with no error.
     it("sends only the type param, never a pagination knob", async () => {
         fetchMock.mockResolvedValue(jsonResponse([]));
 
@@ -1000,9 +1035,7 @@ describe("listSystemWorkflows", () => {
 
         await listSystemWorkflows();
 
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/workflows/system",
-        );
+    expect(lastFetchCall().url).toBe("http://localhost:3001/workflows/system");
     });
 
     it("appends the type filter when given", async () => {
@@ -1014,6 +1047,64 @@ describe("listSystemWorkflows", () => {
             "http://localhost:3001/workflows/system?type=tabular",
         );
     });
+});
+
+describe("getWorkflowFilterOptions", () => {
+  it("scopes workflow facets by type and ownership", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ practices: [], languages: [], jurisdictions: [] }),
+    );
+    const controller = new AbortController();
+
+    await getWorkflowFilterOptions({
+      type: "assistant",
+      scope: "shared",
+      signal: controller.signal,
+    });
+
+    const { url, init } = lastFetchCall();
+    expect(url).toBe(
+      "http://localhost:3001/workflows/filter-options?type=assistant&scope=shared",
+    );
+    expect(init.signal).toBe(controller.signal);
+  });
+});
+
+describe("Library search", () => {
+  it("sends every server-side query option and returns flat results", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ documents: [{ id: "d1" }], documentsHasMore: true }),
+    );
+    const controller = new AbortController();
+
+    const result = await searchLibraryDocuments("templates", {
+      limit: 50,
+      offset: 100,
+      search: "agreement",
+      fileType: "docx",
+      sortKey: "updated",
+      sortDirection: "desc",
+      signal: controller.signal,
+    });
+
+    expect(result.documentsHasMore).toBe(true);
+    const { url, init } = lastFetchCall();
+    expect(url).toBe(
+      "http://localhost:3001/library/templates?view=search&limit=50&offset=100" +
+        "&search=agreement&file_type=docx&sort_key=updated&sort_direction=desc",
+    );
+    expect(init.signal).toBe(controller.signal);
+  });
+
+  it("loads the complete file-type facet list", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ fileTypes: ["docx", "pdf"] }));
+
+    await getLibraryFilterOptions("files");
+
+    expect(lastFetchCall().url).toBe(
+      "http://localhost:3001/library/files/filter-options",
+    );
+  });
 });
 
 describe("tabular review CRUD", () => {
@@ -1122,9 +1213,9 @@ describe("uploadReviewDocument", () => {
         const [uploadCall, patchCall] = fetchMock.mock.calls;
         expect(uploadCall[0]).toBe("http://localhost:3001/single-documents");
         // With no prior ids the review ends up with exactly the new document.
-        expect(JSON.parse((patchCall[1] as RequestInit).body as string)).toEqual(
-            { document_ids: ["new-doc"] },
-        );
+    expect(JSON.parse((patchCall[1] as RequestInit).body as string)).toEqual({
+      document_ids: ["new-doc"],
+    });
     });
 });
 
@@ -1180,9 +1271,7 @@ describe("tabular cell operations", () => {
 
         expect(cell.flag).toBe("green");
         const { url, init } = lastFetchCall();
-        expect(url).toBe(
-            "http://localhost:3001/tabular-review/r1/regenerate-cell",
-        );
+    expect(url).toBe("http://localhost:3001/tabular-review/r1/regenerate-cell");
         expect(JSON.parse(init.body as string)).toEqual({
             row_id: "row-1",
             column_index: 2,
@@ -1277,9 +1366,9 @@ describe("multipart upload endpoints", () => {
         expect((init.body as FormData).get("filename")).toBe("renamed.pdf");
 
         fetchMock.mockResolvedValue(new Response("nope", { status: 409 }));
-        await expect(
-            replaceDocumentVersionFile("d1", "v1", file),
-        ).rejects.toThrow("nope");
+    await expect(replaceDocumentVersionFile("d1", "v1", file)).rejects.toThrow(
+      "nope",
+    );
     });
 });
 
@@ -1398,9 +1487,7 @@ describe("workflow endpoints", () => {
 
         fetchMock.mockResolvedValue(jsonResponse(["w2"]));
         await expect(listHiddenWorkflows()).resolves.toEqual(["w2"]);
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/workflows/hidden",
-        );
+    expect(lastFetchCall().url).toBe("http://localhost:3001/workflows/hidden");
     });
 });
 
@@ -1425,7 +1512,8 @@ describe("thin endpoint wrappers", () => {
         // Account & profile
         {
             name: "createProject",
-            call: () => createProject("Acme v. Zenith", "CM-42", "litigation", ["a@b.c"]),
+      call: () =>
+        createProject("Acme v. Zenith", "CM-42", "litigation", ["a@b.c"]),
             url: "/projects",
             method: "POST",
             body: {
@@ -1628,7 +1716,7 @@ describe("thin endpoint wrappers", () => {
         {
             name: "getLibraryFolderChildren",
             call: () => getLibraryFolderChildren("files", "f1"),
-            url: "/library/files/folders/f1/children",
+            url: "/library/files?parent_folder_id=f1",
         },
         {
             name: "getLibrary with pagination",
@@ -1637,9 +1725,8 @@ describe("thin endpoint wrappers", () => {
         },
         {
             name: "getLibraryFolderChildren with pagination",
-            call: () =>
-                getLibraryFolderChildren("files", "f1", { limit: 50 }),
-            url: "/library/files/folders/f1/children?limit=50",
+      call: () => getLibraryFolderChildren("files", "f1", { limit: 50 }),
+            url: "/library/files?parent_folder_id=f1&limit=50",
         },
         {
             name: "renameLibraryFolder",
@@ -1804,8 +1891,7 @@ describe("thin endpoint wrappers", () => {
         },
         {
             name: "shareWorkflow",
-            call: () =>
-                shareWorkflow("w1", { emails: ["a@b.c"], allow_edit: false }),
+      call: () => shareWorkflow("w1", { emails: ["a@b.c"], allow_edit: false }),
             url: "/workflows/w1/share",
             method: "POST",
             body: { emails: ["a@b.c"], allow_edit: false },
@@ -1823,7 +1909,9 @@ describe("thin endpoint wrappers", () => {
         },
     ];
 
-    it.each(cases)("$name → $method $url", async ({ call, url, method, body }) => {
+  it.each(cases)(
+    "$name → $method $url",
+    async ({ call, url, method, body }) => {
         fetchMock.mockResolvedValue(jsonResponse({}));
 
         await call();
@@ -1842,7 +1930,8 @@ describe("thin endpoint wrappers", () => {
         expect(init.headers).toMatchObject({
             Authorization: "Bearer token-123",
         });
-    });
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -1892,9 +1981,7 @@ describe("unwrapping and blob wrappers", () => {
         );
 
         const chats = await exportChatData();
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/user/chats/export",
-        );
+    expect(lastFetchCall().url).toBe("http://localhost:3001/user/chats/export");
         expect(chats.filename).toBe("x.zip");
         expect(await chats.blob.text()).toBe("bytes");
 
