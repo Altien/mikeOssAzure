@@ -8,7 +8,7 @@ import { useDirectoryData } from "../shared/useDirectoryData";
 import { FileDirectory } from "../shared/FileDirectory";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { Modal } from "../modals/Modal";
-import { ModalFieldLabel } from "../modals/ModalFieldLabel";
+import { FieldLabel } from "../ui/form-field";
 import { ModalSegmentedToggle } from "../modals/ModalSegmentedToggle";
 import { ModalSelect } from "../modals/ModalSelect";
 import { ModalTextarea } from "../modals/ModalTextarea";
@@ -302,7 +302,7 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
 
                     <div className="space-y-6">
                         <div>
-                            <ModalFieldLabel as="p">Use in</ModalFieldLabel>
+                            <FieldLabel as="p">Use in</FieldLabel>
                             <ModalSegmentedToggle
                                 value={location}
                                 onChange={(value) => {
@@ -316,7 +316,7 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
 
                         {inProject && (
                             <div>
-                                <ModalFieldLabel htmlFor="workflow-project">Project</ModalFieldLabel>
+                                <FieldLabel htmlFor="workflow-project">Project</FieldLabel>
                                 <ModalSelect
                                     id="workflow-project"
                                     value={selectedProjectId ?? ""}
@@ -342,9 +342,9 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
 
                         {wf.metadata.type === "assistant" && (
                             <div>
-                                <ModalFieldLabel htmlFor="workflow-additional-message">
+                                <FieldLabel htmlFor="workflow-additional-message">
                                     Additional message
-                                </ModalFieldLabel>
+                                </FieldLabel>
                                 <ModalTextarea
                                     id="workflow-additional-message"
                                     value={assistantPrompt}

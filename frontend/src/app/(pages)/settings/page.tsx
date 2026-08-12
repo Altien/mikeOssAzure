@@ -3,8 +3,10 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { LogOut, Trash2 } from "lucide-react";
-import { Button } from "@/app/components/ui/button";
-import { Input } from "@/app/components/ui/input";
+import { PillButton } from "@/app/components/ui/pill-button";
+import { SettingsActionButton } from "@/app/components/settings/SettingsActionButton";
+import { FieldLabel } from "@/app/components/ui/form-field";
+import { SettingsTextInput } from "@/app/components/settings/SettingsTextInput";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
@@ -14,19 +16,14 @@ import {
 } from "@/app/components/popups/MfaVerificationPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { deleteAccount, isMfaRequiredError } from "@/app/lib/mikeApi";
-import {
-    accountGlassDangerOutlineButtonClassName,
-    accountGlassInputClassName,
-    accountGlassPrimaryButtonClassName,
-} from "./accountStyles";
-import { AccountSection } from "./AccountSection";
+import { SettingsSection } from "./SettingsSection";
 
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
     if (isDev) console.log(...args);
 };
 
-export default function AccountPage() {
+export default function SettingsPage() {
     const router = useRouter();
     const { user, signOut, updateEmail } = useAuth();
     const { profile, updateDisplayName, updateOrganisation } = useUserProfile();
@@ -173,21 +170,20 @@ export default function AccountPage() {
                 <h2 className="text-2xl font-medium font-serif text-gray-900">
                     Profile
                 </h2>
-                <AccountSection className="p-4">
-                    <div className="divide-y divide-gray-200">
-                        <div className="pb-4">
-                            <label className="text-sm text-gray-600 block mb-2">
+                <SettingsSection className="p-4">
+                    <div className="space-y-8">
+                        <div>
+                            <FieldLabel className="text-sm text-gray-600">
                                 Display Name
-                            </label>
+                            </FieldLabel>
                             <div className="space-y-2">
-                                <Input
+                                <SettingsTextInput
                                     type="text"
                                     value={displayName}
                                     onChange={(e) =>
                                         setDisplayName(e.target.value)
                                     }
                                     placeholder="Enter your name"
-                                    className={accountGlassInputClassName}
                                 />
                                 <div className="flex justify-end">
                                     <button
@@ -211,19 +207,18 @@ export default function AccountPage() {
                                 </div>
                             </div>
                         </div>
-                        <div className="pt-4">
-                            <label className="text-sm text-gray-600 block mb-2">
+                        <div>
+                            <FieldLabel className="text-sm text-gray-600">
                                 Organisation
-                            </label>
+                            </FieldLabel>
                             <div className="space-y-2">
-                                <Input
+                                <SettingsTextInput
                                     type="text"
                                     value={organisation}
                                     onChange={(e) =>
                                         setOrganisation(e.target.value)
                                     }
                                     placeholder="Enter your organisation"
-                                    className={accountGlassInputClassName}
                                 />
                                 <div className="flex justify-end">
                                     <button
@@ -249,7 +244,7 @@ export default function AccountPage() {
                             </div>
                         </div>
                     </div>
-                </AccountSection>
+                </SettingsSection>
             </section>
 
             {/* Email */}
@@ -257,9 +252,9 @@ export default function AccountPage() {
                 <h2 className="text-2xl font-medium font-serif text-gray-900">
                     Email
                 </h2>
-                <AccountSection className="p-4">
+                <SettingsSection className="p-4">
                     <div className="space-y-2">
-                        <Input
+                        <SettingsTextInput
                             type="email"
                             value={email}
                             onChange={(event) => {
@@ -269,7 +264,6 @@ export default function AccountPage() {
                                 setEmailSaved(false);
                             }}
                             placeholder="Enter your email"
-                            className={accountGlassInputClassName}
                         />
                         {emailStatus ? (
                             <p className="text-xs text-gray-500">
@@ -308,7 +302,7 @@ export default function AccountPage() {
                             </button>
                         </div>
                     </div>
-                </AccountSection>
+                </SettingsSection>
             </section>
 
             {/* Plan */}
@@ -316,13 +310,13 @@ export default function AccountPage() {
                 <h2 className="text-2xl font-medium font-serif text-gray-900">
                     Usage Plan
                 </h2>
-                <AccountSection className="p-4">
+                <SettingsSection className="p-4">
                     <div>
                         <p className="text-base font-medium text-gray-500 capitalize">
                             {profile?.tier || "Free"}
                         </p>
                     </div>
-                </AccountSection>
+                </SettingsSection>
             </section>
 
             {/* Actions */}
@@ -330,14 +324,15 @@ export default function AccountPage() {
                 <h2 className="text-2xl font-medium font-serif text-gray-900">
                     Actions
                 </h2>
-                <Button
-                    variant="outline"
+                <PillButton
+                    tone="black"
+                    size="normal"
                     onClick={handleLogout}
-                    className="w-full gap-1.5 rounded-lg border border-transparent bg-gray-950 px-3 text-white shadow-none transition-colors hover:bg-gray-900 hover:text-white active:bg-black sm:w-auto"
+                    className="w-full sm:w-auto"
                 >
                     <LogOut className="h-4 w-4 shrink-0" />
                     Sign Out
-                </Button>
+                </PillButton>
             </section>
 
             {/* Danger Zone */}
@@ -345,9 +340,9 @@ export default function AccountPage() {
                 <h2 className="text-2xl font-medium font-serif text-red-600">
                     Danger Zone
                 </h2>
-                <AccountSection className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <SettingsSection className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
                     <div className="space-y-1">
-                        <p className="text-sm font-medium text-gray-900">
+                        <p className="text-sm font-medium text-gray-700">
                             Delete account
                         </p>
                         <p className="text-sm text-gray-500">
@@ -355,16 +350,15 @@ export default function AccountPage() {
                             data. This action cannot be undone.
                         </p>
                     </div>
-                    <Button
-                        variant="outline"
+                    <SettingsActionButton
                         onClick={() => setDeleteConfirm(true)}
                         disabled={isDeleting}
-                        className={`w-full shrink-0 gap-1.5 sm:w-auto ${accountGlassDangerOutlineButtonClassName}`}
+                        className="w-full shrink-0 text-red-600 hover:text-red-700 sm:w-auto"
                     >
                         <Trash2 className="h-4 w-4 shrink-0" />
                         Delete account
-                    </Button>
-                </AccountSection>
+                    </SettingsActionButton>
+                </SettingsSection>
             </section>
             <ConfirmPopup
                 open={deleteConfirm}

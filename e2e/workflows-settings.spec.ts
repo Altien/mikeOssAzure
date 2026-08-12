@@ -1,5 +1,5 @@
 /**
- * E2E tests for Workflows and Account Settings features.
+ * E2E tests for Workflows and Settings features.
  *
  * Test user: e2e@mike.local / E2eTestPass1! (session loaded from e2e/.auth/user.json)
  *
@@ -11,9 +11,9 @@
  *    WorkflowPromptEditor passes editable:!readOnly to Tiptap → contenteditable="false" when readOnly
  *  - WorkflowPromptEditor.tsx: editorProps class = "workflow-editor-content" on the ProseMirror div
  *  - WorkflowDetailPage save status: text "Saving…" → "Saved" rendered in a plain <span>
- *  - account/page.tsx: h2 "Profile"; Input placeholder "Enter your name"; Button "Save" / "Saved"
- *  - account/layout.tsx: h1 "Settings" in layout header
- *  - account/models/page.tsx: h2 "API Keys"; label texts include "Anthropic (Claude) API Key" etc.
+ *  - settings/page.tsx: h2 "Profile"; Input placeholder "Enter your name"; Button "Save" / "Saved"
+ *  - settings/layout.tsx: h1 "Settings" in layout header
+ *  - settings/models/page.tsx: h2 "API Keys"; label texts include "Anthropic (Claude) API Key" etc.
  */
 import { test, expect, type Page } from "@playwright/test";
 
@@ -198,19 +198,19 @@ test.describe("Workflows", () => {
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   ACCOUNT SETTINGS
+   SETTINGS
 ───────────────────────────────────────────────────────────────────────────── */
 
-test.describe("Account Settings", () => {
-    /* ── Test 5: account page loads with user info ────────────────────────── */
+test.describe("Settings", () => {
+    /* ── Test 5: settings page loads with user info ────────────────────────── */
 
-    test("account settings page loads and shows user email", async ({
+    test("settings page loads and shows user email", async ({
         page,
     }) => {
-        await page.goto("/account");
+        await page.goto("/settings");
 
-        // The account layout renders a "Settings" h1
-        // REGRESSION: fails if the account page or its layout is broken
+        // The settings layout renders a "Settings" h1
+        // REGRESSION: fails if the settings page or its layout is broken
         await expect(
             page.getByRole("heading", { name: "Settings" }),
         ).toBeVisible({ timeout: 10_000 });
@@ -222,7 +222,7 @@ test.describe("Account Settings", () => {
 
         // The email is rendered in the (editable) Email input, so assert its
         // value rather than page text.
-        // REGRESSION: fails if user auth context is not propagated to the account page
+        // REGRESSION: fails if user auth context is not propagated to the settings page
         await expect(page.getByPlaceholder("Enter your email")).toHaveValue(
             "e2e@mike.local",
             { timeout: 10_000 },
@@ -238,7 +238,7 @@ test.describe("Account Settings", () => {
         // past a real client-side hydration race (see below), so give it more
         // headroom than the 30 s default.
         test.setTimeout(120_000);
-        await page.goto("/account");
+        await page.goto("/settings");
         await expect(
             page.getByRole("heading", { name: "Settings" }),
         ).toBeVisible({ timeout: 10_000 });
@@ -259,7 +259,7 @@ test.describe("Account Settings", () => {
         // Robustly save the new name and verify it persists. This retry exists
         // for a real client-side hazard, independent of infrastructure:
         //
-        //  Async hydration race. The account page hydrates this input from a profile
+        //  Async hydration race. The settings page hydrates this input from a profile
         //  fetch (UserProfileContext → `if (profile?.displayName) setDisplayName(...)`).
         //  Under cold-start the auth state can settle late and trigger a SECOND profile
         //  fetch that overwrites the field AFTER we type — so the stale stored name is
@@ -290,7 +290,7 @@ test.describe("Account Settings", () => {
                     resp.ok(),
                 { timeout: 10_000 },
             );
-            await page.goto("/account");
+            await page.goto("/settings");
             await profileLoaded;
             await nameInput.fill(newName);
             await expect(nameInput).toHaveValue(newName, { timeout: 2_000 });
@@ -301,7 +301,7 @@ test.describe("Account Settings", () => {
 
             // Navigate away and back; the freshly fetched profile must show newName.
             await page.goto("/assistant");
-            await page.goto("/account");
+            await page.goto("/settings");
             await expect(nameInput).toHaveValue(newName, { timeout: 8_000 });
         }).toPass({ timeout: 90_000 });
     });
@@ -311,18 +311,18 @@ test.describe("Account Settings", () => {
     test("API keys page loads and shows Anthropic, Google, and OpenAI sections", async ({
         page,
     }) => {
-        // API keys were split out of /account/models into their own settings
-        // page (the "API Keys" sidebar entry) — /account/models now holds only
+        // API keys were split out of /settings/models into their own settings
+        // page (the "API Keys" sidebar entry) — /settings/models now holds only
         // model preferences.
-        await page.goto("/account/api-keys");
+        await page.goto("/settings/api-keys");
 
-        // The shared account layout still renders "Settings"
+        // The shared settings layout still renders "Settings"
         await expect(
             page.getByRole("heading", { name: "Settings" }),
         ).toBeVisible({ timeout: 10_000 });
 
         // The h2 "API Keys" section is present
-        // REGRESSION: fails if the /account/api-keys page is broken or the API Keys section is removed
+        // REGRESSION: fails if the /settings/api-keys page is broken or the API Keys section is removed
         await expect(
             page.getByRole("heading", { name: "API Keys" }),
         ).toBeVisible({ timeout: 10_000 });

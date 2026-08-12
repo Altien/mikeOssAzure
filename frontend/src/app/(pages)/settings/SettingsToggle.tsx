@@ -1,10 +1,10 @@
 import { cn } from "@/app/lib/utils";
 import { Loader2 } from "lucide-react";
 
-type AccountToggleSize = "sm" | "md";
+type SettingsToggleSize = "sm" | "md";
 
 const sizeClasses: Record<
-    AccountToggleSize,
+    SettingsToggleSize,
     {
         track: string;
         thumb: string;
@@ -23,7 +23,7 @@ const sizeClasses: Record<
     },
 };
 
-export function AccountToggle({
+export function SettingsToggle({
     checked,
     disabled,
     loading,
@@ -36,7 +36,7 @@ export function AccountToggle({
     disabled?: boolean;
     loading?: boolean;
     onChange: (checked: boolean) => void;
-    size?: AccountToggleSize;
+    size?: SettingsToggleSize;
     label?: string;
     className?: string;
 }) {

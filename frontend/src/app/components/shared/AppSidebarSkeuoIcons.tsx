@@ -47,3 +47,7 @@ export function TabularReviewSkeuoIcon(props: IconProps) {
 export function WorkflowSkeuoIcon(props: IconProps) {
     return <AppSidebarIcon name="workflow" {...props} />;
 }
+
+export function SettingsSkeuoIcon(props: IconProps) {
+    return <AppSidebarIcon name="settings" {...props} />;
+}

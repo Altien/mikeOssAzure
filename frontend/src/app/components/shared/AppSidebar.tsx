@@ -10,7 +10,6 @@ import {
 } from "react";
 import {
     PanelLeft,
-    User,
     ChevronsUpDown,
     ChevronDown,
   Loader2,
@@ -28,6 +27,7 @@ import {
     LibrarySkeuoIcon,
     TabularReviewSkeuoIcon,
     WorkflowSkeuoIcon,
+    SettingsSkeuoIcon,
 } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import { HistorySkeuoIcon } from "@/app/components/shared/HistorySkeuoIcon";
 import { ProjectSvgIcon } from "@/app/components/shared/FolderSvgIcon";
@@ -497,7 +497,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                     "flex items-center transition-colors w-full px-2.5 py-3 border-t",
                                     "rounded-xl border-white/60",
                                     !isOpen ? "hidden md:flex" : "",
-                                    pathname.startsWith("/account") ||
+                                    pathname.startsWith("/settings") ||
                                         pathname === "/history" ||
                                         isDropdownOpen
                                         ? APP_SURFACE_ACTIVE_CLASS
@@ -552,7 +552,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                     </button>
                                     <button
                                         onClick={() => {
-                                            router.push("/account");
+                                            router.push("/settings");
                                             setIsDropdownOpen(false);
                                         }}
                                         className={cn(
@@ -560,8 +560,8 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                             "hover:bg-white",
                                         )}
                                     >
-                                        <User className="h-4 w-4" />
-                                        Account Settings
+                                        <SettingsSkeuoIcon className="h-4 w-4" />
+                                        Settings
                                     </button>
                                 </div>
                             )}

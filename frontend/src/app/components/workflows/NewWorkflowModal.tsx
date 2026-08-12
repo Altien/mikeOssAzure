@@ -6,10 +6,9 @@ import { createWorkflow, updateWorkflow } from "@/app/lib/mikeApi";
 import type { Workflow } from "../shared/types";
 import { PRACTICE_OPTIONS } from "./practices";
 import { Modal } from "../modals/Modal";
-import { ModalFieldLabel } from "../modals/ModalFieldLabel";
 import { ModalSegmentedToggle } from "../modals/ModalSegmentedToggle";
 import { ModalSelect } from "../modals/ModalSelect";
-import { ModalTextInput } from "../modals/ModalTextInput";
+import { FieldLabel, FormTextInput } from "../ui/form-field";
 
 const DEFAULT_LANGUAGE = "English";
 const DEFAULT_PRACTICE = "General Transactions";
@@ -522,10 +521,10 @@ export function NewWorkflowModal({
                         </dl>
                     )}
                     <div>
-                        <ModalFieldLabel htmlFor="workflow-title">
+                        <FieldLabel htmlFor="workflow-title">
                             Title
-                        </ModalFieldLabel>
-                        <ModalTextInput
+                        </FieldLabel>
+                        <FormTextInput
                             id="workflow-title"
                             type="text"
                             value={title}
@@ -539,7 +538,7 @@ export function NewWorkflowModal({
 
                     {!isEditing && (
                         <div>
-                            <ModalFieldLabel as="p">Type</ModalFieldLabel>
+                            <FieldLabel as="p">Type</FieldLabel>
                             <ModalSegmentedToggle
                                 value={type}
                                 onChange={setType}
@@ -561,9 +560,9 @@ export function NewWorkflowModal({
 
                     <div className="grid gap-5 md:grid-cols-2">
                         <div>
-                            <ModalFieldLabel htmlFor="workflow-language">
+                            <FieldLabel htmlFor="workflow-language">
                                 Language
-                            </ModalFieldLabel>
+                            </FieldLabel>
                             <ModalSelect
                                 id="workflow-language"
                                 value={language}
@@ -588,7 +587,7 @@ export function NewWorkflowModal({
                                 }}
                             />
                             {isOtherLanguage && (
-                                <ModalTextInput
+                                <FormTextInput
                                     ref={customLanguageInputRef}
                                     type="text"
                                     value={customLanguage}
@@ -603,9 +602,9 @@ export function NewWorkflowModal({
                         </div>
 
                         <div>
-                            <ModalFieldLabel htmlFor="workflow-practice">
+                            <FieldLabel htmlFor="workflow-practice">
                                 Practice area
-                            </ModalFieldLabel>
+                            </FieldLabel>
                             <ModalSelect
                                 id="workflow-practice"
                                 value={practice}
@@ -630,7 +629,7 @@ export function NewWorkflowModal({
                                 }}
                             />
                             {isOtherPractice && (
-                                <ModalTextInput
+                                <FormTextInput
                                     ref={customInputRef}
                                     type="text"
                                     value={customPractice}
@@ -646,9 +645,9 @@ export function NewWorkflowModal({
                     </div>
 
                     <div>
-                        <ModalFieldLabel htmlFor="workflow-jurisdiction">
+                        <FieldLabel htmlFor="workflow-jurisdiction">
                             Jurisdiction
-                        </ModalFieldLabel>
+                        </FieldLabel>
                         <ModalSelect
                             id="workflow-jurisdiction"
                             value={jurisdiction}
@@ -702,7 +701,7 @@ export function NewWorkflowModal({
                             />
                         )}
                         {isOtherJurisdiction && (
-                            <ModalTextInput
+                            <FormTextInput
                                 ref={customJurisdictionInputRef}
                                 type="text"
                                 value={customJurisdiction}

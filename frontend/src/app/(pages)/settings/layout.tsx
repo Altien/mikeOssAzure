@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/app/contexts/AuthContext";
-import { accountTabButtonClassName } from "./accountStyles";
+import { settingsTabButtonClassName } from "./settingsStyles";
 
 interface TabDef {
     id: string;
@@ -13,20 +13,20 @@ interface TabDef {
 }
 
 const TABS: TabDef[] = [
-    { id: "general", label: "General", href: "/account" },
-    { id: "features", label: "Features", href: "/account/features" },
+    { id: "account", label: "Account", href: "/settings" },
+    { id: "features", label: "Features", href: "/settings/features" },
     {
         id: "privacy-data",
         label: "Privacy & Data",
-        href: "/account/privacy-data",
+        href: "/settings/privacy-data",
     },
-    { id: "security", label: "Security", href: "/account/security" },
-    { id: "models", label: "Model Preferences", href: "/account/models" },
-    { id: "api-keys", label: "API Keys", href: "/account/api-keys" },
-    { id: "connectors", label: "Connectors", href: "/account/connectors" },
+    { id: "security", label: "Security", href: "/settings/security" },
+    { id: "models", label: "Model Preferences", href: "/settings/models" },
+    { id: "api-keys", label: "API Keys", href: "/settings/api-keys" },
+    { id: "connectors", label: "Connectors", href: "/settings/connectors" },
 ];
 
-export default function AccountLayout({
+export default function SettingsLayout({
     children,
 }: {
     children: React.ReactNode;
@@ -73,7 +73,7 @@ export default function AccountLayout({
                                     {TABS.map((tab) => {
                                         const active =
                                             pathname === tab.href ||
-                                            (tab.href !== "/account" &&
+                                            (tab.href !== "/settings" &&
                                                 pathname.startsWith(tab.href));
                                         return (
                                             <li key={tab.id}>
@@ -87,7 +87,7 @@ export default function AccountLayout({
                                                     onClick={() =>
                                                         router.push(tab.href)
                                                     }
-                                                    className={accountTabButtonClassName(
+                                                    className={settingsTabButtonClassName(
                                                         active,
                                                     )}
                                                 >

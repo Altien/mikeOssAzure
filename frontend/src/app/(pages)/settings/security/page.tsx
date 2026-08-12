@@ -9,7 +9,7 @@ import {
 } from "react";
 import { Copy, Loader2 } from "lucide-react";
 import { supabase } from "@/app/lib/supabase";
-import { Button } from "@/app/components/ui/button";
+import { SettingsActionButton } from "@/app/components/settings/SettingsActionButton";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { isMfaRequiredError } from "@/app/lib/mikeApi";
 import { Modal } from "@/app/components/modals/Modal";
@@ -17,11 +17,8 @@ import {
     MfaVerificationPopup,
     needsMfaVerification,
 } from "@/app/components/popups/MfaVerificationPopup";
-import {
-    accountGlassPrimaryButtonClassName,
-} from "../accountStyles";
-import { AccountSection } from "../AccountSection";
-import { AccountToggle } from "../AccountToggle";
+import { SettingsSection } from "../SettingsSection";
+import { SettingsToggle } from "../SettingsToggle";
 
 type MfaFactor = {
     id: string;
@@ -148,20 +145,17 @@ function VerificationCodeInput({
 
 function MfaSettingsSkeleton() {
     return (
-        <div className="px-4 py-5">
-            <div className="space-y-1">
-                <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center justify-between gap-3 px-4 py-5">
+            <div className="min-w-0 flex-1 space-y-1">
+                <div>
                     <div className="h-4 w-36 animate-pulse rounded bg-gray-100" />
-                    <div className="h-3 w-14 shrink-0 animate-pulse rounded bg-gray-100" />
                 </div>
                 <div className="space-y-1.5 pt-1">
                     <div className="h-3 w-full max-w-md animate-pulse rounded bg-gray-100" />
                     <div className="h-3 w-3/4 max-w-sm animate-pulse rounded bg-gray-100" />
                 </div>
             </div>
-            <div className="mt-3 flex justify-end">
-                <div className="h-9 w-20 animate-pulse rounded-lg bg-gray-100" />
-            </div>
+            <div className="h-9 w-20 shrink-0 animate-pulse rounded-lg bg-gray-100" />
         </div>
     );
 }
@@ -468,29 +462,16 @@ export default function SecurityPage() {
                 <h2 className="text-2xl font-medium font-serif text-gray-900">
                     Multi-Factor Authentication
                 </h2>
-                <AccountSection>
+                <SettingsSection>
                     {loading ? (
                         <MfaSettingsSkeleton />
                     ) : (
                         <>
-                            <div className="px-4 py-5">
-                                <div className="space-y-1">
-                                    <div className="flex items-start justify-between gap-3">
-                                        <p className="text-sm font-medium text-gray-900">
-                                            Verification method
-                                        </p>
-                                        <span
-                                            className={`shrink-0 text-xs font-medium ${
-                                                hasVerifiedFactor
-                                                    ? "text-green-700"
-                                                    : "text-gray-500"
-                                            }`}
-                                        >
-                                            {hasVerifiedFactor
-                                                ? "Enabled"
-                                                : "Not set up"}
-                                        </span>
-                                    </div>
+                            <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
+                                <div className="min-w-0 space-y-1">
+                                    <p className="text-sm font-medium text-gray-700">
+                                        Verification method
+                                    </p>
                                     <p className="text-sm text-gray-500">
                                         {hasVerifiedFactor
                                             ? sessionVerified
@@ -499,35 +480,33 @@ export default function SecurityPage() {
                                             : "Add an authenticator app to protect sensitive actions such as exporting data, deleting data, deleting your account, and changing API keys."}
                                     </p>
                                 </div>
-                                {!hasVerifiedFactor && !enrollment ? (
-                                    <div className="mt-3 flex justify-end">
-                                        <Button
-                                            variant="outline"
-                                            onClick={() =>
-                                                setSetupModalOpen(true)
-                                            }
-                                            disabled={busy}
-                                            className={`h-9 w-full gap-1.5 sm:w-auto ${accountGlassPrimaryButtonClassName}`}
-                                        >
-                                            {busy ? (
-                                                <>
-                                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                                    Starting...
-                                                </>
-                                            ) : (
-                                                "Set up"
-                                            )}
-                                        </Button>
-                                    </div>
+                                {hasVerifiedFactor ? (
+                                    <span className="shrink-0 text-xs font-medium text-green-700">
+                                        Enabled
+                                    </span>
+                                ) : !enrollment ? (
+                                    <SettingsActionButton
+                                        onClick={() => setSetupModalOpen(true)}
+                                        disabled={busy}
+                                        className="shrink-0"
+                                    >
+                                        {busy ? (
+                                            <>
+                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                Starting...
+                                            </>
+                                        ) : (
+                                            "Set up"
+                                        )}
+                                    </SettingsActionButton>
                                 ) : null}
                             </div>
 
                             {hasVerifiedFactor && (
                                 <>
-                                    <div className="mx-4 h-px bg-gray-200" />
                                     <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
                                         <div className="space-y-1">
-                                            <p className="text-sm font-medium text-gray-900">
+                                            <p className="text-sm font-medium text-gray-700">
                                                 Login verification
                                             </p>
                                             <p className="text-sm text-gray-500">
@@ -536,7 +515,7 @@ export default function SecurityPage() {
                                                 only before sensitive actions.
                                             </p>
                                         </div>
-                                        <AccountToggle
+                                        <SettingsToggle
                                             checked={loginMfaEnabled}
                                             disabled={savingLoginPreference}
                                             loading={savingLoginPreference}
@@ -566,14 +545,11 @@ export default function SecurityPage() {
                     )}
 
                     {status && (
-                        <>
-                            <div className="mx-4 h-px bg-gray-200" />
-                            <p className="px-4 py-3 text-xs text-gray-500">
-                                {status}
-                            </p>
-                        </>
+                        <p className="px-4 py-3 text-xs text-gray-500">
+                            {status}
+                        </p>
                     )}
-                </AccountSection>
+                </SettingsSection>
             </section>
             <Modal
                 open={setupModalOpen}
@@ -614,7 +590,7 @@ export default function SecurityPage() {
                                 Step 1
                             </p>
                             <div className="space-y-1">
-                                <p className="text-sm font-medium text-gray-900">
+                                <p className="text-sm font-medium text-gray-700">
                                     Before you start
                                 </p>
                                 <p className="text-sm text-gray-500">
@@ -638,7 +614,7 @@ export default function SecurityPage() {
                                 Step 2
                             </p>
                             <div className="space-y-1">
-                                <p className="text-sm font-medium text-gray-900">
+                                <p className="text-sm font-medium text-gray-700">
                                     Scan this code
                                 </p>
                                 <p className="text-sm text-gray-500">

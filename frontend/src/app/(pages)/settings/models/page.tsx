@@ -25,9 +25,10 @@ import {
     providerLabel,
 } from "@/app/lib/modelAvailability";
 import {
-    accountGlassInputClassName,
-} from "../accountStyles";
-import { AccountSection } from "../AccountSection";
+    FieldLabel,
+} from "@/app/components/ui/form-field";
+import { SETTINGS_CONTROL_CLASS } from "@/app/components/settings/SettingsTextInput";
+import { SettingsSection } from "../SettingsSection";
 import { useOllamaModels } from "@/app/hooks/useOllamaModels";
 
 type ModelPreferenceField = "titleModel" | "tabularModel";
@@ -83,11 +84,11 @@ export default function ModelPreferencesPage() {
                     Model Preferences
                 </h2>
             </div>
-            <AccountSection>
+            <SettingsSection>
                 <div className="px-4 py-5">
-                    <label className="text-sm font-medium text-gray-700 block mb-2">
+                    <FieldLabel className="text-sm">
                         Title generation model
-                    </label>
+                    </FieldLabel>
                     <p className="text-xs text-gray-400 mb-2">
                         Used for naming chats and other lightweight titles.
                     </p>
@@ -104,11 +105,10 @@ export default function ModelPreferencesPage() {
                         onChange={(id) => handleModelChange("titleModel", id)}
                     />
                 </div>
-                <div className="mx-4 h-px bg-gray-200" />
                 <div className="px-4 py-5">
-                    <label className="text-sm font-medium text-gray-700 block mb-2">
+                    <FieldLabel className="text-sm">
                         Tabular review model
-                    </label>
+                    </FieldLabel>
                     <p className="text-xs text-gray-400 mb-2">
                         We recommend using a smaller model for tabular reviews
                         to reduce token costs.
@@ -126,7 +126,7 @@ export default function ModelPreferencesPage() {
                         onChange={(id) => handleModelChange("tabularModel", id)}
                     />
                 </div>
-            </AccountSection>
+            </SettingsSection>
         </div>
     );
 }
@@ -162,7 +162,7 @@ function ModelPreferenceDropdown({
                 <button
                     type="button"
                     disabled={isSaving}
-                    className={`flex h-9 w-full items-center justify-between gap-2 px-3 text-sm hover:bg-white/78 ${accountGlassInputClassName}`}
+                    className={`flex h-9 items-center justify-between gap-2 hover:bg-gray-200/70 ${SETTINGS_CONTROL_CLASS}`}
                 >
                     <span className="flex items-center gap-2 min-w-0">
                         {!selectedAvailable && (

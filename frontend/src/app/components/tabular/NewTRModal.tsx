@@ -11,9 +11,8 @@ import {
 } from "@/app/lib/mikeApi";
 import { FileDirectory } from "../shared/FileDirectory";
 import { Modal } from "../modals/Modal";
-import { ModalFieldLabel } from "../modals/ModalFieldLabel";
 import { ModalSelect } from "../modals/ModalSelect";
-import { ModalTextInput } from "../modals/ModalTextInput";
+import { FieldLabel, FormTextInput } from "../ui/form-field";
 import { ToggleSwitch } from "@/app/components/ui/toggle-switch";
 
 const isDev = process.env.NODE_ENV !== "production";
@@ -329,10 +328,10 @@ export function NewTRModal({
                 {step === "details" ? (
                     <div className="space-y-6">
                         <div>
-                            <ModalFieldLabel htmlFor="new-tr-title">
+                            <FieldLabel htmlFor="new-tr-title">
                                 Review name
-                            </ModalFieldLabel>
-                            <ModalTextInput
+                            </FieldLabel>
+                            <FormTextInput
                                 id="new-tr-title"
                                 type="text"
                                 value={title}
@@ -346,9 +345,9 @@ export function NewTRModal({
 
                         {/* Workflow template */}
                         <div>
-                            <ModalFieldLabel as="p">
+                            <FieldLabel as="p">
                                 Workflow template
-                            </ModalFieldLabel>
+                            </FieldLabel>
                             <ModalSelect
                                 id="new-tr-workflow-template"
                                 value={selectedWorkflowId ?? ""}
@@ -363,9 +362,9 @@ export function NewTRModal({
                         {/* Create under a project toggle */}
                         {!isProjectMode && (
                             <div className="space-y-3">
-                                <ModalFieldLabel as="p">
+                                <FieldLabel as="p">
                                     Project
-                                </ModalFieldLabel>
+                                </FieldLabel>
                                 <ToggleSwitch
                                     checked={underProject}
                                     onCheckedChange={(next) => {
@@ -399,9 +398,9 @@ export function NewTRModal({
                         )}
 
                         <div>
-                            <ModalFieldLabel as="p">
+                            <FieldLabel as="p">
                                 Document grouping
-                            </ModalFieldLabel>
+                            </FieldLabel>
                             <ToggleSwitch
                                 checked={groupBySubfolder}
                                 onCheckedChange={setGroupBySubfolder}

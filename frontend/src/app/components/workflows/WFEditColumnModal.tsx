@@ -8,10 +8,9 @@ import { FORMAT_OPTIONS } from "../tabular/columnFormat";
 import { TAG_COLORS } from "../tabular/pillUtils";
 import { getPresetConfig, PROMPT_PRESETS } from "../tabular/columnPresets";
 import { Modal } from "../modals/Modal";
-import { ModalFieldLabel } from "../modals/ModalFieldLabel";
 import { ModalSelect } from "../modals/ModalSelect";
 import { ModalTextarea } from "../modals/ModalTextarea";
-import { ModalTextInput } from "../modals/ModalTextInput";
+import { FieldLabel, FormTextInput } from "../ui/form-field";
 
 interface ColumnDraft {
     name: string;
@@ -136,13 +135,13 @@ export function WFEditColumnModal({ column, onClose, onSave, onDelete }: Props) 
                 className="flex min-h-0 flex-1 flex-col"
             >
                 <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-5 pt-2">
-                        <ModalFieldLabel htmlFor="workflow-column-name">
+                        <FieldLabel htmlFor="workflow-column-name">
                             Column title
-                        </ModalFieldLabel>
+                        </FieldLabel>
                         {/* Name row */}
                         <div className="flex items-start gap-2">
                             <div className="relative flex flex-1 items-start" ref={presetsRef}>
-                                <ModalTextInput
+                                <FormTextInput
                                     id="workflow-column-name"
                                     type="text"
                                     variant="minimal"
@@ -201,9 +200,9 @@ export function WFEditColumnModal({ column, onClose, onSave, onDelete }: Props) 
 
                         {/* Format */}
                         <div className="mt-4">
-                            <ModalFieldLabel htmlFor="workflow-column-format">
+                            <FieldLabel htmlFor="workflow-column-format">
                                 Format
-                            </ModalFieldLabel>
+                            </FieldLabel>
                             <ModalSelect
                                 id="workflow-column-format"
                                 value={draft.format}
@@ -226,9 +225,9 @@ export function WFEditColumnModal({ column, onClose, onSave, onDelete }: Props) 
                         {/* Tag input */}
                         {draft.format === "tag" && (
                             <div className="mt-3">
-                                <ModalFieldLabel htmlFor="workflow-column-tag">
+                                <FieldLabel htmlFor="workflow-column-tag">
                                     Tags
-                                </ModalFieldLabel>
+                                </FieldLabel>
                                 <div className="mt-1 flex flex-wrap gap-1.5 rounded-md border border-gray-200 px-2 py-1.5 focus-within:border-gray-400">
                                     {draft.tags.map((tag, tagIdx) => (
                                         <span
@@ -245,7 +244,7 @@ export function WFEditColumnModal({ column, onClose, onSave, onDelete }: Props) 
                                             </button>
                                         </span>
                                     ))}
-                                    <ModalTextInput
+                                    <FormTextInput
                                         id="workflow-column-tag"
                                         type="text"
                                         variant="minimal"
@@ -263,12 +262,12 @@ export function WFEditColumnModal({ column, onClose, onSave, onDelete }: Props) 
 
                         {/* Prompt */}
                         <div className="mt-4 flex items-center justify-between">
-                            <ModalFieldLabel
+                            <FieldLabel
                                 htmlFor="workflow-column-prompt"
                                 className="mb-0"
                             >
                                 Prompt
-                            </ModalFieldLabel>
+                            </FieldLabel>
                             <button
                                 type="button"
                                 onClick={autoGeneratePrompt}
