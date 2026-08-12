@@ -50,9 +50,25 @@ function resultForTable(table: string): QueryResult {
 function makeQuery(table: string) {
     const q: Record<string, unknown> = {};
     const chain = [
-        "select", "update", "delete", "upsert",
-        "eq", "neq", "in", "is", "or", "not", "lt", "gt", "gte", "lte",
-        "filter", "order", "limit", "range", "contains",
+    "select",
+    "update",
+    "delete",
+    "upsert",
+    "eq",
+    "neq",
+    "in",
+    "is",
+    "or",
+    "not",
+    "lt",
+    "gt",
+    "gte",
+    "lte",
+    "filter",
+    "order",
+    "limit",
+    "range",
+    "contains",
     ];
     for (const m of chain) q[m] = vi.fn(() => q);
     q.insert = vi.fn((payload: unknown) => {
@@ -61,8 +77,10 @@ function makeQuery(table: string) {
     });
     q.single = vi.fn(() => Promise.resolve(resultForTable(table)));
     q.maybeSingle = vi.fn(() => Promise.resolve(resultForTable(table)));
-    q.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) =>
-        Promise.resolve(resultForTable(table)).then(resolve, reject);
+  q.then = (
+    resolve: (v: unknown) => unknown,
+    reject?: (e: unknown) => unknown,
+  ) => Promise.resolve(resultForTable(table)).then(resolve, reject);
     return q;
 }
 
@@ -151,7 +169,9 @@ describe("tabular.routes", () => {
                 error: null,
             };
 
-            const res = await request(app).get("/tabular-review").set(...AUTH);
+      const res = await request(app)
+        .get("/tabular-review")
+        .set(...AUTH);
 
             expect(res.status).toBe(200);
             expect(res.body).toEqual([{ id: "r1", title: "Alpha" }]);
@@ -160,7 +180,9 @@ describe("tabular.routes", () => {
         it("returns 500 with detail when the RPC errors", async () => {
             supabaseState.rpc = { data: null, error: { message: "boom" } };
 
-            const res = await request(app).get("/tabular-review").set(...AUTH);
+      const res = await request(app)
+        .get("/tabular-review")
+        .set(...AUTH);
 
             expect(res.status).toBe(500);
             expect(res.body.detail).toBe("boom");
@@ -242,9 +264,27 @@ describe("tabular.routes", () => {
             };
             supabaseState.tables.documents = {
                 data: [
-                    { id: "d1", filename: "A.pdf", file_type: "pdf", project_id: "p1", folder_id: "f1" },
-                    { id: "d2", filename: "B.pdf", file_type: "pdf", project_id: "p1", folder_id: "f1" },
-                    { id: "d3", filename: "Loose.pdf", file_type: "pdf", project_id: "p1", folder_id: null },
+          {
+            id: "d1",
+            filename: "A.pdf",
+            file_type: "pdf",
+            project_id: "p1",
+            folder_id: "f1",
+          },
+          {
+            id: "d2",
+            filename: "B.pdf",
+            file_type: "pdf",
+            project_id: "p1",
+            folder_id: "f1",
+          },
+          {
+            id: "d3",
+            filename: "Loose.pdf",
+            file_type: "pdf",
+            project_id: "p1",
+            folder_id: null,
+          },
                 ],
                 error: null,
             };
@@ -290,10 +330,14 @@ describe("tabular.routes", () => {
                 });
 
             expect(res.status).toBe(201);
-            expect(supabaseState.inserts.find((i) => i.table === "tabular_reviews")?.payload)
-                .toMatchObject({ document_grouping: "folder" });
-            expect(supabaseState.inserts.find((i) => i.table === "tabular_review_rows")?.payload)
-                .toEqual([
+      expect(
+        supabaseState.inserts.find((i) => i.table === "tabular_reviews")
+          ?.payload,
+      ).toMatchObject({ document_grouping: "folder" });
+      expect(
+        supabaseState.inserts.find((i) => i.table === "tabular_review_rows")
+          ?.payload,
+      ).toEqual([
                     {
                         review_id: "r10",
                         label: "Contracts",
@@ -313,14 +357,18 @@ describe("tabular.routes", () => {
                         sort_index: 1,
                     },
                 ]);
-            expect(supabaseState.inserts.find((i) => i.table === "tabular_review_row_sources")?.payload)
-                .toEqual([
+      expect(
+        supabaseState.inserts.find(
+          (i) => i.table === "tabular_review_row_sources",
+        )?.payload,
+      ).toEqual([
                     { row_id: "row-folder", document_id: "d1", sort_index: 0 },
                     { row_id: "row-folder", document_id: "d2", sort_index: 1 },
                     { row_id: "row-document", document_id: "d3", sort_index: 0 },
                 ]);
-            expect(supabaseState.inserts.find((i) => i.table === "tabular_cells")?.payload)
-                .toEqual([
+      expect(
+        supabaseState.inserts.find((i) => i.table === "tabular_cells")?.payload,
+      ).toEqual([
                     {
                         review_id: "r10",
                         row_id: "row-folder",
@@ -669,9 +717,7 @@ describe("tabular.routes", () => {
                 .send({});
 
             expect(res.status).toBe(400);
-            expect(res.body.detail).toBe(
-                "row_id and column_index are required",
-            );
+      expect(res.body.detail).toBe("row_id and column_index are required");
         });
 
         it("returns 404 when review access is denied", async () => {
@@ -960,9 +1006,7 @@ describe("tabular.routes", () => {
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
-            expect(res.body).toEqual([
-                { id: "chat-1", title: "T", user_id: "u1" },
-            ]);
+      expect(res.body).toEqual([{ id: "chat-1", title: "T", user_id: "u1" }]);
         });
     });
 });

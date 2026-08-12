@@ -8,6 +8,7 @@ import {
     RowActionMenuItems,
     RowActions,
 } from "@/app/components/shared/RowActions";
+import { TableLoadMoreRow } from "@/app/components/shared/TableLoadMoreRow";
 import {
     deleteTabularReview,
     createTabularReview,
@@ -20,6 +21,7 @@ import { NewTRModal } from "@/app/components/tabular/NewTRModal";
 import { TabularReviewDetailsModal } from "@/app/components/tabular/TabularReviewDetailsModal";
 import { OwnerOnlyPopup } from "@/app/components/popups/OwnerOnlyPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
+import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import {
@@ -108,6 +110,9 @@ export default function TabularReviewsPage() {
     });
     const [actionsOpen, setActionsOpen] = useState(false);
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
+    const [selectionCameFromSelectAll, setSelectionCameFromSelectAll] =
+        useState(false);
+    const [confirmDeleteAllOpen, setConfirmDeleteAllOpen] = useState(false);
     const [bulkDeleteNotice, setBulkDeleteNotice] = useState<string | null>(
         null,
     );
@@ -177,8 +182,13 @@ export default function TabularReviewsPage() {
         !allSelected && filtered.some((r) => selectedIds.includes(r.id));
 
     function toggleAll() {
-        if (allSelected) setSelectedIds([]);
-        else void selectAllMatching();
+        if (allSelected) {
+            setSelectedIds([]);
+            setSelectionCameFromSelectAll(false);
+        } else {
+            setSelectionCameFromSelectAll(true);
+            void selectAllMatching();
+        }
     }
 
     function toggleOne(id: string) {
@@ -189,6 +199,8 @@ export default function TabularReviewsPage() {
 
     function clearSelection() {
         setSelectedIds([]);
+        setSelectionCameFromSelectAll(false);
+        setConfirmDeleteAllOpen(false);
         setActionsOpen(false);
     }
 
@@ -264,9 +276,20 @@ export default function TabularReviewsPage() {
         );
     }
 
+    function requestDeleteSelected() {
+        setActionsOpen(false);
+        if (selectionCameFromSelectAll) {
+            setConfirmDeleteAllOpen(true);
+            return;
+        }
+        void handleDeleteSelected();
+    }
+
     async function handleDeleteSelected() {
         const ids = [...selectedIds];
         setActionsOpen(false);
+        setConfirmDeleteAllOpen(false);
+        setSelectionCameFromSelectAll(false);
         setBulkDeleteNotice(null);
         const owned = ids.filter((id) => {
             const ownerId = getReviewOwnerId(id);
@@ -395,7 +418,7 @@ export default function TabularReviewsPage() {
                 {actionsOpen && (
                     <LiquidDropdownSurface className="absolute top-full right-0 mt-1 z-[100] w-36 overflow-hidden">
                         <button
-                            onClick={handleDeleteSelected}
+                            onClick={requestDeleteSelected}
                             className="w-full px-3 py-1.5 text-left text-xs text-red-600 transition-colors hover:bg-red-500/10"
                         >
                             Delete
@@ -683,24 +706,14 @@ export default function TabularReviewsPage() {
                         })}
                     </TableBody>
                 )}
-                {!effectiveLoading && hasMore && filtered.length > 0 && (
-                    <div className="flex justify-center py-3">
-                        <button
-                            onClick={handleLoadMore}
-                            disabled={loadingMore}
-                            className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-gray-500 transition-colors hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                            {loadingMore && (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                            )}
-                            {loadingMore
-                                ? "Loading…"
-                                : loadMoreError
-                                  ? "Retry loading"
-                                  : "Load more"}
-                        </button>
-                    </div>
-                )}
+                <TableLoadMoreRow
+                    loading={effectiveLoading}
+                    hasMore={hasMore}
+                    itemCount={filtered.length}
+                    loadingMore={loadingMore}
+                    hasError={!!loadMoreError}
+                    onLoadMore={handleLoadMore}
+                />
             </TableScrollArea>
 
             <NewTRModal
@@ -732,6 +745,14 @@ export default function TabularReviewsPage() {
                 title="Some reviews were not deleted"
                 message={bulkDeleteNotice}
                 onClose={() => setBulkDeleteNotice(null)}
+            />
+            <ConfirmPopup
+                open={confirmDeleteAllOpen && selectedIds.length > 0}
+                title="Delete all selected reviews?"
+                message={`This will permanently delete every selected review you own, including selected reviews not currently shown. Their review results and associated data will also be deleted. Reviews owned by others will be skipped. ${selectedIds.length} reviews are selected.`}
+                confirmLabel="Delete"
+                onCancel={() => setConfirmDeleteAllOpen(false)}
+                onConfirm={() => void handleDeleteSelected()}
             />
         </div>
     );

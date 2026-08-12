@@ -5,6 +5,7 @@ import {
     type DragEvent,
     type ReactNode,
     type SetStateAction,
+    type UIEvent,
     useCallback,
     useEffect,
     useMemo,
@@ -12,12 +13,7 @@ import {
     useState,
 } from "react";
 import { createPortal } from "react-dom";
-import {
-    Loader2,
-    AlertCircle,
-    ChevronDown,
-    ChevronRight,
-} from "lucide-react";
+import { Loader2, AlertCircle, ChevronDown, ChevronRight } from "lucide-react";
 import {
     deleteDocument,
     getDocumentUrl,
@@ -41,9 +37,7 @@ import {
     RowActions,
     type RowActionMenuSurfaceProps,
 } from "@/app/components/shared/RowActions";
-import {
-    SubfolderSvgIcon,
-} from "@/app/components/shared/FolderSvgIcon";
+import { SubfolderSvgIcon } from "@/app/components/shared/FolderSvgIcon";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { UploadOverlay } from "@/app/components/assistant/UploadOverlay";
@@ -63,6 +57,7 @@ import {
     type ProjectContextMenu,
 } from "@/app/components/projects/ProjectPageParts";
 import { DocumentSidePanel } from "@/app/components/shared/DocumentSidePanel";
+import { TableLoadMoreRow } from "@/app/components/shared/TableLoadMoreRow";
 import { LibrarySkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import {
     APP_SURFACE_ACTIVE_CLASS,
@@ -89,7 +84,16 @@ export interface DocTableSelectionActions {
     onDelete: () => Promise<void>;
 }
 
-type DocumentSortKey = "name" | "size" | "version" | "created" | "updated";
+export type DocumentSortKey = "name" | "size" | "version" | "created" | "updated";
+
+export interface DocTableQuery {
+    search: string;
+    fileType: string | null;
+    sort: {
+        key: DocumentSortKey;
+        direction: TableSortDirection;
+    } | null;
+}
 
 const SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
     { value: "asc", label: "Ascending" },
@@ -99,24 +103,13 @@ const SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
 interface DocTableOperations {
     uploadDocument: (file: File) => Promise<Document>;
     refreshCollection: () => Promise<void>;
-    createFolder: (
-        name: string,
-        parentFolderId?: string | null,
-    ) => Promise<DocTableFolder>;
-    renameFolder: (
-        folderId: string,
-        name: string,
-    ) => Promise<DocTableFolder>;
+    createFolder: (name: string, parentFolderId?: string | null) => Promise<DocTableFolder>;
+    renameFolder: (folderId: string, name: string) => Promise<DocTableFolder>;
     deleteFolder: (folderId: string) => Promise<void>;
-    moveFolder: (
-        folderId: string,
-        parentFolderId: string | null,
-    ) => Promise<DocTableFolder>;
-    moveDocument: (
-        documentId: string,
-        folderId: string | null,
-    ) => Promise<Document>;
+    moveFolder: (folderId: string, parentFolderId: string | null) => Promise<DocTableFolder>;
+    moveDocument: (documentId: string, folderId: string | null) => Promise<Document>;
     renameDocument: (documentId: string, filename: string) => Promise<Document>;
+    bulkDeleteDocuments?: (documentIds: string[]) => Promise<{ deletedIds: string[] }>;
 }
 
 interface DocTableProps {
@@ -139,6 +132,27 @@ interface DocTableProps {
     onSelectionActionsChange?: (actions: DocTableSelectionActions | null) => void;
     onOwnerOnlyAction?: Dispatch<SetStateAction<string | null>>;
     enableHeaderFilters?: boolean;
+    // When provided, folder contents are fetched on demand as folders are
+    // expanded (instead of the whole tree being loaded and auto-expanded
+    // up front). Called once per folder id the first time it's expanded.
+    onExpandFolder?: (folderId: string) => void | Promise<void>;
+    // Per-level document pagination, keyed by parent folder id (root uses
+    // the sentinel "root"). When onLoadMoreDocuments is provided, a level
+    // with more documents than are currently loaded shows a "load more" row.
+    documentsHasMoreByLevel?: Record<string, boolean>;
+    loadingMoreDocumentsByLevel?: Record<string, boolean>;
+    onLoadMoreDocuments?: (parentId: string | null) => void;
+    // When non-null, these are already filtered/sorted server results and are
+    // rendered as a flat list instead of the folder tree.
+    serverDocuments?: Document[] | null;
+    serverQueryLoading?: boolean;
+    serverQueryHasMore?: boolean;
+    serverQueryLoadingMore?: boolean;
+    onLoadMoreServerDocuments?: () => void;
+    onServerQueryChange?: (query: DocTableQuery) => void;
+    onSelectAllMatching?: (query: DocTableQuery) => Promise<string[]>;
+    documentTypeOptions?: TableFilterOption<string>[];
+    autoLoadOnScroll?: boolean;
 }
 
 function apiErrorDetail(error: unknown): string | null {
@@ -179,11 +193,7 @@ function documentVersionNumber(doc: Document): number | null {
     return doc.active_version_number ?? doc.latest_version_number ?? null;
 }
 
-function ProjectTableLoadingHeader({
-    stickyCellBg,
-}: {
-    stickyCellBg: string;
-}) {
+function ProjectTableLoadingHeader({ stickyCellBg }: { stickyCellBg: string }) {
     return (
         <TableHeaderRow className={`${stickyCellBg} pr-8 md:pr-8`}>
             <TableStickyCell
@@ -218,13 +228,8 @@ function ProjectTableLoading({ stickyCellBg }: { stickyCellBg: string }) {
     return (
         <div className="flex-1 flex flex-col min-h-0">
             {[1, 2, 3, 4, 5].map((i) => (
-                <div
-                    key={i}
-                    className="flex h-10 min-w-max items-center pr-8"
-                >
-                    <div
-                        className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${stickyCellBg} py-2 pl-4 pr-2`}
-                    >
+                <div key={i} className="flex h-10 min-w-max items-center pr-8">
+                    <div className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${stickyCellBg} py-2 pl-4 pr-2`}>
                         <div className="flex items-center">
                             <div className="mr-4 h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse" />
                             <div className="mr-2 h-4 w-4 shrink-0 rounded bg-gray-100 animate-pulse" />
@@ -272,6 +277,19 @@ export function DocTable({
     onSelectionActionsChange,
     onOwnerOnlyAction,
     enableHeaderFilters = false,
+    onExpandFolder,
+    documentsHasMoreByLevel,
+    loadingMoreDocumentsByLevel,
+    onLoadMoreDocuments,
+    serverDocuments = null,
+    serverQueryLoading = false,
+    serverQueryHasMore = false,
+    serverQueryLoadingMore = false,
+    onLoadMoreServerDocuments,
+    onServerQueryChange,
+    onSelectAllMatching,
+    documentTypeOptions,
+    autoLoadOnScroll = false,
 }: DocTableProps) {
     const [addDocsOpen, setAddDocsOpen] = useState(false);
     const { user } = useAuth();
@@ -282,18 +300,20 @@ export function DocTable({
         label: string;
     } | null>(null);
     const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
+    const [selectionCameFromSelectAll, setSelectionCameFromSelectAll] = useState(false);
+    const [selectingAllDocuments, setSelectingAllDocuments] = useState(false);
+    const [confirmDeleteAllOpen, setConfirmDeleteAllOpen] = useState(false);
     const [typeFilter, setTypeFilter] = useState<string | null>(null);
     const [sort, setSort] = useState<{
         key: DocumentSortKey;
         direction: TableSortDirection;
     } | null>(null);
+    const serverQueryActive = serverDocuments !== null;
     const documentUploadInputRef = useRef<HTMLInputElement>(null);
+    const autoLoadTriggeredRef = useRef(false);
     const loadingRef = useRef(loading);
     const renderAddDocumentsModalRef = useRef(renderAddDocumentsModal);
-    const setOwnerOnlyAction = useMemo(
-        () => onOwnerOnlyAction ?? (() => {}),
-        [onOwnerOnlyAction],
-    );
+    const setOwnerOnlyAction = useMemo(() => onOwnerOnlyAction ?? (() => {}), [onOwnerOnlyAction]);
 
     useEffect(() => {
         loadingRef.current = loading;
@@ -318,23 +338,13 @@ export function DocTable({
     // versions so toggling closed + open again doesn't refetch. loadingIds
     // drives the inline spinner in the version cell while a fetch is in
     // flight.
-    const [expandedVersionDocIds, setExpandedVersionDocIds] = useState<
-        Set<string>
-    >(() => new Set());
+    const [expandedVersionDocIds, setExpandedVersionDocIds] = useState<Set<string>>(() => new Set());
     const [versionsByDocId, setVersionsByDocId] = useState<
-        Map<
-            string,
-            { currentVersionId: string | null; versions: DocumentVersion[] }
-        >
+        Map<string, { currentVersionId: string | null; versions: DocumentVersion[] }>
     >(() => new Map());
-    const [loadingVersionDocIds, setLoadingVersionDocIds] = useState<
-        Set<string>
-    >(() => new Set());
+    const [loadingVersionDocIds, setLoadingVersionDocIds] = useState<Set<string>>(() => new Set());
 
-    const loadDocumentVersions = async (
-        docId: string,
-        options: { expand?: boolean; force?: boolean } = {},
-    ) => {
+    const loadDocumentVersions = async (docId: string, options: { expand?: boolean; force?: boolean } = {}) => {
         if (options.expand) {
             setExpandedVersionDocIds((prev) => new Set([...prev, docId]));
         }
@@ -375,11 +385,7 @@ export function DocTable({
         await loadDocumentVersions(docId, { expand: true });
     };
 
-    async function downloadDocVersion(
-        docId: string,
-        versionId: string,
-        filename: string,
-    ) {
+    async function downloadDocVersion(docId: string, versionId: string, filename: string) {
         try {
             const resolved = await getDocumentUrl(docId, versionId);
             const a = document.createElement("a");
@@ -399,9 +405,7 @@ export function DocTable({
         window.setTimeout(() => versionUploadInputRef.current?.click(), 0);
     }
 
-    async function handleVersionUploadInputChange(
-        e: React.ChangeEvent<HTMLInputElement>,
-    ) {
+    async function handleVersionUploadInputChange(e: React.ChangeEvent<HTMLInputElement>) {
         const file = e.target.files?.[0] ?? null;
         e.target.value = "";
         const doc = versionUploadTargetDoc;
@@ -410,11 +414,7 @@ export function DocTable({
         await handleDropDocumentVersions(doc, [file]);
     }
 
-    async function submitNewVersion(
-        doc: Document,
-        file: File,
-        filename: string,
-    ) {
+    async function submitNewVersion(doc: Document, file: File, filename: string) {
         try {
             await uploadDocumentVersion(doc.id, file, filename);
             await refreshDocumentVersionState(doc.id);
@@ -423,17 +423,10 @@ export function DocTable({
         }
     }
 
-    async function replaceVersionFile(
-        docId: string,
-        versionId: string,
-        file: File,
-        filename: string,
-    ) {
+    async function replaceVersionFile(docId: string, versionId: string, file: File, filename: string) {
         await replaceDocumentVersionFile(docId, versionId, file, filename);
         const res = await refreshDocumentVersionState(docId);
-        const replaced = res.versions.find(
-            (version) => version.id === versionId,
-        );
+        const replaced = res.versions.find((version) => version.id === versionId);
         if (replaced) {
             setViewingDocVersion({
                 id: replaced.id,
@@ -462,39 +455,25 @@ export function DocTable({
     /**
      * Patch a version filename and update the local cache in place.
      */
-    async function handleRenameVersion(
-        docId: string,
-        versionId: string,
-        filename: string | null,
-    ) {
+    async function handleRenameVersion(docId: string, versionId: string, filename: string | null) {
         const previousFilename = versionsByDocId
             .get(docId)
             ?.versions.find((version) => version.id === versionId)
             ?.filename?.trim();
-        if (
-            previousFilename &&
-            (filename == null ||
-                hasFilenameExtensionChange(previousFilename, filename))
-        ) {
+        if (previousFilename && (filename == null || hasFilenameExtensionChange(previousFilename, filename))) {
             setDocumentRenameWarning(extensionChangeWarning(previousFilename));
             return;
         }
 
         try {
-            const updated = await renameDocumentVersion(
-                docId,
-                versionId,
-                filename,
-            );
+            const updated = await renameDocumentVersion(docId, versionId, filename);
             setVersionsByDocId((prev) => {
                 const cached = prev.get(docId);
                 if (!cached) return prev;
                 const next = new Map(prev);
                 next.set(docId, {
                     ...cached,
-                    versions: cached.versions.map((v) =>
-                        v.id === versionId ? updated : v,
-                    ),
+                    versions: cached.versions.map((v) => (v.id === versionId ? updated : v)),
                 });
                 return next;
             });
@@ -507,13 +486,9 @@ export function DocTable({
         try {
             await deleteDocumentVersion(docId, versionId);
             const res = await refreshDocumentVersionState(docId);
-            const activeVersions = res.versions.filter(
-                (version) => version.deleted_at == null,
-            );
+            const activeVersions = res.versions.filter((version) => version.deleted_at == null);
             const nextVersion =
-                activeVersions.find(
-                    (version) => version.id === res.current_version_id,
-                ) ??
+                activeVersions.find((version) => version.id === res.current_version_id) ??
                 activeVersions[activeVersions.length - 1] ??
                 null;
             setViewingDocVersion(
@@ -530,80 +505,47 @@ export function DocTable({
         }
     }
 
-    const [renamingDocumentId, setRenamingDocumentId] = useState<string | null>(
-        null,
-    );
+    const [renamingDocumentId, setRenamingDocumentId] = useState<string | null>(null);
     const [renameDocumentValue, setRenameDocumentValue] = useState("");
 
     // Folder state
-    const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(
-        new Set(),
-    );
+    const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(new Set());
+    const [loadingChildFolderIds, setLoadingChildFolderIds] = useState<Set<string>>(() => new Set());
     // undefined = not creating; null = creating at root; string = creating inside that folder id
-    const [creatingFolderIn, setCreatingFolderIn] = useState<
-        string | null | undefined
-    >(undefined);
+    const [creatingFolderIn, setCreatingFolderIn] = useState<string | null | undefined>(undefined);
     const [newFolderName, setNewFolderName] = useState("");
-    const [renamingFolderId, setRenamingFolderId] = useState<string | null>(
-        null,
-    );
+    const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
     const [renameFolderValue, setRenameFolderValue] = useState("");
-    const [contextMenu, setContextMenu] = useState<ProjectContextMenu | null>(
-        null,
-    );
+    const [contextMenu, setContextMenu] = useState<ProjectContextMenu | null>(null);
     const contextMenuRef = useRef<HTMLDivElement>(null);
     const newFolderInputRef = useRef<HTMLDivElement | null>(null);
     const versionUploadInputRef = useRef<HTMLInputElement>(null);
-    const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(
-        null,
-    );
+    const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
     const [dragOverRoot, setDragOverRoot] = useState(false);
     const [dragOverFileRoot, setDragOverFileRoot] = useState(false);
-    const [isDraggingCollectionFiles, setIsDraggingCollectionFiles] =
-        useState(false);
+    const [isDraggingCollectionFiles, setIsDraggingCollectionFiles] = useState(false);
     const collectionDragDepthRef = useRef(0);
-    const [dragOverVersionDocId, setDragOverVersionDocId] = useState<
-        string | null
-    >(null);
-    const [uploadingVersionDocIds, setUploadingVersionDocIds] = useState<
-        Set<string>
-    >(() => new Set());
-    const [versionUploadTargetDoc, setVersionUploadTargetDoc] =
-        useState<Document | null>(null);
-    const [uploadingDroppedFilenames, setUploadingDroppedFilenames] = useState<
-        string[]
-    >([]);
-    const [deletingDocIds, setDeletingDocIds] = useState<Set<string>>(
-        () => new Set(),
-    );
-    const [documentUploadWarning, setDocumentUploadWarning] = useState<
-        string | null
-    >(null);
-    const [documentRenameWarning, setDocumentRenameWarning] = useState<
-        string | null
-    >(null);
-    const [collectionActionWarning, setCollectionActionWarning] = useState<
-        string | null
-    >(null);
+    const [dragOverVersionDocId, setDragOverVersionDocId] = useState<string | null>(null);
+    const [uploadingVersionDocIds, setUploadingVersionDocIds] = useState<Set<string>>(() => new Set());
+    const [versionUploadTargetDoc, setVersionUploadTargetDoc] = useState<Document | null>(null);
+    const [uploadingDroppedFilenames, setUploadingDroppedFilenames] = useState<string[]>([]);
+    const [deletingDocIds, setDeletingDocIds] = useState<Set<string>>(() => new Set());
+    const [documentUploadWarning, setDocumentUploadWarning] = useState<string | null>(null);
+    const [documentRenameWarning, setDocumentRenameWarning] = useState<string | null>(null);
+    const [collectionActionWarning, setCollectionActionWarning] = useState<string | null>(null);
     const [pendingVersionDrop, setPendingVersionDrop] = useState<{
         targetDoc: Document;
         sourceDoc: Document;
     } | null>(null);
-    const [pendingDeleteDoc, setPendingDeleteDoc] = useState<Document | null>(
-        null,
-    );
-    const [pendingDeleteStatus, setPendingDeleteStatus] = useState<
-        "idle" | "deleting" | "deleted"
-    >("idle");
+    const [pendingDeleteDoc, setPendingDeleteDoc] = useState<Document | null>(null);
+    const [pendingDeleteStatus, setPendingDeleteStatus] = useState<"idle" | "deleting" | "deleted">("idle");
     const [pendingDeleteFolder, setPendingDeleteFolder] = useState<{
         folder: DocTableFolder;
         folderIds: string[];
         documentIds: string[];
         documentCount: number;
     } | null>(null);
-    const [pendingDeleteFolderStatus, setPendingDeleteFolderStatus] = useState<
-        "idle" | "deleting" | "deleted"
-    >("idle");
+    const [pendingDeleteFolderStatus, setPendingDeleteFolderStatus] = useState<"idle" | "deleting" | "deleted">("idle");
 
     const openCreateFolder = useCallback(() => {
         if (loadingRef.current) return;
@@ -617,12 +559,16 @@ export function DocTable({
     }, [onCreateFolderActionChange, openCreateFolder]);
 
     useEffect(() => {
-        if (loading) return;
+        // In lazy mode, folders start collapsed and their contents are
+        // fetched via onExpandFolder as the user opens them.
+        if (loading || onExpandFolder) return;
         setExpandedFolderIds(new Set(folders.map((f) => f.id)));
-    }, [loading, folders]);
+    }, [loading, folders, onExpandFolder]);
 
     useEffect(() => {
         setSelectedDocIds([]);
+        setSelectionCameFromSelectAll(false);
+        setConfirmDeleteAllOpen(false);
         setContextMenu(null);
         setTypeFilter(null);
         setSort(null);
@@ -632,11 +578,7 @@ export function DocTable({
     useEffect(() => {
         if (!contextMenu) return;
         function handle(e: MouseEvent) {
-            if (
-                contextMenuRef.current &&
-                !contextMenuRef.current.contains(e.target as Node)
-            )
-                setContextMenu(null);
+            if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) setContextMenu(null);
         }
         document.addEventListener("mousedown", handle);
         return () => document.removeEventListener("mousedown", handle);
@@ -667,13 +609,31 @@ export function DocTable({
 
     // ── Folder handlers ───────────────────────────────────────────────────────
 
+    async function expandFolderChildren(folderId: string) {
+        if (!onExpandFolder) return;
+        setLoadingChildFolderIds((prev) => new Set([...prev, folderId]));
+        try {
+            await onExpandFolder(folderId);
+        } catch (e) {
+            console.error("expand folder failed", e);
+        } finally {
+            setLoadingChildFolderIds((prev) => {
+                const next = new Set(prev);
+                next.delete(folderId);
+                return next;
+            });
+        }
+    }
+
     function toggleFolder(id: string) {
+        const opening = !expandedFolderIds.has(id);
         setExpandedFolderIds((prev) => {
             const next = new Set(prev);
             if (next.has(id)) next.delete(id);
             else next.add(id);
             return next;
         });
+        if (opening) void expandFolderChildren(id);
     }
 
     async function handleCreateFolder(parentId: string | null) {
@@ -697,8 +657,11 @@ export function DocTable({
         } as DocTableFolder;
         setFolders((prev) => [...prev, optimistic]);
         setExpandedFolderIds((prev) => new Set([...prev, tempId]));
-        if (parentId)
+        if (parentId) {
+            const wasExpanded = expandedFolderIds.has(parentId);
             setExpandedFolderIds((prev) => new Set([...prev, parentId]));
+            if (!wasExpanded) void expandFolderChildren(parentId);
+        }
 
         // Replace with real folder from API
         const folder = await operations.createFolder(name, parentId ?? null);
@@ -715,9 +678,7 @@ export function DocTable({
         const name = renameFolderValue.trim();
         setRenamingFolderId(null);
         if (!name) return;
-        setFolders((prev) =>
-            prev.map((f) => (f.id === folderId ? { ...f, name } : f)),
-        );
+        setFolders((prev) => prev.map((f) => (f.id === folderId ? { ...f, name } : f)));
         await operations.renameFolder(folderId, name);
     }
 
@@ -725,8 +686,7 @@ export function DocTable({
         const childrenByParent = new Map<string, string[]>();
         for (const folder of folders) {
             if (!folder.parent_folder_id) continue;
-            const children =
-                childrenByParent.get(folder.parent_folder_id) ?? [];
+            const children = childrenByParent.get(folder.parent_folder_id) ?? [];
             children.push(folder.id);
             childrenByParent.set(folder.parent_folder_id, children);
         }
@@ -741,9 +701,7 @@ export function DocTable({
         }
 
         const folderIds = [...toDelete];
-        const documentIds = documents
-            .filter((d) => d.folder_id && toDelete.has(d.folder_id))
-            .map((d) => d.id);
+        const documentIds = documents.filter((d) => d.folder_id && toDelete.has(d.folder_id)).map((d) => d.id);
         return { folderIds, documentIds, documentCount: documentIds.length };
     }
 
@@ -770,9 +728,7 @@ export function DocTable({
             const toDelete = new Set(pending.folderIds);
 
             setFolders((prev) => prev.filter((f) => !toDelete.has(f.id)));
-            setDocuments((prev) =>
-                prev.filter((d) => !d.folder_id || !toDelete.has(d.folder_id)),
-            );
+            setDocuments((prev) => prev.filter((d) => !d.folder_id || !toDelete.has(d.folder_id)));
             setExpandedFolderIds((prev) => {
                 const next = new Set(prev);
                 for (const id of toDelete) next.delete(id);
@@ -785,9 +741,7 @@ export function DocTable({
                 setContextMenu(null);
             }
             const deletedDocIds = new Set(pending.documentIds);
-            setSelectedDocIds((prev) =>
-                prev.filter((id) => !deletedDocIds.has(id)),
-            );
+            setSelectedDocIds((prev) => prev.filter((id) => !deletedDocIds.has(id)));
             setExpandedVersionDocIds((prev) => {
                 const next = new Set(prev);
                 for (const id of pending.documentIds) next.delete(id);
@@ -806,21 +760,14 @@ export function DocTable({
         } catch (err) {
             console.error("delete folder failed", err);
             setPendingDeleteFolderStatus("idle");
-            setCollectionActionWarning(
-                "Folder could not be deleted. Please try again.",
-            );
+            setCollectionActionWarning("Folder could not be deleted. Please try again.");
         }
     }
 
     // ── Doc/chat/review handlers ──────────────────────────────────────────────
 
     function handleDocsSelected(newDocs: Document[]) {
-        setDocuments((prev) =>
-            [
-                ...prev,
-                ...newDocs.filter((d) => !prev.some((e) => e.id === d.id)),
-            ],
-        );
+        setDocuments((prev) => [...prev, ...newDocs.filter((d) => !prev.some((e) => e.id === d.id))]);
     }
 
     function removeDocumentFromLocalState(docId: string) {
@@ -868,17 +815,11 @@ export function DocTable({
         setDocuments((prev) => {
             if (prev.some((d) => d.id === doc.id)) return prev;
             const nextDocs = [...prev];
-            nextDocs.splice(
-                Math.max(0, Math.min(snapshot.index, nextDocs.length)),
-                0,
-                doc,
-            );
+            nextDocs.splice(Math.max(0, Math.min(snapshot.index, nextDocs.length)), 0, doc);
             return nextDocs;
         });
         if (snapshot.selected) {
-            setSelectedDocIds((prev) =>
-                prev.includes(doc.id) ? prev : [...prev, doc.id],
-            );
+            setSelectedDocIds((prev) => (prev.includes(doc.id) ? prev : [...prev, doc.id]));
         }
         if (snapshot.versionsOpen) {
             setExpandedVersionDocIds((prev) => new Set([...prev, doc.id]));
@@ -907,11 +848,7 @@ export function DocTable({
     }
 
     async function handleRemoveDocFromFolder(docId: string) {
-        setDocuments((prev) =>
-            prev.map((d) =>
-                d.id === docId ? { ...d, folder_id: null } : d,
-            ),
-        );
+        setDocuments((prev) => prev.map((d) => (d.id === docId ? { ...d, folder_id: null } : d)));
         await operations.moveDocument(docId, null);
     }
 
@@ -946,16 +883,10 @@ export function DocTable({
         );
         try {
             const updated = await operations.renameDocument(docId, trimmed);
-            setDocuments((prev) =>
-                prev.map((d) => (d.id === docId ? { ...d, ...updated } : d)),
-            );
+            setDocuments((prev) => prev.map((d) => (d.id === docId ? { ...d, ...updated } : d)));
         } catch (e) {
             console.error("renameDocument failed", e);
-            setDocuments((prev) =>
-                previous
-                    ? prev.map((d) => (d.id === docId ? previous : d))
-                    : prev,
-            );
+            setDocuments((prev) => (previous ? prev.map((d) => (d.id === docId ? previous : d)) : prev));
         }
     }
 
@@ -985,10 +916,7 @@ export function DocTable({
             setOwnerOnlyAction("delete this document");
             return;
         }
-        const versionCount =
-            versionsByDocId.get(doc.id)?.versions.length ??
-            currentVersionNumber(doc) ??
-            1;
+        const versionCount = versionsByDocId.get(doc.id)?.versions.length ?? currentVersionNumber(doc) ?? 1;
         if (versionCount <= 1) {
             void handleRemoveDoc(doc.id);
             return;
@@ -1018,9 +946,7 @@ export function DocTable({
 
     function wouldCreateCycle(movingId: string, targetId: string): boolean {
         // Returns true if targetId is movingId or a descendant of it
-        let cur: DocTableFolder | undefined = folders.find(
-            (f) => f.id === targetId,
-        );
+        let cur: DocTableFolder | undefined = folders.find((f) => f.id === targetId);
         while (cur) {
             if (cur.id === movingId) return true;
             if (!cur.parent_folder_id) break;
@@ -1031,9 +957,7 @@ export function DocTable({
 
     function hasMovePayload(dt: DataTransfer): boolean {
         return Array.from(dt.types).some(
-            (type) =>
-                type === "application/mike-doc" ||
-                type === "application/mike-folder",
+            (type) => type === "application/mike-doc" || type === "application/mike-folder",
         );
     }
 
@@ -1055,15 +979,12 @@ export function DocTable({
 
     async function handleDropCollectionFiles(files: File[]) {
         if (files.length === 0) return;
-        const { supported, unsupported } =
-            partitionSupportedDocumentFiles(files);
+        const { supported, unsupported } = partitionSupportedDocumentFiles(files);
         setDocumentUploadWarning(formatUnsupportedDocumentWarning(unsupported));
         if (supported.length === 0) return;
         setUploadingDroppedFilenames(supported.map((file) => file.name));
         try {
-            const uploaded = await Promise.all(
-                supported.map((file) => operations.uploadDocument(file)),
-            );
+            const uploaded = await Promise.all(supported.map((file) => operations.uploadDocument(file)));
             handleDocsSelected(uploaded);
         } catch (err) {
             console.error("Document drop upload failed", err);
@@ -1091,10 +1012,7 @@ export function DocTable({
 
         function handleDragLeave(event: globalThis.DragEvent) {
             if (!hasFiles(event.dataTransfer)) return;
-            collectionDragDepthRef.current = Math.max(
-                0,
-                collectionDragDepthRef.current - 1,
-            );
+            collectionDragDepthRef.current = Math.max(0, collectionDragDepthRef.current - 1);
             if (collectionDragDepthRef.current === 0) {
                 setIsDraggingCollectionFiles(false);
             }
@@ -1107,9 +1025,7 @@ export function DocTable({
             collectionDragDepthRef.current = 0;
             setIsDraggingCollectionFiles(false);
             setDragOverFileRoot(false);
-            void handleDropCollectionFiles(
-                Array.from(event.dataTransfer?.files ?? []),
-            );
+            void handleDropCollectionFiles(Array.from(event.dataTransfer?.files ?? []));
         }
 
         window.addEventListener("dragenter", handleDragEnter);
@@ -1126,8 +1042,7 @@ export function DocTable({
 
     async function handleDropDocumentVersions(doc: Document, files: File[]) {
         if (files.length === 0) return;
-        const { supported, unsupported } =
-            partitionSupportedDocumentFiles(files);
+        const { supported, unsupported } = partitionSupportedDocumentFiles(files);
         setDocumentUploadWarning(formatUnsupportedDocumentWarning(unsupported));
         if (supported.length === 0) return;
 
@@ -1148,42 +1063,29 @@ export function DocTable({
         }
     }
 
-    async function saveExistingDocumentAsNewVersion(
-        targetDoc: Document,
-        sourceDoc: Document,
-    ) {
-        const sourceIndex =
-            documents.findIndex((doc) => doc.id === sourceDoc.id);
+    async function saveExistingDocumentAsNewVersion(targetDoc: Document, sourceDoc: Document) {
+        const sourceIndex = documents.findIndex((doc) => doc.id === sourceDoc.id);
         const sourceSnapshot = {
             index: sourceIndex >= 0 ? sourceIndex : 0,
             selected: selectedDocIds.includes(sourceDoc.id),
             versionsOpen: expandedVersionDocIds.has(sourceDoc.id),
             versions: versionsByDocId.get(sourceDoc.id)?.versions,
-            currentVersionId: versionsByDocId.get(sourceDoc.id)
-                ?.currentVersionId,
+            currentVersionId: versionsByDocId.get(sourceDoc.id)?.currentVersionId,
             loadingVersions: loadingVersionDocIds.has(sourceDoc.id),
             uploadingVersion: uploadingVersionDocIds.has(sourceDoc.id),
             viewing: viewingDoc?.id === sourceDoc.id,
-            viewingVersion:
-                viewingDoc?.id === sourceDoc.id ? viewingDocVersion : null,
+            viewingVersion: viewingDoc?.id === sourceDoc.id ? viewingDocVersion : null,
         };
 
         setUploadingVersionDocIds((prev) => new Set([...prev, targetDoc.id]));
         removeDocumentFromLocalState(sourceDoc.id);
         try {
-            await copyDocumentVersionFromDocument(
-                targetDoc.id,
-                sourceDoc.id,
-                sourceDoc.filename,
-            );
+            await copyDocumentVersionFromDocument(targetDoc.id, sourceDoc.id, sourceDoc.filename);
             await refreshDocumentVersionState(targetDoc.id);
         } catch (err) {
             console.error("Existing document version drop failed", err);
             restoreDocumentToLocalState(sourceDoc, sourceSnapshot);
-            setCollectionActionWarning(
-                apiErrorDetail(err) ??
-                    "Could not save this document as a new version.",
-            );
+            setCollectionActionWarning(apiErrorDetail(err) ?? "Could not save this document as a new version.");
         } finally {
             setUploadingVersionDocIds((prev) => {
                 const next = new Set(prev);
@@ -1193,24 +1095,15 @@ export function DocTable({
         }
     }
 
-    function handleDropExistingDocumentVersion(
-        targetDoc: Document,
-        sourceDocId: string,
-    ) {
+    function handleDropExistingDocumentVersion(targetDoc: Document, sourceDocId: string) {
         if (!sourceDocId || sourceDocId === targetDoc.id) return;
         const sourceDoc = documents.find((doc) => doc.id === sourceDocId);
         if (!sourceDoc) return;
         setPendingVersionDrop({ targetDoc, sourceDoc });
     }
 
-    function handleDocumentVersionDragOver(
-        e: DragEvent<HTMLDivElement>,
-        docId: string,
-    ) {
-        if (
-            !hasFilePayload(e.dataTransfer) &&
-            !hasDocumentPayload(e.dataTransfer)
-        ) {
+    function handleDocumentVersionDragOver(e: DragEvent<HTMLDivElement>, docId: string) {
+        if (!hasFilePayload(e.dataTransfer) && !hasDocumentPayload(e.dataTransfer)) {
             return;
         }
         e.preventDefault();
@@ -1227,14 +1120,8 @@ export function DocTable({
         }
     }
 
-    function handleDocumentVersionDrop(
-        e: DragEvent<HTMLDivElement>,
-        doc: Document,
-    ) {
-        if (
-            !hasFilePayload(e.dataTransfer) &&
-            !hasDocumentPayload(e.dataTransfer)
-        ) {
+    function handleDocumentVersionDrop(e: DragEvent<HTMLDivElement>, doc: Document) {
+        if (!hasFilePayload(e.dataTransfer) && !hasDocumentPayload(e.dataTransfer)) {
             return;
         }
         e.preventDefault();
@@ -1246,49 +1133,27 @@ export function DocTable({
         setDragOverRoot(false);
         setDragOverFolderId(null);
         if (hasFilePayload(e.dataTransfer)) {
-            void handleDropDocumentVersions(
-                doc,
-                Array.from(e.dataTransfer.files),
-            );
+            void handleDropDocumentVersions(doc, Array.from(e.dataTransfer.files));
             return;
         }
-        void handleDropExistingDocumentVersion(
-            doc,
-            e.dataTransfer.getData("application/mike-doc"),
-        );
+        void handleDropExistingDocumentVersion(doc, e.dataTransfer.getData("application/mike-doc"));
     }
 
-    async function handleDropOnFolder(
-        targetFolderId: string | null,
-        dt: DataTransfer,
-    ) {
+    async function handleDropOnFolder(targetFolderId: string | null, dt: DataTransfer) {
         if (!hasMovePayload(dt)) return;
         const docId = dt.getData("application/mike-doc");
         const subFolderId = dt.getData("application/mike-folder");
         if (docId) {
             const doc = documents.find((d) => d.id === docId);
             if (!doc || (doc.folder_id ?? null) === targetFolderId) return;
-            setDocuments((prev) =>
-                prev.map((d) =>
-                    d.id === docId ? { ...d, folder_id: targetFolderId } : d,
-                ),
-            );
+            setDocuments((prev) => prev.map((d) => (d.id === docId ? { ...d, folder_id: targetFolderId } : d)));
             await operations.moveDocument(docId, targetFolderId);
         } else if (subFolderId && subFolderId !== targetFolderId) {
-            if (
-                targetFolderId !== null &&
-                wouldCreateCycle(subFolderId, targetFolderId)
-            )
-                return;
+            if (targetFolderId !== null && wouldCreateCycle(subFolderId, targetFolderId)) return;
             const folder = folders.find((f) => f.id === subFolderId);
-            if (!folder || (folder.parent_folder_id ?? null) === targetFolderId)
-                return;
+            if (!folder || (folder.parent_folder_id ?? null) === targetFolderId) return;
             setFolders((prev) =>
-                prev.map((f) =>
-                    f.id === subFolderId
-                        ? { ...f, parent_folder_id: targetFolderId }
-                        : f,
-                ),
+                prev.map((f) => (f.id === subFolderId ? { ...f, parent_folder_id: targetFolderId } : f)),
             );
             await operations.moveFolder(subFolderId, targetFolderId);
         }
@@ -1320,8 +1185,7 @@ export function DocTable({
                             value={newFolderName}
                             onChange={(e) => setNewFolderName(e.target.value)}
                             onKeyDown={(e) => {
-                                if (e.key === "Enter")
-                                    void handleCreateFolder(parentId);
+                                if (e.key === "Enter") void handleCreateFolder(parentId);
                                 if (e.key === "Escape") {
                                     setCreatingFolderIn(undefined);
                                     setNewFolderName("");
@@ -1355,10 +1219,7 @@ export function DocTable({
         statusLabel: string;
     }) {
         return (
-            <div
-                key={key}
-                className="group flex h-10 min-w-max items-center pr-8"
-            >
+            <div key={key} className="group flex h-10 min-w-max items-center pr-8">
                 <div
                     className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${stickyCellBg} py-2 pl-4 pr-2`}
                     style={treeNameCellStyle(depth)}
@@ -1366,25 +1227,15 @@ export function DocTable({
                     <div className="flex items-center">
                         <Loader2 className="mr-4 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
                         <span className="mr-2 shrink-0">
-                            <DocIcon
-                                fileType={fileType ?? filename}
-                                muted
-                            />
+                            <DocIcon fileType={fileType ?? filename} muted />
                         </span>
-                        <span className="text-sm text-gray-400 truncate">
-                            {filename}
-                        </span>
+                        <span className="text-sm text-gray-400 truncate">{filename}</span>
                     </div>
                 </div>
                 <div className="ml-auto w-20 shrink-0 text-xs text-gray-300 uppercase truncate">
-                    {fileType ??
-                        (filename.includes(".")
-                            ? filename.split(".").pop()
-                            : "file")}
+                    {fileType ?? (filename.includes(".") ? filename.split(".").pop() : "file")}
                 </div>
-                <div className="w-24 shrink-0 text-sm text-gray-300">
-                    {statusLabel}
-                </div>
+                <div className="w-24 shrink-0 text-sm text-gray-300">{statusLabel}</div>
                 <div className="w-20 shrink-0 text-sm text-gray-300">—</div>
                 <div className="w-32 shrink-0 text-sm text-gray-300">—</div>
                 <div className="w-32 shrink-0 text-sm text-gray-300">—</div>
@@ -1406,18 +1257,11 @@ export function DocTable({
     }
 
     function renderLevel(parentId: string | null, depth: number) {
-        const nameMultiplier =
-            enableHeaderFilters &&
-            sort?.key === "name" &&
-            sort.direction === "desc"
-                ? -1
-                : 1;
+        const nameMultiplier = enableHeaderFilters && sort?.key === "name" && sort.direction === "desc" ? -1 : 1;
         const childFolders = folders
             .filter((f) => f.parent_folder_id === parentId)
             .sort((a, b) => a.name.localeCompare(b.name) * nameMultiplier);
-        const childDocs = filteredDocs.filter(
-            (d) => (d.folder_id ?? null) === parentId,
-        );
+        const childDocs = filteredDocs.filter((d) => (d.folder_id ?? null) === parentId);
 
         return (
             <>
@@ -1425,17 +1269,13 @@ export function DocTable({
                 {/* Files first */}
                 {childDocs.map((doc) => {
                     const docName = doc.filename;
-                    const isProcessing =
-                        doc.status === "pending" || doc.status === "processing";
+                    const isProcessing = doc.status === "pending" || doc.status === "processing";
                     const isError = doc.status === "error";
                     const isVersionsOpen = expandedVersionDocIds.has(doc.id);
                     const versionNumber = currentVersionNumber(doc);
-                    const hasVersions =
-                        typeof versionNumber === "number" && versionNumber > 1;
+                    const hasVersions = typeof versionNumber === "number" && versionNumber > 1;
                     const isVersionDragOver = dragOverVersionDocId === doc.id;
-                    const isUploadingVersion = uploadingVersionDocIds.has(
-                        doc.id,
-                    );
+                    const isUploadingVersion = uploadingVersionDocIds.has(doc.id);
                     const isSelected = selectedDocIds.includes(doc.id);
                     const isDeletingDoc = deletingDocIds.has(doc.id);
                     if (isDeletingDoc) {
@@ -1457,10 +1297,7 @@ export function DocTable({
                                         e.preventDefault();
                                         return;
                                     }
-                                    e.dataTransfer.setData(
-                                        "application/mike-doc",
-                                        doc.id,
-                                    );
+                                    e.dataTransfer.setData("application/mike-doc", doc.id);
                                     e.dataTransfer.effectAllowed = "copyMove";
                                 }}
                                 onDragEnd={() => {
@@ -1468,13 +1305,9 @@ export function DocTable({
                                     setDragOverFolderId(null);
                                     setDragOverVersionDocId(null);
                                 }}
-                                onDragOver={(e) =>
-                                    handleDocumentVersionDragOver(e, doc.id)
-                                }
+                                onDragOver={(e) => handleDocumentVersionDragOver(e, doc.id)}
                                 onDragLeave={handleDocumentVersionDragLeave}
-                                onDrop={(e) =>
-                                    handleDocumentVersionDrop(e, doc)
-                                }
+                                onDrop={(e) => handleDocumentVersionDrop(e, doc)}
                                 onClick={() => {
                                     setViewingDocVersion(null);
                                     setViewingDoc(doc);
@@ -1506,37 +1339,20 @@ export function DocTable({
                                                 style={treeNameCellStyle(depth)}
                                             >
                                                 <div className="flex items-center">
-                                                    {isProcessing ||
-                                                    isUploadingVersion ? (
+                                                    {isProcessing || isUploadingVersion ? (
                                                         <Loader2 className="mr-4 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
                                                     ) : (
                                                         <input
                                                             type="checkbox"
-                                                            checked={selectedDocIds.includes(
-                                                                doc.id,
-                                                            )}
-                                                            onChange={() =>
-                                                                setSelectedDocIds(
-                                                                    (prev) =>
-                                                                        prev.includes(
-                                                                            doc.id,
-                                                                        )
-                                                                            ? prev.filter(
-                                                                                  (
-                                                                                      x,
-                                                                                  ) =>
-                                                                                      x !==
-                                                                                      doc.id,
-                                                                              )
-                                                                            : [
-                                                                                  ...prev,
-                                                                                  doc.id,
-                                                                              ],
-                                                                )
-                                                            }
-                                                            onClick={(e) =>
-                                                                e.stopPropagation()
-                                                            }
+                                                            checked={selectedDocIds.includes(doc.id)}
+                                                            onChange={() => {
+                                                                setSelectedDocIds((prev) =>
+                                                                    prev.includes(doc.id)
+                                                                        ? prev.filter((x) => x !== doc.id)
+                                                                        : [...prev, doc.id],
+                                                                );
+                                                            }}
+                                                            onClick={(e) => e.stopPropagation()}
                                                             className="mr-4 h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black"
                                                         />
                                                     )}
@@ -1544,61 +1360,29 @@ export function DocTable({
                                                         {isError ? (
                                                             <AlertCircle className="h-4 w-4 text-red-500" />
                                                         ) : (
-                                                            <DocIcon
-                                                                fileType={
-                                                                    doc.file_type
-                                                                }
-                                                            />
+                                                            <DocIcon fileType={doc.file_type} />
                                                         )}
                                                     </span>
-                                                    {renamingDocumentId ===
-                                                    doc.id ? (
+                                                    {renamingDocumentId === doc.id ? (
                                                         <input
                                                             autoFocus
                                                             className="min-w-0 flex-1 text-sm text-gray-800 bg-transparent outline-none border-b border-gray-300"
-                                                            value={
-                                                                renameDocumentValue
-                                                            }
-                                                            onClick={(e) =>
-                                                                e.stopPropagation()
-                                                            }
-                                                            onDragStart={(
-                                                                e,
-                                                            ) => {
+                                                            value={renameDocumentValue}
+                                                            onClick={(e) => e.stopPropagation()}
+                                                            onDragStart={(e) => {
                                                                 e.preventDefault();
                                                                 e.stopPropagation();
                                                             }}
-                                                            onChange={(e) =>
-                                                                setRenameDocumentValue(
-                                                                    e.target
-                                                                        .value,
-                                                                )
-                                                            }
+                                                            onChange={(e) => setRenameDocumentValue(e.target.value)}
                                                             onKeyDown={(e) => {
-                                                                if (
-                                                                    e.key ===
-                                                                    "Enter"
-                                                                )
-                                                                    void submitDocumentRename(
-                                                                        doc.id,
-                                                                    );
-                                                                if (
-                                                                    e.key ===
-                                                                    "Escape"
-                                                                ) {
-                                                                    setRenamingDocumentId(
-                                                                        null,
-                                                                    );
-                                                                    setRenameDocumentValue(
-                                                                        "",
-                                                                    );
+                                                                if (e.key === "Enter")
+                                                                    void submitDocumentRename(doc.id);
+                                                                if (e.key === "Escape") {
+                                                                    setRenamingDocumentId(null);
+                                                                    setRenameDocumentValue("");
                                                                 }
                                                             }}
-                                                            onBlur={() =>
-                                                                void submitDocumentRename(
-                                                                    doc.id,
-                                                                )
-                                                            }
+                                                            onBlur={() => void submitDocumentRename(doc.id)}
                                                         />
                                                     ) : (
                                                         <span className="text-sm text-gray-800 truncate">
@@ -1608,39 +1392,25 @@ export function DocTable({
                                                 </div>
                                             </div>
                                             <div className="ml-auto w-20 shrink-0 text-xs text-gray-500 uppercase truncate">
-                                                {doc.file_type ?? (
-                                                    <span className="text-gray-300">
-                                                        —
-                                                    </span>
-                                                )}
+                                                {doc.file_type ?? <span className="text-gray-300">—</span>}
                                             </div>
                                             <div className="w-24 shrink-0 text-sm text-gray-500 truncate">
                                                 {doc.size_bytes != null ? (
                                                     formatBytes(doc.size_bytes)
                                                 ) : (
-                                                    <span className="text-gray-300">
-                                                        —
-                                                    </span>
+                                                    <span className="text-gray-300">—</span>
                                                 )}
                                             </div>
                                             <div
                                                 className="w-20 shrink-0 text-sm text-gray-500 flex items-center gap-1"
-                                                onClick={(e) =>
-                                                    e.stopPropagation()
-                                                }
+                                                onClick={(e) => e.stopPropagation()}
                                             >
                                                 {hasVersions ? (
                                                     <button
-                                                        onClick={() =>
-                                                            void toggleVersions(
-                                                                doc.id,
-                                                            )
-                                                        }
+                                                        onClick={() => void toggleVersions(doc.id)}
                                                         className={`flex items-center gap-1 rounded px-1 py-0.5 transition-colors ${APP_SURFACE_HOVER_CLASS}`}
                                                     >
-                                                        <span>
-                                                            {versionNumber}
-                                                        </span>
+                                                        <span>{versionNumber}</span>
                                                         {isVersionsOpen ? (
                                                             <ChevronDown className="h-3 w-3 text-gray-400" />
                                                         ) : (
@@ -1648,74 +1418,45 @@ export function DocTable({
                                                         )}
                                                     </button>
                                                 ) : (
-                                                    <span className="text-gray-300 pl-1">
-                                                        —
-                                                    </span>
+                                                    <span className="text-gray-300 pl-1">—</span>
                                                 )}
                                             </div>
                                             <div className="w-32 shrink-0 text-sm text-gray-500 truncate">
                                                 {doc.created_at ? (
                                                     formatDate(doc.created_at)
                                                 ) : (
-                                                    <span className="text-gray-300">
-                                                        —
-                                                    </span>
+                                                    <span className="text-gray-300">—</span>
                                                 )}
                                             </div>
                                             <div className="w-32 shrink-0 text-sm text-gray-500 truncate">
                                                 {doc.updated_at ? (
                                                     formatDate(doc.updated_at)
                                                 ) : (
-                                                    <span className="text-gray-300">
-                                                        —
-                                                    </span>
+                                                    <span className="text-gray-300">—</span>
                                                 )}
                                             </div>
                                             <div className="w-8 shrink-0 flex justify-end">
                                                 {!isProcessing && (
                                                     <RowActions
                                                         onRename={() => {
-                                                            setRenameDocumentValue(
-                                                                docName,
-                                                            );
-                                                            setRenamingDocumentId(
-                                                                doc.id,
-                                                            );
+                                                            setRenameDocumentValue(docName);
+                                                            setRenamingDocumentId(doc.id);
                                                         }}
                                                         renameLabel="Rename document"
-                                                        onDownload={() =>
-                                                            downloadDoc(doc.id)
-                                                        }
+                                                        onDownload={() => downloadDoc(doc.id)}
                                                         onShowAllVersions={
-                                                            hasVersions &&
-                                                            !isVersionsOpen
-                                                                ? () =>
-                                                                      void toggleVersions(
-                                                                          doc.id,
-                                                                      )
+                                                            hasVersions && !isVersionsOpen
+                                                                ? () => void toggleVersions(doc.id)
                                                                 : undefined
                                                         }
-                                                        onUploadNewVersion={() =>
-                                                            void handleUploadNewVersion(
-                                                                doc,
-                                                            )
-                                                        }
+                                                        onUploadNewVersion={() => void handleUploadNewVersion(doc)}
                                                         onRemoveFromFolder={
                                                             doc.folder_id
-                                                                ? () =>
-                                                                      handleRemoveDocFromFolder(
-                                                                          doc.id,
-                                                                      )
+                                                                ? () => handleRemoveDocFromFolder(doc.id)
                                                                 : undefined
                                                         }
-                                                        onDelete={() =>
-                                                            requestRemoveDoc(
-                                                                doc,
-                                                            )
-                                                        }
-                                                        deleteDisabled={isSharedDocument(
-                                                            doc,
-                                                        )}
+                                                        onDelete={() => requestRemoveDoc(doc)}
+                                                        deleteDisabled={isSharedDocument(doc)}
                                                     />
                                                 )}
                                             </div>
@@ -1729,14 +1470,8 @@ export function DocTable({
                                     filename={docName}
                                     activeVersionNumber={versionNumber}
                                     loading={loadingVersionDocIds.has(doc.id)}
-                                    versions={
-                                        versionsByDocId.get(doc.id)?.versions ??
-                                        []
-                                    }
-                                    currentVersionId={
-                                        versionsByDocId.get(doc.id)
-                                            ?.currentVersionId ?? null
-                                    }
+                                    versions={versionsByDocId.get(doc.id)?.versions ?? []}
+                                    currentVersionId={versionsByDocId.get(doc.id)?.currentVersionId ?? null}
                                     depth={depth}
                                     onDownloadVersion={downloadDocVersion}
                                     onOpenVersion={(versionId, label) => {
@@ -1747,16 +1482,10 @@ export function DocTable({
                                         setViewingDoc(doc);
                                     }}
                                     onRenameVersion={(versionId, filename) =>
-                                        handleRenameVersion(
-                                            doc.id,
-                                            versionId,
-                                            filename,
-                                        )
+                                        handleRenameVersion(doc.id, versionId, filename)
                                     }
                                     onExtensionChangeBlocked={(filename) =>
-                                        setDocumentRenameWarning(
-                                            extensionChangeWarning(filename),
-                                        )
+                                        setDocumentRenameWarning(extensionChangeWarning(filename))
                                     }
                                 />
                             )}
@@ -1764,10 +1493,24 @@ export function DocTable({
                     );
                 })}
 
+                {onLoadMoreDocuments && (
+                    <div style={treeNameCellStyle(depth)}>
+                        <TableLoadMoreRow
+                            loading={false}
+                            hasMore={!!documentsHasMoreByLevel?.[parentId ?? "root"]}
+                            itemCount={childDocs.length}
+                            loadingMore={!!loadingMoreDocumentsByLevel?.[parentId ?? "root"]}
+                            hasError={false}
+                            onLoadMore={() => onLoadMoreDocuments(parentId)}
+                        />
+                    </div>
+                )}
+
                 {/* Subfolders after files, sorted alphabetically */}
                 {childFolders.map((folder) => {
                     const isExpanded = expandedFolderIds.has(folder.id);
                     const isRenaming = renamingFolderId === folder.id;
+                    const isLoadingChildren = loadingChildFolderIds.has(folder.id);
                     return (
                         <div key={`folder-${folder.id}`}>
                             <div
@@ -1777,10 +1520,7 @@ export function DocTable({
                                         e.preventDefault();
                                         return;
                                     }
-                                    e.dataTransfer.setData(
-                                        "application/mike-folder",
-                                        folder.id,
-                                    );
+                                    e.dataTransfer.setData("application/mike-folder", folder.id);
                                     e.dataTransfer.effectAllowed = "move";
                                     e.stopPropagation();
                                 }}
@@ -1802,10 +1542,7 @@ export function DocTable({
                                     setDragOverFolderId(null);
                                     setDragOverRoot(false);
                                     setDragOverVersionDocId(null);
-                                    await handleDropOnFolder(
-                                        folder.id,
-                                        e.dataTransfer,
-                                    );
+                                    await handleDropOnFolder(folder.id, e.dataTransfer);
                                 }}
                                 onClick={() => toggleFolder(folder.id)}
                                 onContextMenu={(e) => {
@@ -1827,16 +1564,15 @@ export function DocTable({
                                 >
                                     <div className="flex items-center">
                                         <span className="mr-4 flex h-2.5 w-2.5 shrink-0 items-center justify-center">
-                                            {isExpanded ? (
+                                            {isLoadingChildren ? (
+                                                <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
+                                            ) : isExpanded ? (
                                                 <ChevronDown className="h-3.5 w-3.5 text-gray-400" />
                                             ) : (
                                                 <ChevronRight className="h-3.5 w-3.5 text-gray-400" />
                                             )}
                                         </span>
-                                        <SubfolderSvgIcon
-                                            open={isExpanded}
-                                            className="mr-2 h-4 w-4 shrink-0"
-                                        />
+                                        <SubfolderSvgIcon open={isExpanded} className="mr-2 h-4 w-4 shrink-0" />
                                         {isRenaming ? (
                                             <input
                                                 autoFocus
@@ -1846,64 +1582,31 @@ export function DocTable({
                                                     e.preventDefault();
                                                     e.stopPropagation();
                                                 }}
-                                                onChange={(e) =>
-                                                    setRenameFolderValue(
-                                                        e.target.value,
-                                                    )
-                                                }
+                                                onChange={(e) => setRenameFolderValue(e.target.value)}
                                                 onKeyDown={(e) => {
-                                                    if (e.key === "Enter")
-                                                        void handleRenameFolder(
-                                                            folder.id,
-                                                        );
-                                                    if (e.key === "Escape")
-                                                        setRenamingFolderId(
-                                                            null,
-                                                        );
+                                                    if (e.key === "Enter") void handleRenameFolder(folder.id);
+                                                    if (e.key === "Escape") setRenamingFolderId(null);
                                                 }}
-                                                onBlur={() =>
-                                                    void handleRenameFolder(
-                                                        folder.id,
-                                                    )
-                                                }
-                                                onClick={(e) =>
-                                                    e.stopPropagation()
-                                                }
+                                                onBlur={() => void handleRenameFolder(folder.id)}
+                                                onClick={(e) => e.stopPropagation()}
                                             />
                                         ) : (
-                                            <span className="text-sm text-gray-800 truncate">
-                                                {folder.name}
-                                            </span>
+                                            <span className="text-sm text-gray-800 truncate">{folder.name}</span>
                                         )}
                                     </div>
                                 </div>
-                                <div className="ml-auto w-20 shrink-0 text-xs text-gray-300">
-                                    —
-                                </div>
-                                <div className="w-24 shrink-0 text-sm text-gray-300">
-                                    —
-                                </div>
-                                <div className="w-20 shrink-0 text-sm text-gray-300">
-                                    —
-                                </div>
-                                <div className="w-32 shrink-0 text-sm text-gray-300">
-                                    —
-                                </div>
-                                <div className="w-32 shrink-0 text-sm text-gray-300">
-                                    —
-                                </div>
-                                <div
-                                    className="w-8 shrink-0 flex justify-end"
-                                    onClick={(e) => e.stopPropagation()}
-                                >
+                                <div className="ml-auto w-20 shrink-0 text-xs text-gray-300">—</div>
+                                <div className="w-24 shrink-0 text-sm text-gray-300">—</div>
+                                <div className="w-20 shrink-0 text-sm text-gray-300">—</div>
+                                <div className="w-32 shrink-0 text-sm text-gray-300">—</div>
+                                <div className="w-32 shrink-0 text-sm text-gray-300">—</div>
+                                <div className="w-8 shrink-0 flex justify-end" onClick={(e) => e.stopPropagation()}>
                                     <RowActions
                                         onRename={() => {
                                             setRenameFolderValue(folder.name);
                                             setRenamingFolderId(folder.id);
                                         }}
-                                        onDelete={() =>
-                                            requestDeleteFolder(folder.id)
-                                        }
+                                        onDelete={() => requestDeleteFolder(folder.id)}
                                     />
                                 </div>
                             </div>
@@ -1920,7 +1623,7 @@ export function DocTable({
 
     // ── Loading skeleton ──────────────────────────────────────────────────────
 
-    const docs = documents;
+    const docs = serverDocuments ?? documents;
     const downloadDoc = useCallback(async (docId: string) => {
         const { url, filename } = await getDocumentUrl(docId);
         const a = document.createElement("a");
@@ -1944,18 +1647,10 @@ export function DocTable({
     }, [downloadDoc, selectedDocIds]);
 
     const handleRemoveSelectedFromFolder = useCallback(async () => {
-        const ids = selectedDocIds.filter(
-            (id) => docs.find((d) => d.id === id)?.folder_id != null,
-        );
+        const ids = selectedDocIds.filter((id) => docs.find((d) => d.id === id)?.folder_id != null);
         if (ids.length === 0) return;
-        setDocuments((prev) =>
-            prev.map((d) =>
-                ids.includes(d.id) ? { ...d, folder_id: null } : d,
-            ),
-        );
-        await Promise.all(
-            ids.map((id) => operations.moveDocument(id, null).catch(() => {})),
-        );
+        setDocuments((prev) => prev.map((d) => (ids.includes(d.id) ? { ...d, folder_id: null } : d)));
+        await Promise.all(ids.map((id) => operations.moveDocument(id, null).catch(() => {})));
     }, [docs, operations, selectedDocIds, setDocuments]);
 
     const handleDeleteSelectedDocs = useCallback(async () => {
@@ -1965,17 +1660,39 @@ export function DocTable({
             return !doc || !doc.user_id || !user?.id || doc.user_id === user.id;
         });
         const blocked = ids.length - owned.length;
+        setConfirmDeleteAllOpen(false);
+        setSelectionCameFromSelectAll(false);
         setSelectedDocIds([]);
-        const results = await Promise.allSettled(
-            owned.map((id) => deleteDocument(id)),
-        );
-        const deletedIds = owned.filter(
-            (_, index) => results[index].status === "fulfilled",
-        );
+        let deletedIds: string[] = [];
+        if (operations.bulkDeleteDocuments) {
+            try {
+                const result = await operations.bulkDeleteDocuments(owned);
+                deletedIds = result.deletedIds;
+            } catch {
+                deletedIds = [];
+            }
+        } else {
+            // Keep destructive requests bounded for project tables, which do
+            // not yet expose a collection-specific bulk endpoint.
+            const pending = [...owned];
+            const workers = Array.from({ length: Math.min(8, pending.length) }, async () => {
+                const workerDeleted: string[] = [];
+                while (pending.length > 0) {
+                    const id = pending.shift();
+                    if (!id) break;
+                    try {
+                        await deleteDocument(id);
+                        workerDeleted.push(id);
+                    } catch {
+                        // Report the aggregate failure below.
+                    }
+                }
+                return workerDeleted;
+            });
+            deletedIds = (await Promise.all(workers)).flat();
+        }
         const failedCount = owned.length - deletedIds.length;
-        setDocuments((prev) =>
-            prev.filter((doc) => !deletedIds.includes(doc.id)),
-        );
+        setDocuments((prev) => prev.filter((doc) => !deletedIds.includes(doc.id)));
         if (deletedIds.length > 0) {
             setExpandedVersionDocIds((prev) => {
                 const next = new Set(prev);
@@ -1998,20 +1715,23 @@ export function DocTable({
                 `delete ${blocked} of the selected documents — only the document creator can delete a document`,
             );
         }
-    }, [
-        documents,
-        selectedDocIds,
-        setDocuments,
-        setOwnerOnlyAction,
-        user?.id,
-    ]);
+        if (deletedIds.length > 0 && operations.bulkDeleteDocuments) {
+            await operations.refreshCollection();
+        }
+    }, [documents, operations, selectedDocIds, setDocuments, setOwnerOnlyAction, user?.id]);
 
-    const sidePanelDoc = viewingDoc
-        ? (docs.find((doc) => doc.id === viewingDoc.id) ?? viewingDoc)
-        : null;
+    const requestDeleteSelectedDocs = useCallback(async () => {
+        if (selectionCameFromSelectAll) {
+            setConfirmDeleteAllOpen(true);
+            return;
+        }
+        await handleDeleteSelectedDocs();
+    }, [handleDeleteSelectedDocs, selectionCameFromSelectAll]);
+
+    const sidePanelDoc = viewingDoc ? (docs.find((doc) => doc.id === viewingDoc.id) ?? viewingDoc) : null;
     const versionUploadAccept = ".pdf,.docx,.doc,.xlsx,.xlsm,.xls,.pptx,.ppt";
-    const q = search.toLowerCase();
-    const typeOptions = useMemo(
+    const q = serverQueryActive ? "__server_results__" : search.toLowerCase();
+    const derivedTypeOptions = useMemo(
         () =>
             Array.from(new Set(docs.map(documentTypeValue)))
                 .sort((a, b) => a.localeCompare(b))
@@ -2021,9 +1741,51 @@ export function DocTable({
                 })),
         [docs],
     );
+    const typeOptions = documentTypeOptions ?? derivedTypeOptions;
+
+    useEffect(() => {
+        onServerQueryChange?.({ search, fileType: typeFilter, sort });
+    }, [onServerQueryChange, search, sort, typeFilter]);
+
+    const activePageLoadingMore = serverQueryActive ? serverQueryLoadingMore : !!loadingMoreDocumentsByLevel?.root;
+
+    useEffect(() => {
+        if (!activePageLoadingMore) autoLoadTriggeredRef.current = false;
+    }, [activePageLoadingMore]);
+
+    function handleTableScroll(event: UIEvent<HTMLDivElement>) {
+        if (!autoLoadOnScroll || autoLoadTriggeredRef.current) return;
+        const viewport = event.currentTarget;
+        const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+        if (distanceFromBottom > 80) return;
+
+        if (
+            serverQueryActive &&
+            serverQueryHasMore &&
+            !serverQueryLoading &&
+            !serverQueryLoadingMore &&
+            onLoadMoreServerDocuments
+        ) {
+            autoLoadTriggeredRef.current = true;
+            onLoadMoreServerDocuments();
+            return;
+        }
+
+        if (
+            !serverQueryActive &&
+            documentsHasMoreByLevel?.root &&
+            !loadingMoreDocumentsByLevel?.root &&
+            onLoadMoreDocuments
+        ) {
+            autoLoadTriggeredRef.current = true;
+            onLoadMoreDocuments(null);
+        }
+    }
 
     function clearDocumentSelection() {
         setSelectedDocIds([]);
+        setSelectionCameFromSelectAll(false);
+        setConfirmDeleteAllOpen(false);
     }
 
     function handleTypeFilterChange(value: string | null) {
@@ -2031,27 +1793,17 @@ export function DocTable({
         clearDocumentSelection();
     }
 
-    function handleSortChange(
-        key: DocumentSortKey,
-        direction: TableSortDirection | null,
-    ) {
+    function handleSortChange(key: DocumentSortKey, direction: TableSortDirection | null) {
         setSort(direction ? { key, direction } : null);
         clearDocumentSelection();
     }
 
     const filteredDocs = useMemo(() => {
+        if (serverQueryActive) return docs;
+
         const rows = docs
-            .filter(
-                (doc) =>
-                    !q ||
-                    doc.filename.toLowerCase().includes(q),
-            )
-            .filter(
-                (doc) =>
-                    !enableHeaderFilters ||
-                    !typeFilter ||
-                    documentTypeValue(doc) === typeFilter,
-            );
+            .filter((doc) => !q || doc.filename.toLowerCase().includes(q))
+            .filter((doc) => !enableHeaderFilters || !typeFilter || documentTypeValue(doc) === typeFilter);
 
         if (!enableHeaderFilters || !sort) return rows;
 
@@ -2063,41 +1815,26 @@ export function DocTable({
             }
 
             if (sort.key === "version") {
-                return (
-                    ((documentVersionNumber(a) ?? 0) -
-                        (documentVersionNumber(b) ?? 0)) *
-                    multiplier
-                );
+                return ((documentVersionNumber(a) ?? 0) - (documentVersionNumber(b) ?? 0)) * multiplier;
             }
 
             if (sort.key === "created") {
-                return (
-                    (dateTimeValue(a.created_at) -
-                        dateTimeValue(b.created_at)) *
-                    multiplier
-                );
+                return (dateTimeValue(a.created_at) - dateTimeValue(b.created_at)) * multiplier;
             }
 
             if (sort.key === "updated") {
-                return (
-                    (dateTimeValue(a.updated_at) -
-                        dateTimeValue(b.updated_at)) *
-                    multiplier
-                );
+                return (dateTimeValue(a.updated_at) - dateTimeValue(b.updated_at)) * multiplier;
             }
 
             return a.filename.localeCompare(b.filename) * multiplier;
         });
-    }, [docs, enableHeaderFilters, q, sort, typeFilter]);
+    }, [docs, enableHeaderFilters, q, serverQueryActive, sort, typeFilter]);
 
     const nameSortDirection = sort?.key === "name" ? sort.direction : null;
     const sizeSortDirection = sort?.key === "size" ? sort.direction : null;
-    const versionSortDirection =
-        sort?.key === "version" ? sort.direction : null;
-    const createdSortDirection =
-        sort?.key === "created" ? sort.direction : null;
-    const updatedSortDirection =
-        sort?.key === "updated" ? sort.direction : null;
+    const versionSortDirection = sort?.key === "version" ? sort.direction : null;
+    const createdSortDirection = sort?.key === "created" ? sort.direction : null;
+    const updatedSortDirection = sort?.key === "updated" ? sort.direction : null;
     const nameFilterButton = enableHeaderFilters ? (
         <TableFilters
             label="Sort by name"
@@ -2160,31 +1897,50 @@ export function DocTable({
         />
     ) : null;
 
-    const allDocsSelected =
-        filteredDocs.length > 0 &&
-        filteredDocs.every((d) => selectedDocIds.includes(d.id));
-    const someDocsSelected =
-        !allDocsSelected &&
-        filteredDocs.some((d) => selectedDocIds.includes(d.id));
+    const allDocsSelected = filteredDocs.length > 0 && filteredDocs.every((d) => selectedDocIds.includes(d.id));
+    const someDocsSelected = !allDocsSelected && filteredDocs.some((d) => selectedDocIds.includes(d.id));
+
+    const handleToggleAllDocuments = useCallback(async () => {
+        if (allDocsSelected || selectionCameFromSelectAll) {
+            setSelectedDocIds([]);
+            setSelectionCameFromSelectAll(false);
+            return;
+        }
+
+        if (!onSelectAllMatching) {
+            setSelectedDocIds(filteredDocs.map((document) => document.id));
+            setSelectionCameFromSelectAll(true);
+            return;
+        }
+
+        setSelectingAllDocuments(true);
+        try {
+            const ids = await onSelectAllMatching({
+                search,
+                fileType: typeFilter,
+                sort,
+            });
+            setSelectedDocIds(ids);
+            setSelectionCameFromSelectAll(true);
+        } catch (error) {
+            setCollectionActionWarning(
+                apiErrorDetail(error) ?? "All matching files could not be selected. Please try again.",
+            );
+        } finally {
+            setSelectingAllDocuments(false);
+        }
+    }, [allDocsSelected, filteredDocs, onSelectAllMatching, search, selectionCameFromSelectAll, sort, typeFilter]);
 
     const selectionActions = useMemo<DocTableSelectionActions | null>(() => {
         if (selectedDocIds.length === 0) return null;
         return {
             selectedCount: selectedDocIds.length,
-            hasDocumentsInFolders: selectedDocIds.some(
-                (id) => docs.find((d) => d.id === id)?.folder_id != null,
-            ),
+            hasDocumentsInFolders: selectedDocIds.some((id) => docs.find((d) => d.id === id)?.folder_id != null),
             onDownload: handleDownloadSelectedDocs,
             onRemoveFromFolder: handleRemoveSelectedFromFolder,
-            onDelete: handleDeleteSelectedDocs,
+            onDelete: requestDeleteSelectedDocs,
         };
-    }, [
-        docs,
-        handleDeleteSelectedDocs,
-        handleDownloadSelectedDocs,
-        handleRemoveSelectedFromFolder,
-        selectedDocIds,
-    ]);
+    }, [docs, handleDownloadSelectedDocs, handleRemoveSelectedFromFolder, requestDeleteSelectedDocs, selectedDocIds]);
 
     useEffect(() => {
         onSelectionActionsChange?.(selectionActions);
@@ -2198,20 +1954,12 @@ export function DocTable({
         <div className="space-y-2">
             <p>
                 You are about to save{" "}
-                <span className="font-medium text-gray-950">
-                    {pendingVersionDrop.sourceDoc.filename}
-                </span>{" "}
-                as a new version of{" "}
-                <span className="font-medium text-gray-950">
-                    {pendingVersionDrop.targetDoc.filename}
-                </span>
-                .
+                <span className="font-medium text-gray-950">{pendingVersionDrop.sourceDoc.filename}</span> as a new
+                version of <span className="font-medium text-gray-950">{pendingVersionDrop.targetDoc.filename}</span>.
             </p>
             <p>
-                <span className="font-medium text-gray-950">
-                    {pendingVersionDrop.sourceDoc.filename}
-                </span>{" "}
-                will no longer exist as a separate document
+                <span className="font-medium text-gray-950">{pendingVersionDrop.sourceDoc.filename}</span> will no
+                longer exist as a separate document
                 {(currentVersionNumber(pendingVersionDrop.sourceDoc) ?? 1) > 1
                     ? " and its older versions will be deleted"
                     : ""}
@@ -2220,19 +1968,14 @@ export function DocTable({
         </div>
     ) : undefined;
     const pendingDeleteDocVersionCount = pendingDeleteDoc
-        ? (versionsByDocId.get(pendingDeleteDoc.id)?.versions.length ??
-          currentVersionNumber(pendingDeleteDoc) ??
-          1)
+        ? (versionsByDocId.get(pendingDeleteDoc.id)?.versions.length ?? currentVersionNumber(pendingDeleteDoc) ?? 1)
         : 0;
     const pendingDeleteDocMessage = pendingDeleteDoc ? (
         <div className="space-y-2">
             <p>
-                <span className="font-medium text-gray-950">
-                    {pendingDeleteDoc.filename}
-                </span>{" "}
-                has {pendingDeleteDocVersionCount}{" "}
-                {pendingDeleteDocVersionCount === 1 ? "version" : "versions"}.
-                Deleting this document will delete all of its versions.
+                <span className="font-medium text-gray-950">{pendingDeleteDoc.filename}</span> has{" "}
+                {pendingDeleteDocVersionCount} {pendingDeleteDocVersionCount === 1 ? "version" : "versions"}. Deleting
+                this document will delete all of its versions.
             </p>
         </div>
     ) : undefined;
@@ -2242,30 +1985,17 @@ export function DocTable({
                 This will permanently delete{" "}
                 <span className="font-medium text-gray-950">
                     {pendingDeleteFolder.folderIds.length}{" "}
-                    {pendingDeleteFolder.folderIds.length === 1
-                        ? "folder"
-                        : "folders"}
+                    {pendingDeleteFolder.folderIds.length === 1 ? "folder" : "folders"}
                 </span>
-                , including{" "}
-                <span className="font-medium text-gray-950">
-                    {pendingDeleteFolder.folder.name}
-                </span>
-                {pendingDeleteFolder.folderIds.length > 1
-                    ? " and its nested subfolders"
-                    : ""}
-                .
+                , including <span className="font-medium text-gray-950">{pendingDeleteFolder.folder.name}</span>
+                {pendingDeleteFolder.folderIds.length > 1 ? " and its nested subfolders" : ""}.
             </p>
             {pendingDeleteFolder.documentCount > 0 && (
                 <p>
                     {pendingDeleteFolder.documentCount}{" "}
-                    {pendingDeleteFolder.documentCount === 1
-                        ? "document"
-                        : "documents"}{" "}
-                    in the deleted{" "}
-                    {pendingDeleteFolder.folderIds.length === 1
-                        ? "folder"
-                        : "folders"}{" "}
-                    will also be permanently deleted.
+                    {pendingDeleteFolder.documentCount === 1 ? "document" : "documents"} in the deleted{" "}
+                    {pendingDeleteFolder.folderIds.length === 1 ? "folder" : "folders"} will also be permanently
+                    deleted.
                 </p>
             )}
         </div>
@@ -2309,6 +2039,15 @@ export function DocTable({
                 message={collectionActionWarning}
             />
             <ConfirmPopup
+                open={confirmDeleteAllOpen && selectedDocIds.length > 0}
+                title="Delete all selected files?"
+                message={`This will permanently delete every selected file you own, including selected files not currently shown in the table. Files owned by others will be skipped. ${selectedDocIds.length} files are selected.`}
+                confirmLabel="Delete"
+                cancelLabel="Cancel"
+                onCancel={() => setConfirmDeleteAllOpen(false)}
+                onConfirm={() => void handleDeleteSelectedDocs()}
+            />
+            <ConfirmPopup
                 open={!!pendingVersionDrop}
                 title="Save as new version?"
                 message={pendingVersionDropMessage}
@@ -2319,10 +2058,7 @@ export function DocTable({
                     const pending = pendingVersionDrop;
                     if (!pending) return;
                     setPendingVersionDrop(null);
-                    void saveExistingDocumentAsNewVersion(
-                        pending.targetDoc,
-                        pending.sourceDoc,
-                    );
+                    void saveExistingDocumentAsNewVersion(pending.targetDoc, pending.sourceDoc);
                 }}
             />
             <ConfirmPopup
@@ -2367,36 +2103,21 @@ export function DocTable({
             />
             {/* Table content */}
             <TableScrollArea
+                onScroll={handleTableScroll}
                 header={
-                    loading ? (
-                        <ProjectTableLoadingHeader
-                            stickyCellBg={stickyCellBg}
-                        />
+                    loading || (serverQueryActive && serverQueryLoading) ? (
+                        <ProjectTableLoadingHeader stickyCellBg={stickyCellBg} />
                     ) : (
-                        <TableHeaderRow
-                            className={`${stickyCellBg} pr-8 md:pr-8`}
-                        >
-                            <TableStickyCell
-                                header
-                                widthClassName={DOC_NAME_COL_W}
-                                bgClassName={stickyCellBg}
-                            >
+                        <TableHeaderRow className={`${stickyCellBg} pr-8 md:pr-8`}>
+                            <TableStickyCell header widthClassName={DOC_NAME_COL_W} bgClassName={stickyCellBg}>
                                 <input
                                     type="checkbox"
-                                    checked={allDocsSelected}
+                                    checked={selectionCameFromSelectAll || allDocsSelected}
+                                    disabled={selectingAllDocuments}
                                     ref={(el) => {
-                                        if (el)
-                                            el.indeterminate =
-                                                someDocsSelected;
+                                        if (el) el.indeterminate = someDocsSelected;
                                     }}
-                                    onChange={() => {
-                                        if (allDocsSelected)
-                                            setSelectedDocIds([]);
-                                        else
-                                            setSelectedDocIds(
-                                                filteredDocs.map((d) => d.id),
-                                            );
-                                    }}
+                                    onChange={() => void handleToggleAllDocuments()}
                                     className={TABLE_CHECKBOX_CLASS}
                                 />
                                 <span className="mr-1">Name</span>
@@ -2427,742 +2148,453 @@ export function DocTable({
                     )
                 }
             >
-                    {loading ? (
-                        <ProjectTableLoading stickyCellBg={stickyCellBg} />
-                    ) : (
-                        <div className="flex-1 flex flex-col min-h-0">
-                            {/* Blue ring wraps everything below the header when root-dropping */}
-                            <div
-                                className="flex-1 flex flex-col min-h-0 relative"
-                                onDragOver={(e) => {
-                                    if (!hasFilePayload(e.dataTransfer)) return;
-                                    e.preventDefault();
-                                    e.dataTransfer.dropEffect = "copy";
-                                    setDragOverFileRoot(true);
-                                    setDragOverVersionDocId(null);
-                                }}
-                                onDragLeave={(e) => {
-                                    if (
-                                        !e.currentTarget.contains(
-                                            e.relatedTarget as Node,
-                                        )
-                                    ) {
-                                        setDragOverFileRoot(false);
-                                    }
-                                }}
-                                onDrop={(e) => {
-                                    if (!hasFilePayload(e.dataTransfer)) return;
-                                    e.preventDefault();
-                                    e.stopPropagation();
+                {loading || (serverQueryActive && serverQueryLoading) ? (
+                    <ProjectTableLoading stickyCellBg={stickyCellBg} />
+                ) : (
+                    <div className="flex-1 flex flex-col min-h-0">
+                        {/* Blue ring wraps everything below the header when root-dropping */}
+                        <div
+                            className="flex-1 flex flex-col min-h-0 relative"
+                            onDragOver={(e) => {
+                                if (!hasFilePayload(e.dataTransfer)) return;
+                                e.preventDefault();
+                                e.dataTransfer.dropEffect = "copy";
+                                setDragOverFileRoot(true);
+                                setDragOverVersionDocId(null);
+                            }}
+                            onDragLeave={(e) => {
+                                if (!e.currentTarget.contains(e.relatedTarget as Node)) {
                                     setDragOverFileRoot(false);
-                                    collectionDragDepthRef.current = 0;
-                                    setIsDraggingCollectionFiles(false);
-                                    setDragOverRoot(false);
-                                    setDragOverFolderId(null);
-                                    setDragOverVersionDocId(null);
-                                    void handleDropCollectionFiles(
-                                        Array.from(e.dataTransfer.files),
-                                    );
-                                }}
-                            >
-                                {dragOverRoot && dragOverFolderId === null && (
-                                    <div className="absolute inset-0 border-2 border-blue-400 pointer-events-none z-[80]" />
-                                )}
-                                {dragOverFileRoot && (
-                                    <div className="absolute inset-0 z-[90] border-2 border-blue-400 bg-blue-50/40 pointer-events-none" />
-                                )}
+                                }
+                            }}
+                            onDrop={(e) => {
+                                if (!hasFilePayload(e.dataTransfer)) return;
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setDragOverFileRoot(false);
+                                collectionDragDepthRef.current = 0;
+                                setIsDraggingCollectionFiles(false);
+                                setDragOverRoot(false);
+                                setDragOverFolderId(null);
+                                setDragOverVersionDocId(null);
+                                void handleDropCollectionFiles(Array.from(e.dataTransfer.files));
+                            }}
+                        >
+                            {dragOverRoot && dragOverFolderId === null && (
+                                <div className="absolute inset-0 border-2 border-blue-400 pointer-events-none z-[80]" />
+                            )}
+                            {dragOverFileRoot && (
+                                <div className="absolute inset-0 z-[90] border-2 border-blue-400 bg-blue-50/40 pointer-events-none" />
+                            )}
 
-                                {/* Empty state */}
-                                {docs.length === 0 &&
-                                folders.length === 0 &&
-                                uploadingDroppedFilenames.length === 0 ? (
+                            {/* Empty state */}
+                            {docs.length === 0 &&
+                            (serverQueryActive || folders.length === 0) &&
+                            uploadingDroppedFilenames.length === 0 ? (
+                                serverQueryActive ? (
+                                    <div className="flex-1 flex flex-col items-center justify-center py-24 text-center">
+                                        <p className="text-sm text-gray-400">No matches found</p>
+                                    </div>
+                                ) : (
                                     <div
                                         onClick={openAddDocuments}
                                         className="flex-1 flex cursor-pointer flex-col items-center justify-center py-24 text-center"
                                     >
                                         <LibrarySkeuoIcon className="mb-3 h-8 w-8" />
-                                        <p className="text-sm text-gray-400">
-                                            {emptyDropLabel}
-                                        </p>
+                                        <p className="text-sm text-gray-400">{emptyDropLabel}</p>
                                     </div>
-                                ) : (
-                                    <div
-                                        className="flex-1 flex flex-col"
-                                        onContextMenu={(e) => {
-                                            e.preventDefault();
-                                            closeRowActionMenus();
-                                            setContextMenu({
-                                                x: e.clientX,
-                                                y: e.clientY,
-                                                folderId: null,
-                                                showFolderActions: false,
-                                            });
-                                        }}
-                                        onClick={() => setContextMenu(null)}
-                                        onDragOver={(e) => {
-                                            if (!hasMovePayload(e.dataTransfer))
-                                                return;
-                                            e.preventDefault();
-                                            setDragOverRoot(true);
-                                            setDragOverVersionDocId(null);
-                                        }}
-                                        onDragLeave={(e) => {
-                                            if (
-                                                !e.currentTarget.contains(
-                                                    e.relatedTarget as Node,
-                                                )
-                                            ) {
-                                                setDragOverRoot(false);
-                                            }
-                                        }}
-                                        onDrop={async (e) => {
-                                            if (!hasMovePayload(e.dataTransfer))
-                                                return;
-                                            e.preventDefault();
+                                )
+                            ) : (
+                                <div
+                                    className="flex-1 flex flex-col"
+                                    onContextMenu={(e) => {
+                                        e.preventDefault();
+                                        closeRowActionMenus();
+                                        setContextMenu({
+                                            x: e.clientX,
+                                            y: e.clientY,
+                                            folderId: null,
+                                            showFolderActions: false,
+                                        });
+                                    }}
+                                    onClick={() => setContextMenu(null)}
+                                    onDragOver={(e) => {
+                                        if (!hasMovePayload(e.dataTransfer)) return;
+                                        e.preventDefault();
+                                        setDragOverRoot(true);
+                                        setDragOverVersionDocId(null);
+                                    }}
+                                    onDragLeave={(e) => {
+                                        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
                                             setDragOverRoot(false);
-                                            setDragOverFolderId(null);
-                                            setDragOverVersionDocId(null);
-                                            await handleDropOnFolder(
-                                                null,
-                                                e.dataTransfer,
-                                            );
-                                        }}
-                                    >
-                                        {/* Search: flat list; no search: folder tree */}
-                                        {q ? (
-                                            <>
-                                                {renderUploadingDocumentRows(0)}
-                                                {filteredDocs.map((doc) => {
-                                                    const docName =
-                                                        doc.filename;
-                                                    const isProcessing =
-                                                        doc.status ===
-                                                            "pending" ||
-                                                        doc.status ===
-                                                            "processing";
-                                                    const isError =
-                                                        doc.status === "error";
-                                                    const isVersionsOpen =
-                                                        expandedVersionDocIds.has(
-                                                            doc.id,
-                                                        );
-                                                    const versionNumber =
-                                                        currentVersionNumber(
-                                                            doc,
-                                                        );
-                                                    const hasVersions =
-                                                        typeof versionNumber ===
-                                                            "number" &&
-                                                        versionNumber > 1;
-                                                    const isVersionDragOver =
-                                                        dragOverVersionDocId ===
-                                                        doc.id;
-                                                    const isUploadingVersion =
-                                                        uploadingVersionDocIds.has(
-                                                            doc.id,
-                                                        );
-                                                    const isSelected =
-                                                        selectedDocIds.includes(
-                                                            doc.id,
-                                                        );
-                                                    const isDeletingDoc =
-                                                        deletingDocIds.has(
-                                                            doc.id,
-                                                        );
-                                                    if (isDeletingDoc) {
-                                                        return renderDocumentActivityRow(
-                                                            {
-                                                                key: `deleting-doc-${doc.id}`,
-                                                                filename:
-                                                                    doc.filename,
-                                                                fileType:
-                                                                    doc.file_type,
-                                                                depth: 0,
-                                                                statusLabel:
-                                                                    "Deleting...",
-                                                            },
-                                                        );
-                                                    }
-                                                    return (
-                                                        <div key={doc.id}>
-                                                            <div
-                                                                data-document-row
-                                                                draggable={
-                                                                    renamingDocumentId !==
-                                                                    doc.id
-                                                                }
-                                                                onDragStart={(
-                                                                    e,
-                                                                ) => {
-                                                                    if (
-                                                                        renamingDocumentId ===
-                                                                        doc.id
-                                                                    ) {
-                                                                        e.preventDefault();
-                                                                        return;
-                                                                    }
-                                                                    e.dataTransfer.setData(
-                                                                        "application/mike-doc",
-                                                                        doc.id,
-                                                                    );
-                                                                    e.dataTransfer.effectAllowed =
-                                                                        "copyMove";
-                                                                }}
-                                                                onDragEnd={() => {
-                                                                    setDragOverRoot(
-                                                                        false,
-                                                                    );
-                                                                    setDragOverFolderId(
-                                                                        null,
-                                                                    );
-                                                                    setDragOverVersionDocId(
-                                                                        null,
-                                                                    );
-                                                                }}
-                                                                onDragOver={(
-                                                                    e,
-                                                                ) =>
-                                                                    handleDocumentVersionDragOver(
-                                                                        e,
-                                                                        doc.id,
-                                                                    )
-                                                                }
-                                                                onDragLeave={
-                                                                    handleDocumentVersionDragLeave
-                                                                }
-                                                                onDrop={(e) =>
-                                                                    handleDocumentVersionDrop(
-                                                                        e,
-                                                                        doc,
-                                                                    )
-                                                                }
-                                                                onClick={() => {
-                                                                    setViewingDocVersion(
-                                                                        null,
-                                                                    );
-                                                                    setViewingDoc(
-                                                                        doc,
-                                                                    );
-                                                                }}
-                                                                onContextMenu={(
-                                                                    e,
-                                                                ) => {
+                                        }
+                                    }}
+                                    onDrop={async (e) => {
+                                        if (!hasMovePayload(e.dataTransfer)) return;
+                                        e.preventDefault();
+                                        setDragOverRoot(false);
+                                        setDragOverFolderId(null);
+                                        setDragOverVersionDocId(null);
+                                        await handleDropOnFolder(null, e.dataTransfer);
+                                    }}
+                                >
+                                    {/* Search: flat list; no search: folder tree */}
+                                    {q ? (
+                                        <>
+                                            {renderUploadingDocumentRows(0)}
+                                            {filteredDocs.map((doc) => {
+                                                const docName = doc.filename;
+                                                const isProcessing =
+                                                    doc.status === "pending" || doc.status === "processing";
+                                                const isError = doc.status === "error";
+                                                const isVersionsOpen = expandedVersionDocIds.has(doc.id);
+                                                const versionNumber = currentVersionNumber(doc);
+                                                const hasVersions =
+                                                    typeof versionNumber === "number" && versionNumber > 1;
+                                                const isVersionDragOver = dragOverVersionDocId === doc.id;
+                                                const isUploadingVersion = uploadingVersionDocIds.has(doc.id);
+                                                const isSelected = selectedDocIds.includes(doc.id);
+                                                const isDeletingDoc = deletingDocIds.has(doc.id);
+                                                if (isDeletingDoc) {
+                                                    return renderDocumentActivityRow({
+                                                        key: `deleting-doc-${doc.id}`,
+                                                        filename: doc.filename,
+                                                        fileType: doc.file_type,
+                                                        depth: 0,
+                                                        statusLabel: "Deleting...",
+                                                    });
+                                                }
+                                                return (
+                                                    <div key={doc.id}>
+                                                        <div
+                                                            data-document-row
+                                                            draggable={renamingDocumentId !== doc.id}
+                                                            onDragStart={(e) => {
+                                                                if (renamingDocumentId === doc.id) {
                                                                     e.preventDefault();
-                                                                    e.stopPropagation();
-                                                                    closeRowActionMenus();
-                                                                    setContextMenu(
-                                                                        {
-                                                                            x: e.clientX,
-                                                                            y: e.clientY,
-                                                                            docId: doc.id,
-                                                                            folderId:
-                                                                                null,
-                                                                            showFolderActions: false,
-                                                                        },
-                                                                    );
-                                                                }}
-                                                                className={`group flex h-10 min-w-max items-center pr-8 cursor-pointer transition-colors ${isVersionDragOver ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : isSelected ? APP_SURFACE_ACTIVE_CLASS : APP_SURFACE_HOVER_CLASS}`}
+                                                                    return;
+                                                                }
+                                                                e.dataTransfer.setData("application/mike-doc", doc.id);
+                                                                e.dataTransfer.effectAllowed = "copyMove";
+                                                            }}
+                                                            onDragEnd={() => {
+                                                                setDragOverRoot(false);
+                                                                setDragOverFolderId(null);
+                                                                setDragOverVersionDocId(null);
+                                                            }}
+                                                            onDragOver={(e) => handleDocumentVersionDragOver(e, doc.id)}
+                                                            onDragLeave={handleDocumentVersionDragLeave}
+                                                            onDrop={(e) => handleDocumentVersionDrop(e, doc)}
+                                                            onClick={() => {
+                                                                setViewingDocVersion(null);
+                                                                setViewingDoc(doc);
+                                                            }}
+                                                            onContextMenu={(e) => {
+                                                                e.preventDefault();
+                                                                e.stopPropagation();
+                                                                closeRowActionMenus();
+                                                                setContextMenu({
+                                                                    x: e.clientX,
+                                                                    y: e.clientY,
+                                                                    docId: doc.id,
+                                                                    folderId: null,
+                                                                    showFolderActions: false,
+                                                                });
+                                                            }}
+                                                            className={`group flex h-10 min-w-max items-center pr-8 cursor-pointer transition-colors ${isVersionDragOver ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : isSelected ? APP_SURFACE_ACTIVE_CLASS : APP_SURFACE_HOVER_CLASS}`}
+                                                        >
+                                                            <div
+                                                                className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${isVersionDragOver ? "bg-blue-50" : isSelected ? APP_SURFACE_ACTIVE_CLASS : stickyCellBg} py-2 pl-4 pr-2 transition-colors ${isVersionDragOver || isSelected ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
                                                             >
-                                                                <div
-                                                                    className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${isVersionDragOver ? "bg-blue-50" : isSelected ? APP_SURFACE_ACTIVE_CLASS : stickyCellBg} py-2 pl-4 pr-2 transition-colors ${isVersionDragOver || isSelected ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
-                                                                >
-                                                                    <div className="flex items-center">
-                                                                        {isProcessing ||
-                                                                        isUploadingVersion ? (
-                                                                            <Loader2 className="mr-4 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
-                                                                        ) : (
-                                                                            <input
-                                                                                type="checkbox"
-                                                                                checked={selectedDocIds.includes(
-                                                                                    doc.id,
-                                                                                )}
-                                                                                onChange={() =>
-                                                                                    setSelectedDocIds(
-                                                                                        (
-                                                                                            prev,
-                                                                                        ) =>
-                                                                                            prev.includes(
-                                                                                                doc.id,
-                                                                                            )
-                                                                                                ? prev.filter(
-                                                                                                      (
-                                                                                                          x,
-                                                                                                      ) =>
-                                                                                                          x !==
-                                                                                                          doc.id,
-                                                                                                  )
-                                                                                                : [
-                                                                                                      ...prev,
-                                                                                                      doc.id,
-                                                                                                  ],
-                                                                                    )
-                                                                                }
-                                                                                onClick={(
-                                                                                    e,
-                                                                                ) =>
-                                                                                    e.stopPropagation()
-                                                                                }
-                                                                                className="mr-4 h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black"
-                                                                            />
-                                                                        )}
-                                                                        <span className="mr-2 shrink-0">
-                                                                            {isError ? (
-                                                                                <AlertCircle className="h-4 w-4 text-red-500" />
-                                                                            ) : (
-                                                                                <DocIcon
-                                                                                    fileType={
-                                                                                        doc.file_type
-                                                                                    }
-                                                                                />
-                                                                            )}
-                                                                        </span>
-                                                                        {renamingDocumentId ===
-                                                                        doc.id ? (
-                                                                            <input
-                                                                                autoFocus
-                                                                                className="min-w-0 flex-1 text-sm text-gray-800 bg-transparent outline-none border-b border-gray-300"
-                                                                                value={
-                                                                                    renameDocumentValue
-                                                                                }
-                                                                                onClick={(
-                                                                                    e,
-                                                                                ) =>
-                                                                                    e.stopPropagation()
-                                                                                }
-                                                                                onDragStart={(
-                                                                                    e,
-                                                                                ) => {
-                                                                                    e.preventDefault();
-                                                                                    e.stopPropagation();
-                                                                                }}
-                                                                                onChange={(
-                                                                                    e,
-                                                                                ) =>
-                                                                                    setRenameDocumentValue(
-                                                                                        e
-                                                                                            .target
-                                                                                            .value,
-                                                                                    )
-                                                                                }
-                                                                                onKeyDown={(
-                                                                                    e,
-                                                                                ) => {
-                                                                                    if (
-                                                                                        e.key ===
-                                                                                        "Enter"
-                                                                                    )
-                                                                                        void submitDocumentRename(
-                                                                                            doc.id,
-                                                                                        );
-                                                                                    if (
-                                                                                        e.key ===
-                                                                                        "Escape"
-                                                                                    ) {
-                                                                                        setRenamingDocumentId(
-                                                                                            null,
-                                                                                        );
-                                                                                        setRenameDocumentValue(
-                                                                                            "",
-                                                                                        );
-                                                                                    }
-                                                                                }}
-                                                                                onBlur={() =>
-                                                                                    void submitDocumentRename(
-                                                                                        doc.id,
-                                                                                    )
-                                                                                }
-                                                                            />
-                                                                        ) : (
-                                                                            <span className="text-sm text-gray-800 truncate">
-                                                                                {
-                                                                                    docName
-                                                                                }
-                                                                            </span>
-                                                                        )}
-                                                                    </div>
-                                                                </div>
-                                                                <div className="ml-auto w-20 shrink-0 text-xs text-gray-500 uppercase truncate">
-                                                                    {doc.file_type ?? (
-                                                                        <span className="text-gray-300">
-                                                                            —
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                                <div className="w-24 shrink-0 text-sm text-gray-500 truncate">
-                                                                    {doc.size_bytes !=
-                                                                    null ? (
-                                                                        formatBytes(
-                                                                            doc.size_bytes,
-                                                                        )
+                                                                <div className="flex items-center">
+                                                                    {isProcessing || isUploadingVersion ? (
+                                                                        <Loader2 className="mr-4 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
                                                                     ) : (
-                                                                        <span className="text-gray-300">
-                                                                            —
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                                <div
-                                                                    className="w-20 shrink-0 text-sm text-gray-500 flex items-center gap-1"
-                                                                    onClick={(
-                                                                        e,
-                                                                    ) =>
-                                                                        e.stopPropagation()
-                                                                    }
-                                                                >
-                                                                    {hasVersions ? (
-                                                                        <button
-                                                                            onClick={() =>
-                                                                                void toggleVersions(
-                                                                                    doc.id,
-                                                                                )
-                                                                            }
-                                                                            className={`flex items-center gap-1 rounded px-1 py-0.5 transition-colors ${APP_SURFACE_HOVER_CLASS}`}
-                                                                        >
-                                                                            <span>
-                                                                                {
-                                                                                    versionNumber
-                                                                                }
-                                                                            </span>
-                                                                            {isVersionsOpen ? (
-                                                                                <ChevronDown className="h-3 w-3 text-gray-400" />
-                                                                            ) : (
-                                                                                <ChevronRight className="h-3 w-3 text-gray-400" />
-                                                                            )}
-                                                                        </button>
-                                                                    ) : (
-                                                                        <span className="text-gray-300 pl-1">
-                                                                            —
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                                <div className="w-32 shrink-0 text-sm text-gray-500 truncate">
-                                                                    {doc.created_at ? (
-                                                                        formatDate(
-                                                                            doc.created_at,
-                                                                        )
-                                                                    ) : (
-                                                                        <span className="text-gray-300">
-                                                                            —
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                                <div className="w-32 shrink-0 text-sm text-gray-500 truncate">
-                                                                    {doc.updated_at ? (
-                                                                        formatDate(
-                                                                            doc.updated_at,
-                                                                        )
-                                                                    ) : (
-                                                                        <span className="text-gray-300">
-                                                                            —
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                                <div className="w-8 shrink-0 flex justify-end">
-                                                                    {!isProcessing && (
-                                                                        <RowActions
-                                                                            onRename={() => {
-                                                                                setRenameDocumentValue(
-                                                                                    docName,
-                                                                                );
-                                                                                setRenamingDocumentId(
-                                                                                    doc.id,
+                                                                        <input
+                                                                            type="checkbox"
+                                                                            checked={selectedDocIds.includes(doc.id)}
+                                                                            onChange={() => {
+                                                                                setSelectedDocIds((prev) =>
+                                                                                    prev.includes(doc.id)
+                                                                                        ? prev.filter(
+                                                                                              (x) => x !== doc.id,
+                                                                                          )
+                                                                                        : [...prev, doc.id],
                                                                                 );
                                                                             }}
-                                                                            renameLabel="Rename document"
-                                                                            onDownload={() =>
-                                                                                downloadDoc(
-                                                                                    doc.id,
-                                                                                )
-                                                                            }
-                                                                            onShowAllVersions={
-                                                                                hasVersions &&
-                                                                                !isVersionsOpen
-                                                                                    ? () =>
-                                                                                          void toggleVersions(
-                                                                                              doc.id,
-                                                                                          )
-                                                                                    : undefined
-                                                                            }
-                                                                            onUploadNewVersion={() =>
-                                                                                void handleUploadNewVersion(
-                                                                                    doc,
-                                                                                )
-                                                                            }
-                                                                            onDelete={() =>
-                                                                                requestRemoveDoc(
-                                                                                    doc,
-                                                                                )
-                                                                            }
-                                                                            deleteDisabled={isSharedDocument(
-                                                                                doc,
-                                                                            )}
+                                                                            onClick={(e) => e.stopPropagation()}
+                                                                            className="mr-4 h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black"
                                                                         />
+                                                                    )}
+                                                                    <span className="mr-2 shrink-0">
+                                                                        {isError ? (
+                                                                            <AlertCircle className="h-4 w-4 text-red-500" />
+                                                                        ) : (
+                                                                            <DocIcon fileType={doc.file_type} />
+                                                                        )}
+                                                                    </span>
+                                                                    {renamingDocumentId === doc.id ? (
+                                                                        <input
+                                                                            autoFocus
+                                                                            className="min-w-0 flex-1 text-sm text-gray-800 bg-transparent outline-none border-b border-gray-300"
+                                                                            value={renameDocumentValue}
+                                                                            onClick={(e) => e.stopPropagation()}
+                                                                            onDragStart={(e) => {
+                                                                                e.preventDefault();
+                                                                                e.stopPropagation();
+                                                                            }}
+                                                                            onChange={(e) =>
+                                                                                setRenameDocumentValue(e.target.value)
+                                                                            }
+                                                                            onKeyDown={(e) => {
+                                                                                if (e.key === "Enter")
+                                                                                    void submitDocumentRename(doc.id);
+                                                                                if (e.key === "Escape") {
+                                                                                    setRenamingDocumentId(null);
+                                                                                    setRenameDocumentValue("");
+                                                                                }
+                                                                            }}
+                                                                            onBlur={() =>
+                                                                                void submitDocumentRename(doc.id)
+                                                                            }
+                                                                        />
+                                                                    ) : (
+                                                                        <span className="text-sm text-gray-800 truncate">
+                                                                            {docName}
+                                                                        </span>
                                                                     )}
                                                                 </div>
                                                             </div>
-                                                            {isVersionsOpen && (
-                                                                <DocVersionHistory
-                                                                    docId={
-                                                                        doc.id
-                                                                    }
-                                                                    filename={
-                                                                        docName
-                                                                    }
-                                                                    activeVersionNumber={
-                                                                        versionNumber
-                                                                    }
-                                                                    loading={loadingVersionDocIds.has(
-                                                                        doc.id,
-                                                                    )}
-                                                                    versions={
-                                                                        versionsByDocId.get(
-                                                                            doc.id,
-                                                                        )
-                                                                            ?.versions ??
-                                                                        []
-                                                                    }
-                                                                    currentVersionId={
-                                                                        versionsByDocId.get(
-                                                                            doc.id,
-                                                                        )
-                                                                            ?.currentVersionId ??
-                                                                        null
-                                                                    }
-                                                                    onDownloadVersion={
-                                                                        downloadDocVersion
-                                                                    }
-                                                                    onOpenVersion={(
-                                                                        versionId,
-                                                                        label,
-                                                                    ) => {
-                                                                        setViewingDocVersion(
-                                                                            {
-                                                                                id: versionId,
-                                                                                label,
-                                                                            },
-                                                                        );
-                                                                        setViewingDoc(
-                                                                            doc,
-                                                                        );
-                                                                    }}
-                                                                    onRenameVersion={(
-                                                                        versionId,
-                                                                        filename,
-                                                                    ) =>
-                                                                        handleRenameVersion(
-                                                                            doc.id,
-                                                                            versionId,
-                                                                            filename,
-                                                                        )
-                                                                    }
-                                                                    onExtensionChangeBlocked={(
-                                                                        filename,
-                                                                    ) =>
-                                                                        setDocumentRenameWarning(
-                                                                            extensionChangeWarning(
-                                                                                filename,
-                                                                            ),
-                                                                        )
-                                                                    }
-                                                                />
-                                                            )}
+                                                            <div className="ml-auto w-20 shrink-0 text-xs text-gray-500 uppercase truncate">
+                                                                {doc.file_type ?? (
+                                                                    <span className="text-gray-300">—</span>
+                                                                )}
+                                                            </div>
+                                                            <div className="w-24 shrink-0 text-sm text-gray-500 truncate">
+                                                                {doc.size_bytes != null ? (
+                                                                    formatBytes(doc.size_bytes)
+                                                                ) : (
+                                                                    <span className="text-gray-300">—</span>
+                                                                )}
+                                                            </div>
+                                                            <div
+                                                                className="w-20 shrink-0 text-sm text-gray-500 flex items-center gap-1"
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            >
+                                                                {hasVersions ? (
+                                                                    <button
+                                                                        onClick={() => void toggleVersions(doc.id)}
+                                                                        className={`flex items-center gap-1 rounded px-1 py-0.5 transition-colors ${APP_SURFACE_HOVER_CLASS}`}
+                                                                    >
+                                                                        <span>{versionNumber}</span>
+                                                                        {isVersionsOpen ? (
+                                                                            <ChevronDown className="h-3 w-3 text-gray-400" />
+                                                                        ) : (
+                                                                            <ChevronRight className="h-3 w-3 text-gray-400" />
+                                                                        )}
+                                                                    </button>
+                                                                ) : (
+                                                                    <span className="text-gray-300 pl-1">—</span>
+                                                                )}
+                                                            </div>
+                                                            <div className="w-32 shrink-0 text-sm text-gray-500 truncate">
+                                                                {doc.created_at ? (
+                                                                    formatDate(doc.created_at)
+                                                                ) : (
+                                                                    <span className="text-gray-300">—</span>
+                                                                )}
+                                                            </div>
+                                                            <div className="w-32 shrink-0 text-sm text-gray-500 truncate">
+                                                                {doc.updated_at ? (
+                                                                    formatDate(doc.updated_at)
+                                                                ) : (
+                                                                    <span className="text-gray-300">—</span>
+                                                                )}
+                                                            </div>
+                                                            <div className="w-8 shrink-0 flex justify-end">
+                                                                {!isProcessing && (
+                                                                    <RowActions
+                                                                        onRename={() => {
+                                                                            setRenameDocumentValue(docName);
+                                                                            setRenamingDocumentId(doc.id);
+                                                                        }}
+                                                                        renameLabel="Rename document"
+                                                                        onDownload={() => downloadDoc(doc.id)}
+                                                                        onShowAllVersions={
+                                                                            hasVersions && !isVersionsOpen
+                                                                                ? () => void toggleVersions(doc.id)
+                                                                                : undefined
+                                                                        }
+                                                                        onUploadNewVersion={() =>
+                                                                            void handleUploadNewVersion(doc)
+                                                                        }
+                                                                        onDelete={() => requestRemoveDoc(doc)}
+                                                                        deleteDisabled={isSharedDocument(doc)}
+                                                                    />
+                                                                )}
+                                                            </div>
                                                         </div>
-                                                    );
-                                                })}
-                                            </>
+                                                        {isVersionsOpen && (
+                                                            <DocVersionHistory
+                                                                docId={doc.id}
+                                                                filename={docName}
+                                                                activeVersionNumber={versionNumber}
+                                                                loading={loadingVersionDocIds.has(doc.id)}
+                                                                versions={versionsByDocId.get(doc.id)?.versions ?? []}
+                                                                currentVersionId={
+                                                                    versionsByDocId.get(doc.id)?.currentVersionId ??
+                                                                    null
+                                                                }
+                                                                onDownloadVersion={downloadDocVersion}
+                                                                onOpenVersion={(versionId, label) => {
+                                                                    setViewingDocVersion({
+                                                                        id: versionId,
+                                                                        label,
+                                                                    });
+                                                                    setViewingDoc(doc);
+                                                                }}
+                                                                onRenameVersion={(versionId, filename) =>
+                                                                    handleRenameVersion(doc.id, versionId, filename)
+                                                                }
+                                                                onExtensionChangeBlocked={(filename) =>
+                                                                    setDocumentRenameWarning(
+                                                                        extensionChangeWarning(filename),
+                                                                    )
+                                                                }
+                                                            />
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                            {serverQueryActive && onLoadMoreServerDocuments && (
+                                                <TableLoadMoreRow
+                                                    loading={false}
+                                                    hasMore={serverQueryHasMore}
+                                                    itemCount={filteredDocs.length}
+                                                    loadingMore={serverQueryLoadingMore}
+                                                    hasError={false}
+                                                    onLoadMore={onLoadMoreServerDocuments}
+                                                />
+                                            )}
+                                        </>
+                                    ) : (
+                                        renderLevel(null, 0)
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Context menu */}
+                            {contextMenu &&
+                                (() => {
+                                    const menuDoc = contextMenu.docId
+                                        ? docs.find((doc) => doc.id === contextMenu.docId)
+                                        : null;
+                                    const menuDocVersionNumber = menuDoc ? currentVersionNumber(menuDoc) : null;
+                                    const menuDocHasVersions =
+                                        typeof menuDocVersionNumber === "number" && menuDocVersionNumber > 1;
+                                    const menuDocVersionsOpen = menuDoc ? expandedVersionDocIds.has(menuDoc.id) : false;
+                                    const surfaceProps: RowActionMenuSurfaceProps = {
+                                        className: "fixed z-[120]",
+                                        style: {
+                                            top: contextMenu.y,
+                                            left: contextMenu.x,
+                                        },
+                                        onClick: (e) => e.stopPropagation(),
+                                    };
+
+                                    return createPortal(
+                                        menuDoc ? (
+                                            <RowActionMenuItems
+                                                ref={contextMenuRef}
+                                                surfaceProps={surfaceProps}
+                                                onClose={() => setContextMenu(null)}
+                                                onRename={() => {
+                                                    setRenameDocumentValue(menuDoc.filename);
+                                                    setRenamingDocumentId(menuDoc.id);
+                                                }}
+                                                renameLabel="Rename document"
+                                                onDownload={() => downloadDoc(menuDoc.id)}
+                                                onShowAllVersions={
+                                                    menuDocHasVersions && !menuDocVersionsOpen
+                                                        ? () => void toggleVersions(menuDoc.id)
+                                                        : undefined
+                                                }
+                                                onUploadNewVersion={() => void handleUploadNewVersion(menuDoc)}
+                                                onRemoveFromFolder={
+                                                    menuDoc.folder_id
+                                                        ? () => void handleRemoveDocFromFolder(menuDoc.id)
+                                                        : undefined
+                                                }
+                                                onDelete={() => requestRemoveDoc(menuDoc)}
+                                                deleteDisabled={isSharedDocument(menuDoc)}
+                                            />
                                         ) : (
-                                            renderLevel(null, 0)
-                                        )}
-                                        {/* Spacer — fills remaining height and extends the root drop zone */}
-                                        <div className="flex-1 min-h-16" />
-                                    </div>
-                                )}
-
-                                {/* Context menu */}
-                                {contextMenu &&
-                                    (() => {
-                                        const menuDoc = contextMenu.docId
-                                            ? docs.find(
-                                                  (doc) =>
-                                                      doc.id ===
-                                                      contextMenu.docId,
-                                              )
-                                            : null;
-                                        const menuDocVersionNumber = menuDoc
-                                            ? currentVersionNumber(menuDoc)
-                                            : null;
-                                        const menuDocHasVersions =
-                                            typeof menuDocVersionNumber ===
-                                                "number" &&
-                                            menuDocVersionNumber > 1;
-                                        const menuDocVersionsOpen = menuDoc
-                                            ? expandedVersionDocIds.has(
-                                                  menuDoc.id,
-                                              )
-                                            : false;
-                                        const surfaceProps: RowActionMenuSurfaceProps =
-                                            {
-                                                className: "fixed z-[120]",
-                                                style: {
-                                                    top: contextMenu.y,
-                                                    left: contextMenu.x,
-                                                },
-                                                onClick: (e) =>
-                                                    e.stopPropagation(),
-                                            };
-
-                                        return createPortal(
-                                            menuDoc ? (
-                                                <RowActionMenuItems
-                                                    ref={contextMenuRef}
-                                                    surfaceProps={surfaceProps}
-                                                    onClose={() =>
-                                                        setContextMenu(null)
-                                                    }
-                                                    onRename={() => {
-                                                        setRenameDocumentValue(
-                                                            menuDoc.filename,
+                                            <RowActionMenuItems
+                                                ref={contextMenuRef}
+                                                surfaceProps={surfaceProps}
+                                                onClose={() => setContextMenu(null)}
+                                                onNewSubfolder={() => {
+                                                    setCreatingFolderIn(contextMenu.folderId);
+                                                    setNewFolderName("");
+                                                    if (contextMenu.folderId) {
+                                                        const wasExpanded = expandedFolderIds.has(contextMenu.folderId);
+                                                        if (!wasExpanded)
+                                                            void expandFolderChildren(contextMenu.folderId);
+                                                        setExpandedFolderIds(
+                                                            (prev) => new Set([...prev, contextMenu.folderId!]),
                                                         );
-                                                        setRenamingDocumentId(
-                                                            menuDoc.id,
-                                                        );
-                                                    }}
-                                                    renameLabel="Rename document"
-                                                    onDownload={() =>
-                                                        downloadDoc(menuDoc.id)
                                                     }
-                                                    onShowAllVersions={
-                                                        menuDocHasVersions &&
-                                                        !menuDocVersionsOpen
-                                                            ? () =>
-                                                                  void toggleVersions(
-                                                                      menuDoc.id,
-                                                                  )
-                                                            : undefined
-                                                    }
-                                                    onUploadNewVersion={() =>
-                                                        void handleUploadNewVersion(
-                                                            menuDoc,
-                                                        )
-                                                    }
-                                                    onRemoveFromFolder={
-                                                        menuDoc.folder_id
-                                                            ? () =>
-                                                                  void handleRemoveDocFromFolder(
-                                                                      menuDoc.id,
-                                                                  )
-                                                            : undefined
-                                                    }
-                                                    onDelete={() =>
-                                                        requestRemoveDoc(menuDoc)
-                                                    }
-                                                    deleteDisabled={isSharedDocument(
-                                                        menuDoc,
-                                                    )}
-                                                />
-                                            ) : (
-                                                <RowActionMenuItems
-                                                    ref={contextMenuRef}
-                                                    surfaceProps={surfaceProps}
-                                                    onClose={() =>
-                                                        setContextMenu(null)
-                                                    }
-                                                    onNewSubfolder={() => {
-                                                        setCreatingFolderIn(
-                                                            contextMenu.folderId,
-                                                        );
-                                                        setNewFolderName("");
-                                                        if (
-                                                            contextMenu.folderId
-                                                        ) {
-                                                            setExpandedFolderIds(
-                                                                (prev) =>
-                                                                    new Set([
-                                                                        ...prev,
-                                                                        contextMenu.folderId!,
-                                                                    ]),
-                                                            );
-                                                        }
-                                                    }}
-                                                    newSubfolderLabel={
-                                                        contextMenu.showFolderActions
-                                                            ? "New subfolder inside"
-                                                            : "New subfolder"
-                                                    }
-                                                    onRename={
-                                                        contextMenu.showFolderActions &&
-                                                        contextMenu.folderId
-                                                            ? () => {
-                                                                  const f =
-                                                                      folders.find(
-                                                                          (x) =>
-                                                                              x.id ===
-                                                                              contextMenu.folderId,
-                                                                      );
-                                                                  setRenameFolderValue(
-                                                                      f?.name ??
-                                                                          "",
-                                                                  );
-                                                                  setRenamingFolderId(
-                                                                      contextMenu.folderId!,
-                                                                  );
-                                                              }
-                                                            : undefined
-                                                    }
-                                                    renameLabel="Rename folder"
-                                                    onDelete={
-                                                        contextMenu.showFolderActions &&
-                                                        contextMenu.folderId
-                                                            ? () =>
-                                                                  requestDeleteFolder(
-                                                                      contextMenu.folderId!,
-                                                                  )
-                                                            : undefined
-                                                    }
-                                                    deleteLabel="Delete folder"
-                                                />
-                                            ),
-                                            document.body,
-                                        );
-                                    })()}
-                            </div>
-                            {/* end blue ring wrapper */}
+                                                }}
+                                                newSubfolderLabel={
+                                                    contextMenu.showFolderActions
+                                                        ? "New subfolder inside"
+                                                        : "New subfolder"
+                                                }
+                                                onRename={
+                                                    contextMenu.showFolderActions && contextMenu.folderId
+                                                        ? () => {
+                                                              const f = folders.find(
+                                                                  (x) => x.id === contextMenu.folderId,
+                                                              );
+                                                              setRenameFolderValue(f?.name ?? "");
+                                                              setRenamingFolderId(contextMenu.folderId!);
+                                                          }
+                                                        : undefined
+                                                }
+                                                renameLabel="Rename folder"
+                                                onDelete={
+                                                    contextMenu.showFolderActions && contextMenu.folderId
+                                                        ? () => requestDeleteFolder(contextMenu.folderId!)
+                                                        : undefined
+                                                }
+                                                deleteLabel="Delete folder"
+                                            />
+                                        ),
+                                        document.body,
+                                    );
+                                })()}
                         </div>
-                    )}
+                        {/* end blue ring wrapper */}
+                    </div>
+                )}
             </TableScrollArea>
 
-            {renderAddDocumentsModal?.(
-                addDocsOpen,
-                () => setAddDocsOpen(false),
-                handleDocsSelected,
-            )}
+            {renderAddDocumentsModal?.(addDocsOpen, () => setAddDocsOpen(false), handleDocsSelected)}
 
             <DocumentSidePanel
                 doc={sidePanelDoc}
                 versionId={viewingDocVersion?.id ?? null}
                 currentVersionId={
-                    sidePanelDoc
-                        ? (versionsByDocId.get(sidePanelDoc.id)
-                              ?.currentVersionId ?? null)
-                        : null
+                    sidePanelDoc ? (versionsByDocId.get(sidePanelDoc.id)?.currentVersionId ?? null) : null
                 }
-                versions={
-                    sidePanelDoc
-                        ? (versionsByDocId.get(sidePanelDoc.id)?.versions ?? [])
-                        : []
-                }
-                versionsLoading={
-                    sidePanelDoc
-                        ? loadingVersionDocIds.has(sidePanelDoc.id)
-                        : false
-                }
+                versions={sidePanelDoc ? (versionsByDocId.get(sidePanelDoc.id)?.versions ?? []) : []}
+                versionsLoading={sidePanelDoc ? loadingVersionDocIds.has(sidePanelDoc.id) : false}
                 onClose={() => {
                     setViewingDoc(null);
                     setViewingDocVersion(null);
                 }}
                 onLoadVersions={(docId) => loadDocumentVersions(docId)}
-                onSelectVersion={(versionId, label) =>
-                    setViewingDocVersion({ id: versionId, label })
-                }
+                onSelectVersion={(versionId, label) => setViewingDocVersion({ id: versionId, label })}
                 onDownloadDocument={downloadDoc}
                 onDownloadVersion={downloadDocVersion}
                 onRenameVersion={handleRenameVersion}
@@ -3175,7 +2607,6 @@ export function DocTable({
                     await handleRemoveDoc(doc.id);
                 }}
             />
-
         </div>
     );
 }
