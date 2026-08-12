@@ -6,7 +6,7 @@ type IconProps = Omit<ImageProps, "alt" | "src" | "width" | "height" | "unoptimi
 export function HistorySkeuoIcon({ className, ...props }: IconProps) {
     return (
         <Image
-            src="/icons/app-sidebar/history.svg?v=1"
+            src="/icons/app-sidebar/history.svg?v=2"
             alt=""
             width={64}
             height={64}

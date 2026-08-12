@@ -29,8 +29,10 @@ import {
     deleteTabularReview,
     downloadDocumentsZip,
     exportAccountData,
+    exportAuditHistory,
     generateTabularColumnPrompt,
     getChat,
+    getAuditHistory,
     getDocumentUrl,
     getTabularChatMessages,
     getTabularChats,
@@ -326,6 +328,65 @@ describe("blob requests (exportAccountData)", () => {
             status: 403,
             message: "not allowed",
         });
+    });
+});
+
+describe("audit history", () => {
+    it("serializes server-side filters, sorting, pagination, and the abort signal", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({ events: [], total: 0, page: 3, pageSize: 50 }),
+        );
+        const controller = new AbortController();
+
+        await getAuditHistory(
+            {
+                q: "agreement",
+                action: "document.edited",
+                status: "completed",
+                surface: "project",
+                from: "2026-08-01",
+                to: "2026-08-12",
+                sortBy: "title",
+                sortDirection: "asc",
+                page: 3,
+            },
+            controller.signal,
+        );
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe(
+            "http://localhost:3001/audit?q=agreement&action=document.edited&status=completed&surface=project&from=2026-08-01&to=2026-08-12&sort_by=title&sort_dir=asc&page=3",
+        );
+        expect(init.signal).toBe(controller.signal);
+    });
+
+    it("exports with the same active filters and server-side sort", async () => {
+        fetchMock.mockResolvedValue(
+            new Response("history", {
+                status: 200,
+                headers: {
+                    "content-disposition":
+                        'attachment; filename="history.csv"',
+                },
+            }),
+        );
+
+        const result = await exportAuditHistory({
+            q: "agreement",
+            action: "document.edited",
+            status: "failed",
+            surface: "assistant",
+            from: "2026-07-01",
+            to: "2026-07-31",
+            sortBy: "created_at",
+            sortDirection: "desc",
+        });
+
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/audit/export?q=agreement&action=document.edited&status=failed&surface=assistant&from=2026-07-01&to=2026-07-31&sort_by=created_at&sort_dir=desc",
+        );
+        expect(result.filename).toBe("history.csv");
+        expect(await result.blob.text()).toBe("history");
     });
 });
 

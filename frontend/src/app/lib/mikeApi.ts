@@ -247,6 +247,7 @@ export interface UserLookupResult {
 export interface AuditEvent {
     id: string;
     created_at: string;
+    user_display_name: string | null;
     user_email: string | null;
     action: string;
     status: string;
@@ -264,17 +265,30 @@ export async function getAuditHistory(
     params: {
         q?: string;
         action?: string;
+        status?: string;
+        surface?: string;
         from?: string;
         to?: string;
+        sortBy?: "created_at" | "user_email" | "title" | "model";
+        sortDirection?: "asc" | "desc";
         page?: number;
     },
     signal?: AbortSignal,
-): Promise<{ events: AuditEvent[]; total: number; page: number; pageSize: number }> {
+): Promise<{
+    events: AuditEvent[];
+    total: number;
+    page: number;
+    pageSize: number;
+}> {
     const qs = new URLSearchParams();
     if (params.q) qs.set("q", params.q);
     if (params.action) qs.set("action", params.action);
+    if (params.status) qs.set("status", params.status);
+    if (params.surface) qs.set("surface", params.surface);
     if (params.from) qs.set("from", params.from);
     if (params.to) qs.set("to", params.to);
+    if (params.sortBy) qs.set("sort_by", params.sortBy);
+    if (params.sortDirection) qs.set("sort_dir", params.sortDirection);
     if (params.page) qs.set("page", String(params.page));
     return apiRequest(`/audit?${qs.toString()}`, { signal });
 }
@@ -282,14 +296,22 @@ export async function getAuditHistory(
 export async function exportAuditHistory(params: {
     q?: string;
     action?: string;
+    status?: string;
+    surface?: string;
     from?: string;
     to?: string;
+    sortBy?: "created_at" | "user_email" | "title" | "model";
+    sortDirection?: "asc" | "desc";
 }): Promise<{ blob: Blob; filename: string | null }> {
     const qs = new URLSearchParams();
     if (params.q) qs.set("q", params.q);
     if (params.action) qs.set("action", params.action);
+    if (params.status) qs.set("status", params.status);
+    if (params.surface) qs.set("surface", params.surface);
     if (params.from) qs.set("from", params.from);
     if (params.to) qs.set("to", params.to);
+    if (params.sortBy) qs.set("sort_by", params.sortBy);
+    if (params.sortDirection) qs.set("sort_dir", params.sortDirection);
     return apiBlobRequest(`/audit/export?${qs.toString()}`);
 }
 

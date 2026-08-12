@@ -5,6 +5,7 @@
 import { Router } from "express";
 import { requireAuth, requireMfaIfEnrolled } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
+import { normalizeDisplayName } from "../lib/userLookup";
 
 export const auditRouter = Router();
 auditRouter.use(requireAuth);
@@ -38,11 +39,23 @@ export async function accessibleProjectIds(
 type AuditQuery = {
   q?: string;
   action?: string;
+  status?: string;
+  surface?: string;
   from?: string;
   to?: string;
+  sortBy: AuditSortField;
+  sortDirection: "asc" | "desc";
   page: number;
   limit: number;
 };
+
+const AUDIT_SORT_FIELDS = [
+  "created_at",
+  "user_email",
+  "title",
+  "model",
+] as const;
+type AuditSortField = (typeof AUDIT_SORT_FIELDS)[number];
 
 export type ParseQueryResult =
   | { ok: true; query: AuditQuery }
@@ -59,6 +72,8 @@ export function parseQuery(
   const page = Math.min(Math.max(parsedPage, 1), MAX_PAGE);
   const from = str(raw.from);
   const to = str(raw.to);
+  const requestedSortBy = str(raw.sort_by);
+  const requestedSortDirection = str(raw.sort_dir);
   // Date filters come from <input type="date"> and are compared as calendar
   // days. Reject anything that isn't a bare YYYY-MM-DD — a value like
   // "2026-07-30T12:00:00Z" would become "...ZT23:59:59.999Z" (F8) and 500.
@@ -66,13 +81,31 @@ export function parseQuery(
     return { ok: false, error: "Invalid 'from' date; expected YYYY-MM-DD" };
   if (to && !DATE_RE.test(to))
     return { ok: false, error: "Invalid 'to' date; expected YYYY-MM-DD" };
+  if (
+    requestedSortBy &&
+    !AUDIT_SORT_FIELDS.includes(requestedSortBy as AuditSortField)
+  ) {
+    return { ok: false, error: "Invalid audit sort field" };
+  }
+  if (
+    requestedSortDirection &&
+    requestedSortDirection !== "asc" &&
+    requestedSortDirection !== "desc"
+  ) {
+    return { ok: false, error: "Invalid audit sort direction" };
+  }
   return {
     ok: true,
     query: {
       q: str(raw.q)?.slice(0, 200),
       action: str(raw.action)?.slice(0, 60),
+      status: str(raw.status)?.slice(0, 20),
+      surface: str(raw.surface)?.slice(0, 30),
       from,
       to,
+      sortBy: (requestedSortBy as AuditSortField | undefined) ?? "created_at",
+      sortDirection:
+        (requestedSortDirection as "asc" | "desc" | undefined) ?? "desc",
       page,
       limit,
     },
@@ -84,26 +117,66 @@ export async function queryEvents(
   userId: string,
   email: string | undefined,
   q: AuditQuery,
+  resolveDisplayNames = true,
 ) {
   const projectIds = await accessibleProjectIds(db, userId, email);
   let query = db
     .from("audit_events")
     .select(
-      "id, created_at, user_email, action, status, title, surface, project_id, chat_id, document_id, review_id, model, detail",
+      "id, created_at, user_id, user_email, action, status, title, surface, project_id, chat_id, document_id, review_id, model, detail",
       { count: "exact" },
     );
   query = projectIds.length
-    ? query.or(
-        `user_id.eq.${userId},project_id.in.(${projectIds.join(",")})`,
-      )
+    ? query.or(`user_id.eq.${userId},project_id.in.(${projectIds.join(",")})`)
     : query.eq("user_id", userId);
   if (q.action) query = query.eq("action", q.action);
+  if (q.status) query = query.eq("status", q.status);
+  if (q.surface) query = query.eq("surface", q.surface);
   if (q.q) query = query.ilike("title", `%${q.q.replace(/[%_]/g, "\\$&")}%`);
   if (q.from) query = query.gte("created_at", q.from);
   if (q.to) query = query.lte("created_at", `${q.to}T23:59:59.999Z`);
-  return query
-    .order("created_at", { ascending: false })
+  const result = await query
+    .order(q.sortBy, {
+      ascending: q.sortDirection === "asc",
+      nullsFirst: false,
+    })
     .range((q.page - 1) * q.limit, q.page * q.limit - 1);
+
+  if (result.error || !result.data?.length) return result;
+
+  const userIds = [
+    ...new Set(
+      result.data
+        .map((event) => event.user_id as string | null)
+        .filter((userId): userId is string => Boolean(userId)),
+    ),
+  ];
+  const displayNameByUserId = new Map<string, string | null>();
+  if (resolveDisplayNames) {
+    const { data: profiles, error: profileError } = await db
+      .from("user_profiles")
+      .select("user_id, display_name")
+      .in("user_id", userIds);
+    if (!profileError) {
+      for (const profile of profiles ?? []) {
+        displayNameByUserId.set(
+          profile.user_id as string,
+          normalizeDisplayName(profile.display_name),
+        );
+      }
+    }
+  }
+
+  return {
+    ...result,
+    data: result.data.map((row) => {
+      const { user_id: userId, ...event } = row;
+      return {
+        ...event,
+        user_display_name: displayNameByUserId.get(userId as string) ?? null,
+      };
+    }),
+  };
 }
 
 auditRouter.get("/", async (req, res) => {
@@ -115,7 +188,12 @@ auditRouter.get("/", async (req, res) => {
   const q = parsed.query;
   const { data, error, count } = await queryEvents(db, userId, email, q);
   if (error) return void res.status(500).json({ detail: error.message });
-  res.json({ events: data ?? [], total: count ?? 0, page: q.page, pageSize: PAGE_SIZE });
+  res.json({
+    events: data ?? [],
+    total: count ?? 0,
+    page: q.page,
+    pageSize: PAGE_SIZE,
+  });
 });
 
 export function csvCell(v: unknown): string {
@@ -137,13 +215,14 @@ auditRouter.get("/export", requireMfaIfEnrolled, async (req, res) => {
   if (!parsed.ok) return void res.status(400).json({ detail: parsed.error });
   const q = parsed.query;
   q.page = 1;
-  const { data, error } = await queryEvents(db, userId, email, q);
+  const { data, error } = await queryEvents(db, userId, email, q, false);
   if (error) return void res.status(500).json({ detail: error.message });
-  const header = "created_at,user,action,status,title,application,project_id,model";
+  const header =
+    "created_at,user,action,status,title,application,project_id,model";
   const rows = ((data ?? []) as Record<string, unknown>[]).map((e) =>
     [
       e.created_at,
-      e.user_email,
+      e.user_display_name ?? e.user_email,
       e.action,
       e.status,
       e.title,
