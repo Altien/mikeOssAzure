@@ -540,7 +540,6 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
         ]}
       />
       <UseWorkflowModal
-        workflows={[]}
         workflow={useOpen ? workflow : null}
         onClose={() => setUseOpen(false)}
         skipSelect

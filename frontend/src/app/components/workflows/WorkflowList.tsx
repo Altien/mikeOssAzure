@@ -5,11 +5,15 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronDown, ChevronRight, Plus } from "lucide-react";
 import {
   deleteWorkflow,
+  getWorkflowFilterOptions,
+  type WorkflowFilterOptions,
   getWorkflowAddon,
   importWorkflowAddon,
   listWorkflowAddons,
-  listWorkflows,
 } from "@/app/lib/mikeApi";
+import { useDebouncedValue } from "@/app/hooks/useDebouncedValue";
+import { usePaginatedWorkflows } from "@/app/hooks/usePaginatedWorkflows";
+import { deleteTabularReviewsWithConcurrency } from "@/app/lib/deleteTabularReviewsWithConcurrency";
 import type { Workflow, WorkflowAddon } from "../shared/types";
 import { UseWorkflowModal } from "./UseWorkflowModal";
 import { NewWorkflowModal } from "./NewWorkflowModal";
@@ -28,6 +32,7 @@ import {
 import { workflowDetailPath } from "./workflowRoutes";
 import { ConfirmPopup } from "../popups/ConfirmPopup";
 import { WorkflowAddonPreviewModal } from "./WorkflowAddonPreviewModal";
+import { TableLoadMoreRow } from "@/app/components/shared/TableLoadMoreRow";
 import {
   SkeletonDot,
   SkeletonLine,
@@ -78,23 +83,36 @@ function workflowFilterOptions(
 export function WorkflowList() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [addons, setAddons] = useState<WorkflowAddon[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [addonsLoading, setAddonsLoading] = useState(true);
   const [selected, setSelected] = useState<Workflow | null>(null);
   const [newModalOpen, setNewModalOpen] = useState(false);
   const [editingWorkflow, setEditingWorkflow] = useState<Workflow | null>(null);
   const [activeTab, setActiveTab] = useState<WorkflowListTab>("all");
   const [search, setSearch] = useState("");
+  const [nameSortDirection, setNameSortDirection] =
+    useState<TableSortDirection | null>(null);
+  const [typeFilter, setTypeFilter] = useState<string | null>(null);
+  const [practiceFilter, setPracticeFilter] = useState<string | null>(null);
+  const [jurisdictionFilter, setJurisdictionFilter] = useState<string | null>(
+    null,
+  );
+  const [languageFilter, setLanguageFilter] = useState<string | null>(null);
+  const [databaseFilterOptions, setDatabaseFilterOptions] =
+    useState<WorkflowFilterOptions>({
+      practices: [],
+      jurisdictions: [],
+      languages: [],
+    });
   const [selectedAddon, setSelectedAddon] = useState<WorkflowAddon | null>(
     null,
   );
-  const [selectedWorkflowIds, setSelectedWorkflowIds] = useState<string[]>([]);
   const [selectedAddonIds, setSelectedAddonIds] = useState<string[]>([]);
   const [workflowActionsOpen, setWorkflowActionsOpen] = useState(false);
   const [pendingDeleteWorkflows, setPendingDeleteWorkflows] = useState<
     Workflow[]
   >([]);
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<string[]>([]);
   const [deleteStatus, setDeleteStatus] = useState<
     "idle" | "loading" | "complete"
   >("idle");
@@ -103,24 +121,73 @@ export function WorkflowList() {
   const [loadError, setLoadError] = useState("");
   const workflowActionsRef = useRef<HTMLDivElement>(null);
   const previewEmptyStates = searchParams.get("emptyStates") === "1";
+  const debouncedSearch = useDebouncedValue(search, 250);
+  const selectedType =
+    activeTab === "assistant" || activeTab === "tabular"
+      ? activeTab
+      : typeFilter === "assistant" || typeFilter === "tabular"
+        ? typeFilter
+        : undefined;
+  const {
+    dbWorkflows: workflows,
+    setDbWorkflows: setWorkflows,
+    loading: workflowsLoading,
+    loadingMore,
+    hasMore,
+    error: workflowsError,
+    loadMoreError,
+    loadMore,
+    selectedWorkflowIds,
+    setSelectedWorkflowIds,
+    selectAllMatching,
+    selectingAll,
+  } = usePaginatedWorkflows({
+    dbEnabled: activeTab !== "addons",
+    systemEnabled: false,
+    type: selectedType,
+    search: debouncedSearch,
+    selectionKey: search,
+    practiceFilter,
+    languageFilter,
+    jurisdictionFilter,
+    sort: nameSortDirection
+      ? { key: "name", direction: nameSortDirection }
+      : null,
+  });
+  const loading = activeTab === "addons" ? addonsLoading : workflowsLoading;
 
   useEffect(() => {
-    Promise.all([
-      listWorkflows("assistant"),
-      listWorkflows("tabular"),
-      listWorkflowAddons(),
-    ])
-      .then(([assistant, tabular, addonRows]) => {
-        setWorkflows([...assistant, ...tabular]);
-        setAddons(addonRows);
-      })
+    listWorkflowAddons()
+      .then(setAddons)
       .catch((error) => {
         setLoadError(
-          error instanceof Error ? error.message : "Unable to load workflows.",
+          error instanceof Error ? error.message : "Unable to load add-ons.",
         );
       })
-      .finally(() => setLoading(false));
+      .finally(() => setAddonsLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (activeTab === "addons") return;
+    const controller = new AbortController();
+    void getWorkflowFilterOptions({
+      type: selectedType,
+      signal: controller.signal,
+    })
+      .then((options) => {
+        if (!controller.signal.aborted) setDatabaseFilterOptions(options);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setDatabaseFilterOptions({
+            practices: [],
+            jurisdictions: [],
+            languages: [],
+          });
+        }
+      });
+    return () => controller.abort();
+  }, [activeTab, selectedType]);
 
   useEffect(() => {
     function closeActions(event: MouseEvent) {
@@ -139,21 +206,8 @@ export function WorkflowList() {
 
   const query = search.trim().toLowerCase();
   const visibleWorkflows = useMemo(() => {
-    if (previewEmptyStates) return [];
-    return workflows
-      .filter(
-        (workflow) =>
-          activeTab === "all" ||
-          activeTab === "addons" ||
-          workflow.metadata.type === activeTab,
-      )
-      .filter(
-        (workflow) =>
-          !query ||
-          workflow.metadata.title.toLowerCase().includes(query) ||
-          workflow.metadata.practice?.toLowerCase().includes(query),
-      );
-  }, [activeTab, previewEmptyStates, query, workflows]);
+    return previewEmptyStates ? [] : workflows;
+  }, [previewEmptyStates, workflows]);
 
   const visibleAddons = useMemo(() => {
     if (previewEmptyStates) return [];
@@ -214,34 +268,38 @@ export function WorkflowList() {
     }
   }
 
-  function requestWorkflowDeletion(workflowsToDelete: Workflow[]) {
+  function requestWorkflowDeletion(
+    workflowsToDelete: Workflow[],
+    ids = workflowsToDelete.map((workflow) => workflow.id),
+  ) {
     setPendingDeleteWorkflows(workflowsToDelete);
+    setPendingDeleteIds(ids);
     setWorkflowActionsOpen(false);
     setDeleteStatus("idle");
   }
 
   async function confirmWorkflowDeletion() {
-    const ids = pendingDeleteWorkflows.map((workflow) => workflow.id);
+    const ids = pendingDeleteIds;
     if (ids.length === 0) return;
     setDeleteStatus("loading");
-    const results = await Promise.allSettled(
-      ids.map((id) => deleteWorkflow(id)),
-    );
-    const deletedIds = ids.filter(
-      (_, index) => results[index]?.status === "fulfilled",
-    );
+    const { deletedIds, failedIds } =
+      await deleteTabularReviewsWithConcurrency(
+        ids,
+        deleteWorkflow,
+      );
     setSelectedWorkflowIds((current) =>
       current.filter((id) => !deletedIds.includes(id)),
     );
     setWorkflows((current) =>
       current.filter((workflow) => !deletedIds.includes(workflow.id)),
     );
-    if (deletedIds.length !== ids.length) {
+    if (failedIds.length > 0) {
       setLoadError("Some selected workflows could not be deleted.");
     }
     setDeleteStatus("complete");
     window.setTimeout(() => {
       setPendingDeleteWorkflows([]);
+      setPendingDeleteIds([]);
       setDeleteStatus("idle");
     }, 500);
   }
@@ -262,6 +320,7 @@ export function WorkflowList() {
                   workflows.filter((workflow) =>
                     selectedWorkflowIds.includes(workflow.id),
                   ),
+                  selectedWorkflowIds,
                 )
               }
               className="w-full px-3 py-1.5 text-left text-xs text-red-600 transition-colors hover:bg-red-500/10"
@@ -289,8 +348,12 @@ export function WorkflowList() {
   const pendingDefaultDeleteCount = pendingDeleteWorkflows.filter(
     (workflow) => workflow.is_default,
   ).length;
+  const includesUnloadedWorkflows =
+    pendingDeleteIds.length > pendingDeleteWorkflows.length;
   const deleteWarningMessage =
-    pendingDefaultDeleteCount > 0
+    includesUnloadedWorkflows
+      ? "This will permanently delete every selected workflow, including matching workflows that are not currently shown. If any are default workflows, their corresponding Quick Actions will also be deleted and will not be recreated automatically."
+      : pendingDefaultDeleteCount > 0
       ? pendingDeleteWorkflows.length === 1
         ? "Deleting this default workflow also permanently deletes its corresponding Quick Action. The default workflow will not be created again automatically."
         : `The selected workflows will be permanently deleted. ${pendingDefaultDeleteCount} ${pendingDefaultDeleteCount === 1 ? "is a default workflow, so its corresponding Quick Action will" : "are default workflows, so their corresponding Quick Actions will"} also be deleted. Deleted defaults will not be created again automatically.`
@@ -328,6 +391,7 @@ export function WorkflowList() {
         active={activeTab}
         onChange={(tab) => {
           setActiveTab(tab);
+          if (tab !== "all") setTypeFilter(null);
           setSelectedWorkflowIds([]);
           setSelectedAddonIds([]);
           setWorkflowActionsOpen(false);
@@ -354,18 +418,34 @@ export function WorkflowList() {
           key={activeTab}
           workflows={visibleWorkflows}
           loading={loading}
-          error={loadError}
+          error={workflowsError?.message || loadError}
           onOpen={setSelected}
           onEdit={setEditingWorkflow}
           onDelete={(workflow) => requestWorkflowDeletion([workflow])}
           onCreate={() => setNewModalOpen(true)}
           selectedIds={selectedWorkflowIds}
           onSelectedIdsChange={setSelectedWorkflowIds}
+          onSelectAll={() => void selectAllMatching([], "owned")}
+          selectingAll={selectingAll}
+          nameSortDirection={nameSortDirection}
+          onNameSortDirectionChange={setNameSortDirection}
+          typeFilter={typeFilter}
+          onTypeFilterChange={setTypeFilter}
+          practiceFilter={practiceFilter}
+          onPracticeFilterChange={setPracticeFilter}
+          jurisdictionFilter={jurisdictionFilter}
+          onJurisdictionFilterChange={setJurisdictionFilter}
+          languageFilter={languageFilter}
+          onLanguageFilterChange={setLanguageFilter}
+          filterOptions={databaseFilterOptions}
+          loadingMore={loadingMore}
+          hasMore={hasMore}
+          loadMoreError={!!loadMoreError}
+          onLoadMore={() => void loadMore()}
         />
       )}
 
       <UseWorkflowModal
-        workflows={workflows}
         workflow={selected}
         onClose={() => setSelected(null)}
       />
@@ -405,9 +485,9 @@ export function WorkflowList() {
       />
 
       <ConfirmPopup
-        open={pendingDeleteWorkflows.length > 0}
+        open={pendingDeleteIds.length > 0}
         title={
-          pendingDeleteWorkflows.length === 1
+          pendingDeleteIds.length === 1
             ? "Delete workflow?"
             : "Delete workflows?"
         }
@@ -418,6 +498,7 @@ export function WorkflowList() {
         onCancel={() => {
           if (deleteStatus === "loading") return;
           setPendingDeleteWorkflows([]);
+          setPendingDeleteIds([]);
           setDeleteStatus("idle");
         }}
       />
@@ -435,6 +516,23 @@ function WorkflowTable({
   onCreate,
   selectedIds,
   onSelectedIdsChange,
+  onSelectAll,
+  selectingAll,
+  nameSortDirection,
+  onNameSortDirectionChange,
+  typeFilter,
+  onTypeFilterChange,
+  practiceFilter,
+  onPracticeFilterChange,
+  jurisdictionFilter,
+  onJurisdictionFilterChange,
+  languageFilter,
+  onLanguageFilterChange,
+  filterOptions,
+  loadingMore,
+  hasMore,
+  loadMoreError,
+  onLoadMore,
 }: {
   workflows: Workflow[];
   loading: boolean;
@@ -445,71 +543,44 @@ function WorkflowTable({
   onCreate: () => void;
   selectedIds: string[];
   onSelectedIdsChange: (ids: string[]) => void;
+  onSelectAll: () => void;
+  selectingAll: boolean;
+  nameSortDirection: TableSortDirection | null;
+  onNameSortDirectionChange: (direction: TableSortDirection | null) => void;
+  typeFilter: string | null;
+  onTypeFilterChange: (value: string | null) => void;
+  practiceFilter: string | null;
+  onPracticeFilterChange: (value: string | null) => void;
+  jurisdictionFilter: string | null;
+  onJurisdictionFilterChange: (value: string | null) => void;
+  languageFilter: string | null;
+  onLanguageFilterChange: (value: string | null) => void;
+  filterOptions: WorkflowFilterOptions;
+  loadingMore: boolean;
+  hasMore: boolean;
+  loadMoreError: boolean;
+  onLoadMore: () => void;
 }) {
-  const [nameSortDirection, setNameSortDirection] =
-    useState<TableSortDirection | null>(null);
-  const [typeFilter, setTypeFilter] = useState<string | null>(null);
-  const [practiceFilter, setPracticeFilter] = useState<string | null>(null);
-  const [jurisdictionFilter, setJurisdictionFilter] = useState<string | null>(
-    null,
-  );
-  const [languageFilter, setLanguageFilter] = useState<string | null>(null);
-  const typeOptions = useMemo(
-    () =>
-      workflowFilterOptions(
-        workflows.map((workflow) => workflow.metadata.type),
-        (value) => (value === "tabular" ? "Tabular" : "Assistant"),
-      ),
-    [workflows],
+  const typeOptions = useMemo<TableFilterOption<string>[]>(
+    () => [
+      { value: "assistant", label: "Assistant" },
+      { value: "tabular", label: "Tabular" },
+    ],
+    [],
   );
   const practiceOptions = useMemo(
-    () =>
-      workflowFilterOptions(
-        workflows.map((workflow) => workflow.metadata.practice),
-      ),
-    [workflows],
+    () => workflowFilterOptions(filterOptions.practices),
+    [filterOptions.practices],
   );
   const jurisdictionOptions = useMemo(
-    () =>
-      workflowFilterOptions(
-        workflows.flatMap(
-          (workflow) => workflow.metadata.jurisdictions ?? [],
-        ),
-      ),
-    [workflows],
+    () => workflowFilterOptions(filterOptions.jurisdictions),
+    [filterOptions.jurisdictions],
   );
   const languageOptions = useMemo(
-    () =>
-      workflowFilterOptions(
-        workflows.map((workflow) => workflow.metadata.language),
-      ),
-    [workflows],
+    () => workflowFilterOptions(filterOptions.languages),
+    [filterOptions.languages],
   );
-  const displayedWorkflows = useMemo(() => {
-    const rows = workflows.filter(
-      (workflow) =>
-        (!typeFilter || workflow.metadata.type === typeFilter) &&
-        (!practiceFilter || workflow.metadata.practice === practiceFilter) &&
-        (!jurisdictionFilter ||
-          workflow.metadata.jurisdictions?.includes(jurisdictionFilter)) &&
-        (!languageFilter || workflow.metadata.language === languageFilter),
-    );
-    if (!nameSortDirection) return rows;
-    const multiplier = nameSortDirection === "asc" ? 1 : -1;
-    return [...rows].sort(
-      (a, b) =>
-        a.metadata.title.localeCompare(b.metadata.title, undefined, {
-          sensitivity: "base",
-        }) * multiplier,
-    );
-  }, [
-    jurisdictionFilter,
-    languageFilter,
-    nameSortDirection,
-    practiceFilter,
-    typeFilter,
-    workflows,
-  ]);
+  const displayedWorkflows = workflows;
   const selectableIds = displayedWorkflows
     .filter((workflow) => workflow.is_owner !== false)
     .map((workflow) => workflow.id);
@@ -520,7 +591,11 @@ function WorkflowTable({
     !allSelected && selectableIds.some((id) => selectedIds.includes(id));
 
   function toggleAll() {
-    onSelectedIdsChange(allSelected ? [] : selectableIds);
+    if (allSelected) {
+      onSelectedIdsChange([]);
+      return;
+    }
+    onSelectAll();
   }
 
   function toggleOne(id: string) {
@@ -532,7 +607,7 @@ function WorkflowTable({
   }
 
   function handleNameSortChange(direction: TableSortDirection | null) {
-    setNameSortDirection(direction);
+    onNameSortDirectionChange(direction);
     onSelectedIdsChange([]);
   }
 
@@ -546,6 +621,13 @@ function WorkflowTable({
 
   return (
     <TableScrollArea
+      onScroll={(event) => {
+        if (loading || loadingMore || !hasMore) return;
+        const element = event.currentTarget;
+        const distanceToBottom =
+          element.scrollHeight - element.scrollTop - element.clientHeight;
+        if (distanceToBottom < 200) onLoadMore();
+      }}
       header={
         <TableHeaderRow>
           <TableStickyCell header>
@@ -555,7 +637,7 @@ function WorkflowTable({
               ref={(element) => {
                 if (element) element.indeterminate = someSelected;
               }}
-              disabled={selectableIds.length === 0}
+              disabled={selectableIds.length === 0 || selectingAll}
               onChange={toggleAll}
               className={TABLE_CHECKBOX_CLASS}
               title="Select all deletable workflows"
@@ -582,7 +664,9 @@ function WorkflowTable({
                 allLabel="All Types"
                 widthClassName="w-40"
                 options={typeOptions}
-                onChange={(value) => handleFilterChange(setTypeFilter, value)}
+                onChange={(value) =>
+                  handleFilterChange(onTypeFilterChange, value)
+                }
               />
             )}
           </TableHeaderCell>
@@ -596,7 +680,7 @@ function WorkflowTable({
                 widthClassName="w-52"
                 options={practiceOptions}
                 onChange={(value) =>
-                  handleFilterChange(setPracticeFilter, value)
+                  handleFilterChange(onPracticeFilterChange, value)
                 }
               />
             )}
@@ -611,7 +695,7 @@ function WorkflowTable({
                 widthClassName="w-48"
                 options={jurisdictionOptions}
                 onChange={(value) =>
-                  handleFilterChange(setJurisdictionFilter, value)
+                  handleFilterChange(onJurisdictionFilterChange, value)
                 }
               />
             )}
@@ -626,7 +710,7 @@ function WorkflowTable({
                 widthClassName="w-44"
                 options={languageOptions}
                 onChange={(value) =>
-                  handleFilterChange(setLanguageFilter, value)
+                  handleFilterChange(onLanguageFilterChange, value)
                 }
               />
             )}
@@ -689,8 +773,9 @@ function WorkflowTable({
           </p>
         </TableEmptyState>
       ) : (
-        <TableBody>
-          {displayedWorkflows.map((workflow) => {
+        <>
+          <TableBody>
+            {displayedWorkflows.map((workflow) => {
             const Icon =
               workflow.metadata.type === "tabular"
                 ? TabularReviewSkeuoIcon
@@ -761,8 +846,17 @@ function WorkflowTable({
                 </div>
               </TableRow>
             );
-          })}
-        </TableBody>
+            })}
+          </TableBody>
+          <TableLoadMoreRow
+            loading={loading}
+            hasMore={hasMore}
+            itemCount={displayedWorkflows.length}
+            loadingMore={loadingMore}
+            hasError={loadMoreError}
+            onLoadMore={onLoadMore}
+          />
+        </>
       )}
     </TableScrollArea>
   );

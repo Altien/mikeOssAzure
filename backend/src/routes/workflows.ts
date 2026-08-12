@@ -15,6 +15,14 @@ import {
 import { findMissingUserEmails } from "../lib/userLookup";
 import { workflowNameFromSkillMd } from "../lib/workflowName";
 import { ensureDefaultWorkflows } from "../lib/workflowCatalog";
+import { parsePaginationQuery } from "../lib/pagination";
+import { normalizeSearchTerm } from "../lib/search";
+import { parseWorkflowSort } from "../lib/sort";
+import {
+  buildWorkflowIdsOverviewRpcArgs,
+  buildWorkflowsOverviewRpcArgs,
+  parseWorkflowScope,
+} from "../lib/workflowsOverview";
 import { singleFileUpload } from "../lib/upload";
 import {
   ALLOWED_DOCUMENT_TYPES,
@@ -123,6 +131,24 @@ function asyncRoute(handler: AsyncRoute) {
   };
 }
 
+async function ensureDefaultsForRequest(
+  userId: string,
+  db: Db,
+  res: Response,
+): Promise<boolean> {
+  try {
+    await ensureDefaultWorkflows(userId, db);
+    return true;
+  } catch (error) {
+    const detail =
+      error && typeof error === "object" && "message" in error
+        ? String(error.message)
+        : "Failed to install default workflows";
+    res.status(500).json({ detail });
+    return false;
+  }
+}
+
 function withWorkflowAccess<T extends object>(
   workflow: T,
   access: {
@@ -208,6 +234,39 @@ function withDatabaseWorkflow(workflow: WorkflowRecord) {
     skill_md: prompt_md ?? null,
     is_system: false,
   };
+}
+
+function withDatabaseWorkflowSummary(workflow: WorkflowRecord) {
+  return {
+    ...withDatabaseWorkflow(workflow),
+    // List pages only need metadata. The detail route loads the full content.
+    skill_md: null,
+    columns_config: null,
+  };
+}
+
+async function markDefaultWorkflows<T extends { id: string }>(
+  db: Db,
+  userId: string,
+  workflows: T[],
+): Promise<Array<T & { is_default: boolean }>> {
+  if (workflows.length === 0) return [];
+  const { data, error } = await db
+    .from("default_workflow_installations")
+    .select("workflow_id")
+    .eq("user_id", userId)
+    .in(
+      "workflow_id",
+      workflows.map((workflow) => workflow.id),
+    );
+  if (error) throw error;
+  const defaultIds = new Set(
+    (data ?? []).map((row) => row.workflow_id).filter(Boolean),
+  );
+  return workflows.map((workflow) => ({
+    ...workflow,
+    is_default: defaultIds.has(workflow.id),
+  }));
 }
 
 function normalizeOptionalString(value: unknown): string | null {
@@ -349,6 +408,20 @@ function validateOpenSourceWorkflow(workflow: WorkflowRecord): string | null {
   return "Workflow type must be 'assistant' or 'tabular'.";
 }
 
+const WORKFLOW_PAGINATION_QUERY_KEYS = [
+  "limit",
+  "offset",
+  "search",
+  "sort_key",
+  "key",
+  "sort_direction",
+  "direction",
+  "scope",
+  "practice",
+  "language",
+  "jurisdiction",
+];
+
 // GET /workflows
 workflowsRouter.get(
   "/",
@@ -360,7 +433,31 @@ workflowsRouter.get(
     const db = createServerSupabase();
     const workflowType = typeof type === "string" && type ? type : null;
 
-    await ensureDefaultWorkflows(userId, db);
+    if (!(await ensureDefaultsForRequest(userId, db, res))) return;
+
+    const hasPaginationParams = WORKFLOW_PAGINATION_QUERY_KEYS.some(
+      (key) => req.query[key] !== undefined,
+    );
+    if (hasPaginationParams) {
+      const rpcArgs = buildWorkflowsOverviewRpcArgs({
+        userId,
+        userEmail,
+        type: workflowType,
+        scope: parseWorkflowScope(req.query.scope),
+        pagination: parsePaginationQuery(req.query as Record<string, unknown>),
+        searchTerm: normalizeSearchTerm(req.query.search),
+        sort: parseWorkflowSort(req.query as Record<string, unknown>),
+        practice: normalizeSearchTerm(req.query.practice),
+        language: normalizeSearchTerm(req.query.language),
+        jurisdiction: normalizeSearchTerm(req.query.jurisdiction),
+      });
+      const { data, error } = await db.rpc("get_workflows_overview", rpcArgs);
+      if (error) return void res.status(500).json({ detail: error.message });
+      const workflows = ((data ?? []) as WorkflowRecord[])
+        .filter((workflow) => !SYSTEM_WORKFLOW_IDS.has(workflow.id))
+        .map(withDatabaseWorkflowSummary);
+      return void res.json(await markDefaultWorkflows(db, userId, workflows));
+    }
 
     const { data, error } = await db.rpc("get_workflows_overview", {
       p_user_id: userId,
@@ -374,19 +471,113 @@ workflowsRouter.get(
     const databaseWorkflows = ((data ?? []) as WorkflowRecord[])
       .filter((workflow) => !SYSTEM_WORKFLOW_IDS.has(workflow.id))
       .map(withDatabaseWorkflow);
-    const { data: installations } = await db
-      .from("default_workflow_installations")
-      .select("workflow_id")
-      .eq("user_id", userId);
-    const defaultIds = new Set(
-      (installations ?? []).map((row) => row.workflow_id),
-    );
+    res.json(await markDefaultWorkflows(db, userId, databaseWorkflows));
+  }),
+);
+
+// Retained as a compatibility endpoint for older clients. The restructured
+// Workflows page no longer exposes a System tab; non-default catalog entries
+// are presented through /workflow-addons instead.
+workflowsRouter.get(
+  "/system",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const workflowType =
+      typeof req.query.type === "string" && req.query.type
+        ? req.query.type
+        : null;
     res.json(
-      databaseWorkflows.map((workflow) => ({
-        ...workflow,
-        is_default: defaultIds.has(workflow.id),
-      })),
+      SYSTEM_WORKFLOWS.filter(
+        (workflow) => !workflowType || workflow.metadata.type === workflowType,
+      ).map(withSystemWorkflowAccess),
     );
+  }),
+);
+
+// GET /workflows/filter-options (must come before /:workflowId routes)
+workflowsRouter.get(
+  "/filter-options",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const type =
+      req.query.type === "assistant" || req.query.type === "tabular"
+        ? req.query.type
+        : null;
+    const scope = parseWorkflowScope(req.query.scope);
+    const db = createServerSupabase();
+    if (!(await ensureDefaultsForRequest(userId, db, res))) return;
+    const { data, error } = await db.rpc("get_workflow_filter_options", {
+      p_user_id: userId,
+      p_user_email: userEmail ?? null,
+      p_type: type,
+      p_scope: scope,
+    });
+    if (error) return void res.status(500).json({ detail: error.message });
+
+    const row = (data?.[0] ?? {}) as Record<string, unknown>;
+    const strings = (value: unknown) =>
+      Array.isArray(value)
+        ? value.filter((item): item is string => typeof item === "string")
+        : [];
+    res.json({
+      practices: strings(row.practices),
+      languages: strings(row.languages),
+      jurisdictions: strings(row.jurisdictions),
+    });
+  }),
+);
+
+const WORKFLOW_IDS_PAGE_SIZE = 1000;
+const WORKFLOW_IDS_MAX_PAGES = 200;
+
+// GET /workflows/ids (must come before /:workflowId routes)
+workflowsRouter.get(
+  "/ids",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const db = createServerSupabase();
+    if (!(await ensureDefaultsForRequest(userId, db, res))) return;
+
+    const workflowType =
+      typeof req.query.type === "string" && req.query.type
+        ? req.query.type
+        : null;
+    const searchTerm = normalizeSearchTerm(req.query.search);
+    const scope = parseWorkflowScope(req.query.scope);
+    const practice = normalizeSearchTerm(req.query.practice);
+    const language = normalizeSearchTerm(req.query.language);
+    const jurisdiction = normalizeSearchTerm(req.query.jurisdiction);
+
+    const ids: { id: string; user_id: string }[] = [];
+    let offset = 0;
+    for (let page = 0; page < WORKFLOW_IDS_MAX_PAGES; page += 1) {
+      const rpcArgs = buildWorkflowIdsOverviewRpcArgs({
+        userId,
+        userEmail,
+        type: workflowType,
+        scope,
+        searchTerm,
+        practice,
+        language,
+        jurisdiction,
+        pagination: { limit: WORKFLOW_IDS_PAGE_SIZE, offset },
+      });
+      const { data, error } = await db.rpc(
+        "get_workflow_ids_overview",
+        rpcArgs,
+      );
+      if (error) return void res.status(500).json({ detail: error.message });
+      const rows = (data ?? []) as { id: string; user_id: string }[];
+      if (rows.length === 0) break;
+      ids.push(...rows);
+      offset += rows.length;
+    }
+
+    res.json(ids);
   }),
 );
 
