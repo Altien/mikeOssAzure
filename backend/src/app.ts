@@ -81,8 +81,7 @@ function makeLimiter(options: {
     legacyHeaders: false,
     skip: (req) => req.method === "OPTIONS",
     message: {
-      detail:
-        options.message ?? "Too many requests. Please try again later.",
+      detail: options.message ?? "Too many requests. Please try again later.",
     },
   });
 }
@@ -102,6 +101,10 @@ function makeLimiter(options: {
  * checks (PUBLIC_DIR existence) happen on every call so tests that
  * mutate env between cases see fresh values.
  */
+export function configuredAllowedOrigins(env: NodeJS.ProcessEnv = process.env): Set<string> {
+  return new Set([env.FRONTEND_URL ?? "http://localhost:3000", env.WORD_ADDIN_URL, ...(env.ALLOWED_ORIGINS ?? "").split(",")].map(origin => origin?.trim()).filter((origin): origin is string => !!origin));
+}
+
 export function buildApp(): express.Express {
   const app = express();
   const isProduction = process.env.NODE_ENV === "production";
@@ -180,9 +183,7 @@ export function buildApp(): express.Express {
     }),
   );
 
-  const allowedOrigins = new Set<string>([
-    process.env.FRONTEND_URL ?? "http://localhost:3000",
-  ]);
+  const allowedOrigins = configuredAllowedOrigins();
 
   app.use(
     cors({

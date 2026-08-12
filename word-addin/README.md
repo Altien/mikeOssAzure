@@ -137,6 +137,11 @@ The build writes the task-pane assets (`taskpane.html`, `commands.html`, `auth-d
 
 If the add-in is hosted on a different origin than `FRONTEND_URL`, the backend's CORS allow-list (`backend/src/app.ts`, `FRONTEND_URL` only) will block its API calls — serve the add-in from the backend's origin or extend the allow-list (not done in this fork yet).
 
+Add the deployed task-pane origin to the API deployment as
+`WORD_ADDIN_URL=https://word.example.com` (or include it in the comma-separated
+`ALLOWED_ORIGINS` value). Without that allowlist entry, browsers will block the
+add-in's direct production API requests at CORS preflight.
+
 ---
 
 ## Features
@@ -145,7 +150,15 @@ If the add-in is hosted on a different origin than `FRONTEND_URL`, the backend's
 
 Ask any question about the open document. The add-in sends Word conversations to the dedicated `POST /word-chat` route with the active document in `document_context`. That route adds the Word-specific system prompt server-side, while persisted user messages contain only the text the user typed. Responses stream in real time.
 
-Chat storage defaults to **Cloud**. Open **Settings** from the hamburger menu to switch to **This device only**, which bypasses server chat persistence and stores document-scoped conversations in IndexedDB. Switching locations does not copy or delete existing conversations; Chat History displays the currently selected location. Cloud storage requires the `0048_word_addin_chats.sql` backend migration on existing databases.
+Chat storage defaults to **Cloud**. Open **Settings** from the hamburger menu to switch to **This device only**, which bypasses server chat persistence and stores document-scoped conversations in IndexedDB. The preference is stored separately for each signed-in account. Local chats are not encrypted by the add-in and remain in the current operating-system profile after sign-out; Settings includes a permanent **Delete** action for that account's device-only chats. Switching locations does not copy or delete existing conversations; Chat History displays the currently selected location. Cloud storage requires the `0048_word_addin_chats.sql` backend migration on existing databases.
+
+The add-in links cloud chat history to an identifier saved in the Word
+document's Office settings. That metadata travels with a copied or externally
+shared `.docx`, although the server still scopes every history lookup to the
+signed-in Mike account. A same-account **Save As** copy therefore initially
+shares the source document's chat history. Remove the Mike document setting or
+treat the copy as a new document before external distribution when that stable
+metadata is undesirable.
 
 The composer mirrors the web assistant controls:
 
@@ -211,7 +224,7 @@ Upstream's hermetic Playwright suite (`e2e/`) and live Word-on-the-web demo reco
 ## Troubleshooting
 
 **Word shows "The content is blocked because it isn't signed by a valid security certificate" — including when it worked before**
-This is *certificate trust drift*, and it will eventually happen to every returning developer: the dev certificate expires after ~30 days, and the tooling then silently regenerates it **with a new signing CA** (the webpack dev server does this on startup). Your OS keychain still trusts only the *old* CA, so Word rejects the pane — while `npx office-addin-dev-certs verify` misleadingly reports "trusted", because it only checks that a CA *by that name* exists, not that it signed the current certificate. `npx office-addin-dev-certs install` then refuses to reinstall for the same reason.
+This is _certificate trust drift_, and it will eventually happen to every returning developer: the dev certificate expires after ~30 days, and the tooling then silently regenerates it **with a new signing CA** (the webpack dev server does this on startup). Your OS keychain still trusts only the _old_ CA, so Word rejects the pane — while `npx office-addin-dev-certs verify` misleadingly reports "trusted", because it only checks that a CA _by that name_ exists, not that it signed the current certificate. `npx office-addin-dev-certs install` then refuses to reinstall for the same reason.
 
 `bash scripts/dev.sh` now detects and repairs this automatically (it verifies the real chain against the OS trust store). To fix it by hand on macOS:
 
@@ -251,6 +264,7 @@ Right-click the task pane → **Inspect** and check the console for errors. A co
 The add-in requires WordApi 1.6. Confirm the Word host and build support that requirement set; otherwise use a supported Microsoft 365 Word client.
 
 **Document upload fails**
+
 - Confirm the Mike API is running (`npm run dev` in `backend/`) and reachable at `http://localhost:3001`
 - Confirm the API's configured object-storage bucket exists
 - Check the backend logs for the specific error

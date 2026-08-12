@@ -14,6 +14,11 @@ module.exports = async (_env, options) => {
   // explicit CI/deployment overrides continue to win.
   const localEnvPath = path.join(__dirname, ".env");
   if (isDev && fs.existsSync(localEnvPath)) {
+    if (typeof process.loadEnvFile !== "function") {
+      throw new Error(
+        "The Word add-in requires Node.js 22 or newer to load word-addin/.env.",
+      );
+    }
     process.loadEnvFile(localEnvPath);
   }
 
@@ -24,7 +29,7 @@ module.exports = async (_env, options) => {
     const missing = required.filter((name) => !process.env[name]?.trim());
     if (missing.length > 0) {
       throw new Error(
-        `Production Word build is missing: ${missing.join(", ")}`
+        `Production Word build is missing: ${missing.join(", ")}`,
       );
     }
   }
@@ -162,11 +167,11 @@ module.exports = async (_env, options) => {
         // Upstream divergence (sync-log: 148635e3): same-origin /api and
         // /config retain the Entra runtime configuration boundary.
         REACT_APP_API_BASE_URL: isDev ? "" : undefined,
-        REACT_APP_DEFAULT_MODEL: "claude-sonnet-4-6",
+        REACT_APP_DEFAULT_MODEL: "gemini-3-flash-preview",
         // The Mike web app origin — the task pane links here (e.g. the
         // account/api-keys page); it never fetches from it.
         REACT_APP_WEB_APP_URL: isDev
-          ? process.env.REACT_APP_WEB_APP_URL || "https://app.mikeoss.com"
+          ? process.env.REACT_APP_WEB_APP_URL || "http://localhost:3000"
           : undefined,
       }),
     ],
