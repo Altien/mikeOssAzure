@@ -22,3 +22,8 @@ coverage
 .pnpm-store/
 .tmp/
 tmp/
+
+# dev-cycle scratch files
+.current-issue.md
+.implementation-plan.md
+.implement-config
