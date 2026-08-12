@@ -48,11 +48,13 @@ import {
     getCourtlistenerOpinions,
     getDocumentUrl,
     getLibrary,
+    getLibraryLevels,
   getLibraryFilterOptions,
     getLibraryFolderChildren,
     getMcpConnector,
     getOllamaModels,
     getProject,
+    getProjectDirectoryLevel,
   getProjectFilterOptions,
     getProjectPeople,
     getTabularChatMessages,
@@ -67,6 +69,7 @@ import {
     listChats,
     listDocumentVersions,
     listHiddenWorkflows,
+    listLibraryDocumentIds,
     listMcpConnectors,
     listProjectChats,
     listProjectIds,
@@ -99,6 +102,7 @@ import {
     renameTabularChat,
     replaceDocumentVersionFile,
   saveApiKey,
+  bulkDeleteLibraryDocuments,
   searchProjectDirectory,
   searchLibraryDocuments,
     setMcpToolEnabled,
@@ -882,6 +886,40 @@ describe("searchProjectDirectory", () => {
   });
 });
 
+describe("getProjectDirectoryLevel", () => {
+  it("serializes a folder level, pagination, and abort signal", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ documents: [], folders: [], documentsHasMore: false }),
+    );
+    const controller = new AbortController();
+
+    await getProjectDirectoryLevel("p1", {
+      parentFolderId: "folder-1",
+      limit: 50,
+      offset: 100,
+      signal: controller.signal,
+    });
+
+    const { url, init } = lastFetchCall();
+    expect(url).toBe(
+      "http://localhost:3001/projects/p1/directory?parent_folder_id=folder-1&limit=50&offset=100",
+    );
+    expect(init.signal).toBe(controller.signal);
+  });
+
+  it("requests the root level without optional query parameters", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ documents: [], folders: [], documentsHasMore: false }),
+    );
+
+    await getProjectDirectoryLevel("p1");
+
+    expect(lastFetchCall().url).toBe(
+      "http://localhost:3001/projects/p1/directory",
+    );
+  });
+});
+
 describe("listProjectIds", () => {
     it("requests the bare id list when no filters are given", async () => {
         fetchMock.mockResolvedValue(jsonResponse([]));
@@ -1094,6 +1132,90 @@ describe("Library search", () => {
         "&search=agreement&file_type=docx&sort_key=updated&sort_direction=desc",
     );
     expect(init.signal).toBe(controller.signal);
+  });
+
+  it("supports a search view with no optional filters", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ documents: [], documentsHasMore: false }),
+    );
+
+    await searchLibraryDocuments("files", {});
+
+    expect(lastFetchCall().url).toBe(
+      "http://localhost:3001/library/files?view=search",
+    );
+  });
+
+  it("loads multiple open directory levels in one request", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ levels: [] }));
+
+    await getLibraryLevels("templates", [
+      { parentId: null, limit: 50 },
+      { parentId: "folder-1", limit: 100 },
+    ]);
+
+    const { url, init } = lastFetchCall();
+    expect(url).toBe("http://localhost:3001/library/templates/levels");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({
+      levels: [
+        { parentId: null, limit: 50 },
+        { parentId: "folder-1", limit: 100 },
+      ],
+    });
+  });
+
+  it("loads another page of one Library folder", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ documents: [], folders: [], documentsHasMore: false }),
+    );
+
+    await getLibraryFolderChildren("files", "folder-1", { offset: 50 });
+
+    expect(lastFetchCall().url).toBe(
+      "http://localhost:3001/library/files?parent_folder_id=folder-1&offset=50",
+    );
+  });
+
+  it("loads filtered Library IDs and forwards the abort signal", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(["d1"]));
+    const controller = new AbortController();
+
+    await listLibraryDocumentIds("templates", {
+      search: "agreement",
+      fileType: "docx",
+      signal: controller.signal,
+    });
+
+    const { url, init } = lastFetchCall();
+    expect(url).toBe(
+      "http://localhost:3001/library/templates/ids?search=agreement&file_type=docx",
+    );
+    expect(init.signal).toBe(controller.signal);
+  });
+
+  it("loads all Library IDs without optional filters", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([]));
+
+    await listLibraryDocumentIds("files");
+
+    expect(lastFetchCall().url).toBe(
+      "http://localhost:3001/library/files/ids",
+    );
+  });
+
+  it("bulk deletes Library documents", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ deletedIds: ["d1", "d2"] }));
+
+    const result = await bulkDeleteLibraryDocuments("files", ["d1", "d2"]);
+
+    const { url, init } = lastFetchCall();
+    expect(result).toEqual({ deletedIds: ["d1", "d2"] });
+    expect(url).toBe(
+      "http://localhost:3001/library/files/documents/bulk-delete",
+    );
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ ids: ["d1", "d2"] });
   });
 
   it("loads the complete file-type facet list", async () => {
