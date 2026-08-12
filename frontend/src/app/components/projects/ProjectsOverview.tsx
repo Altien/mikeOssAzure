@@ -4,11 +4,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronDown, Plus } from "lucide-react";
 import {
-    listProjects,
+    getProjectFilterOptions,
+    type ProjectFilterOptions,
     updateProject,
     deleteProject,
 } from "@/app/lib/mikeApi";
+import { deleteTabularReviewsWithConcurrency } from "@/app/lib/deleteTabularReviewsWithConcurrency";
+import { useDebouncedValue } from "@/app/hooks/useDebouncedValue";
+import { usePaginatedProjects } from "@/app/hooks/usePaginatedProjects";
 import { OwnerOnlyPopup } from "@/app/components/popups/OwnerOnlyPopup";
+import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import { useAuth } from "@/app/contexts/AuthContext";
 import type { Project } from "@/app/components/shared/types";
 import { NewProjectModal } from "./NewProjectModal";
@@ -19,6 +24,7 @@ import {
     RowActions,
 } from "@/app/components/shared/RowActions";
 import { PageHeader } from "@/app/components/shared/PageHeader";
+import { TableLoadMoreRow } from "@/app/components/shared/TableLoadMoreRow";
 import {
     ClosedProjectSvgIcon,
     OpenProjectSvgIcon,
@@ -75,9 +81,6 @@ const SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
 ];
 
 export function ProjectsOverview() {
-    const [projects, setProjects] = useState<Project[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [loadError, setLoadError] = useState<string | null>(null);
     const [modalOpen, setModalOpen] = useState(false);
     const [detailsProject, setDetailsProject] = useState<Project | null>(null);
     const [activeFilter, setActiveFilter] = useState<ProjectFilter>("all");
@@ -87,15 +90,46 @@ export function ProjectsOverview() {
         key: ProjectSortKey;
         direction: TableSortDirection;
     } | null>(null);
-    const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [actionsOpen, setActionsOpen] = useState(false);
     const [search, setSearch] = useState("");
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
+    const [selectionCameFromSelectAll, setSelectionCameFromSelectAll] =
+        useState(false);
+    const [confirmDeleteAllOpen, setConfirmDeleteAllOpen] = useState(false);
+    const [filterOptions, setFilterOptions] = useState<ProjectFilterOptions>({
+        practices: [],
+        owners: [],
+    });
     const actionsRef = useRef<HTMLDivElement>(null);
     const router = useRouter();
     const searchParams = useSearchParams();
     const { user, isAuthenticated, authLoading } = useAuth();
     const previewEmptyStates = searchParams.get("emptyStates") === "1";
+    const debouncedSearch = useDebouncedValue(search, 250);
+
+    const {
+        projects,
+        setProjects,
+        loading,
+        loadingMore,
+        hasMore,
+        error: loadErrorObj,
+        loadMoreError,
+        loadMore,
+        retry,
+        selectedProjectIds: selectedIds,
+        setSelectedProjectIds: setSelectedIds,
+        selectAllMatching,
+        getProjectOwnerId,
+    } = usePaginatedProjects({
+        search: debouncedSearch,
+        selectionKey: search,
+        scope: activeFilter === "shared-with-me" ? "shared" : activeFilter,
+        practiceFilter,
+        ownerUserIdFilter: ownerFilter,
+        sort,
+    });
+    const loadError = loadErrorObj ? "Could not load projects." : null;
     const effectiveLoading = loading && !previewEmptyStates;
     const visibleProjects = useMemo(
         () => (previewEmptyStates ? [] : projects),
@@ -103,44 +137,20 @@ export function ProjectsOverview() {
     );
 
     useEffect(() => {
-        let cancelled = false;
-
-        async function loadProjects() {
-            await Promise.resolve();
-            if (cancelled) return;
-            if (authLoading) {
-                setLoading(true);
-                return;
-            }
-            if (!isAuthenticated) {
-                setProjects([]);
-                setLoadError(null);
-                setLoading(false);
-                return;
-            }
-
-            setLoading(true);
-            setLoadError(null);
-            try {
-                const loaded = await listProjects();
-                if (!cancelled) setProjects(loaded);
-            } catch (err) {
-                console.error("[projects] failed to load projects", err);
-                if (!cancelled) {
-                    setProjects([]);
-                    setLoadError("Could not load projects.");
-                }
-            } finally {
-                if (!cancelled) setLoading(false);
-            }
-        }
-
-        void loadProjects();
-
+        if (authLoading || !isAuthenticated) return;
+        const controller = new AbortController();
+        getProjectFilterOptions(controller.signal)
+            .then((data) => {
+                if (!controller.signal.aborted) setFilterOptions(data);
+            })
+            .catch(() => {
+                // Filter option lists degrade to "no options" — not worth a
+                // user-facing error for a purely cosmetic dropdown.
+            });
         return () => {
-            cancelled = true;
+            controller.abort();
         };
-    }, [authLoading, isAuthenticated, user?.id]);
+    }, [authLoading, isAuthenticated]);
 
     useEffect(() => {
         function handleClick(e: MouseEvent) {
@@ -154,124 +164,22 @@ export function ProjectsOverview() {
         return () => document.removeEventListener("mousedown", handleClick);
     }, [actionsOpen]);
 
-    const q = search.toLowerCase();
-    const practices = useMemo(
-        () =>
-            Array.from(
-                new Set(
-                    visibleProjects
-                        .map((project) => project.practice?.trim())
-                        .filter((practice): practice is string => !!practice),
-                ),
-            ).sort((a, b) => a.localeCompare(b)),
-        [visibleProjects],
-    );
-    const ownerOptions = useMemo(
-        () =>
-            Array.from(
-                new Set(
-                    visibleProjects.map((project) =>
-                        getProjectOwnerLabel(project, user?.id),
-                    ),
-                ),
-            )
-                .sort((a, b) => a.localeCompare(b))
-                .map((owner) => ({ value: owner, label: owner })),
-        [visibleProjects, user?.id],
-    );
-    const filtered = useMemo(() => {
-        const rows = (
-            activeFilter === "all"
-                ? visibleProjects
-                : activeFilter === "mine"
-                  ? visibleProjects.filter(
-                        (p) => p.is_owner ?? p.user_id === user?.id,
-                    )
-                  : visibleProjects.filter(
-                        (p) => !(p.is_owner ?? p.user_id === user?.id),
-                    )
-        )
-            .filter(
-                (p) =>
-                    !q ||
-                    p.name.toLowerCase().includes(q) ||
-                    (p.cm_number ?? "").toLowerCase().includes(q) ||
-                    (p.practice ?? "").toLowerCase().includes(q),
-            )
-            .filter(
-                (p) =>
-                    !practiceFilter ||
-                    (p.practice?.trim() ?? "") === practiceFilter,
-            )
-            .filter(
-                (p) =>
-                    !ownerFilter ||
-                    getProjectOwnerLabel(p, user?.id) === ownerFilter,
-            );
-
-        if (!sort) return rows;
-
-        return [...rows].sort((a, b) => {
-            const multiplier = sort.direction === "asc" ? 1 : -1;
-
-            if (sort.key === "cm") {
-                return (
-                    (a.cm_number ?? "").localeCompare(b.cm_number ?? "") *
-                    multiplier
-                );
-            }
-
-            if (sort.key === "files") {
-                return (
-                    ((a.document_count ?? 0) - (b.document_count ?? 0)) *
-                    multiplier
-                );
-            }
-
-            if (sort.key === "chats") {
-                return (
-                    ((a.chat_count ?? 0) - (b.chat_count ?? 0)) * multiplier
-                );
-            }
-
-            if (sort.key === "reviews") {
-                return (
-                    ((a.review_count ?? 0) - (b.review_count ?? 0)) *
-                    multiplier
-                );
-            }
-
-            if (sort.key === "created") {
-                return (
-                    (new Date(a.created_at).getTime() -
-                        new Date(b.created_at).getTime()) *
-                    multiplier
-                );
-            }
-
-            return a.name.localeCompare(b.name) * multiplier;
-        });
-    }, [
-        activeFilter,
-        ownerFilter,
-        practiceFilter,
-        q,
-        sort,
-        user?.id,
-        visibleProjects,
-    ]);
+    const practices = filterOptions.practices;
+    const ownerOptions = filterOptions.owners;
 
     const allSelected =
-        filtered.length > 0 &&
-        filtered.every((p) => selectedIds.includes(p.id));
+        visibleProjects.length > 0 &&
+        visibleProjects.every((p) => selectedIds.includes(p.id));
     const someSelected =
-        !allSelected && filtered.some((p) => selectedIds.includes(p.id));
+        !allSelected && visibleProjects.some((p) => selectedIds.includes(p.id));
 
     function toggleAll() {
         if (allSelected) {
             setSelectedIds([]);
+            setSelectionCameFromSelectAll(false);
         } else {
-            setSelectedIds(filtered.map((p) => p.id));
+            setSelectionCameFromSelectAll(true);
+            void selectAllMatching();
         }
     }
 
@@ -283,6 +191,8 @@ export function ProjectsOverview() {
 
     function clearSelection() {
         setSelectedIds([]);
+        setSelectionCameFromSelectAll(false);
+        setConfirmDeleteAllOpen(false);
         setActionsOpen(false);
     }
 
@@ -433,20 +343,37 @@ export function ProjectsOverview() {
         );
     }
 
+    function requestDeleteSelected() {
+        setActionsOpen(false);
+        if (selectionCameFromSelectAll) {
+            setConfirmDeleteAllOpen(true);
+            return;
+        }
+        void handleDeleteSelected();
+    }
+
     async function handleDeleteSelected() {
         const ids = [...selectedIds];
         setActionsOpen(false);
+        setConfirmDeleteAllOpen(false);
+        setSelectionCameFromSelectAll(false);
         // Only the project owner can delete; the per-row delete is hidden
         // for shared projects but the bulk action can still pick them up
-        // if a user toggled them across filters. Filter and warn.
+        // if a user toggled them across filters (or select-all-matching
+        // pulled in ids that were never paged into `projects`, which is why
+        // this uses getProjectOwnerId rather than looking the row up
+        // directly). Filter and warn.
         const owned = ids.filter((id) => {
-            const p = projects.find((pp) => pp.id === id);
-            return !p || (p.is_owner ?? p.user_id === user?.id);
+            const ownerId = getProjectOwnerId(id);
+            return !ownerId || ownerId === user?.id;
         });
         const blocked = ids.length - owned.length;
         setSelectedIds([]);
-        await Promise.all(owned.map((id) => deleteProject(id).catch(() => {})));
-        setProjects((prev) => prev.filter((p) => !owned.includes(p.id)));
+        const { deletedIds } = await deleteTabularReviewsWithConcurrency(
+            owned,
+            deleteProject,
+        );
+        setProjects((prev) => prev.filter((p) => !deletedIds.includes(p.id)));
         if (blocked > 0) {
             setOwnerOnlyAction(
                 `delete ${blocked} of the selected projects — only the project owner can delete a project`,
@@ -466,7 +393,7 @@ export function ProjectsOverview() {
                 {actionsOpen && (
                     <div className="absolute top-full right-0 mt-1 w-36 rounded-lg border border-gray-100 bg-white shadow-lg z-50 overflow-hidden">
                         <button
-                            onClick={handleDeleteSelected}
+                            onClick={requestDeleteSelected}
                             className="w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 transition-colors"
                         >
                             Delete
@@ -512,6 +439,13 @@ export function ProjectsOverview() {
 
             {/* Table */}
             <TableScrollArea
+                onScroll={(event) => {
+                    if (loading || loadingMore || !hasMore) return;
+                    const el = event.currentTarget;
+                    const distanceToBottom =
+                        el.scrollHeight - el.scrollTop - el.clientHeight;
+                    if (distanceToBottom < 200) void loadMore();
+                }}
                 header={
                     <TableHeaderRow>
                         <TableStickyCell header>
@@ -526,6 +460,7 @@ export function ProjectsOverview() {
                                     }}
                                     onChange={toggleAll}
                                     className={TABLE_CHECKBOX_CLASS}
+                                    aria-label="Select all projects"
                                 />
                             )}
                             <span className="mr-1">Name</span>
@@ -626,8 +561,16 @@ export function ProjectsOverview() {
                         <p className="mt-1 text-xs text-red-500 max-w-xs">
                             {loadError}
                         </p>
+                        <PillButton
+                            tone="black"
+                            size="sm"
+                            onClick={retry}
+                            className="mt-4 px-3"
+                        >
+                            Try again
+                        </PillButton>
                     </TableEmptyState>
-                ) : filtered.length === 0 ? (
+                ) : visibleProjects.length === 0 ? (
                     <TableEmptyState>
                         {activeFilter === "all" || activeFilter === "mine" ? (
                             <>
@@ -658,7 +601,7 @@ export function ProjectsOverview() {
                     </TableEmptyState>
                 ) : (
                     <TableBody>
-                        {filtered.map((project) => {
+                        {visibleProjects.map((project) => {
                             return (
                             <TableRow
                                 key={project.id}
@@ -763,6 +706,14 @@ export function ProjectsOverview() {
                         })}
                     </TableBody>
                 )}
+                <TableLoadMoreRow
+                    loading={effectiveLoading}
+                    hasMore={hasMore}
+                    itemCount={visibleProjects.length}
+                    loadingMore={loadingMore}
+                    hasError={!!loadMoreError}
+                    onLoadMore={() => void loadMore()}
+                />
             </TableScrollArea>
 
             <NewProjectModal
@@ -790,6 +741,14 @@ export function ProjectsOverview() {
                 open={!!ownerOnlyAction}
                 action={ownerOnlyAction ?? undefined}
                 onClose={() => setOwnerOnlyAction(null)}
+            />
+            <ConfirmPopup
+                open={confirmDeleteAllOpen && selectedIds.length > 0}
+                title="Delete all selected projects?"
+                message={`This will permanently delete every selected project you own, including selected projects not currently shown. Every file within those projects will also be deleted. Shared projects you do not own will be skipped. ${selectedIds.length} projects are selected.`}
+                confirmLabel="Delete"
+                onCancel={() => setConfirmDeleteAllOpen(false)}
+                onConfirm={() => void handleDeleteSelected()}
             />
         </div>
     );

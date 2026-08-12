@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { Document, Workflow } from "../shared/types";
-import { createTabularReview } from "@/app/lib/mikeApi";
+import { createTabularReview, listWorkflows } from "@/app/lib/mikeApi";
 import { useRouter } from "next/navigation";
 import { useDirectoryData } from "../shared/useDirectoryData";
 import { FileDirectory } from "../shared/FileDirectory";
@@ -16,7 +16,6 @@ import { WorkflowPickerContent } from "./WorkflowPickerContent";
 import { workflowDetailPath } from "./workflowRoutes";
 
 interface Props {
-    workflows: Workflow[];
     workflow: Workflow | null;
     onClose: () => void;
     skipSelect?: boolean;
@@ -38,24 +37,55 @@ function SelectedWorkflowSummary({ workflow }: { workflow: Workflow }) {
 // ---------------------------------------------------------------------------
 // UseWorkflowModal
 // ---------------------------------------------------------------------------
-export function UseWorkflowModal({ workflows, workflow, onClose, skipSelect = false }: Props) {
+export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Props) {
     const [screen, setScreen] = useState<"select" | "details" | "documents">("select");
     const [selected, setSelected] = useState<Workflow | null>(workflow);
     const [listSearch, setListSearch] = useState("");
+    // Self-fetched rather than received from the parent's (now paginated,
+    // partial) workflow list — mirrors WorkflowPickerModal.tsx's existing
+    // independent fetch pattern. Merges both types since this modal's
+    // "switch workflow" screen supports any workflow, unlike
+    // WorkflowPickerModal which is always scoped to one type.
+    const [pickerWorkflows, setPickerWorkflows] = useState<Workflow[]>([]);
+
+    useEffect(() => {
+        if (!workflow) return;
+        let cancelled = false;
+        listWorkflows()
+            .then((workflows) => {
+                if (cancelled) return;
+                setPickerWorkflows(workflows);
+                const fullSelected = workflows.find((candidate) => candidate.id === workflow.id);
+                if (fullSelected) setSelected(fullSelected);
+            })
+            .catch(() => {
+                if (!cancelled) setPickerWorkflows([]);
+            });
+        return () => {
+            cancelled = true;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [workflow?.id]);
 
     // Configure screen state
     const [inProject, setInProject] = useState(false);
-    const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
-        null,
-    );
+    const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
     const [selectedDocuments, setSelectedDocuments] = useState<Document[]>([]);
     const [assistantPrompt, setAssistantPrompt] = useState("");
     const [saving, setSaving] = useState(false);
 
     const router = useRouter();
     const { saveChat, setNewChatMessages } = useChatHistoryContext();
-    const { loading: dirLoading, projects } = useDirectoryData(
-        screen === "details",
+    const {
+        loading: dirLoading,
+        projects,
+        loadProjectLevel,
+        loadedProjectLevels,
+        loadingProjectLevels,
+        projectDocumentsHasMoreByLevel,
+        loadMoreProjectDocuments,
+    } = useDirectoryData(
+        screen === "details" || screen === "documents",
         "projects",
     );
 
@@ -67,7 +97,7 @@ export function UseWorkflowModal({ workflows, workflow, onClose, skipSelect = fa
         } else {
             setSelected(null);
         }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [workflow?.id]);
 
     // Reset configure state on back
@@ -119,11 +149,7 @@ export function UseWorkflowModal({ workflows, workflow, onClose, skipSelect = fa
                 },
             ]);
             handleClose();
-            router.push(
-                projectId
-                    ? `/projects/${projectId}/assistant/chat/${chatId}`
-                    : `/assistant/chat/${chatId}`,
-            );
+            router.push(projectId ? `/projects/${projectId}/assistant/chat/${chatId}` : `/assistant/chat/${chatId}`);
         } finally {
             setSaving(false);
         }
@@ -144,9 +170,7 @@ export function UseWorkflowModal({ workflows, workflow, onClose, skipSelect = fa
             });
             handleClose();
             router.push(
-                projectId
-                    ? `/projects/${projectId}/tabular-reviews/${review.id}`
-                    : `/tabular-reviews/${review.id}`,
+                projectId ? `/projects/${projectId}/tabular-reviews/${review.id}` : `/tabular-reviews/${review.id}`,
             );
         } finally {
             setSaving(false);
@@ -157,9 +181,7 @@ export function UseWorkflowModal({ workflows, workflow, onClose, skipSelect = fa
     const projectDocs = selectedProject?.documents ?? [];
     const projectOptions = projects.map((project) => ({
         value: project.id,
-        label:
-            project.name +
-            (project.cm_number ? ` (#${project.cm_number})` : ""),
+        label: project.name + (project.cm_number ? ` (#${project.cm_number})` : ""),
     }));
     const location = inProject ? "project" : "workspace";
     const locationOptions =
@@ -215,15 +237,15 @@ export function UseWorkflowModal({ workflows, workflow, onClose, skipSelect = fa
                       }
                     : screen === "details"
                       ? {
-                          label: "Back",
-                          onClick: () => setScreen("select"),
-                          disabled: saving,
-                      }
+                            label: "Back",
+                            onClick: () => setScreen("select"),
+                            disabled: saving,
+                        }
                       : {
-                          label: "Back",
-                          onClick: () => setScreen("details"),
-                          disabled: saving,
-                      }
+                            label: "Back",
+                            onClick: () => setScreen("details"),
+                            disabled: saving,
+                        }
             }
             primaryAction={
                 screen === "select"
@@ -236,30 +258,30 @@ export function UseWorkflowModal({ workflows, workflow, onClose, skipSelect = fa
                             label: "Next",
                             onClick: () => setScreen("documents"),
                             disabled:
-                                saving || (inProject && !selectedProjectId),
-                        }
-                    : wf.metadata.type === "assistant"
-                      ? {
-                            label: saving ? "Starting…" : "Start Chat",
-                            onClick: handleStartChat,
-                            disabled:
-                                saving || (inProject && !selectedProjectId),
-                        }
-                      : {
-                            label: saving ? "Creating…" : "Create Review",
-                            onClick: handleCreateReview,
-                            disabled:
                                 saving ||
-                                selectedDocuments.length === 0 ||
-                                (inProject && !selectedProjectId),
+                                (inProject &&
+                                    (!selectedProjectId ||
+                                        !loadedProjectLevels.has(`${selectedProjectId}:root`) ||
+                                        loadingProjectLevels.has(`${selectedProjectId}:root`))),
                         }
+                      : wf.metadata.type === "assistant"
+                        ? {
+                              label: saving ? "Starting…" : "Start Chat",
+                              onClick: handleStartChat,
+                              disabled: saving || (inProject && !selectedProjectId),
+                          }
+                        : {
+                              label: saving ? "Creating…" : "Create Review",
+                              onClick: handleCreateReview,
+                              disabled: saving || selectedDocuments.length === 0 || (inProject && !selectedProjectId),
+                          }
             }
             cancelAction={false}
         >
             {/* ── SELECT SCREEN ── */}
             {screen === "select" && (
                 <WorkflowPickerContent
-                    workflows={workflows}
+                    workflows={pickerWorkflows}
                     selected={wf}
                     onSelect={(next) => {
                         if (next) setSelected(next);
@@ -294,9 +316,7 @@ export function UseWorkflowModal({ workflows, workflow, onClose, skipSelect = fa
 
                         {inProject && (
                             <div>
-                                <ModalFieldLabel htmlFor="workflow-project">
-                                    Project
-                                </ModalFieldLabel>
+                                <ModalFieldLabel htmlFor="workflow-project">Project</ModalFieldLabel>
                                 <ModalSelect
                                     id="workflow-project"
                                     value={selectedProjectId ?? ""}
@@ -304,13 +324,16 @@ export function UseWorkflowModal({ workflows, workflow, onClose, skipSelect = fa
                                     onChange={(value) => {
                                         setSelectedProjectId(value || null);
                                         setSelectedDocuments([]);
+                                        if (value) {
+                                            void loadProjectLevel(value, null);
+                                        }
                                     }}
                                     placeholder={
                                         dirLoading
                                             ? "Loading projects..."
                                             : projects.length
-                                            ? "Select project..."
-                                            : "No projects found"
+                                              ? "Select project..."
+                                              : "No projects found"
                                     }
                                     disabled={dirLoading || projects.length === 0}
                                 />
@@ -325,9 +348,7 @@ export function UseWorkflowModal({ workflows, workflow, onClose, skipSelect = fa
                                 <ModalTextarea
                                     id="workflow-additional-message"
                                     value={assistantPrompt}
-                                    onChange={(e) =>
-                                        setAssistantPrompt(e.target.value)
-                                    }
+                                    onChange={(e) => setAssistantPrompt(e.target.value)}
                                     placeholder="Add any additional instructions..."
                                     rows={4}
                                 />
@@ -343,12 +364,78 @@ export function UseWorkflowModal({ workflows, workflow, onClose, skipSelect = fa
                     <div className="flex min-h-0 flex-1 flex-col">
                         <FileDirectory
                             documents={inProject ? projectDocs : undefined}
-                            folders={
-                                inProject ? selectedProject?.folders : undefined
-                            }
+                            folders={inProject ? selectedProject?.folders : undefined}
                             selectedDocuments={selectedDocuments}
                             onChange={setSelectedDocuments}
                             showTabs={!inProject}
+                            onExpandFolder={
+                                inProject && selectedProjectId
+                                    ? (folderId) => loadProjectLevel(selectedProjectId, folderId)
+                                    : undefined
+                            }
+                            documentsHasMoreByFolder={
+                                inProject && selectedProjectId
+                                    ? Object.fromEntries(
+                                          Object.entries(projectDocumentsHasMoreByLevel).flatMap(([key, value]) => {
+                                              const prefix = `${selectedProjectId}:`;
+                                              return key.startsWith(prefix) ? [[key.slice(prefix.length), value]] : [];
+                                          }),
+                                      )
+                                    : undefined
+                            }
+                            loadingFolderIds={
+                                inProject && selectedProjectId
+                                    ? new Set(
+                                          [...loadingProjectLevels]
+                                              .filter(
+                                                  (key) =>
+                                                      key.startsWith(`${selectedProjectId}:`) &&
+                                                      !key.startsWith("more:"),
+                                              )
+                                              .map((key) => key.slice(selectedProjectId.length + 1)),
+                                      )
+                                    : undefined
+                            }
+                            loadedFolderIds={
+                                inProject && selectedProjectId
+                                    ? new Set(
+                                          [...loadedProjectLevels]
+                                              .filter((key) => key.startsWith(`${selectedProjectId}:`))
+                                              .map((key) => key.slice(selectedProjectId.length + 1)),
+                                      )
+                                    : undefined
+                            }
+                            loadingMoreFolderIds={
+                                inProject && selectedProjectId
+                                    ? new Set(
+                                          [...loadingProjectLevels]
+                                              .filter((key) => key.startsWith(`more:${selectedProjectId}:`))
+                                              .map((key) => key.slice(`more:${selectedProjectId}:`.length)),
+                                      )
+                                    : undefined
+                            }
+                            onLoadMoreFolderDocuments={
+                                inProject && selectedProjectId
+                                    ? (folderId) => loadMoreProjectDocuments(selectedProjectId, folderId)
+                                    : undefined
+                            }
+                            rootDocumentsHasMore={
+                                inProject && selectedProjectId
+                                    ? !!projectDocumentsHasMoreByLevel[`${selectedProjectId}:root`]
+                                    : false
+                            }
+                            loadingMoreRootDocuments={
+                                !!(
+                                    inProject &&
+                                    selectedProjectId &&
+                                    loadingProjectLevels.has(`more:${selectedProjectId}:root`)
+                                )
+                            }
+                            onLoadMoreRootDocuments={
+                                inProject && selectedProjectId
+                                    ? () => loadMoreProjectDocuments(selectedProjectId, null)
+                                    : undefined
+                            }
                         />
                     </div>
                 </div>

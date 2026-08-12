@@ -170,6 +170,135 @@ export async function listProjects(options?: {
     return apiRequest<Project[]>(`/projects${query}`);
 }
 
+// Paginated overview sibling of listProjects(), used by ProjectsOverview.tsx.
+// Deliberately a separate function, not an overload of listProjects — the
+// backend route decides whether to paginate based on whether any of these
+// query params are present at all, so listProjects() must keep sending none
+// of them (legacy project pickers still need the full unpaginated list).
+export async function listProjectsPage(pagination?: {
+    limit?: number;
+    offset?: number;
+    search?: string;
+    sortKey?: string;
+    sortDirection?: "asc" | "desc";
+    scope?: "all" | "mine" | "shared";
+    practice?: string;
+    ownerUserId?: string;
+    signal?: AbortSignal;
+}): Promise<Project[]> {
+    const params = new URLSearchParams();
+    if (pagination?.limit) params.set("limit", String(pagination.limit));
+    if (pagination?.offset) params.set("offset", String(pagination.offset));
+    if (pagination?.search) params.set("search", pagination.search);
+    if (pagination?.sortKey) params.set("sort_key", pagination.sortKey);
+  if (pagination?.sortDirection)
+    params.set("sort_direction", pagination.sortDirection);
+    if (pagination?.scope && pagination.scope !== "all")
+        params.set("scope", pagination.scope);
+    if (pagination?.practice) params.set("practice", pagination.practice);
+  if (pagination?.ownerUserId)
+    params.set("owner_user_id", pagination.ownerUserId);
+
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    return apiRequest<Project[]>(`/projects${qs}`, {
+        signal: pagination?.signal,
+    });
+}
+
+export async function listProjectSummaries(pagination?: {
+  limit?: number;
+  offset?: number;
+  signal?: AbortSignal;
+}): Promise<Project[]> {
+  const params = new URLSearchParams();
+  if (pagination?.limit != null) params.set("limit", String(pagination.limit));
+  if (pagination?.offset != null)
+    params.set("offset", String(pagination.offset));
+  params.set("view", "summary");
+  return apiRequest<Project[]>(`/projects?${params.toString()}`, {
+    signal: pagination?.signal,
+  });
+}
+
+export interface ProjectDirectoryLevel {
+  documents: Document[];
+  folders: Folder[];
+  documentsHasMore: boolean;
+}
+
+export async function getProjectDirectoryLevel(
+  projectId: string,
+  options?: {
+    parentFolderId?: string | null;
+    limit?: number;
+    offset?: number;
+    signal?: AbortSignal;
+  },
+): Promise<ProjectDirectoryLevel> {
+  const params = new URLSearchParams();
+  if (options?.parentFolderId)
+    params.set("parent_folder_id", options.parentFolderId);
+  if (options?.limit != null) params.set("limit", String(options.limit));
+  if (options?.offset != null) params.set("offset", String(options.offset));
+  const query = params.toString();
+  return apiRequest<ProjectDirectoryLevel>(
+    `/projects/${projectId}/directory${query ? `?${query}` : ""}`,
+    {
+      signal: options?.signal,
+    },
+  );
+}
+
+export async function searchProjectDirectory(options: {
+  search: string;
+  limit?: number;
+  offset?: number;
+  signal?: AbortSignal;
+}): Promise<Project[]> {
+  const params = new URLSearchParams({
+    view: "directory-search",
+    search: options.search,
+  });
+  if (options.limit != null) params.set("limit", String(options.limit));
+  if (options.offset != null) params.set("offset", String(options.offset));
+  return apiRequest<Project[]>(`/projects?${params}`, {
+    signal: options.signal,
+  });
+}
+
+export async function listProjectIds(options?: {
+    search?: string;
+    scope?: "all" | "mine" | "shared";
+    practice?: string;
+    ownerUserId?: string;
+    signal?: AbortSignal;
+}): Promise<{ id: string; user_id: string }[]> {
+    const params = new URLSearchParams();
+    if (options?.search) params.set("search", options.search);
+  if (options?.scope && options.scope !== "all")
+    params.set("scope", options.scope);
+    if (options?.practice) params.set("practice", options.practice);
+    if (options?.ownerUserId) params.set("owner_user_id", options.ownerUserId);
+
+    const qs = params.toString() ? `?${params.toString()}` : "";
+  return apiRequest<{ id: string; user_id: string }[]>(`/projects/ids${qs}`, {
+    signal: options?.signal,
+  });
+}
+
+export interface ProjectFilterOptions {
+  practices: string[];
+  owners: { value: string; label: string }[];
+}
+
+export async function getProjectFilterOptions(
+  signal?: AbortSignal,
+): Promise<ProjectFilterOptions> {
+  return apiRequest<ProjectFilterOptions>("/projects/filter-options", {
+    signal,
+  });
+}
+
 export async function createProject(
     name: string,
     cm_number?: string,
@@ -435,9 +564,7 @@ export async function listMcpConnectors(): Promise<McpConnectorSummary[]> {
 export async function getMcpConnector(
     connectorId: string,
 ): Promise<McpConnectorSummary> {
-    return apiRequest<McpConnectorSummary>(
-        `/user/mcp-connectors/${connectorId}`,
-    );
+  return apiRequest<McpConnectorSummary>(`/user/mcp-connectors/${connectorId}`);
 }
 
 export async function createMcpConnector(payload: {
@@ -491,10 +618,10 @@ export async function refreshMcpConnectorTools(
 export async function startMcpConnectorOAuth(
     connectorId: string,
 ): Promise<{ authorizationUrl: string | null; alreadyAuthorized: boolean }> {
-    return apiRequest<{ authorizationUrl: string | null; alreadyAuthorized: boolean }>(
-        `/user/mcp-connectors/${connectorId}/oauth/start`,
-        { method: "POST" },
-    );
+  return apiRequest<{
+    authorizationUrl: string | null;
+    alreadyAuthorized: boolean;
+  }>(`/user/mcp-connectors/${connectorId}/oauth/start`, { method: "POST" });
 }
 
 export async function setMcpToolEnabled(
@@ -579,14 +706,11 @@ export async function renameProjectFolder(
     folderId: string,
     name: string,
 ): Promise<Folder> {
-    return apiRequest<Folder>(
-        `/projects/${projectId}/folders/${folderId}`,
-        {
+  return apiRequest<Folder>(`/projects/${projectId}/folders/${folderId}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ name }),
-        },
-    );
+  });
 }
 
 export async function deleteProjectFolder(
@@ -603,14 +727,11 @@ export async function moveSubfolderToFolder(
     folderId: string,
     parentFolderId: string | null,
 ): Promise<Folder> {
-    return apiRequest<Folder>(
-        `/projects/${projectId}/folders/${folderId}`,
-        {
+  return apiRequest<Folder>(`/projects/${projectId}/folders/${folderId}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ parent_folder_id: parentFolderId }),
-        },
-    );
+  });
 }
 
 export async function moveDocumentToFolder(
@@ -648,12 +769,123 @@ export type LibraryKind = "files" | "templates";
 export interface LibraryCollection {
     documents: Document[];
     folders: LibraryFolder[];
+    documentsHasMore: boolean;
+}
+
+export interface LibraryPagination {
+    limit?: number;
+    offset?: number;
+}
+
+export interface LibrarySearchParams extends LibraryPagination {
+  search?: string;
+  fileType?: string;
+  sortKey?: "name" | "type" | "size" | "version" | "created" | "updated";
+  sortDirection?: "asc" | "desc";
+  signal?: AbortSignal;
+}
+
+export interface LibrarySearchResults {
+  documents: Document[];
+  documentsHasMore: boolean;
+}
+
+function libraryPaginationQuery(pagination?: LibraryPagination): string {
+    const params = new URLSearchParams();
+    if (pagination?.limit != null) params.set("limit", String(pagination.limit));
+    if (pagination?.offset != null)
+        params.set("offset", String(pagination.offset));
+    const qs = params.toString();
+    return qs ? `?${qs}` : "";
 }
 
 export async function getLibrary(
     kind: LibraryKind,
+    pagination?: LibraryPagination,
 ): Promise<LibraryCollection> {
-    return apiRequest<LibraryCollection>(`/library/${kind}`);
+    return apiRequest<LibraryCollection>(
+        `/library/${kind}${libraryPaginationQuery(pagination)}`,
+    );
+}
+
+export async function getLibraryFolderChildren(
+    kind: LibraryKind,
+    folderId: string,
+    pagination?: LibraryPagination,
+): Promise<LibraryCollection> {
+    const params = new URLSearchParams({ parent_folder_id: folderId });
+    if (pagination?.limit != null)
+        params.set("limit", String(pagination.limit));
+    if (pagination?.offset != null)
+        params.set("offset", String(pagination.offset));
+    return apiRequest<LibraryCollection>(
+        `/library/${kind}?${params.toString()}`,
+    );
+}
+
+export async function getLibraryLevels(
+  kind: LibraryKind,
+  levels: { parentId: string | null; limit: number }[],
+): Promise<{
+  levels: Array<LibraryCollection & { parentId: string | null }>;
+}> {
+  return apiRequest(`/library/${kind}/levels`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ levels }),
+  });
+}
+
+export async function searchLibraryDocuments(
+  kind: LibraryKind,
+  options: LibrarySearchParams,
+): Promise<LibrarySearchResults> {
+  const params = new URLSearchParams({ view: "search" });
+  if (options.limit != null) params.set("limit", String(options.limit));
+  if (options.offset != null) params.set("offset", String(options.offset));
+  if (options.search) params.set("search", options.search);
+  if (options.fileType) params.set("file_type", options.fileType);
+  if (options.sortKey) params.set("sort_key", options.sortKey);
+  if (options.sortDirection)
+    params.set("sort_direction", options.sortDirection);
+  return apiRequest<LibrarySearchResults>(
+    `/library/${kind}?${params.toString()}`,
+    { signal: options.signal },
+  );
+}
+
+export async function getLibraryFilterOptions(
+  kind: LibraryKind,
+): Promise<{ fileTypes: string[] }> {
+  return apiRequest<{ fileTypes: string[] }>(`/library/${kind}/filter-options`);
+}
+
+export async function listLibraryDocumentIds(
+  kind: LibraryKind,
+  options?: { search?: string; fileType?: string; signal?: AbortSignal },
+): Promise<string[]> {
+  const params = new URLSearchParams();
+  if (options?.search) params.set("search", options.search);
+  if (options?.fileType) params.set("file_type", options.fileType);
+  const query = params.toString();
+  return apiRequest<string[]>(
+    `/library/${kind}/ids${query ? `?${query}` : ""}`,
+    { signal: options?.signal },
+  );
+}
+
+export async function bulkDeleteLibraryDocuments(
+  kind: LibraryKind,
+  ids: string[],
+): Promise<{ deletedIds: string[] }> {
+  return apiRequest<{ deletedIds: string[] }>(
+    `/library/${kind}/documents/bulk-delete`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    },
+  );
 }
 
 export async function uploadLibraryDocument(
@@ -872,21 +1104,16 @@ export async function uploadProjectDocument(
     const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
-    const response = await fetch(
-        `${API_BASE}/projects/${projectId}/documents`,
-        {
+  const response = await fetch(`${API_BASE}/projects/${projectId}/documents`, {
             method: "POST",
             headers: { ...authHeaders },
             body: form,
-        },
-    );
+  });
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<Document>;
 }
 
-export async function uploadStandaloneDocument(
-    file: File,
-): Promise<Document> {
+export async function uploadStandaloneDocument(file: File): Promise<Document> {
     const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
@@ -949,9 +1176,13 @@ export async function createChat(payload?: {
     });
 }
 
-export async function listChats(options?: { limit?: number }): Promise<Chat[]> {
+export async function listChats(options?: {
+  limit?: number;
+  offset?: number;
+}): Promise<Chat[]> {
     const params = new URLSearchParams();
     if (options?.limit) params.set("limit", String(options.limit));
+  if (options?.offset) params.set("offset", String(options.offset));
     const query = params.toString();
     return apiRequest<Chat[]>(`/chat${query ? `?${query}` : ""}`);
 }
@@ -1151,7 +1382,8 @@ export async function listTabularReviews(
     if (pagination?.offset) params.set("offset", String(pagination.offset));
     if (pagination?.search) params.set("search", pagination.search);
     if (pagination?.sortKey) params.set("sort_key", pagination.sortKey);
-    if (pagination?.sortDirection) params.set("sort_direction", pagination.sortDirection);
+  if (pagination?.sortDirection)
+    params.set("sort_direction", pagination.sortDirection);
     if (pagination?.scope && pagination.scope !== "all")
         params.set("scope", pagination.scope);
 
@@ -1430,10 +1662,110 @@ export async function clearTabularCells(
 
 type WorkflowType = Workflow["metadata"]["type"];
 
-export async function listWorkflows(
-    type: WorkflowType,
+export async function listWorkflows(type?: WorkflowType): Promise<Workflow[]> {
+  return apiRequest<Workflow[]>(
+    type ? `/workflows?type=${type}` : "/workflows",
+  );
+}
+
+// Paginated sibling of listWorkflows() used only by WorkflowList.tsx.
+// Deliberately a separate function, not an overload — the backend route
+// decides whether to paginate based on whether any of these query params
+// are present at all, so listWorkflows() must keep sending none of them
+// (every other caller — the workflow picker modal, the chat slash-menu
+// picker, UseWorkflowModal's own independent fetch — needs the exact legacy
+// response shape, system workflows included). Returns DB-backed rows only
+// (always is_system: false) — system workflows come from listSystemWorkflows.
+export async function listWorkflowsPage(pagination?: {
+    limit?: number;
+    offset?: number;
+    search?: string;
+    sortKey?: string;
+    sortDirection?: "asc" | "desc";
+    scope?: "all" | "owned" | "shared";
+    type?: WorkflowType;
+    practice?: string;
+    language?: string;
+    jurisdiction?: string;
+    signal?: AbortSignal;
+}): Promise<Workflow[]> {
+    const params = new URLSearchParams();
+    if (pagination?.type) params.set("type", pagination.type);
+    if (pagination?.limit) params.set("limit", String(pagination.limit));
+    if (pagination?.offset) params.set("offset", String(pagination.offset));
+    if (pagination?.search) params.set("search", pagination.search);
+    if (pagination?.sortKey) params.set("sort_key", pagination.sortKey);
+  if (pagination?.sortDirection)
+    params.set("sort_direction", pagination.sortDirection);
+    if (pagination?.scope && pagination.scope !== "all")
+        params.set("scope", pagination.scope);
+    if (pagination?.practice) params.set("practice", pagination.practice);
+    if (pagination?.language) params.set("language", pagination.language);
+  if (pagination?.jurisdiction)
+    params.set("jurisdiction", pagination.jurisdiction);
+
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    return apiRequest<Workflow[]>(`/workflows${qs}`, {
+        signal: pagination?.signal,
+    });
+}
+
+export async function listWorkflowIds(options?: {
+    search?: string;
+    scope?: "all" | "owned" | "shared";
+    type?: WorkflowType;
+    practice?: string;
+    language?: string;
+    jurisdiction?: string;
+    signal?: AbortSignal;
+}): Promise<{ id: string; user_id: string }[]> {
+    const params = new URLSearchParams();
+    if (options?.type) params.set("type", options.type);
+    if (options?.search) params.set("search", options.search);
+  if (options?.scope && options.scope !== "all")
+    params.set("scope", options.scope);
+    if (options?.practice) params.set("practice", options.practice);
+    if (options?.language) params.set("language", options.language);
+    if (options?.jurisdiction) params.set("jurisdiction", options.jurisdiction);
+
+    const qs = params.toString() ? `?${params.toString()}` : "";
+  return apiRequest<{ id: string; user_id: string }[]>(`/workflows/ids${qs}`, {
+    signal: options?.signal,
+  });
+}
+
+// Always-unpaginated: the static, code-generated system-workflow list (37
+// entries, zero user-data growth). Fetched once by usePaginatedWorkflows and
+// kept fully in memory rather than folded into the paginated RPC above.
+export async function listSystemWorkflows(
+    type?: WorkflowType,
 ): Promise<Workflow[]> {
-    return apiRequest<Workflow[]>(`/workflows?type=${type}`);
+    const qs = type ? `?type=${type}` : "";
+    return apiRequest<Workflow[]>(`/workflows/system${qs}`);
+}
+
+export interface WorkflowFilterOptions {
+  practices: string[];
+  languages: string[];
+  jurisdictions: string[];
+}
+
+export async function getWorkflowFilterOptions(options?: {
+  type?: WorkflowType;
+  scope?: "all" | "owned" | "shared";
+  signal?: AbortSignal;
+}): Promise<WorkflowFilterOptions> {
+  const params = new URLSearchParams();
+  if (options?.type) params.set("type", options.type);
+  if (options?.scope && options.scope !== "all")
+    params.set("scope", options.scope);
+  const query = params.toString();
+  return apiRequest<WorkflowFilterOptions>(
+    `/workflows/filter-options${query ? `?${query}` : ""}`,
+    {
+      signal: options?.signal,
+    },
+  );
 }
 
 export async function getWorkflow(workflowId: string): Promise<Workflow> {

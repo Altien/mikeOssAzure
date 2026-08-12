@@ -8,10 +8,45 @@ import {
 } from "../lib/documentVersions";
 import { singleFileUpload } from "../lib/upload";
 import { handleDocumentUpload } from "./documents";
+import { parsePaginationQuery, type PaginationParams } from "../lib/pagination";
+import { normalizeSearchTerm } from "../lib/search";
 
 export const libraryRouter = Router();
 
 type LibraryKind = "file" | "template";
+type LibraryDocumentSortKey =
+  | "name"
+  | "type"
+  | "size"
+  | "version"
+  | "created"
+  | "updated";
+
+const LIBRARY_DOCUMENT_SORT_KEYS: LibraryDocumentSortKey[] = [
+  "name",
+  "type",
+  "size",
+  "version",
+  "created",
+  "updated",
+];
+const LIBRARY_IDS_PAGE_SIZE = 1000;
+const LIBRARY_IDS_MAX_PAGES = 50;
+const LIBRARY_BULK_DELETE_BATCH_SIZE = 100;
+
+function parseLibraryDocumentSort(query: Record<string, unknown>): {
+  key: LibraryDocumentSortKey;
+  direction: "asc" | "desc";
+} {
+  const rawKey = typeof query.sort_key === "string" ? query.sort_key : null;
+  return {
+    key:
+      rawKey && LIBRARY_DOCUMENT_SORT_KEYS.includes(rawKey as LibraryDocumentSortKey)
+        ? (rawKey as LibraryDocumentSortKey)
+        : "updated",
+    direction: query.sort_direction === "asc" ? "asc" : "desc",
+  };
+}
 
 function normalizeLibraryKind(value: unknown): LibraryKind | null {
   if (value === "file" || value === "files") return "file";
@@ -48,7 +83,9 @@ async function loadLibraryFolder(
     .eq("user_id", userId)
     .eq("library_kind", kind)
     .maybeSingle();
-  return (data as { id: string; parent_folder_id: string | null } | null) ?? null;
+  return (
+    (data as { id: string; parent_folder_id: string | null } | null) ?? null
+  );
 }
 
 async function deleteLibraryDocumentsAndVersionFiles(
@@ -57,12 +94,29 @@ async function deleteLibraryDocumentsAndVersionFiles(
   kind: LibraryKind,
   documentIds: string[],
 ) {
-  if (documentIds.length === 0) return null;
+  if (documentIds.length === 0) return { error: null, deletedIds: [] };
+  let eligibleQuery = db
+    .from("documents")
+    .select("id")
+    .eq("user_id", userId)
+    .is("project_id", null);
+  eligibleQuery =
+    kind === "file"
+      ? eligibleQuery.or("library_kind.eq.file,library_kind.is.null")
+      : eligibleQuery.eq("library_kind", kind);
+  const { data: eligibleDocuments, error: eligibleError } =
+    await eligibleQuery.in("id", documentIds);
+  if (eligibleError) return { error: eligibleError, deletedIds: [] };
+  const eligibleIds = (eligibleDocuments ?? []).map(
+    (document) => document.id as string,
+  );
+  if (eligibleIds.length === 0) return { error: null, deletedIds: [] };
+
   const { data: versions, error: versionsError } = await db
     .from("document_versions")
     .select("storage_path, pdf_storage_path")
-    .in("document_id", documentIds);
-  if (versionsError) return versionsError;
+    .in("document_id", eligibleIds);
+  if (versionsError) return { error: versionsError, deletedIds: [] };
 
   const paths = new Set<string>();
   for (const version of versions ?? []) {
@@ -87,48 +141,310 @@ async function deleteLibraryDocumentsAndVersionFiles(
     kind === "file"
       ? deleteQuery.or("library_kind.eq.file,library_kind.is.null")
       : deleteQuery.eq("library_kind", kind);
-  const { error } = await deleteQuery.in("id", documentIds);
-  return error ?? null;
+  const { error } = await deleteQuery.in("id", eligibleIds);
+  return { error: error ?? null, deletedIds: error ? [] : eligibleIds };
 }
 
-// GET /library/:kind
-libraryRouter.get("/:kind", requireAuth, async (req, res) => {
-  const userId = res.locals.userId as string;
-  const kind = normalizeLibraryKind(req.params.kind);
-  if (!kind) return void res.status(404).json({ detail: "Library not found" });
-
-  const db = createServerSupabase();
+// Folders per level are assumed to stay small (organizational containers,
+// not user data that grows unbounded) and are always returned in full.
+// Documents are the part that can grow into the thousands, so only they're
+// paginated — one extra row is fetched over `limit` to detect `hasMore`
+// without a separate count query.
+async function loadLibraryLevel(
+  db: ReturnType<typeof createServerSupabase>,
+  userId: string,
+  kind: LibraryKind,
+  parentFolderId: string | null,
+  pagination: PaginationParams,
+) {
   let documentsQuery = db
     .from("documents")
     .select("*")
     .eq("user_id", userId)
     .is("project_id", null);
   documentsQuery =
+    parentFolderId === null
+      ? documentsQuery.is("library_folder_id", null)
+      : documentsQuery.eq("library_folder_id", parentFolderId);
+  documentsQuery =
     kind === "file"
       ? documentsQuery.or("library_kind.eq.file,library_kind.is.null")
       : documentsQuery.eq("library_kind", kind);
-  const [{ data: docs, error: docsError }, { data: folders, error: foldersError }] =
-    await Promise.all([
-      documentsQuery.order("created_at", { ascending: true }),
-      db
-        .from("library_folders")
-        .select("*")
-        .eq("user_id", userId)
-        .eq("library_kind", kind)
-        .order("created_at", { ascending: true }),
-    ]);
-  if (docsError) return void res.status(500).json({ detail: docsError.message });
-  if (foldersError)
-    return void res.status(500).json({ detail: foldersError.message });
+  documentsQuery = documentsQuery.range(
+    pagination.offset,
+    pagination.offset + pagination.limit,
+  );
 
-  const docsTyped = (docs ?? []).map(mapLibraryDocument) as {
+  let foldersQuery = db
+    .from("library_folders")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("library_kind", kind);
+  foldersQuery =
+    parentFolderId === null
+      ? foldersQuery.is("parent_folder_id", null)
+      : foldersQuery.eq("parent_folder_id", parentFolderId);
+
+  const [
+    { data: docs, error: docsError },
+    { data: folders, error: foldersError },
+  ] = await Promise.all([
+      documentsQuery.order("created_at", { ascending: true }),
+      foldersQuery.order("created_at", { ascending: true }),
+    ]);
+  if (docsError)
+    return {
+      error: docsError.message,
+      documents: [],
+      folders: [],
+      documentsHasMore: false,
+    };
+  if (foldersError)
+    return {
+      error: foldersError.message,
+      documents: [],
+      folders: [],
+      documentsHasMore: false,
+    };
+
+  const rawDocs = docs ?? [];
+  const documentsHasMore = rawDocs.length > pagination.limit;
+  const pageDocs = documentsHasMore
+    ? rawDocs.slice(0, pagination.limit)
+    : rawDocs;
+
+  const docsTyped = pageDocs.map(mapLibraryDocument) as {
     id: string;
     current_version_id?: string | null;
   }[];
   await attachLatestVersionNumbers(db, docsTyped);
   await attachActiveVersionPaths(db, docsTyped);
-  res.json({ documents: docsTyped, folders: folders ?? [] });
+  return {
+    error: null,
+    documents: docsTyped,
+    folders: folders ?? [],
+    documentsHasMore,
+  };
+}
+
+// GET /library/:kind
+// Directory mode is the default. Pass parent_folder_id to load one folder
+// level, or view=search for flat search/filter/sort results.
+libraryRouter.get("/:kind", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as string;
+  const kind = normalizeLibraryKind(req.params.kind);
+  if (!kind) return void res.status(404).json({ detail: "Library not found" });
+
+  const db = createServerSupabase();
+  const pagination = parsePaginationQuery(req.query as Record<string, unknown>);
+  if (req.query.view === "search") {
+    const searchTerm = normalizeSearchTerm(req.query.search);
+    const fileType =
+      normalizeSearchTerm(req.query.file_type)?.toLowerCase() ?? null;
+    const sort = parseLibraryDocumentSort(
+      req.query as Record<string, unknown>,
+    );
+    const { data, error } = await db.rpc("search_library_documents", {
+      p_user_id: userId,
+      p_library_kind: kind,
+      p_limit: pagination.limit + 1,
+      p_offset: pagination.offset,
+      p_search_term: searchTerm,
+      p_file_type: fileType,
+      p_sort_key: sort.key,
+      p_sort_direction: sort.direction,
+    });
+    if (error) return void res.status(500).json({ detail: error.message });
+
+    const rows = (data ?? []) as Record<string, unknown>[];
+    return void res.json({
+      documents: rows.slice(0, pagination.limit).map(mapLibraryDocument),
+      documentsHasMore: rows.length > pagination.limit,
+    });
+  }
+
+  const parentFolderId = normalizeSearchTerm(req.query.parent_folder_id);
+  if (parentFolderId) {
+    const folder = await loadLibraryFolder(db, userId, kind, parentFolderId);
+    if (!folder)
+      return void res.status(404).json({ detail: "Folder not found" });
+  }
+  const result = await loadLibraryLevel(
+    db,
+    userId,
+    kind,
+    parentFolderId,
+    pagination,
+  );
+  if (result.error) return void res.status(500).json({ detail: result.error });
+  res.json({
+    documents: result.documents,
+    folders: result.folders,
+    documentsHasMore: result.documentsHasMore,
+  });
 });
+
+// POST /library/:kind/levels
+// Refresh several already-open directory levels through one bounded API call.
+libraryRouter.post("/:kind/levels", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as string;
+  const kind = normalizeLibraryKind(req.params.kind);
+  if (!kind) return void res.status(404).json({ detail: "Library not found" });
+  const rawLevels: unknown[] = Array.isArray(req.body?.levels)
+    ? req.body.levels
+    : [];
+  const seen = new Set<string>();
+  const levels = rawLevels.flatMap((value: unknown) => {
+    if (!value || typeof value !== "object") return [];
+    const row = value as { parentId?: unknown; limit?: unknown };
+    const parentId = typeof row.parentId === "string" ? row.parentId : null;
+    const key = parentId ?? "root";
+    if (seen.has(key)) return [];
+    seen.add(key);
+    const requestedLimit = Number(row.limit);
+    return [
+      {
+        parentId,
+        limit: Number.isFinite(requestedLimit)
+          ? Math.max(1, Math.min(500, Math.floor(requestedLimit)))
+          : 50,
+      },
+    ];
+  });
+  if (levels.length === 0 || levels.length > 100) {
+    return void res
+      .status(400)
+      .json({ detail: "1 to 100 levels are required" });
+  }
+
+  const db = createServerSupabase();
+  const results: Array<{
+    parentId: string | null;
+    result: Awaited<ReturnType<typeof loadLibraryLevel>>;
+  }> = new Array(levels.length);
+  let nextLevelIndex = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(8, levels.length) }, async () => {
+      while (nextLevelIndex < levels.length) {
+        const index = nextLevelIndex++;
+        const level = levels[index];
+        results[index] = {
+          parentId: level.parentId,
+          result: await loadLibraryLevel(db, userId, kind, level.parentId, {
+            limit: level.limit,
+            offset: 0,
+          }),
+        };
+      }
+    }),
+  );
+  const failed = results.find(({ result }) => result.error);
+  if (failed?.result.error) {
+    return void res.status(500).json({ detail: failed.result.error });
+  }
+  res.json({
+    levels: results.map(({ parentId, result }) => ({
+      parentId,
+      documents: result.documents,
+      folders: result.folders,
+      documentsHasMore: result.documentsHasMore,
+    })),
+  });
+});
+
+// GET /library/:kind/filter-options
+libraryRouter.get("/:kind/filter-options", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as string;
+  const kind = normalizeLibraryKind(req.params.kind);
+  if (!kind) return void res.status(404).json({ detail: "Library not found" });
+
+  const db = createServerSupabase();
+  const { data, error } = await db.rpc("get_library_filter_options", {
+    p_user_id: userId,
+    p_library_kind: kind,
+  });
+  if (error) return void res.status(500).json({ detail: error.message });
+  const row = (data?.[0] ?? {}) as { file_types?: unknown };
+  res.json({
+    fileTypes: Array.isArray(row.file_types)
+      ? row.file_types.filter(
+          (value): value is string => typeof value === "string",
+        )
+      : [],
+  });
+});
+
+// GET /library/:kind/ids
+// Complete ID-only result set for select-all across unloaded pages/folders.
+libraryRouter.get("/:kind/ids", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as string;
+  const kind = normalizeLibraryKind(req.params.kind);
+  if (!kind) return void res.status(404).json({ detail: "Library not found" });
+
+  const db = createServerSupabase();
+  const searchTerm = normalizeSearchTerm(req.query.search);
+  const fileType = normalizeSearchTerm(req.query.file_type)?.toLowerCase() ?? null;
+  const ids: string[] = [];
+  let offset = 0;
+  for (let page = 0; page < LIBRARY_IDS_MAX_PAGES; page++) {
+    const { data, error } = await db.rpc("get_library_document_ids", {
+      p_user_id: userId,
+      p_library_kind: kind,
+      p_search_term: searchTerm,
+      p_file_type: fileType,
+      p_limit: LIBRARY_IDS_PAGE_SIZE,
+      p_offset: offset,
+    });
+    if (error) return void res.status(500).json({ detail: error.message });
+    const rows = (data ?? []) as { id: string }[];
+    if (rows.length === 0) break;
+    ids.push(...rows.map((row) => row.id));
+    offset += rows.length;
+  }
+  res.json(ids);
+});
+
+// POST /library/:kind/documents/bulk-delete
+// One bounded backend operation replaces an unbounded browser request burst.
+libraryRouter.post(
+  "/:kind/documents/bulk-delete",
+  requireAuth,
+  async (req, res) => {
+    const userId = res.locals.userId as string;
+    const kind = normalizeLibraryKind(req.params.kind);
+    if (!kind)
+      return void res.status(404).json({ detail: "Library not found" });
+    const ids: string[] = Array.from(
+      new Set<string>(
+        (Array.isArray(req.body?.ids) ? req.body.ids : []).filter(
+          (id: unknown): id is string =>
+            typeof id === "string" && id.length > 0,
+        ),
+      ),
+    );
+    if (ids.length === 0) return void res.json({ deletedIds: [] });
+
+    const db = createServerSupabase();
+    const deletedIds: string[] = [];
+    for (
+      let offset = 0;
+      offset < ids.length;
+      offset += LIBRARY_BULK_DELETE_BATCH_SIZE
+    ) {
+      const batch = ids.slice(offset, offset + LIBRARY_BULK_DELETE_BATCH_SIZE);
+      const result = await deleteLibraryDocumentsAndVersionFiles(
+        db,
+        userId,
+        kind,
+        batch,
+      );
+      if (result.error)
+        return void res.status(500).json({ detail: result.error.message });
+      deletedIds.push(...result.deletedIds);
+    }
+    res.json({ deletedIds });
+  },
+);
 
 // POST /library/:kind/documents
 libraryRouter.post(
@@ -138,7 +454,8 @@ libraryRouter.post(
   async (req, res) => {
     const userId = res.locals.userId as string;
     const kind = normalizeLibraryKind(req.params.kind);
-    if (!kind) return void res.status(404).json({ detail: "Library not found" });
+    if (!kind)
+      return void res.status(404).json({ detail: "Library not found" });
     const db = createServerSupabase();
     await handleDocumentUpload(req, res, userId, null, db, {
       libraryKind: kind,
@@ -181,16 +498,24 @@ libraryRouter.post("/:kind/folders", requireAuth, async (req, res) => {
 });
 
 // PATCH /library/:kind/folders/:folderId
-libraryRouter.patch("/:kind/folders/:folderId", requireAuth, async (req, res) => {
+libraryRouter.patch(
+  "/:kind/folders/:folderId",
+  requireAuth,
+  async (req, res) => {
   const userId = res.locals.userId as string;
   const kind = normalizeLibraryKind(req.params.kind);
-  if (!kind) return void res.status(404).json({ detail: "Library not found" });
+    if (!kind)
+      return void res.status(404).json({ detail: "Library not found" });
 
   const { folderId } = req.params;
-  const body = req.body as { name?: string; parent_folder_id?: string | null };
+    const body = req.body as {
+      name?: string;
+      parent_folder_id?: string | null;
+    };
   const db = createServerSupabase();
   const folder = await loadLibraryFolder(db, userId, kind, folderId);
-  if (!folder) return void res.status(404).json({ detail: "Folder not found" });
+    if (!folder)
+      return void res.status(404).json({ detail: "Folder not found" });
 
   const updates: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
@@ -212,7 +537,9 @@ libraryRouter.patch("/:kind/folders/:folderId", requireAuth, async (req, res) =>
         }
         const parent = await loadLibraryFolder(db, userId, kind, cur);
         if (!parent)
-          return void res.status(404).json({ detail: "Parent folder not found" });
+            return void res
+              .status(404)
+              .json({ detail: "Parent folder not found" });
         cur = parent.parent_folder_id ?? null;
       }
     }
@@ -230,13 +557,18 @@ libraryRouter.patch("/:kind/folders/:folderId", requireAuth, async (req, res) =>
   if (error || !data)
     return void res.status(404).json({ detail: "Folder not found" });
   res.json(data);
-});
+  },
+);
 
 // DELETE /library/:kind/folders/:folderId
-libraryRouter.delete("/:kind/folders/:folderId", requireAuth, async (req, res) => {
+libraryRouter.delete(
+  "/:kind/folders/:folderId",
+  requireAuth,
+  async (req, res) => {
   const userId = res.locals.userId as string;
   const kind = normalizeLibraryKind(req.params.kind);
-  if (!kind) return void res.status(404).json({ detail: "Library not found" });
+    if (!kind)
+      return void res.status(404).json({ detail: "Library not found" });
 
   const { folderId } = req.params;
   const db = createServerSupabase();
@@ -282,17 +614,20 @@ libraryRouter.delete("/:kind/folders/:folderId", requireAuth, async (req, res) =
     "library_folder_id",
     [...folderIds],
   );
-  if (docsError) return void res.status(500).json({ detail: docsError.message });
+    if (docsError)
+      return void res.status(500).json({ detail: docsError.message });
 
   const docIds = (docs ?? []).map((doc) => doc.id as string);
-  const deleteDocsError = await deleteLibraryDocumentsAndVersionFiles(
+    const deleteDocsResult = await deleteLibraryDocumentsAndVersionFiles(
     db,
     userId,
     kind,
     docIds,
   );
-  if (deleteDocsError)
-    return void res.status(500).json({ detail: deleteDocsError.message });
+    if (deleteDocsResult.error)
+      return void res
+        .status(500)
+        .json({ detail: deleteDocsResult.error.message });
 
   const { error } = await db
     .from("library_folders")
@@ -302,7 +637,8 @@ libraryRouter.delete("/:kind/folders/:folderId", requireAuth, async (req, res) =
     .eq("library_kind", kind);
   if (error) return void res.status(500).json({ detail: error.message });
   res.status(204).send();
-});
+  },
+);
 
 // PATCH /library/:kind/documents/:documentId/folder
 libraryRouter.patch(
@@ -311,7 +647,8 @@ libraryRouter.patch(
   async (req, res) => {
     const userId = res.locals.userId as string;
     const kind = normalizeLibraryKind(req.params.kind);
-    if (!kind) return void res.status(404).json({ detail: "Library not found" });
+    if (!kind)
+      return void res.status(404).json({ detail: "Library not found" });
 
     const { documentId } = req.params;
     const { folder_id } = req.body as { folder_id: string | null };
@@ -336,9 +673,7 @@ libraryRouter.patch(
       kind === "file"
         ? moveQuery.or("library_kind.eq.file,library_kind.is.null")
         : moveQuery.eq("library_kind", kind);
-    const { data, error } = await moveQuery
-      .select("*")
-      .single();
+    const { data, error } = await moveQuery.select("*").single();
     if (error || !data)
       return void res.status(404).json({ detail: "Document not found" });
     res.json(mapLibraryDocument(data));
@@ -352,7 +687,8 @@ libraryRouter.patch(
   async (req, res) => {
     const userId = res.locals.userId as string;
     const kind = normalizeLibraryKind(req.params.kind);
-    if (!kind) return void res.status(404).json({ detail: "Library not found" });
+    if (!kind)
+      return void res.status(404).json({ detail: "Library not found" });
 
     const { documentId } = req.params;
     const db = createServerSupabase();
@@ -367,7 +703,8 @@ libraryRouter.patch(
         ? docQuery.or("library_kind.eq.file,library_kind.is.null")
         : docQuery.eq("library_kind", kind);
     const { data: doc } = await docQuery.single();
-    if (!doc) return void res.status(404).json({ detail: "Document not found" });
+    if (!doc)
+      return void res.status(404).json({ detail: "Document not found" });
 
     const active = doc.current_version_id
       ? await db
@@ -395,9 +732,7 @@ libraryRouter.patch(
       kind === "file"
         ? updateQuery.or("library_kind.eq.file,library_kind.is.null")
         : updateQuery.eq("library_kind", kind);
-    const { data: updated, error } = await updateQuery
-      .select("*")
-      .single();
+    const { data: updated, error } = await updateQuery.select("*").single();
     if (error || !updated)
       return void res.status(404).json({ detail: "Document not found" });
 

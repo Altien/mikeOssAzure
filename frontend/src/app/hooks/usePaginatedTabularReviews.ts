@@ -8,25 +8,13 @@ import {
 } from "react";
 import type { TabularReview } from "@/app/components/shared/types";
 import { listTabularReviewIds, listTabularReviews } from "@/app/lib/mikeApi";
+import { appendUniqueRows, paginationError, splitOverfetchedPage } from "@/app/lib/paginatedRows";
 
 export type TabularReviewSortKey = "name" | "columns" | "documents" | "created";
 export type TabularReviewSortDirection = "asc" | "desc";
 export type TabularReviewScope = "all" | "in-project" | "standalone";
 
 const PAGE_SIZE = 30;
-
-function pageRows(rows: TabularReview[]) {
-    return {
-        hasMore: rows.length > PAGE_SIZE,
-        rows: rows.slice(0, PAGE_SIZE),
-    };
-}
-
-function asError(value: unknown) {
-    return value instanceof Error
-        ? value
-        : new Error("Unable to load tabular reviews");
-}
 
 export function usePaginatedTabularReviews(options: {
     projectId?: string;
@@ -69,14 +57,11 @@ export function usePaginatedTabularReviews(options: {
     }>({ queryKey, ids: [] });
     const selectedReviewIds =
         selection.queryKey === queryKey ? selection.ids : [];
-    const setSelectedReviewIds: Dispatch<SetStateAction<string[]>> =
-        useCallback(
+  const setSelectedReviewIds: Dispatch<SetStateAction<string[]>> = useCallback(
             (value) => {
                 setSelection((current) => {
-                    const currentIds =
-                        current.queryKey === queryKey ? current.ids : [];
-                    const ids =
-                        typeof value === "function" ? value(currentIds) : value;
+        const currentIds = current.queryKey === queryKey ? current.ids : [];
+        const ids = typeof value === "function" ? value(currentIds) : value;
                     return { queryKey, ids };
                 });
             },
@@ -123,7 +108,7 @@ export function usePaginatedTabularReviews(options: {
         })
             .then((rows) => {
                 if (requestVersion !== requestVersionRef.current) return;
-                const firstPage = pageRows(rows);
+        const firstPage = splitOverfetchedPage(rows, PAGE_SIZE);
                 setReviews(firstPage.rows);
                 setHasMore(firstPage.hasMore);
             })
@@ -134,7 +119,7 @@ export function usePaginatedTabularReviews(options: {
                 )
                     return;
                 console.error("[tabular reviews] failed to load", error);
-                setError(asError(error));
+        setError(paginationError(error, "Unable to load tabular reviews"));
                 setHasMore(false);
             })
             .finally(() => {
@@ -174,16 +159,8 @@ export function usePaginatedTabularReviews(options: {
             });
             if (requestVersion !== requestVersionRef.current) return;
 
-            const nextPage = pageRows(rows);
-            setReviews((current) => {
-                const existingIds = new Set(current.map((review) => review.id));
-                return [
-                    ...current,
-                    ...nextPage.rows.filter(
-                        (review) => !existingIds.has(review.id),
-                    ),
-                ];
-            });
+      const nextPage = splitOverfetchedPage(rows, PAGE_SIZE);
+      setReviews((current) => appendUniqueRows(current, nextPage.rows));
             setHasMore(nextPage.hasMore);
         } catch (error) {
             if (
@@ -191,7 +168,9 @@ export function usePaginatedTabularReviews(options: {
                 requestVersion === requestVersionRef.current
             ) {
                 console.error("[tabular reviews] failed to load more", error);
-                setLoadMoreError(asError(error));
+        setLoadMoreError(
+          paginationError(error, "Unable to load tabular reviews"),
+        );
             }
         } finally {
             if (
@@ -240,9 +219,7 @@ export function usePaginatedTabularReviews(options: {
 
             setSelectAllOwners({
                 queryKey,
-                ownerById: Object.fromEntries(
-                    rows.map((row) => [row.id, row.user_id]),
-                ),
+        ownerById: Object.fromEntries(rows.map((row) => [row.id, row.user_id])),
             });
             setSelectedReviewIds(rows.map((row) => row.id));
         } finally {

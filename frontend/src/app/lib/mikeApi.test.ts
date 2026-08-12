@@ -1,11 +1,4 @@
-import {
-    afterEach,
-    beforeEach,
-    describe,
-    expect,
-    it,
-    vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssistantEvent, Chat } from "@/app/components/shared/types";
 
 // mikeApi resolves the auth header through the module-level Supabase client,
@@ -19,43 +12,115 @@ vi.mock("@/app/lib/supabase", () => ({
 
 import {
     MikeApiError,
+    addDocumentToProject,
     clearTabularCells,
+    copyDocumentVersionFromDocument,
     createChat,
     createLibraryFolder,
+    createMcpConnector,
+    createProject,
     createProjectFolder,
     createTabularReview,
+    createWorkflow,
+    deleteAccount,
     deleteAllChats,
+    deleteAllProjects,
+    deleteAllTabularReviews,
+    deleteChat,
+    deleteDocument,
+    deleteDocumentVersion,
+    deleteLibraryFolder,
+    deleteMcpConnector,
+    deleteProject,
+    deleteProjectFolder,
     deleteTabularChat,
     deleteTabularReview,
+    deleteWorkflow,
+    deleteWorkflowShare,
     downloadDocumentsZip,
     exportAccountData,
     exportAuditHistory,
+    exportChatData,
+    exportTabularReviewsData,
+    generateChatTitle,
     generateTabularColumnPrompt,
+    getApiKeyStatus,
     getChat,
     getAuditHistory,
+    getCourtlistenerOpinions,
     getDocumentUrl,
+    getLibrary,
+    getLibraryLevels,
+  getLibraryFilterOptions,
+    getLibraryFolderChildren,
+    getMcpConnector,
+    getOllamaModels,
+    getProject,
+    getProjectDirectoryLevel,
+  getProjectFilterOptions,
+    getProjectPeople,
     getTabularChatMessages,
     getTabularChats,
+    getTabularReview,
+    getTabularReviewPeople,
     getUserProfile,
+    getWorkflow,
+  getWorkflowFilterOptions,
     hideWorkflow,
     isMfaRequiredError,
     listChats,
+    listDocumentVersions,
     listHiddenWorkflows,
+    listLibraryDocumentIds,
+    listMcpConnectors,
+    listProjectChats,
+    listProjectIds,
+  listProjectSummaries,
     listProjects,
+    listProjectsPage,
+    listStandaloneDocuments,
+    listSystemWorkflows,
     listTabularReviewIds,
     listTabularReviews,
+    listWorkflowIds,
+    listWorkflowShares,
     listWorkflows,
+    listWorkflowsPage,
     lookupUserByEmail,
     mapTRMessages,
+    moveDocumentToFolder,
+    moveLibraryDocument,
+    moveLibraryFolder,
+    moveSubfolderToFolder,
+    openSourceWorkflow,
+    refreshMcpConnectorTools,
     regenerateTabularCell,
+    renameChat,
+    renameDocumentVersion,
+    renameLibraryDocument,
+    renameLibraryFolder,
+    renameProjectDocument,
+    renameProjectFolder,
     renameTabularChat,
     replaceDocumentVersionFile,
+  saveApiKey,
+  bulkDeleteLibraryDocuments,
+  searchProjectDirectory,
+  searchLibraryDocuments,
+    setMcpToolEnabled,
+    shareWorkflow,
+    startMcpConnectorOAuth,
     streamChat,
     streamProjectChat,
     streamTabularChat,
     streamTabularGeneration,
     unhideWorkflow,
+    updateMcpConnector,
+    updateProject,
     updateTabularReview,
+    updateUserMfaOnLogin,
+    updateUserProfile,
+    updateWorkflow,
     uploadDocumentVersion,
     uploadLibraryDocument,
     uploadProjectDocument,
@@ -206,6 +271,21 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         );
     });
 
+  // Regression guard: legacy tabular-review project pickers call
+  // listProjects() with no
+    // arguments and need every project back. The backend route decides
+    // whether to paginate purely by checking whether pagination-related
+    // query params are present at all — if listProjects() ever started
+    // sending one, those callers would silently start seeing a truncated
+    // list instead of an error.
+    it("sends no query string at all, so the backend never paginates it", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listProjects();
+
+        expect(lastFetchCall().url).toBe("http://localhost:3001/projects");
+    });
+
     it("returns undefined for 204 responses", async () => {
         fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
 
@@ -282,8 +362,10 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         );
 
         fetchMock.mockResolvedValue(jsonResponse([]));
-        await listChats({ limit: 5 });
-        expect(lastFetchCall().url).toBe("http://localhost:3001/chat?limit=5");
+    await listChats({ limit: 5, offset: 10 });
+    expect(lastFetchCall().url).toBe(
+      "http://localhost:3001/chat?limit=5&offset=10",
+    );
     });
 });
 
@@ -513,9 +595,7 @@ describe("getChat message mapping", () => {
 
 describe("mapTRMessages", () => {
     it("maps user and assistant rows including annotations", () => {
-        const events: AssistantEvent[] = [
-            { type: "content", text: "Answer" },
-        ];
+    const events: AssistantEvent[] = [{ type: "content", text: "Answer" }];
         const mapped = mapTRMessages([
             {
                 id: "m1",
@@ -623,10 +703,7 @@ describe("streamChat", () => {
     });
 
     it("returns the streaming Response body unconsumed", async () => {
-        const chunks = [
-            'data: {"type":"content_delta","text":"Hel',
-            'lo"}\n\n',
-        ];
+    const chunks = ['data: {"type":"content_delta","text":"Hel', 'lo"}\n\n'];
         fetchMock.mockResolvedValue(streamResponse(chunks));
 
         const response = await streamChat({
@@ -792,6 +869,427 @@ describe("listTabularReviewIds", () => {
     });
 });
 
+describe("listProjectsPage", () => {
+    it("requests the bare collection when no filters are given", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listProjectsPage();
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/projects");
+        expect(init.signal).toBeUndefined();
+    });
+
+    it("serializes every pagination knob and forwards the abort signal", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+        const controller = new AbortController();
+
+        await listProjectsPage({
+            limit: 30,
+            offset: 60,
+            search: "acquisitions",
+            sortKey: "files",
+            sortDirection: "desc",
+            scope: "mine",
+            practice: "Litigation",
+            ownerUserId: "user-2",
+            signal: controller.signal,
+        });
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe(
+            "http://localhost:3001/projects" +
+                "?limit=30&offset=60&search=acquisitions" +
+                "&sort_key=files&sort_direction=desc&scope=mine" +
+                "&practice=Litigation&owner_user_id=user-2",
+        );
+        expect(init.signal).toBe(controller.signal);
+    });
+
+    it('omits the scope param for "all" — the backend default', async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listProjectsPage({ scope: "all", limit: 10 });
+
+    expect(lastFetchCall().url).toBe("http://localhost:3001/projects?limit=10");
+  });
+});
+
+describe("listProjectSummaries", () => {
+  it("uses the projects collection with the summary view", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([]));
+
+    await listProjectSummaries({ limit: 11, offset: 10 });
+
+        expect(lastFetchCall().url).toBe(
+      "http://localhost:3001/projects?limit=11&offset=10&view=summary",
+        );
+    });
+});
+
+describe("searchProjectDirectory", () => {
+  it("uses the projects collection directory-search view", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([]));
+    const controller = new AbortController();
+
+    await searchProjectDirectory({
+      search: "agreement",
+      limit: 51,
+      offset: 10,
+      signal: controller.signal,
+    });
+
+    const { url, init } = lastFetchCall();
+    expect(url).toBe(
+      "http://localhost:3001/projects?view=directory-search&search=agreement&limit=51&offset=10",
+    );
+    expect(init.signal).toBe(controller.signal);
+  });
+});
+
+describe("getProjectDirectoryLevel", () => {
+  it("serializes a folder level, pagination, and abort signal", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ documents: [], folders: [], documentsHasMore: false }),
+    );
+    const controller = new AbortController();
+
+    await getProjectDirectoryLevel("p1", {
+      parentFolderId: "folder-1",
+      limit: 50,
+      offset: 100,
+      signal: controller.signal,
+    });
+
+    const { url, init } = lastFetchCall();
+    expect(url).toBe(
+      "http://localhost:3001/projects/p1/directory?parent_folder_id=folder-1&limit=50&offset=100",
+    );
+    expect(init.signal).toBe(controller.signal);
+  });
+
+  it("requests the root level without optional query parameters", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ documents: [], folders: [], documentsHasMore: false }),
+    );
+
+    await getProjectDirectoryLevel("p1");
+
+    expect(lastFetchCall().url).toBe(
+      "http://localhost:3001/projects/p1/directory",
+    );
+  });
+});
+
+describe("listProjectIds", () => {
+    it("requests the bare id list when no filters are given", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listProjectIds();
+
+        expect(lastFetchCall().url).toBe("http://localhost:3001/projects/ids");
+    });
+
+    it("scopes ids by search, scope, practice, and owner so select-all matches the visible filter", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([{ id: "p1", user_id: "u1" }]));
+        const controller = new AbortController();
+
+        const ids = await listProjectIds({
+            search: "nda",
+            scope: "mine",
+            practice: "Litigation",
+            ownerUserId: "user-2",
+            signal: controller.signal,
+        });
+
+        expect(ids).toEqual([{ id: "p1", user_id: "u1" }]);
+        const { url, init } = lastFetchCall();
+        // Select-all-then-delete deletes whatever this returns; if the query
+        // here is broader than the list query, users delete unseen projects.
+        expect(url).toBe(
+            "http://localhost:3001/projects/ids?search=nda&scope=mine" +
+                "&practice=Litigation&owner_user_id=user-2",
+        );
+        expect(init.signal).toBe(controller.signal);
+    });
+
+    it('omits the scope param for "all"', async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listProjectIds({ scope: "all" });
+
+        expect(lastFetchCall().url).toBe("http://localhost:3001/projects/ids");
+    });
+});
+
+describe("getProjectFilterOptions", () => {
+  it("loads lightweight project facets and forwards cancellation", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ practices: ["Litigation"], owners: [] }),
+    );
+    const controller = new AbortController();
+
+    await getProjectFilterOptions(controller.signal);
+
+    const { url, init } = lastFetchCall();
+    expect(url).toBe("http://localhost:3001/projects/filter-options");
+    expect(init.signal).toBe(controller.signal);
+  });
+});
+
+describe("listWorkflows", () => {
+    it("sends only the type param, never a pagination knob", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listWorkflows("assistant");
+
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/workflows?type=assistant",
+        );
+    });
+});
+
+describe("listWorkflowsPage", () => {
+    it("requests the bare collection when no filters are given", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listWorkflowsPage();
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/workflows");
+        expect(init.signal).toBeUndefined();
+    });
+
+    it("serializes every pagination knob and forwards the abort signal", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+        const controller = new AbortController();
+
+        await listWorkflowsPage({
+            limit: 30,
+            offset: 60,
+            search: "nda",
+            sortKey: "name",
+            sortDirection: "desc",
+            scope: "owned",
+            type: "assistant",
+            practice: "Litigation",
+            language: "English",
+            jurisdiction: "NSW",
+            signal: controller.signal,
+        });
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe(
+            "http://localhost:3001/workflows" +
+                "?type=assistant&limit=30&offset=60&search=nda" +
+                "&sort_key=name&sort_direction=desc&scope=owned" +
+                "&practice=Litigation&language=English&jurisdiction=NSW",
+        );
+        expect(init.signal).toBe(controller.signal);
+    });
+
+    it('omits the scope param for "all" — the backend default', async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listWorkflowsPage({ scope: "all", limit: 10 });
+
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/workflows?limit=10",
+        );
+    });
+});
+
+describe("listWorkflowIds", () => {
+    it("requests the bare id list when no filters are given", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listWorkflowIds();
+
+        expect(lastFetchCall().url).toBe("http://localhost:3001/workflows/ids");
+    });
+
+    it("scopes ids by every active filter so select-all matches the visible list", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([{ id: "w1", user_id: "u1" }]));
+
+        const ids = await listWorkflowIds({
+            search: "nda",
+            scope: "owned",
+            type: "tabular",
+            practice: "Litigation",
+            language: "English",
+            jurisdiction: "NSW",
+        });
+
+        expect(ids).toEqual([{ id: "w1", user_id: "u1" }]);
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/workflows/ids?type=tabular&search=nda" +
+                "&scope=owned&practice=Litigation&language=English&jurisdiction=NSW",
+        );
+    });
+});
+
+describe("listSystemWorkflows", () => {
+    it("requests the unfiltered system list when no type is given", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listSystemWorkflows();
+
+    expect(lastFetchCall().url).toBe("http://localhost:3001/workflows/system");
+    });
+
+    it("appends the type filter when given", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listSystemWorkflows("tabular");
+
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/workflows/system?type=tabular",
+        );
+    });
+});
+
+describe("getWorkflowFilterOptions", () => {
+  it("scopes workflow facets by type and ownership", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ practices: [], languages: [], jurisdictions: [] }),
+    );
+    const controller = new AbortController();
+
+    await getWorkflowFilterOptions({
+      type: "assistant",
+      scope: "shared",
+      signal: controller.signal,
+    });
+
+    const { url, init } = lastFetchCall();
+    expect(url).toBe(
+      "http://localhost:3001/workflows/filter-options?type=assistant&scope=shared",
+    );
+    expect(init.signal).toBe(controller.signal);
+  });
+});
+
+describe("Library search", () => {
+  it("sends every server-side query option and returns flat results", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ documents: [{ id: "d1" }], documentsHasMore: true }),
+    );
+    const controller = new AbortController();
+
+    const result = await searchLibraryDocuments("templates", {
+      limit: 50,
+      offset: 100,
+      search: "agreement",
+      fileType: "docx",
+      sortKey: "updated",
+      sortDirection: "desc",
+      signal: controller.signal,
+    });
+
+    expect(result.documentsHasMore).toBe(true);
+    const { url, init } = lastFetchCall();
+    expect(url).toBe(
+      "http://localhost:3001/library/templates?view=search&limit=50&offset=100" +
+        "&search=agreement&file_type=docx&sort_key=updated&sort_direction=desc",
+    );
+    expect(init.signal).toBe(controller.signal);
+  });
+
+  it("supports a search view with no optional filters", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ documents: [], documentsHasMore: false }),
+    );
+
+    await searchLibraryDocuments("files", {});
+
+    expect(lastFetchCall().url).toBe(
+      "http://localhost:3001/library/files?view=search",
+    );
+  });
+
+  it("loads multiple open directory levels in one request", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ levels: [] }));
+
+    await getLibraryLevels("templates", [
+      { parentId: null, limit: 50 },
+      { parentId: "folder-1", limit: 100 },
+    ]);
+
+    const { url, init } = lastFetchCall();
+    expect(url).toBe("http://localhost:3001/library/templates/levels");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({
+      levels: [
+        { parentId: null, limit: 50 },
+        { parentId: "folder-1", limit: 100 },
+      ],
+    });
+  });
+
+  it("loads another page of one Library folder", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ documents: [], folders: [], documentsHasMore: false }),
+    );
+
+    await getLibraryFolderChildren("files", "folder-1", { offset: 50 });
+
+    expect(lastFetchCall().url).toBe(
+      "http://localhost:3001/library/files?parent_folder_id=folder-1&offset=50",
+    );
+  });
+
+  it("loads filtered Library IDs and forwards the abort signal", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(["d1"]));
+    const controller = new AbortController();
+
+    await listLibraryDocumentIds("templates", {
+      search: "agreement",
+      fileType: "docx",
+      signal: controller.signal,
+    });
+
+    const { url, init } = lastFetchCall();
+    expect(url).toBe(
+      "http://localhost:3001/library/templates/ids?search=agreement&file_type=docx",
+    );
+    expect(init.signal).toBe(controller.signal);
+  });
+
+  it("loads all Library IDs without optional filters", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([]));
+
+    await listLibraryDocumentIds("files");
+
+    expect(lastFetchCall().url).toBe(
+      "http://localhost:3001/library/files/ids",
+    );
+  });
+
+  it("bulk deletes Library documents", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ deletedIds: ["d1", "d2"] }));
+
+    const result = await bulkDeleteLibraryDocuments("files", ["d1", "d2"]);
+
+    const { url, init } = lastFetchCall();
+    expect(result).toEqual({ deletedIds: ["d1", "d2"] });
+    expect(url).toBe(
+      "http://localhost:3001/library/files/documents/bulk-delete",
+    );
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ ids: ["d1", "d2"] });
+  });
+
+  it("loads the complete file-type facet list", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ fileTypes: ["docx", "pdf"] }));
+
+    await getLibraryFilterOptions("files");
+
+    expect(lastFetchCall().url).toBe(
+      "http://localhost:3001/library/files/filter-options",
+    );
+  });
+});
+
 describe("tabular review CRUD", () => {
     it("createTabularReview posts the folder grouping mode through unchanged", async () => {
         fetchMock.mockResolvedValue(jsonResponse({ id: "r1" }));
@@ -898,9 +1396,9 @@ describe("uploadReviewDocument", () => {
         const [uploadCall, patchCall] = fetchMock.mock.calls;
         expect(uploadCall[0]).toBe("http://localhost:3001/single-documents");
         // With no prior ids the review ends up with exactly the new document.
-        expect(JSON.parse((patchCall[1] as RequestInit).body as string)).toEqual(
-            { document_ids: ["new-doc"] },
-        );
+    expect(JSON.parse((patchCall[1] as RequestInit).body as string)).toEqual({
+      document_ids: ["new-doc"],
+    });
     });
 });
 
@@ -956,9 +1454,7 @@ describe("tabular cell operations", () => {
 
         expect(cell.flag).toBe("green");
         const { url, init } = lastFetchCall();
-        expect(url).toBe(
-            "http://localhost:3001/tabular-review/r1/regenerate-cell",
-        );
+    expect(url).toBe("http://localhost:3001/tabular-review/r1/regenerate-cell");
         expect(JSON.parse(init.body as string)).toEqual({
             row_id: "row-1",
             column_index: 2,
@@ -1053,9 +1549,9 @@ describe("multipart upload endpoints", () => {
         expect((init.body as FormData).get("filename")).toBe("renamed.pdf");
 
         fetchMock.mockResolvedValue(new Response("nope", { status: 409 }));
-        await expect(
-            replaceDocumentVersionFile("d1", "v1", file),
-        ).rejects.toThrow("nope");
+    await expect(replaceDocumentVersionFile("d1", "v1", file)).rejects.toThrow(
+      "nope",
+    );
     });
 });
 
@@ -1174,8 +1670,507 @@ describe("workflow endpoints", () => {
 
         fetchMock.mockResolvedValue(jsonResponse(["w2"]));
         await expect(listHiddenWorkflows()).resolves.toEqual(["w2"]);
+    expect(lastFetchCall().url).toBe("http://localhost:3001/workflows/hidden");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Thin endpoint wrappers. Each is a one-liner over apiRequest, so the only
+// things that can break are the route, the HTTP method, and the payload
+// shape — a wrong route or a camelCase key that should be snake_case fails
+// silently in TypeScript and only surfaces as a runtime 404/422. Assert
+// exactly those three things for every wrapper.
+// ---------------------------------------------------------------------------
+
+describe("thin endpoint wrappers", () => {
+    type WrapperCase = {
+        name: string;
+        call: () => Promise<unknown>;
+        url: string;
+        method?: string; // defaults to GET (fetch's default when unset)
+        body?: unknown; // absent means the request must not carry a body
+    };
+
+    const cases: WrapperCase[] = [
+        // Account & profile
+        {
+            name: "createProject",
+      call: () =>
+        createProject("Acme v. Zenith", "CM-42", "litigation", ["a@b.c"]),
+            url: "/projects",
+            method: "POST",
+            body: {
+                name: "Acme v. Zenith",
+                cm_number: "CM-42",
+                practice: "litigation",
+                shared_with: ["a@b.c"],
+            },
+        },
+        {
+            name: "deleteAccount",
+            call: () => deleteAccount(),
+            url: "/user/account",
+            method: "DELETE",
+        },
+        {
+            name: "deleteAllProjects",
+            call: () => deleteAllProjects(),
+            url: "/user/projects",
+            method: "DELETE",
+        },
+        {
+            name: "deleteAllTabularReviews",
+            call: () => deleteAllTabularReviews(),
+            url: "/user/tabular-reviews",
+            method: "DELETE",
+        },
+        {
+            name: "updateUserProfile",
+            call: () => updateUserProfile({ displayName: "Amal", titleModel: "m1" }),
+            url: "/user/profile",
+            method: "PATCH",
+            body: { displayName: "Amal", titleModel: "m1" },
+        },
+        {
+            name: "updateUserMfaOnLogin",
+            call: () => updateUserMfaOnLogin(true),
+            url: "/user/security/mfa-login",
+            method: "PATCH",
+            body: { enabled: true },
+        },
+        {
+            name: "getApiKeyStatus",
+            call: () => getApiKeyStatus(),
+            url: "/user/api-keys",
+        },
+        {
+            name: "saveApiKey",
+            call: () => saveApiKey("claude", "sk-ant-1"),
+            url: "/user/api-keys/claude",
+            method: "PUT",
+            body: { api_key: "sk-ant-1" },
+        },
+        {
+            // null is the delete-my-key signal and must survive
+            // JSON.stringify rather than dropping the field.
+            name: "saveApiKey (clear)",
+            call: () => saveApiKey("openai", null),
+            url: "/user/api-keys/openai",
+            method: "PUT",
+            body: { api_key: null },
+        },
+        // MCP connectors
+        {
+            name: "listMcpConnectors",
+            call: () => listMcpConnectors(),
+            url: "/user/mcp-connectors",
+        },
+        {
+            name: "getMcpConnector",
+            call: () => getMcpConnector("m1"),
+            url: "/user/mcp-connectors/m1",
+        },
+        {
+            name: "createMcpConnector",
+            call: () =>
+                createMcpConnector({
+                    name: "Drive",
+                    serverUrl: "https://mcp.example/mcp/v1",
+                    bearerToken: "tok",
+                }),
+            url: "/user/mcp-connectors",
+            method: "POST",
+            body: {
+                name: "Drive",
+                serverUrl: "https://mcp.example/mcp/v1",
+                bearerToken: "tok",
+            },
+        },
+        {
+            name: "updateMcpConnector",
+            call: () => updateMcpConnector("m1", { enabled: false }),
+            url: "/user/mcp-connectors/m1",
+            method: "PATCH",
+            body: { enabled: false },
+        },
+        {
+            name: "deleteMcpConnector",
+            call: () => deleteMcpConnector("m1"),
+            url: "/user/mcp-connectors/m1",
+            method: "DELETE",
+        },
+        {
+            name: "refreshMcpConnectorTools",
+            call: () => refreshMcpConnectorTools("m1"),
+            url: "/user/mcp-connectors/m1/refresh-tools",
+            method: "POST",
+        },
+        {
+            name: "startMcpConnectorOAuth",
+            call: () => startMcpConnectorOAuth("m1"),
+            url: "/user/mcp-connectors/m1/oauth/start",
+            method: "POST",
+        },
+        {
+            name: "setMcpToolEnabled",
+            call: () => setMcpToolEnabled("m1", "t1", true),
+            url: "/user/mcp-connectors/m1/tools/t1",
+            method: "PATCH",
+            body: { enabled: true },
+        },
+        // Projects
+        {
+            name: "getProject",
+            call: () => getProject("p1"),
+            url: "/projects/p1",
+        },
+        {
+            name: "updateProject",
+            call: () => updateProject("p1", { name: "Renamed", practice: null }),
+            url: "/projects/p1",
+            method: "PATCH",
+            body: { name: "Renamed", practice: null },
+        },
+        {
+            name: "deleteProject",
+            call: () => deleteProject("p1"),
+            url: "/projects/p1",
+            method: "DELETE",
+        },
+        {
+            name: "getProjectPeople",
+            call: () => getProjectPeople("p1"),
+            url: "/projects/p1/people",
+        },
+        {
+            name: "listProjectChats",
+            call: () => listProjectChats("p1"),
+            url: "/projects/p1/chats",
+        },
+        // Project folders & documents
+        {
+            name: "renameProjectFolder",
+            call: () => renameProjectFolder("p1", "f1", "Discovery"),
+            url: "/projects/p1/folders/f1",
+            method: "PATCH",
+            body: { name: "Discovery" },
+        },
+        {
+            name: "deleteProjectFolder",
+            call: () => deleteProjectFolder("p1", "f1"),
+            url: "/projects/p1/folders/f1",
+            method: "DELETE",
+        },
+        {
+            // Moving to the root sends an explicit null parent, on the same
+            // PATCH route as rename — only the body distinguishes them.
+            name: "moveSubfolderToFolder",
+            call: () => moveSubfolderToFolder("p1", "f1", null),
+            url: "/projects/p1/folders/f1",
+            method: "PATCH",
+            body: { parent_folder_id: null },
+        },
+        {
+            name: "moveDocumentToFolder",
+            call: () => moveDocumentToFolder("p1", "d1", "f2"),
+            url: "/projects/p1/documents/d1/folder",
+            method: "PATCH",
+            body: { folder_id: "f2" },
+        },
+        {
+            name: "renameProjectDocument",
+            call: () => renameProjectDocument("p1", "d1", "renamed.pdf"),
+            url: "/projects/p1/documents/d1",
+            method: "PATCH",
+            body: { filename: "renamed.pdf" },
+        },
+        {
+            name: "addDocumentToProject",
+            call: () => addDocumentToProject("p1", "d1"),
+            url: "/projects/p1/documents/d1",
+            method: "POST",
+        },
+        // Library
+        {
+            name: "getLibrary",
+            call: () => getLibrary("templates"),
+            url: "/library/templates",
+        },
+        {
+            name: "getLibraryFolderChildren",
+            call: () => getLibraryFolderChildren("files", "f1"),
+            url: "/library/files?parent_folder_id=f1",
+        },
+        {
+            name: "getLibrary with pagination",
+            call: () => getLibrary("files", { limit: 50, offset: 100 }),
+            url: "/library/files?limit=50&offset=100",
+        },
+        {
+            name: "getLibraryFolderChildren with pagination",
+      call: () => getLibraryFolderChildren("files", "f1", { limit: 50 }),
+            url: "/library/files?parent_folder_id=f1&limit=50",
+        },
+        {
+            name: "renameLibraryFolder",
+            call: () => renameLibraryFolder("files", "f1", "Precedents"),
+            url: "/library/files/folders/f1",
+            method: "PATCH",
+            body: { name: "Precedents" },
+        },
+        {
+            name: "deleteLibraryFolder",
+            call: () => deleteLibraryFolder("files", "f1"),
+            url: "/library/files/folders/f1",
+            method: "DELETE",
+        },
+        {
+            name: "moveLibraryFolder",
+            call: () => moveLibraryFolder("templates", "f1", "parent-1"),
+            url: "/library/templates/folders/f1",
+            method: "PATCH",
+            body: { parent_folder_id: "parent-1" },
+        },
+        {
+            name: "moveLibraryDocument",
+            call: () => moveLibraryDocument("files", "d1", null),
+            url: "/library/files/documents/d1/folder",
+            method: "PATCH",
+            body: { folder_id: null },
+        },
+        {
+            name: "renameLibraryDocument",
+            call: () => renameLibraryDocument("files", "d1", "renamed.docx"),
+            url: "/library/files/documents/d1",
+            method: "PATCH",
+            body: { filename: "renamed.docx" },
+        },
+        // Standalone documents & versions
+        {
+            name: "listStandaloneDocuments",
+            call: () => listStandaloneDocuments(),
+            url: "/single-documents",
+        },
+        {
+            name: "deleteDocument",
+            call: () => deleteDocument("d1"),
+            url: "/single-documents/d1",
+            method: "DELETE",
+        },
+        {
+            name: "listDocumentVersions",
+            call: () => listDocumentVersions("d1"),
+            url: "/single-documents/d1/versions",
+        },
+        {
+            name: "copyDocumentVersionFromDocument",
+            call: () => copyDocumentVersionFromDocument("d1", "src-1", "copy.pdf"),
+            url: "/single-documents/d1/versions/from-document",
+            method: "POST",
+            body: { source_document_id: "src-1", filename: "copy.pdf" },
+        },
+        {
+            // null clears the per-version name so the document name shows.
+            name: "renameDocumentVersion",
+            call: () => renameDocumentVersion("d1", "v1", null),
+            url: "/single-documents/d1/versions/v1",
+            method: "PATCH",
+            body: { filename: null },
+        },
+        {
+            name: "deleteDocumentVersion",
+            call: () => deleteDocumentVersion("d1", "v1"),
+            url: "/single-documents/d1/versions/v1",
+            method: "DELETE",
+        },
+        // Chat
+        {
+            name: "renameChat",
+            call: () => renameChat("c1", "New title"),
+            url: "/chat/c1",
+            method: "PATCH",
+            body: { title: "New title" },
+        },
+        {
+            name: "deleteChat",
+            call: () => deleteChat("c1"),
+            url: "/chat/c1",
+            method: "DELETE",
+        },
+        {
+            name: "generateChatTitle",
+            call: () => generateChatTitle("c1", "first message"),
+            url: "/chat/c1/generate-title",
+            method: "POST",
+            body: { message: "first message" },
+        },
+        // Tabular review
+        {
+            name: "getTabularReview",
+            call: () => getTabularReview("r1"),
+            url: "/tabular-review/r1",
+        },
+        {
+            name: "getTabularReviewPeople",
+            call: () => getTabularReviewPeople("r1"),
+            url: "/tabular-review/r1/people",
+        },
+        // Workflows
+        {
+            name: "getWorkflow",
+            call: () => getWorkflow("w1"),
+            url: "/workflows/w1",
+        },
+        {
+            name: "createWorkflow",
+            call: () =>
+                createWorkflow({
+                    metadata: { title: "NDA review", type: "assistant" },
+                    skill_md: "# Steps",
+                }),
+            url: "/workflows",
+            method: "POST",
+            body: {
+                metadata: { title: "NDA review", type: "assistant" },
+                skill_md: "# Steps",
+            },
+        },
+        {
+            name: "updateWorkflow",
+            call: () => updateWorkflow("w1", { metadata: { title: "Renamed" } }),
+            url: "/workflows/w1",
+            method: "PATCH",
+            body: { metadata: { title: "Renamed" } },
+        },
+        {
+            name: "deleteWorkflow",
+            call: () => deleteWorkflow("w1"),
+            url: "/workflows/w1",
+            method: "DELETE",
+        },
+        {
+            name: "openSourceWorkflow",
+            call: () =>
+                openSourceWorkflow("w1", {
+                    contributor_mode: "named",
+                    contributor: {
+                        name: "Amal",
+                        organisation: null,
+                        role: null,
+                        linkedin: null,
+                    },
+                }),
+            url: "/workflows/w1/open-source",
+            method: "POST",
+            body: {
+                contributor_mode: "named",
+                contributor: {
+                    name: "Amal",
+                    organisation: null,
+                    role: null,
+                    linkedin: null,
+                },
+            },
+        },
+        {
+            name: "shareWorkflow",
+      call: () => shareWorkflow("w1", { emails: ["a@b.c"], allow_edit: false }),
+            url: "/workflows/w1/share",
+            method: "POST",
+            body: { emails: ["a@b.c"], allow_edit: false },
+        },
+        {
+            name: "listWorkflowShares",
+            call: () => listWorkflowShares("w1"),
+            url: "/workflows/w1/shares",
+        },
+        {
+            name: "deleteWorkflowShare",
+            call: () => deleteWorkflowShare("w1", "s1"),
+            url: "/workflows/w1/shares/s1",
+            method: "DELETE",
+        },
+    ];
+
+  it.each(cases)(
+    "$name → $method $url",
+    async ({ call, url, method, body }) => {
+        fetchMock.mockResolvedValue(jsonResponse({}));
+
+        await call();
+
+        const { url: actualUrl, init } = lastFetchCall();
+        expect(actualUrl).toBe(`http://localhost:3001${url}`);
+        expect(init.method ?? "GET").toBe(method ?? "GET");
+        if (body !== undefined) {
+            expect(JSON.parse(init.body as string)).toEqual(body);
+            expect(init.headers).toMatchObject({
+                "Content-Type": "application/json",
+            });
+        } else {
+            expect(init.body).toBeUndefined();
+        }
+        expect(init.headers).toMatchObject({
+            Authorization: "Bearer token-123",
+        });
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Wrappers with response mapping — the ones the table above can't cover
+// because they unwrap an envelope or hit the blob path.
+// ---------------------------------------------------------------------------
+
+describe("unwrapping and blob wrappers", () => {
+    it("getOllamaModels unwraps the models envelope", async () => {
+        const models = [
+            { id: "ollama/llama3.2", label: "Llama 3.2", group: "Local" },
+        ];
+        fetchMock.mockResolvedValue(jsonResponse({ models }));
+
+        await expect(getOllamaModels()).resolves.toEqual(models);
+        expect(lastFetchCall().url).toBe("http://localhost:3001/models/ollama");
+    });
+
+    it("getCourtlistenerOpinions posts the cluster id and unwraps opinions", async () => {
+        const opinions = [
+            {
+                opinionId: 7,
+                type: "majority",
+                author: "Judge X",
+                url: "https://example.test/op/7",
+            },
+        ];
+        fetchMock.mockResolvedValue(jsonResponse({ opinions }));
+
+        await expect(getCourtlistenerOpinions(123)).resolves.toEqual(opinions);
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/case-law/case-opinions");
+        expect(init.method).toBe("POST");
+        expect(JSON.parse(init.body as string)).toEqual({ clusterId: 123 });
+    });
+
+    it("exportChatData and exportTabularReviewsData hit their export routes", async () => {
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(
+                new Response("bytes", {
+                    status: 200,
+                    headers: {
+                        "content-disposition": 'attachment; filename="x.zip"',
+                    },
+                }),
+            ),
+        );
+
+        const chats = await exportChatData();
+    expect(lastFetchCall().url).toBe("http://localhost:3001/user/chats/export");
+        expect(chats.filename).toBe("x.zip");
+        expect(await chats.blob.text()).toBe("bytes");
+
+        await exportTabularReviewsData();
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/workflows/hidden",
+            "http://localhost:3001/user/tabular-reviews/export",
         );
     });
 });

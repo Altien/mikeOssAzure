@@ -207,6 +207,9 @@ create table if not exists public.projects (
 create index if not exists idx_projects_user
   on public.projects(user_id);
 
+create index if not exists projects_updated_at_idx
+  on public.projects(updated_at desc, id);
+
 create index if not exists projects_shared_with_idx
   on public.projects using gin (shared_with);
 
@@ -508,19 +511,24 @@ create table if not exists public.chats (
 create index if not exists idx_chats_user
   on public.chats(user_id);
 
+create index if not exists chats_user_created_idx
+  on public.chats(user_id, created_at desc, id);
+
 create index if not exists idx_chats_project
   on public.chats(project_id);
 
 create or replace function public.get_chats_overview(
   p_user_id text,
-  p_limit integer default null
+  p_limit integer default null,
+  p_offset integer default 0
 )
 returns table (
   id uuid,
   project_id uuid,
   user_id text,
   title text,
-  created_at timestamptz
+  created_at timestamptz,
+  project_name text
 )
 language sql
 stable
@@ -530,20 +538,18 @@ as $$
     c.project_id,
     c.user_id,
     c.title,
-    c.created_at
+    c.created_at,
+    p.name as project_name
   from public.chats c
+  left join public.projects p on p.id = c.project_id
   where c.user_id = p_user_id
-     or exists (
-      select 1
-      from public.projects p
-      where p.id = c.project_id
-        and p.user_id = p_user_id
-    )
-  order by c.created_at desc
+     or (p.id is not null and p.user_id = p_user_id)
+  order by c.created_at desc, c.id asc
   limit case
     when p_limit is null then null
     else greatest(1, least(p_limit, 100))
-  end;
+  end
+  offset greatest(coalesce(p_offset, 0), 0);
 $$;
 
 create table if not exists public.chat_messages (
@@ -1080,6 +1086,737 @@ create table if not exists public.courtlistener_opinion_cluster_index (
 );
 
 alter table public.courtlistener_opinion_cluster_index enable row level security;
+
+-- ---------------------------------------------------------------------------
+-- Library search and lightweight overview facets
+-- ---------------------------------------------------------------------------
+
+create or replace function public.search_library_documents(
+  p_user_id text,
+  p_library_kind text,
+  p_limit integer,
+  p_offset integer,
+  p_search_term text default null,
+  p_file_type text default null,
+  p_sort_key text default 'updated',
+  p_sort_direction text default 'desc'
+)
+returns table (
+  id uuid,
+  project_id uuid,
+  user_id text,
+  status text,
+  folder_id uuid,
+  library_kind text,
+  library_folder_id uuid,
+  current_version_id uuid,
+  created_at timestamptz,
+  updated_at timestamptz,
+  filename text,
+  file_type text,
+  storage_path text,
+  pdf_storage_path text,
+  size_bytes integer,
+  page_count integer,
+  active_version_number integer
+)
+language sql
+stable
+as $$
+  select
+    d.id,
+    d.project_id,
+    d.user_id,
+    d.status,
+    d.folder_id,
+    d.library_kind,
+    d.library_folder_id,
+    d.current_version_id,
+    d.created_at,
+    d.updated_at,
+    coalesce(nullif(trim(v.filename), ''), 'Untitled document') as filename,
+    v.file_type,
+    v.storage_path,
+    v.pdf_storage_path,
+    v.size_bytes,
+    v.page_count,
+    v.version_number as active_version_number
+  from public.documents d
+  left join public.document_versions v
+    on v.id = d.current_version_id
+   and v.deleted_at is null
+  where d.user_id = p_user_id
+    and d.project_id is null
+    and (
+      (p_library_kind = 'file' and coalesce(d.library_kind, 'file') = 'file')
+      or d.library_kind = p_library_kind
+    )
+    and (
+      p_search_term is null
+      or p_search_term = ''
+      or lower(coalesce(v.filename, '')) like
+        '%' || replace(replace(replace(lower(p_search_term), '\', '\\'), '%', '\%'), '_', '\_') || '%'
+        escape '\'
+    )
+    and (
+      p_file_type is null
+      or lower(coalesce(v.file_type, '')) = lower(p_file_type)
+    )
+  order by
+    case when p_sort_key = 'name' and p_sort_direction = 'asc' then lower(coalesce(v.filename, '')) else null end asc,
+    case when p_sort_key = 'name' and p_sort_direction = 'desc' then lower(coalesce(v.filename, '')) else null end desc,
+    case when p_sort_key = 'type' and p_sort_direction = 'asc' then lower(coalesce(v.file_type, '')) else null end asc,
+    case when p_sort_key = 'type' and p_sort_direction = 'desc' then lower(coalesce(v.file_type, '')) else null end desc,
+    case when p_sort_key = 'size' and p_sort_direction = 'asc' then coalesce(v.size_bytes, 0) else null end asc,
+    case when p_sort_key = 'size' and p_sort_direction = 'desc' then coalesce(v.size_bytes, 0) else null end desc,
+    case when p_sort_key = 'version' and p_sort_direction = 'asc' then coalesce(v.version_number, 0) else null end asc,
+    case when p_sort_key = 'version' and p_sort_direction = 'desc' then coalesce(v.version_number, 0) else null end desc,
+    case when p_sort_key = 'created' and p_sort_direction = 'asc' then d.created_at else null end asc,
+    case when p_sort_key = 'created' and p_sort_direction = 'desc' then d.created_at else null end desc,
+    case when p_sort_key = 'updated' and p_sort_direction = 'asc' then d.updated_at else null end asc,
+    case when p_sort_key = 'updated' and p_sort_direction = 'desc' then d.updated_at else null end desc,
+    d.updated_at desc,
+    d.id asc
+  limit greatest(coalesce(p_limit, 50), 1)
+  offset greatest(coalesce(p_offset, 0), 0);
+$$;
+
+create or replace function public.get_library_filter_options(
+  p_user_id text,
+  p_library_kind text
+)
+returns table (file_types text[])
+language sql
+stable
+as $$
+  select coalesce(
+    array_agg(distinct lower(v.file_type) order by lower(v.file_type))
+      filter (where nullif(trim(v.file_type), '') is not null),
+    array[]::text[]
+  ) as file_types
+  from public.documents d
+  left join public.document_versions v
+    on v.id = d.current_version_id
+   and v.deleted_at is null
+  where d.user_id = p_user_id
+    and d.project_id is null
+    and (
+      (p_library_kind = 'file' and coalesce(d.library_kind, 'file') = 'file')
+      or d.library_kind = p_library_kind
+    );
+$$;
+
+create or replace function public.get_project_filter_options(
+  p_user_id text,
+  p_user_email text default null
+)
+returns table (practices text[], owners jsonb)
+language sql
+stable
+as $$
+  with visible_projects as (
+    select p.user_id, nullif(trim(p.practice), '') as practice
+    from public.projects p
+    where p.user_id = p_user_id
+       or (
+         coalesce(p_user_email, '') <> ''
+         and p.user_id <> p_user_id
+         and p.shared_with @> jsonb_build_array(p_user_email)
+       )
+  ),
+  distinct_owners as (
+    select distinct vp.user_id
+    from visible_projects vp
+  ),
+  owner_options as (
+    select
+      o.user_id,
+      case
+        when o.user_id = p_user_id then 'Me'
+        else coalesce(
+          nullif(trim(up.display_name), ''),
+          nullif(trim(up.email), ''),
+          'Shared'
+        )
+      end as label
+    from distinct_owners o
+    left join public.user_profiles up
+      on up.user_id::text = o.user_id
+  )
+  select
+    coalesce(
+      (select array_agg(distinct practice order by practice)
+       from visible_projects
+       where practice is not null),
+      array[]::text[]
+    ) as practices,
+    coalesce(
+      (select jsonb_agg(
+          jsonb_build_object('value', user_id, 'label', label)
+          order by label, user_id
+       ) from owner_options),
+      '[]'::jsonb
+    ) as owners;
+$$;
+
+create or replace function public.get_workflow_filter_options(
+  p_user_id text,
+  p_user_email text default null,
+  p_type text default null,
+  p_scope text default 'all'
+)
+returns table (
+  practices text[],
+  languages text[],
+  jurisdictions text[]
+)
+language sql
+stable
+as $$
+  with owned as (
+    select w.practice, w.language, w.jurisdictions, 'owned'::text as source
+    from public.workflows w
+    where w.user_id::text = p_user_id
+      and (p_type is null or w.type = p_type)
+  ),
+  shared as (
+    select w.practice, w.language, w.jurisdictions, 'shared'::text as source
+    from public.workflow_shares ws
+    join public.workflows w on w.id = ws.workflow_id
+    where lower(ws.shared_with_email) = lower(coalesce(p_user_email, ''))
+      and (p_type is null or w.type = p_type)
+  ),
+  visible as (
+    select * from owned
+    union all
+    select * from shared
+  ),
+  scoped as (
+    select * from visible
+    where coalesce(p_scope, 'all') = 'all' or source = p_scope
+  )
+  select
+    coalesce(
+      array_agg(distinct nullif(trim(practice), '') order by nullif(trim(practice), ''))
+        filter (where nullif(trim(practice), '') is not null),
+      array[]::text[]
+    ) as practices,
+    coalesce(
+      array_agg(distinct nullif(trim(language), '') order by nullif(trim(language), ''))
+        filter (where nullif(trim(language), '') is not null),
+      array[]::text[]
+    ) as languages,
+    coalesce(
+      (select array_agg(distinct jurisdiction order by jurisdiction)
+       from scoped s
+       cross join lateral unnest(coalesce(s.jurisdictions, array[]::text[])) jurisdiction
+       where nullif(trim(jurisdiction), '') is not null),
+      array[]::text[]
+    ) as jurisdictions
+  from scoped;
+$$;
+
+create index if not exists document_versions_filename_trgm_idx
+  on public.document_versions using gin (lower(filename) gin_trgm_ops)
+  where deleted_at is null;
+
+-- ---------------------------------------------------------------------------
+-- Paginated project/workflow overviews and collection summary helpers
+-- ---------------------------------------------------------------------------
+
+-- Server-side pagination for the Projects overview page (/projects) and the
+-- Workflows list page (/workflows), added the same day and combined into one
+-- migration. Both mirror the pattern already built for Tabular Reviews in
+-- 20260726_01_tabular_reviews_pagination.sql /
+-- 20260727_01_tabular_review_ids_overview.sql.
+
+-- ============================================================================
+-- Projects overview pagination
+-- ============================================================================
+--   * a trigram index so leading-wildcard search can use an index scan
+--   * a new, higher-arity overload of get_projects_overview that adds
+--     scope/search/practice/owner filters, server-side sort, and limit/offset
+--   * the existing 2-arg get_projects_overview (from 20260703_02_project_practice.sql)
+--     is left completely untouched as the back-compat path for every caller
+--     that doesn't ask for pagination (document-picker directory view and
+--     tabular-review project pickers) — see backend/src/routes/projects.ts
+--     for the routing logic that decides which overload to call.
+--   * a lightweight get_project_ids_overview companion for "select all
+--     matching" bulk actions.
+
+create extension if not exists pg_trgm;
+
+create index if not exists projects_name_trgm_idx
+  on public.projects using gin (lower(name) gin_trgm_ops);
+
+create index if not exists projects_updated_at_idx
+  on public.projects(updated_at desc, id);
+
+create or replace function public.get_projects_overview(
+  p_user_id text,
+  p_user_email text,
+  p_scope text,
+  p_limit integer,
+  p_offset integer,
+  p_search_term text,
+  p_sort_key text,
+  p_sort_direction text,
+  p_practice text,
+  p_owner_user_id text
+)
+returns table (
+  id uuid,
+  user_id text,
+  name text,
+  cm_number text,
+  practice text,
+  shared_with jsonb,
+  created_at timestamptz,
+  updated_at timestamptz,
+  is_owner boolean,
+  owner_display_name text,
+  owner_email text,
+  document_count integer,
+  chat_count integer,
+  review_count integer
+)
+language sql
+stable
+as $$
+  with visible_projects as (
+    select p.*
+    from public.projects p
+    where (
+        p.user_id = p_user_id
+        or (
+          coalesce(p_user_email, '') <> ''
+          and p.user_id <> p_user_id
+          and p.shared_with @> jsonb_build_array(p_user_email)
+        )
+      )
+      and (
+        coalesce(p_scope, 'all') = 'all'
+        or (p_scope = 'mine' and p.user_id = p_user_id)
+        or (p_scope = 'shared' and p.user_id <> p_user_id)
+      )
+      and (
+        p_search_term is null
+        or p_search_term = ''
+        or lower(coalesce(p.name, '')) like
+          '%' || replace(replace(replace(lower(p_search_term), '\', '\\'), '%', '\%'), '_', '\_') || '%'
+          escape '\'
+        or lower(coalesce(p.cm_number, '')) like
+          '%' || replace(replace(replace(lower(p_search_term), '\', '\\'), '%', '\%'), '_', '\_') || '%'
+          escape '\'
+        or lower(coalesce(p.practice, '')) like
+          '%' || replace(replace(replace(lower(p_search_term), '\', '\\'), '%', '\%'), '_', '\_') || '%'
+          escape '\'
+      )
+      and (p_practice is null or p.practice = p_practice)
+      and (p_owner_user_id is null or p.user_id = p_owner_user_id)
+  ),
+  document_counts as (
+    select d.project_id, count(*)::integer as document_count
+    from public.documents d
+    where d.project_id in (select vp.id from visible_projects vp)
+    group by d.project_id
+  ),
+  chat_counts as (
+    select c.project_id, count(*)::integer as chat_count
+    from public.chats c
+    where c.project_id in (select vp.id from visible_projects vp)
+    group by c.project_id
+  ),
+  review_counts as (
+    select tr.project_id, count(*)::integer as review_count
+    from public.tabular_reviews tr
+    where tr.project_id in (select vp.id from visible_projects vp)
+    group by tr.project_id
+  )
+  select
+    vp.id,
+    vp.user_id,
+    vp.name,
+    vp.cm_number,
+    vp.practice,
+    vp.shared_with,
+    vp.created_at,
+    vp.updated_at,
+    vp.user_id = p_user_id as is_owner,
+    nullif(trim(up.display_name), '') as owner_display_name,
+    null::text as owner_email,
+    coalesce(dc.document_count, 0) as document_count,
+    coalesce(cc.chat_count, 0) as chat_count,
+    coalesce(rc.review_count, 0) as review_count
+  from visible_projects vp
+  left join public.user_profiles up
+    on up.user_id::text = vp.user_id
+  left join document_counts dc
+    on dc.project_id = vp.id
+  left join chat_counts cc
+    on cc.project_id = vp.id
+  left join review_counts rc
+    on rc.project_id = vp.id
+  order by
+    case when p_sort_key = 'name' and p_sort_direction = 'asc' then lower(coalesce(vp.name, '')) else null end asc,
+    case when p_sort_key = 'name' and p_sort_direction = 'desc' then lower(coalesce(vp.name, '')) else null end desc,
+    case when p_sort_key = 'cm' and p_sort_direction = 'asc' then lower(coalesce(vp.cm_number, '')) else null end asc,
+    case when p_sort_key = 'cm' and p_sort_direction = 'desc' then lower(coalesce(vp.cm_number, '')) else null end desc,
+    case when p_sort_key = 'files' and p_sort_direction = 'asc' then coalesce(dc.document_count, 0) else null end asc,
+    case when p_sort_key = 'files' and p_sort_direction = 'desc' then coalesce(dc.document_count, 0) else null end desc,
+    case when p_sort_key = 'chats' and p_sort_direction = 'asc' then coalesce(cc.chat_count, 0) else null end asc,
+    case when p_sort_key = 'chats' and p_sort_direction = 'desc' then coalesce(cc.chat_count, 0) else null end desc,
+    case when p_sort_key = 'reviews' and p_sort_direction = 'asc' then coalesce(rc.review_count, 0) else null end asc,
+    case when p_sort_key = 'reviews' and p_sort_direction = 'desc' then coalesce(rc.review_count, 0) else null end desc,
+    case when p_sort_key = 'created' and p_sort_direction = 'asc' then vp.created_at else null end asc,
+    case when p_sort_key = 'created' and p_sort_direction = 'desc' then vp.created_at else null end desc,
+    case when p_sort_key = 'updated' and p_sort_direction = 'asc' then vp.updated_at else null end asc,
+    case when p_sort_key = 'updated' and p_sort_direction = 'desc' then vp.updated_at else null end desc,
+    vp.created_at desc,
+    vp.id asc
+  limit greatest(coalesce(p_limit, 20), 1)
+  offset greatest(coalesce(p_offset, 0), 0);
+$$;
+
+-- Lightweight companion for bulk "select all matching" actions — id + owning
+-- user only, no count joins. Duplicates visible_projects' predicate rather
+-- than delegating to get_projects_overview (same rationale as
+-- get_tabular_review_ids_overview: the count CTEs there would be pure waste
+-- for a caller that only wants ids). Keep this predicate in sync by hand if
+-- visible_projects above ever changes.
+--
+-- Paginated (not "return everything") because PostgREST enforces its own
+-- row cap on every RPC response and truncates silently rather than erroring;
+-- backend/src/routes/projects.ts pages through this on the caller's behalf.
+create or replace function public.get_project_ids_overview(
+  p_user_id text,
+  p_user_email text,
+  p_scope text,
+  p_search_term text,
+  p_practice text,
+  p_owner_user_id text,
+  p_limit integer,
+  p_offset integer
+)
+returns table (
+  id uuid,
+  user_id text
+)
+language sql
+stable
+as $$
+  select p.id, p.user_id
+  from public.projects p
+  where (
+      p.user_id = p_user_id
+      or (
+        coalesce(p_user_email, '') <> ''
+        and p.user_id <> p_user_id
+        and p.shared_with @> jsonb_build_array(p_user_email)
+      )
+    )
+    and (
+      coalesce(p_scope, 'all') = 'all'
+      or (p_scope = 'mine' and p.user_id = p_user_id)
+      or (p_scope = 'shared' and p.user_id <> p_user_id)
+    )
+    and (
+      p_search_term is null
+      or p_search_term = ''
+      or lower(coalesce(p.name, '')) like
+        '%' || replace(replace(replace(lower(p_search_term), '\', '\\'), '%', '\%'), '_', '\_') || '%'
+        escape '\'
+      or lower(coalesce(p.cm_number, '')) like
+        '%' || replace(replace(replace(lower(p_search_term), '\', '\\'), '%', '\%'), '_', '\_') || '%'
+        escape '\'
+      or lower(coalesce(p.practice, '')) like
+        '%' || replace(replace(replace(lower(p_search_term), '\', '\\'), '%', '\%'), '_', '\_') || '%'
+        escape '\'
+    )
+    and (p_practice is null or p.practice = p_practice)
+    and (p_owner_user_id is null or p.user_id = p_owner_user_id)
+  order by p.created_at desc, p.id asc
+  limit greatest(coalesce(p_limit, 1000), 1)
+  offset greatest(coalesce(p_offset, 0), 0);
+$$;
+
+-- ============================================================================
+-- Workflows overview pagination
+-- ============================================================================
+-- Mirrors the Projects pagination above. System workflows are a static,
+-- code-generated TypeScript constant (backend/src/lib/systemWorkflows.ts)
+-- with zero user-data growth — they are deliberately NOT part of this RPC and
+-- stay fetched/filtered client-side exactly as before. This migration only
+-- paginates the one part of /workflows with real growth: a user's owned +
+-- shared workflows, currently served by the 3-arg get_workflows_overview
+-- defined in 20260625_01_workflow_metadata.sql, which is left completely
+-- untouched — every other caller of GET /workflows (the workflow picker
+-- modal, the chat slash-menu picker) keeps hitting that exact unpaginated
+-- path, since the route only takes the new paginated branch when a
+-- pagination-related query param is present.
+
+create index if not exists workflows_title_trgm_idx
+  on public.workflows using gin (lower(title) gin_trgm_ops);
+
+create index if not exists workflows_jurisdictions_gin_idx
+  on public.workflows using gin (jurisdictions);
+
+-- p_scope here is 'all' | 'owned' | 'shared' — deliberately different
+-- vocabulary from Projects' 'mine'/'shared', since this RPC (unlike
+-- Projects' single source of truth) never includes system workflows at all;
+-- keeping the words distinct avoids conflating this RPC-level scope with the
+-- UI's separate "source" filter (system/user/shared), which does include
+-- system rows client-side.
+create or replace function public.get_workflows_overview(
+  p_user_id text,
+  p_user_email text,
+  p_type text,
+  p_scope text,
+  p_limit integer,
+  p_offset integer,
+  p_search_term text,
+  p_sort_key text,
+  p_sort_direction text,
+  p_practice text,
+  p_language text,
+  p_jurisdiction text
+)
+returns table (
+  id uuid,
+  user_id text,
+  title text,
+  type text,
+  prompt_md text,
+  columns_config jsonb,
+  language text,
+  practice text,
+  jurisdictions text[],
+  is_system boolean,
+  created_at timestamptz,
+  allow_edit boolean,
+  is_owner boolean,
+  shared_by_name text
+)
+language sql
+stable
+as $$
+  with owned as (
+    select
+      w.id, w.user_id::text as user_id, w.title, w.type, w.prompt_md,
+      w.columns_config, w.language, w.practice, w.jurisdictions,
+      false as is_system, w.created_at,
+      true as allow_edit, true as is_owner, null::text as shared_by_name,
+      0 as sort_bucket
+    from public.workflows w
+    where w.user_id::text = p_user_id
+      and (p_type is null or w.type = p_type)
+  ),
+  shared as (
+    select
+      w.id, w.user_id::text as user_id, w.title, w.type, w.prompt_md,
+      w.columns_config, w.language, w.practice, w.jurisdictions,
+      false as is_system, w.created_at,
+      ws.allow_edit, false as is_owner,
+      nullif(trim(up.display_name), '') as shared_by_name,
+      1 as sort_bucket
+    from public.workflow_shares ws
+    join public.workflows w
+      on w.id = ws.workflow_id
+    left join public.user_profiles up
+      on up.user_id::text = ws.shared_by_user_id::text
+    where lower(ws.shared_with_email) = lower(coalesce(p_user_email, ''))
+      and (p_type is null or w.type = p_type)
+  ),
+  visible_workflows as (
+    select * from owned
+    union all
+    select * from shared
+  )
+  select
+    vw.id, vw.user_id, vw.title, vw.type, vw.prompt_md, vw.columns_config,
+    vw.language, vw.practice, vw.jurisdictions, vw.is_system, vw.created_at,
+    vw.allow_edit, vw.is_owner, vw.shared_by_name
+  from visible_workflows vw
+  where (
+      coalesce(p_scope, 'all') = 'all'
+      or (p_scope = 'owned' and vw.sort_bucket = 0)
+      or (p_scope = 'shared' and vw.sort_bucket = 1)
+    )
+    and (
+      p_search_term is null
+      or p_search_term = ''
+      or lower(vw.title) like
+        '%' || replace(replace(replace(lower(p_search_term), '\', '\\'), '%', '\%'), '_', '\_') || '%'
+        escape '\'
+    )
+    and (p_practice is null or vw.practice = p_practice)
+    and (p_language is null or vw.language = p_language)
+    and (p_jurisdiction is null or vw.jurisdictions @> array[p_jurisdiction])
+  order by
+    case when p_sort_key = 'name' and p_sort_direction = 'asc' then lower(coalesce(vw.title, '')) else null end asc,
+    case when p_sort_key = 'name' and p_sort_direction = 'desc' then lower(coalesce(vw.title, '')) else null end desc,
+    case when p_sort_key = 'type' and p_sort_direction = 'asc' then vw.type else null end asc,
+    case when p_sort_key = 'type' and p_sort_direction = 'desc' then vw.type else null end desc,
+    case when p_sort_key = 'created' and p_sort_direction = 'asc' then vw.created_at else null end asc,
+    case when p_sort_key = 'created' and p_sort_direction = 'desc' then vw.created_at else null end desc,
+    vw.sort_bucket asc,
+    vw.created_at desc,
+    vw.id asc
+  limit greatest(coalesce(p_limit, 20), 1)
+  offset greatest(coalesce(p_offset, 0), 0);
+$$;
+
+-- Lightweight companion for bulk "select all matching" actions (owned
+-- workflows only — see the route/hook layer; shared workflows are excluded
+-- from bulk-delete eligibility since only the owner can delete, and system
+-- workflows never need this since all 37 are always already in memory).
+-- Duplicates the owned predicate directly rather than delegating to
+-- get_workflows_overview, same rationale as get_project_ids_overview: no
+-- need for the shared-by-name join when the caller only wants ids.
+create or replace function public.get_workflow_ids_overview(
+  p_user_id text,
+  p_user_email text,
+  p_type text,
+  p_scope text,
+  p_search_term text,
+  p_practice text,
+  p_language text,
+  p_jurisdiction text,
+  p_limit integer,
+  p_offset integer
+)
+returns table (
+  id uuid,
+  user_id text
+)
+language sql
+stable
+as $$
+  with owned as (
+    select w.id, w.user_id::text as user_id, w.title, w.practice, w.language, w.jurisdictions,
+      w.created_at, 0 as sort_bucket
+    from public.workflows w
+    where w.user_id::text = p_user_id
+      and (p_type is null or w.type = p_type)
+  ),
+  shared as (
+    select w.id, w.user_id::text as user_id, w.title, w.practice, w.language, w.jurisdictions,
+      w.created_at, 1 as sort_bucket
+    from public.workflow_shares ws
+    join public.workflows w
+      on w.id = ws.workflow_id
+    where lower(ws.shared_with_email) = lower(coalesce(p_user_email, ''))
+      and (p_type is null or w.type = p_type)
+  ),
+  visible_workflows as (
+    select * from owned
+    union all
+    select * from shared
+  )
+  select vw.id, vw.user_id
+  from visible_workflows vw
+  where (
+      coalesce(p_scope, 'all') = 'all'
+      or (p_scope = 'owned' and vw.sort_bucket = 0)
+      or (p_scope = 'shared' and vw.sort_bucket = 1)
+    )
+    and (
+      p_search_term is null
+      or p_search_term = ''
+      or lower(vw.title) like
+        '%' || replace(replace(replace(lower(p_search_term), '\', '\\'), '%', '\%'), '_', '\_') || '%'
+        escape '\'
+    )
+    and (p_practice is null or vw.practice = p_practice)
+    and (p_language is null or vw.language = p_language)
+    and (p_jurisdiction is null or vw.jurisdictions @> array[p_jurisdiction])
+  order by vw.sort_bucket asc, vw.created_at desc, vw.id asc
+  limit greatest(coalesce(p_limit, 1000), 1)
+  offset greatest(coalesce(p_offset, 0), 0);
+$$;
+
+-- Lightweight sidebar project feed. The Projects overview RPC intentionally
+-- computes file/chat/review counts for table sorting; the sidebar needs none
+-- of those aggregates.
+create or replace function public.get_project_summaries(
+  p_user_id text,
+  p_user_email text,
+  p_limit integer,
+  p_offset integer
+)
+returns table (
+  id uuid,
+  user_id text,
+  name text,
+  created_at timestamptz,
+  updated_at timestamptz,
+  is_owner boolean
+)
+language sql
+stable
+as $$
+  select
+    p.id,
+    p.user_id,
+    p.name,
+    p.created_at,
+    p.updated_at,
+    p.user_id = p_user_id as is_owner
+  from public.projects p
+  where p.user_id = p_user_id
+     or (
+       coalesce(p_user_email, '') <> ''
+       and p.user_id <> p_user_id
+       and p.shared_with @> jsonb_build_array(p_user_email)
+     )
+  order by p.updated_at desc, p.created_at desc, p.id asc
+  limit greatest(coalesce(p_limit, 11), 1)
+  offset greatest(coalesce(p_offset, 0), 0);
+$$;
+
+-- ID-only Library query for select-all and bulk actions. This mirrors the
+-- flat Library search predicate without returning document/version payloads.
+create or replace function public.get_library_document_ids(
+  p_user_id text,
+  p_library_kind text,
+  p_search_term text,
+  p_file_type text,
+  p_limit integer,
+  p_offset integer
+)
+returns table (
+  id uuid,
+  user_id text
+)
+language sql
+stable
+as $$
+  select d.id, d.user_id
+  from public.documents d
+  left join public.document_versions v
+    on v.id = d.current_version_id
+   and v.deleted_at is null
+  where d.user_id = p_user_id
+    and d.project_id is null
+    and (
+      (p_library_kind = 'file' and coalesce(d.library_kind, 'file') = 'file')
+      or d.library_kind = p_library_kind
+    )
+    and (
+      p_search_term is null
+      or p_search_term = ''
+      or lower(coalesce(v.filename, '')) like
+        '%' || replace(replace(replace(lower(p_search_term), '\', '\\'), '%', '\%'), '_', '\_') || '%'
+        escape '\'
+    )
+    and (
+      p_file_type is null
+      or lower(coalesce(v.file_type, '')) = lower(p_file_type)
+    )
+  order by d.updated_at desc, d.id asc
+  limit greatest(coalesce(p_limit, 1000), 1)
+  offset greatest(coalesce(p_offset, 0), 0);
+$$;
 
 -- ---------------------------------------------------------------------------
 -- Direct client grant hardening

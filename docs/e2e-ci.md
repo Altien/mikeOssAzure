@@ -9,7 +9,10 @@ makes that check *required*.
 ## What the workflow does
 
 On every `pull_request` targeting `main` (or `upstream-main`, the fork mirror),
-and on manual `workflow_dispatch`, the `e2e / playwright` job:
+on manual `workflow_dispatch`, and **nightly at 03:47 UTC** (a `schedule` cron,
+so drift that lands between PRs — dependency bumps, Supabase CLI changes,
+selector-breaking UI tweaks — is caught within a day), the `e2e / playwright`
+job:
 
 1. installs the root (Playwright), `backend/`, and `frontend/` dependencies;
 2. boots **MinIO** (S3-compatible object storage — several specs upload documents);
@@ -35,14 +38,35 @@ and on manual `workflow_dispatch`, the `e2e / playwright` job:
 the local Supabase admin API, so no login secret is needed — the credentials
 baked into that file are the single source of truth.
 
-A keyless run is expected to end **23 passed / 4 skipped / 0 failed** — the
-suite has 27 specs, 4 of them LLM-gated (see "Confirm the specs ran" below).
+A keyless run is expected to end **27 passed / 4 skipped / 0 failed** — the
+suite has 31 specs, 4 of them LLM-gated (see "Confirm the specs ran" below).
+Typical run: **~7 minutes**.
+
+## Accessibility scans
+
+`e2e/accessibility.spec.ts` runs an [axe-core](https://github.com/dequelabs/axe-core)
+scan (via `@axe-core/playwright`) over the core pages: `/login` (pre-auth),
+`/assistant`, `/projects`, and `/tabular-reviews`. The policy is two-tier:
+**`critical`-impact violations fail the build**; `serious`-impact violations are
+printed to the test output but do not fail — enforce at critical first, then
+ratchet `serious` into the failing tier (`BLOCKING_IMPACTS` in the spec) once
+that backlog is cleared. The scans need no LLM key and run on every trigger.
+
+## Failure artifacts
+
+Playwright retries failed specs up to twice on CI and records a **trace** on the
+first retry (`retries` / `trace: "on-first-retry"` in `playwright.config.ts`).
+On pass, fail, or timeout, the job uploads `playwright-report/` and
+`test-results/` as the **`playwright-report`** artifact (14-day retention): from
+the failed run's page in the Actions tab, download it, then
+`npx playwright show-report playwright-report` locally to see per-spec results,
+screenshots, and step-by-step traces of what the browser did.
 
 ## Optional secret (fuller coverage)
 
 | Secret | What it unlocks | Without it |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | The 4 LLM-dependent specs (chat rename/delete/submit, critical-path "ask a question") send a message and assert a **streamed** answer. With the key set they run and are enforced. | Those 4 specs **skip** (see `e2e/llm.ts`) instead of hanging, so the run is still green on the other 23 specs. |
+| `ANTHROPIC_API_KEY` | The 4 LLM-dependent specs (chat rename/delete/submit, critical-path "ask a question") send a message and assert a **streamed** answer. With the key set they run and are enforced. | Those 4 specs **skip** (see `e2e/llm.ts`) instead of hanging, so the run is still green on the other 27 specs. |
 
 The suite is green **without** any secret — the LLM specs skip themselves via
 `test.skip(!process.env.ANTHROPIC_API_KEY, …)`, which keeps keyless runs (local,
@@ -99,10 +123,10 @@ few cents per run — negligible next to the CI minutes.
 
 Open the **Run Playwright** step in the Actions log:
 
-- **Keyless run:** the summary ends with `4 skipped` / `23 passed`, and each
+- **Keyless run:** the summary ends with `4 skipped` / `27 passed`, and each
   skipped spec carries the reason
   `requires a model key — set the ANTHROPIC_API_KEY secret to run LLM-dependent specs`.
-- **With the secret:** the summary shows `27 passed` and **no `skipped` line**;
+- **With the secret:** the summary shows `31 passed` and **no `skipped` line**;
   searching the log for `requires a model key` finds nothing.
 
 The uploaded `playwright-report` artifact shows the same per-spec statuses.
@@ -117,9 +141,10 @@ carries the fix (commit `test(e2e): select a real Claude model in LLM-gated
 specs`): the specs' `selectClaudeModel` helper picks **Claude Sonnet 4.6** in
 the ModelToggle whenever the key is set, and the critical-path response
 assertion checks for a nonempty streamed assistant answer instead of the
-fork's canned demo reply. The **23 passed / 4 skipped** keyless and
-**27 passed / 0 skipped** with-key figures come from that commit's own
-verification against a full local stack (backend, prod-build frontend, local
+fork's canned demo reply. That commit measured **23 passed / 4 skipped**
+keyless and **27 passed / 0 skipped** with the key (the 4 accessibility specs
+this branch adds raise those totals to 27 and 31); the figures come from its
+own verification against a full local stack (backend, prod-build frontend, local
 Supabase + MinIO — see its commit message); they have not been re-measured
 since this branch was rebased onto current `main`. The secret setup above is
 all that is needed.
