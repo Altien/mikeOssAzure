@@ -24,9 +24,7 @@ import {
     buildWordDocumentContextPrompt,
 } from "../lib/chat";
 import { completeText } from "../lib/llm";
-import {
-    getUserModelSettings,
-} from "../lib/userSettings";
+import { getUserModelSettings } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
 import { getSkillChatBindingMetadata } from "../altien/skills/runtime";
 import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
@@ -49,7 +47,10 @@ const devLog = (...args: Parameters<typeof console.log>) => {
 const TITLE_FALLBACK = "Misc. Query";
 
 function normalizeGeneratedTitle(raw: string): string {
-    const title = raw.trim().replace(/^["'`]+|["'`.,:;!?]+$/g, "").trim();
+  const title = raw
+    .trim()
+    .replace(/^["'`]+|["'`.,:;!?]+$/g, "")
+    .trim();
     if (!title) return TITLE_FALLBACK;
     return title.slice(0, 80);
 }
@@ -64,13 +65,19 @@ chatRouter.get("/", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const requestedLimit = Number.parseInt(String(req.query.limit ?? ""), 10);
+  const requestedOffset = Number.parseInt(String(req.query.offset ?? ""), 10);
     const limit = Number.isFinite(requestedLimit)
         ? Math.min(Math.max(requestedLimit, 1), 100)
         : null;
+  const offset =
+    Number.isFinite(requestedOffset) && requestedOffset > 0
+      ? requestedOffset
+      : 0;
 
     const { data, error } = await db.rpc("get_chats_overview", {
         p_user_id: userId,
         p_limit: limit,
+    p_offset: offset,
     });
     if (error) return void res.status(500).json({ detail: error.message });
     res.json(data ?? []);
@@ -148,8 +155,7 @@ async function hydrateEditStatuses(
         if (!Array.isArray(list)) return;
         for (const a of list as Record<string, unknown>[]) {
             if (typeof a?.edit_id === "string") editIds.add(a.edit_id);
-            if (typeof a?.version_id === "string")
-                versionIds.add(a.version_id);
+      if (typeof a?.version_id === "string") versionIds.add(a.version_id);
         }
     };
     for (const m of messages) {
@@ -158,8 +164,7 @@ async function hydrateEditStatuses(
             for (const ev of content as Record<string, unknown>[]) {
                 if (ev?.type === "doc_edited") {
                     collectFromAnnList(ev.annotations);
-                    if (typeof ev.version_id === "string")
-                        versionIds.add(ev.version_id);
+          if (typeof ev.version_id === "string") versionIds.add(ev.version_id);
                 }
             }
         }
@@ -223,8 +228,7 @@ async function hydrateEditStatuses(
     return messages.map((m) => {
         const next: Record<string, unknown> = { ...m };
         if (Array.isArray(m.content)) {
-            next.content = (m.content as Record<string, unknown>[]).map(
-                (ev) => {
+      next.content = (m.content as Record<string, unknown>[]).map((ev) => {
                     if (ev?.type !== "doc_edited") return ev;
                     let patched: Record<string, unknown> = {
                         ...ev,
@@ -236,13 +240,11 @@ async function hydrateEditStatuses(
                     ) {
                         patched = {
                             ...patched,
-                            version_number:
-                                versionNumberById.get(ev.version_id) ?? null,
+            version_number: versionNumberById.get(ev.version_id) ?? null,
                         };
                     }
                     return patched;
-                },
-            );
+      });
         }
         return next;
     });
@@ -253,8 +255,7 @@ chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const { chatId } = req.params;
     const title = (req.body.title ?? "").trim();
-    if (!title)
-        return void res.status(400).json({ detail: "title is required" });
+  if (!title) return void res.status(400).json({ detail: "title is required" });
 
     const db = createServerSupabase();
     const { data, error } = await db
@@ -405,9 +406,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         body.document_context,
     );
     if (!parsedDocumentContext.ok) {
-        return void res
-            .status(400)
-            .json({ detail: parsedDocumentContext.detail });
+    return void res.status(400).json({ detail: parsedDocumentContext.detail });
     }
     const parsedAskInputsResponse = parseOptionalAskInputsResponse(
         body.ask_inputs_response,
@@ -480,9 +479,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             .single();
         if (error || !newChat) {
             console.error("[chat/stream] failed to create chat", error);
-            return void res
-                .status(500)
-                .json({ detail: "Failed to create chat" });
+      return void res.status(500).json({ detail: "Failed to create chat" });
         }
         chatId = newChat.id as string;
         chatTitle = newChat.title;
@@ -643,12 +640,8 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                           await db.from("chat_messages").insert({
                               chat_id: chatId,
                               role: "assistant",
-                              content: partial.events.length
-                                  ? partial.events
-                                  : null,
-                              citations: partial.citations.length
-                                  ? partial.citations
-                                  : null,
+                content: partial.events.length ? partial.events : null,
+                citations: partial.citations.length ? partial.citations : null,
                           })
                       ).error;
                 if (askInputsResponse) {
@@ -670,17 +663,14 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         }
         console.error("[chat/stream] error:", safeErrorLog(err));
         const message = safeErrorMessage(err, "Stream error");
-        const errorEvents = err instanceof AssistantStreamError
+    const errorEvents =
+      err instanceof AssistantStreamError
             ? stripTransientAssistantEvents(err.events)
             : [{ type: "error" as const, message }];
         const errorFullText =
             err instanceof AssistantStreamError ? err.fullText : "";
         try {
-            const citations = extractCitations(
-                errorFullText,
-                docIndex,
-                errorEvents,
-            );
+      const citations = extractCitations(errorFullText, docIndex, errorEvents);
             const saveError = askInputsResponse
                 ? null
                 : (
@@ -705,9 +695,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             console.error("[chat/stream] failed to save error", saveErr);
         }
         try {
-            write(
-                `data: ${JSON.stringify({ type: "error", message })}\n\n`,
-            );
+      write(`data: ${JSON.stringify({ type: "error", message })}\n\n`);
             write("data: [DONE]\n\n");
         } catch {
             /* ignore */

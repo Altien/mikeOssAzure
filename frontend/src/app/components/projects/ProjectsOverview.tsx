@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronDown, Plus } from "lucide-react";
 import {
-    listProjects,
+    getProjectFilterOptions,
+    type ProjectFilterOptions,
     updateProject,
     deleteProject,
 } from "@/app/lib/mikeApi";
@@ -12,6 +13,7 @@ import { deleteTabularReviewsWithConcurrency } from "@/app/lib/deleteTabularRevi
 import { useDebouncedValue } from "@/app/hooks/useDebouncedValue";
 import { usePaginatedProjects } from "@/app/hooks/usePaginatedProjects";
 import { OwnerOnlyPopup } from "@/app/components/popups/OwnerOnlyPopup";
+import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import { useAuth } from "@/app/contexts/AuthContext";
 import type { Project } from "@/app/components/shared/types";
 import { NewProjectModal } from "./NewProjectModal";
@@ -91,13 +93,13 @@ export function ProjectsOverview() {
     const [actionsOpen, setActionsOpen] = useState(false);
     const [search, setSearch] = useState("");
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
-    // A separate, always-unpaginated fetch used only to enumerate the
-    // practice/owner filter dropdown options — the paginated rows below
-    // won't necessarily include every distinct practice/owner once there
-    // are more projects than fit on the first page.
-    const [filterOptionsProjects, setFilterOptionsProjects] = useState<
-        Project[]
-    >([]);
+    const [selectionCameFromSelectAll, setSelectionCameFromSelectAll] =
+        useState(false);
+    const [confirmDeleteAllOpen, setConfirmDeleteAllOpen] = useState(false);
+    const [filterOptions, setFilterOptions] = useState<ProjectFilterOptions>({
+        practices: [],
+        owners: [],
+    });
     const actionsRef = useRef<HTMLDivElement>(null);
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -136,17 +138,17 @@ export function ProjectsOverview() {
 
     useEffect(() => {
         if (authLoading || !isAuthenticated) return;
-        let cancelled = false;
-        listProjects()
+        const controller = new AbortController();
+        getProjectFilterOptions(controller.signal)
             .then((data) => {
-                if (!cancelled) setFilterOptionsProjects(data);
+                if (!controller.signal.aborted) setFilterOptions(data);
             })
             .catch(() => {
                 // Filter option lists degrade to "no options" — not worth a
                 // user-facing error for a purely cosmetic dropdown.
             });
         return () => {
-            cancelled = true;
+            controller.abort();
         };
     }, [authLoading, isAuthenticated]);
 
@@ -162,31 +164,8 @@ export function ProjectsOverview() {
         return () => document.removeEventListener("mousedown", handleClick);
     }, [actionsOpen]);
 
-    const practices = useMemo(
-        () =>
-            Array.from(
-                new Set(
-                    filterOptionsProjects
-                        .map((project) => project.practice?.trim())
-                        .filter((practice): practice is string => !!practice),
-                ),
-            ).sort((a, b) => a.localeCompare(b)),
-        [filterOptionsProjects],
-    );
-    const ownerOptions = useMemo(() => {
-        const labelByUserId = new Map<string, string>();
-        for (const project of filterOptionsProjects) {
-            if (!labelByUserId.has(project.user_id)) {
-                labelByUserId.set(
-                    project.user_id,
-                    getProjectOwnerLabel(project, user?.id),
-                );
-            }
-        }
-        return Array.from(labelByUserId.entries())
-            .map(([value, label]) => ({ value, label }))
-            .sort((a, b) => a.label.localeCompare(b.label));
-    }, [filterOptionsProjects, user?.id]);
+    const practices = filterOptions.practices;
+    const ownerOptions = filterOptions.owners;
 
     const allSelected =
         visibleProjects.length > 0 &&
@@ -195,8 +174,13 @@ export function ProjectsOverview() {
         !allSelected && visibleProjects.some((p) => selectedIds.includes(p.id));
 
     function toggleAll() {
-        if (allSelected) setSelectedIds([]);
-        else void selectAllMatching();
+        if (allSelected) {
+            setSelectedIds([]);
+            setSelectionCameFromSelectAll(false);
+        } else {
+            setSelectionCameFromSelectAll(true);
+            void selectAllMatching();
+        }
     }
 
     function toggleOne(id: string) {
@@ -207,6 +191,8 @@ export function ProjectsOverview() {
 
     function clearSelection() {
         setSelectedIds([]);
+        setSelectionCameFromSelectAll(false);
+        setConfirmDeleteAllOpen(false);
         setActionsOpen(false);
     }
 
@@ -357,9 +343,20 @@ export function ProjectsOverview() {
         );
     }
 
+    function requestDeleteSelected() {
+        setActionsOpen(false);
+        if (selectionCameFromSelectAll) {
+            setConfirmDeleteAllOpen(true);
+            return;
+        }
+        void handleDeleteSelected();
+    }
+
     async function handleDeleteSelected() {
         const ids = [...selectedIds];
         setActionsOpen(false);
+        setConfirmDeleteAllOpen(false);
+        setSelectionCameFromSelectAll(false);
         // Only the project owner can delete; the per-row delete is hidden
         // for shared projects but the bulk action can still pick them up
         // if a user toggled them across filters (or select-all-matching
@@ -396,7 +393,7 @@ export function ProjectsOverview() {
                 {actionsOpen && (
                     <div className="absolute top-full right-0 mt-1 w-36 rounded-lg border border-gray-100 bg-white shadow-lg z-50 overflow-hidden">
                         <button
-                            onClick={handleDeleteSelected}
+                            onClick={requestDeleteSelected}
                             className="w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 transition-colors"
                         >
                             Delete
@@ -744,6 +741,14 @@ export function ProjectsOverview() {
                 open={!!ownerOnlyAction}
                 action={ownerOnlyAction ?? undefined}
                 onClose={() => setOwnerOnlyAction(null)}
+            />
+            <ConfirmPopup
+                open={confirmDeleteAllOpen && selectedIds.length > 0}
+                title="Delete all selected projects?"
+                message={`This will permanently delete every selected project you own, including selected projects not currently shown. Every file within those projects will also be deleted. Shared projects you do not own will be skipped. ${selectedIds.length} projects are selected.`}
+                confirmLabel="Delete"
+                onCancel={() => setConfirmDeleteAllOpen(false)}
+                onConfirm={() => void handleDeleteSelected()}
             />
         </div>
     );

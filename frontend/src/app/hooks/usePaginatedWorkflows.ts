@@ -12,6 +12,7 @@ import {
     listWorkflowIds,
     listWorkflowsPage,
 } from "@/app/lib/mikeApi";
+import { appendUniqueRows, paginationError, splitOverfetchedPage } from "@/app/lib/paginatedRows";
 
 export type WorkflowSortKey = "name" | "type" | "created";
 export type WorkflowSortDirection = "asc" | "desc";
@@ -19,19 +20,6 @@ export type WorkflowScope = "all" | "owned" | "shared";
 type WorkflowTypeFilter = "assistant" | "tabular" | undefined;
 
 const PAGE_SIZE = 30;
-
-function pageRows(rows: Workflow[]) {
-    return {
-        hasMore: rows.length > PAGE_SIZE,
-        rows: rows.slice(0, PAGE_SIZE),
-    };
-}
-
-function asError(value: unknown) {
-    return value instanceof Error
-        ? value
-        : new Error("Unable to load workflows");
-}
 
 /**
  * Server-side-paginated owned+shared workflows, plus the always-eager,
@@ -50,6 +38,7 @@ function asError(value: unknown) {
  * `setSelectedWorkflowIds` with no hook involvement needed).
  */
 export function usePaginatedWorkflows(options: {
+  dbEnabled?: boolean;
     type?: WorkflowTypeFilter;
     search?: string;
     selectionKey?: string;
@@ -86,6 +75,7 @@ export function usePaginatedWorkflows(options: {
         languageFilter = null,
         jurisdictionFilter = null,
         sort,
+    dbEnabled = true,
     } = options;
     const sortKey = sort?.key;
     const sortDirection = sort?.direction;
@@ -112,10 +102,8 @@ export function usePaginatedWorkflows(options: {
         useCallback(
             (value) => {
                 setSelection((current) => {
-                    const currentIds =
-                        current.queryKey === queryKey ? current.ids : [];
-                    const ids =
-                        typeof value === "function" ? value(currentIds) : value;
+          const currentIds = current.queryKey === queryKey ? current.ids : [];
+          const ids = typeof value === "function" ? value(currentIds) : value;
                     return { queryKey, ids };
                 });
             },
@@ -153,6 +141,11 @@ export function usePaginatedWorkflows(options: {
         setLoadingMore(false);
         setError(null);
         setLoadMoreError(null);
+    if (!dbEnabled) {
+      setDbLoading(false);
+      setHasMore(false);
+      return;
+    }
         setDbLoading(true);
 
         void listWorkflowsPage({
@@ -169,7 +162,7 @@ export function usePaginatedWorkflows(options: {
         })
             .then((rows) => {
                 if (requestVersion !== requestVersionRef.current) return;
-                const firstPage = pageRows(rows);
+        const firstPage = splitOverfetchedPage(rows, PAGE_SIZE);
                 setDbWorkflows(firstPage.rows);
                 setHasMore(firstPage.hasMore);
             })
@@ -180,7 +173,7 @@ export function usePaginatedWorkflows(options: {
                 )
                     return;
                 console.error("[workflows] failed to load", error);
-                setError(asError(error));
+        setError(paginationError(error, "Unable to load workflows"));
                 setHasMore(false);
             })
             .finally(() => {
@@ -204,10 +197,11 @@ export function usePaginatedWorkflows(options: {
         search,
         sortDirection,
         sortKey,
+    dbEnabled,
     ]);
 
     const loadMore = useCallback(async () => {
-        if (dbLoading || loadingMoreRef.current || !hasMore) return;
+    if (!dbEnabled || dbLoading || loadingMoreRef.current || !hasMore) return;
 
         const requestVersion = requestVersionRef.current;
         const offset = dbWorkflows.length;
@@ -234,16 +228,8 @@ export function usePaginatedWorkflows(options: {
             });
             if (requestVersion !== requestVersionRef.current) return;
 
-            const nextPage = pageRows(rows);
-            setDbWorkflows((current) => {
-                const existingIds = new Set(current.map((workflow) => workflow.id));
-                return [
-                    ...current,
-                    ...nextPage.rows.filter(
-                        (workflow) => !existingIds.has(workflow.id),
-                    ),
-                ];
-            });
+      const nextPage = splitOverfetchedPage(rows, PAGE_SIZE);
+      setDbWorkflows((current) => appendUniqueRows(current, nextPage.rows));
             setHasMore(nextPage.hasMore);
         } catch (error) {
             if (
@@ -251,7 +237,7 @@ export function usePaginatedWorkflows(options: {
                 requestVersion === requestVersionRef.current
             ) {
                 console.error("[workflows] failed to load more", error);
-                setLoadMoreError(asError(error));
+        setLoadMoreError(paginationError(error, "Unable to load workflows"));
             }
         } finally {
             if (
@@ -265,6 +251,7 @@ export function usePaginatedWorkflows(options: {
         }
     }, [
         dbLoading,
+    dbEnabled,
         hasMore,
         type,
         dbWorkflows.length,
@@ -280,19 +267,36 @@ export function usePaginatedWorkflows(options: {
         setRetryVersion((current) => current + 1);
     }, []);
 
-    // Selects every OWNED workflow matching the current filters, not just
-    // the page(s) already loaded. Shared workflows are deliberately excluded
-    // — bulk delete is owner-only, so "select all" for that action should
-    // never pull in workflows the user can't actually delete. Fetches only
-    // ids (+ owner), not full workflow payloads.
-    const selectAllMatchingOwned = useCallback(async () => {
+  const [selectAllOwners, setSelectAllOwners] = useState<{
+    queryKey: string;
+    ownerById: Record<string, string>;
+  }>({ queryKey, ownerById: {} });
+  const getWorkflowOwnerId = useCallback(
+    (id: string): string | undefined => {
+      const loaded = dbWorkflows.find((workflow) => workflow.id === id);
+      if (loaded) return loaded.user_id ?? undefined;
+      return selectAllOwners.queryKey === queryKey
+        ? selectAllOwners.ownerById[id]
+        : undefined;
+    },
+    [dbWorkflows, queryKey, selectAllOwners],
+  );
+
+  // Select every DB-backed workflow matching the active source scope and
+  // filters. System workflow ids can be supplied by the caller because
+  // that static bucket is already fully loaded in memory.
+  const selectAllMatching = useCallback(
+    async (additionalIds: string[] = []) => {
         if (selectionQueryPending) return;
 
         if (!hasMore) {
             setSelectedWorkflowIds(
-                dbWorkflows
-                    .filter((workflow) => workflow.is_owner !== false)
-                    .map((workflow) => workflow.id),
+          Array.from(
+            new Set([
+              ...additionalIds,
+              ...dbWorkflows.map((workflow) => workflow.id),
+            ]),
+          ),
             );
             return;
         }
@@ -303,28 +307,40 @@ export function usePaginatedWorkflows(options: {
             const rows = await listWorkflowIds({
                 type,
                 search: search || undefined,
-                scope: "owned",
+          scope,
                 practice: practiceFilter || undefined,
                 language: languageFilter || undefined,
                 jurisdiction: jurisdictionFilter || undefined,
             });
             if (requestVersion !== requestVersionRef.current) return;
 
-            setSelectedWorkflowIds(rows.map((row) => row.id));
+        setSelectAllOwners({
+          queryKey,
+          ownerById: Object.fromEntries(
+            rows.map((row) => [row.id, row.user_id]),
+          ),
+        });
+        setSelectedWorkflowIds(
+          Array.from(new Set([...additionalIds, ...rows.map((row) => row.id)])),
+        );
         } finally {
             setSelectingAllRequest(false);
         }
-    }, [
+    },
+    [
         hasMore,
+      queryKey,
         type,
         dbWorkflows,
+      scope,
         practiceFilter,
         languageFilter,
         jurisdictionFilter,
         search,
         selectionQueryPending,
         setSelectedWorkflowIds,
-    ]);
+    ],
+  );
 
     return {
         systemWorkflows,
@@ -339,7 +355,8 @@ export function usePaginatedWorkflows(options: {
         retry,
         selectedWorkflowIds,
         setSelectedWorkflowIds,
-        selectAllMatchingOwned,
+    selectAllMatching,
         selectingAll: selectingAllRequest || selectionQueryPending,
+    getWorkflowOwnerId,
     };
 }

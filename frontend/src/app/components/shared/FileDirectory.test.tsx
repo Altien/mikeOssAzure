@@ -1,7 +1,14 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Document, Folder } from "./types";
 import { FileDirectory } from "./FileDirectory";
+
+const { loadFolderChildrenMock, loadMoreLibraryDocumentsMock } = vi.hoisted(
+    () => ({
+        loadFolderChildrenMock: vi.fn(async () => {}),
+        loadMoreLibraryDocumentsMock: vi.fn(async () => {}),
+    }),
+);
 
 vi.mock("./useDirectoryData", () => ({
     useDirectoryData: () => ({
@@ -62,11 +69,25 @@ vi.mock("./useDirectoryData", () => ({
                 ],
             },
         ],
+        loadedFolderIds: { files: new Set(), templates: new Set() },
+        loadingFolderIds: { files: new Set(), templates: new Set() },
+        documentsHasMoreByLevel: {
+            files: { "library-folder-1": true },
+            templates: {},
+        },
+        loadingMoreDocumentsByLevel: { files: {}, templates: {} },
         loadTab: vi.fn(),
+        loadFolderChildren: loadFolderChildrenMock,
+        loadMoreLibraryDocuments: loadMoreLibraryDocumentsMock,
     }),
 }));
 
 describe("FileDirectory", () => {
+    beforeEach(() => {
+        loadFolderChildrenMock.mockClear();
+        loadMoreLibraryDocumentsMock.mockClear();
+    });
+
     it("renders supplied project folders and reveals their documents", () => {
         const folder = {
             id: "folder-1",
@@ -167,4 +188,27 @@ describe("FileDirectory", () => {
             expect(screen.getByText(filename)).toBeInTheDocument();
         },
     );
+
+    it("loads a library folder and its next document page on demand", () => {
+        render(
+            <FileDirectory
+                selectedDocuments={[]}
+                onChange={vi.fn()}
+                showTabs
+                initialTab="files"
+            />,
+        );
+
+        fireEvent.click(screen.getByText("Matter files"));
+        expect(loadFolderChildrenMock).toHaveBeenCalledWith(
+            "files",
+            "library-folder-1",
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+        expect(loadMoreLibraryDocumentsMock).toHaveBeenCalledWith(
+            "files",
+            "library-folder-1",
+        );
+    });
 });
