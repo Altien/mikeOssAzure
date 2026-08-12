@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Download, Trash2 } from "lucide-react";
-import { SettingsActionButton } from "@/app/components/settings/SettingsActionButton";
+import { PillButton } from "@/app/components/ui/pill-button";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 // Upstream divergence (sync-log: 3a10943): upstream wraps these actions in
@@ -160,7 +160,9 @@ export default function PrivacyDataPage() {
                                 history as JSON.
                             </p>
                         </div>
-                        <SettingsActionButton
+                        <PillButton
+                            tone="black"
+                            size="normal"
                             onClick={handleExportChatData}
                             disabled={isExportingChats}
                             className="shrink-0"
@@ -169,7 +171,7 @@ export default function PrivacyDataPage() {
                                 <Download className="h-4 w-4 shrink-0" />
                             )}
                             {isExportingChats ? "Exporting..." : "Export"}
-                        </SettingsActionButton>
+                        </PillButton>
                     </div>
                     <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1">
@@ -181,7 +183,9 @@ export default function PrivacyDataPage() {
                                 review chat records as JSON.
                             </p>
                         </div>
-                        <SettingsActionButton
+                        <PillButton
+                            tone="black"
+                            size="normal"
                             onClick={handleExportTabularReviewsData}
                             disabled={isExportingTabularReviews}
                             className="shrink-0"
@@ -192,7 +196,7 @@ export default function PrivacyDataPage() {
                             {isExportingTabularReviews
                                 ? "Exporting..."
                                 : "Export"}
-                        </SettingsActionButton>
+                        </PillButton>
                     </div>
                     <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1">
@@ -204,7 +208,9 @@ export default function PrivacyDataPage() {
                                 metadata, workflows, and review data as JSON.
                             </p>
                         </div>
-                        <SettingsActionButton
+                        <PillButton
+                            tone="black"
+                            size="normal"
                             onClick={handleExportAccountData}
                             disabled={isExportingAccount}
                             className="shrink-0"
@@ -213,7 +219,7 @@ export default function PrivacyDataPage() {
                                 <Download className="h-4 w-4 shrink-0" />
                             )}
                             {isExportingAccount ? "Exporting..." : "Export"}
-                        </SettingsActionButton>
+                        </PillButton>
                     </div>
                 </SettingsSection>
             </section>
@@ -233,14 +239,16 @@ export default function PrivacyDataPage() {
                                 review chat history.
                             </p>
                         </div>
-                        <SettingsActionButton
+                        <PillButton
+                            tone="black"
+                            size="normal"
                             onClick={() => setPendingDeleteAction("chats")}
                             disabled={!!deletingAction}
-                            className="w-full shrink-0 text-red-600 hover:text-red-700 sm:w-auto"
+                            className="w-full shrink-0 sm:w-auto"
                         >
                             <Trash2 className="h-4 w-4 shrink-0" />
                             Delete
-                        </SettingsActionButton>
+                        </PillButton>
                     </div>
                     <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1">
@@ -252,16 +260,18 @@ export default function PrivacyDataPage() {
                                 including cells and review chats.
                             </p>
                         </div>
-                        <SettingsActionButton
+                        <PillButton
+                            tone="black"
+                            size="normal"
                             onClick={() =>
                                 setPendingDeleteAction("tabular-reviews")
                             }
                             disabled={!!deletingAction}
-                            className="w-full shrink-0 text-red-600 hover:text-red-700 sm:w-auto"
+                            className="w-full shrink-0 sm:w-auto"
                         >
                             <Trash2 className="h-4 w-4 shrink-0" />
                             Delete
-                        </SettingsActionButton>
+                        </PillButton>
                     </div>
                     <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1">
@@ -273,14 +283,16 @@ export default function PrivacyDataPage() {
                                 including documents, chats, and tabular reviews.
                             </p>
                         </div>
-                        <SettingsActionButton
+                        <PillButton
+                            tone="black"
+                            size="normal"
                             onClick={() => setPendingDeleteAction("projects")}
                             disabled={!!deletingAction}
-                            className="w-full shrink-0 text-red-600 hover:text-red-700 sm:w-auto"
+                            className="w-full shrink-0 sm:w-auto"
                         >
                             <Trash2 className="h-4 w-4 shrink-0" />
                             Delete
-                        </SettingsActionButton>
+                        </PillButton>
                     </div>
                 </SettingsSection>
             </section>
