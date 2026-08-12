@@ -39,6 +39,7 @@ const PAGE_SIZE = 30;
  */
 export function usePaginatedWorkflows(options: {
   dbEnabled?: boolean;
+    systemEnabled?: boolean;
     type?: WorkflowTypeFilter;
     search?: string;
     selectionKey?: string;
@@ -76,6 +77,7 @@ export function usePaginatedWorkflows(options: {
         jurisdictionFilter = null,
         sort,
     dbEnabled = true,
+    systemEnabled = true,
     } = options;
     const sortKey = sort?.key;
     const sortDirection = sort?.direction;
@@ -112,6 +114,11 @@ export function usePaginatedWorkflows(options: {
     // System workflows: fetched once, never re-fetched on filter change —
     // there are only 37 of them and they never grow from user data.
     useEffect(() => {
+        if (!systemEnabled) {
+            setSystemWorkflows([]);
+            setSystemLoading(false);
+            return;
+        }
         let cancelled = false;
         void listSystemWorkflows()
             .then((rows) => {
@@ -128,7 +135,7 @@ export function usePaginatedWorkflows(options: {
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [systemEnabled]);
 
     useEffect(() => {
         const requestVersion = ++requestVersionRef.current;
@@ -286,15 +293,24 @@ export function usePaginatedWorkflows(options: {
   // filters. System workflow ids can be supplied by the caller because
   // that static bucket is already fully loaded in memory.
   const selectAllMatching = useCallback(
-    async (additionalIds: string[] = []) => {
+    async (
+      additionalIds: string[] = [],
+      selectionScope: WorkflowScope = scope,
+    ) => {
         if (selectionQueryPending) return;
 
         if (!hasMore) {
+            const selectableWorkflows =
+              selectionScope === "owned"
+                ? dbWorkflows.filter((workflow) => workflow.is_owner !== false)
+                : selectionScope === "shared"
+                  ? dbWorkflows.filter((workflow) => workflow.is_owner === false)
+                  : dbWorkflows;
             setSelectedWorkflowIds(
           Array.from(
             new Set([
               ...additionalIds,
-              ...dbWorkflows.map((workflow) => workflow.id),
+              ...selectableWorkflows.map((workflow) => workflow.id),
             ]),
           ),
             );
@@ -307,7 +323,7 @@ export function usePaginatedWorkflows(options: {
             const rows = await listWorkflowIds({
                 type,
                 search: search || undefined,
-          scope,
+          scope: selectionScope,
                 practice: practiceFilter || undefined,
                 language: languageFilter || undefined,
                 jurisdiction: jurisdictionFilter || undefined,
