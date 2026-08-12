@@ -325,7 +325,7 @@ export default function SettingsPage() {
                 </h2>
                 <PillButton
                     tone="black"
-                    size="normal"
+                    size="sm"
                     onClick={handleLogout}
                     className="w-full sm:w-auto"
                 >
@@ -350,8 +350,8 @@ export default function SettingsPage() {
                         </p>
                     </div>
                     <PillButton
-                        tone="black"
-                        size="normal"
+                        tone="danger"
+                        size="sm"
                         onClick={() => setDeleteConfirm(true)}
                         disabled={isDeleting}
                         className="w-full shrink-0 sm:w-auto"

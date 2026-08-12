@@ -486,8 +486,8 @@ export default function SecurityPage() {
                                     </span>
                                 ) : !enrollment ? (
                                     <PillButton
-                                        tone="black"
-                                        size="normal"
+                                        tone="blue"
+                                        size="sm"
                                         onClick={() => setSetupModalOpen(true)}
                                         disabled={busy}
                                         className="shrink-0"

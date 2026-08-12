@@ -11,6 +11,10 @@ import {
 } from "lucide-react";
 import { FieldLabel } from "@/app/components/ui/form-field";
 import {
+    APP_SURFACE_HOVER_CLASS,
+    APP_SURFACE_PRESSED_CLASS,
+} from "@/app/components/ui/liquid-surface";
+import {
     SETTINGS_CONTROL_CLASS,
     SettingsTextInput,
 } from "@/app/components/settings/SettingsTextInput";
@@ -33,10 +37,7 @@ import {
     startMcpConnectorOAuth,
     updateMcpConnector,
 } from "@/app/lib/mikeApi";
-import {
-    settingsGlassIconButtonClassName,
-    settingsGlassPrimaryButtonClassName,
-} from "../settingsStyles";
+import { settingsGlassIconButtonClassName } from "../settingsStyles";
 import { SettingsSection } from "../SettingsSection";
 import { SettingsToggle } from "../SettingsToggle";
 
@@ -596,14 +597,16 @@ export default function ConnectorsPage() {
                     <h2 className="font-serif text-2xl font-medium text-gray-900">
                         Connectors
                     </h2>
-                    <button
-                        type="button"
-                        onClick={() => setAddOpen(true)}
-                        className={`inline-flex h-9 items-center gap-1.5 text-sm ${settingsGlassPrimaryButtonClassName}`}
-                    >
-                        <Plus className="h-4 w-4" />
-                        Add
-                    </button>
+                    <div className="flex shrink-0 items-center rounded-full border border-white/70 bg-app-surface p-0.5 shadow-[0_8px_24px_rgba(15,23,42,0.06)] backdrop-blur-2xl">
+                        <button
+                            type="button"
+                            onClick={() => setAddOpen(true)}
+                            className={`flex h-6 items-center justify-center gap-1 rounded-full px-2.5 text-xs font-medium text-gray-500 transition-colors hover:text-gray-900 ${APP_SURFACE_HOVER_CLASS} ${APP_SURFACE_PRESSED_CLASS}`}
+                        >
+                            <Plus className="h-3.5 w-3.5" />
+                            Add
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -614,25 +617,26 @@ export default function ConnectorsPage() {
             )}
 
             <div className="space-y-3">
-                {loading ? (
-                    <ConnectorsSkeleton />
-                ) : connectors.length === 0 ? (
-                    <SettingsSection className="p-4">
-                        <p className="text-sm text-gray-500">
-                            No connectors yet.
-                        </p>
-                    </SettingsSection>
-                ) : (
-                    connectors.map((connector) => (
-                        <ConnectorRow
-                            key={connector.id}
-                            connector={connector}
-                            busyKey={busyKey}
-                            onOpen={() => void openConnectorDetails(connector.id)}
-                            onConnectorEnabled={handleConnectorEnabled}
-                        />
-                    ))
-                )}
+                {!loading &&
+                    (connectors.length === 0 ? (
+                        <SettingsSection className="p-4">
+                            <p className="text-sm text-gray-500">
+                                No connectors yet.
+                            </p>
+                        </SettingsSection>
+                    ) : (
+                        connectors.map((connector) => (
+                            <ConnectorRow
+                                key={connector.id}
+                                connector={connector}
+                                busyKey={busyKey}
+                                onOpen={() =>
+                                    void openConnectorDetails(connector.id)
+                                }
+                                onConnectorEnabled={handleConnectorEnabled}
+                            />
+                        ))
+                    ))}
             </div>
 
             <NewMcpModal
@@ -692,34 +696,6 @@ export default function ConnectorsPage() {
                 onVerified={() => void handleMfaVerified()}
             />
         </div>
-    );
-}
-
-function ConnectorsSkeleton() {
-    return (
-        <>
-            {Array.from({ length: 3 }).map((_, index) => (
-                <SettingsSection key={index} className="px-4 py-3">
-                    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-3">
-                        <div className="flex min-h-5 min-w-0 items-center gap-2">
-                            <div className="h-3.5 w-28 animate-pulse rounded bg-gray-100" />
-                            <div className="h-1 w-1 rounded-full bg-gray-100" />
-                            <div className="h-3 w-12 animate-pulse rounded bg-gray-100" />
-                        </div>
-                        <div className="flex min-h-5 shrink-0 items-center justify-self-end gap-1.5">
-                            <div className="h-3 w-12 animate-pulse rounded bg-gray-100" />
-                            <div className="h-4 w-7 animate-pulse rounded-full bg-gray-100" />
-                        </div>
-                        <div className="flex min-h-4 min-w-0 items-center">
-                            <div className="h-3 w-full max-w-sm animate-pulse rounded bg-gray-100" />
-                        </div>
-                        <div className="flex min-h-4 items-center justify-self-end">
-                            <div className="h-3 w-12 animate-pulse rounded bg-gray-100" />
-                        </div>
-                    </div>
-                </SettingsSection>
-            ))}
-        </>
     );
 }
 

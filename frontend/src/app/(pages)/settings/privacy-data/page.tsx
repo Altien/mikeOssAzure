@@ -230,7 +230,7 @@ export default function PrivacyDataPage() {
                         </div>
                         <PillButton
                             tone="black"
-                            size="normal"
+                            size="sm"
                             onClick={handleExportChatData}
                             disabled={isExportingChats}
                             className="shrink-0"
@@ -253,7 +253,7 @@ export default function PrivacyDataPage() {
                         </div>
                         <PillButton
                             tone="black"
-                            size="normal"
+                            size="sm"
                             onClick={handleExportTabularReviewsData}
                             disabled={isExportingTabularReviews}
                             className="shrink-0"
@@ -278,7 +278,7 @@ export default function PrivacyDataPage() {
                         </div>
                         <PillButton
                             tone="black"
-                            size="normal"
+                            size="sm"
                             onClick={handleExportAccountData}
                             disabled={isExportingAccount}
                             className="shrink-0"
@@ -308,8 +308,8 @@ export default function PrivacyDataPage() {
                             </p>
                         </div>
                         <PillButton
-                            tone="black"
-                            size="normal"
+                            tone="danger"
+                            size="sm"
                             onClick={() => setPendingDeleteAction("chats")}
                             disabled={!!deletingAction}
                             className="w-full shrink-0 sm:w-auto"
@@ -329,8 +329,8 @@ export default function PrivacyDataPage() {
                             </p>
                         </div>
                         <PillButton
-                            tone="black"
-                            size="normal"
+                            tone="danger"
+                            size="sm"
                             onClick={() =>
                                 setPendingDeleteAction("tabular-reviews")
                             }
@@ -352,8 +352,8 @@ export default function PrivacyDataPage() {
                             </p>
                         </div>
                         <PillButton
-                            tone="black"
-                            size="normal"
+                            tone="danger"
+                            size="sm"
                             onClick={() => setPendingDeleteAction("projects")}
                             disabled={!!deletingAction}
                             className="w-full shrink-0 sm:w-auto"
