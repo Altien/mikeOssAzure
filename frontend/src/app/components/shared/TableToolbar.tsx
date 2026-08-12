@@ -36,6 +36,8 @@ interface Props<T extends string> {
     items?: ToolbarItem<T>[];
     active?: T;
     onChange?: (id: T) => void;
+    /** Optional content rendered on the left before any tab items */
+    leading?: React.ReactNode;
     /** Optional content rendered on the right side of the toolbar */
     actions?: React.ReactNode;
 }
@@ -44,6 +46,7 @@ export function TableToolbar<T extends string>({
     items = [],
     active,
     onChange,
+    leading,
     actions,
 }: Props<T>) {
     const hasItems = items.length > 0;
@@ -55,8 +58,9 @@ export function TableToolbar<T extends string>({
 
     return (
         <div className="mx-4 mb-2 flex h-10 items-center md:mx-6">
-            {hasItems && (
+            {(leading || hasItems) && (
                 <div className="flex flex-1 items-center gap-1.5 overflow-x-auto">
+                    {leading}
                     {items.map((item) => (
                         <TabPillButton
                             key={item.id}
@@ -69,9 +73,7 @@ export function TableToolbar<T extends string>({
                 </div>
             )}
             {actions && isDesktop && (
-                <div className="ml-auto flex items-center gap-2">
-                    {actions}
-                </div>
+                <div className="ml-auto flex items-center gap-2">{actions}</div>
             )}
             {actions && !isDesktop && (
                 <DropdownMenu>

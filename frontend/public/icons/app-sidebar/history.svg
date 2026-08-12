@@ -1,16 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <defs>
-    <linearGradient id="hg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#4b5563"/><stop offset="1" stop-color="#111827"/>
+    <linearGradient id="clock-face" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e5e7eb"/>
+      <stop offset="1" stop-color="#d1d5db"/>
     </linearGradient>
-    <linearGradient id="hr" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff" stop-opacity=".55"/><stop offset="1" stop-color="#ffffff" stop-opacity=".05"/>
-    </linearGradient>
+    <filter id="clock-shadow" x="-25%" y="-25%" width="150%" height="160%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#0f172a" flood-opacity="0.16"/>
+    </filter>
   </defs>
-  <circle cx="32" cy="34" r="21" fill="url(#hg)"/>
-  <circle cx="32" cy="34" r="21" fill="none" stroke="url(#hr)" stroke-width="2"/>
-  <circle cx="32" cy="34" r="16.5" fill="none" stroke="#ffffff" stroke-opacity=".18" stroke-width="1.4"/>
-  <path d="M32 24v10l7 5" fill="none" stroke="#f9fafb" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M13 20 A22.5 22.5 0 0 1 24 12.5" fill="none" stroke="#6b7280" stroke-width="3.2" stroke-linecap="round"/>
-  <path d="M13.5 12.5 L13 20 L20.4 19.2" fill="none" stroke="#6b7280" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="32" cy="32" r="23" fill="url(#clock-face)" stroke="#111827" stroke-width="3" filter="url(#clock-shadow)"/>
+  <circle cx="32" cy="32" r="2.5" fill="#111827"/>
+  <path d="M32 18v14l9 6" fill="none" stroke="#111827" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="#111827">
+    <circle cx="32" cy="13.5" r="1.25"/>
+    <circle cx="50.5" cy="32" r="1.25"/>
+    <circle cx="32" cy="50.5" r="1.25"/>
+    <circle cx="13.5" cy="32" r="1.25"/>
+  </g>
 </svg>
