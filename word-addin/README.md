@@ -63,12 +63,12 @@ The sections below explain each step the script automates, and the manual / web 
 
    ```bash
    # word-addin/.env
-   REACT_APP_API_BASE_URL=https://localhost:3000
+   REACT_APP_API_BASE_URL=https://localhost:3200
    ```
 
    - `REACT_APP_API_BASE_URL` — the backend **origin** (no `/api`; same meaning as the web frontend's `NEXT_PUBLIC_API_BASE_URL`). The add-in calls `<origin>/api/...` and reads its sign-in config from `<origin>/config`. No identity values (tenant, client id, scope) are baked into the bundle.
 
-   > **Mixed content / HTTPS:** Word serves the task pane over HTTPS (`https://localhost:3000`), and its WebView blocks plain-HTTP requests to the local backend. So in development the bundle points at the dev server itself (`https://localhost:3000`), which proxies `/api` and `/config` to `API_PROXY_TARGET` (default `http://localhost:3001`) — `dev.sh` sets this up. Same-origin calls also avoid the backend's CORS allow-list, which only admits `FRONTEND_URL`.
+   > **Mixed content / HTTPS:** Word serves the task pane over HTTPS (`https://localhost:3200`), and its WebView blocks plain-HTTP requests to the local backend. So in development the bundle points at the dev server itself (`https://localhost:3200`), which proxies `/api` and `/config` to `API_PROXY_TARGET` (default `http://localhost:3001`) — `dev.sh` sets this up. Same-origin calls also avoid the backend's CORS allow-list, which only admits `FRONTEND_URL`.
 
    Existing shell variables take precedence over `.env`, which keeps CI and deployed builds configurable without modifying the file. Production builds continue to require their values from the deployment environment.
 
@@ -76,7 +76,7 @@ The sections below explain each step the script automates, and the manual / web 
 
 3. **Trust the dev SSL certificate (one time only)**
 
-   The dev server runs on `https://localhost:3000` with a self-signed certificate. Word refuses to load add-ins over untrusted HTTPS. Install the trusted cert once:
+   The dev server runs on `https://localhost:3200` with a self-signed certificate. Word refuses to load add-ins over untrusted HTTPS. Install the trusted cert once:
 
    ```bash
    npx office-addin-dev-certs install
@@ -98,7 +98,7 @@ The sections below explain each step the script automates, and the manual / web 
    pnpm start
    ```
 
-   Both commands run `office-addin-debugging start manifest.xml`, which starts the webpack dev server on `https://localhost:3000` **and** automatically opens Word with the add-in sideloaded. The task pane appears under **Home → Mike Legal AI → Mike**. Use `pnpm run dev:server` only when you intentionally want the raw webpack server without sideloading Word.
+   Both commands run `office-addin-debugging start manifest.xml`, which starts the webpack dev server on `https://localhost:3200` **and** automatically opens Word with the add-in sideloaded. The task pane appears under **Home → Mike Legal AI → Mike**. Use `pnpm run dev:server` only when you intentionally want the raw webpack server without sideloading Word.
 
 ---
 
@@ -117,7 +117,7 @@ Restart Word, then: **Insert → Add-ins → My Add-ins → Mike**
 
 **Insert → Add-ins → Upload My Add-in** → select `manifest.xml`
 
-> **Caveat — the pane will silently fail to load in a normal browser.** Word on the web is a *public* origin (`word-edit.officeapps.live.com`) and the dev pane is `https://localhost:3000`; Chrome's Local Network Access checks block a public page from embedding a localhost iframe, with no visible error — the pane simply never appears. This affects dev sideloads only (a deployed add-in on a public HTTPS host is unaffected). To test against real Word on the web locally, start a browser with those checks disabled. (Upstream ships a Playwright launcher for this in `e2e-live/`; it is not included in this fork.)
+> **Caveat — the pane will silently fail to load in a normal browser.** Word on the web is a *public* origin (`word-edit.officeapps.live.com`) and the dev pane is `https://localhost:3200`; Chrome's Local Network Access checks block a public page from embedding a localhost iframe, with no visible error — the pane simply never appears. This affects dev sideloads only (a deployed add-in on a public HTTPS host is unaffected). To test against real Word on the web locally, start a browser with those checks disabled. (Upstream ships a Playwright launcher for this in `e2e-live/`; it is not included in this fork.)
 
 The manifest requires `WordApi 1.6`, which includes the tracked-change inspection, accept, and reject APIs used by assistant edit cards. Word will not activate the add-in on a host that does not satisfy that requirement set.
 
@@ -186,8 +186,8 @@ The add-in reuses the **frontend app registration** (the client id the backend s
 
 | Purpose | Redirect URI (SPA platform) |
 |---|---|
-| NAA broker | `brk-multihub://localhost:3000` (dev) / `brk-multihub://<add-in host>` (prod) |
-| Dialog fallback | `https://localhost:3000/auth-dialog.html` (dev) / `https://<add-in host>/auth-dialog.html` (prod) |
+| NAA broker | `brk-multihub://localhost:3200` (dev) / `brk-multihub://<add-in host>` (prod) |
+| Dialog fallback | `https://localhost:3200/auth-dialog.html` (dev) / `https://<add-in host>/auth-dialog.html` (prod) |
 
 Notes:
 - `<add-in host>` is the host (and port, if any) of `WORD_ADDIN_PUBLIC_URL`, without a path — e.g. `brk-multihub://word.example.com`.
@@ -233,8 +233,8 @@ Then **fully quit Word (Cmd-Q)** — its webview caches trust decisions — and 
 **`pnpm start` fails with `EEXIST: file already exists, link 'manifest.xml' -> …/wef/….manifest.xml`**
 A previous run exited without deregistering (crash, Ctrl-C) and left the sideload hard-link behind. `pnpm start` now clears this automatically via its `prestart` hook; if you hit it anyway, run `pnpm run stop` and retry.
 
-**`pnpm start` / `dev.sh` complains port 3000 is in use**
-The add-in dev server and the manifest are hardwired to `https://localhost:3000`, which collides with the Mike web app's dev server. Find the holder with `lsof -nP -iTCP:3000 -sTCP:LISTEN` and stop it (usually `pnpm dev` in `frontend/`).
+**`pnpm start` / `dev.sh` complains port 3200 is in use**
+The add-in dev server and the manifest are hardwired to `https://localhost:3200`, which collides with the Mike web app's dev server. Find the holder with `lsof -nP -iTCP:3200 -sTCP:LISTEN` and stop it (usually `pnpm dev` in `frontend/`).
 
 **The pane never appears in Word on the web**
 See the caveat under [Word on the web](#word-on-the-web) — Chrome's Local Network Access checks silently block the localhost iframe.
