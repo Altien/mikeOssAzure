@@ -42,6 +42,30 @@ describe("extractDocxBodyText", () => {
         );
     });
 
+    it("preserves numeric-looking text through an unrelated edit", async () => {
+        const bytes = await makeDocx(
+            `<w:p>` +
+                `<w:r><w:t>12.10</w:t></w:r>` +
+                `<w:r><w:t> applies.</w:t></w:r>` +
+                `</w:p>`,
+        );
+        const result = await applyTrackedEdits(bytes, [
+            {
+                find: "applies",
+                replace: "governs",
+                context_before: " ",
+                context_after: ".",
+            },
+        ]);
+
+        expect(result.errors).toEqual([]);
+        expect(await readDocumentXml(result.bytes)).toContain("<w:t>12.10</w:t>");
+        await expect(extractDocxBodyText(result.bytes)).resolves.toBe(
+            "12.10 governs.",
+        );
+        await expect(extractDocxBodyText(bytes)).resolves.toBe("12.10 applies.");
+    });
+
     it("uses the accepted view: w:ins text included, w:del text excluded", async () => {
         const bytes = await makeDocx(
             `<w:p>` +
