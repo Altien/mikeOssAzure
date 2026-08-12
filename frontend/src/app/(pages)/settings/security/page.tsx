@@ -9,7 +9,7 @@ import {
 } from "react";
 import { Copy, Loader2 } from "lucide-react";
 import { supabase } from "@/app/lib/supabase";
-import { SettingsActionButton } from "@/app/components/settings/SettingsActionButton";
+import { PillButton } from "@/app/components/ui/pill-button";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { isMfaRequiredError } from "@/app/lib/mikeApi";
 import { Modal } from "@/app/components/modals/Modal";
@@ -485,7 +485,9 @@ export default function SecurityPage() {
                                         Enabled
                                     </span>
                                 ) : !enrollment ? (
-                                    <SettingsActionButton
+                                    <PillButton
+                                        tone="black"
+                                        size="normal"
                                         onClick={() => setSetupModalOpen(true)}
                                         disabled={busy}
                                         className="shrink-0"
@@ -498,7 +500,7 @@ export default function SecurityPage() {
                                         ) : (
                                             "Set up"
                                         )}
-                                    </SettingsActionButton>
+                                    </PillButton>
                                 ) : null}
                             </div>
 

@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { LogOut, Trash2 } from "lucide-react";
 import { PillButton } from "@/app/components/ui/pill-button";
-import { SettingsActionButton } from "@/app/components/settings/SettingsActionButton";
 import { FieldLabel } from "@/app/components/ui/form-field";
 import { SettingsTextInput } from "@/app/components/settings/SettingsTextInput";
 import { useAuth } from "@/app/contexts/AuthContext";
@@ -350,14 +349,16 @@ export default function SettingsPage() {
                             data. This action cannot be undone.
                         </p>
                     </div>
-                    <SettingsActionButton
+                    <PillButton
+                        tone="black"
+                        size="normal"
                         onClick={() => setDeleteConfirm(true)}
                         disabled={isDeleting}
-                        className="w-full shrink-0 text-red-600 hover:text-red-700 sm:w-auto"
+                        className="w-full shrink-0 sm:w-auto"
                     >
                         <Trash2 className="h-4 w-4 shrink-0" />
                         Delete account
-                    </SettingsActionButton>
+                    </PillButton>
                 </SettingsSection>
             </section>
             <ConfirmPopup
