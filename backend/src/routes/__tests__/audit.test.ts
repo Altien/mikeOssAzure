@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
     csvCell,
+    escapeLikePattern,
     parseQuery,
     queryEvents,
     accessibleProjectIds,
@@ -133,6 +134,7 @@ function makeDb(
         or?: string;
         eq: [string, unknown][];
         order?: [string, { ascending: boolean; nullsFirst: boolean }];
+        ilike?: [string, string];
         profileUserIds?: string[];
     } = { eq: [] };
 
@@ -169,7 +171,10 @@ function makeDb(
                 calls.eq.push([col, val]);
                 return b;
             },
-            ilike: () => b,
+            ilike: (column: string, pattern: string) => {
+                calls.ilike = [column, pattern];
+                return b;
+            },
             gte: () => b,
             lte: () => b,
             order: (
@@ -248,6 +253,7 @@ describe("queryEvents visibility scoping", () => {
             action: "document.uploaded",
             status: "completed",
             surface: "project",
+            q: "agreement\\draft_100%",
             sortBy: "title",
             sortDirection: "asc",
         });
@@ -263,6 +269,10 @@ describe("queryEvents visibility scoping", () => {
         expect(calls.order).toEqual([
             "title",
             { ascending: true, nullsFirst: false },
+        ]);
+        expect(calls.ilike).toEqual([
+            "title",
+            "%agreement\\\\draft\\_100\\%%",
         ]);
     });
 
