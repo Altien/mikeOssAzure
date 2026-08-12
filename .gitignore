@@ -28,3 +28,8 @@ e2e/.auth/
 /supabase/
 backend/supabase/*
 !backend/supabase/config.toml
+
+# dev-cycle scratch files
+.current-issue.md
+.implementation-plan.md
+.implement-config
