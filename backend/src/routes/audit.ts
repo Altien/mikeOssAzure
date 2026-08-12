@@ -61,6 +61,13 @@ export type ParseQueryResult =
   | { ok: true; query: AuditQuery }
   | { ok: false; error: string };
 
+export function escapeLikePattern(value: string): string {
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/%/g, "\\%")
+    .replace(/_/g, "\\_");
+}
+
 export function parseQuery(
   raw: Record<string, unknown>,
   limit: number,
@@ -132,7 +139,7 @@ export async function queryEvents(
   if (q.action) query = query.eq("action", q.action);
   if (q.status) query = query.eq("status", q.status);
   if (q.surface) query = query.eq("surface", q.surface);
-  if (q.q) query = query.ilike("title", `%${q.q.replace(/[%_]/g, "\\$&")}%`);
+  if (q.q) query = query.ilike("title", `%${escapeLikePattern(q.q)}%`);
   if (q.from) query = query.gte("created_at", q.from);
   if (q.to) query = query.lte("created_at", `${q.to}T23:59:59.999Z`);
   const result = await query

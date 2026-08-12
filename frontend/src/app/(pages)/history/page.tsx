@@ -56,9 +56,9 @@ const ACTION_LABELS: Record<string, string> = {
 };
 
 const STATUS_DOT_STYLES: Record<string, string> = {
-  completed: "bg-green-400",
-  cancelled: "bg-amber-500",
-  failed: "bg-red-500",
+  completed: "bg-green-400/80",
+  cancelled: "bg-amber-400/80",
+  failed: "bg-red-400/80",
 };
 
 const STATUS_TEXT_STYLES: Record<string, string> = {
@@ -68,7 +68,7 @@ const STATUS_TEXT_STYLES: Record<string, string> = {
 };
 
 const GLASS_DOT =
-  "h-2 w-2 shrink-0 rounded-full shadow-[inset_0_1px_0.5px_rgba(255,255,255,0.65),inset_0_-1px_1px_rgba(15,23,42,0.28),0_1px_1.5px_rgba(15,23,42,0.2)]";
+  "h-2.5 w-2.5 shrink-0 rounded-full border border-white/80 shadow-[0_1px_2px_rgba(15,23,42,0.08),inset_0_1px_1px_rgba(255,255,255,0.55)] backdrop-blur-xl";
 
 const SURFACE_LABELS: Record<string, string> = {
   assistant: "Assistant",
@@ -472,7 +472,7 @@ export default function HistoryPage() {
                       <span
                         aria-hidden="true"
                         data-testid={`status-dot-${event.id}`}
-                        className={`${GLASS_DOT} ${STATUS_DOT_STYLES[event.status] ?? "bg-gray-500"}`}
+                        className={`${GLASS_DOT} ${STATUS_DOT_STYLES[event.status] ?? "bg-gray-400/80"}`}
                       />
                       {formatStatus(event.status)}
                     </span>

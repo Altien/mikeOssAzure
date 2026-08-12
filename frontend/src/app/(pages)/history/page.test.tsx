@@ -123,7 +123,9 @@ describe("HistoryPage", () => {
     expect(screen.getByText("Completed")).not.toHaveClass("rounded-full");
     expect(screen.getByTestId("status-dot-event-1")).toHaveClass(
       "rounded-full",
-      "bg-green-400",
+      "border-white/80",
+      "bg-green-400/80",
+      "backdrop-blur-xl",
     );
     expect(screen.getByText("gpt-5")).toHaveClass("w-28", "text-xs");
     expect(screen.getByText("Email").parentElement).toHaveClass("ml-auto");

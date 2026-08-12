@@ -470,6 +470,20 @@ describe("audit history", () => {
         expect(result.filename).toBe("history.csv");
         expect(await result.blob.text()).toBe("history");
     });
+
+    it("omits every optional audit parameter when no filters are active", async () => {
+        fetchMock.mockResolvedValueOnce(
+            jsonResponse({ events: [], total: 0, page: 1, pageSize: 50 }),
+        );
+
+        await getAuditHistory({});
+        expect(lastFetchCall().url).toBe("http://localhost:3001/audit?");
+
+        fetchMock.mockResolvedValueOnce(new Response("history", { status: 200 }));
+
+        await exportAuditHistory({});
+        expect(lastFetchCall().url).toBe("http://localhost:3001/audit/export?");
+    });
 });
 
 describe("downloadDocumentsZip", () => {
