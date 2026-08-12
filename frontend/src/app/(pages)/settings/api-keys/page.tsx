@@ -1,12 +1,6 @@
 "use client";
 
-import { useState } from "react";
-import {
-    AlertTriangle,
-    CheckCircle2,
-    ExternalLink,
-    RefreshCw,
-} from "lucide-react";
+import { AlertTriangle, CheckCircle2, ExternalLink } from "lucide-react";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import type { ApiKeyProvider } from "@/app/lib/mikeApi";
 // Upstream divergence (OSS-6, §2.3 item 3 — org Key Vault keys): upstream's
@@ -15,10 +9,9 @@ import type { ApiKeyProvider } from "@/app/lib/mikeApi";
 // Azure Key Vault, set by an administrator through /install; the backend
 // rejects personal keys (PUT returns an "organisation credential required"
 // error). So this page is a read-only status list in upstream's layout
-// (header, Refresh, SettingsSection), including dev's Kimi and Azure OpenAI.
-// Upstream divergence (sync-log: fe942475): NOT SUPPORTED — upstream's
-// Refresh also re-detects local Ollama models (refreshOllamaModels). Dev's
-// backend serves no local models, so Refresh only reloads the profile.
+// (header, SettingsSection), including dev's Kimi and Azure OpenAI. Upstream
+// dropped the page's Refresh button in 93c72a16 (it only re-detected local
+// Ollama models, which dev does not serve).
 // Upstream divergence (sync-log: 3a10943): upstream gates key save/remove
 // behind MfaVerificationPopup. Dev has no app-level MFA and no key editing.
 import { SettingsSection } from "../SettingsSection";
@@ -58,36 +51,14 @@ const INSTALL_URL =
     "/install";
 
 export default function ApiKeysPage() {
-    const { profile, reloadProfile } = useUserProfile();
-    const [refreshing, setRefreshing] = useState(false);
-
-    const handleRefresh = async () => {
-        setRefreshing(true);
-        try {
-            await reloadProfile();
-        } finally {
-            setRefreshing(false);
-        }
-    };
+    const { profile } = useUserProfile();
 
     return (
         <div>
-            <div className="mb-3 flex items-center justify-between gap-2">
+            <div className="mb-3">
                 <h2 className="text-2xl font-medium font-serif text-gray-900">
                     API Keys
                 </h2>
-                <button
-                    type="button"
-                    onClick={handleRefresh}
-                    disabled={refreshing}
-                    className="flex items-center gap-1.5 text-xs font-medium text-gray-600 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
-                    title="Re-check API keys"
-                >
-                    <RefreshCw
-                        className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
-                    />
-                    {refreshing ? "Refreshing..." : "Refresh"}
-                </button>
             </div>
             <p className="text-sm text-gray-500 mb-4">
                 Provider credentials are shared by everyone in this Mike
