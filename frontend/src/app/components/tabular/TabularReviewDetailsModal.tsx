@@ -2,9 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "../modals/Modal";
-import { ModalFieldLabel } from "../modals/ModalFieldLabel";
 import { ModalSelect } from "../modals/ModalSelect";
-import { ModalTextInput } from "../modals/ModalTextInput";
+import { FieldLabel, FormTextInput } from "../ui/form-field";
 import { ToggleSwitch } from "@/app/components/ui/toggle-switch";
 import type { Project, TabularReview } from "../shared/types";
 
@@ -130,10 +129,10 @@ export function TabularReviewDetailsModal({
         >
             <div className="space-y-6">
                 <div>
-                    <ModalFieldLabel htmlFor="tabular-review-details-title">
+                    <FieldLabel htmlFor="tabular-review-details-title">
                         Review name
-                    </ModalFieldLabel>
-                    <ModalTextInput
+                    </FieldLabel>
+                    <FormTextInput
                         id="tabular-review-details-title"
                         type="text"
                         value={titleDraft}
@@ -152,7 +151,7 @@ export function TabularReviewDetailsModal({
 
                 {!lockProject && (
                     <div className="space-y-3">
-                        <ModalFieldLabel as="p">Project</ModalFieldLabel>
+                        <FieldLabel as="p">Project</FieldLabel>
                         <ToggleSwitch
                             checked={underProject}
                             disabled={!canEdit || saving}

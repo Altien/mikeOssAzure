@@ -21,6 +21,9 @@ const nextConfig: NextConfig = {
     // when NEXT_PUBLIC_SUPABASE_* / NEXT_PUBLIC_API_BASE_URL are unset. NOT
     // carried -- dev uses runtime config (GET /config via ConfigContext); the
     // only build-time var is the optional NEXT_PUBLIC_API_BASE_URL (may be empty).
+    // Upstream divergence (317a8f05): upstream's `redirects()` /account ->
+    // /settings is NOT carried -- unsupported under `output: "export"`. Dev has
+    // client pages at (pages)/account/** that router.replace to /settings/**.
     skipTrailingSlashRedirect: true,
 };
 

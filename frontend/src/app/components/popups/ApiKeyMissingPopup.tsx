@@ -26,7 +26,7 @@ export function ApiKeyMissingPopup({ open, onClose, provider, message }: Props) 
         `${providerName} is not configured for this organisation. ` +
             "Ask an administrator to open /install and configure the organisation credential.";
 
-    const handleGoToAccount = () => {
+    const handleGoToSettings = () => {
         onClose();
         router.push("/install");
     };
@@ -42,7 +42,7 @@ export function ApiKeyMissingPopup({ open, onClose, provider, message }: Props) 
             }
             primaryAction={{
                 label: "Open organisation setup",
-                onClick: handleGoToAccount,
+                onClick: handleGoToSettings,
             }}
         />
     );

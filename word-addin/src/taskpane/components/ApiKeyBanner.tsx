@@ -23,7 +23,7 @@ const WEB_APP_URL: string =
   (typeof process !== "undefined" && process.env.REACT_APP_WEB_APP_URL) ||
   "http://localhost:3000";
 
-const API_KEYS_PAGE_URL = `${WEB_APP_URL.replace(/\/+$/, "")}/account/api-keys`;
+const API_KEYS_PAGE_URL = `${WEB_APP_URL.replace(/\/+$/, "")}/settings/api-keys`;
 
 /**
  * Open the web app's API-keys page in the system browser. Office's

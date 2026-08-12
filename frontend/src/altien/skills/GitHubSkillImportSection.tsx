@@ -19,13 +19,15 @@ import {
     startGitHubSkillOAuth,
     type GitHubSkillImportPolicy,
 } from "./api";
-import { openOAuthPopup } from "@/app/(pages)/account/connectors/oauthPopup";
-import { AccountSection } from "@/app/(pages)/account/AccountSection";
-import { AccountToggle } from "@/app/(pages)/account/AccountToggle";
-import {
-    accountGlassDangerButtonClassName,
-    accountGlassPrimaryButtonClassName,
-} from "@/app/(pages)/account/accountStyles";
+import { openOAuthPopup } from "@/app/(pages)/settings/connectors/oauthPopup";
+import { SettingsSection } from "@/app/(pages)/settings/SettingsSection";
+import { SettingsToggle } from "@/app/(pages)/settings/SettingsToggle";
+import { settingsGlassPrimaryButtonClassName } from "@/app/(pages)/settings/settingsStyles";
+
+// Dev-only: upstream's settings refactor (317a8f05) dropped the shared
+// danger-button class; this dev component keeps its own.
+const settingsGlassDangerButtonClassName =
+    "rounded-lg border border-transparent bg-transparent px-3 text-red-600 shadow-none transition-colors hover:bg-red-50 hover:text-red-700 active:bg-red-100 disabled:cursor-not-allowed disabled:opacity-45";
 
 function errorText(err: unknown, fallback: string) {
     return err instanceof Error ? err.message : fallback;
@@ -94,7 +96,7 @@ export function GitHubSkillImportSection({
     if (!policy) return null;
 
     return (
-        <AccountSection className="p-4">
+        <SettingsSection className="p-4">
             <div className="flex items-start justify-between gap-4">
                 <div>
                     <h3 className="text-sm font-medium text-gray-900">
@@ -124,7 +126,7 @@ export function GitHubSkillImportSection({
                                     onClick={() =>
                                         run(connect, "GitHub connection failed.")
                                     }
-                                    className={`inline-flex h-9 items-center gap-1.5 text-sm ${accountGlassPrimaryButtonClassName}`}
+                                    className={`inline-flex h-9 items-center gap-1.5 text-sm ${settingsGlassPrimaryButtonClassName}`}
                                 >
                                     Connect GitHub
                                 </button>
@@ -140,7 +142,7 @@ export function GitHubSkillImportSection({
                                             );
                                         }, "GitHub disconnect failed.")
                                     }
-                                    className={accountGlassDangerButtonClassName}
+                                    className={settingsGlassDangerButtonClassName}
                                 >
                                     Disconnect GitHub
                                 </button>
@@ -153,7 +155,7 @@ export function GitHubSkillImportSection({
                         </p>
                     )}
                 </div>
-                <AccountToggle
+                <SettingsToggle
                     checked={policy.tenantEnabled}
                     disabled={!policy.deploymentAllowed || !policy.canManage}
                     loading={busy}
@@ -165,6 +167,6 @@ export function GitHubSkillImportSection({
                     }
                 />
             </div>
-        </AccountSection>
+        </SettingsSection>
     );
 }

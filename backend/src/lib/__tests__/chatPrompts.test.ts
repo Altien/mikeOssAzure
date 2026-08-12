@@ -27,6 +27,14 @@ describe("buildSystemPrompt", () => {
         }
     });
 
+    it("never instructs the model to fabricate citation quotes", () => {
+        for (const prompt of [buildSystemPrompt(true), buildSystemPrompt(false)]) {
+            expect(prompt).not.toContain("TESTING ONLY");
+            expect(prompt).not.toContain("deliberately false text");
+            expect(prompt).not.toContain("Make 50% of document citation quotes");
+        }
+    });
+
     it("always contains the doc-label hygiene and reasoning-trace safety rules", () => {
         for (const prompt of [buildSystemPrompt(true), buildSystemPrompt(false)]) {
             expect(prompt).toContain("REASONING TRACE SAFETY:");

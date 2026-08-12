@@ -13,8 +13,7 @@ import type { Document, Project } from "../shared/types";
 import type { UserLookupResult } from "@/app/lib/mikeApi";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { Modal } from "../modals/Modal";
-import { ModalFieldLabel } from "../modals/ModalFieldLabel";
-import { ModalTextInput } from "../modals/ModalTextInput";
+import { FieldLabel, FormTextInput } from "../ui/form-field";
 import { ProjectPracticeField } from "./ProjectPracticeField";
 
 interface Props {
@@ -210,10 +209,10 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                 {step === "details" ? (
                     <div className="space-y-6">
                         <div>
-                            <ModalFieldLabel htmlFor="new-project-name">
+                            <FieldLabel htmlFor="new-project-name">
                                 Project name
-                            </ModalFieldLabel>
-                            <ModalTextInput
+                            </FieldLabel>
+                            <FormTextInput
                                 id="new-project-name"
                                 type="text"
                                 value={name}
@@ -225,10 +224,10 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                         </div>
 
                         <div>
-                            <ModalFieldLabel htmlFor="new-project-cm-number">
+                            <FieldLabel htmlFor="new-project-cm-number">
                                 CM number
-                            </ModalFieldLabel>
-                            <ModalTextInput
+                            </FieldLabel>
+                            <FormTextInput
                                 id="new-project-cm-number"
                                 type="text"
                                 value={cmNumber}
@@ -240,9 +239,9 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                         </div>
 
                         <div>
-                            <ModalFieldLabel htmlFor="new-project-practice">
+                            <FieldLabel htmlFor="new-project-practice">
                                 Practice
-                            </ModalFieldLabel>
+                            </FieldLabel>
                             <ProjectPracticeField
                                 id="new-project-practice"
                                 value={practice}
@@ -251,9 +250,9 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                         </div>
 
                         <div className="space-y-2">
-                            <ModalFieldLabel as="p">
+                            <FieldLabel as="p">
                                 Share with
-                            </ModalFieldLabel>
+                            </FieldLabel>
                             <AddUserInput
                                 onAdd={handleAddShareUser}
                                 validateEmail={validateShareUser}

@@ -1,13 +1,16 @@
 "use client";
 
 import { Check, ChevronDown, Eye, EyeOff, Loader2 } from "lucide-react";
-import { Input } from "@/app/components/ui/input";
+import { FieldLabel } from "@/app/components/ui/form-field";
+import {
+    SETTINGS_CONTROL_CLASS,
+    SettingsTextInput,
+} from "@/app/components/settings/SettingsTextInput";
 import { Modal } from "@/app/components/modals/Modal";
 import type { McpConnectorSummary } from "@/app/lib/mikeApi";
 import {
-    accountGlassIconButtonClassName,
-    accountGlassInputClassName,
-} from "@/app/(pages)/account/accountStyles";
+    settingsGlassIconButtonClassName,
+} from "@/app/(pages)/settings/settingsStyles";
 
 export type NewMcpDraft = {
     name: string;
@@ -157,24 +160,24 @@ function NewMcpForm({
     return (
         <div className="grid gap-3 pt-1">
             <label className="grid gap-2 sm:grid-cols-[96px_minmax(0,1fr)] sm:items-center">
-                <span className="text-xs font-medium text-gray-500">
+                <FieldLabel as="span" className="mb-0 text-gray-500">
                     Label
-                </span>
-                <Input
+                </FieldLabel>
+                <SettingsTextInput
                     value={draft.name}
                     onChange={(event) =>
                         onDraftChange({ ...draft, name: event.target.value })
                     }
                     placeholder="Connector label"
-                    className={`h-8 text-sm ${accountGlassInputClassName}`}
+                    className="h-8"
                     disabled={disabled}
                 />
             </label>
             <label className="grid gap-2 sm:grid-cols-[96px_minmax(0,1fr)] sm:items-center">
-                <span className="text-xs font-medium text-gray-500">
+                <FieldLabel as="span" className="mb-0 text-gray-500">
                     URL endpoint
-                </span>
-                <Input
+                </FieldLabel>
+                <SettingsTextInput
                     value={draft.serverUrl}
                     onChange={(event) =>
                         onDraftChange({
@@ -183,17 +186,20 @@ function NewMcpForm({
                         })
                     }
                     placeholder="https://mcp.example.com/mcp"
-                    className={`h-8 text-sm ${accountGlassInputClassName}`}
+                    className="h-8"
                     disabled={disabled}
                 />
             </label>
             <div className="grid gap-2 sm:grid-cols-[96px_minmax(0,1fr)] sm:items-start">
-                <span className="pt-2 text-xs font-medium text-gray-500">
+                <FieldLabel
+                    as="span"
+                    className="mb-0 pt-2 text-gray-500"
+                >
                     Bearer token
-                </span>
+                </FieldLabel>
                 <div className="min-w-0">
                     <div className="relative">
-                        <Input
+                        <SettingsTextInput
                             value={draft.bearerToken}
                             onChange={(event) =>
                                 onDraftChange({
@@ -203,7 +209,7 @@ function NewMcpForm({
                             }
                             type={showToken ? "text" : "password"}
                             placeholder="Bearer token"
-                            className={`h-8 pr-10 text-sm ${accountGlassInputClassName}`}
+                            className="h-8 pr-10"
                             autoComplete="off"
                             spellCheck={false}
                             disabled={disabled}
@@ -211,7 +217,7 @@ function NewMcpForm({
                         {draft.bearerToken && (
                             <button
                                 type="button"
-                                className={`absolute inset-y-1 right-1.5 flex items-center ${accountGlassIconButtonClassName}`}
+                                className={`absolute inset-y-1 right-1.5 flex items-center ${settingsGlassIconButtonClassName}`}
                                 onClick={() => onShowTokenChange(!showToken)}
                                 aria-label={
                                     showToken ? "Hide token" : "Show token"
@@ -247,9 +253,12 @@ function NewMcpForm({
                 </button>
                 {showAdvanced && (
                     <label className="grid gap-2 sm:grid-cols-[96px_minmax(0,1fr)] sm:items-start">
-                        <span className="text-xs font-medium text-gray-500">
+                        <FieldLabel
+                            as="span"
+                            className="mb-0 text-gray-500"
+                        >
                             Custom headers
-                        </span>
+                        </FieldLabel>
                         <div className="min-w-0">
                             <textarea
                                 value={draft.customHeaders}
@@ -260,7 +269,7 @@ function NewMcpForm({
                                     })
                                 }
                                 placeholder='{"X-API-Key":"secret"}'
-                                className={`min-h-20 w-full resize-y rounded-lg px-3 py-2 text-sm outline-none ${accountGlassInputClassName}`}
+                                className={`min-h-20 resize-y py-2 ${SETTINGS_CONTROL_CLASS}`}
                                 autoComplete="off"
                                 spellCheck={false}
                                 disabled={disabled}
@@ -296,7 +305,7 @@ function NewMcpSuccess({ connector }: { connector: McpConnectorSummary }) {
                             className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 px-3 py-2"
                         >
                             <div className="min-w-0">
-                                <p className="truncate text-sm font-medium text-gray-800">
+                                <p className="truncate text-sm font-medium text-gray-700">
                                     {tool.title ?? tool.openaiToolName}
                                 </p>
                                 {tool.description && (
@@ -323,7 +332,7 @@ function NewMcpAuth({ message }: { message: string }) {
                 <Loader2 className="h-4 w-4 animate-spin" />
             </div>
             <div className="max-w-sm space-y-1">
-                <h3 className="text-sm font-medium text-gray-900">
+                <h3 className="text-sm font-medium text-gray-700">
                     Authentication required
                 </h3>
                 <p className="text-sm text-gray-500">{message}</p>

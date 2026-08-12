@@ -5,9 +5,11 @@ import { Check, EyeOff, User } from "lucide-react";
 import { openSourceWorkflow } from "@/app/lib/mikeApi";
 import type { WorkflowOpenSourceSubmission } from "@/app/components/shared/types";
 import { Modal } from "@/app/components/modals/Modal";
-import { ModalFieldLabel } from "@/app/components/modals/ModalFieldLabel";
 import { ModalSegmentedToggle } from "@/app/components/modals/ModalSegmentedToggle";
-import { ModalTextInput } from "@/app/components/modals/ModalTextInput";
+import {
+    FieldLabel,
+    FormTextInput,
+} from "@/app/components/ui/form-field";
 
 type OpenSourceContributorMode = "named" | "anonymous";
 type OpenSourceStatus = "idle" | "loading" | "complete";
@@ -195,9 +197,9 @@ export function OpenSourceWorkflowModal({
                     )}
 
                     <div className="space-y-2 pt-2">
-                        <ModalFieldLabel as="p">
+                        <FieldLabel as="p">
                             Contributor attribution
-                        </ModalFieldLabel>
+                        </FieldLabel>
                         <ModalSegmentedToggle
                             value={contributorMode}
                             onChange={setContributorMode}
@@ -218,10 +220,10 @@ export function OpenSourceWorkflowModal({
                         {contributorMode === "named" && (
                             <div className="grid gap-x-4 gap-y-5 pt-4 sm:grid-cols-2">
                                 <div>
-                                    <ModalFieldLabel htmlFor="open-source-contributor-name">
+                                    <FieldLabel htmlFor="open-source-contributor-name">
                                         Full Name
-                                    </ModalFieldLabel>
-                                    <ModalTextInput
+                                    </FieldLabel>
+                                    <FormTextInput
                                         id="open-source-contributor-name"
                                         value={contributorName}
                                         onChange={(event) =>
@@ -234,10 +236,10 @@ export function OpenSourceWorkflowModal({
                                     />
                                 </div>
                                 <div>
-                                    <ModalFieldLabel htmlFor="open-source-contributor-organisation">
+                                    <FieldLabel htmlFor="open-source-contributor-organisation">
                                         Organisation
-                                    </ModalFieldLabel>
-                                    <ModalTextInput
+                                    </FieldLabel>
+                                    <FormTextInput
                                         id="open-source-contributor-organisation"
                                         value={contributorOrganisation}
                                         onChange={(event) =>
@@ -250,10 +252,10 @@ export function OpenSourceWorkflowModal({
                                     />
                                 </div>
                                 <div>
-                                    <ModalFieldLabel htmlFor="open-source-contributor-role">
+                                    <FieldLabel htmlFor="open-source-contributor-role">
                                         Role
-                                    </ModalFieldLabel>
-                                    <ModalTextInput
+                                    </FieldLabel>
+                                    <FormTextInput
                                         id="open-source-contributor-role"
                                         value={contributorRole}
                                         onChange={(event) =>
@@ -266,10 +268,10 @@ export function OpenSourceWorkflowModal({
                                     />
                                 </div>
                                 <div>
-                                    <ModalFieldLabel htmlFor="open-source-contributor-linkedin">
+                                    <FieldLabel htmlFor="open-source-contributor-linkedin">
                                         LinkedIn
-                                    </ModalFieldLabel>
-                                    <ModalTextInput
+                                    </FieldLabel>
+                                    <FormTextInput
                                         id="open-source-contributor-linkedin"
                                         type="url"
                                         value={contributorLinkedin}

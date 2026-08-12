@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import { PRACTICE_OPTIONS } from "../workflows/practices";
 import { ModalSelect, type ModalSelectOption } from "../modals/ModalSelect";
-import { ModalTextInput } from "../modals/ModalTextInput";
+import { FormTextInput } from "../ui/form-field";
 
 const OPTION_NONE = "__none__";
 const OPTION_OTHER = "Other";
@@ -60,7 +60,7 @@ export function ProjectPracticeField({
                 disabled={disabled}
             />
             {selectedOption === OPTION_OTHER && (
-                <ModalTextInput
+                <FormTextInput
                     type="text"
                     value={customValue}
                     onChange={(event) => onChange(event.target.value)}

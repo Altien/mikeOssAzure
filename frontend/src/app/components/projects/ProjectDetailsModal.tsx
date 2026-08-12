@@ -3,8 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Users } from "lucide-react";
 import { Modal } from "@/app/components/modals/Modal";
-import { ModalFieldLabel } from "@/app/components/modals/ModalFieldLabel";
-import { ModalTextInput } from "@/app/components/modals/ModalTextInput";
+import {
+    FieldLabel,
+    FormTextInput,
+} from "@/app/components/ui/form-field";
 import type { Project } from "@/app/components/shared/types";
 import { ProjectPracticeField } from "./ProjectPracticeField";
 
@@ -111,10 +113,10 @@ export function ProjectDetailsModal({
         >
             <div className="flex min-h-0 flex-1 flex-col gap-6 py-1">
                 <div>
-                    <ModalFieldLabel htmlFor="project-details-name">
+                    <FieldLabel htmlFor="project-details-name">
                         Project name
-                    </ModalFieldLabel>
-                    <ModalTextInput
+                    </FieldLabel>
+                    <FormTextInput
                         id="project-details-name"
                         value={nameDraft}
                         onChange={(e) => {
@@ -129,10 +131,10 @@ export function ProjectDetailsModal({
                 </div>
 
                 <div>
-                    <ModalFieldLabel htmlFor="project-details-cm">
+                    <FieldLabel htmlFor="project-details-cm">
                         CM number
-                    </ModalFieldLabel>
-                    <ModalTextInput
+                    </FieldLabel>
+                    <FormTextInput
                         id="project-details-cm"
                         value={cmDraft}
                         onChange={(e) => {
@@ -148,9 +150,9 @@ export function ProjectDetailsModal({
                 </div>
 
                 <div>
-                    <ModalFieldLabel htmlFor="project-details-practice">
+                    <FieldLabel htmlFor="project-details-practice">
                         Practice
-                    </ModalFieldLabel>
+                    </FieldLabel>
                     <ProjectPracticeField
                         id="project-details-practice"
                         value={practiceDraft}
