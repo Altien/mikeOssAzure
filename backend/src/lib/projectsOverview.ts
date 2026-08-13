@@ -30,7 +30,7 @@ export function buildProjectsOverviewRpcArgs(params: {
 }): ProjectsOverviewRpcArgs {
     return {
         p_user_id: params.userId,
-        p_user_email: params.userEmail ?? null,
+        p_user_email: params.userEmail?.trim().toLowerCase() || null,
         p_scope: params.scope ?? "all",
         p_limit: params.pagination?.limit ?? 20,
         p_offset: params.pagination?.offset ?? 0,
@@ -69,7 +69,7 @@ export function buildProjectIdsOverviewRpcArgs(params: {
 }): ProjectIdsOverviewRpcArgs {
     return {
         p_user_id: params.userId,
-        p_user_email: params.userEmail ?? null,
+        p_user_email: params.userEmail?.trim().toLowerCase() || null,
         p_scope: params.scope ?? "all",
         p_search_term: params.searchTerm ?? null,
         p_practice: params.practice ?? null,

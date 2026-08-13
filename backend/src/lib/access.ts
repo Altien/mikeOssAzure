@@ -48,7 +48,7 @@ export async function checkProjectAccess(
         return { ok: true, isOwner: true, project: proj };
     }
     const sharedWith = Array.isArray(proj.shared_with) ? proj.shared_with : [];
-    const email = (userEmail ?? "").toLowerCase();
+    const email = (userEmail ?? "").trim().toLowerCase();
     if (
         email &&
         sharedWith.some((e) => (e ?? "").toLowerCase() === email)
@@ -170,6 +170,7 @@ export async function listAccessibleProjectIds(
     userEmail: string | null | undefined,
     db: Db,
 ): Promise<string[]> {
+    const normalizedEmail = userEmail?.trim().toLowerCase() ?? "";
     // shared_with is JSONB — pass a JSON-stringified array so supabase-js
     // emits `cs.<jsonarray>` instead of `cs.{pgarray}`.  See projects.ts
     // for the long-form rationale.
@@ -181,18 +182,18 @@ export async function listAccessibleProjectIds(
     // propagated up.
     const [ownResult, sharedResult] = await Promise.all([
         db.from("projects").select("id").eq("user_id", userId),
-        userEmail
+        normalizedEmail
             ? (async () => {
                   try {
                       const result = await db
                           .from("projects")
                           .select("id")
-                          .contains("shared_with", JSON.stringify([userEmail]))
+                          .contains("shared_with", JSON.stringify([normalizedEmail]))
                           .neq("user_id", userId);
                       if (result.error) {
                           console.error("[access] shared_with query failed", {
                               userId,
-                              userEmail,
+                              userEmail: normalizedEmail,
                               message: result.error.message,
                               code: result.error.code,
                               details: result.error.details,
@@ -203,7 +204,7 @@ export async function listAccessibleProjectIds(
                   } catch (err) {
                       console.error("[access] shared_with query threw", {
                           userId,
-                          userEmail,
+                              userEmail: normalizedEmail,
                           err,
                       });
                       return { data: [] as { id: string }[] };

@@ -258,6 +258,7 @@ const PROJECT_PAGINATION_QUERY_KEYS = [
 projectsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
+  const normalizedUserEmail = userEmail?.trim().toLowerCase();
   const includeDocuments = req.query.include === "documents";
 
   if (req.query.view === "directory-search") {
@@ -271,7 +272,7 @@ projectsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
     );
     const { data, error } = await db.rpc("get_project_summaries", {
       p_user_id: userId,
-      p_user_email: userEmail ?? null,
+      p_user_email: normalizedUserEmail ?? null,
       p_limit: pagination.limit,
       p_offset: pagination.offset,
     });
@@ -288,7 +289,7 @@ projectsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
   const rpcArgs = hasPaginationParams
     ? buildProjectsOverviewRpcArgs({
         userId,
-        userEmail,
+        userEmail: normalizedUserEmail,
         scope: parseProjectScope(req.query.scope),
         pagination: parsePaginationQuery(
           req.query as Record<string, unknown>,
@@ -298,7 +299,7 @@ projectsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
         practice: normalizeSearchTerm(req.query.practice),
         ownerUserId: normalizeSearchTerm(req.query.owner_user_id),
       })
-    : { p_user_id: userId, p_user_email: userEmail ?? null };
+    : { p_user_id: userId, p_user_email: normalizedUserEmail ?? null };
 
   const { data, error } = await db.rpc("get_projects_overview", rpcArgs);
   if (error) return void res.status(500).json({ detail: error.message });
@@ -437,16 +438,17 @@ async function handleProjectDirectorySearch(req: Request, res: Response) {
     req.query as Record<string, unknown>,
   );
   const db = createServerSupabase();
+  const normalizedUserEmail = userEmail?.trim().toLowerCase();
 
   const projectQueries = [
     db.from("projects").select("*").eq("user_id", userId),
   ];
-  if (userEmail) {
+  if (normalizedUserEmail) {
     projectQueries.push(
       db
         .from("projects")
         .select("*")
-        .contains("shared_with", JSON.stringify([userEmail])),
+        .contains("shared_with", JSON.stringify([normalizedUserEmail])),
     );
   }
   const projectResults = await Promise.all(projectQueries);
@@ -556,10 +558,11 @@ projectsRouter.get("/:projectId/directory", requireAuth, asyncRoute(async (req, 
 projectsRouter.get("/filter-options", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
+  const normalizedUserEmail = userEmail?.trim().toLowerCase();
   const db = createServerSupabase();
   const { data, error } = await db.rpc("get_project_filter_options", {
     p_user_id: userId,
-    p_user_email: userEmail ?? null,
+    p_user_email: normalizedUserEmail ?? null,
   });
   if (error) return void res.status(500).json({ detail: error.message });
 
@@ -639,6 +642,10 @@ projectsRouter.get("/:projectId", requireAuth, async (req, res) => {
   const { projectId } = req.params;
   const db = createServerSupabase();
 
+  const access = await checkProjectAccess(projectId, userId, userEmail, db);
+  if (!access.ok)
+    return void res.status(404).json({ detail: "Project not found" });
+
   const { data: project, error } = await db
     .from("projects")
     .select("*")
@@ -652,30 +659,6 @@ projectsRouter.get("/:projectId", requireAuth, async (req, res) => {
       error: error
         ? { message: error.message, code: error.code, details: error.details }
         : null,
-    });
-    return void res.status(404).json({ detail: "Project not found" });
-  }
-
-  const ownerMatch = project.user_id === userId;
-  const sharedWithList = Array.isArray(project.shared_with)
-    ? (project.shared_with as unknown[]).filter(
-        (e): e is string => typeof e === "string",
-      )
-    : [];
-  const sharedMatch =
-    !!userEmail && sharedWithList.includes(userEmail);
-  const canAccess = ownerMatch || sharedMatch;
-  if (!canAccess) {
-    console.warn("[projects.GET/:id] access-denied", {
-      auth: { userId, userEmail },
-      projectId,
-      project: {
-        id: project.id,
-        user_id: project.user_id,
-        shared_with: sharedWithList,
-      },
-      ownerMatch,
-      sharedMatch,
     });
     return void res.status(404).json({ detail: "Project not found" });
   }
@@ -702,7 +685,7 @@ projectsRouter.get("/:projectId", requireAuth, async (req, res) => {
   await attachDocumentOwnerLabels(db, docsTyped);
   res.json({
     ...project,
-    is_owner: project.user_id === userId,
+    is_owner: access.isOwner,
     documents: docsTyped,
     folders: folderData ?? [],
   });
@@ -729,8 +712,9 @@ projectsRouter.get("/:projectId/people", requireAuth, async (req, res) => {
   const isOwner = project.user_id === userId;
   const sharedWith = (
     Array.isArray(project.shared_with) ? (project.shared_with as string[]) : []
-  ).map((e) => e.toLowerCase());
-  const isShared = !!userEmail && sharedWith.includes(userEmail.toLowerCase());
+  ).map((e) => e.trim().toLowerCase());
+  const normalizedUserEmail = userEmail?.trim().toLowerCase();
+  const isShared = !!normalizedUserEmail && sharedWith.includes(normalizedUserEmail);
   if (!isOwner && !isShared)
     return void res.status(404).json({ detail: "Project not found" });
 
