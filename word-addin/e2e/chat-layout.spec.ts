@@ -637,6 +637,12 @@ test("keeps the pinned turn steady when a tall activity strip completes", async 
     });
   };
 
+  await expect
+    .poll(async () => {
+      const position = await readPosition();
+      return Math.abs(position.userTop - (position.containerTop + 80));
+    })
+    .toBeLessThanOrEqual(4);
   await waitForStableSample(readPosition);
   const workingPosition = await readPosition();
 
