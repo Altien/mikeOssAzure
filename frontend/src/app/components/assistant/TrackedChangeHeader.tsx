@@ -209,7 +209,7 @@ function EditResolveButtons({
     return (
         <div className="flex items-center gap-2">
             <PillButton
-                tone="black"
+                tone="blue"
                 size="sm"
                 onClick={() => handle("accept")}
                 disabled={inFlight || resolved}

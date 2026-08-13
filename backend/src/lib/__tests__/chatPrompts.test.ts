@@ -9,6 +9,12 @@ describe("buildSystemPrompt", () => {
                 "You are Mike, an AI legal assistant for lawyers and legal professionals.",
             );
             expect(prompt).toContain("Do not fabricate document content.");
+            expect(prompt).toContain(
+                "In user-facing responses, use natural language only",
+            );
+            expect(prompt).toContain(
+                "Never mention tool names or tool calls",
+            );
             expect(prompt).toContain("DOCX GENERATION:");
             expect(prompt).toContain("DOCUMENT EDITING:");
         }
@@ -41,6 +47,36 @@ describe("buildSystemPrompt", () => {
             expect(prompt).toContain(
                 `Never show "doc-N" labels to the user in prose`,
             );
+        }
+    });
+
+    it("separates workflows and Library Templates with copy-before-edit rules", () => {
+        for (const prompt of [buildSystemPrompt(true), buildSystemPrompt(false)]) {
+            expect(prompt).toContain("WORKFLOWS:");
+            expect(prompt).toContain("LIBRARY TEMPLATES:");
+            expect(prompt).toContain(
+                "Workflow reference files used as templates are immutable",
+            );
+            expect(prompt).toContain("Library Templates are immutable");
+            expect(prompt).toContain(
+                "call replicate_document with a descriptive new_filename",
+            );
+            expect(prompt).toContain(
+                "open the relevant files with read_document before continuing",
+            );
+            // edit_document only handles .docx, so the copy-then-edit
+            // mandate is scoped to .docx copies in both sections, with a
+            // generate-from-copy path for pdf/xlsx templates.
+            expect(
+                prompt.match(
+                    /call edit_document on the returned copy rather than generating a replacement/g,
+                ),
+            ).toHaveLength(2);
+            expect(
+                prompt.match(
+                    /produce the filled-in result as a new generated document/g,
+                ),
+            ).toHaveLength(2);
         }
     });
 

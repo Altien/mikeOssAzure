@@ -124,6 +124,7 @@ vi.mock("../../lib/documentVersions", () => ({
 
 import { app } from "../../app";
 import { createServerSupabase } from "../../lib/supabase";
+import { resetEnsuredDefaultUsersForTests } from "../../lib/workflowCatalog";
 
 const AUTH = ["Authorization", "Bearer test"] as const;
 
@@ -149,11 +150,12 @@ describe("workflows.routes", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         resetSupabaseState();
+        resetEnsuredDefaultUsersForTests();
     });
 
     // ── GET /workflows (overview) ─────────────────────────────────────────
     describe("GET /workflows", () => {
-        it("returns system workflows prepended to the RPC's rows when no pagination params are present", async () => {
+        it("returns the user's installed workflows when no pagination params are present", async () => {
             supabaseState.rpc = {
                 data: [{ id: "w1", title: "My workflow" }],
                 error: null,
@@ -164,10 +166,8 @@ describe("workflows.routes", () => {
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
-            // System workflows (static, non-uuid ids) come first, then the
-            // DB row (mapped through withDatabaseWorkflow) — exact system
-            // count isn't pinned here since it's a generated constant, just
-            // that the DB row survived untouched.
+            // Defaults are installed as user-owned database workflows rather
+            // than prepended from the static system catalog.
             expect(res.body.at(-1)).toMatchObject({
                 id: "w1",
                 is_system: false,
@@ -273,6 +273,7 @@ describe("workflows.routes", () => {
         it("pages through the RPC until an empty page is returned", async () => {
             const rpcMock = vi
                 .fn()
+                .mockResolvedValueOnce({ data: 0, error: null })
                 .mockResolvedValueOnce({
                     data: [{ id: "w1", user_id: "u1" }],
                     error: null,
@@ -290,8 +291,11 @@ describe("workflows.routes", () => {
 
             expect(res.status).toBe(200);
             expect(res.body).toEqual([{ id: "w1", user_id: "u1" }]);
-            expect(rpcMock).toHaveBeenCalledTimes(2);
-            expect(rpcMock.mock.calls[0][0]).toBe("get_workflow_ids_overview");
+            expect(rpcMock).toHaveBeenCalledTimes(3);
+            expect(rpcMock.mock.calls[0][0]).toBe(
+                "install_missing_default_workflows",
+            );
+            expect(rpcMock.mock.calls[1][0]).toBe("get_workflow_ids_overview");
         });
 
         it("returns 500 with detail when the RPC errors", async () => {

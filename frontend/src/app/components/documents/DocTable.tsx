@@ -86,19 +86,29 @@ export interface DocTableSelectionActions {
 
 export type DocumentSortKey = "name" | "size" | "version" | "created" | "updated";
 
+export type DocumentSort = {
+    key: DocumentSortKey;
+    direction: TableSortDirection;
+};
+
 export interface DocTableQuery {
     search: string;
     fileType: string | null;
-    sort: {
-        key: DocumentSortKey;
-        direction: TableSortDirection;
-    } | null;
+    sort: DocumentSort | null;
 }
 
 const SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
     { value: "asc", label: "Ascending" },
     { value: "desc", label: "Descending" },
 ];
+
+const SORT_KEY_LABELS: Record<DocumentSortKey, string> = {
+    name: "Name",
+    size: "Size",
+    version: "Version",
+    created: "Created",
+    updated: "Updated",
+};
 
 interface DocTableOperations {
     uploadDocument: (file: File) => Promise<Document>;
@@ -153,6 +163,7 @@ interface DocTableProps {
     onSelectAllMatching?: (query: DocTableQuery) => Promise<string[]>;
     documentTypeOptions?: TableFilterOption<string>[];
     autoLoadOnScroll?: boolean;
+    defaultSort?: DocumentSort | null;
 }
 
 function apiErrorDetail(error: unknown): string | null {
@@ -195,13 +206,13 @@ function documentVersionNumber(doc: Document): number | null {
 
 function ProjectTableLoadingHeader({ stickyCellBg }: { stickyCellBg: string }) {
     return (
-        <TableHeaderRow className={`${stickyCellBg} pr-8 md:pr-8`}>
+        <TableHeaderRow className={`${stickyCellBg} pr-3`}>
             <TableStickyCell
                 header
                 widthClassName={DOC_NAME_COL_W}
                 bgClassName={stickyCellBg}
             >
-                <div className="mr-4 h-2.5 w-2.5 rounded bg-gray-100 animate-pulse" />
+                <div className="mr-3 h-2.5 w-2.5 rounded bg-gray-100 animate-pulse" />
                 <span className="mr-1">Name</span>
             </TableStickyCell>
             <TableHeaderCell className="ml-auto flex w-20 items-center gap-1">
@@ -228,10 +239,10 @@ function ProjectTableLoading({ stickyCellBg }: { stickyCellBg: string }) {
     return (
         <div className="flex-1 flex flex-col min-h-0">
             {[1, 2, 3, 4, 5].map((i) => (
-                <div key={i} className="flex h-10 min-w-max items-center pr-8">
-                    <div className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${stickyCellBg} py-2 pl-4 pr-2`}>
+                <div key={i} className="flex h-10 min-w-max items-center pr-3">
+                    <div className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${stickyCellBg} py-2 pl-3 pr-2`}>
                         <div className="flex items-center">
-                            <div className="mr-4 h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse" />
+                            <div className="mr-3 h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse" />
                             <div className="mr-2 h-4 w-4 shrink-0 rounded bg-gray-100 animate-pulse" />
                             <div
                                 className="h-3.5 rounded bg-gray-100 animate-pulse"
@@ -290,6 +301,7 @@ export function DocTable({
     onSelectAllMatching,
     documentTypeOptions,
     autoLoadOnScroll = false,
+    defaultSort = null,
 }: DocTableProps) {
     const [addDocsOpen, setAddDocsOpen] = useState(false);
     const { user } = useAuth();
@@ -304,10 +316,7 @@ export function DocTable({
     const [selectingAllDocuments, setSelectingAllDocuments] = useState(false);
     const [confirmDeleteAllOpen, setConfirmDeleteAllOpen] = useState(false);
     const [typeFilter, setTypeFilter] = useState<string | null>(null);
-    const [sort, setSort] = useState<{
-        key: DocumentSortKey;
-        direction: TableSortDirection;
-    } | null>(null);
+    const [sort, setSort] = useState<DocumentSort | null>(null);
     const serverQueryActive = serverDocuments !== null;
     const documentUploadInputRef = useRef<HTMLInputElement>(null);
     const autoLoadTriggeredRef = useRef(false);
@@ -1166,15 +1175,15 @@ export function DocTable({
         return (
             <div
                 ref={newFolderInputRef}
-                className="group flex h-10 min-w-max items-center pr-8"
+                className="group flex h-10 min-w-max items-center pr-3"
                 key={`new-folder-${parentId ?? "root"}`}
             >
                 <div
-                    className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${stickyCellBg} py-2 pl-4 pr-2`}
+                    className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${stickyCellBg} py-2 pl-3 pr-2`}
                     style={treeNameCellStyle(depth)}
                 >
                     <div className="flex items-center">
-                        <span className="mr-4 flex h-2.5 w-2.5 shrink-0 items-center justify-center">
+                        <span className="mr-3 flex h-2.5 w-2.5 shrink-0 items-center justify-center">
                             <ChevronRight className="h-3.5 w-3.5 text-gray-300" />
                         </span>
                         <SubfolderSvgIcon className="mr-2 h-4 w-4 shrink-0" />
@@ -1219,13 +1228,13 @@ export function DocTable({
         statusLabel: string;
     }) {
         return (
-            <div key={key} className="group flex h-10 min-w-max items-center pr-8">
+            <div key={key} className="group flex h-10 min-w-max items-center pr-3">
                 <div
-                    className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${stickyCellBg} py-2 pl-4 pr-2`}
+                    className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${stickyCellBg} py-2 pl-3 pr-2`}
                     style={treeNameCellStyle(depth)}
                 >
                     <div className="flex items-center">
-                        <Loader2 className="mr-4 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
+                        <Loader2 className="mr-3 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
                         <span className="mr-2 shrink-0">
                             <DocIcon fileType={fileType ?? filename} muted />
                         </span>
@@ -1256,8 +1265,15 @@ export function DocTable({
         );
     }
 
+    const effectiveSort = sort ?? defaultSort;
+
     function renderLevel(parentId: string | null, depth: number) {
-        const nameMultiplier = enableHeaderFilters && sort?.key === "name" && sort.direction === "desc" ? -1 : 1;
+        const nameMultiplier =
+            enableHeaderFilters &&
+            effectiveSort?.key === "name" &&
+            effectiveSort.direction === "desc"
+                ? -1
+                : 1;
         const childFolders = folders
             .filter((f) => f.parent_folder_id === parentId)
             .sort((a, b) => a.name.localeCompare(b.name) * nameMultiplier);
@@ -1324,7 +1340,7 @@ export function DocTable({
                                         showFolderActions: false,
                                     });
                                 }}
-                                className={`group flex h-10 min-w-max items-center pr-8 cursor-pointer transition-colors ${isVersionDragOver ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : isSelected ? APP_SURFACE_ACTIVE_CLASS : APP_SURFACE_HOVER_CLASS}`}
+                                className={`group flex h-10 min-w-max items-center pr-3 cursor-pointer transition-colors ${isVersionDragOver ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : isSelected ? APP_SURFACE_ACTIVE_CLASS : APP_SURFACE_HOVER_CLASS}`}
                             >
                                 {(() => {
                                     const rowBg = isVersionDragOver
@@ -1335,12 +1351,12 @@ export function DocTable({
                                     return (
                                         <>
                                             <div
-                                                className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${rowBg} py-2 pl-4 pr-2 transition-colors ${isVersionDragOver || isSelected ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
+                                                className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${rowBg} py-2 pl-3 pr-2 transition-colors ${isVersionDragOver || isSelected ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
                                                 style={treeNameCellStyle(depth)}
                                             >
                                                 <div className="flex items-center">
                                                     {isProcessing || isUploadingVersion ? (
-                                                        <Loader2 className="mr-4 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
+                                                        <Loader2 className="mr-3 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
                                                     ) : (
                                                         <input
                                                             type="checkbox"
@@ -1353,7 +1369,7 @@ export function DocTable({
                                                                 );
                                                             }}
                                                             onClick={(e) => e.stopPropagation()}
-                                                            className="mr-4 h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black"
+                                                            className="mr-3 h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black"
                                                         />
                                                     )}
                                                     <span className="mr-2 shrink-0">
@@ -1556,14 +1572,14 @@ export function DocTable({
                                         showFolderActions: true,
                                     });
                                 }}
-                                className={`group flex h-10 min-w-max items-center pr-8 ${APP_SURFACE_HOVER_CLASS} cursor-pointer transition-colors ${isRenaming ? "" : "select-none"} ${dragOverFolderId === folder.id ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : ""}`}
+                                className={`group flex h-10 min-w-max items-center pr-3 ${APP_SURFACE_HOVER_CLASS} cursor-pointer transition-colors ${isRenaming ? "" : "select-none"} ${dragOverFolderId === folder.id ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : ""}`}
                             >
                                 <div
-                                    className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} py-2 pl-4 pr-2 ${dragOverFolderId === folder.id ? "bg-blue-50" : stickyCellBg} transition-colors ${dragOverFolderId === folder.id ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
+                                    className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} py-2 pl-3 pr-2 ${dragOverFolderId === folder.id ? "bg-blue-50" : stickyCellBg} transition-colors ${dragOverFolderId === folder.id ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
                                     style={treeNameCellStyle(depth)}
                                 >
                                     <div className="flex items-center">
-                                        <span className="mr-4 flex h-2.5 w-2.5 shrink-0 items-center justify-center">
+                                        <span className="mr-3 flex h-2.5 w-2.5 shrink-0 items-center justify-center">
                                             {isLoadingChildren ? (
                                                 <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
                                             ) : isExpanded ? (
@@ -1805,41 +1821,44 @@ export function DocTable({
             .filter((doc) => !q || doc.filename.toLowerCase().includes(q))
             .filter((doc) => !enableHeaderFilters || !typeFilter || documentTypeValue(doc) === typeFilter);
 
-        if (!enableHeaderFilters || !sort) return rows;
+        if (!enableHeaderFilters || !effectiveSort) return rows;
 
         return [...rows].sort((a, b) => {
-            const multiplier = sort.direction === "asc" ? 1 : -1;
+            const multiplier = effectiveSort.direction === "asc" ? 1 : -1;
 
-            if (sort.key === "size") {
+            if (effectiveSort.key === "size") {
                 return ((a.size_bytes ?? 0) - (b.size_bytes ?? 0)) * multiplier;
             }
 
-            if (sort.key === "version") {
+            if (effectiveSort.key === "version") {
                 return ((documentVersionNumber(a) ?? 0) - (documentVersionNumber(b) ?? 0)) * multiplier;
             }
 
-            if (sort.key === "created") {
+            if (effectiveSort.key === "created") {
                 return (dateTimeValue(a.created_at) - dateTimeValue(b.created_at)) * multiplier;
             }
 
-            if (sort.key === "updated") {
+            if (effectiveSort.key === "updated") {
                 return (dateTimeValue(a.updated_at) - dateTimeValue(b.updated_at)) * multiplier;
             }
 
             return a.filename.localeCompare(b.filename) * multiplier;
         });
-    }, [docs, enableHeaderFilters, q, serverQueryActive, sort, typeFilter]);
+    }, [docs, effectiveSort, enableHeaderFilters, q, serverQueryActive, typeFilter]);
 
-    const nameSortDirection = sort?.key === "name" ? sort.direction : null;
-    const sizeSortDirection = sort?.key === "size" ? sort.direction : null;
-    const versionSortDirection = sort?.key === "version" ? sort.direction : null;
-    const createdSortDirection = sort?.key === "created" ? sort.direction : null;
-    const updatedSortDirection = sort?.key === "updated" ? sort.direction : null;
+    const nameSortDirection = effectiveSort?.key === "name" ? effectiveSort.direction : null;
+    const sizeSortDirection = effectiveSort?.key === "size" ? effectiveSort.direction : null;
+    const versionSortDirection = effectiveSort?.key === "version" ? effectiveSort.direction : null;
+    const createdSortDirection = effectiveSort?.key === "created" ? effectiveSort.direction : null;
+    const updatedSortDirection = effectiveSort?.key === "updated" ? effectiveSort.direction : null;
+    const resetSortLabel = defaultSort
+        ? `Default (${SORT_KEY_LABELS[defaultSort.key]})`
+        : "Default Order";
     const nameFilterButton = enableHeaderFilters ? (
         <TableFilters
             label="Sort by name"
             value={nameSortDirection}
-            allLabel="Default Order"
+            allLabel={resetSortLabel}
             widthClassName="w-40"
             align="right"
             options={SORT_OPTIONS}
@@ -1860,7 +1879,7 @@ export function DocTable({
         <TableFilters
             label="Sort by size"
             value={sizeSortDirection}
-            allLabel="Default Order"
+            allLabel={resetSortLabel}
             widthClassName="w-40"
             options={SORT_OPTIONS}
             onChange={(direction) => handleSortChange("size", direction)}
@@ -1870,7 +1889,7 @@ export function DocTable({
         <TableFilters
             label="Sort by version"
             value={versionSortDirection}
-            allLabel="Default Order"
+            allLabel={resetSortLabel}
             widthClassName="w-40"
             options={SORT_OPTIONS}
             onChange={(direction) => handleSortChange("version", direction)}
@@ -1880,7 +1899,7 @@ export function DocTable({
         <TableFilters
             label="Sort by created date"
             value={createdSortDirection}
-            allLabel="Default Order"
+            allLabel={resetSortLabel}
             widthClassName="w-40"
             options={SORT_OPTIONS}
             onChange={(direction) => handleSortChange("created", direction)}
@@ -1890,7 +1909,7 @@ export function DocTable({
         <TableFilters
             label="Sort by updated date"
             value={updatedSortDirection}
-            allLabel="Default Order"
+            allLabel={resetSortLabel}
             widthClassName="w-40"
             options={SORT_OPTIONS}
             onChange={(direction) => handleSortChange("updated", direction)}
@@ -2108,7 +2127,7 @@ export function DocTable({
                     loading || (serverQueryActive && serverQueryLoading) ? (
                         <ProjectTableLoadingHeader stickyCellBg={stickyCellBg} />
                     ) : (
-                        <TableHeaderRow className={`${stickyCellBg} pr-8 md:pr-8`}>
+                        <TableHeaderRow className={`${stickyCellBg} pr-3`}>
                             <TableStickyCell header widthClassName={DOC_NAME_COL_W} bgClassName={stickyCellBg}>
                                 <input
                                     type="checkbox"
@@ -2301,14 +2320,14 @@ export function DocTable({
                                                                     showFolderActions: false,
                                                                 });
                                                             }}
-                                                            className={`group flex h-10 min-w-max items-center pr-8 cursor-pointer transition-colors ${isVersionDragOver ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : isSelected ? APP_SURFACE_ACTIVE_CLASS : APP_SURFACE_HOVER_CLASS}`}
+                                                            className={`group flex h-10 min-w-max items-center pr-3 cursor-pointer transition-colors ${isVersionDragOver ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : isSelected ? APP_SURFACE_ACTIVE_CLASS : APP_SURFACE_HOVER_CLASS}`}
                                                         >
                                                             <div
-                                                                className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${isVersionDragOver ? "bg-blue-50" : isSelected ? APP_SURFACE_ACTIVE_CLASS : stickyCellBg} py-2 pl-4 pr-2 transition-colors ${isVersionDragOver || isSelected ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
+                                                                className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${isVersionDragOver ? "bg-blue-50" : isSelected ? APP_SURFACE_ACTIVE_CLASS : stickyCellBg} py-2 pl-3 pr-2 transition-colors ${isVersionDragOver || isSelected ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
                                                             >
                                                                 <div className="flex items-center">
                                                                     {isProcessing || isUploadingVersion ? (
-                                                                        <Loader2 className="mr-4 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
+                                                                        <Loader2 className="mr-3 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
                                                                     ) : (
                                                                         <input
                                                                             type="checkbox"
@@ -2323,7 +2342,7 @@ export function DocTable({
                                                                                 );
                                                                             }}
                                                                             onClick={(e) => e.stopPropagation()}
-                                                                            className="mr-4 h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black"
+                                                                            className="mr-3 h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black"
                                                                         />
                                                                     )}
                                                                     <span className="mr-2 shrink-0">

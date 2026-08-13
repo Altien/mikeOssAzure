@@ -35,6 +35,7 @@ interface Props {
     /** When provided, skip the project/directory picker and show only these docs */
     projectDocs?: Document[];
     projectFolders?: Folder[];
+    projectId?: string;
     projectName?: string;
     projectCmNumber?: string | null;
 }
@@ -46,10 +47,11 @@ export function NewTRModal({
     projects = [],
     projectDocs: fixedProjectDocs,
     projectFolders: fixedProjectFolders,
+    projectId,
     projectName,
     projectCmNumber,
 }: Props) {
-    const isProjectMode = fixedProjectDocs !== undefined;
+    const isProjectMode = projectId !== undefined;
     const [step, setStep] = useState<"details" | "documents">("details");
     const [title, setTitle] = useState("");
     const [underProject, setUnderProject] = useState(false);
@@ -107,7 +109,9 @@ export function NewTRModal({
             .finally(() => setLoadingWorkflows(false));
 
         if (isProjectMode) {
-            setSelectedDocuments(fixedProjectDocs ?? []);
+            const readyProjectDocuments = fixedProjectDocs ?? [];
+            setProjectDocs(readyProjectDocuments);
+            setSelectedDocuments(readyProjectDocuments);
         }
     }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -182,14 +186,19 @@ export function NewTRModal({
         if (!files.length) return;
         setUploading(true);
         try {
+            const uploadProjectId = isProjectMode
+                ? projectId
+                : underProject
+                  ? selectedProjectId
+                  : undefined;
             const uploaded = await Promise.all(
                 files.map((f) =>
-                    underProject && selectedProjectId
-                        ? uploadProjectDocument(selectedProjectId, f)
+                    uploadProjectId
+                        ? uploadProjectDocument(uploadProjectId, f)
                         : uploadStandaloneDocument(f),
                 ),
             );
-            if (underProject && selectedProjectId) {
+            if (uploadProjectId) {
                 setProjectDocs((prev) => [...uploaded, ...prev]);
             } else {
                 setExtraStandaloneDocs((prev) => [...uploaded, ...prev]);
@@ -232,7 +241,7 @@ export function NewTRModal({
 
     // What to show in the directory depends on mode and toggle state
     const directoryDocuments = isProjectMode
-        ? (fixedProjectDocs ?? [])
+        ? projectDocs
         : underProject
           ? projectDocs
           : extraStandaloneDocs;

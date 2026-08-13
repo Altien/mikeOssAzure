@@ -300,7 +300,16 @@ test("opens and saves editable workflow metadata from the header", async ({
   await modal.getByLabel("Jurisdiction").click();
   await page.getByRole("menuitem", { name: "Hong Kong", exact: true }).click();
 
-  const requestPromise = page.waitForRequest("**/workflows/wf-summary");
+  const requestPromise = page.waitForRequest((request) => {
+    if (
+      request.method() !== "PATCH" ||
+      !new URL(request.url()).pathname.endsWith("/workflows/wf-summary")
+    ) {
+      return false;
+    }
+    const body = request.postDataJSON() as { metadata?: unknown } | null;
+    return !!body?.metadata;
+  });
   await modal.getByRole("button", { name: "Save changes" }).click();
   const body = (await requestPromise).postDataJSON();
   expect(body).toEqual({

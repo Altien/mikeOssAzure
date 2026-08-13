@@ -24,6 +24,8 @@ export type DocStore = Map<
     storage_path: string;
     file_type: string;
     filename: string;
+    /** Identifies source material that must be copied before it is edited. */
+    source_kind?: "document" | "library_template" | "workflow_asset";
     /**
      * Request-scoped plain text that is already available in memory. Inline
      * documents still flow through read_document so their body only reaches
@@ -33,7 +35,20 @@ export type DocStore = Map<
   }
 >;
 
-export type WorkflowStore = Map<string, { title: string; skill_md: string }>;
+export type WorkflowStore = Map<
+  string,
+  {
+    title: string;
+    skill_md: string;
+    listed?: boolean;
+    reference_files?: {
+      reference_id: string;
+      filename: string;
+      file_type: string;
+      storage_path: string;
+    }[];
+  }
+>;
 
 export type DocIndex = Record<
   string,

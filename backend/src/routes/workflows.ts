@@ -4,15 +4,16 @@ import {
   type Request,
   type Response,
 } from "express";
+import crypto from "crypto";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import {
-  SYSTEM_WORKFLOW_IDS,
   SYSTEM_WORKFLOWS,
   type SystemWorkflow,
 } from "../lib/systemWorkflows";
 import { findMissingUserEmails } from "../lib/userLookup";
 import { workflowNameFromSkillMd } from "../lib/workflowName";
+import { ensureDefaultWorkflows } from "../lib/workflowCatalog";
 import { parsePaginationQuery } from "../lib/pagination";
 import { normalizeSearchTerm } from "../lib/search";
 import { parseWorkflowSort } from "../lib/sort";
@@ -21,6 +22,19 @@ import {
   buildWorkflowsOverviewRpcArgs,
   parseWorkflowScope,
 } from "../lib/workflowsOverview";
+import { singleFileUpload } from "../lib/upload";
+import {
+  ALLOWED_DOCUMENT_TYPES,
+  ALLOWED_DOCUMENT_TYPES_LABEL,
+  contentTypeForDocumentType,
+} from "../lib/documentTypes";
+import { contentSha256 } from "../lib/documentVersions";
+import {
+  deleteFile,
+  getSignedUrl,
+  uploadFile,
+  workflowReferenceKey,
+} from "../lib/storage";
 
 export const workflowsRouter = Router();
 
@@ -103,9 +117,9 @@ const WORKFLOW_CONTRIBUTIONS_ENABLED =
   process.env.WORKFLOW_CONTRIBUTIONS_ENABLED === "true";
 
 type WorkflowAccess = {
-      workflow: WorkflowRecord;
-      allowEdit: boolean;
-      isOwner: boolean;
+  workflow: WorkflowRecord;
+  allowEdit: boolean;
+  isOwner: boolean;
 } | null;
 
 type AsyncRoute = (req: Request, res: Response) => Promise<unknown>;
@@ -114,6 +128,24 @@ function asyncRoute(handler: AsyncRoute) {
   return (req: Request, res: Response, next: NextFunction) => {
     void handler(req, res).catch(next);
   };
+}
+
+async function ensureDefaultsForRequest(
+  userId: string,
+  db: Db,
+  res: Response,
+): Promise<boolean> {
+  try {
+    await ensureDefaultWorkflows(userId, db);
+    return true;
+  } catch (error) {
+    const detail =
+      error && typeof error === "object" && "message" in error
+        ? String(error.message)
+        : "Failed to install default workflows";
+    res.status(500).json({ detail });
+    return false;
+  }
 }
 
 function withWorkflowAccess<T extends object>(
@@ -153,6 +185,17 @@ function workflowTypeFrom(value: unknown): WorkflowType {
   return value === "tabular" ? "tabular" : "assistant";
 }
 
+function rejectReferenceFilesForTabularWorkflow(
+  access: NonNullable<WorkflowAccess>,
+  res: Response,
+): boolean {
+  if (workflowTypeFrom(access.workflow.type) === "assistant") return false;
+  res.status(400).json({
+    detail: "Reference files are only available for assistant workflows",
+  });
+  return true;
+}
+
 function metadataFromWorkflowRecord(
   workflow: WorkflowRecord,
 ): WorkflowMetadata {
@@ -163,8 +206,8 @@ function metadataFromWorkflowRecord(
     description: null,
     type,
     contributors: normalizeContributors(workflow.contributors) ?? [
-        DEFAULT_WORKFLOW_CONTRIBUTOR,
-      ],
+      DEFAULT_WORKFLOW_CONTRIBUTOR,
+    ],
     language: workflow.language ?? DEFAULT_WORKFLOW_LANGUAGE,
     version: workflow.version ?? null,
     practice: workflow.practice ?? DEFAULT_WORKFLOW_PRACTICE,
@@ -195,11 +238,34 @@ function withDatabaseWorkflow(workflow: WorkflowRecord) {
 function withDatabaseWorkflowSummary(workflow: WorkflowRecord) {
   return {
     ...withDatabaseWorkflow(workflow),
-    // List pages render metadata only. Full instructions/columns are loaded
-    // from GET /workflows/:id when a workflow is opened.
+    // List pages only need metadata. The detail route loads the full content.
     skill_md: null,
     columns_config: null,
   };
+}
+
+async function markDefaultWorkflows<T extends { id: string }>(
+  db: Db,
+  userId: string,
+  workflows: T[],
+): Promise<Array<T & { is_default: boolean }>> {
+  if (workflows.length === 0) return [];
+  const { data, error } = await db
+    .from("default_workflow_installations")
+    .select("workflow_id")
+    .eq("user_id", userId)
+    .in(
+      "workflow_id",
+      workflows.map((workflow) => workflow.id),
+    );
+  if (error) throw error;
+  const defaultIds = new Set(
+    (data ?? []).map((row) => row.workflow_id).filter(Boolean),
+  );
+  return workflows.map((workflow) => ({
+    ...workflow,
+    is_default: defaultIds.has(workflow.id),
+  }));
 }
 
 function normalizeOptionalString(value: unknown): string | null {
@@ -355,71 +421,75 @@ const WORKFLOW_PAGINATION_QUERY_KEYS = [
   "jurisdiction",
 ];
 
-workflowsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
-  const userId = res.locals.userId as string;
-  const userEmail = res.locals.userEmail as string | undefined;
-  const db = createServerSupabase();
-  const { type } = req.query as { type?: string };
-  const workflowType = typeof type === "string" && type ? type : null;
-  const hasPaginationParams = WORKFLOW_PAGINATION_QUERY_KEYS.some(
-    (key) => req.query[key] !== undefined,
-  );
+// GET /workflows
+workflowsRouter.get(
+  "/",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const { type } = req.query as { type?: string };
+    const db = createServerSupabase();
+    const workflowType = typeof type === "string" && type ? type : null;
 
-  if (hasPaginationParams) {
-    const rpcArgs = buildWorkflowsOverviewRpcArgs({
-      userId,
-      userEmail,
-      type: workflowType,
-      scope: parseWorkflowScope(req.query.scope),
-      pagination: parsePaginationQuery(req.query as Record<string, unknown>),
-      searchTerm: normalizeSearchTerm(req.query.search),
-      sort: parseWorkflowSort(req.query as Record<string, unknown>),
-      practice: normalizeSearchTerm(req.query.practice),
-      language: normalizeSearchTerm(req.query.language),
-      jurisdiction: normalizeSearchTerm(req.query.jurisdiction),
+    if (!(await ensureDefaultsForRequest(userId, db, res))) return;
+
+    const hasPaginationParams = WORKFLOW_PAGINATION_QUERY_KEYS.some(
+      (key) => req.query[key] !== undefined,
+    );
+    if (hasPaginationParams) {
+      const rpcArgs = buildWorkflowsOverviewRpcArgs({
+        userId,
+        userEmail,
+        type: workflowType,
+        scope: parseWorkflowScope(req.query.scope),
+        pagination: parsePaginationQuery(req.query as Record<string, unknown>),
+        searchTerm: normalizeSearchTerm(req.query.search),
+        sort: parseWorkflowSort(req.query as Record<string, unknown>),
+        practice: normalizeSearchTerm(req.query.practice),
+        language: normalizeSearchTerm(req.query.language),
+        jurisdiction: normalizeSearchTerm(req.query.jurisdiction),
+      });
+      const { data, error } = await db.rpc("get_workflows_overview", rpcArgs);
+      if (error) return void res.status(500).json({ detail: error.message });
+      const workflows = ((data ?? []) as WorkflowRecord[]).map(
+        withDatabaseWorkflowSummary,
+      );
+      return void res.json(await markDefaultWorkflows(db, userId, workflows));
+    }
+
+    const { data, error } = await db.rpc("get_workflows_overview", {
+      p_user_id: userId,
+      p_user_email: userEmail ?? null,
+      p_type: workflowType,
     });
-    const { data, error } = await db.rpc("get_workflows_overview", rpcArgs);
-    if (error) return void res.status(500).json({ detail: error.message });
-    const databaseWorkflows = ((data ?? []) as WorkflowRecord[])
-      .filter((workflow) => !SYSTEM_WORKFLOW_IDS.has(workflow.id))
-      .map(withDatabaseWorkflowSummary);
-    return void res.json(databaseWorkflows);
-  }
+    if (error) {
+      return void res.status(500).json({ detail: error.message });
+    }
 
-  const { data, error } = await db.rpc("get_workflows_overview", {
-    p_user_id: userId,
-    p_user_email: userEmail ?? null,
-    p_type: workflowType,
-  });
-  if (error) {
-    return void res.status(500).json({ detail: error.message });
-  }
+    const databaseWorkflows = ((data ?? []) as WorkflowRecord[]).map(
+      withDatabaseWorkflow,
+    );
+    res.json(await markDefaultWorkflows(db, userId, databaseWorkflows));
+  }),
+);
 
-  const systemWorkflows = SYSTEM_WORKFLOWS.filter(
-    (workflow) => !workflowType || workflow.metadata.type === workflowType,
-  ).map(withSystemWorkflowAccess);
-  const databaseWorkflows = ((data ?? []) as WorkflowRecord[])
-    .filter((workflow) => !SYSTEM_WORKFLOW_IDS.has(workflow.id))
-    .map(withDatabaseWorkflow);
-
-  res.json([...systemWorkflows, ...databaseWorkflows]);
-}));
-
-// GET /workflows/system (must come before /:workflowId routes)
-// Returns just the static system-workflow list, with no RPC call — the
-// hybrid pagination design keeps this bucket always fully loaded client-side
-// (only 37 entries, code-generated, zero user-data growth) rather than
-// trying to fold it into the paginated RPC above.
+// Retained as a compatibility endpoint for older clients. The restructured
+// Workflows page no longer exposes a System tab; non-default catalog entries
+// are presented through /workflow-addons instead.
 workflowsRouter.get(
   "/system",
   requireAuth,
   asyncRoute(async (req, res) => {
-  const { type } = req.query as { type?: string };
-  const workflowType = typeof type === "string" && type ? type : null;
-  const systemWorkflows = SYSTEM_WORKFLOWS.filter(
-    (workflow) => !workflowType || workflow.metadata.type === workflowType,
-  ).map(withSystemWorkflowAccess);
-  res.json(systemWorkflows);
+    const workflowType =
+      typeof req.query.type === "string" && req.query.type
+        ? req.query.type
+        : null;
+    res.json(
+      SYSTEM_WORKFLOWS.filter(
+        (workflow) => !workflowType || workflow.metadata.type === workflowType,
+      ).map(withSystemWorkflowAccess),
+    );
   }),
 );
 
@@ -436,6 +506,7 @@ workflowsRouter.get(
         : null;
     const scope = parseWorkflowScope(req.query.scope);
     const db = createServerSupabase();
+    if (!(await ensureDefaultsForRequest(userId, db, res))) return;
     const { data, error } = await db.rpc("get_workflow_filter_options", {
       p_user_id: userId,
       p_user_email: userEmail ?? null,
@@ -457,60 +528,55 @@ workflowsRouter.get(
   }),
 );
 
-// GET /workflows/ids (must come before /:workflowId routes)
-// Lightweight id + owner list for every owned/shared workflow matching the
-// current filters — backs "select all matching" bulk actions so the client
-// doesn't have to page through full workflow payloads just to collect
-// checkboxes. System workflows never need this (always fully in memory).
-//
-// PostgREST enforces its own row cap on every RPC response (db-max-rows),
-// independent of anything this route asks for, and truncates silently
-// rather than failing. So this pages through the RPC itself — server-side,
-// same-datacenter round trips — until a page comes back empty, rather than
-// trusting one call to return everything.
 const WORKFLOW_IDS_PAGE_SIZE = 1000;
-const WORKFLOW_IDS_MAX_PAGES = 200; // guards a runaway loop, not a product limit
+const WORKFLOW_IDS_MAX_PAGES = 200;
 
+// GET /workflows/ids (must come before /:workflowId routes)
 workflowsRouter.get(
   "/ids",
   requireAuth,
   asyncRoute(async (req, res) => {
-  const userId = res.locals.userId as string;
-  const userEmail = res.locals.userEmail as string | undefined;
-  const db = createServerSupabase();
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const db = createServerSupabase();
+    if (!(await ensureDefaultsForRequest(userId, db, res))) return;
 
-  const { type } = req.query as { type?: string };
-  const workflowType = typeof type === "string" && type ? type : null;
-  const searchTerm = normalizeSearchTerm(req.query.search);
-  const scope = parseWorkflowScope(req.query.scope);
-  const practice = normalizeSearchTerm(req.query.practice);
-  const language = normalizeSearchTerm(req.query.language);
-  const jurisdiction = normalizeSearchTerm(req.query.jurisdiction);
+    const workflowType =
+      typeof req.query.type === "string" && req.query.type
+        ? req.query.type
+        : null;
+    const searchTerm = normalizeSearchTerm(req.query.search);
+    const scope = parseWorkflowScope(req.query.scope);
+    const practice = normalizeSearchTerm(req.query.practice);
+    const language = normalizeSearchTerm(req.query.language);
+    const jurisdiction = normalizeSearchTerm(req.query.jurisdiction);
 
-  const ids: { id: string; user_id: string }[] = [];
-  let offset = 0;
-  for (let page = 0; page < WORKFLOW_IDS_MAX_PAGES; page++) {
-    const rpcArgs = buildWorkflowIdsOverviewRpcArgs({
-      userId,
-      userEmail,
-      type: workflowType,
-      scope,
-      searchTerm,
-      practice,
-      language,
-      jurisdiction,
-      pagination: { limit: WORKFLOW_IDS_PAGE_SIZE, offset },
-    });
-    const { data, error } = await db.rpc("get_workflow_ids_overview", rpcArgs);
-    if (error) return void res.status(500).json({ detail: error.message });
+    const ids: { id: string; user_id: string }[] = [];
+    let offset = 0;
+    for (let page = 0; page < WORKFLOW_IDS_MAX_PAGES; page += 1) {
+      const rpcArgs = buildWorkflowIdsOverviewRpcArgs({
+        userId,
+        userEmail,
+        type: workflowType,
+        scope,
+        searchTerm,
+        practice,
+        language,
+        jurisdiction,
+        pagination: { limit: WORKFLOW_IDS_PAGE_SIZE, offset },
+      });
+      const { data, error } = await db.rpc(
+        "get_workflow_ids_overview",
+        rpcArgs,
+      );
+      if (error) return void res.status(500).json({ detail: error.message });
+      const rows = (data ?? []) as { id: string; user_id: string }[];
+      if (rows.length === 0) break;
+      ids.push(...rows);
+      offset += rows.length;
+    }
 
-    const rows = (data ?? []) as { id: string; user_id: string }[];
-    if (rows.length === 0) break;
-    ids.push(...rows);
-    offset += rows.length;
-  }
-
-  res.json(ids);
+    res.json(ids);
   }),
 );
 
@@ -519,77 +585,77 @@ workflowsRouter.post(
   "/",
   requireAuth,
   asyncRoute(async (req, res) => {
-  const userId = res.locals.userId as string;
+    const userId = res.locals.userId as string;
     const { metadata, skill_md, columns_config } = req.body as {
-    metadata?: Partial<WorkflowMetadata>;
-    skill_md?: string;
-    columns_config?: unknown;
-  };
-  const title = metadata?.title;
-  const type = metadata?.type;
-  if (!title?.trim())
+      metadata?: Partial<WorkflowMetadata>;
+      skill_md?: string;
+      columns_config?: unknown;
+    };
+    const title = metadata?.title;
+    const type = metadata?.type;
+    if (!title?.trim())
       return void res
         .status(400)
         .json({ detail: "metadata.title is required" });
-  if (type !== "assistant" && type !== "tabular")
-    return void res
-      .status(400)
-      .json({ detail: "metadata.type must be 'assistant' or 'tabular'" });
+    if (type !== "assistant" && type !== "tabular")
+      return void res
+        .status(400)
+        .json({ detail: "metadata.type must be 'assistant' or 'tabular'" });
 
-  const db = createServerSupabase();
-  devLog("[workflows/create] request", {
-    userId,
-    title: title.trim(),
-    type,
-    hasSkill: typeof skill_md === "string" && skill_md.length > 0,
-    columnCount: Array.isArray(columns_config) ? columns_config.length : null,
-    language:
-        normalizeOptionalString(metadata?.language) ??
-        DEFAULT_WORKFLOW_LANGUAGE,
-    practice: metadata?.practice ?? null,
-    jurisdictions:
-      normalizeJurisdictions(metadata?.jurisdictions) ??
-      DEFAULT_WORKFLOW_JURISDICTIONS,
-  });
-  const { data, error } = await db
-    .from("workflows")
-    .insert({
-      user_id: userId,
-      title: title.trim(),
-      type,
-      prompt_md: skill_md ?? null,
-      columns_config: columns_config ?? null,
-      language:
-          normalizeOptionalString(metadata?.language) ??
-          DEFAULT_WORKFLOW_LANGUAGE,
-      practice:
-          normalizeOptionalString(metadata?.practice) ??
-          DEFAULT_WORKFLOW_PRACTICE,
-      jurisdictions:
-        normalizeJurisdictions(metadata?.jurisdictions) ??
-        DEFAULT_WORKFLOW_JURISDICTIONS,
-    })
-    .select("*")
-    .single();
-  if (error) {
-    devLog("[workflows/create] insert error", {
+    const db = createServerSupabase();
+    devLog("[workflows/create] request", {
       userId,
       title: title.trim(),
       type,
-      code: error.code,
-      message: error.message,
-      details: error.details,
-      hint: error.hint,
+      hasSkill: typeof skill_md === "string" && skill_md.length > 0,
+      columnCount: Array.isArray(columns_config) ? columns_config.length : null,
+      language:
+        normalizeOptionalString(metadata?.language) ??
+        DEFAULT_WORKFLOW_LANGUAGE,
+      practice: metadata?.practice ?? null,
+      jurisdictions:
+        normalizeJurisdictions(metadata?.jurisdictions) ??
+        DEFAULT_WORKFLOW_JURISDICTIONS,
     });
-    return void res.status(500).json({ detail: error.message });
-  }
-  devLog("[workflows/create] inserted", {
-    id: data?.id,
-    user_id: data?.user_id,
-    title: data?.title,
-    type: data?.type,
-  });
-  res.status(201).json(withDatabaseWorkflow(data as WorkflowRecord));
+    const { data, error } = await db
+      .from("workflows")
+      .insert({
+        user_id: userId,
+        title: title.trim(),
+        type,
+        prompt_md: skill_md ?? null,
+        columns_config: columns_config ?? null,
+        language:
+          normalizeOptionalString(metadata?.language) ??
+          DEFAULT_WORKFLOW_LANGUAGE,
+        practice:
+          normalizeOptionalString(metadata?.practice) ??
+          DEFAULT_WORKFLOW_PRACTICE,
+        jurisdictions:
+          normalizeJurisdictions(metadata?.jurisdictions) ??
+          DEFAULT_WORKFLOW_JURISDICTIONS,
+      })
+      .select("*")
+      .single();
+    if (error) {
+      devLog("[workflows/create] insert error", {
+        userId,
+        title: title.trim(),
+        type,
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+      });
+      return void res.status(500).json({ detail: error.message });
+    }
+    devLog("[workflows/create] inserted", {
+      id: data?.id,
+      user_id: data?.user_id,
+      title: data?.title,
+      type: data?.type,
+    });
+    res.status(201).json(withDatabaseWorkflow(data as WorkflowRecord));
   }),
 );
 
@@ -654,23 +720,36 @@ workflowsRouter.delete(
   "/:workflowId",
   requireAuth,
   asyncRoute(async (req, res) => {
-  const userId = res.locals.userId as string;
-  const { workflowId } = req.params;
-  const systemWorkflow = SYSTEM_WORKFLOWS.find(
-    (workflow) => workflow.id === workflowId,
-  );
-  if (systemWorkflow) {
-    return void res.json(withSystemWorkflowAccess(systemWorkflow));
-  }
+    const userId = res.locals.userId as string;
+    const { workflowId } = req.params;
+    const systemWorkflow = SYSTEM_WORKFLOWS.find(
+      (workflow) => workflow.id === workflowId,
+    );
+    if (systemWorkflow) {
+      return void res.json(withSystemWorkflowAccess(systemWorkflow));
+    }
 
-  const db = createServerSupabase();
-  const { error } = await db
-    .from("workflows")
-    .delete()
-    .eq("id", workflowId)
-    .eq("user_id", userId);
-  if (error) return void res.status(500).json({ detail: error.message });
-  res.status(204).send();
+    const db = createServerSupabase();
+    const { data: referenceDocuments } = await db
+      .from("workflow_reference_documents")
+      .select("storage_path")
+      .eq("workflow_id", workflowId)
+      .eq("user_id", userId);
+    const { data: deleted, error } = await db
+      .from("workflows")
+      .delete()
+      .eq("id", workflowId)
+      .eq("user_id", userId)
+      .select("id");
+    if (error) return void res.status(500).json({ detail: error.message });
+    if ((deleted ?? []).length > 0) {
+      await Promise.all(
+        (referenceDocuments ?? []).map((reference) =>
+          deleteFile(reference.storage_path).catch(() => {}),
+        ),
+      );
+    }
+    res.status(204).send();
   }),
 );
 
@@ -679,14 +758,14 @@ workflowsRouter.get(
   "/hidden",
   requireAuth,
   asyncRoute(async (req, res) => {
-  const userId = res.locals.userId as string;
-  const db = createServerSupabase();
-  const { data, error } = await db
-    .from("hidden_workflows")
-    .select("workflow_id")
-    .eq("user_id", userId);
-  if (error) return void res.status(500).json({ detail: error.message });
-  res.json((data ?? []).map((r) => r.workflow_id));
+    const userId = res.locals.userId as string;
+    const db = createServerSupabase();
+    const { data, error } = await db
+      .from("hidden_workflows")
+      .select("workflow_id")
+      .eq("user_id", userId);
+    if (error) return void res.status(500).json({ detail: error.message });
+    res.json((data ?? []).map((r) => r.workflow_id));
   }),
 );
 
@@ -695,19 +774,19 @@ workflowsRouter.post(
   "/hidden",
   requireAuth,
   asyncRoute(async (req, res) => {
-  const userId = res.locals.userId as string;
-  const { workflow_id } = req.body as { workflow_id: string };
-  if (!workflow_id?.trim())
-    return void res.status(400).json({ detail: "workflow_id is required" });
-  const db = createServerSupabase();
-  const { error } = await db
-    .from("hidden_workflows")
+    const userId = res.locals.userId as string;
+    const { workflow_id } = req.body as { workflow_id: string };
+    if (!workflow_id?.trim())
+      return void res.status(400).json({ detail: "workflow_id is required" });
+    const db = createServerSupabase();
+    const { error } = await db
+      .from("hidden_workflows")
       .upsert(
         { user_id: userId, workflow_id },
         { onConflict: "user_id,workflow_id" },
       );
-  if (error) return void res.status(500).json({ detail: error.message });
-  res.status(204).send();
+    if (error) return void res.status(500).json({ detail: error.message });
+    res.status(204).send();
   }),
 );
 
@@ -716,16 +795,16 @@ workflowsRouter.delete(
   "/hidden/:workflowId",
   requireAuth,
   asyncRoute(async (req, res) => {
-  const userId = res.locals.userId as string;
-  const { workflowId } = req.params;
-  const db = createServerSupabase();
-  const { error } = await db
-    .from("hidden_workflows")
-    .delete()
-    .eq("user_id", userId)
-    .eq("workflow_id", workflowId);
-  if (error) return void res.status(500).json({ detail: error.message });
-  res.status(204).send();
+    const userId = res.locals.userId as string;
+    const { workflowId } = req.params;
+    const db = createServerSupabase();
+    const { error } = await db
+      .from("hidden_workflows")
+      .delete()
+      .eq("user_id", userId)
+      .eq("workflow_id", workflowId);
+    if (error) return void res.status(500).json({ detail: error.message });
+    res.status(204).send();
   }),
 );
 
@@ -734,129 +813,392 @@ workflowsRouter.post(
   "/:workflowId/open-source",
   requireAuth,
   asyncRoute(async (req, res) => {
-  if (!WORKFLOW_CONTRIBUTIONS_ENABLED) {
+    if (!WORKFLOW_CONTRIBUTIONS_ENABLED) {
       return void res
         .status(404)
         .json({ detail: "Workflow contributions are disabled" });
-  }
+    }
 
-  const userId = res.locals.userId as string;
-  const userEmail = res.locals.userEmail as string | undefined;
-  const { workflowId } = req.params;
-  const openSourceBody = req.body as {
-    contributor_mode?: unknown;
-    contributor?: unknown;
-  };
-  const requestedContributorMode =
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const { workflowId } = req.params;
+    const openSourceBody = req.body as {
+      contributor_mode?: unknown;
+      contributor?: unknown;
+    };
+    const requestedContributorMode =
       openSourceBody.contributor_mode === "named" ? "named" : "anonymous";
-  const db = createServerSupabase();
+    const db = createServerSupabase();
 
-  const { data: workflow, error: workflowError } = await db
-    .from("workflows")
-    .select("*")
-    .eq("id", workflowId)
-    .eq("user_id", userId)
-    .maybeSingle();
-  if (workflowError) {
-    return void res.status(500).json({ detail: workflowError.message });
-  }
-  if (!workflow) {
-    return void res
-      .status(404)
-      .json({ detail: "Workflow not found or not open-sourceable" });
-  }
+    const { data: workflow, error: workflowError } = await db
+      .from("workflows")
+      .select("*")
+      .eq("id", workflowId)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (workflowError) {
+      return void res.status(500).json({ detail: workflowError.message });
+    }
+    if (!workflow) {
+      return void res
+        .status(404)
+        .json({ detail: "Workflow not found or not open-sourceable" });
+    }
 
-  const workflowRecord = workflow as WorkflowRecord;
-  const validationError = validateOpenSourceWorkflow(workflowRecord);
-  if (validationError) {
-    return void res.status(400).json({ detail: validationError });
-  }
+    const workflowRecord = workflow as WorkflowRecord;
+    const validationError = validateOpenSourceWorkflow(workflowRecord);
+    if (validationError) {
+      return void res.status(400).json({ detail: validationError });
+    }
 
-  const { data: profile } = await db
-    .from("user_profiles")
-    .select("display_name")
-    .eq("user_id", userId)
-    .maybeSingle();
-  const submitterName =
-    typeof profile?.display_name === "string" && profile.display_name.trim()
-      ? profile.display_name.trim()
-      : null;
-  const submittedContributor =
-    normalizeContributors([openSourceBody.contributor])?.[0] ??
-    contributorFromName(submitterName || userEmail);
-  const publicContributors =
-    requestedContributorMode === "named"
-      ? [submittedContributor]
-      : [DEFAULT_WORKFLOW_CONTRIBUTOR];
-  const now = new Date().toISOString();
-  const snapshot = buildOpenSourceSnapshot(
-    workflowRecord,
-    publicContributors,
-    requestedContributorMode,
-  );
+    const { data: profile } = await db
+      .from("user_profiles")
+      .select("display_name")
+      .eq("user_id", userId)
+      .maybeSingle();
+    const submitterName =
+      typeof profile?.display_name === "string" && profile.display_name.trim()
+        ? profile.display_name.trim()
+        : null;
+    const submittedContributor =
+      normalizeContributors([openSourceBody.contributor])?.[0] ??
+      contributorFromName(submitterName || userEmail);
+    const publicContributors =
+      requestedContributorMode === "named"
+        ? [submittedContributor]
+        : [DEFAULT_WORKFLOW_CONTRIBUTOR];
+    const now = new Date().toISOString();
+    const snapshot = buildOpenSourceSnapshot(
+      workflowRecord,
+      publicContributors,
+      requestedContributorMode,
+    );
 
-  const { data: pendingSubmission, error: pendingError } = await db
-    .from("workflow_open_source_submissions")
-    .select("*")
-    .eq("workflow_id", workflowId)
-    .eq("submitted_by_user_id", userId)
-    .eq("status", "pending")
-    .maybeSingle();
-  if (pendingError) {
-    return void res.status(500).json({ detail: pendingError.message });
-  }
-
-  if (pendingSubmission) {
-    const { data: updated, error: updateError } = await db
+    const { data: pendingSubmission, error: pendingError } = await db
       .from("workflow_open_source_submissions")
-      .update({
+      .select("*")
+      .eq("workflow_id", workflowId)
+      .eq("submitted_by_user_id", userId)
+      .eq("status", "pending")
+      .maybeSingle();
+    if (pendingError) {
+      return void res.status(500).json({ detail: pendingError.message });
+    }
+
+    if (pendingSubmission) {
+      const { data: updated, error: updateError } = await db
+        .from("workflow_open_source_submissions")
+        .update({
+          submitter_email: userEmail ?? null,
+          submitter_name:
+            requestedContributorMode === "named" ? submitterName : null,
+          contributor_mode: requestedContributorMode,
+          snapshot,
+          updated_at: now,
+        })
+        .eq("id", pendingSubmission.id)
+        .select("id, status, submitted_at, updated_at, reviewed_at")
+        .single();
+      if (updateError || !updated) {
+        return void res.status(500).json({
+          detail: updateError?.message ?? "Failed to update submission",
+        });
+      }
+      return void res.json({
+        ...toOpenSourceSubmissionSummary(updated as OpenSourceSubmissionRow),
+        mode: "updated",
+      });
+    }
+
+    const { data: created, error: createError } = await db
+      .from("workflow_open_source_submissions")
+      .insert({
+        workflow_id: workflowId,
+        submitted_by_user_id: userId,
         submitter_email: userEmail ?? null,
         submitter_name:
           requestedContributorMode === "named" ? submitterName : null,
         contributor_mode: requestedContributorMode,
+        status: "pending",
         snapshot,
+        submitted_at: now,
         updated_at: now,
       })
-      .eq("id", pendingSubmission.id)
       .select("id, status, submitted_at, updated_at, reviewed_at")
       .single();
-    if (updateError || !updated) {
+    if (createError || !created) {
       return void res.status(500).json({
-        detail: updateError?.message ?? "Failed to update submission",
+        detail: createError?.message ?? "Failed to create submission",
       });
     }
-    return void res.json({
-      ...toOpenSourceSubmissionSummary(updated as OpenSourceSubmissionRow),
-      mode: "updated",
-    });
-  }
 
-  const { data: created, error: createError } = await db
-    .from("workflow_open_source_submissions")
-    .insert({
-      workflow_id: workflowId,
-      submitted_by_user_id: userId,
-      submitter_email: userEmail ?? null,
-      submitter_name:
-        requestedContributorMode === "named" ? submitterName : null,
-      contributor_mode: requestedContributorMode,
-      status: "pending",
-      snapshot,
-      submitted_at: now,
-      updated_at: now,
-    })
-    .select("id, status, submitted_at, updated_at, reviewed_at")
-    .single();
-  if (createError || !created) {
-    return void res.status(500).json({
-      detail: createError?.message ?? "Failed to create submission",
+    res.status(201).json({
+      ...toOpenSourceSubmissionSummary(created as OpenSourceSubmissionRow),
+      mode: "created",
     });
-  }
+  }),
+);
 
-  res.status(201).json({
-    ...toOpenSourceSubmissionSummary(created as OpenSourceSubmissionRow),
-    mode: "created",
-  });
+// GET /workflows/:workflowId/reference-files
+workflowsRouter.get(
+  "/:workflowId/reference-files",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const db = createServerSupabase();
+    const access = await resolveWorkflowAccess(
+      req.params.workflowId,
+      userId,
+      userEmail,
+      db,
+    );
+    if (!access)
+      return void res.status(404).json({ detail: "Workflow not found" });
+    if (rejectReferenceFilesForTabularWorkflow(access, res)) return;
+
+    const { data, error } = await db
+      .from("workflow_reference_documents")
+      .select(
+        "id, workflow_id, filename, file_type, size_bytes, created_at, updated_at",
+      )
+      .eq("workflow_id", req.params.workflowId)
+      .order("created_at", { ascending: true });
+    if (error) return void res.status(500).json({ detail: error.message });
+    res.json(data ?? []);
+  }),
+);
+
+// POST /workflows/:workflowId/reference-files
+workflowsRouter.post(
+  "/:workflowId/reference-files",
+  requireAuth,
+  singleFileUpload("file"),
+  asyncRoute(async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const db = createServerSupabase();
+    const access = await resolveWorkflowAccess(
+      req.params.workflowId,
+      userId,
+      userEmail,
+      db,
+    );
+    if (!access || !access.allowEdit) {
+      return void res
+        .status(404)
+        .json({ detail: "Workflow not found or not editable" });
+    }
+    if (rejectReferenceFilesForTabularWorkflow(access, res)) return;
+    const file = req.file;
+    if (!file) return void res.status(400).json({ detail: "file is required" });
+    const fileType = file.originalname.includes(".")
+      ? file.originalname.split(".").pop()!.toLowerCase()
+      : "";
+    if (!ALLOWED_DOCUMENT_TYPES.has(fileType)) {
+      return void res.status(400).json({
+        detail: `Unsupported file type: ${fileType}. Allowed: ${ALLOWED_DOCUMENT_TYPES_LABEL}`,
+      });
+    }
+    const referenceId = crypto.randomUUID();
+    const contentHash = contentSha256(file.buffer);
+    const ownerId = access.workflow.user_id ?? userId;
+    const storagePath = workflowReferenceKey(
+      ownerId,
+      req.params.workflowId,
+      referenceId,
+      contentHash,
+      file.originalname,
+    );
+    await uploadFile(
+      storagePath,
+      file.buffer.buffer.slice(
+        file.buffer.byteOffset,
+        file.buffer.byteOffset + file.buffer.byteLength,
+      ) as ArrayBuffer,
+      contentTypeForDocumentType(fileType),
+    );
+    const { data, error } = await db
+      .from("workflow_reference_documents")
+      .insert({
+        id: referenceId,
+        workflow_id: req.params.workflowId,
+        user_id: ownerId,
+        filename: file.originalname,
+        file_type: fileType,
+        storage_path: storagePath,
+        size_bytes: file.buffer.byteLength,
+        content_hash: contentHash,
+      })
+      .select(
+        "id, workflow_id, filename, file_type, size_bytes, created_at, updated_at",
+      )
+      .single();
+    if (error || !data) {
+      await deleteFile(storagePath).catch(() => {});
+      return void res
+        .status(500)
+        .json({ detail: error?.message ?? "Upload failed" });
+    }
+    res.status(201).json(data);
+  }),
+);
+
+// GET /workflows/:workflowId/reference-files/:referenceId/url
+workflowsRouter.get(
+  "/:workflowId/reference-files/:referenceId/url",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const db = createServerSupabase();
+    const access = await resolveWorkflowAccess(
+      req.params.workflowId,
+      userId,
+      userEmail,
+      db,
+    );
+    if (!access)
+      return void res.status(404).json({ detail: "Workflow not found" });
+    if (rejectReferenceFilesForTabularWorkflow(access, res)) return;
+    const { data: reference } = await db
+      .from("workflow_reference_documents")
+      .select("id, filename, storage_path")
+      .eq("id", req.params.referenceId)
+      .eq("workflow_id", req.params.workflowId)
+      .maybeSingle();
+    if (!reference)
+      return void res.status(404).json({ detail: "Reference file not found" });
+    const url = await getSignedUrl(
+      reference.storage_path,
+      3600,
+      reference.filename,
+    );
+    if (!url)
+      return void res.status(503).json({ detail: "Storage not configured" });
+    res.json({ url, filename: reference.filename });
+  }),
+);
+
+// PUT /workflows/:workflowId/reference-files/:referenceId
+workflowsRouter.put(
+  "/:workflowId/reference-files/:referenceId",
+  requireAuth,
+  singleFileUpload("file"),
+  asyncRoute(async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const db = createServerSupabase();
+    const access = await resolveWorkflowAccess(
+      req.params.workflowId,
+      userId,
+      userEmail,
+      db,
+    );
+    if (!access || !access.allowEdit) {
+      return void res
+        .status(404)
+        .json({ detail: "Workflow not found or not editable" });
+    }
+    if (rejectReferenceFilesForTabularWorkflow(access, res)) return;
+    const file = req.file;
+    if (!file) return void res.status(400).json({ detail: "file is required" });
+    const fileType = file.originalname.includes(".")
+      ? file.originalname.split(".").pop()!.toLowerCase()
+      : "";
+    if (!ALLOWED_DOCUMENT_TYPES.has(fileType)) {
+      return void res.status(400).json({
+        detail: `Unsupported file type: ${fileType}. Allowed: ${ALLOWED_DOCUMENT_TYPES_LABEL}`,
+      });
+    }
+    const { data: current } = await db
+      .from("workflow_reference_documents")
+      .select("id, user_id, storage_path")
+      .eq("id", req.params.referenceId)
+      .eq("workflow_id", req.params.workflowId)
+      .maybeSingle();
+    if (!current)
+      return void res.status(404).json({ detail: "Reference file not found" });
+    const contentHash = contentSha256(file.buffer);
+    const storagePath = workflowReferenceKey(
+      current.user_id,
+      req.params.workflowId,
+      current.id,
+      contentHash,
+      file.originalname,
+    );
+    await uploadFile(
+      storagePath,
+      file.buffer.buffer.slice(
+        file.buffer.byteOffset,
+        file.buffer.byteOffset + file.buffer.byteLength,
+      ) as ArrayBuffer,
+      contentTypeForDocumentType(fileType),
+    );
+    const { data, error } = await db
+      .from("workflow_reference_documents")
+      .update({
+        filename: file.originalname,
+        file_type: fileType,
+        storage_path: storagePath,
+        size_bytes: file.buffer.byteLength,
+        content_hash: contentHash,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", current.id)
+      .select(
+        "id, workflow_id, filename, file_type, size_bytes, created_at, updated_at",
+      )
+      .single();
+    if (error || !data) {
+      await deleteFile(storagePath).catch(() => {});
+      return void res
+        .status(500)
+        .json({ detail: error?.message ?? "Replacement failed" });
+    }
+    if (current.storage_path !== storagePath) {
+      await deleteFile(current.storage_path).catch(() => {});
+    }
+    res.json(data);
+  }),
+);
+
+// DELETE /workflows/:workflowId/reference-files/:referenceId
+workflowsRouter.delete(
+  "/:workflowId/reference-files/:referenceId",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const db = createServerSupabase();
+    const access = await resolveWorkflowAccess(
+      req.params.workflowId,
+      userId,
+      userEmail,
+      db,
+    );
+    if (!access || !access.allowEdit) {
+      return void res
+        .status(404)
+        .json({ detail: "Workflow not found or not editable" });
+    }
+    if (rejectReferenceFilesForTabularWorkflow(access, res)) return;
+    const { data: reference } = await db
+      .from("workflow_reference_documents")
+      .select("id, storage_path")
+      .eq("id", req.params.referenceId)
+      .eq("workflow_id", req.params.workflowId)
+      .maybeSingle();
+    if (!reference) {
+      return void res.status(404).json({ detail: "Reference file not found" });
+    }
+    await deleteFile(reference.storage_path).catch(() => {});
+    const { error } = await db
+      .from("workflow_reference_documents")
+      .delete()
+      .eq("id", reference.id);
+    if (error) return void res.status(500).json({ detail: error.message });
+    res.status(204).send();
   }),
 );
 
@@ -865,37 +1207,46 @@ workflowsRouter.get(
   "/:workflowId",
   requireAuth,
   asyncRoute(async (req, res) => {
-  const userId = res.locals.userId as string;
-  const userEmail = res.locals.userEmail as string | undefined;
-  const { workflowId } = req.params;
-  const systemWorkflow = SYSTEM_WORKFLOWS.find(
-    (workflow) => workflow.id === workflowId,
-  );
-  if (systemWorkflow) {
-    return void res.json(withSystemWorkflowAccess(systemWorkflow));
-  }
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const { workflowId } = req.params;
+    const systemWorkflow = SYSTEM_WORKFLOWS.find(
+      (workflow) => workflow.id === workflowId,
+    );
+    if (systemWorkflow) {
+      return void res.json(withSystemWorkflowAccess(systemWorkflow));
+    }
 
-  const db = createServerSupabase();
+    const db = createServerSupabase();
     const access = await resolveWorkflowAccess(
       workflowId,
       userId,
       userEmail,
       db,
     );
-  if (!access)
-    return void res.status(404).json({ detail: "Workflow not found" });
-  const openSourceSubmission = access.isOwner
-    ? await getLatestOpenSourceSubmission(db, workflowId, userId)
-    : null;
-  res.json(
-    withOpenSourceSubmission(
-      withWorkflowAccess(withDatabaseWorkflow(access.workflow), {
-        allowEdit: access.allowEdit,
-        isOwner: access.isOwner,
-      }),
-      openSourceSubmission,
-    ),
-  );
+    if (!access)
+      return void res.status(404).json({ detail: "Workflow not found" });
+    const openSourceSubmission = access.isOwner
+      ? await getLatestOpenSourceSubmission(db, workflowId, userId)
+      : null;
+    const { data: installation } = access.isOwner
+      ? await db
+          .from("default_workflow_installations")
+          .select("id")
+          .eq("workflow_id", workflowId)
+          .eq("user_id", userId)
+          .maybeSingle()
+      : { data: null };
+    res.json({
+      ...withOpenSourceSubmission(
+        withWorkflowAccess(withDatabaseWorkflow(access.workflow), {
+          allowEdit: access.allowEdit,
+          isOwner: access.isOwner,
+        }),
+        openSourceSubmission,
+      ),
+      is_default: !!installation,
+    });
   }),
 );
 
@@ -904,29 +1255,29 @@ workflowsRouter.get(
   "/:workflowId/shares",
   requireAuth,
   asyncRoute(async (req, res) => {
-  const userId = res.locals.userId as string;
-  const { workflowId } = req.params;
-  const db = createServerSupabase();
+    const userId = res.locals.userId as string;
+    const { workflowId } = req.params;
+    const db = createServerSupabase();
 
-  const { data: wf } = await db
-    .from("workflows")
-    .select("id")
-    .eq("id", workflowId)
-    .eq("user_id", userId)
-    .single();
+    const { data: wf } = await db
+      .from("workflows")
+      .select("id")
+      .eq("id", workflowId)
+      .eq("user_id", userId)
+      .single();
     if (!wf)
       return void res
         .status(404)
         .json({ detail: "Workflow not found or not editable" });
 
-  const { data: shares, error } = await db
-    .from("workflow_shares")
-    .select("id, shared_with_email, allow_edit, created_at")
-    .eq("workflow_id", workflowId)
-    .order("created_at", { ascending: true });
-  if (error) return void res.status(500).json({ detail: error.message });
+    const { data: shares, error } = await db
+      .from("workflow_shares")
+      .select("id, shared_with_email, allow_edit, created_at")
+      .eq("workflow_id", workflowId)
+      .order("created_at", { ascending: true });
+    if (error) return void res.status(500).json({ detail: error.message });
 
-  res.json(shares ?? []);
+    res.json(shares ?? []);
   }),
 );
 
@@ -935,24 +1286,24 @@ workflowsRouter.delete(
   "/:workflowId/shares/:shareId",
   requireAuth,
   asyncRoute(async (req, res) => {
-  const userId = res.locals.userId as string;
-  const { workflowId, shareId } = req.params;
-  const db = createServerSupabase();
+    const userId = res.locals.userId as string;
+    const { workflowId, shareId } = req.params;
+    const db = createServerSupabase();
 
-  const { data: wf } = await db
-    .from("workflows")
-    .select("id")
-    .eq("id", workflowId)
-    .eq("user_id", userId)
-    .single();
-  if (!wf) return void res.status(404).json({ detail: "Workflow not found" });
+    const { data: wf } = await db
+      .from("workflows")
+      .select("id")
+      .eq("id", workflowId)
+      .eq("user_id", userId)
+      .single();
+    if (!wf) return void res.status(404).json({ detail: "Workflow not found" });
 
     await db
       .from("workflow_shares")
       .delete()
       .eq("id", shareId)
       .eq("workflow_id", workflowId);
-  res.status(204).send();
+    res.status(204).send();
   }),
 );
 
@@ -961,9 +1312,9 @@ workflowsRouter.post(
   "/:workflowId/share",
   requireAuth,
   asyncRoute(async (req, res) => {
-  const userId = res.locals.userId as string;
-  const userEmail = res.locals.userEmail as string | undefined;
-  const { workflowId } = req.params;
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const { workflowId } = req.params;
     const { emails, allow_edit } = req.body as {
       emails: string[];
       allow_edit: boolean;
@@ -971,58 +1322,58 @@ workflowsRouter.post(
 
     if (!emails?.length)
       return void res.status(400).json({ detail: "emails is required" });
-  const normalizedEmails = [
-    ...new Set(
+    const normalizedEmails = [
+      ...new Set(
         emails.map((email) => email.trim().toLowerCase()).filter(Boolean),
-    ),
-  ];
-  if (normalizedEmails.length === 0) {
-    return void res.status(400).json({ detail: "emails is required" });
-  }
-  const normalizedUserEmail = userEmail?.trim().toLowerCase();
-  if (normalizedUserEmail && normalizedEmails.includes(normalizedUserEmail)) {
-    return void res
-      .status(400)
-      .json({ detail: "You cannot share a workflow with yourself." });
-  }
+      ),
+    ];
+    if (normalizedEmails.length === 0) {
+      return void res.status(400).json({ detail: "emails is required" });
+    }
+    const normalizedUserEmail = userEmail?.trim().toLowerCase();
+    if (normalizedUserEmail && normalizedEmails.includes(normalizedUserEmail)) {
+      return void res
+        .status(400)
+        .json({ detail: "You cannot share a workflow with yourself." });
+    }
 
-  const db = createServerSupabase();
+    const db = createServerSupabase();
     const missingSharedUsers = await findMissingUserEmails(
       db,
       normalizedEmails,
     );
-  if (missingSharedUsers.length > 0) {
-    return void res.status(400).json({
-      detail: `${missingSharedUsers[0]} does not belong to a Mike user.`,
-    });
-  }
+    if (missingSharedUsers.length > 0) {
+      return void res.status(400).json({
+        detail: `${missingSharedUsers[0]} does not belong to a Mike user.`,
+      });
+    }
 
-  // Verify ownership
-  const { data: wf } = await db
-    .from("workflows")
-    .select("id")
-    .eq("id", workflowId)
-    .eq("user_id", userId)
-    .single();
+    // Verify ownership
+    const { data: wf } = await db
+      .from("workflows")
+      .select("id")
+      .eq("id", workflowId)
+      .eq("user_id", userId)
+      .single();
     if (!wf)
       return void res
         .status(404)
         .json({ detail: "Workflow not found or not editable" });
 
-  const rows = normalizedEmails.map((email: string) => ({
-    workflow_id: workflowId,
-    shared_by_user_id: userId,
-    shared_with_email: email,
-    allow_edit: allow_edit ?? false,
-  }));
-  // Upsert on (workflow_id, shared_with_email) so re-sharing to the same
-  // person updates the existing row instead of stacking duplicates.
-  const { error } = await db
-    .from("workflow_shares")
-    .upsert(rows, { onConflict: "workflow_id,shared_with_email" });
-  if (error) return void res.status(500).json({ detail: error.message });
+    const rows = normalizedEmails.map((email: string) => ({
+      workflow_id: workflowId,
+      shared_by_user_id: userId,
+      shared_with_email: email,
+      allow_edit: allow_edit ?? false,
+    }));
+    // Upsert on (workflow_id, shared_with_email) so re-sharing to the same
+    // person updates the existing row instead of stacking duplicates.
+    const { error } = await db
+      .from("workflow_shares")
+      .upsert(rows, { onConflict: "workflow_id,shared_with_email" });
+    if (error) return void res.status(500).json({ detail: error.message });
 
-  res.status(204).send();
+    res.status(204).send();
   }),
 );
 

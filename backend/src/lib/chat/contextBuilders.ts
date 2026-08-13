@@ -15,6 +15,7 @@ import {
 import { buildSystemPrompt } from "./prompts";
 import { parseCitations, createCitation } from "./citations";
 import type { AssistantEvent } from "./streaming";
+import { ensureDefaultWorkflows } from "../workflowCatalog";
 
 // ---------------------------------------------------------------------------
 // Prompt-injection spotlighting helpers
@@ -518,6 +519,19 @@ export async function buildDocContext(
           typeof ev.document_id === "string"
         ) {
           documentIds.add(ev.document_id);
+        } else if (ev?.type === "doc_replicated" && Array.isArray(ev.copies)) {
+          for (const copy of ev.copies) {
+            if (
+              copy &&
+              typeof copy === "object" &&
+              typeof (copy as { document_id?: unknown }).document_id ===
+                "string"
+            ) {
+              documentIds.add(
+                (copy as { document_id: string }).document_id,
+              );
+            }
+          }
         }
       }
     }
@@ -527,7 +541,7 @@ export async function buildDocContext(
   if (ids.length > 0) {
     const { data: docs } = await db
       .from("documents")
-      .select("id, current_version_id, status")
+      .select("id, current_version_id, status, library_kind")
       .in("id", ids)
       .eq("user_id", userId)
       .eq("status", "ready");
@@ -539,6 +553,7 @@ export async function buildDocContext(
       current_version_id?: string | null;
       active_version_number?: number | null;
       storage_path?: string | null;
+      library_kind?: string | null;
     }[];
     await attachActiveVersionPaths(db, docList);
     for (let i = 0; i < docList.length; i++) {
@@ -556,6 +571,8 @@ export async function buildDocContext(
         storage_path: doc.storage_path,
         file_type: doc.file_type ?? "",
         filename,
+        source_kind:
+          doc.library_kind === "template" ? "library_template" : "document",
       });
     }
   }
@@ -673,9 +690,25 @@ export async function buildWorkflowStore(
   const store: WorkflowStore = new Map();
   const normalizedUserEmail = (userEmail ?? "").trim().toLowerCase();
 
-  // Seed system workflows first.
+  // Best-effort: the chat routes call this outside their try blocks, so a
+  // thrown error here becomes an unhandled rejection that kills the process
+  // (Express 4 does not forward async errors). A chat must never fail —
+  // let alone crash the backend — because default installation failed.
+  try {
+    await ensureDefaultWorkflows(userId, db);
+  } catch (err) {
+    console.error("[buildWorkflowStore] ensureDefaultWorkflows failed:", err);
+  }
+
+  // Keep repository IDs readable for historical chat attachments, but do not
+  // expose them through list_workflows. Current discovery happens through the
+  // user's owned/shared workflows and the Add-ons catalog.
   for (const wf of SYSTEM_ASSISTANT_WORKFLOWS) {
-    store.set(wf.id, { title: wf.title, skill_md: wf.skill_md });
+    store.set(wf.id, {
+      title: wf.title,
+      skill_md: wf.skill_md,
+      listed: false,
+    });
   }
 
   // Then overlay user-owned assistant workflows.
@@ -686,7 +719,11 @@ export async function buildWorkflowStore(
     .eq("type", "assistant");
   for (const wf of workflows ?? []) {
     if (wf.prompt_md) {
-      store.set(wf.id, { title: wf.title, skill_md: wf.prompt_md });
+      store.set(wf.id, {
+        title: wf.title,
+        skill_md: wf.prompt_md,
+        listed: true,
+      });
     }
   }
 
@@ -710,9 +747,38 @@ export async function buildWorkflowStore(
           store.set(wf.id, {
             title: wf.title,
             skill_md: wf.prompt_md,
+            listed: true,
           });
         }
       }
+    }
+  }
+  const databaseWorkflowIds = [...store.entries()]
+    .filter(([, workflow]) => workflow.listed !== false)
+    .map(([id]) => id);
+  if (databaseWorkflowIds.length > 0) {
+    const { data: referenceDocuments } = await db
+      .from("workflow_reference_documents")
+      .select("id, workflow_id, filename, file_type, storage_path")
+      .in("workflow_id", databaseWorkflowIds);
+    const documents = (referenceDocuments ?? []) as {
+      id: string;
+      workflow_id: string;
+      filename: string;
+      file_type: string;
+      storage_path: string;
+    }[];
+    for (const document of documents) {
+      const workflow = store.get(document.workflow_id);
+      if (!workflow) continue;
+      const references = workflow.reference_files ?? [];
+      references.push({
+        reference_id: document.id,
+        filename: document.filename?.trim() || "Untitled reference",
+        file_type: document.file_type,
+        storage_path: document.storage_path,
+      });
+      workflow.reference_files = references;
     }
   }
   return store;

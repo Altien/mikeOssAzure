@@ -189,7 +189,7 @@ async function loadLibraryLevel(
     { data: docs, error: docsError },
     { data: folders, error: foldersError },
   ] = await Promise.all([
-      documentsQuery.order("created_at", { ascending: true }),
+      documentsQuery.order("updated_at", { ascending: false }),
       foldersQuery.order("created_at", { ascending: true }),
     ]);
   if (docsError)

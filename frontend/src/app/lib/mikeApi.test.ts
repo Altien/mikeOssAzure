@@ -36,6 +36,7 @@ import {
     deleteTabularChat,
     deleteTabularReview,
     deleteWorkflow,
+    deleteWorkflowReferenceFile,
     deleteWorkflowShare,
     downloadDocumentsZip,
     exportAccountData,
@@ -65,7 +66,9 @@ import {
     getTabularReviewPeople,
     getUserProfile,
     getWorkflow,
+    getWorkflowAddon,
   getWorkflowFilterOptions,
+    getWorkflowReferenceUrl,
     hideWorkflow,
     isMfaRequiredError,
     listChats,
@@ -83,6 +86,8 @@ import {
     listTabularReviewIds,
     listTabularReviews,
     listWorkflowIds,
+    listWorkflowAddons,
+    listWorkflowReferenceFiles,
     listWorkflowShares,
     listWorkflows,
     listWorkflowsPage,
@@ -121,6 +126,12 @@ import {
     updateUserMfaOnLogin,
     updateUserProfile,
     updateWorkflow,
+    updateQuickAction,
+    deleteQuickAction,
+    importWorkflowAddon,
+    listQuickActions,
+    replaceWorkflowReferenceFile,
+    uploadWorkflowReferenceFile,
     uploadDocumentVersion,
     uploadLibraryDocument,
     uploadProjectDocument,
@@ -1567,6 +1578,54 @@ describe("multipart upload endpoints", () => {
       "nope",
     );
     });
+
+    it("uploads workflow reference files as authenticated multipart data", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ id: "ref-1" }));
+
+        await expect(uploadWorkflowReferenceFile("w1", file)).resolves.toEqual({
+            id: "ref-1",
+        });
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe(
+            "http://localhost:3001/workflows/w1/reference-files",
+        );
+        expect(init.method).toBe("POST");
+        expect(init.headers).toEqual({ Authorization: "Bearer token-123" });
+        expect(init.body).toBeInstanceOf(FormData);
+        expect((init.body as FormData).get("file")).toBeInstanceOf(File);
+
+        fetchMock.mockResolvedValue(
+            jsonResponse({ detail: "Unsupported file" }, { status: 415 }),
+        );
+        await expect(uploadWorkflowReferenceFile("w1", file)).rejects.toBeInstanceOf(
+            MikeApiError,
+        );
+    });
+
+    it("replaces workflow reference files as authenticated multipart data", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ id: "ref-1" }));
+
+        await expect(
+            replaceWorkflowReferenceFile("w1", "ref-1", file),
+        ).resolves.toEqual({ id: "ref-1" });
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe(
+            "http://localhost:3001/workflows/w1/reference-files/ref-1",
+        );
+        expect(init.method).toBe("PUT");
+        expect(init.headers).toEqual({ Authorization: "Bearer token-123" });
+        expect(init.body).toBeInstanceOf(FormData);
+        expect((init.body as FormData).get("file")).toBeInstanceOf(File);
+
+        fetchMock.mockResolvedValue(
+            jsonResponse({ detail: "Reference not found" }, { status: 404 }),
+        );
+        await expect(
+            replaceWorkflowReferenceFile("w1", "missing", file),
+        ).rejects.toBeInstanceOf(MikeApiError);
+    });
 });
 
 describe("query and payload defaults", () => {
@@ -2102,6 +2161,67 @@ describe("thin endpoint wrappers", () => {
             name: "deleteWorkflowShare",
             call: () => deleteWorkflowShare("w1", "s1"),
             url: "/workflows/w1/shares/s1",
+            method: "DELETE",
+        },
+        {
+            name: "listQuickActions",
+            call: () => listQuickActions(),
+            url: "/quick-actions",
+        },
+        {
+            name: "updateQuickAction",
+            call: () =>
+                updateQuickAction("qa1", {
+                    prompt: "Proofread this",
+                    document_upload: true,
+                    enabled: false,
+                    sort_order: 3,
+                }),
+            url: "/quick-actions/qa1",
+            method: "PATCH",
+            body: {
+                prompt: "Proofread this",
+                document_upload: true,
+                enabled: false,
+                sort_order: 3,
+            },
+        },
+        {
+            name: "deleteQuickAction",
+            call: () => deleteQuickAction("qa1"),
+            url: "/quick-actions/qa1",
+            method: "DELETE",
+        },
+        {
+            name: "listWorkflowAddons",
+            call: () => listWorkflowAddons(),
+            url: "/workflow-addons",
+        },
+        {
+            name: "getWorkflowAddon",
+            call: () => getWorkflowAddon("addon-1"),
+            url: "/workflow-addons/addon-1",
+        },
+        {
+            name: "importWorkflowAddon",
+            call: () => importWorkflowAddon("addon-1"),
+            url: "/workflow-addons/addon-1/import",
+            method: "POST",
+        },
+        {
+            name: "listWorkflowReferenceFiles",
+            call: () => listWorkflowReferenceFiles("w1"),
+            url: "/workflows/w1/reference-files",
+        },
+        {
+            name: "getWorkflowReferenceUrl",
+            call: () => getWorkflowReferenceUrl("w1", "ref-1"),
+            url: "/workflows/w1/reference-files/ref-1/url",
+        },
+        {
+            name: "deleteWorkflowReferenceFile",
+            call: () => deleteWorkflowReferenceFile("w1", "ref-1"),
+            url: "/workflows/w1/reference-files/ref-1",
             method: "DELETE",
         },
     ];

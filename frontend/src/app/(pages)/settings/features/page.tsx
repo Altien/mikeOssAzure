@@ -1,16 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ApiKeyField } from "@/app/components/settings/ApiKeyField";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
-import { useQuickActionsPreference } from "@/app/components/assistant/quickActionsPreferences";
+import { listQuickActions, updateQuickAction } from "@/app/lib/mikeApi";
+import type { QuickAction } from "@/app/components/shared/types";
 import { SettingsSection } from "../SettingsSection";
 import { SettingsToggle } from "../SettingsToggle";
 
 export default function FeaturesPage() {
     const { profile, updateApiKey, updateLegalResearchUs } = useUserProfile();
-    const { visibleActions, showAllQuickActions, hideAllQuickActions } =
-        useQuickActionsPreference();
+    const [quickActions, setQuickActions] = useState<QuickAction[]>([]);
+    const [quickActionsError, setQuickActionsError] = useState<string | null>(
+        null,
+    );
     const [saving, setSaving] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
     const [optimisticLegalResearchUs, setOptimisticLegalResearchUs] = useState<
@@ -20,7 +23,38 @@ export default function FeaturesPage() {
     const persistedLegalResearchUs = profile?.legalResearchUs ?? true;
     const courtListenerEnabled =
         optimisticLegalResearchUs ?? persistedLegalResearchUs;
-    const quickActionsEnabled = Object.values(visibleActions).some(Boolean);
+    const quickActionsEnabled = quickActions.some((action) => action.enabled);
+
+    useEffect(() => {
+        void listQuickActions().then(setQuickActions).catch(() => {});
+    }, []);
+
+    const updateAllQuickActions = async (enabled: boolean) => {
+        const previous = quickActions;
+        setQuickActionsError(null);
+        setQuickActions((current) =>
+            current.map((action) => ({ ...action, enabled })),
+        );
+        const results = await Promise.allSettled(
+            previous.map((action) => updateQuickAction(action.id, { enabled })),
+        );
+        setQuickActions(
+            previous.map((action, index) => {
+                const result = results[index];
+                return result.status === "fulfilled" ? result.value : action;
+            }),
+        );
+        const failed = results.filter(
+            (result) => result.status === "rejected",
+        ).length;
+        if (failed > 0) {
+            setQuickActionsError(
+                failed === results.length
+                    ? "Could not update. Try again."
+                    : "Some quick actions could not be updated. Try again.",
+            );
+        }
+    };
 
     const handleCourtListenerChange = async (enabled: boolean) => {
         if (saving) return;
@@ -53,16 +87,17 @@ export default function FeaturesPage() {
                                 Show the quick actions row on the assistant
                                 start screen.
                             </p>
+                            {quickActionsError && (
+                                <p className="text-sm text-red-600">
+                                    {quickActionsError}
+                                </p>
+                            )}
                         </div>
                         <SettingsToggle
                             checked={quickActionsEnabled}
                             size="md"
                             onChange={(checked) => {
-                                if (checked) {
-                                    showAllQuickActions();
-                                } else {
-                                    hideAllQuickActions();
-                                }
+                                void updateAllQuickActions(checked);
                             }}
                         />
                     </div>

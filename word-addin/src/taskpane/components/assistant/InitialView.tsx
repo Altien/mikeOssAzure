@@ -2,11 +2,8 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import quickActionsIcon from "../../../assets/icons/app-sidebar/quick-actions.svg";
 import { getUserProfile } from "../../api/mikeApi";
 import { MikeIcon } from "../../../shared/chat/mike-icon";
-import {
-  QUICK_ACTIONS,
-  type QuickAction,
-  useQuickActionPreferences,
-} from "../../lib/quickActions";
+import type { QuickAction } from "../../types";
+import { useQuickActions } from "../../lib/quickActionStore";
 
 const ICON_SIZE = 26;
 const GREETING_GAP = 6;
@@ -20,8 +17,8 @@ export function InitialView({
   const [loaded, setLoaded] = useState(false);
   const [iconOffset, setIconOffset] = useState(0);
   const [textOffset, setTextOffset] = useState(0);
+  const quickActions = useQuickActions();
   const textRef = useRef<HTMLHeadingElement>(null);
-  const { activeActions } = useQuickActionPreferences();
 
   useEffect(() => {
     let cancelled = false;
@@ -104,15 +101,15 @@ export function InitialView({
         </span>
       </div>
       <div className="mt-3 flex flex-wrap justify-center gap-2 text-xs">
-        {QUICK_ACTIONS.filter((action) => activeActions[action.id]).map(
+        {quickActions.filter((action) => action.enabled).map(
           (action) => (
             <button
-              key={action.label}
+              key={action.id}
               type="button"
               onClick={() => onSelect(action)}
               className="inline-flex h-8 items-center justify-center rounded-full border border-white/70 bg-white/55 px-3 font-medium text-gray-600 shadow-[0_3px_9px_rgba(15,23,42,0.06),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] backdrop-blur-xl transition-all hover:bg-white hover:text-gray-900 active:scale-[0.98]"
             >
-              {action.label}
+              {action.workflow.title}
             </button>
           ),
         )}
