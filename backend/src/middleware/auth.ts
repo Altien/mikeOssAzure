@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createServerSupabase } from "../lib/supabase";
 import { syncProfileEmail } from "../lib/userLookup";
 
 const isDev = process.env.NODE_ENV !== "production";
@@ -30,7 +30,7 @@ function isLoginMfaBootstrapRoute(req: Request) {
 async function enforceLoginMfaIfEnabled(
   req: Request,
   res: Response,
-  admin: SupabaseClient<any, "public", any>,
+  admin: ReturnType<typeof createServerSupabase>,
   token: string,
 ) {
   if (isLoginMfaBootstrapRoute(req)) return true;
@@ -87,6 +87,15 @@ async function enforceLoginMfaIfEnabled(
   return true;
 }
 
+function getAdminClient(res: Response) {
+  try {
+    return createServerSupabase();
+  } catch {
+    res.status(500).json({ detail: "Server auth is not configured" });
+    return null;
+  }
+}
+
 export async function requireAuth(
   req: Request,
   res: Response,
@@ -99,17 +108,8 @@ export async function requireAuth(
   }
   const token = auth.slice(7).trim();
 
-  const supabaseUrl = process.env.SUPABASE_URL ?? "";
-  const serviceKey = process.env.SUPABASE_SECRET_KEY ?? "";
-
-  if (!supabaseUrl || !serviceKey) {
-    res.status(500).json({ detail: "Server auth is not configured" });
-    return;
-  }
-
-  const admin = createClient(supabaseUrl, serviceKey, {
-    auth: { persistSession: false },
-  });
+  const admin = getAdminClient(res);
+  if (!admin) return;
   const { data } = await admin.auth.getUser(token);
   if (!data.user) {
     res.status(401).json({ detail: "Invalid or expired token" });
@@ -153,17 +153,8 @@ export async function requireMfaIfEnrolled(
     return;
   }
 
-  const supabaseUrl = process.env.SUPABASE_URL ?? "";
-  const serviceKey = process.env.SUPABASE_SECRET_KEY ?? "";
-
-  if (!supabaseUrl || !serviceKey) {
-    res.status(500).json({ detail: "Server auth is not configured" });
-    return;
-  }
-
-  const admin = createClient(supabaseUrl, serviceKey, {
-    auth: { persistSession: false },
-  });
+  const admin = getAdminClient(res);
+  if (!admin) return;
   const { data, error } =
     await admin.auth.mfa.getAuthenticatorAssuranceLevel(token);
 
