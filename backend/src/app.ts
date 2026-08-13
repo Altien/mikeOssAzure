@@ -284,6 +284,7 @@ export function buildApp(): express.Express {
   app.post("/api/library/:kind/documents", uploadLimiter);
   app.post("/api/single-documents/:documentId/versions", uploadLimiter);
   app.post("/api/workflows/:workflowId/reference-files", uploadLimiter);
+  app.post("/api/workflow-addons/:addonId/import", uploadLimiter);
   app.put("/api/workflows/:workflowId/reference-files/:referenceId", uploadLimiter);
   app.put(
     "/api/single-documents/:documentId/versions/:versionId/file",
