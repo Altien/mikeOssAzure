@@ -1,8 +1,12 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { ToggleSwitch } from "../../../shared/ui/toggle-switch";
-import { listQuickActions, updateQuickAction } from "../../api/mikeApi";
+import { updateQuickAction } from "../../api/mikeApi";
 import type { QuickAction } from "../../types";
+import {
+  replaceQuickAction,
+  useQuickActions,
+} from "../../lib/quickActionStore";
 import { Modal } from "../primitives/Modal";
 import {
   ModalFieldLabel,
@@ -14,22 +18,9 @@ import { PageTitle } from "../primitives/PageTitle";
 export function DocumentActions(): React.ReactElement {
   const [search, setSearch] = useState("");
   const [selectedAction, setSelectedAction] = useState<QuickAction | null>(null);
-  const [actions, setActions] = useState<QuickAction[]>([]);
+  const actions = useQuickActions();
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void listQuickActions()
-      .then((rows) => {
-        if (!cancelled) setActions(rows);
-      })
-      .catch(() => {
-        if (!cancelled) setActions([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
   const filteredActions = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) return actions;
@@ -43,28 +34,18 @@ export function DocumentActions(): React.ReactElement {
   // LIST: the list is merged from the server response alone, and the modal
   // keeps its local draft with only `enabled` updated.
   async function setActionActive(action: QuickAction, enabled: boolean) {
-    setActions((current) =>
-      current.map((item) =>
-        item.id === action.id ? { ...item, enabled } : item,
-      ),
-    );
+    replaceQuickAction({ ...action, enabled });
     setSelectedAction({ ...action, enabled });
     try {
       const updated = await updateQuickAction(action.id, { enabled });
-      setActions((current) =>
-        current.map((item) => (item.id === updated.id ? updated : item)),
-      );
+      replaceQuickAction(updated);
       setSelectedAction((current) =>
         current && current.id === updated.id
           ? { ...current, enabled: updated.enabled }
           : current,
       );
     } catch {
-      setActions((current) =>
-        current.map((item) =>
-          item.id === action.id ? { ...item, enabled: action.enabled } : item,
-        ),
-      );
+      replaceQuickAction(action);
       setSelectedAction((current) =>
         current && current.id === action.id
           ? { ...current, enabled: action.enabled }
@@ -81,9 +62,7 @@ export function DocumentActions(): React.ReactElement {
         prompt: action.prompt,
         document_upload: action.document_upload,
       });
-      setActions((current) =>
-        current.map((item) => (item.id === updated.id ? updated : item)),
-      );
+      replaceQuickAction(updated);
       setSelectedAction(null);
     } catch (reason) {
       // Keep the modal open so the user can retry, and say why it failed.

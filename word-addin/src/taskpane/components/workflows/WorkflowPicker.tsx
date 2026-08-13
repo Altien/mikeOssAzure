@@ -233,6 +233,14 @@ export function WorkflowPicker({
     }, 800);
   };
 
+  const openWorkflow = (workflow: Workflow): void => {
+    // Populate the prompt before mounting the already-loaded editor. Waiting
+    // for the selected-workflow effect leaves one render where a revisited
+    // workflow can initialize Tiptap with an empty document.
+    setPromptMd(withoutLeadingTitle(workflow.skill_md ?? ""));
+    onSelectedWorkflowChange(workflow);
+  };
+
   const importAddon = async (addon: WorkflowAddon): Promise<void> => {
     setImportingAddonId(addon.id);
     setImportError(null);
@@ -240,7 +248,7 @@ export function WorkflowPicker({
       const imported = await importWorkflowAddon(addon.id);
       setWorkflows((current) => [imported, ...current]);
       setTab("workflows");
-      onSelectedWorkflowChange(imported);
+      openWorkflow(imported);
     } catch (reason) {
       setImportError(
         reason instanceof Error ? reason.message : "Failed to import add-on",
@@ -346,7 +354,7 @@ export function WorkflowPicker({
             workflows={workflows}
             search={search}
             onSearchChange={setSearch}
-            onSelect={onSelectedWorkflowChange}
+            onSelect={openWorkflow}
             loading={fetchLoading}
             error={fetchError}
             emptyMessage="No workflows found."

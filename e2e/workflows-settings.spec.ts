@@ -6,9 +6,7 @@
  * Key source facts used by these selectors:
  *  - WorkflowList.tsx: h1 "Workflows"; Plus icon button (no aria-label) opens NewWorkflowModal
  *  - NewWorkflowModal.tsx: placeholder "Workflow name"; submit button text "Create workflow"
- *  - systemWorkflows.ts (generated): built-in id "builtin-draft-cp-checklist", title "Draft CP Checklist"
- *  - WorkflowDetailPage ([id]/page.tsx): readOnly badge renders <span>Read-only</span>;
- *    WorkflowPromptEditor passes editable:!readOnly to Tiptap → contenteditable="false" when readOnly
+ *  - New accounts receive editable default workflows, including "Proofread"
  *  - WorkflowPromptEditor.tsx: editorProps class = "workflow-editor-content" on the ProseMirror div
  *  - WorkflowDetailPage save status: text "Saving…" → "Saved" rendered in a plain <span>
  *  - settings/page.tsx: h2 "Profile"; Input placeholder "Enter your name"; Button "Save" / "Saved"
@@ -41,9 +39,9 @@ async function createWorkflowAndOpenDetail(page: Page, title: string) {
 ───────────────────────────────────────────────────────────────────────────── */
 
 test.describe("Workflows", () => {
-    /* ── Test 1: list page loads and shows built-in workflows ──────────────── */
+    /* ── Test 1: list page loads and shows default workflows ─────────────── */
 
-    test("workflow list page loads and shows built-in workflows", async ({
+    test("workflow list page loads and shows default workflows", async ({
         page,
     }) => {
         await page.goto("/workflows");
@@ -56,11 +54,9 @@ test.describe("Workflows", () => {
             page.getByRole("heading", { name: "Workflows" }),
         ).toBeVisible({ timeout: 10_000 });
 
-        // System workflows are generated into backend/src/lib/systemWorkflows.ts —
-        // "Draft CP Checklist" (id: builtin-draft-cp-checklist) is always present
-        // is always present; its title appears as a row in the table.
-        // REGRESSION: fails if the workflow list page or built-in workflow rendering is broken
-        await expect(page.getByText("Draft CP Checklist")).toBeVisible({
+        // Default workflows are installed as user-owned rows on first use.
+        // REGRESSION: fails if default installation or workflow rendering breaks.
+        await expect(page.getByText("Proofread", { exact: true })).toBeVisible({
             timeout: 10_000,
         });
     });
@@ -103,36 +99,28 @@ test.describe("Workflows", () => {
         });
     });
 
-    /* ── Test 3: built-in workflow detail page is read-only ────────────────── */
+    /* ── Test 3: installed default workflows remain editable ──────────────── */
 
-    test("built-in workflow detail page shows Read-only badge and non-editable prompt", async ({
+    test("installed default workflow opens as an editable user workflow", async ({
         page,
     }) => {
-        // Navigate directly to the known built-in ID; this avoids having to click
-        // through the DisplayWorkflowModal "View Page" button. builtin-draft-cp-checklist
-        // is an assistant-type workflow, so use the typed detail route
-        // (/workflows/assistant/[id]) that the app itself links to via
-        // workflowDetailPath — the flat /workflows/[id] path does not exist here.
-        await page.goto("/workflows/assistant/builtin-draft-cp-checklist");
+        await page.goto("/workflows");
+        const defaultWorkflow = page.getByText("Proofread", { exact: true });
+        await expect(defaultWorkflow).toBeVisible({ timeout: 10_000 });
+        await defaultWorkflow.click();
+        await page.getByRole("button", { name: "View Page" }).click();
 
-        // The page loads and shows the built-in workflow title
-        await expect(page.getByText("Draft CP Checklist")).toBeVisible({
-            timeout: 15_000,
-        });
-
-        // WorkflowDetailPage renders a "Read-only" badge for built-in (is_system) workflows
-        // REGRESSION: fails if built-in read-only enforcement is removed from the detail page
-        await expect(page.getByText("Read-only")).toBeVisible({
+        await expect(page).toHaveURL(/\/workflows\/assistant\/.+/, {
             timeout: 10_000,
         });
+        await expect(
+            page.getByRole("main").getByText("Proofread", { exact: true }).first(),
+        ).toBeVisible();
 
-        // WorkflowPromptEditor is dynamically imported (SSR: false); wait for it to mount.
-        // When readOnly=true, Tiptap sets editable:false which renders contenteditable="false"
-        // on the ProseMirror content div (given class "workflow-editor-content" via editorProps).
-        // REGRESSION: fails if the readOnly prop is no longer passed to WorkflowPromptEditor
+        // Defaults are ordinary user-owned workflow rows, so their prompt can be edited.
         const editorDiv = page.locator(".ProseMirror");
         await expect(editorDiv).toBeVisible({ timeout: 15_000 });
-        await expect(editorDiv).toHaveAttribute("contenteditable", "false", {
+        await expect(editorDiv).toHaveAttribute("contenteditable", "true", {
             timeout: 5_000,
         });
     });

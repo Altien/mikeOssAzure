@@ -1,8 +1,9 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import quickActionsIcon from "../../../assets/icons/app-sidebar/quick-actions.svg";
-import { getUserProfile, listQuickActions } from "../../api/mikeApi";
+import { getUserProfile } from "../../api/mikeApi";
 import { MikeIcon } from "../../../shared/chat/mike-icon";
 import type { QuickAction } from "../../types";
+import { useQuickActions } from "../../lib/quickActionStore";
 
 const ICON_SIZE = 26;
 const GREETING_GAP = 6;
@@ -16,7 +17,7 @@ export function InitialView({
   const [loaded, setLoaded] = useState(false);
   const [iconOffset, setIconOffset] = useState(0);
   const [textOffset, setTextOffset] = useState(0);
-  const [quickActions, setQuickActions] = useState<QuickAction[]>([]);
+  const quickActions = useQuickActions();
   const textRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
@@ -28,20 +29,6 @@ export function InitialView({
       })
       .catch(() => {
         if (!cancelled) setName("there");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void listQuickActions()
-      .then((actions) => {
-        if (!cancelled) setQuickActions(actions);
-      })
-      .catch(() => {
-        if (!cancelled) setQuickActions([]);
       });
     return () => {
       cancelled = true;
