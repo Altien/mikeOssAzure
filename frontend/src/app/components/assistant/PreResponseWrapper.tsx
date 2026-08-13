@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
+import { GlassCard } from "@/app/components/ui/glass-card";
 
 export function PreResponseWrapper({
     children,
@@ -47,7 +48,7 @@ export function PreResponseWrapper({
     const childrenGapClass = compact ? "gap-2.5" : "gap-4";
 
     return (
-        <div className="rounded-xl border border-white/70 bg-white/55 px-3 py-2 shadow-[0_3px_9px_rgba(15,23,42,0.03),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-4px_9px_rgba(255,255,255,0.05)] backdrop-blur-2xl">
+        <GlassCard className="px-3 py-2">
             <button
                 type="button"
                 onClick={() => {
@@ -76,6 +77,6 @@ export function PreResponseWrapper({
                     {children}
                 </div>
             )}
-        </div>
+        </GlassCard>
     );
 }

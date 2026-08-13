@@ -91,7 +91,7 @@ test.describe("unauthenticated", () => {
             "/projects",
             "/tabular-reviews",
             "/workflows",
-            "/account",
+            "/settings",
         ];
 
         for (const route of protectedRoutes) {
@@ -121,7 +121,7 @@ test.describe("logout (isolated user)", () => {
     const logoutPassword =
         process.env.E2E_LOGOUT_PASSWORD ?? "E2eLogoutPass1!";
 
-    test("logout from account settings redirects to /login", async ({
+    test("logout from settings redirects to /login", async ({
         page,
     }) => {
         /* Log in fresh as the dedicated logout user. */
@@ -147,24 +147,24 @@ test.describe("logout (isolated user)", () => {
     await expect(userMenuButton).toBeVisible({ timeout: 10_000 });
     await userMenuButton.click();
 
-    /* The dropdown that appears contains an "Account Settings" button which
-       navigates to /account via router.push("/account"). */
+    /* The dropdown that appears contains a "Settings" button which
+       navigates to /settings via router.push("/settings"). */
     const accountSettingsItem = page.getByRole("button", {
-        name: "Account Settings",
+        name: "Settings",
     });
     await expect(accountSettingsItem).toBeVisible({ timeout: 5_000 });
     await accountSettingsItem.click();
 
-    await expect(page).toHaveURL(/\/account/, { timeout: 10_000 });
+    await expect(page).toHaveURL(/\/settings/, { timeout: 10_000 });
     await page.waitForLoadState("networkidle");
 
-    /* The /account page has a "Sign Out" button that calls:
+    /* The /settings page has a "Sign Out" button that calls:
            await signOut();
            router.push("/");
        The root "/" page redirects to "/assistant", and the (pages) layout auth
        guard then redirects the now-unauthenticated user to "/login".
        REGRESSION: fails if signOut() is removed from handleLogout in
-       frontend/src/app/(pages)/account/page.tsx. */
+       frontend/src/app/(pages)/settings/page.tsx. */
     const signOutButton = page.getByRole("button", { name: "Sign Out" });
     await expect(signOutButton).toBeVisible({ timeout: 5_000 });
     await signOutButton.click();

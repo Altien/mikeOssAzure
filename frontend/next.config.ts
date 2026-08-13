@@ -35,6 +35,20 @@ const nextConfig: NextConfig = {
             },
         ];
     },
+    async redirects() {
+        return [
+            {
+                source: "/account",
+                destination: "/settings",
+                permanent: true,
+            },
+            {
+                source: "/account/:path*",
+                destination: "/settings/:path*",
+                permanent: true,
+            },
+        ];
+    },
     skipTrailingSlashRedirect: true,
 };
 

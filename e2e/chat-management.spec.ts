@@ -391,7 +391,7 @@ test("project assistant: create a new chat and submit a question", async ({ page
     let cleared = false;
     for (let attempt = 0; attempt < SUBMIT_ATTEMPTS && !cleared; attempt++) {
         // Dismiss a stray "API key required" modal left by a prior racey attempt
-        // (Cancel closes it without navigating; "Go to account settings" would).
+        // (Cancel closes it without navigating; "Go to settings" would).
         if (await apiKeyModalHeading.isVisible().catch(() => false)) {
             await page
                 .getByRole("button", { name: "Cancel" })

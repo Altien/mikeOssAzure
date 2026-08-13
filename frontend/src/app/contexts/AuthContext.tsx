@@ -77,7 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const redirectTo =
             typeof window === "undefined"
                 ? undefined
-                : `${window.location.origin}/account`;
+                : `${window.location.origin}/settings`;
         const { data, error } = await supabase.auth.updateUser(
             { email },
             redirectTo ? { emailRedirectTo: redirectTo } : undefined,

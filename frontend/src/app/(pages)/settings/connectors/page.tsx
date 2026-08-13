@@ -9,9 +9,17 @@ import {
     Plus,
     RefreshCw,
 } from "lucide-react";
-import { Input } from "@/app/components/ui/input";
+import { FieldLabel } from "@/app/components/ui/form-field";
+import {
+    APP_SURFACE_HOVER_CLASS,
+    APP_SURFACE_PRESSED_CLASS,
+} from "@/app/components/ui/liquid-surface";
+import {
+    SETTINGS_CONTROL_CLASS,
+    SettingsTextInput,
+} from "@/app/components/settings/SettingsTextInput";
 import { Modal } from "@/app/components/modals/Modal";
-import { NewMcpModal } from "@/app/components/account/NewMcpModal";
+import { NewMcpModal } from "@/app/components/settings/NewMcpModal";
 import {
     MfaVerificationPopup,
     needsMfaVerification,
@@ -29,13 +37,9 @@ import {
     startMcpConnectorOAuth,
     updateMcpConnector,
 } from "@/app/lib/mikeApi";
-import {
-    accountGlassIconButtonClassName,
-    accountGlassInputClassName,
-    accountGlassPrimaryButtonClassName,
-} from "../accountStyles";
-import { AccountSection } from "../AccountSection";
-import { AccountToggle } from "../AccountToggle";
+import { settingsGlassIconButtonClassName } from "../settingsStyles";
+import { SettingsSection } from "../SettingsSection";
+import { SettingsToggle } from "../SettingsToggle";
 
 type PendingMfaAction =
     | { type: "create" }
@@ -593,14 +597,16 @@ export default function ConnectorsPage() {
                     <h2 className="font-serif text-2xl font-medium text-gray-900">
                         Connectors
                     </h2>
-                    <button
-                        type="button"
-                        onClick={() => setAddOpen(true)}
-                        className={`inline-flex h-9 items-center gap-1.5 text-sm ${accountGlassPrimaryButtonClassName}`}
-                    >
-                        <Plus className="h-4 w-4" />
-                        Add
-                    </button>
+                    <div className="flex shrink-0 items-center rounded-full border border-white/70 bg-app-surface p-0.5 shadow-[0_8px_24px_rgba(15,23,42,0.06)] backdrop-blur-2xl">
+                        <button
+                            type="button"
+                            onClick={() => setAddOpen(true)}
+                            className={`flex h-6 items-center justify-center gap-1 rounded-full px-2.5 text-xs font-medium text-gray-500 transition-colors hover:text-gray-900 ${APP_SURFACE_HOVER_CLASS} ${APP_SURFACE_PRESSED_CLASS}`}
+                        >
+                            <Plus className="h-3.5 w-3.5" />
+                            Add
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -611,25 +617,26 @@ export default function ConnectorsPage() {
             )}
 
             <div className="space-y-3">
-                {loading ? (
-                    <ConnectorsSkeleton />
-                ) : connectors.length === 0 ? (
-                    <AccountSection className="p-4">
-                        <p className="text-sm text-gray-500">
-                            No connectors yet.
-                        </p>
-                    </AccountSection>
-                ) : (
-                    connectors.map((connector) => (
-                        <ConnectorRow
-                            key={connector.id}
-                            connector={connector}
-                            busyKey={busyKey}
-                            onOpen={() => void openConnectorDetails(connector.id)}
-                            onConnectorEnabled={handleConnectorEnabled}
-                        />
-                    ))
-                )}
+                {!loading &&
+                    (connectors.length === 0 ? (
+                        <SettingsSection className="p-4">
+                            <p className="text-sm text-gray-500">
+                                No connectors yet.
+                            </p>
+                        </SettingsSection>
+                    ) : (
+                        connectors.map((connector) => (
+                            <ConnectorRow
+                                key={connector.id}
+                                connector={connector}
+                                busyKey={busyKey}
+                                onOpen={() =>
+                                    void openConnectorDetails(connector.id)
+                                }
+                                onConnectorEnabled={handleConnectorEnabled}
+                            />
+                        ))
+                    ))}
             </div>
 
             <NewMcpModal
@@ -692,34 +699,6 @@ export default function ConnectorsPage() {
     );
 }
 
-function ConnectorsSkeleton() {
-    return (
-        <>
-            {Array.from({ length: 3 }).map((_, index) => (
-                <AccountSection key={index} className="px-4 py-3">
-                    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-3">
-                        <div className="flex min-h-5 min-w-0 items-center gap-2">
-                            <div className="h-3.5 w-28 animate-pulse rounded bg-gray-100" />
-                            <div className="h-1 w-1 rounded-full bg-gray-100" />
-                            <div className="h-3 w-12 animate-pulse rounded bg-gray-100" />
-                        </div>
-                        <div className="flex min-h-5 shrink-0 items-center justify-self-end gap-1.5">
-                            <div className="h-3 w-12 animate-pulse rounded bg-gray-100" />
-                            <div className="h-4 w-7 animate-pulse rounded-full bg-gray-100" />
-                        </div>
-                        <div className="flex min-h-4 min-w-0 items-center">
-                            <div className="h-3 w-full max-w-sm animate-pulse rounded bg-gray-100" />
-                        </div>
-                        <div className="flex min-h-4 items-center justify-self-end">
-                            <div className="h-3 w-12 animate-pulse rounded bg-gray-100" />
-                        </div>
-                    </div>
-                </AccountSection>
-            ))}
-        </>
-    );
-}
-
 function ConnectorRow({
     connector,
     busyKey,
@@ -737,7 +716,7 @@ function ConnectorRow({
     const toolCount = connector.toolCount ?? connector.tools.length;
 
     return (
-        <AccountSection
+        <SettingsSection
             className="cursor-pointer px-4 py-3 transition-colors hover:bg-white/70"
             role="button"
             tabIndex={0}
@@ -751,7 +730,7 @@ function ConnectorRow({
         >
             <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-3">
                 <div className="min-w-0 text-left">
-                    <h3 className="flex min-w-0 items-center gap-2 text-sm font-semibold text-gray-900">
+                    <h3 className="flex min-w-0 items-center gap-2 text-sm font-semibold text-gray-700">
                         <span className="truncate">{connector.name}</span>
                         <span className="h-1 w-1 rounded-full bg-gray-300" />
                         <span className="shrink-0 text-xs font-medium text-gray-500">
@@ -763,7 +742,7 @@ function ConnectorRow({
                     className="shrink-0 justify-self-end"
                     onClick={(event) => event.stopPropagation()}
                 >
-                    <AccountToggle
+                    <SettingsToggle
                         checked={connector.enabled}
                         disabled={busyKey === `connector:${connector.id}`}
                         loading={busyKey === `connector:${connector.id}`}
@@ -787,7 +766,7 @@ function ConnectorRow({
                     Details
                 </button>
             </div>
-        </AccountSection>
+        </SettingsSection>
     );
 }
 
@@ -852,7 +831,7 @@ function McpConnectorDetailsModal({
             breadcrumbs={["Connectors", connector?.name ?? "MCP connector"]}
             headerAction={
                 connector ? (
-                    <AccountToggle
+                    <SettingsToggle
                         checked={connector.enabled}
                         disabled={busyKey === `connector:${connector.id}`}
                         loading={busyKey === `connector:${connector.id}`}
@@ -1013,24 +992,24 @@ function ConnectorForm({
     return (
         <div className="grid gap-3 pt-1">
             <label className="grid gap-2 sm:grid-cols-[96px_minmax(0,1fr)] sm:items-center">
-                <span className="text-xs font-medium text-gray-500">
+                <FieldLabel as="span" className="mb-0 text-gray-500">
                     Label
-                </span>
-                <Input
+                </FieldLabel>
+                <SettingsTextInput
                     value={draft.name}
                     onChange={(event) =>
                         onDraftChange({ ...draft, name: event.target.value })
                     }
                     placeholder="Connector label"
-                    className={`h-8 text-sm ${accountGlassInputClassName}`}
+                    className="h-8"
                     disabled={disabled}
                 />
             </label>
             <label className="grid gap-2 sm:grid-cols-[96px_minmax(0,1fr)] sm:items-center">
-                <span className="text-xs font-medium text-gray-500">
+                <FieldLabel as="span" className="mb-0 text-gray-500">
                     URL endpoint
-                </span>
-                <Input
+                </FieldLabel>
+                <SettingsTextInput
                     value={draft.serverUrl}
                     onChange={(event) =>
                         onDraftChange({
@@ -1039,17 +1018,20 @@ function ConnectorForm({
                         })
                     }
                     placeholder="https://mcp.example.com/mcp"
-                    className={`h-8 text-sm ${accountGlassInputClassName}`}
+                    className="h-8"
                     disabled={disabled}
                 />
             </label>
             <div className="grid gap-2 sm:grid-cols-[96px_minmax(0,1fr)] sm:items-start">
-                <span className="pt-2 text-xs font-medium text-gray-500">
+                <FieldLabel
+                    as="span"
+                    className="mb-0 pt-2 text-gray-500"
+                >
                     Bearer token
-                </span>
+                </FieldLabel>
                 <div className="min-w-0">
                     <div className="relative">
-                        <Input
+                        <SettingsTextInput
                             value={draft.bearerToken}
                             onChange={(event) =>
                                 onDraftChange({
@@ -1065,7 +1047,7 @@ function ConnectorForm({
                                         ? "pr-[6.5rem]"
                                         : "pr-16"
                                     : "pr-10"
-                            } text-sm ${accountGlassInputClassName}`}
+                            }`}
                             autoComplete="off"
                             spellCheck={false}
                             disabled={disabled}
@@ -1075,7 +1057,7 @@ function ConnectorForm({
                                 type="button"
                                 className={`absolute inset-y-1 ${
                                     tokenAction ? "right-[3.75rem]" : "right-1.5"
-                                } flex items-center ${accountGlassIconButtonClassName}`}
+                                } flex items-center ${settingsGlassIconButtonClassName}`}
                                 onClick={() => onShowTokenChange(!showToken)}
                                 aria-label={
                                     showToken ? "Hide token" : "Show token"
@@ -1136,9 +1118,12 @@ function ConnectorForm({
                 </button>
                 {showAdvanced && (
                     <label className="grid gap-2 sm:grid-cols-[96px_minmax(0,1fr)] sm:items-start">
-                        <span className="text-xs font-medium text-gray-500">
+                        <FieldLabel
+                            as="span"
+                            className="mb-0 text-gray-500"
+                        >
                             Custom headers
-                        </span>
+                        </FieldLabel>
                         <div className="min-w-0">
                             <textarea
                                 value={draft.customHeaders}
@@ -1149,7 +1134,7 @@ function ConnectorForm({
                                     })
                                 }
                                 placeholder='{"X-API-Key":"secret"}'
-                                className={`min-h-20 w-full resize-y rounded-lg px-3 py-2 text-sm outline-none ${accountGlassInputClassName}`}
+                                className={`min-h-20 resize-y py-2 ${SETTINGS_CONTROL_CLASS}`}
                                 autoComplete="off"
                                 spellCheck={false}
                                 disabled={disabled}
@@ -1179,7 +1164,7 @@ function ToolListSkeleton({
                 fill ? "min-h-0 flex-1" : "max-h-72"
             }`}
         >
-            <div className="divide-y divide-gray-100">
+            <div>
                 {Array.from({ length: rowCount }).map((_, index) => (
                     <div key={index} className="px-3 py-2">
                         <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
@@ -1229,7 +1214,7 @@ function ScrollableToolList({
                 fill ? "min-h-0 flex-1" : "max-h-72"
             }`}
         >
-            <div className="divide-y divide-gray-100">
+            <div>
                 {connector.tools.map((tool) => {
                     const disabled =
                         !onToolEnabled ||
@@ -1258,11 +1243,11 @@ function ScrollableToolList({
                                         }`}
                                     />
                                 </button>
-                                <p className="min-w-0 truncate text-sm font-medium text-gray-800">
+                                <p className="min-w-0 truncate text-sm font-medium text-gray-700">
                                     {toolLabel}
                                 </p>
                                 {onToolEnabled ? (
-                                    <AccountToggle
+                                    <SettingsToggle
                                         checked={tool.enabled}
                                         disabled={disabled}
                                         loading={busyKey === `tool:${tool.id}`}

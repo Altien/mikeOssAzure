@@ -20,11 +20,11 @@ export function ApiKeyMissingPopup({ open, onClose, provider, message }: Props) 
     const providerName = provider ? providerLabel(provider) : "this provider";
     const body =
         message ??
-        `You haven't added a ${providerName} API key yet. Add one in your account settings to use this model.`;
+        `You haven't added a ${providerName} API key yet. Add one in Settings to use this model.`;
 
-    const handleGoToAccount = () => {
+    const handleGoToSettings = () => {
         onClose();
-        router.push("/account/models");
+        router.push("/settings/api-keys");
     };
 
     return (
@@ -37,8 +37,8 @@ export function ApiKeyMissingPopup({ open, onClose, provider, message }: Props) 
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-600" />
             }
             primaryAction={{
-                label: "Go to account settings",
-                onClick: handleGoToAccount,
+                label: "Go to settings",
+                onClick: handleGoToSettings,
             }}
         />
     );

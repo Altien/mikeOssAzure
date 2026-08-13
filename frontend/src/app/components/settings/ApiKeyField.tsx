@@ -1,144 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Eye, EyeOff, RefreshCw } from "lucide-react";
-import { Input } from "@/app/components/ui/input";
-import { useUserProfile } from "@/app/contexts/UserProfileContext";
-import { refreshOllamaModels } from "@/app/hooks/useOllamaModels";
+import { Eye, EyeOff } from "lucide-react";
 import {
     MfaVerificationPopup,
     needsMfaVerification,
 } from "@/app/components/popups/MfaVerificationPopup";
+import { FieldLabel } from "@/app/components/ui/form-field";
+import { SettingsTextInput } from "@/app/components/settings/SettingsTextInput";
 import { isMfaRequiredError } from "@/app/lib/mikeApi";
-import {
-    accountGlassIconButtonClassName,
-    accountGlassInputClassName,
-} from "../accountStyles";
-import { AccountSection } from "../AccountSection";
+import { settingsGlassIconButtonClassName } from "@/app/(pages)/settings/settingsStyles";
 
-const MODEL_API_KEY_FIELDS = [
-    {
-        provider: "claude",
-        label: "Anthropic (Claude) API Key",
-        placeholder: "sk-ant-...",
-    },
-    {
-        provider: "gemini",
-        label: "Google (Gemini) API Key",
-        placeholder: "AI...",
-    },
-    {
-        provider: "openai",
-        label: "OpenAI API Key",
-        placeholder: "sk-...",
-    },
-    {
-        provider: "openrouter",
-        label: "OpenRouter API Key",
-        placeholder: "sk-or-...",
-    },
-] as const;
-
-const OTHER_API_KEY_FIELDS = [
-    {
-        provider: "courtlistener",
-        label: "CourtListener API Key",
-        placeholder: "Token...",
-        description:
-            "Add a CourtListener API key if you want the latest CourtListener data. Otherwise, Mike will use the bulk data hosted by us.",
-    },
-] as const;
-
-export default function ApiKeysPage() {
-    const { profile, updateApiKey, reloadProfile } = useUserProfile();
-    const [refreshing, setRefreshing] = useState(false);
-
-    const handleRefresh = async () => {
-        setRefreshing(true);
-        try {
-            await Promise.all([reloadProfile(), refreshOllamaModels()]);
-        } finally {
-            setRefreshing(false);
-        }
-    };
-
-    return (
-        <div>
-            <div className="mb-3 flex items-center justify-between gap-2">
-                <h2 className="text-2xl font-medium font-serif text-gray-900">
-                    API Keys
-                </h2>
-                <button
-                    type="button"
-                    onClick={handleRefresh}
-                    disabled={refreshing}
-                    className="flex items-center gap-1.5 text-xs font-medium text-gray-600 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
-                    title="Re-check API keys and detect local (Ollama) models"
-                >
-                    <RefreshCw
-                        className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
-                    />
-                    {refreshing ? "Refreshing..." : "Refresh"}
-                </button>
-            </div>
-            <p className="text-sm text-gray-500 mb-4">
-                You must provide your own API keys for the app to work or add
-                your API keys into the .env file if you are running your own
-                instance of Mike. All API keys are encrypted in storage.
-            </p>
-            <AccountSection>
-                {MODEL_API_KEY_FIELDS.map((field, index) => (
-                    <div key={field.provider}>
-                        <ApiKeyField
-                            label={field.label}
-                            placeholder={field.placeholder}
-                            hasSavedKey={
-                                !!profile?.apiKeys[field.provider].configured
-                            }
-                            isServerConfigured={
-                                profile?.apiKeys[field.provider].source ===
-                                "env"
-                            }
-                            onSave={(value) =>
-                                updateApiKey(
-                                    field.provider,
-                                    value.trim() || null,
-                                )
-                            }
-                            onRemove={() => updateApiKey(field.provider, null)}
-                        />
-                        {index < MODEL_API_KEY_FIELDS.length - 1 && (
-                            <div className="mx-4 h-px bg-gray-200" />
-                        )}
-                    </div>
-                ))}
-            </AccountSection>
-
-            <AccountSection className="mt-8">
-                {OTHER_API_KEY_FIELDS.map((field) => (
-                    <ApiKeyField
-                        key={field.provider}
-                        label={field.label}
-                        description={field.description}
-                        placeholder={field.placeholder}
-                        hasSavedKey={
-                            !!profile?.apiKeys[field.provider].configured
-                        }
-                        isServerConfigured={
-                            profile?.apiKeys[field.provider].source === "env"
-                        }
-                        onSave={(value) =>
-                            updateApiKey(field.provider, value.trim() || null)
-                        }
-                        onRemove={() => updateApiKey(field.provider, null)}
-                    />
-                ))}
-            </AccountSection>
-        </div>
-    );
-}
-
-function ApiKeyField({
+export function ApiKeyField({
     label,
     description,
     placeholder,
@@ -228,18 +101,18 @@ function ApiKeyField({
     return (
         <>
             <div className="px-4 py-5">
-                <label className="text-sm font-medium text-gray-700 block mb-2">
-                    {label}
-                </label>
+                <FieldLabel className="text-sm">{label}</FieldLabel>
                 {description && (
-                    <p className="text-sm text-gray-500 mb-3">{description}</p>
+                    <p className="mb-3 text-sm text-gray-500">
+                        {description}
+                    </p>
                 )}
                 <div className="space-y-2">
                     <div className="relative flex-1">
-                        <Input
+                        <SettingsTextInput
                             type={reveal ? "text" : "password"}
                             value={value}
-                            onChange={(e) => setValue(e.target.value)}
+                            onChange={(event) => setValue(event.target.value)}
                             placeholder={
                                 isServerConfigured
                                     ? "Server .env key configured"
@@ -247,7 +120,7 @@ function ApiKeyField({
                                       ? "Saved key hidden"
                                       : placeholder
                             }
-                            className={`pr-10 ${accountGlassInputClassName}`}
+                            className="pr-10"
                             autoComplete="off"
                             spellCheck={false}
                             disabled={isServerConfigured}
@@ -255,9 +128,9 @@ function ApiKeyField({
                         {dirty && (
                             <button
                                 type="button"
-                                onClick={() => setReveal((r) => !r)}
+                                onClick={() => setReveal((current) => !current)}
                                 disabled={isServerConfigured}
-                                className={`absolute inset-y-1 right-1.5 flex items-center ${accountGlassIconButtonClassName}`}
+                                className={`absolute inset-y-1 right-1.5 flex items-center ${settingsGlassIconButtonClassName}`}
                                 aria-label={reveal ? "Hide key" : "Show key"}
                             >
                                 {reveal ? (

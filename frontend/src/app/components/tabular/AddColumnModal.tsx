@@ -8,10 +8,9 @@ import { FORMAT_OPTIONS } from "./columnFormat";
 import { TAG_COLORS } from "./pillUtils";
 import { getPresetConfig, PROMPT_PRESETS } from "./columnPresets";
 import { Modal } from "../modals/Modal";
-import { ModalFieldLabel } from "../modals/ModalFieldLabel";
 import { ModalSelect } from "../modals/ModalSelect";
 import { ModalTextarea } from "../modals/ModalTextarea";
-import { ModalTextInput } from "../modals/ModalTextInput";
+import { FieldLabel, FormTextInput } from "../ui/form-field";
 
 interface ColumnDraft {
     name: string;
@@ -290,9 +289,9 @@ export function AddColumnModal({ open, existingCount, onClose, onAdd, editingCol
                                             </div>
                                             {!isCollapsed && (
                                                 <>
-                                            <ModalFieldLabel htmlFor={nameInputId}>
+                                            <FieldLabel htmlFor={nameInputId}>
                                                 Column title
-                                            </ModalFieldLabel>
+                                            </FieldLabel>
                                 {/* Name row */}
                                 <div className="flex items-start gap-2">
                                     {/* Input + preset dropdown anchored to this wrapper */}
@@ -304,7 +303,7 @@ export function AddColumnModal({ open, existingCount, onClose, onAdd, editingCol
                                                 : null
                                         }
                                     >
-                                        <ModalTextInput
+                                        <FormTextInput
                                             id={nameInputId}
                                             type="text"
                                             variant="minimal"
@@ -395,9 +394,9 @@ export function AddColumnModal({ open, existingCount, onClose, onAdd, editingCol
 
                                 {/* Format */}
                                 <div className="mt-4">
-                                    <ModalFieldLabel htmlFor={formatInputId}>
+                                    <FieldLabel htmlFor={formatInputId}>
                                         Format
-                                    </ModalFieldLabel>
+                                    </FieldLabel>
                                     <ModalSelect
                                         id={formatInputId}
                                         value={column.format}
@@ -420,9 +419,9 @@ export function AddColumnModal({ open, existingCount, onClose, onAdd, editingCol
                                 {/* Tag input */}
                                 {column.format === "tag" && (
                                     <div className="mt-3">
-                                        <ModalFieldLabel htmlFor={tagInputId}>
+                                        <FieldLabel htmlFor={tagInputId}>
                                             Tags
-                                        </ModalFieldLabel>
+                                        </FieldLabel>
                                         <div className="mt-1 flex flex-wrap gap-1.5 rounded-xl border border-white/70 bg-white/55 px-2 py-1.5 shadow-[0_3px_9px_rgba(15,23,42,0.052),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] backdrop-blur-xl">
                                             {column.tags.map((tag, tagIdx) => (
                                                 <span
@@ -450,7 +449,7 @@ export function AddColumnModal({ open, existingCount, onClose, onAdd, editingCol
                                                     </button>
                                                 </span>
                                             ))}
-                                            <ModalTextInput
+                                            <FormTextInput
                                                 id={tagInputId}
                                                 type="text"
                                                 variant="minimal"
@@ -477,12 +476,12 @@ export function AddColumnModal({ open, existingCount, onClose, onAdd, editingCol
 
                                 {/* Prompt */}
                                 <div className="mt-4 flex items-center justify-between">
-                                    <ModalFieldLabel
+                                    <FieldLabel
                                         htmlFor={promptInputId}
                                         className="mb-0"
                                     >
                                         Prompt
-                                    </ModalFieldLabel>
+                                    </FieldLabel>
                                     <button
                                         type="button"
                                         onClick={() =>

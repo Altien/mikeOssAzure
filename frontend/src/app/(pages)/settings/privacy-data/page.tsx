@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Download, Trash2 } from "lucide-react";
-import { Button } from "@/app/components/ui/button";
+import { PillButton } from "@/app/components/ui/pill-button";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import {
@@ -18,11 +18,7 @@ import {
     exportTabularReviewsData,
     isMfaRequiredError,
 } from "@/app/lib/mikeApi";
-import {
-    accountGlassDangerOutlineButtonClassName,
-    accountGlassPrimaryButtonClassName,
-} from "../accountStyles";
-import { AccountSection } from "../AccountSection";
+import { SettingsSection } from "../SettingsSection";
 
 type DeleteDataAction = "chats" | "tabular-reviews" | "projects";
 type ExportDataAction = "export-chats" | "export-tabular-reviews" | "export-account";
@@ -221,10 +217,10 @@ export default function PrivacyDataPage() {
                 <h2 className="text-2xl font-medium font-serif text-gray-900">
                     Export data
                 </h2>
-                <AccountSection>
+                <SettingsSection>
                     <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1">
-                            <p className="text-sm font-medium text-gray-900">
+                            <p className="text-sm font-medium text-gray-700">
                                 Export chats
                             </p>
                             <p className="text-sm text-gray-500">
@@ -232,23 +228,22 @@ export default function PrivacyDataPage() {
                                 history as JSON.
                             </p>
                         </div>
-                        <Button
-                            variant="outline"
+                        <PillButton
+                            tone="black"
+                            size="sm"
                             onClick={handleExportChatData}
                             disabled={isExportingChats}
-                            className={`h-9 gap-1.5 text-sm ${accountGlassPrimaryButtonClassName}`}
+                            className="shrink-0"
                         >
                             {!isExportingChats && (
                                 <Download className="h-4 w-4 shrink-0" />
                             )}
                             {isExportingChats ? "Exporting..." : "Export"}
-                        </Button>
+                        </PillButton>
                     </div>
-                    <div className="mx-4 h-px bg-gray-200" />
-
                     <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1">
-                            <p className="text-sm font-medium text-gray-900">
+                            <p className="text-sm font-medium text-gray-700">
                                 Export tabular reviews
                             </p>
                             <p className="text-sm text-gray-500">
@@ -256,11 +251,12 @@ export default function PrivacyDataPage() {
                                 review chat records as JSON.
                             </p>
                         </div>
-                        <Button
-                            variant="outline"
+                        <PillButton
+                            tone="black"
+                            size="sm"
                             onClick={handleExportTabularReviewsData}
                             disabled={isExportingTabularReviews}
-                            className={`h-9 gap-1.5 text-sm ${accountGlassPrimaryButtonClassName}`}
+                            className="shrink-0"
                         >
                             {!isExportingTabularReviews && (
                                 <Download className="h-4 w-4 shrink-0" />
@@ -268,13 +264,11 @@ export default function PrivacyDataPage() {
                             {isExportingTabularReviews
                                 ? "Exporting..."
                                 : "Export"}
-                        </Button>
+                        </PillButton>
                     </div>
-                    <div className="mx-4 h-px bg-gray-200" />
-
                     <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1">
-                            <p className="text-sm font-medium text-gray-900">
+                            <p className="text-sm font-medium text-gray-700">
                                 Export account JSON
                             </p>
                             <p className="text-sm text-gray-500">
@@ -282,29 +276,30 @@ export default function PrivacyDataPage() {
                                 metadata, workflows, and review data as JSON.
                             </p>
                         </div>
-                        <Button
-                            variant="outline"
+                        <PillButton
+                            tone="black"
+                            size="sm"
                             onClick={handleExportAccountData}
                             disabled={isExportingAccount}
-                            className={`h-9 gap-1.5 text-sm ${accountGlassPrimaryButtonClassName}`}
+                            className="shrink-0"
                         >
                             {!isExportingAccount && (
                                 <Download className="h-4 w-4 shrink-0" />
                             )}
                             {isExportingAccount ? "Exporting..." : "Export"}
-                        </Button>
+                        </PillButton>
                     </div>
-                </AccountSection>
+                </SettingsSection>
             </section>
 
             <section className="space-y-3">
                 <h2 className="text-2xl font-medium font-serif text-gray-900">
                     Delete data
                 </h2>
-                <AccountSection>
+                <SettingsSection>
                     <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1">
-                            <p className="text-sm font-medium text-gray-900">
+                            <p className="text-sm font-medium text-gray-700">
                                 Delete all chats
                             </p>
                             <p className="text-sm text-gray-500">
@@ -312,21 +307,20 @@ export default function PrivacyDataPage() {
                                 review chat history.
                             </p>
                         </div>
-                        <Button
-                            variant="outline"
+                        <PillButton
+                            tone="danger"
+                            size="sm"
                             onClick={() => setPendingDeleteAction("chats")}
                             disabled={!!deletingAction}
-                            className={`h-9 w-full shrink-0 gap-1.5 sm:w-auto ${accountGlassDangerOutlineButtonClassName}`}
+                            className="w-full shrink-0 sm:w-auto"
                         >
                             <Trash2 className="h-4 w-4 shrink-0" />
                             Delete
-                        </Button>
+                        </PillButton>
                     </div>
-                    <div className="mx-4 h-px bg-gray-200" />
-
                     <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1">
-                            <p className="text-sm font-medium text-gray-900">
+                            <p className="text-sm font-medium text-gray-700">
                                 Delete all tabular reviews
                             </p>
                             <p className="text-sm text-gray-500">
@@ -334,23 +328,22 @@ export default function PrivacyDataPage() {
                                 including cells and review chats.
                             </p>
                         </div>
-                        <Button
-                            variant="outline"
+                        <PillButton
+                            tone="danger"
+                            size="sm"
                             onClick={() =>
                                 setPendingDeleteAction("tabular-reviews")
                             }
                             disabled={!!deletingAction}
-                            className={`h-9 w-full shrink-0 gap-1.5 sm:w-auto ${accountGlassDangerOutlineButtonClassName}`}
+                            className="w-full shrink-0 sm:w-auto"
                         >
                             <Trash2 className="h-4 w-4 shrink-0" />
                             Delete
-                        </Button>
+                        </PillButton>
                     </div>
-                    <div className="mx-4 h-px bg-gray-200" />
-
                     <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1">
-                            <p className="text-sm font-medium text-gray-900">
+                            <p className="text-sm font-medium text-gray-700">
                                 Delete all projects
                             </p>
                             <p className="text-sm text-gray-500">
@@ -358,17 +351,18 @@ export default function PrivacyDataPage() {
                                 including documents, chats, and tabular reviews.
                             </p>
                         </div>
-                        <Button
-                            variant="outline"
+                        <PillButton
+                            tone="danger"
+                            size="sm"
                             onClick={() => setPendingDeleteAction("projects")}
                             disabled={!!deletingAction}
-                            className={`h-9 w-full shrink-0 gap-1.5 sm:w-auto ${accountGlassDangerOutlineButtonClassName}`}
+                            className="w-full shrink-0 sm:w-auto"
                         >
                             <Trash2 className="h-4 w-4 shrink-0" />
                             Delete
-                        </Button>
+                        </PillButton>
                     </div>
-                </AccountSection>
+                </SettingsSection>
             </section>
             <ConfirmPopup
                 open={!!pendingDeleteAction}
