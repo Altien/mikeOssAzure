@@ -4,6 +4,7 @@ import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { chatRouter } from "./routes/chat";
+import { wordChatRouter } from "./routes/wordChat";
 import { projectsRouter } from "./routes/projects";
 import { projectChatRouter } from "./routes/projectChat";
 import { documentsRouter } from "./routes/documents";
@@ -52,8 +53,7 @@ function makeLimiter(options: {
     legacyHeaders: false,
     skip: (req) => req.method === "OPTIONS",
     message: {
-      detail:
-        options.message ?? "Too many requests. Please try again later.",
+      detail: options.message ?? "Too many requests. Please try again later.",
     },
   });
 }
@@ -115,9 +115,21 @@ app.use(
   }),
 );
 
-const allowedOrigins = new Set<string>([
-  process.env.FRONTEND_URL ?? "http://localhost:3000",
-]);
+export function configuredAllowedOrigins(
+  env: NodeJS.ProcessEnv = process.env,
+): Set<string> {
+  return new Set(
+    [
+      env.FRONTEND_URL ?? "http://localhost:3000",
+      env.WORD_ADDIN_URL,
+      ...(env.ALLOWED_ORIGINS ?? "").split(","),
+    ]
+      .map((origin) => origin?.trim())
+      .filter((origin): origin is string => !!origin),
+  );
+}
+
+const allowedOrigins = configuredAllowedOrigins();
 
 app.use(
   cors({
@@ -140,6 +152,7 @@ app.use(
 app.use(generalLimiter);
 
 app.post("/chat", chatLimiter);
+app.post("/word-chat", chatLimiter);
 app.post("/projects/:projectId/chat", chatLimiter);
 app.post("/tabular-review/:reviewId/chat", chatLimiter);
 app.post("/tabular-review/:reviewId/generate", chatLimiter);
@@ -166,6 +179,7 @@ app.delete("/user/tabular-reviews", dataDeleteLimiter);
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 app.use("/chat", chatRouter);
+app.use("/word-chat", wordChatRouter);
 app.use("/models", modelsRouter);
 app.use("/projects", projectsRouter);
 app.use("/projects/:projectId/chat", projectChatRouter);
@@ -190,6 +204,8 @@ app.get("/manifest-signing-key", (_req, res) => {
     res.json(manifestPublicKey());
   } catch (err) {
     console.error("[manifest-signing-key] failed", safeErrorLog(err));
-    res.status(500).json({ detail: "Manifest signing key is misconfigured" });
+    res.status(500).json({
+      detail: "Manifest signing key is misconfigured",
+    });
   }
 });

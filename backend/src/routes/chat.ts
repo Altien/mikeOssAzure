@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import { recordChatTurn } from "../lib/audit";
@@ -21,8 +22,10 @@ import {
     parseOptionalChatId,
     parseOptionalModel,
     parseOptionalProjectId,
-    parseOptionalDocumentContext,
-    buildWordDocumentContextPrompt,
+    createReservedAssistantMessageUpdater,
+    openAssistantSse,
+    reserveAssistantMessage,
+    withoutEmptyAssistantReservations,
 } from "../lib/chat";
 import { completeText } from "../lib/llm";
 import { getUserModelSettings } from "../lib/userSettings";
@@ -40,10 +43,10 @@ const devLog = (...args: Parameters<typeof console.log>) => {
 const TITLE_FALLBACK = "Misc. Query";
 
 function normalizeGeneratedTitle(raw: string): string {
-  const title = raw
-    .trim()
-    .replace(/^["'`]+|["'`.,:;!?]+$/g, "")
-    .trim();
+    const title = raw
+        .trim()
+        .replace(/^["'`]+|["'`.,:;!?]+$/g, "")
+        .trim();
     if (!title) return TITLE_FALLBACK;
     return title.slice(0, 80);
 }
@@ -107,19 +110,19 @@ chatRouter.get("/", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const requestedLimit = Number.parseInt(String(req.query.limit ?? ""), 10);
-  const requestedOffset = Number.parseInt(String(req.query.offset ?? ""), 10);
+    const requestedOffset = Number.parseInt(String(req.query.offset ?? ""), 10);
     const limit = Number.isFinite(requestedLimit)
         ? Math.min(Math.max(requestedLimit, 1), 100)
         : null;
-  const offset =
-    Number.isFinite(requestedOffset) && requestedOffset > 0
-      ? requestedOffset
-      : 0;
+    const offset =
+        Number.isFinite(requestedOffset) && requestedOffset > 0
+            ? requestedOffset
+            : 0;
 
     const { data, error } = await db.rpc("get_chats_overview", {
         p_user_id: userId,
         p_limit: limit,
-    p_offset: offset,
+        p_offset: offset,
     });
     if (error) return void res.status(500).json({ detail: error.message });
     res.json(data ?? []);
@@ -164,7 +167,7 @@ chatRouter.get("/:chatId", requireAuth, async (req, res) => {
     const db = createServerSupabase();
 
     const chat = await getAccessibleChat(chatId, userId, userEmail, db);
-  if (!chat) return void res.status(404).json({ detail: "Chat not found" });
+    if (!chat) return void res.status(404).json({ detail: "Chat not found" });
 
     const { data: messages } = await db
         .from("chat_messages")
@@ -172,7 +175,10 @@ chatRouter.get("/:chatId", requireAuth, async (req, res) => {
         .eq("chat_id", chatId)
         .order("created_at", { ascending: true });
 
-    const hydrated = await hydrateEditStatuses(messages ?? [], db);
+    const hydrated = await hydrateEditStatuses(
+        withoutEmptyAssistantReservations(messages ?? []),
+        db,
+    );
     res.json({ chat, messages: hydrated });
 });
 
@@ -190,7 +196,7 @@ async function hydrateEditStatuses(
         if (!Array.isArray(list)) return;
         for (const a of list as Record<string, unknown>[]) {
             if (typeof a?.edit_id === "string") editIds.add(a.edit_id);
-      if (typeof a?.version_id === "string") versionIds.add(a.version_id);
+            if (typeof a?.version_id === "string") versionIds.add(a.version_id);
         }
     };
     for (const m of messages) {
@@ -199,7 +205,8 @@ async function hydrateEditStatuses(
             for (const ev of content as Record<string, unknown>[]) {
                 if (ev?.type === "doc_edited") {
                     collectFromAnnList(ev.annotations);
-          if (typeof ev.version_id === "string") versionIds.add(ev.version_id);
+                    if (typeof ev.version_id === "string")
+                        versionIds.add(ev.version_id);
                 }
             }
         }
@@ -263,7 +270,8 @@ async function hydrateEditStatuses(
     return messages.map((m) => {
         const next: Record<string, unknown> = { ...m };
         if (Array.isArray(m.content)) {
-      next.content = (m.content as Record<string, unknown>[]).map((ev) => {
+            next.content = (m.content as Record<string, unknown>[]).map(
+                (ev) => {
                     if (ev?.type !== "doc_edited") return ev;
                     let patched: Record<string, unknown> = {
                         ...ev,
@@ -275,11 +283,13 @@ async function hydrateEditStatuses(
                     ) {
                         patched = {
                             ...patched,
-            version_number: versionNumberById.get(ev.version_id) ?? null,
+                            version_number:
+                                versionNumberById.get(ev.version_id) ?? null,
                         };
                     }
                     return patched;
-      });
+                },
+            );
         }
         return next;
     });
@@ -290,7 +300,8 @@ chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const { chatId } = req.params;
     const title = (req.body.title ?? "").trim();
-  if (!title) return void res.status(400).json({ detail: "title is required" });
+    if (!title)
+        return void res.status(400).json({ detail: "title is required" });
 
     const db = createServerSupabase();
     const { data, error } = await db
@@ -333,10 +344,13 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
 
     const db = createServerSupabase();
     const chat = await getAccessibleChat(chatId, userId, userEmail, db);
-  if (!chat) return void res.status(404).json({ detail: "Chat not found" });
+    if (!chat) return void res.status(404).json({ detail: "Chat not found" });
 
     try {
-    const { title_model, api_keys } = await getUserModelSettings(userId, db);
+        const { title_model, api_keys } = await getUserModelSettings(
+            userId,
+            db,
+        );
         const titleText = await completeText({
             model: title_model,
             user: `Generate a concise title (3–6 words) for a chat in an AI Legal Platform that starts with this message. The title should describe the topic or document — do NOT include words like "Legal Assistant", "AI", "Chat", or any similar prefix. If there is not enough information to generate a title, return exactly "${TITLE_FALLBACK}". Return only the title, no quotes or punctuation.\n\nMessage: ${message.slice(0, 500)}`,
@@ -345,7 +359,7 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
         });
         const title = normalizeGeneratedTitle(titleText);
 
-    await db.from("chats").update({ title }).eq("id", chatId);
+        await db.from("chats").update({ title }).eq("id", chatId);
 
         res.json({ title });
     } catch (err) {
@@ -377,15 +391,6 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     if (!parsedModel.ok) {
         return void res.status(400).json({ detail: parsedModel.detail });
     }
-    // Optional plain-text document context supplied by the Word add-in (the
-    // active document body, read via Word.run() — no upload, no stored
-    // document record). Injected into the LLM system prompt below.
-    const parsedDocumentContext = parseOptionalDocumentContext(
-        body.document_context,
-    );
-    if (!parsedDocumentContext.ok) {
-    return void res.status(400).json({ detail: parsedDocumentContext.detail });
-    }
     const parsedAskInputsResponse = parseOptionalAskInputsResponse(
         body.ask_inputs_response,
     );
@@ -394,12 +399,14 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             .status(400)
             .json({ detail: parsedAskInputsResponse.detail });
     }
-
     const messages = parsedMessages.value;
     const chat_id = parsedChatId.value;
     const project_id = parsedProjectId.value.projectId;
     const model = parsedModel.value;
     const askInputsResponse = parsedAskInputsResponse.value;
+    // Reserve a stable assistant identity before streaming. This lets clients
+    // associate streamed UI with the same durable message after a reload.
+    const assistantMessageId = askInputsResponse ? null : randomUUID();
 
     devLog("[chat/stream] incoming request", {
         userId,
@@ -454,10 +461,18 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             .single();
         if (error || !newChat) {
             console.error("[chat/stream] failed to create chat", error);
-      return void res.status(500).json({ detail: "Failed to create chat" });
+            return void res
+                .status(500)
+                .json({ detail: "Failed to create chat" });
         }
         chatId = newChat.id as string;
         chatTitle = newChat.title;
+    }
+
+    if (!chatId) {
+        return void res
+            .status(500)
+            .json({ detail: "Failed to initialize chat" });
     }
 
     devLog("[chat/stream] resolved chatId", chatId);
@@ -499,22 +514,12 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         docIndex,
         nonce,
     );
-  const { api_keys: apiKeys, legal_research_us: legalResearchUs } =
-    await getUserModelSettings(userId, db);
-    // Extra system context: the Word add-in's active-document body. The
-    // document text is user-controlled and a prompt-injection vector, so
-    // buildWordDocumentContextPrompt nonce-fences it before it enters the
-    // system prompt.
-    const systemPromptExtra = parsedDocumentContext.documentContext
-        ? buildWordDocumentContextPrompt(
-              parsedDocumentContext.documentContext,
-              nonce,
-          )
-        : undefined;
+    const { api_keys: apiKeys, legal_research_us: legalResearchUs } =
+        await getUserModelSettings(userId, db);
     const apiMessages = buildMessages(
         enrichedMessages,
         docAvailability,
-        systemPromptExtra,
+        undefined,
         undefined,
         legalResearchUs,
         nonce,
@@ -528,21 +533,47 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         workflowCount: Object.keys(workflowStore).length,
     });
 
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("X-Accel-Buffering", "no");
-    res.flushHeaders();
+    // Make the advertised identity durable before the response becomes an
+    // SSE stream. If this reservation fails, return a normal HTTP error while
+    // headers are still mutable; clients must never receive an ID that cannot
+    // subsequently be loaded from chat history.
+    if (assistantMessageId) {
+        const reserveError = await reserveAssistantMessage({
+            db,
+            table: "chat_messages",
+            id: assistantMessageId,
+            chatId,
+        });
+        if (reserveError) {
+            console.error(
+                "[chat/stream] failed to reserve assistant message",
+                reserveError,
+            );
+            return void res
+                .status(500)
+                .json({ detail: "Failed to start assistant response" });
+        }
+    }
 
-    const write = (line: string) => res.write(line);
-    const streamAbort = new AbortController();
-    let streamFinished = false;
-    res.on("close", () => {
-        if (!streamFinished) streamAbort.abort();
-    });
+    const stream = openAssistantSse(res);
+    const write = stream.write;
+    const updateReservedAssistantMessage =
+        createReservedAssistantMessageUpdater({
+            db,
+            table: "chat_messages",
+            id: assistantMessageId ?? "",
+            chatId,
+            enabled: !!assistantMessageId,
+        });
 
     try {
-        write(`data: ${JSON.stringify({ type: "chat_id", chatId })}\n\n`);
+        write(
+            `data: ${JSON.stringify({
+                type: "chat_id",
+                chatId,
+                ...(assistantMessageId ? { assistantMessageId } : {}),
+            })}\n\n`,
+        );
 
         const { fullText, events, citations } = await runLLMStream({
             apiMessages,
@@ -555,9 +586,12 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             includeResearchTools: legalResearchUs,
             model,
             apiKeys,
-            signal: streamAbort.signal,
+            signal: stream.signal,
             projectId: resolvedProjectId,
             nonce,
+            // This route first makes the advertised assistant ID durable.
+            // It emits [DONE] only after the reserved row has been populated.
+            emitDone: false,
         });
 
         devLog("[chat/stream] LLM stream finished", {
@@ -574,12 +608,25 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                 citations,
             );
         } else {
-            await db.from("chat_messages").insert({
-                chat_id: chatId,
-                role: "assistant",
-                content: persistedEvents.length ? persistedEvents : null,
-                citations: citations.length ? citations : null,
-            });
+            const saveError = await updateReservedAssistantMessage(
+                persistedEvents.length ? persistedEvents : null,
+                citations.length ? citations : null,
+            );
+            if (saveError) {
+                console.error(
+                    "[chat/stream] failed to save assistant response",
+                    saveError,
+                );
+                write(
+                    `data: ${JSON.stringify({
+                        type: "error",
+                        message:
+                            "The response was generated but could not be saved.",
+                    })}\n\n`,
+                );
+                write("data: [DONE]\n\n");
+                return;
+            }
         }
 
         if (!chatTitle && lastUser?.content) {
@@ -588,7 +635,6 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                 .update({ title: lastUser.content.slice(0, 120) })
                 .eq("id", chatId);
         }
-
         void recordChatTurn(
             db,
             {
@@ -601,6 +647,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             },
             persistedEvents,
         );
+        write("data: [DONE]\n\n");
     } catch (err) {
         if (isAbortError(err)) {
             devLog("[chat/stream] client aborted stream", { chatId });
@@ -626,14 +673,10 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                 });
                 const saveError = askInputsResponse
                     ? null
-                    : (
-                          await db.from("chat_messages").insert({
-                              chat_id: chatId,
-                              role: "assistant",
-                content: partial.events.length ? partial.events : null,
-                citations: partial.citations.length ? partial.citations : null,
-                          })
-                      ).error;
+                    : await updateReservedAssistantMessage(
+                          partial.events.length ? partial.events : null,
+                          partial.citations.length ? partial.citations : null,
+                      );
                 if (askInputsResponse) {
                     await appendAssistantEventsToLastAssistantMessage(
                         db,
@@ -653,24 +696,24 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         }
         console.error("[chat/stream] error:", safeErrorLog(err));
         const message = safeErrorMessage(err, "Stream error");
-    const errorEvents =
-      err instanceof AssistantStreamError
-            ? stripTransientAssistantEvents(err.events)
-            : [{ type: "error" as const, message }];
+        const errorEvents =
+            err instanceof AssistantStreamError
+                ? stripTransientAssistantEvents(err.events)
+                : [{ type: "error" as const, message }];
         const errorFullText =
             err instanceof AssistantStreamError ? err.fullText : "";
         try {
-      const citations = extractCitations(errorFullText, docIndex, errorEvents);
+            const citations = extractCitations(
+                errorFullText,
+                docIndex,
+                errorEvents,
+            );
             const saveError = askInputsResponse
                 ? null
-                : (
-                      await db.from("chat_messages").insert({
-                          chat_id: chatId,
-                          role: "assistant",
-                          content: errorEvents.length ? errorEvents : null,
-                          citations: citations.length ? citations : null,
-                      })
-                  ).error;
+                : await updateReservedAssistantMessage(
+                      errorEvents.length ? errorEvents : null,
+                      citations.length ? citations : null,
+                  );
             if (askInputsResponse) {
                 await appendAssistantEventsToLastAssistantMessage(
                     db,
@@ -685,13 +728,12 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             console.error("[chat/stream] failed to save error", saveErr);
         }
         try {
-      write(`data: ${JSON.stringify({ type: "error", message })}\n\n`);
+            write(`data: ${JSON.stringify({ type: "error", message })}\n\n`);
             write("data: [DONE]\n\n");
         } catch {
             /* ignore */
         }
     } finally {
-        streamFinished = true;
-        res.end();
+        stream.finish();
     }
 });
