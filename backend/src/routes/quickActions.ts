@@ -154,4 +154,3 @@ quickActionsRouter.delete("/:quickActionId", requireAuth, asyncRoute(async (req,
   if (error) return void res.status(500).json({ detail: error.message });
   res.status(204).send();
 }));
-
