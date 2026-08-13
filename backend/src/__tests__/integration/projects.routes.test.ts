@@ -554,7 +554,7 @@ describe("projects.routes", () => {
         });
     });
 
-    // ── GET /projects/:projectId (detail, inline access) ──────────────────
+    // ── GET /projects/:projectId (detail, shared access helper) ───────────
     describe("GET /projects/:projectId", () => {
         it("returns 404 when the project does not exist", async () => {
             supabaseState.tables.projects = { data: null, error: null };
@@ -568,14 +568,7 @@ describe("projects.routes", () => {
         });
 
         it("returns 404 when the caller is neither owner nor shared", async () => {
-            supabaseState.tables.projects = {
-                data: {
-                    id: "p1",
-                    user_id: "someone-else",
-                    shared_with: ["other@x.com"],
-                },
-                error: null,
-            };
+            checkProjectAccess.mockResolvedValue({ ok: false });
 
       const res = await request(app)
         .get("/projects/p1")
@@ -583,14 +576,29 @@ describe("projects.routes", () => {
 
             expect(res.status).toBe(404);
             expect(res.body.detail).toBe("Project not found");
+            expect(checkProjectAccess).toHaveBeenCalledWith(
+                "p1",
+                "u1",
+                "u1@test.local",
+                expect.anything(),
+            );
         });
 
-        it("grants access to a shared member (is_owner false)", async () => {
+        it("delegates mixed-case shared access to the case-insensitive helper", async () => {
+            checkProjectAccess.mockResolvedValue({
+                ok: true,
+                isOwner: false,
+                project: {
+                    id: "p1",
+                    user_id: "someone-else",
+                    shared_with: ["U1@Test.Local"],
+                },
+            });
             supabaseState.tables.projects = {
                 data: {
                     id: "p1",
                     user_id: "someone-else",
-                    shared_with: ["u1@test.local"],
+                    shared_with: ["U1@Test.Local"],
                 },
                 error: null,
             };
@@ -603,6 +611,7 @@ describe("projects.routes", () => {
 
             expect(res.status).toBe(200);
             expect(res.body).toMatchObject({ id: "p1", is_owner: false });
+            expect(checkProjectAccess).toHaveBeenCalledTimes(1);
         });
 
         it("returns 200 with documents/folders/is_owner when owned", async () => {

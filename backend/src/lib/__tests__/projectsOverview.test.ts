@@ -10,7 +10,7 @@ describe("buildProjectsOverviewRpcArgs", () => {
         expect(
             buildProjectsOverviewRpcArgs({
                 userId: "user-1",
-                userEmail: "user@example.com",
+                userEmail: " User@Example.com ",
                 scope: "mine",
                 pagination: { limit: 25, offset: 10 },
                 searchTerm: "merger",
@@ -58,7 +58,7 @@ describe("buildProjectIdsOverviewRpcArgs", () => {
         expect(
             buildProjectIdsOverviewRpcArgs({
                 userId: "user-1",
-                userEmail: "user@example.com",
+                userEmail: " User@Example.com ",
                 scope: "shared",
                 searchTerm: "merger",
                 practice: "Litigation",

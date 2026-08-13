@@ -29,17 +29,12 @@ function makeDb(tables: Record<string, Row[]>) {
                 },
                 filter: (column: string, operator: string, value: string) => {
                     if (operator !== "cs") return query;
-                    const expected = (JSON.parse(value) as string[]).map((item) =>
-                        item.toLowerCase(),
-                    );
+                    const expected = JSON.parse(value) as string[];
                     rows = rows.filter((row) => {
                         const actual = row[column];
-                        const normalizedActual = Array.isArray(actual)
-                            ? actual.map((item) => String(item).toLowerCase())
-                            : [];
                         return (
                             Array.isArray(actual) &&
-                            expected.every((item) => normalizedActual.includes(item))
+                            expected.every((item) => actual.includes(item))
                         );
                     });
                     return query;
@@ -62,7 +57,7 @@ describe("access helpers", () => {
             {
                 id: "shared-project",
                 user_id: "other-owner",
-                shared_with: ["Reviewer@Example.com"],
+                shared_with: ["reviewer@example.com"],
             },
             { id: "private-project", user_id: "other-owner", shared_with: [] },
         ],
@@ -92,7 +87,7 @@ describe("access helpers", () => {
             checkProjectAccess(
                 "shared-project",
                 "reviewer",
-                "reviewer@example.com",
+                " REVIEWER@EXAMPLE.COM ",
                 db,
             ),
         ).resolves.toMatchObject({ ok: true, isOwner: false });
@@ -142,7 +137,7 @@ describe("access helpers", () => {
 
     it("lists own and directly shared projects", async () => {
         await expect(
-            listAccessibleProjectIds("owner", "reviewer@example.com", db),
+            listAccessibleProjectIds("owner", " Reviewer@Example.com ", db),
         ).resolves.toEqual(expect.arrayContaining(["own-project", "shared-project"]));
     });
 

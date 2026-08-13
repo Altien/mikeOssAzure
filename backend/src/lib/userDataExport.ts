@@ -364,7 +364,11 @@ export async function buildUserAccountExport(
         userEmail
             ? selectAll(db, "projects", (query) =>
                   query
-                      .filter("shared_with", "cs", JSON.stringify([userEmail]))
+                      .filter(
+                          "shared_with",
+                          "cs",
+                          JSON.stringify([userEmail.trim().toLowerCase()]),
+                      )
                       .neq("user_id", userId)
                       .order("created_at", { ascending: true }),
                   "id, user_id, name, cm_number, created_at, updated_at",
