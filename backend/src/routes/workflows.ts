@@ -8,7 +8,6 @@ import crypto from "crypto";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import {
-  SYSTEM_WORKFLOW_IDS,
   SYSTEM_WORKFLOWS,
   type SystemWorkflow,
 } from "../lib/systemWorkflows";
@@ -453,9 +452,9 @@ workflowsRouter.get(
       });
       const { data, error } = await db.rpc("get_workflows_overview", rpcArgs);
       if (error) return void res.status(500).json({ detail: error.message });
-      const workflows = ((data ?? []) as WorkflowRecord[])
-        .filter((workflow) => !SYSTEM_WORKFLOW_IDS.has(workflow.id))
-        .map(withDatabaseWorkflowSummary);
+      const workflows = ((data ?? []) as WorkflowRecord[]).map(
+        withDatabaseWorkflowSummary,
+      );
       return void res.json(await markDefaultWorkflows(db, userId, workflows));
     }
 
@@ -468,9 +467,9 @@ workflowsRouter.get(
       return void res.status(500).json({ detail: error.message });
     }
 
-    const databaseWorkflows = ((data ?? []) as WorkflowRecord[])
-      .filter((workflow) => !SYSTEM_WORKFLOW_IDS.has(workflow.id))
-      .map(withDatabaseWorkflow);
+    const databaseWorkflows = ((data ?? []) as WorkflowRecord[]).map(
+      withDatabaseWorkflow,
+    );
     res.json(await markDefaultWorkflows(db, userId, databaseWorkflows));
   }),
 );
@@ -736,17 +735,20 @@ workflowsRouter.delete(
       .select("storage_path")
       .eq("workflow_id", workflowId)
       .eq("user_id", userId);
-    await Promise.all(
-      (referenceDocuments ?? []).map((reference) =>
-        deleteFile(reference.storage_path).catch(() => {}),
-      ),
-    );
-    const { error } = await db
+    const { data: deleted, error } = await db
       .from("workflows")
       .delete()
       .eq("id", workflowId)
-      .eq("user_id", userId);
+      .eq("user_id", userId)
+      .select("id");
     if (error) return void res.status(500).json({ detail: error.message });
+    if ((deleted ?? []).length > 0) {
+      await Promise.all(
+        (referenceDocuments ?? []).map((reference) =>
+          deleteFile(reference.storage_path).catch(() => {}),
+        ),
+      );
+    }
     res.status(204).send();
   }),
 );

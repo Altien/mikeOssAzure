@@ -124,6 +124,7 @@ vi.mock("../../lib/documentVersions", () => ({
 
 import { app } from "../../app";
 import { createServerSupabase } from "../../lib/supabase";
+import { resetEnsuredDefaultUsersForTests } from "../../lib/workflowCatalog";
 
 const AUTH = ["Authorization", "Bearer test"] as const;
 
@@ -149,6 +150,7 @@ describe("workflows.routes", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         resetSupabaseState();
+        resetEnsuredDefaultUsersForTests();
     });
 
     // ── GET /workflows (overview) ─────────────────────────────────────────
