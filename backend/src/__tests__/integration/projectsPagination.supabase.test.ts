@@ -6,9 +6,9 @@ const serviceKey = process.env.SUPABASE_TEST_SERVICE_ROLE_KEY;
 const maybeDescribe = url && serviceKey ? describe : describe.skip;
 
 maybeDescribe("Supabase projects-overview pagination", () => {
-    const ownerId = crypto.randomUUID();
-    const ownerEmail = `pagination-${ownerId}@test.local`;
-    const otherUserId = crypto.randomUUID();
+    let ownerId = "";
+    let ownerEmail = "";
+    let otherUserId = "";
     const myProjectIds = Array.from({ length: 25 }, () => crypto.randomUUID());
     const sharedProjectIds = Array.from({ length: 5 }, () => crypto.randomUUID());
     const tiedCreatedAt = "2026-07-27T00:00:00.000Z";
@@ -18,6 +18,31 @@ maybeDescribe("Supabase projects-overview pagination", () => {
         admin = createClient(url!, serviceKey!, {
             auth: { persistSession: false, autoRefreshToken: false },
         });
+
+        const suffix = Date.now();
+        ownerEmail = `pagination-owner-${suffix}@test.local`;
+        const owner = await admin.auth.admin.createUser({
+            email: ownerEmail,
+            password: "StackTest1!",
+            email_confirm: true,
+        });
+        if (owner.error || !owner.data.user) {
+            throw owner.error ?? new Error("Could not create pagination owner");
+        }
+        ownerId = owner.data.user.id;
+
+        const otherUser = await admin.auth.admin.createUser({
+            email: `pagination-other-${suffix}@test.local`,
+            password: "StackTest1!",
+            email_confirm: true,
+        });
+        if (otherUser.error || !otherUser.data.user) {
+            throw (
+                otherUser.error ??
+                new Error("Could not create shared-project owner")
+            );
+        }
+        otherUserId = otherUser.data.user.id;
 
         const myProjects = await admin.from("projects").insert(
             myProjectIds.map((id) => ({
@@ -49,6 +74,8 @@ maybeDescribe("Supabase projects-overview pagination", () => {
         if (!admin) return;
         await admin.from("projects").delete().in("id", myProjectIds);
         await admin.from("projects").delete().in("id", sharedProjectIds);
+        if (otherUserId) await admin.auth.admin.deleteUser(otherUserId);
+        if (ownerId) await admin.auth.admin.deleteUser(ownerId);
     });
 
     it("paginates tied rows deterministically without duplicates", async () => {

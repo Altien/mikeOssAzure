@@ -124,39 +124,18 @@ jobs:
         uses: supabase/setup-cli@v1
         with:
           version: latest
-      - name: Init + start Supabase, load schema + migrations
+      - name: Init + start Supabase, load fresh schema
         run: |
           supabase init --force --with-vscode-settings=false || supabase init --force
           supabase start
           DB_URL=$(supabase status -o json | jq -r '.DB_URL')
-          # 1) Base schema. README: "For a new Supabase database ... run
-          # backend/schema.sql". It is meant to be the latest shape but in practice
-          # lags the migrations (e.g. it is missing workflow_open_source_submissions,
-          # which GET /workflows/:id queries — a 500 that breaks the workflow specs).
+          # A fresh database runs the current schema exactly once. Historical
+          # migrations only upgrade older deployments; replaying them on top of
+          # schema.sql can overwrite current functions with obsolete definitions.
+          # The schema-drift workflow separately proves that the real upgrade path
+          # (pinned baseline + migrations) converges with this fresh-install path.
           psql "$DB_URL" -v ON_ERROR_STOP=1 -f backend/schema.sql
-          # 2) Apply every dated migration on top. They are written to be safe to
-          # re-run (IF NOT EXISTS / ADD COLUMN IF NOT EXISTS), so the ones already
-          # in schema.sql are no-ops and the newer ones fill the gaps. Verified on a
-          # fresh CLI DB: all migrations apply with zero errors. Kept fail-tolerant
-          # so one non-idempotent migration can't wedge the whole gate — mismatches
-          # surface as a spec failure downstream, not an opaque CI abort.
-          for m in $(ls backend/migrations/*.sql | sort); do
-            psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$m" >/dev/null 2>&1 \
-              || echo "::warning::migration returned a non-zero status (already applied?): $m"
-          done
-          # 3) schema.sql now grants service_role its narrowed data privileges
-          # itself, but those GRANT ... ON ALL statements only cover tables that
-          # exist when schema.sql runs — tables created by the migrations above
-          # are not covered, and the backend (which queries exclusively as
-          # service_role, lib/supabase.ts) 500s with "permission denied" on them.
-          # Re-grant AFTER migrations with the SAME privilege set as schema.sql —
-          # deliberately not ALL, so e2e cannot pass on a privilege prod lacks.
-          psql "$DB_URL" -v ON_ERROR_STOP=1 <<'SQL'
-          GRANT USAGE ON SCHEMA public TO service_role;
-          GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO service_role;
-          GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO service_role;
-          SQL
-          # 4) PostgREST cached its schema when `supabase start` booted it (before
+          # PostgREST cached its schema when `supabase start` booted it (before
           # the DDL above). Tell it to reload so the new tables/grants are visible.
           psql "$DB_URL" -v ON_ERROR_STOP=1 -c "NOTIFY pgrst, 'reload schema';"
 

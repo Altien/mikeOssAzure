@@ -6,8 +6,8 @@ const serviceKey = process.env.SUPABASE_TEST_SERVICE_ROLE_KEY;
 const maybeDescribe = url && serviceKey ? describe : describe.skip;
 
 maybeDescribe("Supabase tabular-review pagination", () => {
-    const ownerId = crypto.randomUUID();
-    const ownerEmail = `pagination-${ownerId}@test.local`;
+    let ownerId = "";
+    let ownerEmail = "";
     const projectId = crypto.randomUUID();
     const projectReviewIds = Array.from({ length: 25 }, () =>
         crypto.randomUUID(),
@@ -22,6 +22,17 @@ maybeDescribe("Supabase tabular-review pagination", () => {
         admin = createClient(url!, serviceKey!, {
             auth: { persistSession: false, autoRefreshToken: false },
         });
+
+        ownerEmail = `pagination-${Date.now()}@test.local`;
+        const owner = await admin.auth.admin.createUser({
+            email: ownerEmail,
+            password: "StackTest1!",
+            email_confirm: true,
+        });
+        if (owner.error || !owner.data.user) {
+            throw owner.error ?? new Error("Could not create pagination owner");
+        }
+        ownerId = owner.data.user.id;
 
         const project = await admin.from("projects").insert({
             id: projectId,
@@ -72,6 +83,7 @@ maybeDescribe("Supabase tabular-review pagination", () => {
             .delete()
             .in("id", standaloneReviewIds);
         await admin.from("projects").delete().eq("id", projectId);
+        if (ownerId) await admin.auth.admin.deleteUser(ownerId);
     });
 
     it("paginates tied rows deterministically without duplicates", async () => {
