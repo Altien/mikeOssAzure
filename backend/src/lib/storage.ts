@@ -6,6 +6,7 @@ import {
   ListObjectsV2Command,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl as awsGetSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { safeErrorLog } from "./safeError";
 import { BlobServiceClient, ContainerClient } from "@azure/storage-blob";
 import { DefaultAzureCredential } from "@azure/identity";
 
@@ -91,7 +92,11 @@ class R2Provider implements StorageProvider {
       if (!response.Body) return null;
       const bytes = await response.Body.transformToByteArray();
       return bytes.buffer as ArrayBuffer;
-    } catch {
+    } catch (error) {
+      console.error("[storage] downloadFile failed", {
+        key,
+        error: safeErrorLog(error),
+      });
       return null;
     }
   }
@@ -136,7 +141,11 @@ class R2Provider implements StorageProvider {
         ResponseContentDisposition: responseContentDisposition,
       });
       return await awsGetSignedUrl(this.client(), command, { expiresIn });
-    } catch {
+    } catch (error) {
+      console.error("[storage] getSignedUrl failed", {
+        key,
+        error: safeErrorLog(error),
+      });
       return null;
     }
   }
@@ -196,7 +205,11 @@ class AzureBlobProvider implements StorageProvider {
     try {
       const buffer = await this.container.getBlobClient(key).downloadToBuffer();
       return buffer.buffer as ArrayBuffer;
-    } catch {
+    } catch (error) {
+      console.error("[storage] downloadFile failed", {
+        key,
+        error: safeErrorLog(error),
+      });
       return null;
     }
   }

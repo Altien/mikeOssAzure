@@ -1,4 +1,13 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+
+let cachedAdminClient:
+  | {
+      url: string;
+      key: string;
+      provider: string;
+      client: SupabaseClient<any, "public", any>;
+    }
+  | undefined;
 
 // Historical naming note:
 // the upstream app used hosted Supabase directly. In this fork the backend still
@@ -70,30 +79,44 @@ export function createServerSupabase() {
   }
 
   const provider = getAuthProvider();
+  const key = provider === "entra"
+    ? "unused-entra-mode-no-auth"
+    : process.env.SUPABASE_SECRET_KEY || "";
+
+  if (provider === "supabase" && !key) {
+    throw new Error("SUPABASE_URL and SUPABASE_SECRET_KEY must be set");
+  }
+
+  if (
+    cachedAdminClient?.url === url &&
+    cachedAdminClient.key === key &&
+    cachedAdminClient.provider === provider
+  ) {
+    return cachedAdminClient.client;
+  }
+
+  let client: SupabaseClient<any, "public", any>;
 
   if (provider === "entra") {
     // The "key" arg is required by supabase-js but never reaches PostgREST
     // — the fetch wrapper deletes the Authorization and apikey headers
     // before the request leaves the process.
-    return createClient(url, "unused-entra-mode-no-auth", {
-      auth: { persistSession: false },
+    client = createClient(url, key, {
+      auth: { persistSession: false, autoRefreshToken: false },
       global: { fetch: postgrestFetchWrapper({ stripAuth: true }) },
     });
-  }
-
-  if (provider === "local") {
-    const key = process.env.SUPABASE_SECRET_KEY || "";
-    return createClient(url, key, {
-      auth: { persistSession: false },
+  } else if (provider === "local") {
+    client = createClient(url, key, {
+      auth: { persistSession: false, autoRefreshToken: false },
       global: { fetch: postgrestFetchWrapper({ stripAuth: false }) },
+    });
+  } else {
+    // Hosted Supabase keeps its /rest/v1 path and service-role credential.
+    client = createClient(url, key, {
+      auth: { persistSession: false, autoRefreshToken: false },
     });
   }
 
-  // supabase mode — default supabase-js behavior, including the /rest/v1
-  // prefix that hosted Supabase actually serves.
-  const key = process.env.SUPABASE_SECRET_KEY || "";
-  if (!url || !key) {
-    throw new Error("SUPABASE_URL and SUPABASE_SECRET_KEY must be set");
-  }
-  return createClient(url, key, { auth: { persistSession: false } });
+  cachedAdminClient = { url, key, provider, client };
+  return client;
 }
