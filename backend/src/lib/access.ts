@@ -48,7 +48,7 @@ export async function checkProjectAccess(
         return { ok: true, isOwner: true, project: proj };
     }
     const sharedWith = Array.isArray(proj.shared_with) ? proj.shared_with : [];
-    const email = (userEmail ?? "").toLowerCase();
+    const email = (userEmail ?? "").trim().toLowerCase();
     if (
         email &&
         sharedWith.some((e) => (e ?? "").toLowerCase() === email)
@@ -171,13 +171,18 @@ export async function listAccessibleProjectIds(
     userEmail: string | null | undefined,
     db: Db,
 ): Promise<string[]> {
+    const normalizedEmail = userEmail?.trim().toLowerCase() ?? "";
     const [{ data: own }, { data: shared }] = await Promise.all([
         db.from("projects").select("id").eq("user_id", userId),
-        userEmail
+        normalizedEmail
             ? db
                   .from("projects")
                   .select("id")
-                  .filter("shared_with", "cs", JSON.stringify([userEmail]))
+                  .filter(
+                      "shared_with",
+                      "cs",
+                      JSON.stringify([normalizedEmail]),
+                  )
                   .neq("user_id", userId)
             : Promise.resolve({ data: [] as { id: string }[] }),
     ]);

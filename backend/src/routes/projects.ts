@@ -256,6 +256,7 @@ const PROJECT_PAGINATION_QUERY_KEYS = [
 projectsRouter.get("/", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
+  const normalizedUserEmail = userEmail?.trim().toLowerCase();
   const includeDocuments = req.query.include === "documents";
 
   if (req.query.view === "directory-search") {
@@ -269,7 +270,7 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
     );
     const { data, error } = await db.rpc("get_project_summaries", {
       p_user_id: userId,
-      p_user_email: userEmail ?? null,
+      p_user_email: normalizedUserEmail ?? null,
       p_limit: pagination.limit,
       p_offset: pagination.offset,
     });
@@ -284,7 +285,7 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
   const rpcArgs = hasPaginationParams
     ? buildProjectsOverviewRpcArgs({
         userId,
-        userEmail,
+        userEmail: normalizedUserEmail,
         scope: parseProjectScope(req.query.scope),
         pagination: parsePaginationQuery(
           req.query as Record<string, unknown>,
@@ -294,7 +295,7 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
         practice: normalizeSearchTerm(req.query.practice),
         ownerUserId: normalizeSearchTerm(req.query.owner_user_id),
       })
-    : { p_user_id: userId, p_user_email: userEmail ?? null };
+    : { p_user_id: userId, p_user_email: normalizedUserEmail ?? null };
 
   const { data, error } = await db.rpc("get_projects_overview", rpcArgs);
   if (error) return void res.status(500).json({ detail: error.message });
@@ -423,13 +424,17 @@ async function handleProjectDirectorySearch(req: Request, res: Response) {
     req.query as Record<string, unknown>,
   );
   const db = createServerSupabase();
+  const normalizedUserEmail = userEmail?.trim().toLowerCase();
 
   const projectQueries = [
     db.from("projects").select("*").eq("user_id", userId),
   ];
-  if (userEmail) {
+  if (normalizedUserEmail) {
     projectQueries.push(
-      db.from("projects").select("*").contains("shared_with", [userEmail]),
+      db
+        .from("projects")
+        .select("*")
+        .contains("shared_with", [normalizedUserEmail]),
     );
   }
   const projectResults = await Promise.all(projectQueries);
@@ -539,10 +544,11 @@ projectsRouter.get("/:projectId/directory", requireAuth, async (req, res) => {
 projectsRouter.get("/filter-options", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
+  const normalizedUserEmail = userEmail?.trim().toLowerCase();
   const db = createServerSupabase();
   const { data, error } = await db.rpc("get_project_filter_options", {
     p_user_id: userId,
-    p_user_email: userEmail ?? null,
+    p_user_email: normalizedUserEmail ?? null,
   });
   if (error) return void res.status(500).json({ detail: error.message });
 
@@ -622,20 +628,16 @@ projectsRouter.get("/:projectId", requireAuth, async (req, res) => {
   const { projectId } = req.params;
   const db = createServerSupabase();
 
+  const access = await checkProjectAccess(projectId, userId, userEmail, db);
+  if (!access.ok)
+    return void res.status(404).json({ detail: "Project not found" });
+
   const { data: project, error } = await db
     .from("projects")
     .select("*")
     .eq("id", projectId)
     .single();
   if (error || !project)
-    return void res.status(404).json({ detail: "Project not found" });
-
-  const canAccess =
-    project.user_id === userId ||
-    (userEmail &&
-      Array.isArray(project.shared_with) &&
-      project.shared_with.includes(userEmail));
-  if (!canAccess)
     return void res.status(404).json({ detail: "Project not found" });
 
   const [{ data: docs }, { data: folderData }] = await Promise.all([
@@ -660,7 +662,7 @@ projectsRouter.get("/:projectId", requireAuth, async (req, res) => {
   await attachDocumentOwnerLabels(db, docsTyped);
   res.json({
     ...project,
-    is_owner: project.user_id === userId,
+    is_owner: access.isOwner,
     documents: docsTyped,
     folders: folderData ?? [],
   });

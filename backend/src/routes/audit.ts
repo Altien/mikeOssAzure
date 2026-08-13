@@ -30,7 +30,7 @@ export async function accessibleProjectIds(
     const shared = await db
       .from("projects")
       .select("id")
-      .contains("shared_with", [email]);
+      .contains("shared_with", [email.trim().toLowerCase()]);
     for (const row of (shared.data ?? []) as { id: string }[]) ids.add(row.id);
   }
   return [...ids];
