@@ -1603,6 +1603,7 @@ test("streams sealed edit cards into Word and resolves their exact revisions", a
     .first()
     .click();
   await expect(page.getByText("Accepted.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Scroll to bottom" }).click();
   await page
     .getByRole("button", { name: "Reject", exact: true })
     .first()
