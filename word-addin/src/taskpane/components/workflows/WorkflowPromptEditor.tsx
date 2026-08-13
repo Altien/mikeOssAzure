@@ -78,6 +78,7 @@ export function WorkflowPromptEditor({
   readOnly = false,
 }: WorkflowPromptEditorProps): React.ReactElement {
   const lastEmittedRef = useRef(value);
+  const suppressOnChangeRef = useRef(false);
   const rawTextareaRef = useRef<HTMLTextAreaElement>(null);
   const tablePickerRef = useRef<HTMLDivElement>(null);
   const [rawMode, setRawMode] = useState(false);
@@ -111,7 +112,7 @@ export function WorkflowPromptEditor({
       const markdown = getEditorMarkdown(editor);
       lastEmittedRef.current = markdown;
       setRawMarkdown(markdown);
-      onChange?.(markdown);
+      if (!suppressOnChangeRef.current) onChange?.(markdown);
     },
     editorProps: {
       attributes: { class: "tiptap workflow-editor-content" },
@@ -141,7 +142,12 @@ export function WorkflowPromptEditor({
     if (!editor || editor.isDestroyed || value === lastEmittedRef.current) return;
     lastEmittedRef.current = value;
     setRawMarkdown(value);
-    editor.commands.setContent(value);
+    suppressOnChangeRef.current = true;
+    try {
+      editor.commands.setContent(value);
+    } finally {
+      suppressOnChangeRef.current = false;
+    }
   }, [editor, value]);
 
   useEffect(() => {
