@@ -212,7 +212,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         <div
           ref={containerRef}
           data-testid="chat-composer-overlay"
-          className="absolute inset-x-0 bottom-0 z-30 p-3 @sm:py-4"
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-30 p-3 @sm:py-4 [&>*]:pointer-events-auto"
         >
           <input
             ref={localFileInputRef}
