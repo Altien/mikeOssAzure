@@ -26,14 +26,14 @@
 
   <g clip-path="url(#clipCard)">
     <rect x="5" y="9" width="54" height="12" fill="url(#header)"/>
-    <ellipse cx="32" cy="12" rx="25" ry="5" fill="url(#sheen)" opacity="0.6"/>
+    <ellipse cx="32" cy="12" rx="25" ry="5" fill="url(#sheen)" opacity="0.3"/>
     <g stroke="#9CA3AF" stroke-width="1.6" opacity="0.9">
       <line x1="23" y1="21" x2="23" y2="53"/>
       <line x1="41" y1="21" x2="41" y2="53"/>
       <line x1="5" y1="31.67" x2="59" y2="31.67"/>
       <line x1="5" y1="42.33" x2="59" y2="42.33"/>
     </g>
-    <ellipse cx="10" cy="34" rx="4" ry="12" fill="url(#sheen)" opacity="0.38"/>
-    <ellipse cx="32" cy="24" rx="26" ry="4" fill="url(#sheen)" opacity="0.45"/>
+    <ellipse cx="10" cy="34" rx="4" ry="12" fill="url(#sheen)" opacity="0.2"/>
+    <ellipse cx="32" cy="24" rx="26" ry="4" fill="url(#sheen)" opacity="0.22"/>
   </g>
 </svg>
