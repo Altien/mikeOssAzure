@@ -122,7 +122,6 @@ export default function App(): React.ReactElement {
               setChatSessionKey((current) => current + 1);
             }}
             onClearLocalChats={() => clearLocalWordChats(wordChatOwnerId)}
-            onSignOut={() => void logout()}
           />
         );
     }
@@ -184,6 +183,7 @@ export default function App(): React.ReactElement {
         onOpenWorkflowDetails={() => setWorkflowDetailsOpen(true)}
         onUseWorkflow={useSelectedWorkflow}
         onNewWorkflow={() => setNewWorkflowOpen(true)}
+        onSignOut={() => void logout()}
         wordDocumentId={wordDocumentId}
         wordChatStorage={wordChatStorage.mode}
         wordChatOwnerId={wordChatOwnerId}

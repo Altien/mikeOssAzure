@@ -7,7 +7,6 @@ import {
   streamProjectChat,
 } from "@/app/lib/mikeApi";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
-import { useGenerateChatTitle } from "./useGenerateChatTitle";
 import type {
   AssistantEvent,
   Citation,
@@ -87,8 +86,8 @@ export function useAssistantChat({
     setCurrentChatId,
     saveChat,
     setNewChatMessages,
+    updateChatTitle,
   } = useChatHistoryContext();
-  const { generate: generateTitle } = useGenerateChatTitle();
 
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [isResponseLoading, setIsResponseLoading] = useState(false);
@@ -405,6 +404,15 @@ export function useAssistantChat({
               streamedChatId = data.chatId;
               setChatId(data.chatId);
               setCurrentChatId(data.chatId);
+              continue;
+            }
+
+            if (
+              data.type === "chat_title" &&
+              typeof data.chatId === "string" &&
+              typeof data.title === "string"
+            ) {
+              updateChatTitle(data.chatId, data.title);
               continue;
             }
 
@@ -879,6 +887,10 @@ export function useAssistantChat({
               pushEvent({
                 type: "doc_read",
                 filename: data.filename as string,
+                document_id:
+                  typeof data.document_id === "string"
+                    ? (data.document_id as string)
+                    : undefined,
                 isStreaming: true,
               });
               continue;
@@ -969,7 +981,20 @@ export function useAssistantChat({
                   e.type === "doc_read" &&
                   e.filename === data.filename &&
                   !!e.isStreaming,
-                (e) => ({ ...e, isStreaming: false }),
+                (e) => {
+                  const event = e as Extract<
+                    AssistantEvent,
+                    { type: "doc_read" }
+                  >;
+                  return {
+                    ...event,
+                    document_id:
+                      typeof data.document_id === "string"
+                        ? (data.document_id as string)
+                        : event.document_id,
+                    isStreaming: false,
+                  };
+                },
               );
               pushThinkingPlaceholder();
               continue;
@@ -979,6 +1004,10 @@ export function useAssistantChat({
               pushEvent({
                 type: "doc_find",
                 filename: data.filename as string,
+                document_id:
+                  typeof data.document_id === "string"
+                    ? (data.document_id as string)
+                    : undefined,
                 query: (data.query as string) ?? "",
                 total_matches: 0,
                 isStreaming: true,
@@ -993,19 +1022,24 @@ export function useAssistantChat({
                   e.filename === data.filename &&
                   e.query === (data.query as string) &&
                   !!e.isStreaming,
-                (e) => ({
-                  ...e,
-                  isStreaming: false,
-                  total_matches:
-                    typeof data.total_matches === "number"
-                      ? (data.total_matches as number)
-                      : (
-                          e as {
-                            type: "doc_find";
-                            total_matches: number;
-                          }
-                        ).total_matches,
-                }),
+                (e) => {
+                  const event = e as Extract<
+                    AssistantEvent,
+                    { type: "doc_find" }
+                  >;
+                  return {
+                    ...event,
+                    document_id:
+                      typeof data.document_id === "string"
+                        ? (data.document_id as string)
+                        : event.document_id,
+                    isStreaming: false,
+                    total_matches:
+                      typeof data.total_matches === "number"
+                        ? (data.total_matches as number)
+                        : event.total_matches,
+                  };
+                },
               );
               pushThinkingPlaceholder();
               continue;
@@ -1211,18 +1245,6 @@ export function useAssistantChat({
       }
 
       await loadChats();
-
-      const finalChatIdForTitle = streamedChatId || chatId || null;
-      if (finalChatIdForTitle && apiMessagesForTurn.length === 1) {
-        const titleParts = [message.content];
-        if (message.workflow)
-          titleParts.push(`Workflow: ${message.workflow.title}`);
-        if (message.files?.length)
-          titleParts.push(
-            `Files: ${message.files.map((f) => f.filename).join(", ")}`,
-          );
-        void generateTitle(finalChatIdForTitle, titleParts.join("\n"));
-      }
 
       return streamedChatId || null;
     } catch (error: unknown) {

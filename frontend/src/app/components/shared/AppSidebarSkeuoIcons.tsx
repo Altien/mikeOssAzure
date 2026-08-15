@@ -5,8 +5,8 @@ type IconProps = Omit<
     "alt" | "src" | "width" | "height" | "unoptimized"
 >;
 
-const ICON_BASE_PATH = "/icons/app-sidebar";
-const ICON_VERSION = "27";
+const ICON_BASE_PATH = "/icons";
+const ICON_VERSION = "29";
 
 function AppSidebarIcon({
     name,
@@ -29,25 +29,29 @@ function AppSidebarIcon({
 }
 
 export function ChatSkeuoIcon(props: IconProps) {
-    return <AppSidebarIcon name="chat" {...props} />;
+    return <AppSidebarIcon name="features/chat" {...props} />;
 }
 
 export function FolderSkeuoIcon(props: IconProps) {
-    return <AppSidebarIcon name="project-closed" {...props} />;
+    return <AppSidebarIcon name="file-system/project-closed" {...props} />;
 }
 
 export function LibrarySkeuoIcon(props: IconProps) {
-    return <AppSidebarIcon name="library" {...props} />;
+    return <AppSidebarIcon name="features/library" {...props} />;
 }
 
 export function TabularReviewSkeuoIcon(props: IconProps) {
-    return <AppSidebarIcon name="tabular-review" {...props} />;
+    return <AppSidebarIcon name="features/tabular-review" {...props} />;
 }
 
 export function WorkflowSkeuoIcon(props: IconProps) {
-    return <AppSidebarIcon name="workflow" {...props} />;
+    return <AppSidebarIcon name="features/workflow" {...props} />;
 }
 
 export function SettingsSkeuoIcon(props: IconProps) {
     return <AppSidebarIcon name="settings" {...props} />;
+}
+
+export function SignOutSkeuoIcon(props: IconProps) {
+    return <AppSidebarIcon name="sign-out" {...props} />;
 }

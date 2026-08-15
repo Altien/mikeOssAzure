@@ -1,4 +1,5 @@
-import { Loader2, Scale } from "lucide-react";
+import Image from "next/image";
+import { Loader2 } from "lucide-react";
 import { FileTypeIcon } from "../../shared/FileTypeIcon";
 import { displayCitationQuote, formatCitationPage } from "../../shared/types";
 import type { Citation } from "../../shared/types";
@@ -47,7 +48,16 @@ function CitationSourceIcon({
     annotation: Citation;
 }) {
     if (annotation.kind === "case") {
-        return <Scale className="h-3.5 w-3.5 text-slate-600" />;
+        return (
+            <Image
+                src="/icons/legal-sources/case-law.svg"
+                alt=""
+                aria-hidden="true"
+                width={14}
+                height={14}
+                className="h-3.5 w-3.5 shrink-0"
+            />
+        );
     }
     return (
         <FileTypeIcon fileType={annotation.filename} className="h-3.5 w-3.5" />

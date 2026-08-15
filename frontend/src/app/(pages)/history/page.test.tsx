@@ -261,12 +261,13 @@ describe("HistoryPage", () => {
 
     expect(await screen.findByText("No history yet")).toBeInTheDocument();
     expect(screen.getByText("No history yet").parentElement).toHaveClass(
-      "items-center",
-      "text-center",
+      "max-w-[260px]",
+      "items-start",
+      "text-left",
     );
     expect(screen.getByTestId("history-empty-icon")).toHaveAttribute(
       "src",
-      expect.stringContaining("/icons/app-sidebar/history.svg"),
+      expect.stringContaining("/icons/features/history.svg"),
     );
   });
 
