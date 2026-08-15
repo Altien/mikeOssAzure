@@ -7,8 +7,10 @@ import {
     useState,
     type CSSProperties,
 } from "react";
+import Image from "next/image";
 import { X } from "lucide-react";
 import { DocPanel, type DocPanelMode } from "./DocPanel";
+import { FileTypeIcon } from "../shared/FileTypeIcon";
 import type {
     Citation,
     EditAnnotation,
@@ -268,6 +270,21 @@ export function AssistantSidePanel({
                                         : "z-10 bg-gray-100 text-gray-600 hover:bg-gray-100 before:content-[''] before:absolute before:bottom-0 before:-left-2 before:h-2 before:w-2 before:rounded-br-lg before:shadow-[4px_4px_0_4px_#f3f4f6] before:transition-shadow after:content-[''] after:absolute after:bottom-0 after:-right-2 after:h-2 after:w-2 after:rounded-bl-lg after:shadow-[-4px_4px_0_4px_#f3f4f6] after:transition-shadow",
                                 )}
                             >
+                                {tab.kind === "case" ? (
+                                    <Image
+                                        src="/icons/legal-sources/case-law.svg"
+                                        alt=""
+                                        aria-hidden="true"
+                                        width={14}
+                                        height={14}
+                                        className="h-3.5 w-3.5 shrink-0 object-contain"
+                                    />
+                                ) : (
+                                    <FileTypeIcon
+                                        fileType={tab.filename}
+                                        className="h-3.5 w-3.5"
+                                    />
+                                )}
                                 <span
                                     className={`min-w-0 flex-1 truncate text-xs ${isActive ? "font-medium" : "font-normal"}`}
                                     title={title}

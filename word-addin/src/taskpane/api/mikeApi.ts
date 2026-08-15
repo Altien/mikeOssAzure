@@ -50,6 +50,7 @@ configureMikeApiClient({
 });
 
 export {
+  createQuickAction,
   createWorkflow,
   deleteWorkflowReferenceFile,
   getApiKeyStatus,
@@ -58,10 +59,8 @@ export {
   getProjectDirectoryLevel,
   getUserProfile,
   getWorkflowReferenceUrl,
-  importWorkflowAddon,
   listProjects,
   listQuickActions,
-  listWorkflowAddons,
   listWorkflowReferenceFiles,
   listWorkflows,
   readSSE,

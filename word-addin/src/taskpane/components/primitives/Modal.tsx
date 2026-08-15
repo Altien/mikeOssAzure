@@ -41,6 +41,11 @@ export function Modal({
   className,
 }: ModalProps): React.ReactElement | null {
   const dialogRef = useRef<HTMLElement>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!open) return;
@@ -63,7 +68,7 @@ export function Modal({
     });
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== "Tab") return;
@@ -88,7 +93,7 @@ export function Modal({
       window.removeEventListener("keydown", onKeyDown);
       previouslyFocused?.focus();
     };
-  }, [onClose, open]);
+  }, [open]);
 
   if (!open) return null;
 

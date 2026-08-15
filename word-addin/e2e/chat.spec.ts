@@ -58,7 +58,9 @@ test("shows frontend-style quick actions before any message is sent", async ({
     page.getByRole("heading", { name: "Hi, Test User" }),
   ).toBeVisible();
   await expect(page.getByText("Quick actions", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Proofread" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Proofread agreement" }),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Compare documents" }),
   ).toBeVisible();

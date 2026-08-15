@@ -48,6 +48,11 @@ export function replaceQuickAction(action: QuickAction): void {
   emitChange();
 }
 
+export function addQuickAction(action: QuickAction): void {
+  snapshot = [...snapshot, action];
+  emitChange();
+}
+
 export function useQuickActions(): QuickAction[] {
   const actions = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 

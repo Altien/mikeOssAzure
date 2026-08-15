@@ -52,6 +52,7 @@ export default function App(): React.ReactElement {
     useState<Workflow | null>(null);
   const [workflowDetailsOpen, setWorkflowDetailsOpen] = useState(false);
   const [newWorkflowOpen, setNewWorkflowOpen] = useState(false);
+  const [newQuickActionOpen, setNewQuickActionOpen] = useState(false);
   const [chatWorkflow, setChatWorkflow] = useState<{
     id: string;
     title: string;
@@ -94,7 +95,12 @@ export default function App(): React.ReactElement {
       case "chat":
         return <></>;
       case "actions":
-        return <DocumentActions />;
+        return (
+          <DocumentActions
+            createOpen={newQuickActionOpen}
+            onCreateClose={() => setNewQuickActionOpen(false)}
+          />
+        );
       case "workflows":
         return (
           <WorkflowPicker
@@ -139,6 +145,7 @@ export default function App(): React.ReactElement {
 
   const changeSection = (section: AddinSection): void => {
     setSelectedSection(section);
+    if (section !== "actions") setNewQuickActionOpen(false);
     if (section !== "workflows") {
       setWorkflowPageSelection(null);
       setWorkflowDetailsOpen(false);
@@ -183,6 +190,7 @@ export default function App(): React.ReactElement {
         onOpenWorkflowDetails={() => setWorkflowDetailsOpen(true)}
         onUseWorkflow={useSelectedWorkflow}
         onNewWorkflow={() => setNewWorkflowOpen(true)}
+        onNewQuickAction={() => setNewQuickActionOpen(true)}
         onSignOut={() => void logout()}
         wordDocumentId={wordDocumentId}
         wordChatStorage={wordChatStorage.mode}

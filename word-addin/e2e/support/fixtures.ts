@@ -230,6 +230,7 @@ export const test = base.extend<{ addin: Addin }>({
       {
         id: "qa-proofread",
         workflow_id: "wf-proofread",
+        name: "Proofread agreement",
         prompt: "Review the current document for drafting quality, internal consistency, grammar, punctuation, formatting, numbering, defined terms, and cross-reference errors. List each issue with its location, severity, and a specific recommended fix.",
         document_upload: true,
         enabled: true,
@@ -239,6 +240,7 @@ export const test = base.extend<{ addin: Addin }>({
       {
         id: "qa-compare",
         workflow_id: "wf-compare",
+        name: null,
         prompt: "Compare the current document with the documents I attach. Present the material similarities, differences, risks, and follow-up points in a structured table, citing the relevant location in each document where available.",
         document_upload: true,
         enabled: true,
@@ -248,6 +250,7 @@ export const test = base.extend<{ addin: Addin }>({
       {
         id: "qa-extract",
         workflow_id: "wf-extract",
+        name: "Extract key terms",
         prompt: "Extract the key legal, commercial, and operational terms from the current document. Present them in a concise table with the term, value, location, and notes, and flag material omissions or ambiguities without inventing missing information.",
         document_upload: true,
         enabled: true,
@@ -257,6 +260,7 @@ export const test = base.extend<{ addin: Addin }>({
       {
         id: "qa-draft",
         workflow_id: "wf-draft",
+        name: "Draft from template",
         prompt: "Create a completed draft from the template I attach, using the current document and any additional materials as source context. Preserve the template's formatting and structure, replace placeholders consistently, and ask for any essential missing information.",
         document_upload: true,
         enabled: true,
@@ -286,15 +290,6 @@ export const test = base.extend<{ addin: Addin }>({
         });
       }
       return route.fallback();
-    });
-
-    await page.route("**/workflow-addons**", (route, request) => {
-      if (request.method() !== "GET") return route.fallback();
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: "[]",
-      });
     });
 
     // Chat history preloads on every authenticated Assistant mount. Keep that
