@@ -924,6 +924,7 @@ function WorkflowTable({
                         disabled
                         className={TABLE_CHECKBOX_CLASS}
                         title="Shared workflows cannot be deleted"
+                        aria-label={`Select ${workflow.metadata.title}`}
                       />
                     )
                   }
@@ -1207,6 +1208,7 @@ function AddonTable({
                           onClick={(event) => event.stopPropagation()}
                           className={TABLE_CHECKBOX_CLASS}
                           title={`Select ${pack.title}`}
+                          aria-label={`Select ${pack.title}`}
                         />
                       }
                       label={

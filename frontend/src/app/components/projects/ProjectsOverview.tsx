@@ -647,6 +647,7 @@ export function ProjectsOverview() {
                                     onSelectionChange={() =>
                                         toggleOne(project.id)
                                     }
+                                    checkboxTitle={`Select ${project.name}`}
                                 >
                                     <ClosedProjectSvgIcon className="mr-2 h-4 w-4 shrink-0" />
                                     <span className="min-w-0 flex-1 truncate text-xs text-gray-800">

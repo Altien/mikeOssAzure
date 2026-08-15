@@ -55,6 +55,7 @@ export function TRFirstColumnCell({
                 checked={selected}
                 onChange={onToggleSelection}
                 className={TABLE_CHECKBOX_CLASS}
+                aria-label={`Select ${row.label}`}
             />
             {row.row_type === "folder" ? (
                 <button

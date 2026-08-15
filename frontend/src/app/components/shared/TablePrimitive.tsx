@@ -426,6 +426,12 @@ export function TablePrimaryCell({
                         onClick={(e) => e.stopPropagation()}
                         className={TABLE_CHECKBOX_CLASS}
                         title={checkboxTitle}
+                        aria-label={
+                            checkboxTitle ??
+                            (typeof label === "string"
+                                ? `Select ${label}`
+                                : undefined)
+                        }
                     />
                 )}
                 {content}

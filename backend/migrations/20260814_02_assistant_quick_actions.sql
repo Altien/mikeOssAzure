@@ -63,8 +63,14 @@ begin
     );
 
     insert into public.workflows (
-      user_id, title, type, prompt_md, columns_config,
-      language, practice, jurisdictions
+      user_id,
+      title,
+      type,
+      prompt_md,
+      columns_config,
+      language,
+      practice,
+      jurisdictions
     ) values (
       p_user_id::uuid,
       item->>'title',
@@ -82,7 +88,9 @@ begin
     returning id into workflow_uuid;
 
     insert into public.default_workflow_installations (
-      user_id, default_key, workflow_id
+      user_id,
+      default_key,
+      workflow_id
     ) values (
       p_user_id::uuid,
       item->>'default_key',
@@ -90,17 +98,23 @@ begin
     );
 
     if item->>'type' = 'assistant' then
-      insert into public.quick_actions (
-        user_id, workflow_id, name, prompt, document_upload, enabled, sort_order
-      ) values (
-        p_user_id::uuid,
-        workflow_uuid,
-        coalesce(nullif(trim(item->>'quick_action_name'), ''), item->>'title'),
-        coalesce(item->>'quick_action_prompt', ''),
-        coalesce((item->>'document_upload')::boolean, false),
-        true,
-        coalesce((item->>'sort_order')::integer, installed_count)
-      );
+    insert into public.quick_actions (
+      user_id,
+      workflow_id,
+      name,
+      prompt,
+      document_upload,
+      enabled,
+      sort_order
+    ) values (
+      p_user_id::uuid,
+      workflow_uuid,
+      coalesce(nullif(trim(item->>'quick_action_name'), ''), item->>'title'),
+      coalesce(item->>'quick_action_prompt', ''),
+      coalesce((item->>'document_upload')::boolean, false),
+      true,
+      coalesce((item->>'sort_order')::integer, installed_count)
+    );
     end if;
 
     installed_count := installed_count + 1;
