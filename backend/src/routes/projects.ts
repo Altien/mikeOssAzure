@@ -201,9 +201,9 @@ async function loadProjectDirectoryLevel(
     { data: folders, error: foldersError },
   ] = await Promise.all([
     documentsQuery
-      .order("created_at", { ascending: true })
+      .order("updated_at", { ascending: false })
       .range(pagination.offset, pagination.offset + pagination.limit),
-    foldersQuery.order("created_at", { ascending: true }),
+    foldersQuery.order("updated_at", { ascending: false }),
   ]);
   if (documentsError)
     return { error: documentsError, documents: [], folders: [] };

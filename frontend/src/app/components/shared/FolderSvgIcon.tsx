@@ -15,8 +15,8 @@ type FolderStateIconProps = FolderSvgIconProps & {
     open?: boolean;
 };
 
-const FOLDER_ICON_VERSION = "19";
-const FOLDER_ICON_BASE_PATH = "/icons/app-sidebar";
+const FOLDER_ICON_VERSION = "20";
+const FOLDER_ICON_BASE_PATH = "/icons/file-system";
 
 function FolderSvgIcon({
     name,
@@ -46,7 +46,10 @@ export function OpenSubfolderSvgIcon(props: FolderSvgIconProps) {
     return <FolderSvgIcon name="folder-open" {...props} />;
 }
 
-export function SubfolderSvgIcon({ open = false, ...props }: FolderStateIconProps) {
+export function SubfolderSvgIcon({
+    open = false,
+    ...props
+}: FolderStateIconProps) {
     return open ? (
         <OpenSubfolderSvgIcon {...props} />
     ) : (
@@ -62,7 +65,10 @@ export function OpenProjectSvgIcon(props: FolderSvgIconProps) {
     return <FolderSvgIcon name="project-opened" {...props} />;
 }
 
-export function ProjectSvgIcon({ open = false, ...props }: FolderStateIconProps) {
+export function ProjectSvgIcon({
+    open = false,
+    ...props
+}: FolderStateIconProps) {
     return open ? (
         <OpenProjectSvgIcon {...props} />
     ) : (

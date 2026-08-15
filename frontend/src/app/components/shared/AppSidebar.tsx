@@ -8,12 +8,7 @@ import {
   useRef,
   type UIEvent,
 } from "react";
-import {
-    PanelLeft,
-    ChevronsUpDown,
-    ChevronDown,
-  Loader2,
-} from "lucide-react";
+import { PanelLeft, ChevronsUpDown, ChevronDown, Loader2 } from "lucide-react";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
@@ -28,6 +23,7 @@ import {
     TabularReviewSkeuoIcon,
     WorkflowSkeuoIcon,
     SettingsSkeuoIcon,
+    SignOutSkeuoIcon,
 } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import { HistorySkeuoIcon } from "@/app/components/shared/HistorySkeuoIcon";
 import { ProjectSvgIcon } from "@/app/components/shared/FolderSvgIcon";
@@ -53,9 +49,15 @@ const NAV_ITEMS = [
 
 const RECENT_PROJECT_PAGE_SIZE = 10;
 const RECENT_PROJECT_LIST_HEIGHT_CLASS = "h-44";
+const recentProjectsCache = new Map<
+    string,
+    { projects: Project[]; hasMore: boolean }
+>();
 
 function isNearScrollEnd(element: HTMLDivElement) {
-  return element.scrollHeight - element.scrollTop - element.clientHeight <= 32;
+    return (
+        element.scrollHeight - element.scrollTop - element.clientHeight <= 32
+    );
 }
 
 interface AppSidebarProps {
@@ -64,9 +66,9 @@ interface AppSidebarProps {
 }
 
 export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
-    const { user } = useAuth();
+    const { user, signOut } = useAuth();
     const { profile } = useUserProfile();
-  const { chats, loadingMoreChats, loadMoreChats, setCurrentChatId } =
+    const { chats, loadingMoreChats, loadMoreChats, setCurrentChatId } =
         useChatHistoryContext();
     const router = useRouter();
     const pathname = usePathname();
@@ -84,78 +86,103 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const [projectsCollapsed, setProjectsCollapsed] = useState(false);
     const [historyCollapsed, setHistoryCollapsed] = useState(false);
-  const [recentProjects, setRecentProjects] = useState<Project[] | null>(null);
-  const [hasMoreRecentProjects, setHasMoreRecentProjects] = useState(false);
-  const [loadingMoreRecentProjects, setLoadingMoreRecentProjects] =
-    useState(false);
-  const loadingMoreRecentProjectsRef = useRef(false);
+    const userId = user?.id ?? null;
+    const [recentProjects, setRecentProjects] = useState<Project[] | null>(
+        null,
+    );
+    const [hasMoreRecentProjects, setHasMoreRecentProjects] = useState(false);
+    const [loadingMoreRecentProjects, setLoadingMoreRecentProjects] =
+        useState(false);
+    const loadingMoreRecentProjectsRef = useRef(false);
+    const displayedRecentProjects =
+        recentProjects ??
+        (userId ? recentProjectsCache.get(userId)?.projects : undefined) ??
+        null;
 
     useEffect(() => {
-    if (!user) {
-      setRecentProjects([]);
-      setHasMoreRecentProjects(false);
-      setLoadingMoreRecentProjects(false);
-      loadingMoreRecentProjectsRef.current = false;
-      return;
-    }
+        if (!userId) {
+            setRecentProjects([]);
+            setHasMoreRecentProjects(false);
+            setLoadingMoreRecentProjects(false);
+            loadingMoreRecentProjectsRef.current = false;
+            return;
+        }
 
-    const controller = new AbortController();
-    setRecentProjects(null);
-    setHasMoreRecentProjects(false);
-    setLoadingMoreRecentProjects(false);
-    loadingMoreRecentProjectsRef.current = false;
+        const cached = recentProjectsCache.get(userId);
+        if (cached) {
+            setRecentProjects(cached.projects);
+            setHasMoreRecentProjects(cached.hasMore);
+        } else {
+            setRecentProjects(null);
+            setHasMoreRecentProjects(false);
+        }
+        const controller = new AbortController();
+        setLoadingMoreRecentProjects(false);
+        loadingMoreRecentProjectsRef.current = false;
 
-    listProjectSummaries({
-      limit: RECENT_PROJECT_PAGE_SIZE + 1,
-      signal: controller.signal,
-    })
+        listProjectSummaries({
+            limit: RECENT_PROJECT_PAGE_SIZE + 1,
+            signal: controller.signal,
+        })
             .then((projects) => {
-        if (controller.signal.aborted) return;
-        setRecentProjects(projects.slice(0, RECENT_PROJECT_PAGE_SIZE));
-        setHasMoreRecentProjects(projects.length > RECENT_PROJECT_PAGE_SIZE);
+                if (controller.signal.aborted) return;
+                const next = projects.slice(0, RECENT_PROJECT_PAGE_SIZE);
+                const hasMore = projects.length > RECENT_PROJECT_PAGE_SIZE;
+                recentProjectsCache.set(userId, { projects: next, hasMore });
+                setRecentProjects(next);
+                setHasMoreRecentProjects(hasMore);
             })
             .catch(() => {
-        if (controller.signal.aborted) return;
+                if (controller.signal.aborted) return;
                 setRecentProjects([]);
-        setHasMoreRecentProjects(false);
+                setHasMoreRecentProjects(false);
             });
 
-    return () => controller.abort();
-    }, [user]);
+        return () => controller.abort();
+    }, [userId]);
 
-  const loadMoreRecentProjects = useCallback(async () => {
-    if (
-      !user ||
-      recentProjects === null ||
-      !hasMoreRecentProjects ||
-      loadingMoreRecentProjectsRef.current
-    ) {
-      return;
-    }
+    const loadMoreRecentProjects = useCallback(async () => {
+        if (
+            !userId ||
+            recentProjects === null ||
+            !hasMoreRecentProjects ||
+            loadingMoreRecentProjectsRef.current
+        ) {
+            return;
+        }
 
-    loadingMoreRecentProjectsRef.current = true;
-    setLoadingMoreRecentProjects(true);
-    try {
-      const projects = await listProjectSummaries({
-        limit: RECENT_PROJECT_PAGE_SIZE + 1,
-        offset: recentProjects.length,
-      });
-      const page = projects.slice(0, RECENT_PROJECT_PAGE_SIZE);
-      setRecentProjects((current) => {
-        const existing = new Set((current ?? []).map((project) => project.id));
-        return [
-          ...(current ?? []),
-          ...page.filter((project) => !existing.has(project.id)),
-        ];
-      });
-      setHasMoreRecentProjects(projects.length > RECENT_PROJECT_PAGE_SIZE);
-    } catch {
-      // Keep the current page and allow the next scroll to retry.
-    } finally {
-      loadingMoreRecentProjectsRef.current = false;
-      setLoadingMoreRecentProjects(false);
-    }
-  }, [hasMoreRecentProjects, recentProjects, user]);
+        loadingMoreRecentProjectsRef.current = true;
+        setLoadingMoreRecentProjects(true);
+        try {
+            const projects = await listProjectSummaries({
+                limit: RECENT_PROJECT_PAGE_SIZE + 1,
+                offset: recentProjects.length,
+            });
+            const page = projects.slice(0, RECENT_PROJECT_PAGE_SIZE);
+            setRecentProjects((current) => {
+                const existing = new Set(
+                    (current ?? []).map((project) => project.id),
+                );
+                const next = [
+                    ...(current ?? []),
+                    ...page.filter((project) => !existing.has(project.id)),
+                ];
+                recentProjectsCache.set(userId, {
+                    projects: next,
+                    hasMore: projects.length > RECENT_PROJECT_PAGE_SIZE,
+                });
+                return next;
+            });
+            setHasMoreRecentProjects(
+                projects.length > RECENT_PROJECT_PAGE_SIZE,
+            );
+        } catch {
+            // Keep the current page and allow the next scroll to retry.
+        } finally {
+            loadingMoreRecentProjectsRef.current = false;
+            setLoadingMoreRecentProjects(false);
+        }
+    }, [hasMoreRecentProjects, recentProjects, userId]);
 
   const handleRecentProjectsScroll = useCallback(
     (event: UIEvent<HTMLDivElement>) => {
@@ -184,7 +211,8 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
         const handleClickOutside = () => setIsDropdownOpen(false);
         if (isDropdownOpen) {
             document.addEventListener("click", handleClickOutside);
-      return () => document.removeEventListener("click", handleClickOutside);
+            return () =>
+                document.removeEventListener("click", handleClickOutside);
         }
     }, [isDropdownOpen]);
 
@@ -274,7 +302,8 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                             ? pathname === href
                             : href === "/projects"
                               ? pathname === href
-                : pathname === href || pathname.startsWith(href + "/");
+                              : pathname === href ||
+                                pathname.startsWith(href + "/");
                     return (
                         <div key={href} className="py-0.5 px-2.5">
                             <button
@@ -290,13 +319,17 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                             >
                                 <Icon
                                     className={`h-4 w-4 flex-shrink-0 ${
-                    isActive ? "text-gray-900" : "text-black"
+                                        isActive
+                                            ? "text-gray-900"
+                                            : "text-black"
                                     }`}
                                 />
                                 {isOpen && (
                                     <span
                                         className={`text-sm font-medium ${
-                      shouldAnimate ? "sidebar-fade-in-2" : ""
+                                            shouldAnimate
+                                                ? "sidebar-fade-in-2"
+                                                : ""
                                         }`}
                                     >
                                         {label}
@@ -332,7 +365,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                   )}
                   onScroll={handleRecentProjectsScroll}
                 >
-                                    {!recentProjects ? (
+                                    {!displayedRecentProjects ? (
                                         <div className="space-y-1 px-2.5">
                                             {[50, 65, 45].map((w, i) => (
                                                 <div
@@ -348,10 +381,12 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                                 </div>
                                             ))}
                                         </div>
-                                    ) : recentProjects.length === 0 ? (
+                                    ) : displayedRecentProjects.length === 0 ? (
                                         <div
                                             className={`px-5 py-2 text-xs text-gray-500 ${
-                        shouldAnimate ? "sidebar-fade-in-2" : ""
+                                                shouldAnimate
+                                                    ? "sidebar-fade-in-2"
+                                                    : ""
                                             }`}
                                         >
                                             No projects yet
@@ -359,18 +394,26 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                     ) : (
                                         <div
                       className={`space-y-1 px-2.5 pb-1 ${
-                        shouldAnimate ? "sidebar-fade-in-2" : ""
+                                                shouldAnimate
+                                                    ? "sidebar-fade-in-2"
+                                                    : ""
                                             }`}
                                         >
-                                            {recentProjects.map((project) => {
+                                            {displayedRecentProjects.map(
+                                                (project) => {
                                                 const isActive =
-                          pathname === `/projects/${project.id}` ||
-                          pathname.startsWith(`/projects/${project.id}/`);
+                                                        pathname ===
+                                                            `/projects/${project.id}` ||
+                                                        pathname.startsWith(
+                                                            `/projects/${project.id}/`,
+                                                        );
                                                 return (
                                                     <button
                                                         key={project.id}
                                                         onClick={() =>
-                              router.push(`/projects/${project.id}`)
+                                                                router.push(
+                                                                    `/projects/${project.id}`,
+                                                                )
                                                         }
                                                         title={project.name}
                                                         className={cn(
@@ -389,7 +432,8 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                                         </span>
                                                     </button>
                                                 );
-                                            })}
+                                                },
+                                            )}
                       {loadingMoreRecentProjects && (
                         <div className="flex h-8 items-center justify-center">
                           <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
@@ -446,7 +490,9 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                 ) : chats.length === 0 ? (
                                     <div
                                         className={`text-xs text-gray-500 py-2 px-5 ${
-                      shouldAnimate ? "sidebar-fade-in-2" : ""
+                                            shouldAnimate
+                                                ? "sidebar-fade-in-2"
+                                                : ""
                                         }`}
                                     >
                                         No chats yet
@@ -455,17 +501,26 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                     <>
                                         <div
                                             className={`space-y-1.5 px-2.5 ${
-                        shouldAnimate ? "sidebar-fade-in-2" : ""
+                                                shouldAnimate
+                                                    ? "sidebar-fade-in-2"
+                                                    : ""
                                             }`}
                                         >
                                             {chats.map((chat) => (
                                                 <SidebarChatItem
                                                     key={chat.id}
                                                     chat={chat}
-                          isActive={routeChatId === chat.id}
-                          projectName={chat.project_name ?? undefined}
+                                                    isActive={
+                                                        routeChatId === chat.id
+                                                    }
+                                                    projectName={
+                                                        chat.project_name ??
+                                                        undefined
+                                                    }
                                                     onSelect={() => {
-                            setCurrentChatId(chat.id);
+                                                        setCurrentChatId(
+                                                            chat.id,
+                                                        );
                                                         router.push(
                                                             chat.project_id
                                                                 ? `/projects/${chat.project_id}/assistant/chat/${chat.id}`
@@ -492,7 +547,9 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                     {user && (
                         <div className="relative">
                             <button
-                onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                                onClick={() =>
+                                    setIsDropdownOpen(!isDropdownOpen)
+                                }
                                 className={cn(
                                     "flex items-center transition-colors w-full px-2.5 py-3 border-t",
                                     "rounded-xl border-white/60",
@@ -511,7 +568,9 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                 {isOpen && (
                                     <div
                                         className={`text-left flex-1 min-w-0 pl-3 flex items-center justify-between gap-2 ${
-                      shouldAnimate ? "sidebar-fade-in-2" : ""
+                                            shouldAnimate
+                                                ? "sidebar-fade-in-2"
+                                                : ""
                                         }`}
                                     >
                                         <div className="flex flex-col gap-0.5 min-w-0">
@@ -542,7 +601,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                         }}
                                         className={cn(
                                             "flex w-full items-center gap-2 rounded-md px-4 py-2 text-left text-sm text-gray-700",
-                                            "hover:bg-white",
+                                            APP_SURFACE_HOVER_CLASS,
                                             pathname === "/history" &&
                                                 APP_SURFACE_ACTIVE_CLASS,
                                         )}
@@ -557,11 +616,26 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                         }}
                                         className={cn(
                                             "w-full px-4 py-2 text-left text-sm text-gray-700 flex items-center gap-2 rounded-md",
-                                            "hover:bg-white",
+                                            APP_SURFACE_HOVER_CLASS,
                                         )}
                                     >
                                         <SettingsSkeuoIcon className="h-4 w-4" />
                                         Settings
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setIsDropdownOpen(false);
+                                            void signOut().then(() =>
+                                                router.push("/"),
+                                            );
+                                        }}
+                                        className={cn(
+                                            "flex w-full items-center gap-2 rounded-md px-4 py-2 text-left text-sm text-gray-700",
+                                            APP_SURFACE_HOVER_CLASS,
+                                        )}
+                                    >
+                                        <SignOutSkeuoIcon className="h-4 w-4" />
+                                        Sign out
                                     </button>
                                 </div>
                             )}
