@@ -39,6 +39,7 @@ interface FloatingHeaderProps {
   onOpenWorkflowDetails?: () => void;
   onUseWorkflow?: () => void;
   onNewWorkflow?: () => void;
+  onNewQuickAction?: () => void;
   onSignOut: () => void;
   wordDocumentId: string;
   wordChatStorage: WordChatStorageMode;
@@ -71,6 +72,7 @@ export function FloatingHeader({
   onOpenWorkflowDetails,
   onUseWorkflow,
   onNewWorkflow,
+  onNewQuickAction,
   onSignOut,
   wordDocumentId,
   wordChatStorage,
@@ -204,6 +206,16 @@ export function FloatingHeader({
             onClick={onNewWorkflow}
             aria-label="New workflow"
             title="New workflow"
+          >
+            <Plus className="h-4 w-4" />
+          </LiquidIconButton>
+        </LiquidActionRow>
+      ) : section === "actions" ? (
+        <LiquidActionRow className="pointer-events-auto relative z-10">
+          <LiquidIconButton
+            onClick={onNewQuickAction}
+            aria-label="New quick action"
+            title="New quick action"
           >
             <Plus className="h-4 w-4" />
           </LiquidIconButton>

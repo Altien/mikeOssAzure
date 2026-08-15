@@ -3,7 +3,6 @@ import type {
     LibraryFolder,
     Project,
     Workflow,
-    WorkflowAddon,
     WorkflowReferenceDocument,
 } from "../types";
 import { describeNetworkFailure } from "../lib/networkError";
@@ -388,6 +387,8 @@ export async function listQuickActions(): Promise<
 export async function updateQuickAction(
     quickActionId: string,
     payload: {
+        workflow_id?: string;
+        name?: string;
         prompt?: string;
         document_upload?: boolean;
         enabled?: boolean;
@@ -404,17 +405,18 @@ export async function updateQuickAction(
     );
 }
 
-export async function listWorkflowAddons(
-    type?: WorkflowType,
-): Promise<WorkflowAddon[]> {
-    return apiRequest<WorkflowAddon[]>(
-        type ? `/workflow-addons?type=${type}` : "/workflow-addons",
-    );
-}
-
-export async function importWorkflowAddon(addonId: string): Promise<Workflow> {
-    return apiRequest<Workflow>(`/workflow-addons/${addonId}/import`, {
+export async function createQuickAction(payload: {
+    workflow_id: string;
+    name: string;
+    prompt: string;
+    document_upload: boolean;
+    enabled?: boolean;
+    sort_order?: number;
+}): Promise<import("../types").QuickAction> {
+    return apiRequest<import("../types").QuickAction>("/quick-actions", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
     });
 }
 
