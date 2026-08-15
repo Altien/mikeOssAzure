@@ -38,7 +38,7 @@
         fill="url(#front)" stroke="url(#rim)" stroke-width="1.5"/>
 
   <g clip-path="url(#clipFront)">
-    <ellipse cx="32" cy="23" rx="26" ry="6" fill="url(#sheen)" opacity="0.22"/>
-    <ellipse cx="11.5" cy="37" rx="4" ry="11" fill="url(#sheen)" opacity="0.14"/>
+    <ellipse cx="32" cy="23" rx="26" ry="6" fill="url(#sheen)" opacity="0.12"/>
+    <ellipse cx="11.5" cy="37" rx="4" ry="11" fill="url(#sheen)" opacity="0.08"/>
   </g>
 </svg>
