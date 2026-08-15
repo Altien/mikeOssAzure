@@ -27,15 +27,15 @@ import {
     reserveAssistantMessage,
     withoutEmptyAssistantReservations,
 } from "../lib/chat";
-import { completeText } from "../lib/llm";
 import { getUserModelSettings } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
 import { getSkillChatBindingMetadata } from "../altien/skills/runtime";
 import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
+import { generateAssistantChatTitle } from "../lib/chatTitle";
 
 export const chatRouter = Router();
 
-// Adopted from upstream 44e868e (title normalization + devLog, used by
+// Adopted from upstream 44e868e (devLog, used by
 // the abort-aware stream error path). Upstream 3f76761b centralized the
 // request-body validators (parseChatMessages / parseOptional*) in
 // lib/chat/requestValidation.ts; dev ADOPTS those validators. Upstream's
@@ -47,17 +47,6 @@ const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
     if (isDev) console.log(...args);
 };
-
-const TITLE_FALLBACK = "Misc. Query";
-
-function normalizeGeneratedTitle(raw: string): string {
-    const title = raw
-        .trim()
-        .replace(/^["'`]+|["'`.,:;!?]+$/g, "")
-        .trim();
-    if (!title) return TITLE_FALLBACK;
-    return title.slice(0, 80);
-}
 
 // GET /chat
 // Visible chats = the user's own chats + every chat under a project the
@@ -337,19 +326,12 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
             userId,
             db,
         );
-        const titleText = await completeText({
-            // Dev routes title generation through fast_model (dev's
-            // analog of upstream's title_model — sync-log: 44e868e);
-            // prompt + normalization adopted from upstream.
+        title = await generateAssistantChatTitle({
+            // Dev routes title generation through fast_model.
             model: fast_model,
-            user: `Generate a concise title (3–6 words) for a chat in an AI Legal Platform that starts with this message. The title should describe the topic or document — do NOT include words like "Legal Assistant", "AI", "Chat", or any similar prefix. If there is not enough information to generate a title, return exactly "${TITLE_FALLBACK}". Return only the title, no quotes or punctuation.\n\nMessage: ${message.slice(0, 500)}`,
-            maxTokens: 64,
-            // A reasoning model otherwise spends all 64 tokens thinking and
-            // returns no content → fallback title (OSS-6 smoke, 2026-09-30).
-            reasoningEffort: "none",
+            message,
             apiKeys: api_keys,
         });
-        title = normalizeGeneratedTitle(titleText);
     } catch (err) {
         // Upstream divergence (sync-log: 3a10943): upstream returns 500 when
         // the title LLM call fails; dev intentionally keeps the
@@ -605,6 +587,48 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             })}\n\n`,
         );
 
+        const shouldGenerateTitle =
+            !chatTitle && !!lastUser?.content && !askInputsResponse;
+        const titleMessage = lastUser
+            ? [
+                  lastUser.content,
+                  lastUser.workflow
+                      ? `Workflow: ${lastUser.workflow.title}`
+                      : "",
+                  lastUser.files?.length
+                      ? `Files: ${lastUser.files.map((file) => file.filename).join(", ")}`
+                      : "",
+              ]
+                  .filter(Boolean)
+                  .join("\n")
+            : "";
+        const titlePromise = shouldGenerateTitle
+            ? generateAssistantChatTitle({
+                  model: fastModel,
+                  message: titleMessage,
+                  apiKeys,
+              })
+                  .then(async (title) => {
+                      const { error } = await db
+                          .from("chats")
+                          .update({ title })
+                          .eq("id", chatId);
+                      if (error) throw error;
+                      chatTitle = title;
+                      if (!stream.signal.aborted) {
+                          write(
+                              `data: ${JSON.stringify({ type: "chat_title", chatId, title })}\n\n`,
+                          );
+                      }
+                  })
+                  .catch((error) => {
+                      console.error(
+                          "[chat/stream] failed to generate chat title",
+                          safeErrorLog(error),
+                      );
+                  })
+            : Promise.resolve();
+
         const { fullText, events, citations } = await runLLMStream({
             apiMessages,
             docStore,
@@ -660,11 +684,20 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             }
         }
 
+        await titlePromise;
+
         if (!chatTitle && lastUser?.content) {
+            const title = lastUser.content.slice(0, 120);
             await db
                 .from("chats")
-                .update({ title: lastUser.content.slice(0, 120) })
+                .update({ title })
                 .eq("id", chatId);
+            chatTitle = title;
+            if (shouldGenerateTitle && !stream.signal.aborted) {
+                write(
+                    `data: ${JSON.stringify({ type: "chat_title", chatId, title })}\n\n`,
+                );
+            }
         }
         void recordChatTurn(
             db,

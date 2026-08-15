@@ -260,12 +260,14 @@ export function DocFindBlock({
     totalMatches,
     isStreaming,
     showConnector,
+    onClick,
 }: {
     filename: string;
     query: string;
     totalMatches: number;
     isStreaming?: boolean;
     showConnector?: boolean;
+    onClick?: () => void;
 }) {
     const matchSuffix = isStreaming
         ? ""
@@ -281,7 +283,18 @@ export function DocFindBlock({
             </span>{" "}
             <span>
                 &ldquo;{query}&rdquo;{matchSuffix}
-                <span className="ml-1 text-gray-400">in {filename}</span>
+                <span className="ml-1 text-gray-400">in </span>
+                {!isStreaming && onClick ? (
+                    <button
+                        type="button"
+                        onClick={onClick}
+                        className="cursor-pointer text-left text-gray-400 transition-colors hover:text-gray-700"
+                    >
+                        {filename}
+                    </button>
+                ) : (
+                    <span className="text-gray-400">{filename}</span>
+                )}
                 {isStreaming && "..."}
             </span>
         </EventBlock>
@@ -292,10 +305,12 @@ export function DocCreatedBlock({
     filename,
     showConnector,
     isStreaming,
+    onClick,
 }: {
     filename: string;
     showConnector?: boolean;
     isStreaming?: boolean;
+    onClick?: () => void;
 }) {
     return (
         <EventBlock
@@ -303,10 +318,28 @@ export function DocCreatedBlock({
             isStreaming={isStreaming}
             dotColor="green"
         >
-            <span className="font-medium">
-                {isStreaming ? "Creating" : "Created"}
-            </span>{" "}
-            <span>{isStreaming ? `${filename}...` : filename}</span>
+            <div className="flex min-w-0 items-center gap-1.5">
+                <span className="shrink-0 font-medium">
+                    {isStreaming ? "Creating" : "Created"}
+                </span>
+                {isStreaming || !onClick ? (
+                    <span className="flex min-w-0 items-center gap-1.5">
+                        <FileTypeIcon fileType={filename} className="h-3.5 w-3.5" />
+                        <span className="truncate">
+                            {isStreaming ? `${filename}...` : filename}
+                        </span>
+                    </span>
+                ) : (
+                    <button
+                        type="button"
+                        onClick={onClick}
+                        className="flex min-w-0 cursor-pointer items-center gap-1.5 text-left transition-colors hover:text-gray-700"
+                    >
+                        <FileTypeIcon fileType={filename} className="h-3.5 w-3.5" />
+                        <span className="truncate">{filename}</span>
+                    </button>
+                )}
+            </div>
         </EventBlock>
     );
 }
@@ -314,9 +347,11 @@ export function DocCreatedBlock({
 export function DocReplicatedBlock({
     filename,
     count,
+    copies,
     showConnector,
     isStreaming,
     hasError,
+    onOpenCopy,
 }: {
     filename: string;
     /**
@@ -324,9 +359,19 @@ export function DocReplicatedBlock({
      * into this block. ≥ 1; only rendered when > 1.
      */
     count: number;
+    copies?: {
+        new_filename: string;
+        document_id: string;
+        version_id: string;
+    }[];
     showConnector?: boolean;
     isStreaming?: boolean;
     hasError?: boolean;
+    onOpenCopy?: (copy: {
+        new_filename: string;
+        document_id: string;
+        version_id: string;
+    }) => void;
 }) {
     const label = isStreaming ? "Replicating" : "Replicated";
     const suffix =
@@ -342,10 +387,31 @@ export function DocReplicatedBlock({
             dotColor={hasError ? "red" : "green"}
         >
             <span className="font-medium">{label}</span>{" "}
-            <span>
-                {filename}
-                {suffix}
-            </span>
+            {!isStreaming && copies?.length ? (
+                <span>
+                    {copies.map((copy, index) => (
+                        <span key={copy.document_id}>
+                            {index > 0 && ", "}
+                            {onOpenCopy ? (
+                                <button
+                                    type="button"
+                                    onClick={() => onOpenCopy(copy)}
+                                    className="cursor-pointer text-left transition-colors hover:text-gray-700"
+                                >
+                                    {copy.new_filename}
+                                </button>
+                            ) : (
+                                copy.new_filename
+                            )}
+                        </span>
+                    ))}
+                </span>
+            ) : (
+                <>
+                    <span>{filename}</span>
+                    <span>{suffix}</span>
+                </>
+            )}
         </EventBlock>
     );
 }
@@ -510,7 +576,7 @@ export function WorkflowAppliedBlock({
 }) {
     return (
         <EventBlock showConnector={showConnector} dotColor="green">
-            <span className="font-medium">Applied Workflow</span>{" "}
+            <span className="font-medium">Read Workflow</span>{" "}
             {onClick ? (
                 <button
                     onClick={onClick}
@@ -693,11 +759,13 @@ export function DocEditedBlock({
     showConnector,
     isStreaming,
     hasError,
+    onClick,
 }: {
     filename: string;
     showConnector?: boolean;
     isStreaming?: boolean;
     hasError?: boolean;
+    onClick?: () => void;
 }) {
     return (
         <EventBlock
@@ -708,7 +776,17 @@ export function DocEditedBlock({
             <span className="font-medium">
                 {isStreaming ? "Editing" : hasError ? "Edit failed" : "Edited"}
             </span>{" "}
-            <span>{isStreaming ? `${filename}...` : filename}</span>
+            {!isStreaming && onClick ? (
+                <button
+                    type="button"
+                    onClick={onClick}
+                    className="cursor-pointer text-left transition-colors hover:text-gray-700"
+                >
+                    {filename}
+                </button>
+            ) : (
+                <span>{isStreaming ? `${filename}...` : filename}</span>
+            )}
         </EventBlock>
     );
 }

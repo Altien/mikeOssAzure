@@ -1756,6 +1756,7 @@ export async function findInDocumentContent(params: {
       error: `Document '${docLabel}' not found.`,
     });
   }
+  const documentId = docIndex?.[docLabel]?.document_id;
 
   // Announce the search to the UI, then reuse readDocumentContent for its
   // fallbacks — but suppress its own doc_read events so the user only sees
@@ -1764,6 +1765,7 @@ export async function findInDocumentContent(params: {
     `data: ${JSON.stringify({
       type: "doc_find_start",
       filename: docInfo.filename,
+      document_id: documentId,
       query,
     })}\n\n`,
   );
@@ -1781,6 +1783,7 @@ export async function findInDocumentContent(params: {
       `data: ${JSON.stringify({
         type: "doc_find",
         filename: docInfo.filename,
+        document_id: documentId,
         query,
         total_matches: 0,
       })}\n\n`,
@@ -1811,6 +1814,7 @@ export async function findInDocumentContent(params: {
     `data: ${JSON.stringify({
       type: "doc_find",
       filename: docInfo.filename,
+      document_id: documentId,
       query,
       total_matches: totalMatches,
     })}\n\n`,

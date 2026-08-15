@@ -23,6 +23,7 @@ import {
     clearTabularCells,
     copyDocumentVersionFromDocument,
     createChat,
+    createQuickAction,
     createLibraryFolder,
     createMcpConnector,
     createProject,
@@ -59,8 +60,9 @@ import {
     getDocumentUrl,
     getLibrary,
     getLibraryLevels,
-  getLibraryFilterOptions,
+    getLibraryFilterOptions,
     getLibraryFolderChildren,
+    getLibraryFolderPath,
     getMcpConnector,
     getProject,
     getProjectDirectoryLevel,
@@ -467,8 +469,7 @@ describe("audit history", () => {
             new Response("history", {
                 status: 200,
                 headers: {
-                    "content-disposition":
-                        'attachment; filename="history.csv"',
+                    "content-disposition": 'attachment; filename="history.csv"',
                 },
             }),
         );
@@ -499,7 +500,9 @@ describe("audit history", () => {
         await getAuditHistory({});
         expect(lastFetchCall().url).toBe("http://localhost:3001/api/audit?");
 
-        fetchMock.mockResolvedValueOnce(new Response("history", { status: 200 }));
+        fetchMock.mockResolvedValueOnce(
+            new Response("history", { status: 200 }),
+        );
 
         await exportAuditHistory({});
         expect(lastFetchCall().url).toBe("http://localhost:3001/api/audit/export?");
@@ -737,7 +740,10 @@ describe("streamChat", () => {
     });
 
     it("returns the streaming Response body unconsumed", async () => {
-    const chunks = ['data: {"type":"content_delta","text":"Hel', 'lo"}\n\n'];
+        const chunks = [
+            'data: {"type":"content_delta","text":"Hel',
+            'lo"}\n\n',
+        ];
         fetchMock.mockResolvedValue(streamResponse(chunks));
 
         const response = await streamChat({
@@ -873,7 +879,9 @@ describe("listTabularReviewIds", () => {
     });
 
     it("scopes ids by project, search, and scope so select-all matches the visible filter", async () => {
-        fetchMock.mockResolvedValue(jsonResponse([{ id: "r1", user_id: "u1" }]));
+        fetchMock.mockResolvedValue(
+            jsonResponse([{ id: "r1", user_id: "u1" }]),
+        );
         const controller = new AbortController();
 
         const ids = await listTabularReviewIds("p1", {
@@ -984,7 +992,11 @@ describe("searchProjectDirectory", () => {
 describe("getProjectDirectoryLevel", () => {
   it("serializes a folder level, pagination, and abort signal", async () => {
     fetchMock.mockResolvedValue(
-      jsonResponse({ documents: [], folders: [], documentsHasMore: false }),
+            jsonResponse({
+                documents: [],
+                folders: [],
+                documentsHasMore: false,
+            }),
     );
     const controller = new AbortController();
 
@@ -1004,7 +1016,11 @@ describe("getProjectDirectoryLevel", () => {
 
   it("requests the root level without optional query parameters", async () => {
     fetchMock.mockResolvedValue(
-      jsonResponse({ documents: [], folders: [], documentsHasMore: false }),
+            jsonResponse({
+                documents: [],
+                folders: [],
+                documentsHasMore: false,
+            }),
     );
 
     await getProjectDirectoryLevel("p1");
@@ -1025,7 +1041,9 @@ describe("listProjectIds", () => {
     });
 
     it("scopes ids by search, scope, practice, and owner so select-all matches the visible filter", async () => {
-        fetchMock.mockResolvedValue(jsonResponse([{ id: "p1", user_id: "u1" }]));
+        fetchMock.mockResolvedValue(
+            jsonResponse([{ id: "p1", user_id: "u1" }]),
+        );
         const controller = new AbortController();
 
         const ids = await listProjectIds({
@@ -1143,7 +1161,9 @@ describe("listWorkflowIds", () => {
     });
 
     it("scopes ids by every active filter so select-all matches the visible list", async () => {
-        fetchMock.mockResolvedValue(jsonResponse([{ id: "w1", user_id: "u1" }]));
+        fetchMock.mockResolvedValue(
+            jsonResponse([{ id: "w1", user_id: "u1" }]),
+        );
 
         const ids = await listWorkflowIds({
             search: "nda",
@@ -1262,7 +1282,11 @@ describe("Library search", () => {
 
   it("loads another page of one Library folder", async () => {
     fetchMock.mockResolvedValue(
-      jsonResponse({ documents: [], folders: [], documentsHasMore: false }),
+            jsonResponse({
+                documents: [],
+                folders: [],
+                documentsHasMore: false,
+            }),
     );
 
     await getLibraryFolderChildren("files", "folder-1", { offset: 50 });
@@ -1314,7 +1338,9 @@ describe("Library search", () => {
   });
 
   it("loads the complete file-type facet list", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ fileTypes: ["docx", "pdf"] }));
+        fetchMock.mockResolvedValue(
+            jsonResponse({ fileTypes: ["docx", "pdf"] }),
+        );
 
     await getLibraryFilterOptions("files");
 
@@ -1414,7 +1440,9 @@ describe("uploadReviewDocument", () => {
         expect(patchCall[0]).toBe("http://localhost:3001/api/tabular-review/r1");
         // Existing ids must be preserved — the review would otherwise shrink
         // to just the newly uploaded document.
-        expect(JSON.parse((patchCall[1] as RequestInit).body as string)).toEqual({
+        expect(
+            JSON.parse((patchCall[1] as RequestInit).body as string),
+        ).toEqual({
             columns_config: [{ index: 0, name: "Term", prompt: "p" }],
             document_ids: ["d1", "new-doc"],
         });
@@ -1430,7 +1458,9 @@ describe("uploadReviewDocument", () => {
         const [uploadCall, patchCall] = fetchMock.mock.calls;
         expect(uploadCall[0]).toBe("http://localhost:3001/api/single-documents");
         // With no prior ids the review ends up with exactly the new document.
-    expect(JSON.parse((patchCall[1] as RequestInit).body as string)).toEqual({
+        expect(
+            JSON.parse((patchCall[1] as RequestInit).body as string),
+        ).toEqual({
       document_ids: ["new-doc"],
     });
     });
@@ -1585,9 +1615,9 @@ describe("multipart upload endpoints", () => {
         expect((init.body as FormData).get("filename")).toBe("renamed.pdf");
 
         fetchMock.mockResolvedValue(new Response("nope", { status: 409 }));
-    await expect(replaceDocumentVersionFile("d1", "v1", file)).rejects.toThrow(
-      "nope",
-    );
+        await expect(
+            replaceDocumentVersionFile("d1", "v1", file),
+        ).rejects.toThrow("nope");
     });
 
     it("uploads workflow reference files as authenticated multipart data", async () => {
@@ -1610,9 +1640,9 @@ describe("multipart upload endpoints", () => {
         fetchMock.mockResolvedValue(
             jsonResponse({ detail: "Unsupported file" }, { status: 415 }),
         );
-        await expect(uploadWorkflowReferenceFile("w1", file)).rejects.toBeInstanceOf(
-            MikeApiError,
-        );
+        await expect(
+            uploadWorkflowReferenceFile("w1", file),
+        ).rejects.toBeInstanceOf(MikeApiError);
     });
 
     it("replaces workflow reference files as authenticated multipart data", async () => {
@@ -1783,7 +1813,9 @@ describe("thin endpoint wrappers", () => {
         {
             name: "createProject",
       call: () =>
-        createProject("Acme v. Zenith", "CM-42", "litigation", ["a@b.c"]),
+                createProject("Acme v. Zenith", "CM-42", "litigation", [
+                    "a@b.c",
+                ]),
             url: "/projects",
             method: "POST",
             body: {
@@ -1813,7 +1845,8 @@ describe("thin endpoint wrappers", () => {
         },
         {
             name: "updateUserProfile",
-            call: () => updateUserProfile({ displayName: "Amal", titleModel: "m1" }),
+            call: () =>
+                updateUserProfile({ displayName: "Amal", titleModel: "m1" }),
             url: "/user/profile",
             method: "PATCH",
             body: { displayName: "Amal", titleModel: "m1" },
@@ -1913,7 +1946,8 @@ describe("thin endpoint wrappers", () => {
         },
         {
             name: "updateProject",
-            call: () => updateProject("p1", { name: "Renamed", practice: null }),
+            call: () =>
+                updateProject("p1", { name: "Renamed", practice: null }),
             url: "/projects/p1",
             method: "PATCH",
             body: { name: "Renamed", practice: null },
@@ -1989,6 +2023,11 @@ describe("thin endpoint wrappers", () => {
             url: "/library/files?parent_folder_id=f1",
         },
         {
+            name: "getLibraryFolderPath",
+            call: () => getLibraryFolderPath("templates", "f2"),
+            url: "/library/templates/folders/f2",
+        },
+        {
             name: "getLibrary with pagination",
             call: () => getLibrary("files", { limit: 50, offset: 100 }),
             url: "/library/files?limit=50&offset=100",
@@ -2051,7 +2090,8 @@ describe("thin endpoint wrappers", () => {
         },
         {
             name: "copyDocumentVersionFromDocument",
-            call: () => copyDocumentVersionFromDocument("d1", "src-1", "copy.pdf"),
+            call: () =>
+                copyDocumentVersionFromDocument("d1", "src-1", "copy.pdf"),
             url: "/single-documents/d1/versions/from-document",
             method: "POST",
             body: { source_document_id: "src-1", filename: "copy.pdf" },
@@ -2124,7 +2164,8 @@ describe("thin endpoint wrappers", () => {
         },
         {
             name: "updateWorkflow",
-            call: () => updateWorkflow("w1", { metadata: { title: "Renamed" } }),
+            call: () =>
+                updateWorkflow("w1", { metadata: { title: "Renamed" } }),
             url: "/workflows/w1",
             method: "PATCH",
             body: { metadata: { title: "Renamed" } },
@@ -2161,7 +2202,8 @@ describe("thin endpoint wrappers", () => {
         },
         {
             name: "shareWorkflow",
-      call: () => shareWorkflow("w1", { emails: ["a@b.c"], allow_edit: false }),
+            call: () =>
+                shareWorkflow("w1", { emails: ["a@b.c"], allow_edit: false }),
             url: "/workflows/w1/share",
             method: "POST",
             body: { emails: ["a@b.c"], allow_edit: false },
@@ -2183,9 +2225,33 @@ describe("thin endpoint wrappers", () => {
             url: "/quick-actions",
         },
         {
+            name: "createQuickAction",
+            call: () =>
+                createQuickAction({
+                    workflow_id: "w1",
+                    name: "Review agreement",
+                    prompt: "Review this",
+                    document_upload: true,
+                    enabled: true,
+                    sort_order: 4,
+                }),
+            url: "/quick-actions",
+            method: "POST",
+            body: {
+                workflow_id: "w1",
+                name: "Review agreement",
+                prompt: "Review this",
+                document_upload: true,
+                enabled: true,
+                sort_order: 4,
+            },
+        },
+        {
             name: "updateQuickAction",
             call: () =>
                 updateQuickAction("qa1", {
+                    workflow_id: "w2",
+                    name: "Proofread agreement",
                     prompt: "Proofread this",
                     document_upload: true,
                     enabled: false,
@@ -2194,6 +2260,8 @@ describe("thin endpoint wrappers", () => {
             url: "/quick-actions/qa1",
             method: "PATCH",
             body: {
+                workflow_id: "w2",
+                name: "Proofread agreement",
                 prompt: "Proofread this",
                 document_upload: true,
                 enabled: false,

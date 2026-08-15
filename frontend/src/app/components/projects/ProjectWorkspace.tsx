@@ -60,6 +60,9 @@ type ProjectWorkspaceValue = {
     createChat: () => Promise<void>;
     openNewReview: () => void;
     setAddDocumentsHeaderAction: (action: (() => void) | null) => void;
+    setDocumentFolderBreadcrumbs: React.Dispatch<
+        React.SetStateAction<Array<{ label: string; onClick: () => void }>>
+    >;
     setOwnerOnlyAction: React.Dispatch<React.SetStateAction<string | null>>;
 };
 
@@ -90,6 +93,7 @@ function activeSectionFromSegments(
 
 function shouldShowWorkspaceShell(segments: string[]) {
     if (segments.length === 0) return true;
+    if (segments.length === 2 && segments[0] === "folders") return true;
     if (segments.length !== 1) return false;
     return segments[0] === "assistant" || segments[0] === "tabular-reviews";
 }
@@ -122,7 +126,9 @@ export function ProjectWorkspaceProvider({
     const [creatingReview, setCreatingReview] = useState(false);
     const [addDocumentsHeaderAction, setAddDocumentsHeaderActionState] =
         useState<{ action: (() => void) | null }>({ action: null });
-
+    const [documentFolderBreadcrumbs, setDocumentFolderBreadcrumbs] = useState<
+        Array<{ label: string; onClick: () => void }>
+    >([]);
     const segments = useSelectedLayoutSegments();
     const activeSection = activeSectionFromSegments(segments);
     const showShell = shouldShowWorkspaceShell(segments);
@@ -135,6 +141,7 @@ export function ProjectWorkspaceProvider({
     useEffect(() => {
         setProjectChats(null);
         setProjectChatsLoading(false);
+        setDocumentFolderBreadcrumbs([]);
         projectChatsPromiseRef.current = null;
     }, [projectId]);
 
@@ -144,6 +151,10 @@ export function ProjectWorkspaceProvider({
         },
         [],
     );
+
+    const openProjectRoot = useCallback(() => {
+        router.push(`/projects/${projectId}`);
+    }, [projectId, router]);
 
     useEffect(() => {
         if (!showShell) {
@@ -340,6 +351,7 @@ export function ProjectWorkspaceProvider({
             createChat,
             openNewReview,
             setAddDocumentsHeaderAction,
+            setDocumentFolderBreadcrumbs,
             setOwnerOnlyAction,
         }),
         [
@@ -381,6 +393,7 @@ export function ProjectWorkspaceProvider({
                     creatingReview={creatingReview}
                     isOwner={project?.is_owner !== false}
                     onBackToProjects={() => router.push("/projects")}
+                    onProjectRoot={openProjectRoot}
                     onOpenDetails={() => setProjectDetailsOpen(true)}
                     onDeleteProject={requestProjectDelete}
                     onSearchChange={setSearch}
@@ -388,6 +401,7 @@ export function ProjectWorkspaceProvider({
                     onNewChat={() => void createChat()}
                     onNewReview={openNewReview}
                     onAddDocuments={addDocumentsHeaderAction.action}
+                    documentFolderBreadcrumbs={documentFolderBreadcrumbs}
                 />
 
                 {children}

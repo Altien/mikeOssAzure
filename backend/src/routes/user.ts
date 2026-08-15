@@ -160,6 +160,8 @@ userRouter.get("/lookup", requireAuth, async (req, res) => {
 const MONTHLY_CREDIT_LIMIT = 999999;
 
 const PROFILE_SELECT =
+  "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us, quick_actions_visible";
+const PROFILE_SELECT_NO_QUICK_ACTIONS =
   "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us";
 
 type UserProfileRow = {
@@ -171,6 +173,7 @@ type UserProfileRow = {
   tabular_model: string | null;
   fast_model: string | null;
   legal_research_us: boolean | null;
+  quick_actions_visible: boolean | null;
 };
 
 type ProfileApiKeyStatus = Record<OrganisationCredentialProvider, boolean> & {
@@ -233,6 +236,7 @@ function serializeProfile(
     // Features > Legal Research > Jurisdiction > US toggle (upstream
     // 1fa0554); defaults to enabled.
     legalResearchUs: row.legal_research_us !== false,
+    quickActionsVisible: row.quick_actions_visible !== false,
     apiKeyStatus,
   };
 }
@@ -245,7 +249,15 @@ async function loadProfile(
   | { data: null; error: { message: string } }
 > {
   const [profileResult, apiKeyStatus] = await Promise.all([
-    db.from("user_profiles").select(PROFILE_SELECT).eq("user_id", userId).single(),
+    (async () => {
+      const current = await db.from("user_profiles").select(PROFILE_SELECT).eq("user_id", userId).single();
+      if (!current.error || current.error.code !== "42703") return current;
+      const previous = await db.from("user_profiles").select(PROFILE_SELECT_NO_QUICK_ACTIONS).eq("user_id", userId).single();
+      if (previous.data) {
+        return { ...previous, data: { ...previous.data, quick_actions_visible: true } };
+      }
+      return previous;
+    })(),
     buildProfileApiKeyStatus(userId, db),
   ]);
   const { data, error } = profileResult;
@@ -287,6 +299,7 @@ type ProfileUpdate = {
   fast_model?: string | null;
   tabular_model?: string;
   legal_research_us?: boolean;
+  quick_actions_visible?: boolean;
   updated_at: string;
 };
 
@@ -306,6 +319,7 @@ function validateProfilePayload(
     "titleModel",
     "tabularModel",
     "legalResearchUs",
+    "quickActionsVisible",
   ]);
   const invalidField = Object.keys(raw).find((key) => !allowedFields.has(key));
   if (invalidField) {
@@ -355,6 +369,13 @@ function validateProfilePayload(
       return { ok: false, detail: "legalResearchUs must be a boolean" };
     }
     update.legal_research_us = raw.legalResearchUs;
+  }
+
+  if ("quickActionsVisible" in raw) {
+    if (typeof raw.quickActionsVisible !== "boolean") {
+      return { ok: false, detail: "quickActionsVisible must be a boolean" };
+    }
+    update.quick_actions_visible = raw.quickActionsVisible;
   }
 
   return { ok: true, update };

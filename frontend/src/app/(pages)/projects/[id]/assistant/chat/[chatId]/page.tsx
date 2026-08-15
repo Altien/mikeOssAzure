@@ -963,16 +963,22 @@ export default function ProjectAssistantChatPage() {
                         ? {
                               label: project.name,
                               onClick: () =>
-                                  router.push(`/projects/${projectId}/assistant`),
+                                  router.push(`/projects/${projectId}`),
                               title: "Back to project",
                           }
                         : {
                               loading: true,
                               skeletonClassName: "w-32",
                               onClick: () =>
-                                  router.push(`/projects/${projectId}/assistant`),
+                                  router.push(`/projects/${projectId}`),
                               title: "Back to project",
                           },
+                    {
+                        label: "Chats",
+                        onClick: () =>
+                            router.push(`/projects/${projectId}/assistant`),
+                        title: "Back to Chats",
+                    },
                     chatLoaded
                         ? {
                               label: (

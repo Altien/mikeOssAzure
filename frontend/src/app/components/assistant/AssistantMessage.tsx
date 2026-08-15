@@ -426,9 +426,19 @@ export function AssistantMessage({
                     filename={event.filename}
                     isStreaming={event.isStreaming}
                     onClick={
-                        !event.isStreaming && ann && onCitationClick
-                            ? () => onCitationClick(ann)
-                            : undefined
+                        !event.isStreaming &&
+                        event.document_id &&
+                        onOpenDocument
+                            ? () =>
+                                  onOpenDocument({
+                                      documentId: event.document_id!,
+                                      filename: event.filename,
+                                      versionId: null,
+                                      versionNumber: null,
+                                  })
+                            : !event.isStreaming && ann && onCitationClick
+                              ? () => onCitationClick(ann)
+                              : undefined
                     }
                     showConnector={showConnector}
                 />
@@ -443,6 +453,19 @@ export function AssistantMessage({
                     totalMatches={event.total_matches}
                     isStreaming={!!event.isStreaming}
                     showConnector={showConnector}
+                    onClick={
+                        !event.isStreaming &&
+                        event.document_id &&
+                        onOpenDocument
+                            ? () =>
+                                  onOpenDocument({
+                                      documentId: event.document_id!,
+                                      filename: event.filename,
+                                      versionId: null,
+                                      versionNumber: null,
+                                  })
+                            : undefined
+                    }
                 />
             );
         }
@@ -453,6 +476,20 @@ export function AssistantMessage({
                     filename={event.filename}
                     isStreaming={event.isStreaming}
                     showConnector={showConnector}
+                    onClick={
+                        !event.isStreaming &&
+                        event.document_id &&
+                        onOpenDocument
+                            ? () =>
+                                  onOpenDocument({
+                                      documentId: event.document_id!,
+                                      filename: event.filename,
+                                      versionId: event.version_id ?? null,
+                                      versionNumber:
+                                          event.version_number ?? null,
+                                  })
+                            : undefined
+                    }
                 />
             );
         }
@@ -465,9 +502,21 @@ export function AssistantMessage({
                     key={globalIdx}
                     filename={event.filename}
                     count={event.count}
+                    copies={event.copies}
                     isStreaming={!!event.isStreaming}
                     hasError={!!event.error}
                     showConnector={showConnector}
+                    onOpenCopy={
+                        !event.isStreaming && onOpenDocument
+                            ? (copy) =>
+                                  onOpenDocument({
+                                      documentId: copy.document_id,
+                                      filename: copy.new_filename,
+                                      versionId: copy.version_id,
+                                      versionNumber: 1,
+                                  })
+                            : undefined
+                    }
                 />
             );
         }
@@ -479,6 +528,20 @@ export function AssistantMessage({
                     isStreaming={event.isStreaming}
                     hasError={!!event.error}
                     showConnector={showConnector}
+                    onClick={
+                        !event.isStreaming &&
+                        event.document_id &&
+                        onOpenDocument
+                            ? () =>
+                                  onOpenDocument({
+                                      documentId: event.document_id,
+                                      filename: event.filename,
+                                      versionId: event.version_id || null,
+                                      versionNumber:
+                                          event.version_number ?? null,
+                                  })
+                            : undefined
+                    }
                 />
             );
         }

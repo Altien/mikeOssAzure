@@ -6,16 +6,18 @@ import {
   LiquidIconButton,
   LiquidTextButton,
 } from "../primitives/LiquidActionRow";
-import chatIcon from "../../../assets/icons/app-sidebar/chat.svg";
-import quickActionsIcon from "../../../assets/icons/app-sidebar/quick-actions.svg";
-import workflowIcon from "../../../assets/icons/app-sidebar/workflow.svg";
-import chatHistoryIcon from "../../../assets/icons/app-sidebar/chat-history.svg";
-import settingsIcon from "../../../assets/icons/app-sidebar/settings.svg";
+import chatIcon from "@icons/features/chat.svg";
+import quickActionsIcon from "@icons/features/quick-actions.svg";
+import workflowIcon from "@icons/features/workflow.svg";
+import chatHistoryIcon from "@icons/features/chat-history.svg";
+import settingsIcon from "@icons/settings.svg";
+import signOutIcon from "@icons/sign-out.svg";
 import { ChatHistoryDropdown } from "../history/ChatHistoryDropdown";
 import {
   Dropdown,
   DropdownContent,
   DropdownItem,
+  DropdownSeparator,
   DropdownTrigger,
 } from "../primitives/Dropdown";
 import type { WordChatStorageMode } from "../../lib/wordChatSettings";
@@ -37,6 +39,7 @@ interface FloatingHeaderProps {
   onOpenWorkflowDetails?: () => void;
   onUseWorkflow?: () => void;
   onNewWorkflow?: () => void;
+  onSignOut: () => void;
   wordDocumentId: string;
   wordChatStorage: WordChatStorageMode;
   wordChatOwnerId: string;
@@ -68,6 +71,7 @@ export function FloatingHeader({
   onOpenWorkflowDetails,
   onUseWorkflow,
   onNewWorkflow,
+  onSignOut,
   wordDocumentId,
   wordChatStorage,
   wordChatOwnerId,
@@ -134,6 +138,17 @@ export function FloatingHeader({
                 </DropdownItem>
               );
             })}
+            <DropdownSeparator />
+            <DropdownItem onSelect={onSignOut}>
+              <img
+                src={signOutIcon}
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+                className="h-4 w-4 shrink-0 object-contain"
+              />
+              <span className="min-w-0 flex-1">Sign out</span>
+            </DropdownItem>
           </DropdownContent>
         </Dropdown>
         {workflowDetailOpen && (

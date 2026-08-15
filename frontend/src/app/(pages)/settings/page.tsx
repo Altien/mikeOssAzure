@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { LogOut, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { FieldLabel } from "@/app/components/ui/form-field";
 import { SettingsTextInput } from "@/app/components/settings/SettingsTextInput";
@@ -58,11 +58,6 @@ export default function SettingsPage() {
             setEmail(user.pendingEmail || user.email);
         }
     }, [user?.email, user?.pendingEmail]);
-
-    const handleLogout = async () => {
-        await signOut();
-        router.push("/");
-    };
 
     const handleDeleteAccount = async () => {
         devLog("[account] delete account requested");
@@ -178,13 +173,11 @@ export default function SettingsPage() {
                                         }
                                         className="text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
                                     >
-                                        {isSavingName ? (
-                                            "Saving..."
-                                        ) : saved ? (
-                                            "Saved"
-                                        ) : (
-                                            "Save"
-                                        )}
+                                        {isSavingName
+                                            ? "Saving..."
+                                            : saved
+                                              ? "Saved"
+                                              : "Save"}
                                     </button>
                                 </div>
                             </div>
@@ -214,13 +207,11 @@ export default function SettingsPage() {
                                         }
                                         className="text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
                                     >
-                                        {isSavingOrg ? (
-                                            "Saving..."
-                                        ) : orgSaved ? (
-                                            "Saved"
-                                        ) : (
-                                            "Save"
-                                        )}
+                                        {isSavingOrg
+                                            ? "Saving..."
+                                            : orgSaved
+                                              ? "Saved"
+                                              : "Save"}
                                     </button>
                                 </div>
                             </div>
@@ -292,13 +283,11 @@ export default function SettingsPage() {
                                 }
                                 className="text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
                             >
-                                {isSavingEmail ? (
-                                    "Saving..."
-                                ) : emailSaved ? (
-                                    "Saved"
-                                ) : (
-                                    "Save"
-                                )}
+                                {isSavingEmail
+                                    ? "Saving..."
+                                    : emailSaved
+                                      ? "Saved"
+                                      : "Save"}
                             </button>
                         </div>
                     </div>

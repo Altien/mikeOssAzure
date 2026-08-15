@@ -13,9 +13,10 @@ import {
     useState,
 } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Upload } from "lucide-react";
+import { ChevronLeft, Plus, Upload } from "lucide-react";
 import { DocTable } from "@/app/components/documents/DocTable";
 import type {
+  DocTableFolderBreadcrumb,
   DocTableFolder,
   DocTableQuery,
 } from "@/app/components/documents/DocTable";
@@ -27,8 +28,9 @@ import {
     createLibraryFolder,
     deleteLibraryFolder,
     getLibrary,
-  getLibraryFilterOptions,
+    getLibraryFilterOptions,
     getLibraryFolderChildren,
+    getLibraryFolderPath,
   getLibraryLevels,
   listLibraryDocumentIds,
     moveLibraryDocument,
@@ -88,7 +90,7 @@ const EMPTY_COLLECTION: LibraryViewCollection = {
 // below (folder levels are keyed by their real folder id, which is always a
 // uuid and so can never collide with this).
 const ROOT_LEVEL_KEY = "root";
-const DOCUMENT_PAGE_SIZE = 50;
+const DOCUMENT_PAGE_SIZE = 40;
 
 function libraryLevelKey(parentId: string | null): string {
     return parentId ?? ROOT_LEVEL_KEY;
@@ -489,7 +491,13 @@ export function LibraryWorkspaceLayout({ children }: { children: ReactNode }) {
     return <LibraryWorkspaceProvider>{children}</LibraryWorkspaceProvider>;
 }
 
-export function LibraryCollectionPage({ kind }: { kind: LibraryKind }) {
+export function LibraryCollectionPage({
+    kind,
+    folderId = null,
+}: {
+    kind: LibraryKind;
+    folderId?: string | null;
+}) {
     const router = useRouter();
     const {
         collections,
@@ -505,7 +513,9 @@ export function LibraryCollectionPage({ kind }: { kind: LibraryKind }) {
         setFoldersForKind,
     } = useLibraryWorkspace();
     const collection = collections[kind];
+    const collectionLoaded = collection !== null;
     const search = searchByKind[kind];
+    const collectionRootPath = kind === "files" ? "/library" : "/library/templates";
   const debouncedSearch = useDebouncedValue(search, 250);
     const title = kind === "files" ? "Files" : "Templates";
   const [documentTypeOptions, setDocumentTypeOptions] = useState<string[]>([]);
@@ -522,11 +532,92 @@ export function LibraryCollectionPage({ kind }: { kind: LibraryKind }) {
   const [serverQueryHasMore, setServerQueryHasMore] = useState(false);
   const [serverQueryRefreshVersion, setServerQueryRefreshVersion] = useState(0);
   const serverQueryRequestRef = useRef(0);
+    const loadedFolderRouteRef = useRef<string | null>(null);
+    const loadFolderChildrenRef = useRef(loadFolderChildren);
+    loadFolderChildrenRef.current = loadFolderChildren;
+    const folderAvailable =
+        !folderId ||
+        !!collection?.folders.some((folder) => folder.id === folderId);
+    const folderAvailableRef = useRef(folderAvailable);
+    folderAvailableRef.current = folderAvailable;
 
     useEffect(() => {
         if (collection) return;
         void loadLibrary(kind, { showLoading: true });
     }, [collection, kind, loadLibrary]);
+
+    useEffect(() => {
+        if (!folderId) {
+            loadedFolderRouteRef.current = null;
+            return;
+        }
+        if (!collectionLoaded) return;
+
+        const routeKey = `${kind}:${folderId}`;
+        if (loadedFolderRouteRef.current === routeKey) return;
+        loadedFolderRouteRef.current = routeKey;
+        let cancelled = false;
+
+        const loadRoute = folderAvailableRef.current
+            ? Promise.resolve()
+            : getLibraryFolderPath(kind, folderId).then(
+                  ({ folders: path }) => {
+                      if (cancelled) return;
+                      setFoldersForKind(kind, (current) => {
+                          const pathById = new Map(
+                              path.map((folder) => [folder.id, folder]),
+                          );
+                          const merged = current.map(
+                              (folder) =>
+                                  pathById.get(folder.id) ?? folder,
+                          );
+                          const currentIds = new Set(
+                              current.map((folder) => folder.id),
+                          );
+                          return [
+                              ...merged,
+                              ...path.filter(
+                                  (folder) => !currentIds.has(folder.id),
+                              ),
+                          ];
+                      });
+                  },
+              );
+
+        void loadRoute
+            .then(() => {
+                if (cancelled) return;
+                return loadFolderChildrenRef.current(kind, folderId);
+            })
+            .catch((error) => {
+                console.error("[library] failed to load folder route", error);
+                loadedFolderRouteRef.current = null;
+                if (!cancelled) {
+                    router.replace(collectionRootPath, { scroll: false });
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [
+        collectionLoaded,
+        collectionRootPath,
+        folderId,
+        kind,
+        router,
+        setFoldersForKind,
+    ]);
+
+    const handleFolderViewIdChange = useCallback(
+        (nextFolderId: string | null) => {
+            const nextPath = nextFolderId
+                ? `${collectionRootPath}/folders/${encodeURIComponent(nextFolderId)}`
+                : collectionRootPath;
+            router.push(nextPath, { scroll: false });
+        },
+        [collectionRootPath, router],
+    );
 
     const setDocuments: Dispatch<SetStateAction<Document[]>> = useCallback(
     (update) => {
@@ -548,7 +639,14 @@ export function LibraryCollectionPage({ kind }: { kind: LibraryKind }) {
     const [createFolderAction, setCreateFolderAction] = useState<
         (() => void) | null
     >(null);
-    const loading = !collection || loadingByKind[kind];
+    const [folderBackAction, setFolderBackAction] = useState<
+        (() => void) | null
+    >(null);
+    const [folderBreadcrumbs, setFolderBreadcrumbs] = useState<
+        Array<{ label: string; onClick: () => void }>
+    >([]);
+    const loading =
+        !collection || loadingByKind[kind] || !folderAvailable;
     const addCollectionLabel = kind === "templates" ? "Templates" : "Files";
 
     const handleAddDocumentsActionChange = useCallback(
@@ -561,6 +659,25 @@ export function LibraryCollectionPage({ kind }: { kind: LibraryKind }) {
     const handleCreateFolderActionChange = useCallback(
         (action: (() => void) | null) => {
             setCreateFolderAction(() => action);
+        },
+        [],
+    );
+
+    const handleFolderBackActionChange = useCallback(
+        (action: (() => void) | null) => {
+            setFolderBackAction(() => action);
+        },
+        [],
+    );
+
+    const handleFolderViewChange = useCallback(
+        (path: DocTableFolderBreadcrumb[]) => {
+            setFolderBreadcrumbs(
+                path.map((folder) => ({
+                    label: folder.name,
+                    onClick: folder.onClick,
+                })),
+            );
         },
         [],
     );
@@ -741,7 +858,17 @@ export function LibraryCollectionPage({ kind }: { kind: LibraryKind }) {
     return (
         <div className="flex h-full min-h-0 flex-col">
             <PageHeader
-                breadcrumbs={[{ label: "Library" }, { label: title }]}
+                breadcrumbs={[
+                    {
+                        label: "Library",
+                        onClick: () => router.push("/library"),
+                    },
+                    {
+                        label: title,
+                        onClick: () => router.push(collectionRootPath),
+                    },
+                    ...folderBreadcrumbs,
+                ]}
                 actionGroups={[
                     {
                         actions: [
@@ -774,16 +901,26 @@ export function LibraryCollectionPage({ kind }: { kind: LibraryKind }) {
                     items={LIBRARY_TABS}
                     active={kind}
                     onChange={(next) =>
-            router.push(next === "files" ? "/library" : "/library/templates")
+                        router.push(
+                            next === "files" ? "/library" : "/library/templates",
+                        )
                     }
                     actions={
-                        <TabPillButton
-                            onClick={createFolderAction ?? undefined}
-                            disabled={!createFolderAction || loading}
-                        >
-                            <Plus className="h-3.5 w-3.5" />
-                            <span className="hidden sm:inline">Folder</span>
-                        </TabPillButton>
+                        <>
+                            {folderBackAction && (
+                                <TabPillButton onClick={folderBackAction}>
+                                    <ChevronLeft className="h-3.5 w-3.5" />
+                                    Back
+                                </TabPillButton>
+                            )}
+                            <TabPillButton
+                                onClick={createFolderAction ?? undefined}
+                                disabled={!createFolderAction || loading}
+                            >
+                                <Plus className="h-3.5 w-3.5" />
+                                <span className="hidden sm:inline">Folder</span>
+                            </TabPillButton>
+                        </>
                     }
                 />
                 <DocTable
@@ -797,6 +934,10 @@ export function LibraryCollectionPage({ kind }: { kind: LibraryKind }) {
                     operations={operations}
                     onAddDocumentsActionChange={handleAddDocumentsActionChange}
           onCreateFolderActionChange={handleCreateFolderActionChange}
+                    onFolderViewBackActionChange={handleFolderBackActionChange}
+                    onFolderViewChange={handleFolderViewChange}
+                    folderViewId={folderId}
+                    onFolderViewIdChange={handleFolderViewIdChange}
                     onExpandFolder={handleExpandFolder}
                     documentsHasMoreByLevel={documentsHasMoreByKind[kind]}
           loadingMoreDocumentsByLevel={loadingMoreDocumentsByKind[kind]}
