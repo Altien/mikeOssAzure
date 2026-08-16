@@ -9,6 +9,7 @@ export type EditCardStatus =
   | "restoring"
   | "pending"
   | "view-only"
+  | "applied"
   | "accepted"
   | "rejected"
   | "skipped"
@@ -21,6 +22,7 @@ export type EditCardStatus =
 export type DocEditStatus =
   | "applying"
   | "pending"
+  | "applied"
   | "accepted"
   | "rejected"
   | "skipped"

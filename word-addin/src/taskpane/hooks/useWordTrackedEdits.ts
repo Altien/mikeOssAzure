@@ -18,14 +18,17 @@ import type {
   WordEditStreamController,
   WordTrackedEditsController,
 } from "../lib/wordChatTypes";
+import type { WordEditApplyMode } from "../lib/wordChatSettings";
 import { getEditKey } from "../lib/wordTrackedEditKeys";
 
 export function useWordTrackedEdits({
   sessionKey,
   initialMessages,
+  applyMode = "approval",
 }: {
   sessionKey: number;
   initialMessages: SavedMessage[];
+  applyMode?: WordEditApplyMode;
 }): WordTrackedEditsController {
   const [editStateByKey, setEditStateByKey] = useState<
     Record<string, EditRuntimeState>
@@ -37,6 +40,10 @@ export function useWordTrackedEdits({
   const editHandlesRef = useRef(new Map<string, TrackedEditHandle>());
   const persistentViewEditKeysRef = useRef(new Set<string>());
   const resolvingEditKeysRef = useRef(new Set<string>());
+  // Read at apply time so a mid-stream toggle governs only edits that have
+  // not been scheduled yet; already-applied cards keep their lifecycle.
+  const applyModeRef = useRef(applyMode);
+  applyModeRef.current = applyMode;
   const { applyTrackedEdits } = useWordDoc();
 
   const setEditRuntimeState = useCallback(
@@ -167,6 +174,9 @@ export function useWordTrackedEdits({
       scheduledEditKeysRef.current.add(key);
       setEditRuntimeState(key, { status: "applying", busy: true });
       const generation = sessionGenerationRef.current;
+      // Bind the mode per edit at scheduling time: a toggle flipped while
+      // this apply is in flight must not split one edit's lifecycle.
+      const directApply = applyModeRef.current === "direct";
 
       const job = applyTrackedEdits([
         {
@@ -190,6 +200,56 @@ export function useWordTrackedEdits({
           }
 
           if (result.status === "applied" && result.handle) {
+            if (directApply) {
+              // Direct mode: the tracked change was only the write mechanism.
+              // Accept it immediately so the document shows final text with
+              // no review step.
+              const resolution = await resolveTrackedEdit(
+                result.handle,
+                "accept",
+              );
+              if (
+                generation !== sessionGenerationRef.current ||
+                !mountedRef.current
+              ) {
+                return;
+              }
+              if (
+                resolution.status === "accepted" ||
+                (resolution.status === "already-resolved" &&
+                  resolution.resolvedAs === "accept")
+              ) {
+                setEditRuntimeState(key, {
+                  status: "applied",
+                  matches: result.matches,
+                  busy: false,
+                  error: result.error ?? report.warning,
+                });
+                return;
+              }
+              if (
+                resolution.status === "already-resolved" &&
+                resolution.resolvedAs === "reject"
+              ) {
+                setEditRuntimeState(key, {
+                  status: "rejected",
+                  busy: false,
+                  error: undefined,
+                });
+                return;
+              }
+              // The write landed but the auto-accept did not stick; the
+              // revision handle is gone, so hand review back to Word.
+              setEditRuntimeState(key, {
+                status: "unmanaged",
+                matches: result.matches,
+                busy: false,
+                error:
+                  resolution.error ??
+                  "Applied in Word, but the change couldn’t be finalized. Review it from Word’s Review tab.",
+              });
+              return;
+            }
             editHandlesRef.current.set(key, result.handle);
             if (result.persistentAnchor) {
               persistentViewEditKeysRef.current.add(key);
