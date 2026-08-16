@@ -86,6 +86,7 @@ describe("citation verification presentation", () => {
   it("shows per-quote verification in the citation panel", () => {
     render(
       <CitationQuotesHeader
+        citationRef={7}
         quotes={[
           {
             id: "quote-1",
@@ -97,6 +98,8 @@ describe("citation verification presentation", () => {
       />,
     );
 
+    expect(screen.getByLabelText("Citation 7")).toHaveTextContent("7");
+    expect(screen.queryByText("Citation")).not.toBeInTheDocument();
     expect(screen.getByText("Could not verify quote")).toBeVisible();
     const quoteButton = screen.getByRole("button", {
       name: /Model supplied quote/,

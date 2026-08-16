@@ -9,10 +9,6 @@ import {
     type RefObject,
 } from "react";
 import DOMPurify from "dompurify";
-import {
-    Download,
-    ExternalLink,
-} from "lucide-react";
 import { MikeIcon } from "@/app/components/chat/mike-icon";
 import type { CaseCitationQuote } from "../shared/types";
 import {
@@ -112,10 +108,7 @@ const CASE_OPINION_SANITIZER_CONFIG = {
 };
 
 function sanitizeCaseOpinionHtml(value: string): string {
-    const sanitized = DOMPurify.sanitize(
-        value,
-        CASE_OPINION_SANITIZER_CONFIG,
-    );
+    const sanitized = DOMPurify.sanitize(value, CASE_OPINION_SANITIZER_CONFIG);
     if (typeof document === "undefined") return sanitized;
 
     const template = document.createElement("template");
@@ -152,18 +145,6 @@ function friendlyCaseError(message: string): string {
     return "Could not load this case from CourtListener. Please try again shortly.";
 }
 
-function formatCaseDate(value: string | null | undefined): string | null {
-    if (!value) return null;
-    const date = new Date(`${value}T00:00:00`);
-    if (Number.isNaN(date.getTime())) return value;
-    return new Intl.DateTimeFormat("en-US", {
-        month: "long",
-        day: "numeric",
-        year: "numeric",
-        timeZone: "UTC",
-    }).format(date);
-}
-
 function hashString(value: string): string {
     let hash = 0;
     for (let i = 0; i < value.length; i += 1) {
@@ -178,7 +159,11 @@ function caseTabQuoteKey(tab: CaseTab): string {
             ?.map((quote) => quote.quote)
             .filter(Boolean)
             .join("\n---\n") ?? "";
-    return [tab.clusterId, tab.citationRef ?? "source", hashString(quoteKey)].join(":");
+    return [
+        tab.clusterId,
+        tab.citationRef ?? "source",
+        hashString(quoteKey),
+    ].join(":");
 }
 
 function relevantQuoteKey(quote: CaseCitationQuote, index: number): string {
@@ -189,13 +174,7 @@ function caseCitationRequestKey(tab: CaseTab) {
     return String(tab.clusterId);
 }
 
-export function CaseLawPanel({
-    tab,
-    compactActions = false,
-}: {
-    tab: CaseTab;
-    compactActions?: boolean;
-}) {
+export function CaseView({ tab }: { tab: CaseTab }) {
     const cachedOpinions = courtlistenerOpinionsCache.get(tab.clusterId);
     const [opinions, setOpinions] = useState<CaseLawOpinion[]>(
         tab.opinions?.length ? tab.opinions : (cachedOpinions ?? []),
@@ -281,8 +260,6 @@ export function CaseLawPanel({
 
     const title = tab.caseName;
     const citation = tab.citation;
-    const courtlistenerUrl = tab.url;
-    const filedDate = formatCaseDate(tab.dateFiled);
     const orderedOpinions = orderOpinions(opinions);
     const activeOpinion = opinions.find(
         (opinion) => opinion.opinionId === activeOpinionId,
@@ -370,71 +347,7 @@ export function CaseLawPanel({
     const opinionSurfaceClassName = "bg-white/60 backdrop-blur-xl";
 
     return (
-        <div className="flex h-full flex-col">
-            <div className="flex items-start gap-3 px-3 pt-4 pb-3">
-                <div className="min-w-0 flex-1">
-                    <h2 className="font-serif text-xl text-gray-900">
-                        {title}
-                        {citation && (
-                            <span className="text-gray-500">, {citation}</span>
-                        )}
-                    </h2>
-                    {filedDate ? (
-                        <p className="mt-1 font-serif text-sm text-gray-600">
-                            Date: {filedDate}
-                        </p>
-                    ) : null}
-                </div>
-                <div className="flex min-w-0 shrink flex-wrap items-center justify-end gap-2">
-                    {tab.pdfUrl && (
-                        <a
-                            href={tab.pdfUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            download
-                            aria-label="Download PDF"
-                            title="Download PDF"
-                            className={`inline-flex min-w-0 shrink items-center justify-center rounded-lg border border-gray-200 text-xs text-gray-700 hover:bg-gray-50 ${
-                                compactActions
-                                    ? "h-8 w-8 p-0"
-                                    : "gap-1.5 px-2.5 py-1.5"
-                            }`}
-                        >
-                            <span
-                                className={
-                                    compactActions ? "sr-only" : "truncate"
-                                }
-                            >
-                                PDF
-                            </span>
-                            <Download className="h-3.5 w-3.5" />
-                        </a>
-                    )}
-                    {courtlistenerUrl && (
-                        <a
-                            href={courtlistenerUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            aria-label="Open in CourtListener"
-                            title="Open in CourtListener"
-                            className={`inline-flex min-w-0 shrink items-center justify-center rounded-lg border border-gray-200 text-xs text-gray-700 hover:bg-gray-50 ${
-                                compactActions
-                                    ? "h-8 w-8 p-0"
-                                    : "gap-1.5 px-2.5 py-1.5"
-                            }`}
-                        >
-                            <span
-                                className={
-                                    compactActions ? "sr-only" : "truncate"
-                                }
-                            >
-                                CourtListener
-                            </span>
-                            <ExternalLink className="h-3.5 w-3.5" />
-                        </a>
-                    )}
-                </div>
-            </div>
+        <div className="flex min-h-0 flex-1 flex-col">
             {relevantQuoteItems.length > 0 && (
                 <CitationQuotesHeader
                     quotes={relevantQuoteItems}
@@ -453,7 +366,7 @@ export function CaseLawPanel({
                 />
             )}
             {!loading && !error && opinions.length > 1 && (
-                <div className="relative mt-2 px-1 shadow-[inset_0_-1px_0_rgb(229_231_235)]">
+                <div className="relative px-1 shadow-[inset_0_-1px_0_rgb(229_231_235)]">
                     <div className="relative z-10 flex items-end gap-1 overflow-hidden px-2 pt-1">
                         {orderedOpinions.map(({ opinion, index }) => {
                             const opinionId = opinion.opinionId;
@@ -492,30 +405,53 @@ export function CaseLawPanel({
                     </div>
                 </div>
             )}
-            <div className="flex flex-1 min-h-0 flex-col px-3 py-3">
+            <div className="flex flex-1 min-h-0 flex-col">
                 {loading && (
-                    <div className={cn("h-full min-h-0 rounded-lg border border-gray-200", opinionSurfaceClassName)}>
+                    <div
+                        className={cn(
+                            "h-full min-h-0",
+                            opinionSurfaceClassName,
+                        )}
+                    >
                         <div className="flex h-full items-center justify-center p-5">
                             <MikeIcon spin mike size={28} />
                         </div>
                     </div>
                 )}
                 {error && (
-                    <p className={cn("rounded-md p-4 font-serif text-sm text-red-600", opinionSurfaceClassName)}>
+                    <p
+                        className={cn(
+                            "p-4 font-serif text-sm text-red-600",
+                            opinionSurfaceClassName,
+                        )}
+                    >
                         {error}
                     </p>
                 )}
                 {!loading && !error && opinions.length === 0 && (
-                    <p className={cn("rounded-md p-4 font-serif text-sm text-gray-500", opinionSurfaceClassName)}>
+                    <p
+                        className={cn(
+                            "p-4 font-serif text-sm text-gray-500",
+                            opinionSurfaceClassName,
+                        )}
+                    >
                         No opinions were returned for this case.
                     </p>
                 )}
                 {!loading && !error && opinions.length > 0 && (
-                    <div className={cn("h-full min-h-0 border border-gray-200 rounded-lg overflow-hidden", opinionSurfaceClassName)}>
+                    <div
+                        className={cn(
+                            "h-full min-h-0 overflow-hidden",
+                            opinionSurfaceClassName,
+                        )}
+                    >
                         {activeOpinion && (
                             <div
                                 ref={opinionScrollRef}
-                                className={cn("h-full overflow-y-auto p-5", opinionSurfaceClassName)}
+                                className={cn(
+                                    "h-full overflow-y-auto p-5",
+                                    opinionSurfaceClassName,
+                                )}
                             >
                                 <OpinionBlock
                                     opinion={activeOpinion}
@@ -589,10 +525,7 @@ function OpinionBlock({
     contentRef?: RefObject<HTMLElement | null>;
 }) {
     const sanitizedHtml = useMemo(
-        () =>
-            opinion.html
-                ? sanitizeCaseOpinionHtml(opinion.html)
-                : "",
+        () => (opinion.html ? sanitizeCaseOpinionHtml(opinion.html) : ""),
         [opinion.html],
     );
 

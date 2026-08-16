@@ -7,6 +7,7 @@ import {
     CitationVerificationBadge,
     type CitationVerificationDisplayState,
 } from "./message/citationVerification";
+import { ContextNumberBadge } from "./ContextNumberBadge";
 
 export type CitationQuoteHeaderItem = {
     id: string;
@@ -58,20 +59,14 @@ export function CitationQuotesHeader({
     }, [hasMultipleQuotes, viewMode]);
 
     return (
-        <div className="px-3">
+        <div className="px-3 pb-3">
             <div className={QUOTE_GLASS_SURFACE}>
                 <div className="flex h-10 items-center justify-between px-2">
-                    <div className="flex items-center gap-2">
-                        <p className="flex items-center gap-1.5 text-xs font-medium text-gray-700">
-                            <span>Citation</span>
-                            {typeof citationRef === "number" && (
-                                <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-gray-200 px-1 text-[9px] font-medium text-gray-600">
-                                    {citationRef}
-                                </span>
-                            )}
-                        </p>
-                    </div>
-                    <div className="flex items-center gap-2">
+                    <ContextNumberBadge
+                        number={citationRef}
+                        label="Citation"
+                    />
+                    <div className="ml-auto flex items-center gap-2">
                         {hasMultipleQuotes && (
                             <div className="flex items-center gap-1">
                                 <span className="mr-0.5 text-xs font-medium text-gray-500">
