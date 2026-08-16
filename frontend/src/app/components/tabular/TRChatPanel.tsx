@@ -386,7 +386,6 @@ function TRAssistantMessage({
                                 stepCount={g.events.length}
                                 shouldMinimize={subsequentContent}
                                 isStreaming={wrapperIsStreaming}
-                                compact
                             >
                                 {g.events.map((event, i) =>
                                     renderPreEvent(

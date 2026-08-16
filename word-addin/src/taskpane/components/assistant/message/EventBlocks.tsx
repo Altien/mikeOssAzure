@@ -1,5 +1,10 @@
 import React, { useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
+import {
+  DocEditBlockUI,
+  DocFindBlockUI,
+  DocReadBlockUI,
+} from "@mike/document-event-blocks-ui";
 import { Markdown } from "../../../../shared/chat/Markdown";
 import type { DocEditStatus } from "../../../lib/wordChatTypes";
 
@@ -174,25 +179,38 @@ export function DocReadBlock({
   showConnector?: boolean;
 }): React.ReactElement {
   return (
-    <EventBlock
-      showConnector={showConnector}
+    <DocReadBlockUI
+      filename={filename}
       isStreaming={isStreaming}
-      dotColor="green"
-    >
-      <div className="flex min-w-0 items-center gap-1.5">
-        <span className="shrink-0 font-medium">
-          {isStreaming ? "Reading" : "Read"}
-        </span>
-        {filename ? (
-          <span className="truncate">
-            {filename}
-            {isStreaming && "..."}
-          </span>
-        ) : isStreaming ? (
-          <span>...</span>
-        ) : null}
-      </div>
-    </EventBlock>
+      showConnector={showConnector}
+    />
+  );
+}
+
+export function DocFindBlock({
+  filename,
+  query,
+  totalMatches,
+  isStreaming,
+  showConnector,
+  onClick,
+}: {
+  filename: string;
+  query: string;
+  totalMatches: number;
+  isStreaming?: boolean;
+  showConnector?: boolean;
+  onClick?: () => void;
+}): React.ReactElement {
+  return (
+    <DocFindBlockUI
+      filename={filename}
+      query={query}
+      totalMatches={totalMatches}
+      isStreaming={isStreaming}
+      showConnector={showConnector}
+      onClick={onClick}
+    />
   );
 }
 
@@ -235,17 +253,13 @@ export function DocEditBlock({
         : "gray";
 
   return (
-    <EventBlock
+    <DocEditBlockUI
+      label={label}
+      detail={detail}
       showConnector={showConnector}
       isStreaming={status === "applying"}
       dotColor={dotColor}
-    >
-      <span
-        className={`font-medium ${status === "error" ? "text-red-500" : ""}`}
-      >
-        {label}
-      </span>
-      {detail && <span className="ml-1 text-gray-400">{detail}</span>}
-    </EventBlock>
+      labelTone={status === "error" ? "error" : "default"}
+    />
   );
 }

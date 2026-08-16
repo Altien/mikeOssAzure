@@ -1159,6 +1159,26 @@ export async function deleteDocument(documentId: string): Promise<void> {
     await apiRequest(`/single-documents/${documentId}`, { method: "DELETE" });
 }
 
+export interface DocumentEditResolution {
+    ok: boolean;
+    already_resolved?: boolean;
+    status?: "accepted" | "rejected";
+    version_id: string | null;
+    download_url: string | null;
+    remaining_pending?: number;
+}
+
+export async function resolveDocumentEdit(
+    documentId: string,
+    editId: string,
+    verb: "accept" | "reject",
+): Promise<DocumentEditResolution> {
+    return apiRequest<DocumentEditResolution>(
+        `/single-documents/${encodeURIComponent(documentId)}/edits/${encodeURIComponent(editId)}/${verb}`,
+        { method: "POST" },
+    );
+}
+
 export async function getDocumentUrl(
     documentId: string,
     versionId?: string | null,

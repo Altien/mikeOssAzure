@@ -4,6 +4,30 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@mike/edit-card-ui": [
+        "../frontend/src/shared/ui/EditCardUI.tsx"
+      ],
+      "@mike/edit-cards-section-ui": [
+        "../frontend/src/shared/ui/EditCardsSectionUI.tsx"
+      ],
+      "@mike/pre-response-wrapper-ui": [
+        "../frontend/src/shared/ui/PreResponseWrapperUI.tsx"
+      ],
+      "@mike/document-event-blocks-ui": [
+        "../frontend/src/shared/ui/DocumentEventBlocksUI.tsx"
+      ],
+      "@mike/glass-card-ui": [
+        "../frontend/src/shared/ui/GlassCardUI.tsx"
+      ],
+      "@mike/modal-ui": [
+        "../frontend/src/shared/ui/ModalUI.tsx"
+      ],
+      "@mike/header-buttons-ui": [
+        "../frontend/src/shared/ui/HeaderButtonsUI.tsx"
+      ]
+    },
     "jsx": "react-jsx",
     "strict": true,
     "noUnusedLocals": true,

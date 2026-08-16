@@ -522,8 +522,23 @@ function DateRangeDropdown({
   to: string;
   onChange: (range: { from: string; to: string }) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const [draftRange, setDraftRange] = useState({ from, to });
+  const hasChanges = draftRange.from !== from || draftRange.to !== to;
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (nextOpen) setDraftRange({ from, to });
+    setOpen(nextOpen);
+  };
+
+  const handleConfirm = () => {
+    if (!hasChanges) return;
+    onChange(draftRange);
+    setOpen(false);
+  };
+
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={handleOpenChange}>
       <DropdownMenuTrigger asChild>
         <TabPillButton active aria-label="Select date range">
           <CalendarDays className="h-3.5 w-3.5" />
@@ -539,20 +554,39 @@ function DateRangeDropdown({
           <HistoryDatePicker
             label="Start date"
             testId="start-date-picker"
-            selected={dateFromLocalValue(from)}
-            disabled={{ after: dateFromLocalValue(to) }}
-            onSelect={(date) => onChange({ from: localDateValue(date), to })}
+            selected={dateFromLocalValue(draftRange.from)}
+            disabled={{ after: dateFromLocalValue(draftRange.to) }}
+            onSelect={(date) =>
+              setDraftRange((current) => ({
+                ...current,
+                from: localDateValue(date),
+              }))
+            }
           />
           <HistoryDatePicker
             label="End date"
             testId="end-date-picker"
-            selected={dateFromLocalValue(to)}
+            selected={dateFromLocalValue(draftRange.to)}
             disabled={[
-              { before: dateFromLocalValue(from) },
+              { before: dateFromLocalValue(draftRange.from) },
               { after: new Date() },
             ]}
-            onSelect={(date) => onChange({ from, to: localDateValue(date) })}
+            onSelect={(date) =>
+              setDraftRange((current) => ({
+                ...current,
+                to: localDateValue(date),
+              }))
+            }
           />
+        </div>
+        <div className="flex justify-end pt-3">
+          <PillButton
+            tone="black"
+            disabled={!hasChanges}
+            onClick={handleConfirm}
+          >
+            Confirm
+          </PillButton>
         </div>
       </LiquidDropdownContent>
     </DropdownMenu>

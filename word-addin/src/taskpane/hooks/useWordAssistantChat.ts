@@ -40,6 +40,7 @@ interface UseWordAssistantChatOptions {
   chatId: string | null;
   initialMessages: SavedMessage[];
   onChatIdChange: (chatId: string) => void;
+  onChatStarted: () => void;
   wordDocumentId: string;
   wordChatStorage: WordChatStorageMode;
   wordChatOwnerId: string;
@@ -51,6 +52,7 @@ export function useWordAssistantChat({
   chatId,
   initialMessages,
   onChatIdChange,
+  onChatStarted,
   wordDocumentId,
   wordChatStorage,
   wordChatOwnerId,
@@ -158,6 +160,7 @@ export function useWordAssistantChat({
           workflow: submission.workflow,
         };
         const history = [...messagesRef.current, userMessage];
+        onChatStarted();
         const requestChatId =
           chatId ??
           (wordChatStorage === "local" ? crypto.randomUUID() : undefined);
@@ -487,6 +490,7 @@ export function useWordAssistantChat({
       chatId,
       editController,
       onChatIdChange,
+      onChatStarted,
       readDocumentText,
       wordChatOwnerId,
       wordChatStorage,

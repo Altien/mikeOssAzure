@@ -22,7 +22,7 @@ import {
     CourtListenerBlock,
     DocCreatedBlock,
     DocDownloadBlock,
-    DocEditedBlock,
+    DocEditBlock,
     DocFindBlock,
     DocReadBlock,
     DocReplicatedBlock,
@@ -522,7 +522,7 @@ export function AssistantMessage({
         }
         if (event.type === "doc_edited") {
             return (
-                <DocEditedBlock
+                <DocEditBlock
                     key={globalIdx}
                     filename={event.filename}
                     isStreaming={event.isStreaming}

@@ -93,6 +93,9 @@ test("uses a floating icon header with no logo, tabs, or visible sign-out button
   await expect(page.getByRole("button", { name: "Sign out" })).toHaveCount(0);
 
   const header = page.getByTestId("floating-header");
+  await expect(header.getByRole("button", { name: "New chat" })).toHaveCount(
+    0,
+  );
   const chatInput = page.getByTestId("chat-input");
   const [headerBox, inputBox, headerPadding] = await Promise.all([
     header.boundingBox(),
@@ -1118,11 +1121,42 @@ test("opens a left-aligned source menu and selects web files from the document m
   });
 
   await expect(modal.getByText("agreement.pdf")).toBeVisible();
-  await expect(modal.getByText("Date", { exact: true })).toBeVisible();
-  await expect(modal.getByText("Size", { exact: true })).toBeVisible();
-  await expect(modal.getByText("12 B", { exact: true })).toBeVisible();
+  await expect(modal.getByText("Date", { exact: true })).toHaveCount(0);
+  await expect(modal.getByText("Size", { exact: true })).toHaveCount(0);
+  await expect(modal.getByText("Name", { exact: true })).toHaveCount(0);
+  await expect(modal.getByText("12 B", { exact: true })).toHaveCount(0);
+  const tabsScroll = modal.getByTestId("document-tabs-scroll");
+  await expect(tabsScroll).toHaveCSS("padding-left", "8px");
+  await expect(tabsScroll).toHaveCSS("padding-top", "8px");
+  await expect(tabsScroll).toHaveCSS("overflow-x", "auto");
+  const [tabsScrollBox, filesTabBox] = await Promise.all([
+    tabsScroll.boundingBox(),
+    modal.getByRole("button", { name: "Files", exact: true }).boundingBox(),
+  ]);
+  expect(tabsScrollBox).not.toBeNull();
+  expect(filesTabBox).not.toBeNull();
+  expect(filesTabBox!.x - tabsScrollBox!.x).toBeGreaterThanOrEqual(8);
+  expect(filesTabBox!.y - tabsScrollBox!.y).toBeGreaterThanOrEqual(8);
   await expect(modal.locator('img[src*="/icons/pdf."]')).toBeVisible();
   const uploadedRow = modal.getByRole("button", { name: /agreement\.pdf/ });
+  const documentsScroll = modal.locator(".overflow-y-auto").last();
+  await expect(documentsScroll).toHaveCSS(
+    "padding-left",
+    "8px",
+  );
+  await expect(documentsScroll).toHaveCSS("margin-left", "-8px");
+  const [documentSearchBox, uploadedRowBox] = await Promise.all([
+    modal.getByPlaceholder("Search...").locator("..").boundingBox(),
+    uploadedRow.boundingBox(),
+  ]);
+  expect(documentSearchBox).not.toBeNull();
+  expect(uploadedRowBox).not.toBeNull();
+  expect(Math.abs(uploadedRowBox!.x - documentSearchBox!.x)).toBeLessThanOrEqual(
+    1,
+  );
+  expect(
+    Math.abs(uploadedRowBox!.width - documentSearchBox!.width),
+  ).toBeLessThanOrEqual(1);
   await expect(uploadedRow).toHaveAttribute("aria-pressed", "true");
   await uploadedRow.click();
   await expect(uploadedRow).toHaveAttribute("aria-pressed", "false");
@@ -1362,6 +1396,18 @@ test("selects a workflow from the add-workflow modal and attaches it to chat", a
   const contractWorkflow = modal.getByRole("button", {
     name: /Contract review/,
   });
+  const [workflowSearchBox, contractWorkflowBox] = await Promise.all([
+    modal.getByPlaceholder("Search workflows...").locator("..").boundingBox(),
+    contractWorkflow.boundingBox(),
+  ]);
+  expect(workflowSearchBox).not.toBeNull();
+  expect(contractWorkflowBox).not.toBeNull();
+  expect(
+    Math.abs(contractWorkflowBox!.x - workflowSearchBox!.x),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(contractWorkflowBox!.width - workflowSearchBox!.width),
+  ).toBeLessThanOrEqual(1);
   await expect(contractWorkflow.getByText("Commercial")).toBeVisible();
   await expect(contractWorkflow.locator("svg")).toHaveCount(0);
   await expect(modal.getByText("System", { exact: true })).toHaveCount(0);
@@ -1425,6 +1471,9 @@ test("composer controls and workflow modal fit a narrow Word task pane", async (
   await expect(
     page.getByRole("button", { name: "Choose model" }),
   ).toBeVisible();
+  const sendButton = page.getByRole("button", { name: "Send" });
+  await expect(sendButton).toHaveClass(/rounded-\[11px\]/);
+  await expect(sendButton).toHaveClass(/border-0/);
 
   const placeholderBounds = await page
     .getByPlaceholder("How can I help?")

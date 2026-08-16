@@ -352,7 +352,7 @@ export const test = base.extend<{ addin: Addin }>({
         ).toBeVisible();
         await expect(
           page.getByRole("button", { name: "New chat" }),
-        ).toBeVisible();
+        ).toHaveCount(0);
         await expect(
           page.getByRole("button", { name: "Chat history" }),
         ).toBeVisible();

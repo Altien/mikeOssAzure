@@ -37,7 +37,7 @@ const TABS: { value: DirectoryTab; label: string }[] = [
 ];
 
 const DIRECTORY_GRID_CLASS =
-  "grid grid-cols-[14px_14px_minmax(0,1fr)_64px_48px] items-center gap-1.5";
+  "grid grid-cols-[14px_14px_minmax(0,1fr)] items-center gap-1.5";
 const DIRECTORY_PAGE_SIZE = 40;
 const ROOT_LEVEL_KEY = "root";
 
@@ -90,22 +90,6 @@ function DirectoryLoadMoreRow({
       </button>
     </div>
   );
-}
-
-function formatDate(value: string | null): string {
-  if (!value) return "";
-  return new Date(value).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
-
-function formatBytes(bytes: number | null): string {
-  if (bytes == null) return "";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export function AddDocumentsModal({
@@ -619,18 +603,6 @@ export function AddDocumentsModal({
         </span>
         <FileTypeIcon fileType={document.file_type ?? document.filename} />
         <span className="min-w-0 truncate">{document.filename}</span>
-        <span
-          className="truncate text-[10px] text-gray-400"
-          title={formatDate(document.created_at) || "--"}
-        >
-          {formatDate(document.created_at) || "--"}
-        </span>
-        <span
-          className="truncate text-right text-[10px] text-gray-400"
-          title={formatBytes(document.size_bytes) || "--"}
-        >
-          {formatBytes(document.size_bytes) || "--"}
-        </span>
       </button>
     );
   };
@@ -693,15 +665,6 @@ export function AddDocumentsModal({
               />
             )}
             <span className="min-w-0 truncate font-medium">{folder.name}</span>
-            <span
-              className="truncate text-[10px] text-gray-400"
-              title={formatDate(folder.created_at) || "--"}
-            >
-              {formatDate(folder.created_at) || "--"}
-            </span>
-            <span className="truncate text-right text-[10px] text-gray-400">
-              {items.length} {items.length === 1 ? "file" : "files"}
-            </span>
           </button>
           {expanded && (
             <div>
@@ -798,15 +761,6 @@ export function AddDocumentsModal({
               />
             )}
             <span className="min-w-0 truncate font-medium">{folder.name}</span>
-            <span
-              className="truncate text-[10px] text-gray-400"
-              title={formatDate(folder.created_at) || "--"}
-            >
-              {formatDate(folder.created_at) || "--"}
-            </span>
-            <span className="truncate text-right text-[10px] text-gray-400">
-              {items.length} {items.length === 1 ? "file" : "files"}
-            </span>
           </button>
           {expanded && (
             <div>
@@ -909,7 +863,10 @@ export function AddDocumentsModal({
       </label>
 
       <div className="my-3 flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
+        <div
+          data-testid="document-tabs-scroll"
+          className="-mx-2 -my-2 flex min-w-0 items-center gap-1 overflow-x-auto px-2 py-2"
+        >
           {TABS.map((tab) => (
             <TabPillButton
               key={tab.value}
@@ -929,13 +886,6 @@ export function AddDocumentsModal({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col">
-        <div
-          className={`shrink-0 px-2 pb-1 text-[10px] font-medium text-gray-400 ${DIRECTORY_GRID_CLASS}`}
-        >
-          <span className="col-span-3">Name</span>
-          <span>Date</span>
-          <span className="text-right">Size</span>
-        </div>
         <div className="min-h-0 flex-1 overflow-y-auto pb-3">
           {loading ? (
             <div className="flex h-full items-center justify-center">
@@ -1017,18 +967,6 @@ export function AddDocumentsModal({
                             </span>
                           )}
                         </span>
-                        <span
-                          className="truncate text-[10px] text-gray-400"
-                          title={formatDate(project.created_at) || "--"}
-                        >
-                          {formatDate(project.created_at) || "--"}
-                        </span>
-                        <span className="truncate text-right text-[10px] text-gray-400">
-                          {projectDocuments[project.id]?.length ??
-                            project.document_count ??
-                            0}{" "}
-                          files
-                        </span>
                       </button>
                       {expanded &&
                         (projectLoading && !projectLoaded ? (
@@ -1089,8 +1027,6 @@ export function AddDocumentsModal({
                     <span className="h-3.5 w-3.5 rounded border border-gray-300" />
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     <span className="min-w-0 truncate">{filename}</span>
-                    <span className="truncate text-[10px]">Uploading</span>
-                    <span className="text-right text-[10px]">--</span>
                   </div>
                 ))}
               {query ? (

@@ -4,6 +4,9 @@ const fs = require("fs");
 const HtmlWebpackPlugin = require("html-webpack-plugin");
 const webpack = require("webpack");
 
+const frontendSharedUi = (filename) =>
+  path.resolve(__dirname, "..", "frontend", "src", "shared", "ui", filename);
+
 module.exports = async (_env, options) => {
   const isDev = options.mode !== "production";
 
@@ -127,9 +130,32 @@ module.exports = async (_env, options) => {
       extensions: [".ts", ".tsx", ".js", ".jsx"],
       modules: [path.resolve(__dirname, "node_modules"), "node_modules"],
       alias: {
+        // Cross-app source files must use the add-in's React runtime so the
+        // bundle never picks up a second copy from frontend/node_modules.
+        "react$": require.resolve("react"),
+        "react/jsx-runtime$": require.resolve("react/jsx-runtime"),
+        "react-dom$": require.resolve("react-dom"),
+        "lucide-react$": require.resolve(
+          "lucide-react/dist/esm/lucide-react.js",
+        ),
         // The frontend's public icon set is canonical. Webpack imports those
         // same SVGs and emits content-hashed copies for the add-in bundle.
         "@icons": path.resolve(__dirname, "..", "frontend", "public", "icons"),
+        "@mike/edit-card-ui": frontendSharedUi("EditCardUI.tsx"),
+        "@mike/edit-cards-section-ui": frontendSharedUi(
+          "EditCardsSectionUI.tsx",
+        ),
+        "@mike/pre-response-wrapper-ui": frontendSharedUi(
+          "PreResponseWrapperUI.tsx",
+        ),
+        "@mike/document-event-blocks-ui": frontendSharedUi(
+          "DocumentEventBlocksUI.tsx",
+        ),
+        "@mike/glass-card-ui": frontendSharedUi("GlassCardUI.tsx"),
+        "@mike/modal-ui": frontendSharedUi("ModalUI.tsx"),
+        "@mike/header-buttons-ui": frontendSharedUi(
+          "HeaderButtonsUI.tsx",
+        ),
       },
     },
     module: {

@@ -199,7 +199,7 @@ export function DocPanel({
             )}
 
             {mode.kind === "edit" && !isCase && (
-                <div className="px-3 pb-3">
+                <div className="px-2 pb-2">
                     <EditCard
                         annotation={mode.edit}
                         changeNumber={mode.changeNumber}

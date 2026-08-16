@@ -110,6 +110,7 @@ import {
     renameProjectFolder,
     renameTabularChat,
     replaceDocumentVersionFile,
+    resolveDocumentEdit,
     saveApiKey,
     bulkDeleteLibraryDocuments,
     searchProjectDirectory,
@@ -2076,6 +2077,12 @@ describe("thin endpoint wrappers", () => {
             call: () => deleteDocument("d1"),
             url: "/single-documents/d1",
             method: "DELETE",
+        },
+        {
+            name: "resolveDocumentEdit",
+            call: () => resolveDocumentEdit("doc/1", "edit/1", "accept"),
+            url: "/single-documents/doc%2F1/edits/edit%2F1/accept",
+            method: "POST",
         },
         {
             name: "listDocumentVersions",
