@@ -124,6 +124,10 @@ export function useWordAssistantChat({
       const controller = new AbortController();
       abortRef.current = controller;
       setRequestError(null);
+      // A submitted turn is already an active chat, even while Office is
+      // still reading the document snapshot. Expose New Chat immediately so
+      // the user can abandon a slow read and invalidate this generation.
+      onChatStarted();
       let cleanupAssistantMessageId: string | null = null;
       let assistantEvents: WordAssistantEvent[] = [];
 
@@ -160,7 +164,6 @@ export function useWordAssistantChat({
           workflow: submission.workflow,
         };
         const history = [...messagesRef.current, userMessage];
-        onChatStarted();
         const requestChatId =
           chatId ??
           (wordChatStorage === "local" ? crypto.randomUUID() : undefined);

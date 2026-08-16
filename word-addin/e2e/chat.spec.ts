@@ -1658,11 +1658,15 @@ test("streams sealed edit cards into Word and resolves their exact revisions", a
     .first()
     .click();
   await expect(page.getByText("Accepted.", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Scroll to bottom" }).click();
-  await page
+  const scrollToBottom = page.getByRole("button", {
+    name: "Scroll to bottom",
+  });
+  await expect(scrollToBottom).toBeVisible();
+  await scrollToBottom.click();
+  const rejectButton = page
     .getByRole("button", { name: "Reject", exact: true })
-    .first()
-    .click();
+    .first();
+  await rejectButton.click();
   await expect(page.getByText("Rejected.", { exact: true })).toBeVisible();
 
   calls = await addin.wordCalls();

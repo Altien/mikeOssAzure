@@ -1,5 +1,6 @@
 import { normalizeCaseDocument } from "../../sourceDocuments";
 import type { CaseCitationEvent } from "./courtlistenerTools";
+import { convert } from "html-to-text";
 
 export type CourtlistenerCaseRecord = {
   clusterId: number;
@@ -75,16 +76,13 @@ function stringArrayField(
 }
 
 function stripOpinionHtml(value: string): string {
-  return value
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+  return convert(value, {
+    wordwrap: false,
+    selectors: [
+      { selector: "script", format: "skip" },
+      { selector: "style", format: "skip" },
+    ],
+  })
     .replace(/\s+/g, " ")
     .trim();
 }

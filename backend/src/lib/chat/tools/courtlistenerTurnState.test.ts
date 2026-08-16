@@ -41,7 +41,31 @@ describe("CourtListener turn state", () => {
     ]);
 
     expect(getCachedCaseOpinionTexts(state, 456)[0]?.text).toBe(
-      "The Court affirms .",
+      "The Court affirms.",
     );
+  });
+
+  it("skips malformed script tags without double-decoding entities", () => {
+    const state: CourtlistenerTurnState = { casesByClusterId: new Map() };
+    upsertCourtlistenerCases(state, [
+      {
+        clusterId: 789,
+        opinions: [
+          {
+            opinionId: 3,
+            html: [
+              "<script>alert('unsafe')</script >",
+              "<p>Decision &amp; Costs</p>",
+              "<p>&amp;lt;script&amp;gt;</p>",
+            ].join(""),
+          },
+        ],
+      },
+    ]);
+
+    const text = getCachedCaseOpinionTexts(state, 789)[0]?.text;
+    expect(text).toBe("Decision & Costs &lt;script&gt;");
+    expect(text).not.toContain("unsafe");
+    expect(text).not.toContain("<script>");
   });
 });

@@ -241,7 +241,10 @@ test("uses the frontend assistant spacer while a new answer grows", async ({
                 candidate.clientHeight,
               clientHeight: candidate.clientHeight,
               top: candidate.getBoundingClientRect().top,
-              paddingBottom: Number.parseFloat(style.paddingBottom),
+              bottomInset:
+                candidate.querySelector<HTMLElement>(
+                  '[data-testid="messages-bottom-spacer"]',
+                )?.offsetHeight ?? Number.parseFloat(style.paddingBottom),
               rowGap: Number.parseFloat(style.rowGap),
               firstMessageTop:
                 candidate.querySelector<HTMLElement>("[data-message-id]")
@@ -281,7 +284,7 @@ test("uses the frontend assistant spacer while a new answer grows", async ({
       early.firstMessageTop -
       early.userHeight -
       early.rowGap * 2 -
-      early.paddingBottom,
+      early.bottomInset,
   );
   expect(
     Math.abs(early.assistantMinHeight - expectedMinHeight),
@@ -327,7 +330,7 @@ test("uses the frontend assistant spacer while a new answer grows", async ({
           resized.firstMessageTop -
           resized.userHeight -
           resized.rowGap * 2 -
-          resized.paddingBottom,
+          resized.bottomInset,
       );
       return {
         minHeightDelta: Math.round(
