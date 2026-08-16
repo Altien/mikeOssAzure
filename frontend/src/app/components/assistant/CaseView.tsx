@@ -1,52 +1,22 @@
 "use client";
 
-import {
-    useCallback,
-    useEffect,
-    useMemo,
-    useRef,
-    useState,
-    type RefObject,
-} from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import DOMPurify from "dompurify";
-import { MikeIcon } from "@/app/components/chat/mike-icon";
-import type { CaseCitationQuote } from "../shared/types";
+import { Loader2 } from "lucide-react";
+import { PillButton } from "@/app/components/ui/pill-button";
+import { cn } from "@/app/lib/utils";
+import type {
+    PanelDocument,
+    PanelDocumentQuote,
+    PanelSubdocument,
+} from "../shared/types";
 import {
     clearDocxQuoteHighlights,
     highlightDocxQuote,
+    QUOTE_HIGHLIGHT_CLASS,
 } from "../shared/views/highlightDocxQuote";
-import {
-    CitationQuotesHeader,
-    type CitationQuoteHeaderItem,
-} from "./CitationQuotesHeader";
-import {
-    getCourtlistenerOpinions,
-    type CaseLawOpinion,
-} from "@/app/lib/mikeApi";
-import { cn } from "@/app/lib/utils";
 
-export type CaseTab = {
-    kind: "case";
-    id: `case:${number}`;
-    chatId: string;
-    clusterId: number;
-    citationRef?: number;
-    caseName: string | null;
-    citation: string | null;
-    url: string | null;
-    dateFiled: string | null;
-    pdfUrl: string | null;
-    quotes?: CaseCitationQuote[];
-    opinions?: CaseLawOpinion[];
-};
-
-const courtlistenerOpinionsCache = new Map<number, CaseLawOpinion[]>();
-const caseOpinionsRequestCache = new Map<
-    string,
-    ReturnType<typeof getCourtlistenerOpinions>
->();
-
-const CASE_OPINION_SANITIZER_CONFIG = {
+const CASE_HTML_SANITIZER_CONFIG = {
     ALLOWED_TAGS: [
         "a",
         "blockquote",
@@ -92,7 +62,7 @@ const CASE_OPINION_SANITIZER_CONFIG = {
     ],
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: true,
-    ALLOWED_URI_REGEXP: /^(?:https:\/\/www\.courtlistener\.com\/|#)/i,
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|#)/i,
     FORBID_ATTR: ["style"],
     FORBID_TAGS: [
         "embed",
@@ -107,8 +77,8 @@ const CASE_OPINION_SANITIZER_CONFIG = {
     RETURN_TRUSTED_TYPE: false,
 };
 
-function sanitizeCaseOpinionHtml(value: string): string {
-    const sanitized = DOMPurify.sanitize(value, CASE_OPINION_SANITIZER_CONFIG);
+function sanitizeCaseHtml(value: string): string {
+    const sanitized = DOMPurify.sanitize(value, CASE_HTML_SANITIZER_CONFIG);
     if (typeof document === "undefined") return sanitized;
 
     const template = document.createElement("template");
@@ -122,266 +92,97 @@ function sanitizeCaseOpinionHtml(value: string): string {
     return template.innerHTML;
 }
 
-function friendlyCaseError(message: string): string {
-    try {
-        const parsed = JSON.parse(message) as { detail?: unknown };
-        if (typeof parsed.detail === "string") {
-            message = parsed.detail;
-        }
-    } catch {
-        /* keep original message */
-    }
-
-    if (message.includes("429") || /rate limit|throttled/i.test(message)) {
-        const waitMatch = message.match(/available in\s+(\d+)\s+seconds/i);
-        const wait = waitMatch?.[1];
-        return wait
-            ? `CourtListener is rate limiting requests. Please try again in about ${wait} seconds.`
-            : "CourtListener is rate limiting requests. Please try again shortly.";
-    }
-    if (message.includes("401") || /credentials|token|auth/i.test(message)) {
-        return "CourtListener authentication is not configured correctly.";
-    }
-    return "Could not load this case from CourtListener. Please try again shortly.";
-}
-
-function hashString(value: string): string {
-    let hash = 0;
-    for (let i = 0; i < value.length; i += 1) {
-        hash = (hash * 31 + value.charCodeAt(i)) | 0;
-    }
-    return Math.abs(hash).toString(36);
-}
-
-function caseTabQuoteKey(tab: CaseTab): string {
-    const quoteKey =
-        tab.quotes
-            ?.map((quote) => quote.quote)
-            .filter(Boolean)
-            .join("\n---\n") ?? "";
-    return [
-        tab.clusterId,
-        tab.citationRef ?? "source",
-        hashString(quoteKey),
-    ].join(":");
-}
-
-function relevantQuoteKey(quote: CaseCitationQuote, index: number): string {
-    return `${quote.opinionId ?? "unknown"}:${index}:${hashString(quote.quote)}`;
-}
-
-function caseCitationRequestKey(tab: CaseTab) {
-    return String(tab.clusterId);
-}
-
-export function CaseView({ tab }: { tab: CaseTab }) {
-    const cachedOpinions = courtlistenerOpinionsCache.get(tab.clusterId);
-    const [opinions, setOpinions] = useState<CaseLawOpinion[]>(
-        tab.opinions?.length ? tab.opinions : (cachedOpinions ?? []),
+export function CaseView({
+    document,
+    activeQuote,
+    quoteFocusKey,
+    isLoading = false,
+    error = null,
+    onRetry,
+    onClearQuote,
+}: {
+    document: PanelDocument;
+    activeQuote?: PanelDocumentQuote | null;
+    quoteFocusKey?: number;
+    isLoading?: boolean;
+    error?: string | null;
+    onRetry?: () => void;
+    onClearQuote?: () => void;
+}) {
+    const subdocuments = useMemo(
+        () => document.subdocuments ?? [],
+        [document.subdocuments],
     );
-    const [error, setError] = useState<string | null>(null);
-    const [loading, setLoading] = useState(false);
-    const [activeOpinionId, setActiveOpinionId] = useState<number | null>(null);
-    const [relevantQuotes, setRelevantQuotes] = useState<CaseCitationQuote[]>(
-        tab.quotes ?? [],
+    const [activeSubdocumentId, setActiveSubdocumentId] = useState<
+        string | null
+    >(
+        activeQuote?.target.subdocument_id ??
+            subdocuments[0]?.document_id ??
+            null,
     );
-    const [activeQuoteKey, setActiveQuoteKey] = useState<string | null>(null);
-    const [quoteIndexState, setQuoteIndexState] = useState({
-        cacheKey: "",
-        index: 0,
-    });
-    const opinionScrollRef = useRef<HTMLDivElement | null>(null);
-    const opinionContentRef = useRef<HTMLElement | null>(null);
+    const contentRef = useRef<HTMLElement | null>(null);
 
     useEffect(() => {
-        if (tab.opinions?.length) {
-            // eslint-disable-next-line react-hooks/set-state-in-effect -- sync path of an async fetch effect: serve prop/cache data without a loading flash
-            setOpinions(tab.opinions);
-            setLoading(false);
-            setError(null);
-            return;
-        }
-        const cached = courtlistenerOpinionsCache.get(tab.clusterId);
-        if (cached?.length) {
-            setOpinions(cached);
-            setLoading(false);
-            setError(null);
-            return;
-        }
-
-        let cancelled = false;
-        setLoading(true);
-        setError(null);
-        const requestKey = caseCitationRequestKey(tab);
-        let request = caseOpinionsRequestCache.get(requestKey);
-        if (!request) {
-            request = getCourtlistenerOpinions(tab.clusterId).finally(() => {
-                caseOpinionsRequestCache.delete(requestKey);
-            });
-            caseOpinionsRequestCache.set(requestKey, request);
-        }
-        request
-            .then((nextOpinions) => {
-                if (!cancelled) {
-                    setOpinions(nextOpinions);
-                    courtlistenerOpinionsCache.set(tab.clusterId, nextOpinions);
-                }
-            })
-            .catch((err: unknown) => {
-                if (!cancelled) {
-                    setError(
-                        err instanceof Error
-                            ? friendlyCaseError(err.message)
-                            : "Failed to load case",
-                    );
-                }
-            })
-            .finally(() => {
-                if (!cancelled) setLoading(false);
-            });
-        return () => {
-            cancelled = true;
-        };
-    }, [tab]);
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- synchronize the first opinion when a new document is supplied
+        setActiveSubdocumentId(subdocuments[0]?.document_id ?? null);
+    }, [document.document_id, subdocuments]);
 
     useEffect(() => {
-        const firstOpinionId =
-            orderOpinions(opinions).find(
-                ({ opinion }) => typeof opinion.opinionId === "number",
-            )?.opinion.opinionId ?? null;
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- reset active opinion after opinions load
-        setActiveOpinionId(firstOpinionId);
-    }, [opinions]);
-
-    useEffect(() => {
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- sync quote list when the tab prop changes
-        setRelevantQuotes(tab.quotes ?? []);
-    }, [tab.quotes]);
-
-    const title = tab.caseName;
-    const citation = tab.citation;
-    const orderedOpinions = orderOpinions(opinions);
-    const activeOpinion = opinions.find(
-        (opinion) => opinion.opinionId === activeOpinionId,
-    );
-    const quoteCacheKey = caseTabQuoteKey(tab);
-    const currentQuoteIndex =
-        quoteIndexState.cacheKey === quoteCacheKey
-            ? Math.min(
-                  quoteIndexState.index,
-                  Math.max(relevantQuotes.length - 1, 0),
-              )
-            : 0;
-    const relevantQuoteItems: CitationQuoteHeaderItem[] = relevantQuotes.map(
-        (quote, index) => ({
-            id: relevantQuoteKey(quote, index),
-            quote: quote.quote,
-            eyebrow:
-                quote.author || quote.type
-                    ? opinionTitle({
-                          opinionId: quote.opinionId,
-                          type: quote.type,
-                          author: quote.author,
-                          url: null,
-                      })
-                    : null,
-        }),
-    );
-
-    const selectRelevantQuote = useCallback(
-        (quote: CaseCitationQuote, index: number) => {
-            const key = relevantQuoteKey(quote, index);
-            setQuoteIndexState({ cacheKey: quoteCacheKey, index });
-            setActiveQuoteKey((current) => (current === key ? null : key));
-            if (typeof quote.opinionId === "number") {
-                setActiveOpinionId(quote.opinionId);
-            }
-        },
-        [quoteCacheKey],
-    );
-
-    useEffect(() => {
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- reset quote selection when the quote set changes
-        setQuoteIndexState({ cacheKey: quoteCacheKey, index: 0 });
-        const firstQuote = relevantQuotes[0];
-        setActiveQuoteKey(firstQuote ? relevantQuoteKey(firstQuote, 0) : null);
-        if (typeof firstQuote?.opinionId === "number") {
-            setActiveOpinionId(firstQuote.opinionId);
+        const targetId = activeQuote?.target.subdocument_id;
+        if (targetId) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect -- selected quotes control the visible opinion
+            setActiveSubdocumentId(targetId);
         }
-    }, [quoteCacheKey, relevantQuotes]);
+    }, [activeQuote?.target.subdocument_id, subdocuments]);
+
+    const activeSubdocument =
+        subdocuments.find(
+            (subdocument) => subdocument.document_id === activeSubdocumentId,
+        ) ?? subdocuments[0];
 
     useEffect(() => {
-        const root = opinionContentRef.current;
+        const root = contentRef.current;
         if (!root) return;
         clearDocxQuoteHighlights(root);
-        if (!activeQuoteKey) return;
-
-        const activeEntry = relevantQuotes
-            .map((quote, index) => ({ quote, index }))
-            .find(
-                ({ quote, index }) =>
-                    relevantQuoteKey(quote, index) === activeQuoteKey,
-            );
-        if (!activeEntry) return;
+        if (!activeQuote) return;
         if (
-            typeof activeEntry.quote.opinionId === "number" &&
-            activeEntry.quote.opinionId !== activeOpinionId
+            activeQuote.target.subdocument_id &&
+            activeQuote.target.subdocument_id !== activeSubdocument?.document_id
         ) {
             return;
         }
-
-        const match = highlightDocxQuote(root, activeEntry.quote.quote);
+        const match = highlightDocxQuote(root, activeQuote.quote);
         if (!match) return;
+        root.querySelectorAll(`.${QUOTE_HIGHLIGHT_CLASS}`).forEach((element) =>
+            element.classList.add("case-quote-highlight"),
+        );
         window.setTimeout(() => {
             match.scrollIntoView({ behavior: "smooth", block: "center" });
         }, 50);
-    }, [
-        activeOpinionId,
-        activeOpinion?.html,
-        activeOpinion?.opinionId,
-        activeOpinion?.text,
-        activeQuoteKey,
-        relevantQuotes,
-    ]);
+    }, [activeQuote, activeSubdocument, quoteFocusKey]);
 
-    const opinionSurfaceClassName = "bg-white/60 backdrop-blur-xl";
+    const surfaceClassName = "bg-white/60 backdrop-blur-xl";
+    const visibleLoading = isLoading && subdocuments.length === 0;
+    const visibleError = subdocuments.length === 0 ? error : null;
 
     return (
         <div className="flex min-h-0 flex-1 flex-col">
-            {relevantQuoteItems.length > 0 && (
-                <CitationQuotesHeader
-                    quotes={relevantQuoteItems}
-                    activeQuoteId={activeQuoteKey}
-                    currentIndex={currentQuoteIndex}
-                    citationRef={tab.citationRef}
-                    citationText={[title, citation].filter(Boolean).join(", ")}
-                    onSelect={(_quote, index) => {
-                        const quote = relevantQuotes[index];
-                        if (quote) selectRelevantQuote(quote, index);
-                    }}
-                    onIndexChange={(index) => {
-                        const quote = relevantQuotes[index];
-                        if (quote) selectRelevantQuote(quote, index);
-                    }}
-                />
-            )}
-            {!loading && !error && opinions.length > 1 && (
+            {!visibleLoading && !visibleError && subdocuments.length > 1 && (
                 <div className="relative px-1 shadow-[inset_0_-1px_0_rgb(229_231_235)]">
                     <div className="relative z-10 flex items-end gap-1 overflow-hidden px-2 pt-1">
-                        {orderedOpinions.map(({ opinion, index }) => {
-                            const opinionId = opinion.opinionId;
+                        {subdocuments.map((subdocument) => {
                             const isActive =
-                                opinionId !== null &&
-                                opinionId === activeOpinionId;
+                                subdocument.document_id ===
+                                activeSubdocument?.document_id;
                             return (
                                 <button
-                                    key={opinionId ?? index}
+                                    key={subdocument.document_id}
                                     type="button"
-                                    disabled={opinionId === null}
                                     onClick={() => {
-                                        if (opinionId === null) return;
-                                        setActiveOpinionId(opinionId);
-                                        setActiveQuoteKey(null);
+                                        setActiveSubdocumentId(
+                                            subdocument.document_id,
+                                        );
+                                        onClearQuote?.();
                                     }}
                                     style={
                                         isActive
@@ -394,10 +195,10 @@ export function CaseView({ tab }: { tab: CaseTab }) {
                                         isActive
                                             ? "z-20 bg-white text-gray-800 before:content-[''] before:absolute before:bottom-0 before:-left-2 before:z-20 before:h-2 before:w-2 before:rounded-br-lg before:shadow-[4px_4px_0_4px_white] before:transition-shadow after:content-[''] after:absolute after:bottom-0 after:-right-2 after:z-20 after:h-2 after:w-2 after:rounded-bl-lg after:shadow-[-4px_4px_0_4px_white] after:transition-shadow"
                                             : "z-10 bg-gray-100 text-gray-600 hover:bg-gray-100 before:content-[''] before:absolute before:bottom-0 before:-left-2 before:h-2 before:w-2 before:rounded-br-lg before:shadow-[4px_4px_0_4px_#f3f4f6] before:transition-shadow after:content-[''] after:absolute after:bottom-0 after:-right-2 after:h-2 after:w-2 after:rounded-bl-lg after:shadow-[-4px_4px_0_4px_#f3f4f6] after:transition-shadow"
-                                    } disabled:cursor-not-allowed disabled:opacity-50`}
+                                    }`}
                                 >
                                     <span className="truncate">
-                                        {opinionTitle(opinion, index)}
+                                        {subdocument.title}
                                     </span>
                                 </button>
                             );
@@ -405,60 +206,62 @@ export function CaseView({ tab }: { tab: CaseTab }) {
                     </div>
                 </div>
             )}
-            <div className="flex flex-1 min-h-0 flex-col">
-                {loading && (
-                    <div
-                        className={cn(
-                            "h-full min-h-0",
-                            opinionSurfaceClassName,
-                        )}
-                    >
+
+            <div className="flex min-h-0 flex-1 flex-col">
+                {visibleLoading && (
+                    <div className={cn("h-full min-h-0", surfaceClassName)}>
                         <div className="flex h-full items-center justify-center p-5">
-                            <MikeIcon spin mike size={28} />
+                            <Loader2 className="h-7 w-7 animate-spin text-gray-400" />
                         </div>
                     </div>
                 )}
-                {error && (
-                    <p
+                {visibleError && (
+                    <div
                         className={cn(
-                            "p-4 font-serif text-sm text-red-600",
-                            opinionSurfaceClassName,
+                            "flex h-full flex-col items-center justify-center gap-3 p-4 text-center",
+                            surfaceClassName,
                         )}
                     >
-                        {error}
-                    </p>
-                )}
-                {!loading && !error && opinions.length === 0 && (
-                    <p
-                        className={cn(
-                            "p-4 font-serif text-sm text-gray-500",
-                            opinionSurfaceClassName,
+                        <p className="font-serif text-sm text-red-600">
+                            {visibleError}
+                        </p>
+                        {onRetry && (
+                            <PillButton tone="white" onClick={onRetry}>
+                                Try again
+                            </PillButton>
                         )}
-                    >
-                        No opinions were returned for this case.
-                    </p>
+                    </div>
                 )}
-                {!loading && !error && opinions.length > 0 && (
+                {!visibleLoading &&
+                    !visibleError &&
+                    subdocuments.length === 0 && (
+                        <p
+                            className={cn(
+                                "p-4 font-serif text-sm text-gray-500",
+                                surfaceClassName,
+                            )}
+                        >
+                            No content was returned for this document.
+                        </p>
+                    )}
+                {!visibleLoading && !visibleError && activeSubdocument && (
                     <div
                         className={cn(
                             "h-full min-h-0 overflow-hidden",
-                            opinionSurfaceClassName,
+                            surfaceClassName,
                         )}
                     >
-                        {activeOpinion && (
-                            <div
-                                ref={opinionScrollRef}
-                                className={cn(
-                                    "h-full overflow-y-auto p-5",
-                                    opinionSurfaceClassName,
-                                )}
-                            >
-                                <OpinionBlock
-                                    opinion={activeOpinion}
-                                    contentRef={opinionContentRef}
-                                />
-                            </div>
-                        )}
+                        <div
+                            className={cn(
+                                "h-full overflow-y-auto p-5",
+                                surfaceClassName,
+                            )}
+                        >
+                            <CaseSubdocument
+                                subdocument={activeSubdocument}
+                                contentRef={contentRef}
+                            />
+                        </div>
                     </div>
                 )}
             </div>
@@ -466,77 +269,23 @@ export function CaseView({ tab }: { tab: CaseTab }) {
     );
 }
 
-function opinionTypeLabel(value: string | null): string {
-    if (!value) return "Opinion";
-    const type = value.replace(/^\d+/, "").replace(/_/g, " ").trim();
-    const compactType = type.toLowerCase().replace(/\s+/g, "");
-    if (compactType === "lead") return "Lead Opinion";
-    if (
-        compactType === "concurrentinpart" ||
-        compactType === "concurrenceinpart" ||
-        compactType === "concurinpart"
-    ) {
-        return "Concurrence in part";
-    }
-    if (compactType === "combined") return "Combined Opinion";
-    return type.replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function opinionOrderRank(value: string | null): number {
-    const type = value?.replace(/^\d+/, "").toLowerCase() ?? "";
-    if (
-        type.includes("lead") ||
-        type.includes("majority") ||
-        type.includes("unanimous") ||
-        type.includes("plurality")
-    ) {
-        return 0;
-    }
-    if (type.includes("concurr")) return 1;
-    if (type.includes("dissent")) return 2;
-    if (type.includes("combined")) return 4;
-    return 3;
-}
-
-function orderOpinions(opinions: CaseLawOpinion[]) {
-    return opinions
-        .map((opinion, index) => ({ opinion, index }))
-        .sort((a, b) => {
-            const rankDelta =
-                opinionOrderRank(a.opinion.type) -
-                opinionOrderRank(b.opinion.type);
-            return rankDelta || a.index - b.index;
-        });
-}
-
-function opinionTitle(opinion: CaseLawOpinion, index?: number): string {
-    const type = opinionTypeLabel(opinion.type);
-    const fallbackType = opinion.type ? type : `Opinion ${index ?? ""}`.trim();
-    return opinion.author
-        ? `${fallbackType} by ${opinion.author}`
-        : fallbackType;
-}
-
-function OpinionBlock({
-    opinion,
+function CaseSubdocument({
+    subdocument,
     contentRef,
 }: {
-    opinion: CaseLawOpinion;
-    contentRef?: RefObject<HTMLElement | null>;
+    subdocument: PanelSubdocument;
+    contentRef: React.RefObject<HTMLElement | null>;
 }) {
     const sanitizedHtml = useMemo(
-        () => (opinion.html ? sanitizeCaseOpinionHtml(opinion.html) : ""),
-        [opinion.html],
+        () => (subdocument.html ? sanitizeCaseHtml(subdocument.html) : ""),
+        [subdocument.html],
     );
 
     return (
-        <article
-            ref={contentRef}
-            className="case-opinion-content border-b border-gray-100 pb-6 last:border-b-0"
-        >
+        <article ref={contentRef} className="case-document-content pb-6">
             <div className="mb-3">
                 <h3 className="font-serif text-lg font-semibold text-gray-900">
-                    {opinionTitle(opinion)}
+                    {subdocument.title}
                 </h3>
             </div>
             {sanitizedHtml ? (
@@ -546,7 +295,7 @@ function OpinionBlock({
                 />
             ) : (
                 <div className="whitespace-pre-wrap font-serif text-sm leading-7 text-gray-900 [&_p]:my-3">
-                    {opinion.text || "No opinion text returned."}
+                    {subdocument.text || "No document text returned."}
                 </div>
             )}
         </article>

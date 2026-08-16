@@ -4,7 +4,7 @@ import { QuoteIcon } from "@radix-ui/react-icons";
 
 interface CiteButtonProps {
     quoteText: string;
-    citationText: string;
+    quoteLabel: string;
     className?: string;
     showText?: boolean;
     iconSize?: number;
@@ -13,7 +13,7 @@ interface CiteButtonProps {
 
 export function CiteButton({
     quoteText,
-    citationText,
+    quoteLabel,
     className = "",
     showText = true,
     iconSize = 12,
@@ -26,8 +26,8 @@ export function CiteButton({
         e.preventDefault();
 
         try {
-            const compiledText =
-                `"${quoteText.replace(/"/g, "'")}" ${citationText}`.trim();
+            const label = quoteLabel ? ` (${quoteLabel})` : "";
+            const compiledText = `"${quoteText.replace(/"/g, "'")}"${label}`;
             await navigator.clipboard.writeText(compiledText);
 
             setIsCopied(true);

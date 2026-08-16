@@ -28,7 +28,7 @@ export function UserMessage({ content, files, workflow, onFileClick }: Props) {
                         {hasFiles &&
                             files.map((f, i) => {
                                 const className =
-                                    "inline-flex items-center gap-1 rounded-[10px] border border-white/70 bg-white py-0.5 pl-2 pr-2.5 text-xs text-gray-800 shadow-[0_2px_6px_rgba(15,23,42,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-xl";
+                                    "inline-flex items-center gap-1 rounded-[10px] border border-white/70 bg-white py-0.5 pl-2 pr-2.5 text-xs text-gray-800 shadow-sm backdrop-blur-xl";
                                 const fileContent = (
                                     <>
                                         <FileTypeIcon

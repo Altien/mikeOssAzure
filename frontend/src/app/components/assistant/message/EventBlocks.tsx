@@ -489,7 +489,7 @@ export function DocDownloadBlock({
                         {basename}
                     </p>
                     {hasVersion && (
-                        <span className="shrink-0 inline-flex items-center rounded-md border border-white/70 bg-white/55 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] backdrop-blur-xl">
+                        <span className="shrink-0 inline-flex items-center rounded-md border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
                             V{versionNumber}
                         </span>
                     )}
@@ -518,7 +518,7 @@ export function DocDownloadBlock({
     if (onOpen) {
         return (
             <div
-                className={`flex items-stretch overflow-hidden w-full font-sans ${RESPONSE_GLASS_SURFACE}`}
+                className={`flex items-stretch overflow-hidden w-full font-serif ${RESPONSE_GLASS_SURFACE}`}
             >
                 <button
                     type="button"
@@ -535,7 +535,7 @@ export function DocDownloadBlock({
     if (spinning) {
         return (
             <div
-                className={`flex items-stretch overflow-hidden w-full font-sans ${RESPONSE_GLASS_SURFACE}`}
+                className={`flex items-stretch overflow-hidden w-full font-serif ${RESPONSE_GLASS_SURFACE}`}
             >
                 {body}
                 {downloadIcon}
@@ -545,7 +545,7 @@ export function DocDownloadBlock({
 
     return (
         <div
-            className={`flex items-stretch overflow-hidden w-full font-sans ${RESPONSE_GLASS_SURFACE}`}
+            className={`flex items-stretch overflow-hidden w-full font-serif ${RESPONSE_GLASS_SURFACE}`}
         >
             <button
                 type="button"

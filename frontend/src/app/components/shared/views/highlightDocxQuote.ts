@@ -1,4 +1,4 @@
-const HIGHLIGHT_CLASS = "docx-text-highlight";
+export const QUOTE_HIGHLIGHT_CLASS = "docx-text-highlight";
 const IGNORED_TEXT_SELECTOR = ".star-pagination,.case-page-number";
 
 function onlyLetters(s: string): string {
@@ -39,7 +39,7 @@ function collectTextNodes(root: HTMLElement): Text[] {
 }
 
 export function clearDocxQuoteHighlights(root: HTMLElement): void {
-    root.querySelectorAll(`.${HIGHLIGHT_CLASS}`).forEach((span) => {
+    root.querySelectorAll(`.${QUOTE_HIGHLIGHT_CLASS}`).forEach((span) => {
         const parent = span.parentNode;
         if (!parent) return;
         while (span.firstChild) parent.insertBefore(span.firstChild, span);
@@ -64,7 +64,7 @@ export function highlightDocxQuote(
     clearDocxQuoteHighlights(root);
     if (!quote) return null;
     const segments = quote
-        .split(/\.{3}|…/)
+        .split(/\[\[PAGE_BREAK\]\]|\.{3}|…/)
         .map(onlyLetters)
         .filter((s) => s.length > 0);
     if (segments.length === 0) return null;
@@ -118,7 +118,7 @@ export function highlightDocxQuote(
         const mid = node.splitText(r.origStart);
         mid.splitText(r.origEnd - r.origStart);
         const span = document.createElement("span");
-        span.className = HIGHLIGHT_CLASS;
+        span.className = QUOTE_HIGHLIGHT_CLASS;
         mid.parentNode?.insertBefore(span, mid);
         span.appendChild(mid);
         spans.push(span);

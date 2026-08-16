@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/app/lib/supabase";
 import { PillButton } from "@/app/components/ui/pill-button";
 import type { EditAnnotation } from "../shared/types";
+import { ContextNumberBadge } from "./ContextNumberBadge";
 import { RESPONSE_GLASS_SURFACE } from "./message/messageStyles";
 
 function normalizeText(s: string) {
@@ -203,6 +204,11 @@ export function EditCard({
     const status = resolvedStatus ?? localStatus;
     const setStatus = setLocalStatus;
 
+    useEffect(() => {
+        if (busy) return;
+        setLocalStatus(annotation.status);
+    }, [annotation.edit_id, annotation.status, busy]);
+
     const resolved = status !== "pending";
     // True while an accept/reject request for any edit on this card's
     // document is in flight — triggered here, in DocPanel, or in the
@@ -278,17 +284,41 @@ export function EditCard({
         }
     };
 
+    const resolveButtons = (
+        <>
+            <PillButton
+                tone="blue"
+                size="sm"
+                onClick={() => handle("accept")}
+                disabled={inFlight || resolved}
+            >
+                {status === "accepted" ? "Accepted" : "Accept"}
+            </PillButton>
+            <PillButton
+                tone="white"
+                size="sm"
+                onClick={() => handle("reject")}
+                disabled={inFlight || resolved}
+            >
+                {status === "rejected" ? "Rejected" : "Reject"}
+            </PillButton>
+        </>
+    );
+
     return (
         <div className={`${RESPONSE_GLASS_SURFACE} p-3`}>
-            {changeNumber !== undefined && (
-                <p className="text-xs text-gray-400 mb-1.5">{changeNumber}</p>
-            )}
-            {annotation.reason && (
-                <p className="text-xs text-gray-500 mb-2">
-                    {annotation.reason}
-                </p>
-            )}
-            <div className="text-sm leading-relaxed font-serif bg-gray-100/70 rounded-lg px-2 py-2">
+            <div className="mb-2 flex items-start gap-2">
+                <ContextNumberBadge
+                    number={changeNumber}
+                    label="Tracked change"
+                />
+                {annotation.reason && (
+                    <p className="min-w-0 flex-1 font-serif text-sm text-gray-500">
+                        {annotation.reason}
+                    </p>
+                )}
+            </div>
+            <div className="rounded-lg bg-gray-100/70 px-2 py-2 font-sans text-xs leading-relaxed">
                 {annotation.inserted_text && (
                     <span className="text-green-700">
                         {annotation.inserted_text}
@@ -300,23 +330,8 @@ export function EditCard({
                     </span>
                 )}
             </div>
-            <div className="flex gap-2 mt-3">
-                <PillButton
-                    tone="blue"
-                    size="sm"
-                    onClick={() => handle("accept")}
-                    disabled={inFlight || resolved}
-                >
-                    {status === "accepted" ? "Accepted" : "Accept"}
-                </PillButton>
-                <PillButton
-                    tone="white"
-                    size="sm"
-                    onClick={() => handle("reject")}
-                    disabled={inFlight || resolved}
-                >
-                    {status === "rejected" ? "Rejected" : "Reject"}
-                </PillButton>
+            <div className="mt-3 flex gap-2">
+                {resolveButtons}
                 {onViewClick && (
                     <PillButton
                         tone="black"

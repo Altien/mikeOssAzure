@@ -16,7 +16,7 @@ import { workflowAddonsRouter } from "./routes/workflowAddons";
 import { userRouter } from "./routes/user";
 import { modelsRouter } from "./routes/models";
 import { downloadsRouter } from "./routes/downloads";
-import { caseLawRouter } from "./routes/caseLaw";
+import { sourceDocumentsRouter } from "./routes/sourceDocuments";
 import { auditRouter } from "./routes/audit";
 import { manifestPublicKey } from "./lib/manifestSigning";
 import { safeErrorLog } from "./lib/safeError";
@@ -200,7 +200,7 @@ app.use("/workflow-addons", workflowAddonsRouter);
 app.use("/user", userRouter);
 app.use("/users", userRouter);
 app.use("/download", downloadsRouter);
-app.use("/case-law", caseLawRouter);
+app.use("/documents", sourceDocumentsRouter);
 app.use("/audit", auditRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));

@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { Citation, DocumentCitation } from "../../shared/types";
-import { CitationQuotesHeader } from "../CitationQuotesHeader";
+import { CitationQuotesSection } from "../CitationQuotesSection";
 import {
   citationVerificationAriaLabel,
   citationVerificationPillClassName,
@@ -60,10 +60,16 @@ describe("citation verification presentation", () => {
     expect(citationVerificationPillClassName(citation)).toBe("");
   });
 
-  it("does not apply document verification semantics to case citations", () => {
-    expect(citationVerificationState(caseCitation)).toBeNull();
+  it("applies source verification semantics to case citations", () => {
+    expect(citationVerificationState(caseCitation)).toBe("verified");
     expect(citationVerificationAriaLabel(caseCitation)).toBe("Citation 2");
     expect(citationVerificationPillClassName(caseCitation)).toBe("");
+
+    const unverifiedCase = { ...caseCitation, verified: false };
+    expect(citationVerificationState(unverifiedCase)).toBe("unverified");
+    expect(citationVerificationAriaLabel(unverifiedCase)).toBe(
+      "Citation 2. Could not verify quote",
+    );
   });
 
   it("renders an accessible per-quote warning badge", () => {
@@ -71,7 +77,7 @@ describe("citation verification presentation", () => {
     const badge = screen.getByText("Could not verify quote");
     expect(badge).toHaveAttribute(
       "title",
-      "Quote could not be matched to the extracted document text.",
+      "Quote could not be matched to the source text.",
     );
     expect(badge).toHaveClass("backdrop-blur-xl");
   });
@@ -85,7 +91,7 @@ describe("citation verification presentation", () => {
 
   it("shows per-quote verification in the citation panel", () => {
     render(
-      <CitationQuotesHeader
+      <CitationQuotesSection
         citationRef={7}
         quotes={[
           {
@@ -101,10 +107,36 @@ describe("citation verification presentation", () => {
     expect(screen.getByLabelText("Citation 7")).toHaveTextContent("7");
     expect(screen.queryByText("Citation")).not.toBeInTheDocument();
     expect(screen.getByText("Could not verify quote")).toBeVisible();
-    const quoteButton = screen.getByRole("button", {
-      name: /Model supplied quote/,
-    });
-    expect(quoteButton).toBeDisabled();
-    expect(quoteButton).not.toHaveClass("bg-blue-100/70");
+    expect(screen.getByRole("button", { name: "View" })).toBeDisabled();
+    expect(screen.getByText(/Model supplied quote/)).not.toHaveClass(
+      "bg-blue-100/70",
+    );
+  });
+
+  it("formats normalized document quotes inside the quote section", () => {
+    render(
+      <CitationQuotesSection
+        document={{
+          document_id: "spreadsheet-1",
+          title: "Damages.xlsx",
+          type: "spreadsheet",
+          metadata: [],
+          quotes: [
+            {
+              quote: "1,250,000",
+              target: { sheet: "Summary", cell: "B7" },
+              verification: { verified: true },
+            },
+          ],
+        }}
+        activeQuoteId="spreadsheet-1:quote:0"
+        citationRef={4}
+      />,
+    );
+
+    expect(screen.getByText(/1,250,000/)).toHaveTextContent(
+      "“1,250,000” (Summary, cell B7)",
+    );
+    expect(screen.getByLabelText("Citation 4")).toHaveTextContent("4");
   });
 });

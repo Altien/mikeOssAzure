@@ -11,13 +11,9 @@ import Image from "next/image";
 import { X } from "lucide-react";
 import { DocPanel, type DocPanelMode } from "./DocPanel";
 import { FileTypeIcon } from "../shared/FileTypeIcon";
-import type {
-    Citation,
-    EditAnnotation,
-} from "../shared/types";
-import type { CaseTab } from "./CaseView";
+import type { Citation, EditAnnotation, PanelDocument } from "../shared/types";
 import { cn } from "@/app/lib/utils";
-import { LIQUID_PANEL_SURFACE_CLASS } from "@/app/components/ui/liquid-surface";
+import { APP_PANEL_SHADOW_CLASS } from "@/app/components/ui/liquid-surface";
 
 // ---------------------------------------------------------------------------
 // Tab data
@@ -33,10 +29,7 @@ import { LIQUID_PANEL_SURFACE_CLASS } from "@/app/components/ui/liquid-surface";
 
 type CommonTab = {
     id: string;
-    documentId: string;
-    filename: string;
-    versionId: string | null;
-    versionNumber: number | null;
+    document: PanelDocument;
     warning?: string | null;
     initialScrollTop?: number | null;
 };
@@ -54,11 +47,7 @@ export type EditTab = CommonTab & {
     changeNumber?: number;
 };
 
-export type AssistantSidePanelTab =
-    | DocumentTab
-    | CitationTab
-    | EditTab
-    | CaseTab;
+export type AssistantSidePanelTab = DocumentTab | CitationTab | EditTab;
 
 /**
  * Keep the mounted document viewer's identity stable when another link opens
@@ -70,18 +59,30 @@ export function mergeAssistantSidePanelTab(
     existing: AssistantSidePanelTab,
     incoming: AssistantSidePanelTab,
 ): AssistantSidePanelTab {
-    if (existing.kind === "case" || incoming.kind === "case") return incoming;
-    if (existing.documentId !== incoming.documentId) return incoming;
+    if (existing.document.document_id !== incoming.document.document_id) {
+        return incoming;
+    }
     if (existing.kind === "document" && incoming.kind === "document") {
+        if (
+            incoming.document.subdocuments?.length &&
+            !existing.document.subdocuments?.length
+        ) {
+            return {
+                ...existing,
+                document: incoming.document,
+            };
+        }
         return existing;
     }
     return {
         ...incoming,
         id: existing.id,
-        documentId: existing.documentId,
-        filename: existing.filename,
-        versionId: existing.versionId,
-        versionNumber: existing.versionNumber,
+        document: {
+            ...incoming.document,
+            document_id: existing.document.document_id,
+            version_id: existing.document.version_id,
+            version_number: existing.document.version_number,
+        },
         warning: existing.warning,
         initialScrollTop: existing.initialScrollTop,
     };
@@ -97,11 +98,7 @@ export function reorderAssistantSidePanelTabs(
 ): AssistantSidePanelTab[] {
     const draggedIndex = tabs.findIndex((tab) => tab.id === draggedTabId);
     const targetIndex = tabs.findIndex((tab) => tab.id === targetTabId);
-    if (
-        draggedIndex < 0 ||
-        targetIndex < 0 ||
-        draggedTabId === targetTabId
-    ) {
+    if (draggedIndex < 0 || targetIndex < 0 || draggedTabId === targetTabId) {
         return tabs;
     }
 
@@ -111,9 +108,7 @@ export function reorderAssistantSidePanelTabs(
         (tab) => tab.id === targetTabId,
     );
     const insertionIndex =
-        position === "after"
-            ? remainingTargetIndex + 1
-            : remainingTargetIndex;
+        position === "after" ? remainingTargetIndex + 1 : remainingTargetIndex;
     next.splice(insertionIndex, 0, draggedTab);
 
     return next.every((tab, index) => tab === tabs[index]) ? tabs : next;
@@ -167,7 +162,6 @@ interface Props {
 const MIN_WIDTH = 300;
 const MAX_WIDTH_OFFSET = 56; // sidebar width
 const MIN_CHAT_WIDTH = 400;
-
 function maxPanelWidth() {
     if (typeof window === "undefined") return 600;
     return Math.max(
@@ -177,10 +171,7 @@ function maxPanelWidth() {
 }
 
 function tabTitle(tab: AssistantSidePanelTab): string {
-    if (tab.kind === "case") {
-        return tab.caseName || tab.citation || "Case";
-    }
-    return tab.filename;
+    return tab.document.title;
 }
 
 export function AssistantSidePanel({
@@ -274,12 +265,15 @@ export function AssistantSidePanel({
             ref={panelRef}
             className={cn(
                 "relative flex h-full w-full shrink-0 flex-col md:my-3 md:mr-3 md:h-[calc(100%-1.5rem)] md:w-[var(--assistant-panel-width)]",
-                LIQUID_PANEL_SURFACE_CLASS,
+                "rounded-2xl border border-white/70 bg-white/50 backdrop-blur-2xl",
+                APP_PANEL_SHADOW_CLASS,
                 "overflow-hidden",
             )}
-            style={{
-                "--assistant-panel-width": `${panelWidth}px`,
-            } as CSSProperties}
+            style={
+                {
+                    "--assistant-panel-width": `${panelWidth}px`,
+                } as CSSProperties
+            }
         >
             {/* Drag handle */}
             <div
@@ -302,17 +296,14 @@ export function AssistantSidePanel({
                     {tabs.map((tab) => {
                         const isActive = tab.id === active.id;
                         const showVersionBadge =
-                            tab.kind !== "case" &&
-                            typeof tab.versionNumber === "number" &&
-                            Number.isFinite(tab.versionNumber) &&
-                            tab.versionNumber > 1;
+                            typeof tab.document.version_number === "number" &&
+                            Number.isFinite(tab.document.version_number) &&
+                            tab.document.version_number > 1;
                         const title = tabTitle(tab);
                         return (
                             <div
                                 key={tab.id}
-                                draggable={
-                                    !!onReorderTabs && tabs.length > 1
-                                }
+                                draggable={!!onReorderTabs && tabs.length > 1}
                                 onDragStart={(event) => {
                                     if (!onReorderTabs) return;
                                     draggedTabIdRef.current = tab.id;
@@ -329,10 +320,7 @@ export function AssistantSidePanel({
                                         event.dataTransfer.getData(
                                             "text/plain",
                                         );
-                                    if (
-                                        !onReorderTabs ||
-                                        !draggedId
-                                    ) {
+                                    if (!onReorderTabs || !draggedId) {
                                         return;
                                     }
                                     if (draggedId === tab.id) {
@@ -406,38 +394,45 @@ export function AssistantSidePanel({
                                             )}
                                         />
                                     )}
-                                {tab.kind === "case" ? (
-                                    <Image
-                                        src="/icons/legal-sources/case-law.svg"
-                                        alt=""
-                                        aria-hidden="true"
-                                        width={14}
-                                        height={14}
-                                        className="h-3.5 w-3.5 shrink-0 object-contain"
-                                    />
-                                ) : (
-                                    <FileTypeIcon
-                                        fileType={tab.filename}
-                                        className="h-3.5 w-3.5"
-                                    />
-                                )}
-                                <span
-                                    className={`min-w-0 flex-1 truncate text-xs ${isActive ? "font-medium" : "font-normal"}`}
-                                    title={title}
-                                >
-                                    {title}
-                                </span>
-                                {showVersionBadge && (
+                                <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+                                    {tab.document.type === "case" ||
+                                    tab.document.type === "legislation" ? (
+                                        <Image
+                                            src={
+                                                tab.document.type === "case"
+                                                    ? "/icons/legal-sources/case-law.svg"
+                                                    : "/icons/legal-sources/legislation.svg"
+                                            }
+                                            alt=""
+                                            aria-hidden="true"
+                                            width={14}
+                                            height={14}
+                                            className="h-3.5 w-3.5 shrink-0 object-contain"
+                                        />
+                                    ) : (
+                                        <FileTypeIcon
+                                            fileType={tab.document.title}
+                                            className="h-3.5 w-3.5 shrink-0"
+                                        />
+                                    )}
                                     <span
-                                        className={`shrink-0 inline-flex items-center rounded border px-1 py-px text-[9px] font-medium ${
-                                            isActive
-                                                ? "border-gray-200 bg-white text-gray-600"
-                                                : "border-gray-300 bg-white/70 text-gray-500"
-                                        }`}
+                                        className={`min-w-0 flex-1 truncate text-xs ${isActive ? "font-medium" : "font-normal"}`}
+                                        title={title}
                                     >
-                                        V{tab.versionNumber}
+                                        {title}
                                     </span>
-                                )}
+                                    {showVersionBadge && (
+                                        <span
+                                            className={`inline-flex shrink-0 items-center rounded border px-1 py-px text-[9px] font-medium ${
+                                                isActive
+                                                    ? "border-gray-200 bg-white text-gray-600"
+                                                    : "border-gray-300 bg-white/70 text-gray-500"
+                                            }`}
+                                        >
+                                            V{tab.document.version_number}
+                                        </span>
+                                    )}
+                                </div>
                                 <button
                                     onClick={(e) => {
                                         e.stopPropagation();
@@ -480,11 +475,7 @@ export function AssistantSidePanel({
                                 draggedId &&
                                 draggedId !== lastTab.id
                             ) {
-                                onReorderTabs(
-                                    draggedId,
-                                    lastTab.id,
-                                    "after",
-                                );
+                                onReorderTabs(draggedId, lastTab.id, "after");
                             }
                             clearTabDrag();
                         }}
@@ -505,21 +496,6 @@ export function AssistantSidePanel({
             <div className="flex-1 min-h-0 relative">
                 {tabs.map((tab) => {
                     const isActive = tab.id === active.id;
-                    if (tab.kind === "case") {
-                        return (
-                            <div
-                                key={tab.id}
-                                className={`absolute inset-0 flex flex-col ${isActive ? "" : "invisible pointer-events-none"}`}
-                                aria-hidden={!isActive}
-                            >
-                                <DocPanel
-                                    kind="case"
-                                    tab={tab}
-                                    compactActions={panelWidth < 600}
-                                />
-                            </div>
-                        );
-                    }
                     const mode: DocPanelMode =
                         tab.kind === "citation"
                             ? {
@@ -546,15 +522,14 @@ export function AssistantSidePanel({
                             aria-hidden={!isActive}
                         >
                             <DocPanel
-                                kind="document"
-                                documentId={tab.documentId}
-                                filename={tab.filename}
-                                versionId={tab.versionId}
-                                versionNumber={tab.versionNumber}
+                                document={tab.document}
                                 mode={mode}
                                 isReloading={
-                                    isEditorReloading?.(tab.documentId) ?? false
+                                    isEditorReloading?.(
+                                        tab.document.document_id,
+                                    ) ?? false
                                 }
+                                compactActions={panelWidth < 600}
                                 warning={tab.warning ?? null}
                                 onWarningDismiss={() =>
                                     onWarningDismiss?.(tab.id)

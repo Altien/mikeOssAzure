@@ -20,7 +20,7 @@ export function EditCardsSection({
   return (
     <div className={`${EDIT_SECTION_SURFACE} overflow-hidden`}>
       <div className="flex items-center gap-2 px-3 pt-3">
-        <p className="min-w-0 flex-1 truncate font-serif text-sm text-gray-700">
+        <p className="min-w-0 flex-1 truncate font-serif text-xs text-gray-700">
           {summary}
         </p>
         <button

@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { ChevronDown, Loader2 } from "lucide-react";
+import { GlassCard } from "@/app/components/ui/glass-card";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { supabase } from "@/app/lib/supabase";
 import type { EditAnnotation } from "../../shared/types";
@@ -172,7 +173,7 @@ function BulkEditActions({
                 Reject all
             </PillButton>
             {progress && (
-                <span className="text-xs font-serif text-gray-500">
+                <span className="text-xs font-sans text-gray-500">
                     {progress.done}/{progress.total}
                 </span>
             )}
@@ -249,10 +250,10 @@ export function EditCardsSection({
               : `${resolvedCount} resolved tracked ${resolvedCount === 1 ? "change" : "changes"}`;
 
     return (
-        <div className="rounded-xl bg-white/55 shadow-[0_3px_9px_rgba(15,23,42,0.03),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-4px_9px_rgba(255,255,255,0.05)] backdrop-blur-2xl overflow-hidden">
+        <GlassCard className="overflow-hidden">
             {/* Row 1: summary + chevron */}
             <div className="flex items-center gap-2 px-3 pt-3">
-                <p className="flex-1 min-w-0 text-sm font-serif text-gray-700 truncate">
+                <p className="min-w-0 flex-1 truncate font-serif text-xs text-gray-700">
                     {summary}
                 </p>
                 <button
@@ -284,6 +285,6 @@ export function EditCardsSection({
                 </div>
             )}
             {!isOpen && <div className="pb-3" />}
-        </div>
+        </GlassCard>
     );
 }

@@ -20,7 +20,7 @@ const PRESENTATION: Record<
   },
   unverified: {
     label: "Could not verify quote",
-    description: "Quote could not be matched to the extracted document text.",
+    description: "Quote could not be matched to the source text.",
     pillClassName:
       "!border-0 !bg-red-100/85 !text-red-800 hover:!bg-red-200/80",
   },
@@ -29,12 +29,11 @@ const PRESENTATION: Record<
 export function citationVerificationState(
   citation: Citation,
 ): CitationVerificationDisplayState | null {
-  if (citation.kind === "case") return null;
   return citation.verified === false ? "unverified" : "verified";
 }
 
 export function quoteVerificationState(
-  quote: DocumentCitationQuote,
+  quote: Pick<DocumentCitationQuote, "verification">,
 ): CitationVerificationDisplayState {
   return quote.verification?.verified === false ? "unverified" : "verified";
 }
