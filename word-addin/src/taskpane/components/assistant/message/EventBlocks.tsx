@@ -236,19 +236,23 @@ export function DocEditBlock({
         ? changeNumber === undefined
           ? "Tracked change ready for review"
           : `Change ${changeNumber} ready for review`
-        : status === "accepted"
-          ? `Accepted ${subject}`
-          : status === "rejected"
-            ? `Rejected ${subject}`
-            : status === "skipped"
-              ? `Skipped ${subject}`
-              : status === "unmanaged"
-                ? `Edited ${subject} in Word`
-                : `Couldn’t apply ${subject}`;
+        : status === "applied"
+          ? changeNumber === undefined
+            ? "Applied change to the document"
+            : `Applied change ${changeNumber} to the document`
+          : status === "accepted"
+            ? `Accepted ${subject}`
+            : status === "rejected"
+              ? `Rejected ${subject}`
+              : status === "skipped"
+                ? `Skipped ${subject}`
+                : status === "unmanaged"
+                  ? `Edited ${subject} in Word`
+                  : `Couldn’t apply ${subject}`;
   const dotColor =
     status === "error"
       ? "red"
-      : status === "pending" || status === "accepted"
+      : status === "pending" || status === "applied" || status === "accepted"
         ? "green"
         : "gray";
 

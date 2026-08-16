@@ -136,13 +136,15 @@ function AssistantMessageImpl({
           ? "error"
           : pendingEditCount > 0
             ? "pending"
-            : editRows.some(({ status }) => status === "accepted")
-              ? "accepted"
-              : editRows.some(({ status }) => status === "rejected")
-                ? "rejected"
-                : editRows.some(({ status }) => status === "unmanaged")
-                  ? "unmanaged"
-                  : "skipped";
+            : editRows.some(({ status }) => status === "applied")
+              ? "applied"
+              : editRows.some(({ status }) => status === "accepted")
+                ? "accepted"
+                : editRows.some(({ status }) => status === "rejected")
+                  ? "rejected"
+                  : editRows.some(({ status }) => status === "unmanaged")
+                    ? "unmanaged"
+                    : "skipped";
   const firstEditError = editRows.find(({ runtime }) => runtime?.error)?.runtime
     ?.error;
   const editEvent =

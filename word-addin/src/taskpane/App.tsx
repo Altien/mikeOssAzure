@@ -15,7 +15,10 @@ import {
 import { WorkflowDetailsModal } from "./components/workflows/WorkflowDetailsModal";
 import { NewWorkflowModal } from "./components/workflows/NewWorkflowModal";
 import { SettingsPage } from "./components/settings/SettingsPage";
-import { useWordChatStoragePreference } from "./lib/wordChatSettings";
+import {
+  useWordChatStoragePreference,
+  useWordEditApplyMode,
+} from "./lib/wordChatSettings";
 import { useWordDocumentIdentity } from "./lib/wordDocumentIdentity";
 import { clearLocalWordChats } from "./lib/localWordChats";
 
@@ -43,6 +46,7 @@ export default function App(): React.ReactElement {
   const { token, loading, logout } = useAuth();
   const pendingOwnerId = token ? getWordChatOwnerId(token) : null;
   const wordChatStorage = useWordChatStoragePreference(pendingOwnerId);
+  const editApply = useWordEditApplyMode();
   const wordDocument = useWordDocumentIdentity();
   const [selectedSection, setSelectedSection] = useState<AddinSection>("chat");
   const [chatSessionKey, setChatSessionKey] = useState(0);
@@ -205,6 +209,8 @@ export default function App(): React.ReactElement {
         wordDocumentId={wordDocumentId}
         wordChatStorage={wordChatStorage.mode}
         wordChatOwnerId={wordChatOwnerId}
+        editApplyMode={editApply.mode}
+        onEditApplyModeChange={editApply.setMode}
       />
 
       <div className="absolute inset-x-3 top-14 z-30">
@@ -229,6 +235,7 @@ export default function App(): React.ReactElement {
             onChatIdChange={handleChatIdChange}
             onChatStarted={markChatStarted}
             wordDocumentId={wordDocumentId}
+            editApplyMode={editApply.mode}
             wordChatStorage={wordChatStorage.mode}
             wordChatOwnerId={wordChatOwnerId}
           />

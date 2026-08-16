@@ -30,6 +30,7 @@ const STATUS_COPY: Record<
     copy: "Tracked change found — review it in Word.",
     className: "text-gray-500",
   },
+  applied: { copy: "Applied to the document.", className: "text-green-700" },
   accepted: { copy: "Accepted.", className: "text-green-700" },
   rejected: { copy: "Rejected.", className: "text-gray-500" },
   skipped: {
