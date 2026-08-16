@@ -431,7 +431,6 @@ export function DocDownloadBlock({
         Number.isFinite(versionNumber) &&
         versionNumber > 0;
     const extMatch = filename.match(/\.(\w+)$/);
-    const ext = extMatch ? extMatch[1].toUpperCase() : "FILE";
     const rawBasename = extMatch
         ? filename.slice(0, -extMatch[0].length)
         : filename;
@@ -483,9 +482,10 @@ export function DocDownloadBlock({
 
     const body = (
         <div className="flex items-center gap-3 px-4 py-3 min-w-0 flex-1">
+            <FileTypeIcon fileType={filename} className="h-4 w-4" />
             <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 min-w-0">
-                    <p className="text-base font-serif text-gray-900 text-wrap">
+                    <p className="text-lg font-serif text-gray-900 text-wrap">
                         {basename}
                     </p>
                     {hasVersion && (
@@ -494,7 +494,6 @@ export function DocDownloadBlock({
                         </span>
                     )}
                 </div>
-                <p className="text-xs text-blue-500 mt-0.5">{ext}</p>
             </div>
         </div>
     );

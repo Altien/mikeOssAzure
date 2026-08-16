@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
     mergeAssistantSidePanelTab,
+    reorderAssistantSidePanelTabs,
     type AssistantSidePanelTab,
 } from "./AssistantSidePanel";
 
@@ -62,5 +63,43 @@ describe("mergeAssistantSidePanelTab", () => {
             warning: "Preserved warning",
             initialScrollTop: 240,
         });
+    });
+});
+
+describe("reorderAssistantSidePanelTabs", () => {
+    const tabs = [
+        documentTab({ id: "a", documentId: "a" }),
+        documentTab({ id: "b", documentId: "b" }),
+        documentTab({ id: "c", documentId: "c" }),
+    ];
+
+    it("moves a tab before the drop target", () => {
+        expect(
+            reorderAssistantSidePanelTabs(tabs, "c", "a", "before").map(
+                (tab) => tab.id,
+            ),
+        ).toEqual(["c", "a", "b"]);
+    });
+
+    it("moves a tab after the drop target", () => {
+        expect(
+            reorderAssistantSidePanelTabs(tabs, "a", "b", "after").map(
+                (tab) => tab.id,
+            ),
+        ).toEqual(["b", "a", "c"]);
+    });
+
+    it("moves a tab to the right end after the last tab", () => {
+        expect(
+            reorderAssistantSidePanelTabs(tabs, "a", "c", "after").map(
+                (tab) => tab.id,
+            ),
+        ).toEqual(["b", "c", "a"]);
+    });
+
+    it("keeps the existing array when the drop does not change order", () => {
+        expect(
+            reorderAssistantSidePanelTabs(tabs, "a", "b", "before"),
+        ).toBe(tabs);
     });
 });

@@ -1,7 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Download, Loader2 } from "lucide-react";
+import Image from "next/image";
+import {
+    useCallback,
+    useEffect,
+    useMemo,
+    useState,
+    type ReactNode,
+} from "react";
+import { Download, ExternalLink, Loader2 } from "lucide-react";
 import { supabase } from "@/app/lib/supabase";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { PdfView } from "../shared/views/PdfView";
@@ -29,6 +36,7 @@ import type {
 } from "../shared/types";
 import { quoteVerificationState } from "./message/citationVerification";
 import { FileTypeIcon } from "../shared/FileTypeIcon";
+import { CaseView, type CaseTab } from "./CaseView";
 
 /**
  * Discriminated-union describing what the panel is showing above the viewer.
@@ -69,7 +77,8 @@ export type DocPanelMode =
           }) => void;
       };
 
-interface Props {
+interface DocumentPanelProps {
+    kind: "document";
     documentId: string;
     filename: string;
     versionId: string | null;
@@ -83,13 +92,32 @@ interface Props {
     onScrollChange?: (scrollTop: number) => void;
 }
 
+interface CasePanelProps {
+    kind: "case";
+    tab: CaseTab;
+    compactActions?: boolean;
+}
+
+type Props = DocumentPanelProps | CasePanelProps;
+
 /**
- * Unified side-panel body for the assistant. Renders a single document
- * with optionally a citation quote OR a tracked change highlighted above
- * the viewer. No selector UI — caller picks the one thing to show; if the
- * user wants a different citation/edit, the panel gets a new tab.
+ * Unified side-panel body for documents and legal sources. The shell owns
+ * the title, metadata, and source actions; each source-specific view owns
+ * fetching, selection, and highlighting within its content.
  */
-export function DocPanel({
+export function DocPanel(props: Props) {
+    if (props.kind === "case") {
+        return (
+            <CasePanel
+                tab={props.tab}
+                compactActions={props.compactActions ?? false}
+            />
+        );
+    }
+    return <DocumentPanel {...props} />;
+}
+
+function DocumentPanel({
     documentId,
     filename,
     versionId,
@@ -100,7 +128,7 @@ export function DocPanel({
     onWarningDismiss,
     initialScrollTop,
     onScrollChange,
-}: Props) {
+}: DocumentPanelProps) {
     // Pick the viewer from the filename only, not from mode. Switching
     // headers (citation ↔ edit ↔ document) for the same document must
     // not unmount and remount the body — otherwise the user sees a full
@@ -210,11 +238,12 @@ export function DocPanel({
                 />
             )}
 
-            <div className="flex flex-1 min-h-0 flex-col px-3 py-3">
+            <div className="flex flex-1 min-h-0 flex-col">
                 {useDocxView ? (
                     <DocxView
                         documentId={documentId}
                         versionId={versionId ?? undefined}
+                        rounded={false}
                         quotes={quotes}
                         quoteFocusKey={quoteFocusKey}
                         highlightEdit={highlightEdit}
@@ -227,6 +256,7 @@ export function DocPanel({
                     <SpreadsheetView
                         documentId={documentId}
                         versionId={versionId}
+                        rounded={false}
                         highlightCells={highlightCells}
                     />
                 ) : (
@@ -235,6 +265,7 @@ export function DocPanel({
                             document_id: documentId,
                             version_id: versionId,
                         }}
+                        rounded={false}
                         quotes={quotes}
                         quoteFocusKey={quoteFocusKey}
                     />
@@ -244,9 +275,134 @@ export function DocPanel({
     );
 }
 
+function CasePanel({
+    tab,
+    compactActions,
+}: {
+    tab: CaseTab;
+    compactActions: boolean;
+}) {
+    const title =
+        [tab.caseName, tab.citation].filter(Boolean).join(", ") || "Case";
+    const filedDate = formatCaseDate(tab.dateFiled);
+    const metadata = filedDate
+        ? [{ label: "Date", value: filedDate }]
+        : [];
+
+    return (
+        <div className="flex h-full flex-col">
+            <PanelTitleRow
+                icon={
+                    <Image
+                        src="/icons/legal-sources/case-law.svg"
+                        alt=""
+                        aria-hidden="true"
+                        width={16}
+                        height={16}
+                        className="h-4 w-4 shrink-0 object-contain"
+                    />
+                }
+                title={title}
+                metadata={metadata}
+                downloadUrl={tab.pdfUrl}
+                externalLink={
+                    tab.url
+                        ? {
+                              href: tab.url,
+                              label: "CourtListener",
+                              title: "Open in CourtListener",
+                          }
+                        : null
+                }
+                compactActions={compactActions}
+            />
+            <CaseView tab={tab} />
+        </div>
+    );
+}
+
 // ---------------------------------------------------------------------------
-// Header variants
+// Shared source header
 // ---------------------------------------------------------------------------
+
+type PanelMetadataItem = {
+    label?: string;
+    value: string;
+};
+
+type ExternalSourceLink = {
+    href: string;
+    label: string;
+    title: string;
+};
+
+function PanelTitleRow({
+    icon,
+    title,
+    badge,
+    metadata = [],
+    downloadButton,
+    downloadUrl,
+    externalLink,
+    compactActions = false,
+}: {
+    icon: ReactNode;
+    title: string;
+    badge?: ReactNode;
+    metadata?: PanelMetadataItem[];
+    downloadButton?: ReactNode;
+    downloadUrl?: string | null;
+    externalLink?: ExternalSourceLink | null;
+    compactActions?: boolean;
+}) {
+    return (
+        <div className="p-3">
+            <div className="flex items-start gap-3">
+                <div className="flex min-w-0 flex-1 items-start gap-2">
+                    <span className="mt-0.5 shrink-0">{icon}</span>
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                        <h2
+                            className="min-w-0 break-words text-sm font-medium text-gray-800"
+                            title={title}
+                        >
+                            {title}
+                        </h2>
+                        {badge}
+                    </div>
+                </div>
+                {(downloadButton || downloadUrl || externalLink) && (
+                    <div className="flex min-w-0 shrink-0 flex-wrap items-center justify-end gap-2">
+                        {downloadButton}
+                        {downloadUrl && (
+                            <UrlDownloadButton
+                                href={downloadUrl}
+                                compact={compactActions}
+                            />
+                        )}
+                        {externalLink && (
+                            <ExternalSourceLinkButton
+                                link={externalLink}
+                                compact={compactActions}
+                            />
+                        )}
+                    </div>
+                )}
+            </div>
+            {metadata.length > 0 && (
+                <div className="mt-1 flex w-full flex-wrap items-center gap-x-3 gap-y-1 font-serif text-sm text-gray-600">
+                    {metadata.map((item, index) => (
+                        <span
+                            key={`${item.label ?? "metadata"}:${item.value}:${index}`}
+                        >
+                            {item.label ? `${item.label}: ` : ""}
+                            {item.value}
+                        </span>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
 
 export function DocumentTitleRow({
     documentId,
@@ -262,35 +418,25 @@ export function DocumentTitleRow({
     isReloading: boolean;
 }) {
     return (
-        <div className="flex items-center gap-3 px-3 pt-4 pb-3">
-            <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <FileTypeIcon
-                        fileType={filename}
-                        className="h-4 w-4"
-                    />
-                    <h2
-                        className="min-w-0 break-words text-sm font-medium text-gray-800"
-                        title={filename}
-                    >
-                        {filename}
-                    </h2>
-                    {versionNumber && versionNumber > 0 && (
-                        <span className="shrink-0 inline-flex items-center rounded-md border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-gray-600">
-                            V{versionNumber}
-                        </span>
-                    )}
-                </div>
-            </div>
-            <div className="shrink-0">
+        <PanelTitleRow
+            icon={<FileTypeIcon fileType={filename} className="h-4 w-4" />}
+            title={filename}
+            badge={
+                versionNumber && versionNumber > 0 ? (
+                    <span className="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-gray-600">
+                        V{versionNumber}
+                    </span>
+                ) : null
+            }
+            downloadButton={
                 <DownloadButton
                     documentId={documentId}
                     versionId={versionId}
                     filename={filename}
                     isReloading={isReloading}
                 />
-            </div>
-        </div>
+            }
+        />
     );
 }
 
@@ -352,8 +498,81 @@ function RelevantQuoteSection({
 }
 
 // ---------------------------------------------------------------------------
-// Download button
+// Source actions
 // ---------------------------------------------------------------------------
+
+function formatCaseDate(value: string | null | undefined): string | null {
+    if (!value) return null;
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(value)
+        ? new Date(`${value}T00:00:00Z`)
+        : new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return new Intl.DateTimeFormat("en-US", {
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+        timeZone: "UTC",
+    }).format(date);
+}
+
+function UrlDownloadButton({
+    href,
+    compact,
+}: {
+    href: string;
+    compact: boolean;
+}) {
+    return (
+        <PillButton
+            asChild
+            tone="white"
+            className={compact ? "h-8 w-8 px-0 py-0" : undefined}
+        >
+            <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                download
+                aria-label="Download"
+                title="Download"
+            >
+                <Download className="h-3.5 w-3.5" />
+                <span className={compact ? "sr-only" : undefined}>
+                    Download
+                </span>
+            </a>
+        </PillButton>
+    );
+}
+
+function ExternalSourceLinkButton({
+    link,
+    compact,
+}: {
+    link: ExternalSourceLink;
+    compact: boolean;
+}) {
+    return (
+        <PillButton
+            asChild
+            tone="white"
+            className={compact ? "h-8 w-8 px-0 py-0" : undefined}
+        >
+            <a
+                href={link.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={link.title}
+                title={link.title}
+            >
+                <ExternalLink className="h-3.5 w-3.5" />
+                <span className={compact ? "sr-only" : undefined}>
+                    {link.label}
+                </span>
+            </a>
+        </PillButton>
+    );
+}
 
 function DownloadButton({
     documentId,

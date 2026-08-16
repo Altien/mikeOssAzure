@@ -1353,6 +1353,18 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                                                 content={msg.content ?? ""}
                                                 files={msg.files}
                                                 workflow={msg.workflow}
+                                                onFileClick={(file) => {
+                                                    if (!file.document_id)
+                                                        return;
+                                                    handleOpenDocument({
+                                                        documentId:
+                                                            file.document_id,
+                                                        filename:
+                                                            file.filename,
+                                                        versionId: null,
+                                                        versionNumber: null,
+                                                    });
+                                                }}
                                             />
                                         </div>
                                     ) : (
@@ -1404,6 +1416,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                                 isLoading={isResponseLoading}
                                 hideAddDocButton
                                 projectId={projectId}
+                                onDocumentClick={handleDocClick}
                                 onDocumentsUploaded={(documents) =>
                                     setProject((prev) =>
                                         prev

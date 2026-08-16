@@ -5,6 +5,7 @@ import { supabase } from "@/app/lib/supabase";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { applyOptimisticResolution } from "./EditCard";
 import type { EditAnnotation } from "../shared/types";
+import { ContextNumberBadge } from "./ContextNumberBadge";
 
 const PANEL_GLASS_SURFACE =
     "rounded-2xl bg-white/58 shadow-[0_5px_15px_rgba(15,23,42,0.095),inset_0_1px_0_rgba(255,255,255,0.88),inset_0_-8px_16px_rgba(255,255,255,0.16)] backdrop-blur-2xl";
@@ -52,10 +53,10 @@ export function TrackedChangeHeader({
         <div className="px-3 pb-3">
             <div className={`${PANEL_GLASS_SURFACE} px-2 py-2`}>
                 <div className="mb-1 flex items-center gap-2">
-                    <p className="text-xs font-medium text-gray-700">
-                        Tracked Change
-                        {changeNumber !== undefined ? ` ${changeNumber}` : ""}
-                    </p>
+                    <ContextNumberBadge
+                        number={changeNumber}
+                        label="Tracked change"
+                    />
                     <div className="ml-auto flex shrink-0 items-center gap-2">
                         <EditResolveButtons
                             edit={edit}

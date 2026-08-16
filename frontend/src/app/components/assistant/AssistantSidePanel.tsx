@@ -15,10 +15,7 @@ import type {
     Citation,
     EditAnnotation,
 } from "../shared/types";
-import {
-    CaseLawPanel,
-    type CaseTab,
-} from "./CaseLawPanel";
+import type { CaseTab } from "./CaseView";
 import { cn } from "@/app/lib/utils";
 import { LIQUID_PANEL_SURFACE_CLASS } from "@/app/components/ui/liquid-surface";
 
@@ -90,12 +87,49 @@ export function mergeAssistantSidePanelTab(
     };
 }
 
+export type AssistantTabDropPosition = "before" | "after";
+
+export function reorderAssistantSidePanelTabs(
+    tabs: AssistantSidePanelTab[],
+    draggedTabId: string,
+    targetTabId: string,
+    position: AssistantTabDropPosition,
+): AssistantSidePanelTab[] {
+    const draggedIndex = tabs.findIndex((tab) => tab.id === draggedTabId);
+    const targetIndex = tabs.findIndex((tab) => tab.id === targetTabId);
+    if (
+        draggedIndex < 0 ||
+        targetIndex < 0 ||
+        draggedTabId === targetTabId
+    ) {
+        return tabs;
+    }
+
+    const next = tabs.slice();
+    const [draggedTab] = next.splice(draggedIndex, 1);
+    const remainingTargetIndex = next.findIndex(
+        (tab) => tab.id === targetTabId,
+    );
+    const insertionIndex =
+        position === "after"
+            ? remainingTargetIndex + 1
+            : remainingTargetIndex;
+    next.splice(insertionIndex, 0, draggedTab);
+
+    return next.every((tab, index) => tab === tabs[index]) ? tabs : next;
+}
+
 interface Props {
     tabs: AssistantSidePanelTab[];
     activeTabId: string | null;
     onActivateTab: (id: string) => void;
     onCloseTab: (id: string) => void;
     onCloseAll: () => void;
+    onReorderTabs?: (
+        draggedTabId: string,
+        targetTabId: string,
+        position: AssistantTabDropPosition,
+    ) => void;
     /**
      * Parent-driven reloading flag per document. Download buttons in
      * DocPanel show a spinner iff this returns true for the tab's
@@ -155,6 +189,7 @@ export function AssistantSidePanel({
     onActivateTab,
     onCloseTab,
     onCloseAll,
+    onReorderTabs,
     isEditorReloading,
     isEditReloading,
     onEditResolveStart,
@@ -175,6 +210,18 @@ export function AssistantSidePanel({
 
     const dragStartX = useRef<number>(0);
     const dragStartWidth = useRef<number>(0);
+    const draggedTabIdRef = useRef<string | null>(null);
+    const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
+    const [dropTarget, setDropTarget] = useState<{
+        tabId: string;
+        position: AssistantTabDropPosition;
+    } | null>(null);
+
+    const clearTabDrag = useCallback(() => {
+        draggedTabIdRef.current = null;
+        setDraggedTabId(null);
+        setDropTarget(null);
+    }, []);
 
     const onMouseDown = useCallback(
         (e: React.MouseEvent) => {
@@ -220,6 +267,7 @@ export function AssistantSidePanel({
 
     const active = tabs.find((t) => t.id === activeTabId) ?? tabs[0] ?? null;
     if (!active) return null;
+    const lastTab = tabs[tabs.length - 1];
 
     return (
         <div
@@ -262,14 +310,102 @@ export function AssistantSidePanel({
                         return (
                             <div
                                 key={tab.id}
+                                draggable={
+                                    !!onReorderTabs && tabs.length > 1
+                                }
+                                onDragStart={(event) => {
+                                    if (!onReorderTabs) return;
+                                    draggedTabIdRef.current = tab.id;
+                                    setDraggedTabId(tab.id);
+                                    event.dataTransfer.effectAllowed = "move";
+                                    event.dataTransfer.setData(
+                                        "text/plain",
+                                        tab.id,
+                                    );
+                                }}
+                                onDragOver={(event) => {
+                                    const draggedId =
+                                        draggedTabIdRef.current ??
+                                        event.dataTransfer.getData(
+                                            "text/plain",
+                                        );
+                                    if (
+                                        !onReorderTabs ||
+                                        !draggedId
+                                    ) {
+                                        return;
+                                    }
+                                    if (draggedId === tab.id) {
+                                        setDropTarget(null);
+                                        return;
+                                    }
+                                    event.preventDefault();
+                                    event.dataTransfer.dropEffect = "move";
+                                    const rect =
+                                        event.currentTarget.getBoundingClientRect();
+                                    const position =
+                                        event.clientX <
+                                        rect.left + rect.width / 2
+                                            ? "before"
+                                            : "after";
+                                    setDropTarget((current) =>
+                                        current?.tabId === tab.id &&
+                                        current.position === position
+                                            ? current
+                                            : { tabId: tab.id, position },
+                                    );
+                                }}
+                                onDrop={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    const draggedId =
+                                        draggedTabIdRef.current ??
+                                        event.dataTransfer.getData(
+                                            "text/plain",
+                                        );
+                                    if (
+                                        onReorderTabs &&
+                                        draggedId &&
+                                        draggedId !== tab.id
+                                    ) {
+                                        const rect =
+                                            event.currentTarget.getBoundingClientRect();
+                                        onReorderTabs(
+                                            draggedId,
+                                            tab.id,
+                                            event.clientX <
+                                                rect.left + rect.width / 2
+                                                ? "before"
+                                                : "after",
+                                        );
+                                    }
+                                    clearTabDrag();
+                                }}
+                                onDragEnd={clearTabDrag}
                                 onClick={() => onActivateTab(tab.id)}
                                 className={cn(
                                     "group relative flex items-center gap-1.5 pl-3 pr-1.5 h-8 min-w-0 max-w-[220px] rounded-t-lg cursor-pointer select-none transition-colors",
                                     isActive
                                         ? "z-20 bg-white text-gray-800 before:content-[''] before:absolute before:bottom-0 before:-left-2 before:z-20 before:h-2 before:w-2 before:rounded-br-lg before:shadow-[4px_4px_0_4px_white] before:transition-shadow after:content-[''] after:absolute after:bottom-0 after:-right-2 after:z-20 after:h-2 after:w-2 after:rounded-bl-lg after:shadow-[-4px_4px_0_4px_white] after:transition-shadow"
                                         : "z-10 bg-gray-100 text-gray-600 hover:bg-gray-100 before:content-[''] before:absolute before:bottom-0 before:-left-2 before:h-2 before:w-2 before:rounded-br-lg before:shadow-[4px_4px_0_4px_#f3f4f6] before:transition-shadow after:content-[''] after:absolute after:bottom-0 after:-right-2 after:h-2 after:w-2 after:rounded-bl-lg after:shadow-[-4px_4px_0_4px_#f3f4f6] after:transition-shadow",
+                                    onReorderTabs && tabs.length > 1
+                                        ? "cursor-grab active:cursor-grabbing"
+                                        : "",
+                                    draggedTabId === tab.id ? "opacity-55" : "",
                                 )}
                             >
+                                {dropTarget?.tabId === tab.id &&
+                                    draggedTabId !== tab.id && (
+                                        <span
+                                            aria-hidden="true"
+                                            className={cn(
+                                                "pointer-events-none absolute inset-y-1 z-30 w-0.5 rounded-full bg-blue-500",
+                                                dropTarget.position === "before"
+                                                    ? "left-0"
+                                                    : "right-0",
+                                            )}
+                                        />
+                                    )}
                                 {tab.kind === "case" ? (
                                     <Image
                                         src="/icons/legal-sources/case-law.svg"
@@ -314,6 +450,45 @@ export function AssistantSidePanel({
                             </div>
                         );
                     })}
+                    <div
+                        className="h-8 min-w-4 flex-1"
+                        onDragOver={(event) => {
+                            const draggedId =
+                                draggedTabIdRef.current ??
+                                event.dataTransfer.getData("text/plain");
+                            if (!onReorderTabs || !draggedId) return;
+
+                            event.preventDefault();
+                            event.dataTransfer.dropEffect = "move";
+                            setDropTarget(
+                                draggedId === lastTab.id
+                                    ? null
+                                    : {
+                                          tabId: lastTab.id,
+                                          position: "after",
+                                      },
+                            );
+                        }}
+                        onDrop={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            const draggedId =
+                                draggedTabIdRef.current ??
+                                event.dataTransfer.getData("text/plain");
+                            if (
+                                onReorderTabs &&
+                                draggedId &&
+                                draggedId !== lastTab.id
+                            ) {
+                                onReorderTabs(
+                                    draggedId,
+                                    lastTab.id,
+                                    "after",
+                                );
+                            }
+                            clearTabDrag();
+                        }}
+                    />
                 </div>
                 <button
                     onClick={onCloseAll}
@@ -337,7 +512,8 @@ export function AssistantSidePanel({
                                 className={`absolute inset-0 flex flex-col ${isActive ? "" : "invisible pointer-events-none"}`}
                                 aria-hidden={!isActive}
                             >
-                                <CaseLawPanel
+                                <DocPanel
+                                    kind="case"
                                     tab={tab}
                                     compactActions={panelWidth < 600}
                                 />
@@ -370,6 +546,7 @@ export function AssistantSidePanel({
                             aria-hidden={!isActive}
                         >
                             <DocPanel
+                                kind="document"
                                 documentId={tab.documentId}
                                 filename={tab.filename}
                                 versionId={tab.versionId}

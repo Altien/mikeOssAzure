@@ -11,6 +11,8 @@ import { AskInputPopup } from "./AskInputPopup";
 import {
     AssistantSidePanel,
     mergeAssistantSidePanelTab,
+    reorderAssistantSidePanelTabs,
+    type AssistantTabDropPosition,
     type AssistantSidePanelTab,
 } from "./AssistantSidePanel";
 import { AssistantWorkflowModal } from "./AssistantWorkflowModal";
@@ -176,6 +178,24 @@ export function ChatView({
             });
         },
         [activeTabId, hidePanel, unmountPanel],
+    );
+
+    const reorderTabs = useCallback(
+        (
+            draggedTabId: string,
+            targetTabId: string,
+            position: AssistantTabDropPosition,
+        ) => {
+            setTabs((current) =>
+                reorderAssistantSidePanelTabs(
+                    current,
+                    draggedTabId,
+                    targetTabId,
+                    position,
+                ),
+            );
+        },
+        [],
     );
 
     /**
@@ -682,6 +702,18 @@ export function ChatView({
                                                 content={msg.content ?? ""}
                                                 files={msg.files}
                                                 workflow={msg.workflow}
+                                                onFileClick={(file) => {
+                                                    if (!file.document_id)
+                                                        return;
+                                                    openDocument({
+                                                        documentId:
+                                                            file.document_id,
+                                                        filename:
+                                                            file.filename,
+                                                        versionId: null,
+                                                        versionNumber: null,
+                                                    });
+                                                }}
                                             />
                                         ) : (
                                             <AssistantMessage
@@ -817,6 +849,16 @@ export function ChatView({
                                     onSubmit={handleChat}
                                     onCancel={cancel}
                                     isLoading={isResponseLoading}
+                                    onDocumentClick={(document) =>
+                                        openDocument({
+                                            documentId: document.id,
+                                            filename: document.filename,
+                                            versionId: null,
+                                            versionNumber:
+                                                document.active_version_number ??
+                                                null,
+                                        })
+                                    }
                                 />
                             )}
                         </div>
@@ -841,6 +883,7 @@ export function ChatView({
                         onActivateTab={setActiveTabId}
                         onCloseTab={closeTab}
                         onCloseAll={closeAllTabs}
+                        onReorderTabs={reorderTabs}
                         isEditorReloading={(documentId) =>
                             reloadingDocIds.has(documentId)
                         }

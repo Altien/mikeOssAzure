@@ -3,7 +3,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listWorkflows } from "@/app/lib/mikeApi";
-import type { Workflow } from "../shared/types";
+import type { Document, Workflow } from "../shared/types";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 
 vi.mock("@/app/lib/mikeApi", () => ({
@@ -56,6 +56,37 @@ describe("ChatInput workflow slash commands", () => {
     beforeEach(() => {
         vi.mocked(listWorkflows).mockResolvedValue([workflow]);
         vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    });
+
+    it("opens an attached document without removing it", async () => {
+        const ref = createRef<ChatInputHandle>();
+        const onDocumentClick = vi.fn();
+        const user = userEvent.setup();
+        const document = {
+            id: "document-1",
+            filename: "agreement.docx",
+            file_type: "docx",
+        } as Document;
+
+        render(
+            <ChatInput
+                ref={ref}
+                onSubmit={vi.fn()}
+                onCancel={vi.fn()}
+                isLoading={false}
+                onDocumentClick={onDocumentClick}
+            />,
+        );
+
+        act(() => ref.current?.addDoc(document));
+        await user.click(
+            screen.getByRole("button", { name: "Open agreement.docx" }),
+        );
+
+        expect(onDocumentClick).toHaveBeenCalledWith(document);
+        expect(
+            screen.getByRole("button", { name: "Remove agreement.docx" }),
+        ).toBeInTheDocument();
     });
 
     it("attaches the selected workflow without submitting", async () => {

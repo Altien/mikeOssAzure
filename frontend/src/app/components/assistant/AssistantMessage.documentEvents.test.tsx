@@ -136,4 +136,66 @@ describe("AssistantMessage document events", () => {
             ],
         ]);
     });
+
+    it("opens the edit wrapper as a plain document but keeps individual edit context", () => {
+        const onOpenDocument = vi.fn();
+        const onEditViewClick = vi.fn();
+        const events: AssistantEvent[] = [
+            {
+                type: "doc_edited",
+                filename: "agreement.docx",
+                document_id: "document-1",
+                version_id: "version-2",
+                version_number: 2,
+                download_url: "",
+                annotations: [
+                    {
+                        edit_id: "edit-1",
+                        document_id: "document-1",
+                        version_id: "version-2",
+                        version_number: 2,
+                        change_id: "change-1",
+                        deleted_text: "old one",
+                        inserted_text: "new one",
+                        status: "pending",
+                    },
+                    {
+                        edit_id: "edit-2",
+                        document_id: "document-1",
+                        version_id: "version-2",
+                        version_number: 2,
+                        change_id: "change-2",
+                        deleted_text: "old two",
+                        inserted_text: "new two",
+                        status: "pending",
+                    },
+                ],
+            },
+        ];
+
+        render(
+            <AssistantMessage
+                events={events}
+                onOpenDocument={onOpenDocument}
+                onEditViewClick={onEditViewClick}
+            />,
+        );
+
+        const viewButtons = screen.getAllByRole("button", { name: "View" });
+        fireEvent.click(viewButtons[0]);
+        expect(onOpenDocument).toHaveBeenCalledWith({
+            documentId: "document-1",
+            filename: "agreement.docx",
+            versionId: "version-2",
+            versionNumber: 2,
+        });
+        expect(onEditViewClick).not.toHaveBeenCalled();
+
+        fireEvent.click(viewButtons[1]);
+        expect(onEditViewClick).toHaveBeenCalledWith(
+            expect.objectContaining({ edit_id: "edit-1" }),
+            "agreement.docx",
+            1,
+        );
+    });
 });
