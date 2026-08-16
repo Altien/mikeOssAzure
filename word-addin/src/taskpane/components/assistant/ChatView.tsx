@@ -47,17 +47,17 @@ interface ChatViewProps
 function measureSpacerPx(
     container: HTMLElement,
     latestUser: HTMLElement,
+    bottomInset: number,
 ): number {
     const containerStyle = window.getComputedStyle(container);
     const messageGap = Number.parseFloat(containerStyle.rowGap) || 0;
-    const paddingBottom = Number.parseFloat(containerStyle.paddingBottom) || 0;
     return Math.max(
         0,
         container.clientHeight -
             PIN_TOP_OFFSET -
             latestUser.offsetHeight -
             messageGap * 2 -
-            paddingBottom,
+            bottomInset,
     );
 }
 
@@ -177,6 +177,7 @@ export function ChatView({
     const [assistantMinHeight, setAssistantMinHeight] = useState("0px");
     const [messagesVisible, setMessagesVisible] = useState(false);
     const [showScrollButton, setShowScrollButton] = useState(false);
+    const messagesBottomInset = composerHeight + CHAT_MESSAGES_BOTTOM_GAP;
 
     let latestUserIndex = -1;
     let latestAssistantIndex = -1;
@@ -419,14 +420,18 @@ export function ChatView({
         hasPositionedRef.current = true;
         anchorActiveRef.current = true;
 
-        const spacerPx = measureSpacerPx(container, userEl);
+        const spacerPx = measureSpacerPx(
+            container,
+            userEl,
+            messagesBottomInset,
+        );
         const assistantEl = userEl.nextElementSibling as HTMLElement | null;
         if (assistantEl?.hasAttribute("data-assistant-message-id")) {
             assistantEl.style.minHeight = `${spacerPx}px`;
         }
         setAssistantMinHeight(`${spacerPx}px`);
         setMessagesVisible(true);
-    }, [latestUserMessageId, isResponseLoading]);
+    }, [latestUserMessageId, isResponseLoading, messagesBottomInset]);
 
     // ── Restored transcripts: masked post-paint positioning ────────────────
     // Mirrors the frontend assistant: the list mounts at opacity 0 (so refs
@@ -445,7 +450,9 @@ export function ChatView({
         const container = messagesContainerRef.current;
         const userEl = latestUserMessageRef.current;
         if (container && userEl) {
-            setAssistantMinHeight(`${measureSpacerPx(container, userEl)}px`);
+            setAssistantMinHeight(
+                `${measureSpacerPx(container, userEl, messagesBottomInset)}px`,
+            );
         }
 
         const questions = messages.filter(
@@ -481,7 +488,7 @@ export function ChatView({
             setMessagesVisible(true);
         }, 100);
         return () => window.clearTimeout(timer);
-    }, [messages, latestUserMessageId]);
+    }, [messages, latestUserMessageId, messagesBottomInset]);
 
     // ── Live sends: the pin scroll ──────────────────────────────────────────
     // The chat hook calls this right before it starts consuming the response
@@ -538,7 +545,11 @@ export function ChatView({
                 // the pinned turn and changes the correct reservation. An
                 // unchanged result no-ops via the useState string bailout, so
                 // the initial observe fire is harmless.
-                const spacerPx = measureSpacerPx(container, userEl);
+                const spacerPx = measureSpacerPx(
+                    container,
+                    userEl,
+                    messagesBottomInset,
+                );
                 const assistantEl =
                     userEl.nextElementSibling as HTMLElement | null;
                 if (assistantEl?.hasAttribute("data-assistant-message-id")) {
@@ -571,7 +582,7 @@ export function ChatView({
             observer.disconnect();
             if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
         };
-    }, [hasMessages, updateScrollButton]);
+    }, [hasMessages, messagesBottomInset, updateScrollButton]);
 
     // The container's border box does not change when streamed content grows
     // or an activity card collapses. Observe the active assistant row so the
@@ -669,8 +680,6 @@ export function ChatView({
                     data-testid="messages-container"
                     className="relative flex h-full scroll-pt-20 flex-col gap-4 overflow-y-auto px-6 pt-20 transition-opacity duration-150 [overflow-anchor:none]"
                     style={{
-                        paddingBottom:
-                            composerHeight + CHAT_MESSAGES_BOTTOM_GAP,
                         opacity: messagesVisible ? 1 : 0,
                     }}
                 >
@@ -715,7 +724,14 @@ export function ChatView({
                             />
                         );
                     })}
-                    <div ref={messagesEndRef} />
+                    {/* WebKit excludes flex end padding from scrollHeight, so
+                        reserve the composer inset with a concrete flex item. */}
+                    <div
+                        ref={messagesEndRef}
+                        data-testid="messages-bottom-spacer"
+                        className="shrink-0"
+                        style={{ height: messagesBottomInset }}
+                    />
                 </div>
             )}
 
