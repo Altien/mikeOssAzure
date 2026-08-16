@@ -109,7 +109,7 @@ export function CitationQuotesSection({
     const currentQuote = quotes[currentIndex];
 
     return (
-        <div className="px-3 pb-3">
+        <div className="px-2 pb-2">
             <div className={RESPONSE_GLASS_SURFACE}>
                 <div className="flex h-10 items-center justify-between px-2">
                     <ContextNumberBadge number={citationRef} label="Citation" />
@@ -254,7 +254,7 @@ function QuoteItem({
                     </p>
                 </div>
             </div>
-            <div className="mt-3 flex items-center justify-between gap-2">
+            <div className="mt-2 flex items-center justify-between gap-2">
                 <CiteButton
                     quoteText={quote.quote}
                     quoteLabel={quoteLabel}

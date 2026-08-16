@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useCallback, useState } from "react";
 import { useAuth } from "./auth/useAuth";
 import { LoginPage } from "./auth/LoginPage";
 import { ApiKeyBanner } from "./components/shell/ApiKeyBanner";
@@ -47,6 +47,7 @@ export default function App(): React.ReactElement {
   const [selectedSection, setSelectedSection] = useState<AddinSection>("chat");
   const [chatSessionKey, setChatSessionKey] = useState(0);
   const [chatId, setChatId] = useState<string | null>(null);
+  const [chatInSession, setChatInSession] = useState(false);
   const [initialMessages, setInitialMessages] = useState<Message[]>([]);
   const [workflowPageSelection, setWorkflowPageSelection] =
     useState<Workflow | null>(null);
@@ -57,6 +58,11 @@ export default function App(): React.ReactElement {
     id: string;
     title: string;
   } | null>(null);
+  const handleChatIdChange = useCallback((nextChatId: string) => {
+    setChatId(nextChatId);
+    setChatInSession(true);
+  }, []);
+  const markChatStarted = useCallback(() => setChatInSession(true), []);
 
   // Show a minimal spinner while the token is being read from storage
   if (loading) {
@@ -124,6 +130,7 @@ export default function App(): React.ReactElement {
             onStorageModeChange={async (mode) => {
               await wordChatStorage.setMode(mode);
               setChatId(null);
+              setChatInSession(false);
               setInitialMessages([]);
               setChatSessionKey((current) => current + 1);
             }}
@@ -139,6 +146,7 @@ export default function App(): React.ReactElement {
     setWorkflowDetailsOpen(false);
     setChatWorkflow(null);
     setChatId(selectedChatId);
+    setChatInSession(true);
     setInitialMessages(messages);
     setChatSessionKey((current) => current + 1);
   }
@@ -158,6 +166,7 @@ export default function App(): React.ReactElement {
     setWorkflowDetailsOpen(false);
     setChatWorkflow(null);
     setChatId(null);
+    setChatInSession(false);
     setInitialMessages([]);
     setChatSessionKey((current) => current + 1);
   };
@@ -179,6 +188,7 @@ export default function App(): React.ReactElement {
         section={selectedSection}
         onSectionChange={changeSection}
         onNewChat={startNewChat}
+        hasActiveChat={chatInSession}
         onSelectHistoryChat={openSelectedChat}
         workflowDetailOpen={
           selectedSection === "workflows" && !!workflowPageSelection
@@ -216,7 +226,8 @@ export default function App(): React.ReactElement {
             initialMessages={initialMessages}
             selectedWorkflow={chatWorkflow}
             onSelectedWorkflowChange={setChatWorkflow}
-            onChatIdChange={setChatId}
+            onChatIdChange={handleChatIdChange}
+            onChatStarted={markChatStarted}
             wordDocumentId={wordDocumentId}
             wordChatStorage={wordChatStorage.mode}
             wordChatOwnerId={wordChatOwnerId}

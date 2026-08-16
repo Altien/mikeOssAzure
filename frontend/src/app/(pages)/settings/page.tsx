@@ -152,8 +152,8 @@ export default function SettingsPage() {
                 <h2 className="text-2xl font-medium font-serif text-gray-900">
                     Profile
                 </h2>
-                <SettingsSection className="p-4">
-                    <div className="space-y-8">
+                <SettingsSection>
+                    <div className="space-y-8 p-4">
                         <div>
                             <FieldLabel className="text-sm text-gray-600">
                                 Display Name
@@ -230,13 +230,13 @@ export default function SettingsPage() {
                 <h2 className="text-2xl font-medium font-serif text-gray-900">
                     Email
                 </h2>
-                <SettingsSection className="p-4">
+                <SettingsSection>
                     {/* Upstream divergence (OSS-6, auth): the email editor
                         exists only in supabase mode. In entra/local mode the
                         sign-in provider owns the address (AuthContext's
                         updateEmail rejects), so it is shown read-only. */}
                     {!emailEditable ? (
-                        <div className="space-y-2">
+                        <div className="space-y-2 p-4">
                             <SettingsTextInput
                                 type="email"
                                 value={user.email ?? ""}
@@ -249,7 +249,7 @@ export default function SettingsPage() {
                             </p>
                         </div>
                     ) : (
-                    <div className="space-y-2">
+                    <div className="space-y-2 p-4">
                         <SettingsTextInput
                             type="email"
                             value={email}
@@ -305,8 +305,8 @@ export default function SettingsPage() {
                 <h2 className="text-2xl font-medium font-serif text-gray-900">
                     Usage Plan
                 </h2>
-                <SettingsSection className="p-4">
-                    <div>
+                <SettingsSection>
+                    <div className="p-4">
                         <p className="text-base font-medium text-gray-500 capitalize">
                             {profile?.tier || "Free"}
                         </p>
@@ -342,26 +342,28 @@ export default function SettingsPage() {
                 <h2 className="text-2xl font-medium font-serif text-red-600">
                     Danger Zone
                 </h2>
-                <SettingsSection className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="space-y-1">
-                        <p className="text-sm font-medium text-gray-700">
+                <SettingsSection>
+                    <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="space-y-1">
+                            <p className="text-sm font-medium text-gray-700">
+                                Delete account
+                            </p>
+                            <p className="text-sm text-gray-500">
+                                Permanently delete your account and all
+                                associated data. This action cannot be undone.
+                            </p>
+                        </div>
+                        <PillButton
+                            tone="danger"
+                            size="sm"
+                            onClick={() => setDeleteConfirm(true)}
+                            disabled={isDeleting}
+                            className="w-full shrink-0 sm:w-auto"
+                        >
+                            <Trash2 className="h-4 w-4 shrink-0" />
                             Delete account
-                        </p>
-                        <p className="text-sm text-gray-500">
-                            Permanently delete your account and all associated
-                            data. This action cannot be undone.
-                        </p>
+                        </PillButton>
                     </div>
-                    <PillButton
-                        tone="danger"
-                        size="sm"
-                        onClick={() => setDeleteConfirm(true)}
-                        disabled={isDeleting}
-                        className="w-full shrink-0 sm:w-auto"
-                    >
-                        <Trash2 className="h-4 w-4 shrink-0" />
-                        Delete account
-                    </PillButton>
                 </SettingsSection>
             </section>
             )}

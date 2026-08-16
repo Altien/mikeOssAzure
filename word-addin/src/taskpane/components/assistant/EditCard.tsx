@@ -1,7 +1,7 @@
 import React from "react";
+import { EditCardUI } from "@mike/edit-card-ui";
 import type { RedlineEdit } from "../../lib/redline";
 import { EDIT_CARD_SURFACE } from "./message/messageStyles";
-import { PillButton } from "../primitives/PillButton";
 import type { EditCardStatus } from "../../lib/wordChatTypes";
 
 interface EditCardProps {
@@ -68,8 +68,6 @@ export function EditCard({
   error,
   disabled = false,
 }: EditCardProps): React.ReactElement {
-  const hasEditText =
-    edit.replacement !== undefined || edit.original !== undefined;
   const statusCopy = status === "pending" ? undefined : STATUS_COPY[status];
   // Every other status already says something precise; only these two learn
   // more from Word's own message — and a pending change can carry one too
@@ -85,85 +83,48 @@ export function EditCard({
     status === "pending" ? "text-amber-700" : (statusCopy?.className ?? "");
 
   return (
-    <div
+    <EditCardUI
+      originalText={edit.original}
+      replacementText={edit.replacement}
+      reason={edit.reason}
+      changeNumber={changeNumber}
+      status={status}
+      statusMessage={message}
+      statusMessageClassName={messageClass}
+      actionOrder="view-first"
       className={`${EDIT_CARD_SURFACE} p-3`}
-      data-edit-status={status}
-      aria-busy={
+      ariaBusy={
         status === "receiving" ||
         status === "applying" ||
         status === "restoring"
       }
-    >
-      {(changeNumber !== undefined || edit.reason) && (
-        <div className="mb-2 flex items-start gap-2">
-          {changeNumber !== undefined && (
-            <span
-              aria-label={`Tracked change ${changeNumber}`}
-              title={`Tracked change ${changeNumber}`}
-              className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-gray-200 text-[9px] font-medium text-gray-600"
-            >
-              {changeNumber}
-            </span>
-          )}
-          {edit.reason && (
-            <p className="min-w-0 flex-1 font-serif text-sm text-gray-500">
-              {edit.reason}
-            </p>
-          )}
-        </div>
-      )}
-      {hasEditText && (
-        <div className="text-xs leading-relaxed font-sans bg-gray-100/70 rounded-lg px-2 py-2">
-          {edit.replacement !== undefined && edit.replacement !== "" && (
-            <span className="text-green-700">{edit.replacement}</span>
-          )}
-          {edit.replacement && edit.original && " "}
-          {edit.original !== undefined && edit.original !== "" && (
-            <span className="text-red-600 line-through">{edit.original}</span>
-          )}
-        </div>
-      )}
-      {(status === "pending" || status === "view-only") && (
-        <div
-          className="mt-3 flex items-center justify-between gap-2"
-          role="group"
-          aria-label="Edit actions"
-        >
-          <PillButton
-            tone="white"
-            size="sm"
-            onClick={onView}
-            disabled={disabled || !onView}
-          >
-            View
-          </PillButton>
-          {status === "pending" && (
-            <div className="flex gap-2">
-              <PillButton
-                tone="blue"
-                size="sm"
-                onClick={onAccept}
-                disabled={disabled || !onAccept}
-              >
-                Accept
-              </PillButton>
-              <PillButton
-                tone="white"
-                size="sm"
-                onClick={onReject}
-                disabled={disabled || !onReject}
-              >
-                Reject
-              </PillButton>
-            </div>
-          )}
-        </div>
-      )}
-      {message && (
-        <p className={`mt-2 text-xs ${messageClass}`} role="status">
-          {message}
-        </p>
-      )}
-    </div>
+      viewAction={
+        status === "pending" || status === "view-only"
+          ? {
+              label: "View",
+              onClick: onView,
+              disabled: disabled || !onView,
+            }
+          : undefined
+      }
+      acceptAction={
+        status === "pending"
+          ? {
+              label: "Accept",
+              onClick: onAccept,
+              disabled: disabled || !onAccept,
+            }
+          : undefined
+      }
+      rejectAction={
+        status === "pending"
+          ? {
+              label: "Reject",
+              onClick: onReject,
+              disabled: disabled || !onReject,
+            }
+          : undefined
+      }
+    />
   );
 }

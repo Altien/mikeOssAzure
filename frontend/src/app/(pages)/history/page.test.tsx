@@ -207,6 +207,8 @@ describe("HistoryPage", () => {
     expect(screen.getByRole("region", { name: "End date" })).toHaveClass(
       "w-56",
     );
+    const confirmButton = screen.getByRole("button", { name: "Confirm" });
+    expect(confirmButton).toBeDisabled();
     const selectedStartCell = screen
       .getByTestId("start-date-picker")
       .querySelector('[data-selected="true"]');
@@ -232,9 +234,24 @@ describe("HistoryPage", () => {
     expect(startButton).not.toBeNull();
     expect(endButton).not.toBeNull();
 
+    const callsBeforeSelection = mockedGetAuditHistory.mock.calls.length;
     await user.click(startButton!);
     await user.click(endButton!);
-    await user.keyboard("{Escape}");
+    expect(confirmButton).toBeEnabled();
+    expect(mockedGetAuditHistory).toHaveBeenCalledTimes(callsBeforeSelection);
+
+    await user.click(confirmButton);
+    await waitFor(() =>
+      expect(mockedGetAuditHistory).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          from: selectedFrom,
+          to: selectedTo,
+          page: 1,
+        }),
+        expect.any(AbortSignal),
+      ),
+    );
+    expect(screen.queryByRole("button", { name: "Confirm" })).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "Export history" }));
     await waitFor(() =>

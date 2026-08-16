@@ -5,6 +5,7 @@ import { PageTitle } from "../primitives/PageTitle";
 import { PillButton } from "../primitives/PillButton";
 import type { WordChatStorageMode } from "../../lib/wordChatSettings";
 import { Modal } from "../primitives/Modal";
+import { GlassCardUI } from "@mike/glass-card-ui";
 
 interface SettingsPageProps {
   storageMode: WordChatStorageMode;
@@ -41,52 +42,58 @@ export function SettingsPage({
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto p-4">
       <PageTitle className="mb-5 px-1">Settings</PageTitle>
-      <section className="rounded-xl border border-white/70 bg-white/70 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_8px_24px_rgba(15,23,42,0.06)]">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h2 className="text-sm font-medium text-gray-900">
-              Save chats in the cloud
-            </h2>
-            <p className="mt-1 text-xs leading-5 text-gray-500">
-              Cloud chats are linked to this Word document and available on your
-              other devices.
-            </p>
-          </div>
-          <ToggleSwitch
-            aria-label="Save chats in the cloud"
-            checked={storageMode === "cloud"}
-            disabled={saving}
-            onCheckedChange={(checked) => void updateMode(checked)}
-          />
-        </div>
+      <section>
+        <GlassCardUI>
+          <div className="p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="text-sm font-medium text-gray-900">
+                  Save chats in the cloud
+                </h2>
+                <p className="mt-1 text-xs leading-5 text-gray-500">
+                  Cloud chats are linked to this Word document and available on
+                  your other devices.
+                </p>
+              </div>
+              <ToggleSwitch
+                aria-label="Save chats in the cloud"
+                checked={storageMode === "cloud"}
+                disabled={saving}
+                onCheckedChange={(checked) => void updateMode(checked)}
+              />
+            </div>
 
-        {error && (
-          <p role="alert" className="mt-3 text-xs text-red-600">
-            {error}
-          </p>
-        )}
+            {error && (
+              <p role="alert" className="mt-3 text-xs text-red-600">
+                {error}
+              </p>
+            )}
+          </div>
+        </GlassCardUI>
       </section>
 
-      <section className="mt-3 rounded-xl border border-white/70 bg-white/70 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_8px_24px_rgba(15,23,42,0.06)]">
-        <div className="flex items-center justify-between gap-4">
-          <div className="min-w-0">
-            <h2 className="text-sm font-medium text-gray-900">
-              Device-only chats
-            </h2>
-            <p className="mt-1 text-xs leading-5 text-gray-500">
-              Local chats remain readable in this device profile after sign-out
-              until you delete them.
-            </p>
+      <section className="mt-3">
+        <GlassCardUI>
+          <div className="flex items-center justify-between gap-4 p-4">
+            <div className="min-w-0">
+              <h2 className="text-sm font-medium text-gray-900">
+                Device-only chats
+              </h2>
+              <p className="mt-1 text-xs leading-5 text-gray-500">
+                Local chats remain readable in this device profile after
+                sign-out until you delete them.
+              </p>
+            </div>
+            <PillButton
+              tone="white"
+              onClick={() => setClearConfirmOpen(true)}
+              className="shrink-0"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete
+            </PillButton>
           </div>
-          <PillButton
-            tone="white"
-            onClick={() => setClearConfirmOpen(true)}
-            className="shrink-0"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Delete
-          </PillButton>
-        </div>
+        </GlassCardUI>
       </section>
 
       <Modal

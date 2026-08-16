@@ -96,7 +96,7 @@ export function GitHubSkillImportSection({
     if (!policy) return null;
 
     return (
-        <SettingsSection className="p-4">
+        <SettingsSection><div className="p-4">
             <div className="flex items-start justify-between gap-4">
                 <div>
                     <h3 className="text-sm font-medium text-gray-900">
@@ -167,6 +167,6 @@ export function GitHubSkillImportSection({
                     }
                 />
             </div>
-        </SettingsSection>
+        </div></SettingsSection>
     );
 }

@@ -13,6 +13,7 @@ interface ChatPanelProps {
   selectedWorkflow: WorkflowAttachment | null;
   onSelectedWorkflowChange: (workflow: WorkflowAttachment | null) => void;
   onChatIdChange: (chatId: string) => void;
+  onChatStarted: () => void;
   wordDocumentId: string;
   wordChatStorage: WordChatStorageMode;
   wordChatOwnerId: string;
@@ -30,6 +31,7 @@ export function ChatPanel({
   selectedWorkflow,
   onSelectedWorkflowChange,
   onChatIdChange,
+  onChatStarted,
   wordDocumentId,
   wordChatStorage,
   wordChatOwnerId,
@@ -43,6 +45,7 @@ export function ChatPanel({
     chatId,
     initialMessages,
     onChatIdChange,
+    onChatStarted,
     wordDocumentId,
     wordChatStorage,
     wordChatOwnerId,

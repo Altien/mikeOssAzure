@@ -5,7 +5,6 @@ import {
     useLayoutEffect,
     useRef,
     useState,
-    type ButtonHTMLAttributes,
     type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -22,9 +21,12 @@ import {
 } from "@/app/components/ui/liquid-dropdown";
 import {
     APP_SURFACE_ACTIVE_CLASS,
-    APP_SURFACE_HOVER_CLASS,
-    APP_SURFACE_PRESSED_CLASS,
 } from "@/app/components/ui/liquid-surface";
+import {
+    HeaderButtonUI,
+    HeaderButtonsUI,
+    headerButtonClassName,
+} from "@/shared/ui/HeaderButtonsUI";
 
 export interface PageHeaderBreadcrumb {
     label?: ReactNode;
@@ -159,13 +161,7 @@ function PageHeaderActionGroups({
     return (
         <>
             {groupedActionItems.map((group, groupIndex) => (
-                <div
-                    key={groupIndex}
-                    className={cn(
-                        "flex shrink-0 items-center gap-2",
-                        "rounded-full border border-white/70 bg-app-surface px-1 py-1 shadow-[0_8px_24px_rgba(15,23,42,0.06)] backdrop-blur-2xl",
-                    )}
-                >
+                <HeaderButtonsUI key={groupIndex}>
                     {group.actions.map((action, index) => (
                         <PageHeaderActionRenderer
                             key={index}
@@ -173,7 +169,7 @@ function PageHeaderActionGroups({
                             disabled={actionsDisabled}
                         />
                     ))}
-                </div>
+                </HeaderButtonsUI>
             ))}
         </>
     );
@@ -247,7 +243,7 @@ function PageHeaderButtonActionControl({
     const iconOnly = action.iconOnly ?? !action.label;
     return (
         <div className={action.tooltip ? "relative group" : undefined}>
-            <PageHeaderActionButton
+            <HeaderButtonUI
                 onClick={action.onClick}
                 disabled={disabled || action.disabled}
                 title={action.title}
@@ -256,7 +252,7 @@ function PageHeaderButtonActionControl({
             >
                 {action.icon}
                 {action.label}
-            </PageHeaderActionButton>
+            </HeaderButtonUI>
             {action.tooltip && (
                 <div className="pointer-events-none absolute right-0 top-full mt-1.5 z-10 hidden items-center whitespace-nowrap rounded-lg bg-gray-900 px-2.5 py-1.5 text-xs text-white shadow-lg group-hover:flex">
                     {action.tooltip}
@@ -275,7 +271,7 @@ function PageHeaderNewActionControl({
 }) {
     const title = action.title ?? "New";
     return (
-        <PageHeaderActionButton
+        <HeaderButtonUI
             onClick={action.onClick}
             disabled={disabled || action.disabled || action.loading}
             title={title}
@@ -287,7 +283,7 @@ function PageHeaderNewActionControl({
             ) : (
                 <Plus className="h-4 w-4" />
             )}
-        </PageHeaderActionButton>
+        </HeaderButtonUI>
     );
 }
 
@@ -319,7 +315,7 @@ function PageHeaderSearchActionControl({
             {expanded ? (
                 <div
                     className={cn(
-                        pageHeaderActionControlClassName({
+                        headerButtonClassName({
                             className:
                                 "cursor-text justify-start gap-2 px-3 text-gray-700 hover:text-gray-700",
                         }),
@@ -352,7 +348,7 @@ function PageHeaderSearchActionControl({
                     )}
                 </div>
             ) : (
-                <PageHeaderActionButton
+                <HeaderButtonUI
                     onClick={() => setOpen(true)}
                     disabled={disabled}
                     iconOnly
@@ -360,60 +356,9 @@ function PageHeaderSearchActionControl({
                     aria-label={placeholder}
                 >
                     <Search className="h-4 w-4" />
-                </PageHeaderActionButton>
+                </HeaderButtonUI>
             )}
         </div>
-    );
-}
-
-type PageHeaderActionButtonProps = Omit<
-    ButtonHTMLAttributes<HTMLButtonElement>,
-    "className"
-> & {
-    iconOnly?: boolean;
-};
-
-type PageHeaderActionControlClassNameOptions = {
-    iconOnly?: boolean;
-    disabled?: boolean;
-    className?: string;
-};
-
-function pageHeaderActionControlClassName({
-    iconOnly = false,
-    disabled = false,
-    className,
-}: PageHeaderActionControlClassNameOptions = {}) {
-    return cn(
-        "flex h-7 items-center justify-center rounded-full text-sm transition-colors disabled:cursor-default disabled:text-gray-300 disabled:hover:bg-transparent disabled:hover:text-gray-300",
-        APP_SURFACE_HOVER_CLASS,
-        APP_SURFACE_PRESSED_CLASS,
-        iconOnly
-            ? "w-7"
-            : "w-7 gap-1.5 px-0 sm:w-auto sm:px-3",
-        disabled ? "cursor-default" : "cursor-pointer",
-        "text-gray-500 hover:text-gray-900",
-        className,
-    );
-}
-
-function PageHeaderActionButton({
-    children,
-    iconOnly = false,
-    disabled,
-    ...props
-}: PageHeaderActionButtonProps) {
-    return (
-        <button
-            disabled={disabled}
-            className={pageHeaderActionControlClassName({
-                iconOnly,
-                disabled,
-            })}
-            {...props}
-        >
-            {children}
-        </button>
     );
 }
 

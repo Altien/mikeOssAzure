@@ -5,6 +5,13 @@
 
 /* Tailwind v4 content detection: scan all add-in component sources. */
 @source "../";
+@source "../../../frontend/src/shared/ui/EditCardUI.tsx";
+@source "../../../frontend/src/shared/ui/EditCardsSectionUI.tsx";
+@source "../../../frontend/src/shared/ui/PreResponseWrapperUI.tsx";
+@source "../../../frontend/src/shared/ui/DocumentEventBlocksUI.tsx";
+@source "../../../frontend/src/shared/ui/GlassCardUI.tsx";
+@source "../../../frontend/src/shared/ui/ModalUI.tsx";
+@source "../../../frontend/src/shared/ui/HeaderButtonsUI.tsx";
 
 /* The web supplies these font variables via next/font; the add-in supplies
    them here (the actual font files are loaded via a <link> in index.html).
