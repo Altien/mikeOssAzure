@@ -255,7 +255,7 @@ test("prunes a stale bookmark after its revisions were resolved directly in Word
   expect(calls.searches).toBe(0);
 });
 
-test("keeps a changed bookmark View-only when it contains an unexpected revision", async ({
+test("keeps review controls when the bookmark holds an unrelated sibling revision", async ({
   addin,
   page,
 }) => {
@@ -272,6 +272,39 @@ test("keeps a changed bookmark View-only when it contains an unexpected revision
   expect((await addin.wordDocument()).bookmarks[0]?.pendingRevisionCount).toBe(
     3,
   );
+
+  await reloadAndOpenPersistedChat(addin, page);
+
+  // Word ranges report sibling revisions from the same passage; Mike's own
+  // Added/Deleted pair is still unambiguous, so the card stays actionable.
+  const view = page.getByRole("button", { name: "View", exact: true });
+  await expect(view).toBeVisible();
+  const accept = page.getByRole("button", { name: "Accept", exact: true });
+  await expect(accept).toBeVisible();
+
+  // Accepting resolves exactly Mike's pair — never the injected revision.
+  await accept.click();
+  await expect(page.getByText("Accepted.", { exact: true })).toBeVisible();
+  const calls = await addin.wordCalls();
+  expect(calls.acceptedChanges).toEqual([
+    { text: REPLACEMENT, location: "Replace", original: ORIGINAL },
+  ]);
+  expect(calls.rejectedChanges).toEqual([]);
+  expect(calls.searches).toBe(0);
+});
+
+test("stays View-only when the bookmark's revisions no longer identify the edit", async ({
+  addin,
+  page,
+}) => {
+  await mockPersistedChat(addin);
+  const bookmark = await applyPersistedEdit(addin, page);
+
+  // A second identical Added revision makes Mike's insertion ambiguous, so
+  // no revision may be resolved on the user's behalf.
+  expect(
+    await addin.injectRevisionIntoBookmark(bookmark.name, "Added", REPLACEMENT)
+  ).toBe(true);
 
   await reloadAndOpenPersistedChat(addin, page);
 

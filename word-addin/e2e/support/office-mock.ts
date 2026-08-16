@@ -438,6 +438,13 @@ export function installOfficeMock(seed: OfficeSeed): void {
             cannotSelect: args.cannotSelect,
           });
         },
+        // Real Word exposes the containing paragraph, whose collection also
+        // reports revisions adjacent to this range. The mock's ranges already
+        // see their own stored revisions, so the paragraph maps to the range
+        // itself.
+        paragraphs: {
+          getFirst: () => ({ getRange: (_location?: string) => range }),
+        },
         insertBookmark: (name: string) => {
           if (args.isNullObject) throw new Error("ItemNotFound");
           const entry = args.entry();
@@ -552,6 +559,14 @@ export function installOfficeMock(seed: OfficeSeed): void {
         return w.__OFFICE_SEED__.documentText as string;
       },
       load: (_properties?: any) => undefined,
+      // Mirrors real Word: the document-level collection reliably reports
+      // every pending revision even when range-scoped reads come up short.
+      getTrackedChanges: () =>
+        makeTrackedChangeCollection(
+          Object.values(documentState.revisions)
+            .filter((revision) => revision.resolution === null)
+            .map((revision) => makeStoredTrackedChange(revision.id))
+        ),
       search: (query: string, options?: any) => {
         wordCalls.searches++;
         const documentText: string = w.__OFFICE_SEED__.documentText || "";

@@ -237,6 +237,11 @@ function getErrorMessage(error: unknown): string {
   return "Word operation failed.";
 }
 
+/** Word reports paragraph breaks inconsistently (\r, \n, \v) across hosts. */
+function normalizeBreaks(value: string): string {
+  return value.replace(/[\r\n\v]+/g, "\n");
+}
+
 function trackedChangesMatchEdit(
   changes: readonly Word.TrackedChange[],
   edit: RedlineEdit,
@@ -254,14 +259,75 @@ function trackedChangesMatchEdit(
     const type = String(change.type).toLowerCase();
     return type === "added" || type === "deleted";
   });
-  const normalizeBreaks = (value: string): string =>
-    value.replace(/[\r\n\v]+/g, "\n");
   return (
     onlyExpectedTypes &&
     normalizeBreaks(addedText) ===
       normalizeBreaks(toWordText(edit.replacement)) &&
     normalizeBreaks(deletedText) === normalizeBreaks(edit.original)
   );
+}
+
+/**
+ * Select, from a possibly wider revision set, exactly the revisions that
+ * reconstruct one logical edit.
+ *
+ * Word ranges do not scope `getTrackedChanges()` to the touched run: on Word
+ * for the web a range inside an edited paragraph reports sibling revisions
+ * too. Whole-set equality is still tried first because Word may split one
+ * insertion into several revisions, which the by-text selection below
+ * deliberately does not attempt. The selection requires an unambiguous single
+ * Added/Deleted pair; anything less certain returns null so the caller never
+ * resolves someone else's revision.
+ */
+function pickEditRevisionSubset(
+  changes: readonly Word.TrackedChange[],
+  edit: RedlineEdit,
+): Word.TrackedChange[] | null {
+  if (trackedChangesMatchEdit(changes, edit)) return [...changes];
+
+  const matches = matchesForSides(changes, edit);
+  const sides = editRevisionSides(edit);
+  if (sides.added && matches.added.length !== 1) return null;
+  if (sides.deleted && matches.deleted.length !== 1) return null;
+
+  const subset = [
+    ...(sides.added ? matches.added : []),
+    ...(sides.deleted ? matches.deleted : []),
+  ];
+  return subset.length > 0 ? subset : null;
+}
+
+/** Which halves of a replacement an operation still has to account for. */
+interface EditRevisionSides {
+  added: boolean;
+  deleted: boolean;
+}
+
+function editRevisionSides(edit: RedlineEdit): EditRevisionSides {
+  return {
+    added: toWordText(edit.replacement).length > 0,
+    deleted: edit.original.length > 0,
+  };
+}
+
+function matchesForSides(
+  changes: readonly Word.TrackedChange[],
+  edit: RedlineEdit,
+): { added: Word.TrackedChange[]; deleted: Word.TrackedChange[] } {
+  const wordReplacement = normalizeBreaks(toWordText(edit.replacement));
+  const original = normalizeBreaks(edit.original);
+  return {
+    added: changes.filter(
+      (change) =>
+        String(change.type).toLowerCase() === "added" &&
+        normalizeBreaks(change.text) === wordReplacement,
+    ),
+    deleted: changes.filter(
+      (change) =>
+        String(change.type).toLowerCase() === "deleted" &&
+        normalizeBreaks(change.text) === original,
+    ),
+  };
 }
 
 function trackedObjectsFor(
@@ -305,28 +371,105 @@ async function removePersistentAnchorForEntry(
 class NoRemainingRevisionsError extends Error {}
 class ChangedRevisionSetError extends Error {}
 
+interface AnchorEditScan {
+  pendingCount: number;
+  addedMatches: number;
+  deletedMatches: number;
+}
+
 /**
- * Resolve whatever revisions one anchor still holds. Each anchor gets its own
- * batch: a stale proxy fails its whole `Word.run`, so sharing one would lose
- * the anchors that are still good.
+ * Read-only census of one anchor's pending revisions against the edit. Each
+ * anchor gets its own batch: a stale proxy fails its whole `Word.run`, so
+ * sharing one would lose the anchors that are still good.
  */
-async function resolveThroughAnchor(
+async function scanAnchorForEdit(
   range: Word.Range,
-  decision: TrackedEditDecision,
-  expectedEdit: RedlineEdit,
-): Promise<"resolved" | "empty" | "changed"> {
+  edit: RedlineEdit,
+): Promise<AnchorEditScan> {
   return Word.run([range], async (context) => {
     const collection = range.getTrackedChanges();
     collection.load("items");
     await context.sync();
+    if (collection.items.length === 0) {
+      return { pendingCount: 0, addedMatches: 0, deletedMatches: 0 };
+    }
+    for (const change of collection.items) change.load(["type", "text"]);
+    await context.sync();
+    const matches = matchesForSides(collection.items, edit);
+    return {
+      pendingCount: collection.items.length,
+      addedMatches: matches.added.length,
+      deletedMatches: matches.deleted.length,
+    };
+  });
+}
 
+/**
+ * Resolve the requested sides of the edit through one anchor, re-verifying by
+ * content inside the mutating batch so nothing beyond this edit is touched.
+ */
+async function resolveEditSidesThroughAnchor(
+  range: Word.Range,
+  decision: TrackedEditDecision,
+  edit: RedlineEdit,
+  sides: EditRevisionSides,
+): Promise<"resolved" | "changed"> {
+  return Word.run([range], async (context) => {
+    const collection = range.getTrackedChanges();
+    collection.load("items");
+    await context.sync();
+    for (const change of collection.items) change.load(["type", "text"]);
+    await context.sync();
+    const matches = matchesForSides(collection.items, edit);
+    if (sides.added && matches.added.length !== 1) return "changed" as const;
+    if (sides.deleted && matches.deleted.length !== 1) {
+      return "changed" as const;
+    }
+    const targets = [
+      ...(sides.added ? matches.added : []),
+      ...(sides.deleted ? matches.deleted : []),
+    ];
+    for (const change of targets) {
+      if (decision === "accept") change.accept();
+      else change.reject();
+    }
+    await context.sync();
+    return "resolved" as const;
+  });
+}
+
+/**
+ * Last-resort resolution against the whole document's pending revisions, in
+ * one atomic batch. Word for the web reports revisions unreliably through
+ * retained range proxies — an anchor can see only the Added half of a
+ * replacement, or nothing at all — while the body-level collection stays
+ * accurate. Scope safety comes from the exactly-one-per-side guard: if the
+ * document holds more than one pending revision with this edit's text on
+ * either side, nothing is touched.
+ */
+async function resolveEditThroughBody(
+  decision: TrackedEditDecision,
+  edit: RedlineEdit,
+): Promise<"resolved" | "changed" | "empty"> {
+  return Word.run(async (context) => {
+    const collection = context.document.body.getTrackedChanges();
+    collection.load("items");
+    await context.sync();
     if (collection.items.length === 0) return "empty" as const;
     for (const change of collection.items) change.load(["type", "text"]);
     await context.sync();
-    if (!trackedChangesMatchEdit(collection.items, expectedEdit)) {
+    const matches = matchesForSides(collection.items, edit);
+    const sides = editRevisionSides(edit);
+    if (sides.added && matches.added.length !== 1) return "changed" as const;
+    if (sides.deleted && matches.deleted.length !== 1) {
       return "changed" as const;
     }
-    for (const change of collection.items) {
+    const targets = [
+      ...(sides.added ? matches.added : []),
+      ...(sides.deleted ? matches.deleted : []),
+    ];
+    if (targets.length === 0) return "changed" as const;
+    for (const change of targets) {
       if (decision === "accept") change.accept();
       else change.reject();
     }
@@ -355,48 +498,137 @@ async function resolveTrackedEditNow(
   }
 
   try {
+    let resolvedViaChildren = false;
+    let childBatchFailure: unknown = null;
     if (entry.changes.length > 0) {
-      await Word.run(trackedObjectsFor(entry), async (context) => {
-        // Resolve the exact captured children, never acceptAll/rejectAll on a
-        // document or dynamically re-evaluated range collection.
-        for (const change of entry.changes) {
-          if (decision === "accept") change.accept();
-          else change.reject();
-        }
-        await context.sync();
-      });
-    } else {
-      // Word did not hand over usable revision proxies at apply time. The
-      // edited passage is still tracked, so re-read the revisions it holds
-      // now: it was revision-free before Mike touched it, which keeps the
-      // scope of this decision to Mike's own edit. Stop at the first anchor
-      // that resolves something — later anchors cover the same revisions.
-      let resolved = false;
-      let changed = false;
+      try {
+        await Word.run(trackedObjectsFor(entry), async (context) => {
+          // Resolve the exact captured children, never acceptAll/rejectAll
+          // on a document or dynamically re-evaluated range collection.
+          for (const change of entry.changes) {
+            if (decision === "accept") change.accept();
+            else change.reject();
+          }
+          await context.sync();
+        });
+        resolvedViaChildren = true;
+      } catch (error) {
+        // Later edits in the same passage can invalidate these child proxies
+        // between apply and resolve. The passage anchors below re-read the
+        // live revisions and verify them by content, so a stale child batch
+        // is recoverable rather than terminal.
+        childBatchFailure = error;
+      }
+    }
+    if (!resolvedViaChildren) {
+      // Resolve through the edited passage: it was revision-free before Mike
+      // touched it and every mutation below re-verifies content first, which
+      // keeps the scope of this decision to Mike's own edit. Word does not
+      // reliably report both halves of a replacement through one anchor — an
+      // anchor on the inserted text can see only the Added revision and the
+      // replaced search range only the Deleted one — so the plan may resolve
+      // each side through a different anchor.
+      const sidesNeeded = editRevisionSides(entry.expectedEdit);
+      let addedAnchor: Word.Range | null = null;
+      let deletedAnchor: Word.Range | null = null;
+      let ambiguous = false;
+      let sawAnyPending = false;
       let anchorFailure: unknown;
+
+      // Pass 1 (read-only): find an anchor for each required side before
+      // mutating anything, so a missing side aborts with the document intact.
       for (const range of entry.ranges) {
         try {
-          const result = await resolveThroughAnchor(
-            range,
-            decision,
-            entry.expectedEdit,
+          const scan = await scanAnchorForEdit(range, entry.expectedEdit);
+          console.debug(
+            `[tracked-edit/resolve] anchor scan ${JSON.stringify(scan)}`,
           );
-          if (result === "resolved") {
-            resolved = true;
+          if (scan.pendingCount > 0) sawAnyPending = true;
+          if (scan.addedMatches > 1 || scan.deletedMatches > 1) {
+            ambiguous = true;
             break;
           }
-          if (result === "changed") changed = true;
+          if (sidesNeeded.added && !addedAnchor && scan.addedMatches === 1) {
+            addedAnchor = range;
+          }
+          if (
+            sidesNeeded.deleted &&
+            !deletedAnchor &&
+            scan.deletedMatches === 1
+          ) {
+            deletedAnchor = range;
+          }
+          if (
+            (!sidesNeeded.added || addedAnchor) &&
+            (!sidesNeeded.deleted || deletedAnchor)
+          ) {
+            break;
+          }
         } catch (error) {
           anchorFailure = error;
         }
       }
-      if (!resolved) {
-        throw (
-          anchorFailure ??
-          (changed
-            ? new ChangedRevisionSetError()
-            : new NoRemainingRevisionsError())
+
+      const planComplete =
+        !ambiguous &&
+        (!sidesNeeded.added || !!addedAnchor) &&
+        (!sidesNeeded.deleted || !!deletedAnchor);
+      if (!planComplete) {
+        if (ambiguous) throw new ChangedRevisionSetError();
+        // The anchors could not account for every side (Word for the web
+        // routinely hides the Deleted half from them). Fall through to the
+        // document-level collection, which reports revisions reliably.
+        let bodyOutcome: "resolved" | "changed" | "empty";
+        try {
+          bodyOutcome = await resolveEditThroughBody(
+            decision,
+            entry.expectedEdit,
+          );
+        } catch (error) {
+          throw (
+            anchorFailure ??
+            error ??
+            (childBatchFailure ?? new NoRemainingRevisionsError())
+          );
+        }
+        console.debug(`[tracked-edit/resolve] body fallback ${bodyOutcome}`);
+        if (bodyOutcome !== "resolved") {
+          throw (
+            anchorFailure ??
+            (bodyOutcome === "changed" || sawAnyPending
+              ? new ChangedRevisionSetError()
+              : (childBatchFailure ?? new NoRemainingRevisionsError()))
+          );
+        }
+      } else if (addedAnchor && addedAnchor === deletedAnchor) {
+        const outcome = await resolveEditSidesThroughAnchor(
+          addedAnchor,
+          decision,
+          entry.expectedEdit,
+          { added: true, deleted: true },
         );
+        if (outcome !== "resolved") throw new ChangedRevisionSetError();
+      } else {
+        // Pass 2: act. Each mutating batch re-verifies its side, so the worst
+        // interleaving outcome is an honest error, never a broadened edit.
+        if (addedAnchor) {
+          const outcome = await resolveEditSidesThroughAnchor(
+            addedAnchor,
+            decision,
+            entry.expectedEdit,
+            { added: true, deleted: false },
+          );
+          if (outcome !== "resolved") throw new ChangedRevisionSetError();
+        }
+        if (deletedAnchor) {
+          const outcome = await resolveEditSidesThroughAnchor(
+            deletedAnchor,
+            decision,
+            entry.expectedEdit,
+            { added: false, deleted: true },
+          );
+          if (outcome !== "resolved") throw new ChangedRevisionSetError();
+        }
       }
     }
     pendingTrackedEdits.delete(handle);
@@ -581,18 +813,36 @@ async function restoreTrackedEditNow(
 
       for (const change of collection.items) change.load(["type", "text"]);
       await context.sync();
-      if (!trackedChangesMatchEdit(collection.items, edit)) {
+      // The bookmark range can report sibling revisions from the same
+      // paragraph — or, on Word for the web, only one half of the
+      // replacement pair. Manage the unambiguous subset that reconstructs
+      // this edit, consulting the reliable document-level collection when
+      // the bookmark's own report cannot account for both sides.
+      let editRevisions = pickEditRevisionSubset(collection.items, edit);
+      let managedCollection = collection;
+      if (!editRevisions) {
+        const bodyCollection = context.document.body.getTrackedChanges();
+        bodyCollection.load("items");
+        await context.sync();
+        for (const change of bodyCollection.items) {
+          change.load(["type", "text"]);
+        }
+        await context.sync();
+        editRevisions = pickEditRevisionSubset(bodyCollection.items, edit);
+        managedCollection = bodyCollection;
+      }
+      if (!editRevisions) {
         return { status: "view-only" as const };
       }
 
-      collection.track();
-      for (const change of collection.items) change.track();
+      managedCollection.track();
+      for (const change of editRevisions) change.track();
       range.track();
       await context.sync();
       return {
         status: "restored" as const,
-        collection,
-        changes: collection.items,
+        collection: managedCollection,
+        changes: editRevisions,
         range,
       };
     });
@@ -751,26 +1001,68 @@ async function restoreTrackedEditsNow(
         }
 
         let trackingQueued = false;
+        const bodyFallback: typeof present = [];
         for (const entry of withRevisions) {
-          if (
-            !trackedChangesMatchEdit(
-              entry.collection.items,
-              entry.candidate.edit,
-            )
-          ) {
-            byCandidate.set(entry.candidate, { status: "view-only" });
+          // Manage only the unambiguous subset that reconstructs this edit:
+          // the bookmark range can report sibling revisions from the same
+          // paragraph, or (on Word for the web) only one half of the pair.
+          const subset = pickEditRevisionSubset(
+            entry.collection.items,
+            entry.candidate.edit,
+          );
+          if (!subset) {
+            bodyFallback.push(entry);
             continue;
           }
           entry.collection.track();
-          for (const change of entry.collection.items) change.track();
+          for (const change of subset) change.track();
           entry.range.track();
           trackingQueued = true;
           byCandidate.set(entry.candidate, {
             status: "restored",
             collection: entry.collection,
-            changes: entry.collection.items,
+            changes: subset,
             range: entry.range,
           });
+        }
+        if (bodyFallback.length > 0) {
+          // One shared document-level read verifies the candidates whose
+          // bookmark could not account for both halves of their replacement.
+          // The consumed set stops two edits from ever binding the same
+          // revision proxy.
+          const bodyCollection = context.document.body.getTrackedChanges();
+          bodyCollection.load("items");
+          await context.sync();
+          for (const change of bodyCollection.items) {
+            change.load(["type", "text"]);
+          }
+          await context.sync();
+          const consumed = new Set<Word.TrackedChange>();
+          let bodyCollectionTracked = false;
+          for (const entry of bodyFallback) {
+            const subset = pickEditRevisionSubset(
+              bodyCollection.items,
+              entry.candidate.edit,
+            );
+            if (!subset || subset.some((change) => consumed.has(change))) {
+              byCandidate.set(entry.candidate, { status: "view-only" });
+              continue;
+            }
+            for (const change of subset) consumed.add(change);
+            if (!bodyCollectionTracked) {
+              bodyCollection.track();
+              bodyCollectionTracked = true;
+            }
+            for (const change of subset) change.track();
+            entry.range.track();
+            trackingQueued = true;
+            byCandidate.set(entry.candidate, {
+              status: "restored",
+              collection: bodyCollection,
+              changes: subset,
+              range: entry.range,
+            });
+          }
         }
         if (trackingQueued) await context.sync();
 
@@ -1157,46 +1449,132 @@ export function useWordDoc() {
                 const generatedChanges = generatedCollections.flatMap(
                   (collection) => collection.items,
                 );
-                candidateCollections = generatedCollections;
-                candidateChanges = generatedChanges;
 
-                // Prefer managing the exact revisions this edit generated, but
-                // only when Word hands over a set that reconstructs the edit and
-                // nothing else. Anything less precise is still Mike's edit — the
-                // target was revision-free a moment ago — so it stays reviewable
-                // through the edited passage instead of being handed back.
+                // Prefer managing the exact revisions this edit generated. A
+                // range does not scope getTrackedChanges() to the touched
+                // run — in a shared paragraph Word reports sibling revisions
+                // too — so the verified set may be a by-text subset of what
+                // Word handed over. Anything less certain than an unambiguous
+                // subset is still Mike's edit (the target was revision-free a
+                // moment ago), so it stays reviewable through the edited
+                // passage instead of being handed back.
+                let managedCollections = generatedCollections;
+                let managedChanges = generatedChanges;
                 let exactRevisions =
                   generatedChanges.length > 0 &&
                   generatedCollections.every(
                     (collection) => collection.items.length > 0,
                   );
 
-                if (!exactRevisions) {
-                  result.reason = "no-tracked-changes";
-                } else {
+                // The replaced search range and the inserted-text range both
+                // end up spanning only the NEW text, so on Word for the web
+                // their collections report just the Added revision — the
+                // Deleted run sits beside them. The edited paragraph contains
+                // both halves; its collection is the recovery source and the
+                // last-resort resolution anchor. (Original text never spans
+                // paragraphs, so the Deleted run is always in this first
+                // paragraph.)
+                let paragraphRange: Word.Range | null = null;
+                try {
+                  const paragraphSource =
+                    insertedRanges[0] ?? matches.items[0];
+                  paragraphRange = paragraphSource
+                    ? paragraphSource.paragraphs.getFirst().getRange("Whole")
+                    : null;
+                } catch {
+                  paragraphRange = null;
+                }
+
+                if (exactRevisions) {
                   for (const change of generatedChanges) {
                     change.load(["type", "text"]);
                   }
                   await context.sync();
 
-                  if (!trackedChangesMatchEdit(generatedChanges, edit)) {
+                  const verifiedSubset = pickEditRevisionSubset(
+                    generatedChanges,
+                    edit,
+                  );
+                  if (verifiedSubset) {
+                    managedChanges = verifiedSubset;
+                  } else {
                     exactRevisions = false;
                     result.reason = "unexpected-revisions";
                   }
                 }
+
+                if (!exactRevisions) {
+                  // Re-read the passage once before giving up on exact review
+                  // controls: the paragraph supplies revisions the tight
+                  // ranges cannot see, and Word for the web may materialize
+                  // generated revisions only after the batch that queued the
+                  // replacement.
+                  const rereadTargets = [
+                    ...(paragraphRange ? [paragraphRange] : []),
+                    ...(insertedRanges.length > 0
+                      ? insertedRanges
+                      : matches.items),
+                  ];
+                  const rereadCollections = rereadTargets.map((range) => {
+                    const collection = range.getTrackedChanges();
+                    collection.load("items");
+                    return collection;
+                  });
+                  await context.sync();
+                  const rereadChanges = rereadCollections.flatMap(
+                    (collection) => collection.items,
+                  );
+                  for (const change of rereadChanges) {
+                    change.load(["type", "text"]);
+                  }
+                  await context.sync();
+
+                  // Evaluate each collection on its own: the same underlying
+                  // revision reaches this batch as a distinct proxy per
+                  // range, so a union would double-count it and trip the
+                  // exactly-one ambiguity guard.
+                  let recovered: {
+                    collection: Word.TrackedChangeCollection;
+                    subset: Word.TrackedChange[];
+                  } | null = null;
+                  for (const collection of rereadCollections) {
+                    if (recovered) break;
+                    const subset =
+                      collection.items.length > 0
+                        ? pickEditRevisionSubset(collection.items, edit)
+                        : null;
+                    if (subset) recovered = { collection, subset };
+                  }
+                  console.debug(
+                    `[tracked-edit/apply] revision re-read ${JSON.stringify({
+                      rereadCount: rereadChanges.length,
+                      recovered: !!recovered,
+                    })}`,
+                  );
+                  if (recovered) {
+                    managedCollections = [recovered.collection];
+                    managedChanges = recovered.subset;
+                    exactRevisions = true;
+                    result.reason = undefined;
+                  } else if (!result.reason) {
+                    result.reason = "no-tracked-changes";
+                  }
+                }
+                candidateCollections = managedCollections;
+                candidateChanges = managedChanges;
 
                 // Track each retained proxy so it stays valid after this
                 // Word.run completes: the exact children when they were
                 // verified, and always the edited passage itself.
                 trackingQueued = true;
                 if (exactRevisions) {
-                  for (const collection of generatedCollections) {
+                  for (const collection of managedCollections) {
                     collection.track();
                   }
-                  for (const change of generatedChanges) change.track();
+                  for (const change of managedChanges) change.track();
                 }
                 const revisionRanges = exactRevisions
-                  ? generatedChanges
+                  ? managedChanges
                       .map((change) => ({
                         range: change.getRange("Whole"),
                         type: String(change.type).toLowerCase(),
@@ -1211,14 +1589,22 @@ export function useWordDoc() {
                   ...revisionRanges,
                   ...insertedRanges,
                   ...matches.items,
+                  ...(paragraphRange ? [paragraphRange] : []),
                 ];
                 for (const range of candidateRanges) range.track();
                 await context.sync();
 
                 let bookmarkName: string | undefined;
                 if (edit.stableEditId && candidateRanges.length > 0) {
+                  // Without per-revision ranges, fall back to the paragraph:
+                  // the tight ranges span only the inserted text, and a
+                  // bookmark that misses the Deleted half restores view-only.
                   const persistentRanges =
-                    revisionRanges.length > 0 ? revisionRanges : insertedRanges;
+                    revisionRanges.length > 0
+                      ? revisionRanges
+                      : paragraphRange
+                        ? [paragraphRange]
+                        : [...insertedRanges, ...matches.items];
                   const [firstPersistentRange, ...remainingPersistentRanges] =
                     persistentRanges;
                   if (firstPersistentRange) {
@@ -1253,9 +1639,9 @@ export function useWordDoc() {
                   handle,
                   entry: {
                     expectedEdit: edit,
-                    changes: exactRevisions ? generatedChanges : [],
+                    changes: exactRevisions ? managedChanges : [],
                     parentCollections: exactRevisions
-                      ? generatedCollections
+                      ? managedCollections
                       : [],
                     ranges: candidateRanges,
                     ...(bookmarkName && edit.stableEditId

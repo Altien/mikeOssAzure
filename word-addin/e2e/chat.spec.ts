@@ -2062,16 +2062,16 @@ test("keeps an edit reviewable through its passage when Word withholds revision 
       { text: "The Supplier", location: "Replace", original: "The Suplier" },
     ]);
 
-  // Resolution re-reads the passage. This document reports nothing there, so
-  // the card says so rather than claiming a decision Word never made.
+  // Resolution re-reads the passage; its ranges report nothing here, so the
+  // decision falls through to the document-level collection — which is
+  // exactly how Word for the web behaves — and still resolves only this
+  // edit's Added/Deleted pair.
   await page.getByRole("button", { name: "Accept", exact: true }).click();
-  await expect(
-    page.getByText(
-      "Word no longer reports a revision for this change. Review it from Word’s Review tab.",
-    ),
-  ).toBeVisible();
+  await expect(page.getByText("Accepted.", { exact: true })).toBeVisible();
   const calls = await addin.wordCalls();
-  expect(calls.acceptedChanges).toEqual([]);
+  expect(calls.acceptedChanges).toEqual([
+    { text: "The Supplier", location: "Replace", original: "The Suplier" },
+  ]);
   expect(calls.rejectedChanges).toEqual([]);
 });
 
