@@ -25,7 +25,7 @@ import { llmRouter } from "./routes/llm";
 import { diagnosticsRouter } from "./routes/diagnostics";
 import { installRouter } from "./routes/install";
 import { configRouter } from "./routes/config";
-import { caseLawRouter } from "./routes/caseLaw";
+import { sourceDocumentsRouter } from "./routes/sourceDocuments";
 import { helpRouter } from "./routes/help";
 import { diagRouter } from "./routes/diag";
 import { manifestPublicKey } from "./lib/manifestSigning";
@@ -320,7 +320,7 @@ export function buildApp(): express.Express {
   app.use("/api/user", userRouter);
   app.use("/api/users", userRouter);
   app.use("/api/download", downloadsRouter);
-  app.use("/api/case-law", caseLawRouter);
+  app.use("/api/documents", sourceDocumentsRouter);
   app.use("/api/help", helpRouter);
   app.use("/api/authority-trace", authorityTraceRouter);
   app.use("/api/altien/skills", skillsRouter);

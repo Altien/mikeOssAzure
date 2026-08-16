@@ -94,14 +94,26 @@ export function EditCard({
         status === "restoring"
       }
     >
-      {changeNumber !== undefined && (
-        <p className="text-xs text-gray-400 mb-1.5">{changeNumber}</p>
-      )}
-      {edit.reason && (
-        <p className="text-xs text-gray-500 mb-2">{edit.reason}</p>
+      {(changeNumber !== undefined || edit.reason) && (
+        <div className="mb-2 flex items-start gap-2">
+          {changeNumber !== undefined && (
+            <span
+              aria-label={`Tracked change ${changeNumber}`}
+              title={`Tracked change ${changeNumber}`}
+              className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-gray-200 text-[9px] font-medium text-gray-600"
+            >
+              {changeNumber}
+            </span>
+          )}
+          {edit.reason && (
+            <p className="min-w-0 flex-1 font-serif text-sm text-gray-500">
+              {edit.reason}
+            </p>
+          )}
+        </div>
       )}
       {hasEditText && (
-        <div className="text-sm leading-relaxed font-serif bg-gray-100/70 rounded-lg px-2 py-2">
+        <div className="text-xs leading-relaxed font-sans bg-gray-100/70 rounded-lg px-2 py-2">
           {edit.replacement !== undefined && edit.replacement !== "" && (
             <span className="text-green-700">{edit.replacement}</span>
           )}

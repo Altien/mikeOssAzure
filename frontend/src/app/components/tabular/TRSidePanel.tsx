@@ -34,7 +34,7 @@ import { SpreadsheetView } from "../shared/views/SpreadsheetView";
 import { DocxView } from "../shared/views/DocxView";
 import { FileTypeIcon } from "../shared/FileTypeIcon";
 import { SubfolderSvgIcon } from "../shared/FolderSvgIcon";
-import { CitationQuotesHeader } from "../assistant/CitationQuotesHeader";
+import { CitationQuotesSection } from "../assistant/CitationQuotesSection";
 import { cn } from "@/app/lib/utils";
 import {
     APP_SURFACE_HOVER_CLASS,
@@ -355,14 +355,13 @@ export function TRSidePanel({
                     {/* Quote row */}
                     {docCitation?.quote && (
                         <div className="-mx-3 shrink-0 py-2">
-                            <CitationQuotesHeader
+                            <CitationQuotesSection
                                 quotes={[
                                     {
                                         id: citationKey(cell.id, docCitation),
                                         quote: docCitation.quote,
-                                        inlineDetail:
+                                        quoteLabel:
                                             formatCitationLocation(docCitation),
-                                        citationText: `${doc.filename}, ${formatCitationLocation(docCitation)}`,
                                     },
                                 ]}
                                 activeQuoteId={citationKey(
@@ -370,7 +369,6 @@ export function TRSidePanel({
                                     docCitation,
                                 )}
                                 citationRef={docCitation.citationRef}
-                                citationText={`${doc.filename}, ${formatCitationLocation(docCitation)}`}
                             />
                         </div>
                     )}

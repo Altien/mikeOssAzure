@@ -11,8 +11,9 @@ vi.mock("../storage", () => ({ downloadFile: vi.fn() }));
 import {
   locateQuote,
   verifyQuoteAgainstSource,
+  verifyCaseCitationAnnotation,
   verifyDocumentCitationAnnotation,
-  verifyDocumentCitations,
+  verifyCitations,
 } from "./verifyCitations";
 
 // Deterministic in-memory source text — no storage/model/network. Proves
@@ -197,6 +198,44 @@ describe("verifyDocumentCitationAnnotation", () => {
     expect(ann.verified).toBe(false);
   });
 
+  it("updates verification and corrected text on normalized document quotes", async () => {
+    const annotation = {
+      ...docAnnotation([
+        { page: 1, quote: "the TENANT shall pay rent" },
+        { page: 2, quote: "Nonexistent clause here." },
+      ]),
+      document: {
+        document_id: "doc-1",
+        title: "lease.docx",
+        type: "docx",
+        metadata: [],
+        quotes: [
+          { quote: "the TENANT shall pay rent", target: { page: 1 } },
+          { quote: "Nonexistent clause here.", target: { page: 2 } },
+        ],
+      },
+    };
+
+    const verified = (await verifyDocumentCitationAnnotation(
+      annotation,
+      fetcher,
+    )) as Record<string, unknown>;
+    const document = verified.document as {
+      quotes: { quote: string; verification: { verified: boolean } }[];
+    };
+
+    expect(document.quotes).toMatchObject([
+      {
+        quote: "The Tenant shall pay rent",
+        verification: { verified: true },
+      },
+      {
+        quote: "Nonexistent clause here.",
+        verification: { verified: false },
+      },
+    ]);
+  });
+
   it("unreadable source → all quotes unverified", async () => {
     const ann = (await verifyDocumentCitationAnnotation(
       docAnnotation([{ page: 1, quote: "The Tenant shall pay rent" }]),
@@ -222,7 +261,89 @@ describe("verifyDocumentCitationAnnotation", () => {
   });
 });
 
-describe("verifyDocumentCitations (batch)", () => {
+describe("verifyCaseCitationAnnotation", () => {
+  const opinions = async () => [
+    {
+      opinion_id: 11,
+      text: "The Court holds that the statutory requirement applies.",
+    },
+    {
+      opinion_id: 12,
+      text: "The dissent would reverse the judgment.",
+    },
+  ];
+
+  it("verifies against the targeted opinion and updates the normalized document", async () => {
+    const annotation = {
+      type: "citation_data",
+      kind: "case",
+      ref: 2,
+      cluster_id: 42,
+      quotes: [
+        {
+          opinionId: 11,
+          type: "lead",
+          author: null,
+          quote: "the COURT holds that the statutory requirement applies",
+        },
+      ],
+      document: {
+        document_id: "case:42",
+        title: "Example v Example",
+        type: "case",
+        metadata: [],
+        quotes: [
+          {
+            quote: "the COURT holds that the statutory requirement applies",
+            target: { subdocument_id: "case:42:opinion:11" },
+          },
+        ],
+      },
+    };
+
+    const verified = (await verifyCaseCitationAnnotation(
+      annotation,
+      opinions,
+    )) as Record<string, unknown>;
+    expect(verified.verified).toBe(true);
+    const quotes = verified.quotes as {
+      quote: string;
+      verification: { verified: boolean };
+    }[];
+    expect(quotes[0].quote).toBe(
+      "The Court holds that the statutory requirement applies",
+    );
+    expect(quotes[0].verification.verified).toBe(true);
+    const document = verified.document as {
+      quotes: { quote: string; verification: { verified: boolean } }[];
+    };
+    expect(document.quotes[0]).toMatchObject({
+      quote: "The Court holds that the statutory requirement applies",
+      verification: { verified: true },
+    });
+  });
+
+  it("does not match a quote against a different opinion", async () => {
+    const verified = (await verifyCaseCitationAnnotation(
+      {
+        type: "citation_data",
+        kind: "case",
+        ref: 2,
+        cluster_id: 42,
+        quotes: [
+          {
+            opinionId: 12,
+            quote: "The Court holds that the statutory requirement applies.",
+          },
+        ],
+      },
+      opinions,
+    )) as Record<string, unknown>;
+    expect(verified.verified).toBe(false);
+  });
+});
+
+describe("verifyCitations (batch)", () => {
   it("verifies documents and passes case citations through unchanged", async () => {
     const caseAnn = {
       type: "citation_data",
@@ -230,14 +351,32 @@ describe("verifyDocumentCitations (batch)", () => {
       ref: 2,
       cluster_id: 7,
     };
-    const out = await verifyDocumentCitations(
+    const out = await verifyCitations(
       [
         docAnnotation([{ page: 1, quote: "The Tenant shall pay rent" }]),
         caseAnn,
       ],
       fetcherFor({ "doc-1": SOURCE }),
+      async () => [],
     );
     expect((out[0] as Record<string, unknown>).verified).toBe(true);
     expect(out[1]).toBe(caseAnn);
+  });
+
+  it("verifies case citations when opinion text is available", async () => {
+    const out = await verifyCitations(
+      [
+        {
+          type: "citation_data",
+          kind: "case",
+          ref: 2,
+          cluster_id: 7,
+          quotes: [{ opinionId: 3, quote: "Binding case text" }],
+        },
+      ],
+      fetcherFor({}),
+      async () => [{ opinion_id: 3, text: "Binding case text" }],
+    );
+    expect(out[0]).toMatchObject({ verified: true });
   });
 });

@@ -338,6 +338,13 @@ describe("createCitation", () => {
             filename: "contract.pdf",
             page: 4,
             quote: "q",
+            document: {
+                document_id: "uuid-aaa",
+                title: "contract.pdf",
+                type: "pdf",
+                metadata: [],
+                quotes: [{ quote: "q", target: { page: 4 } }],
+            },
         });
     });
 
@@ -379,6 +386,18 @@ describe("createCitation", () => {
             url: "https://example.test/case",
             pdfUrl: null,
             dateFiled: "1990-01-02",
+            document: {
+                document_id: "case:55",
+                title: "Smith v. Jones, 123 U.S. 456",
+                type: "case",
+                metadata: [
+                    {
+                        label: "Date",
+                        value: "1990-01-02",
+                        format: "date",
+                    },
+                ],
+            },
         });
     });
 

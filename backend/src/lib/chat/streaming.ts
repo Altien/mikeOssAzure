@@ -8,6 +8,7 @@ import {
 import { safeErrorMessage } from "../safeError";
 import { createServerSupabase } from "../supabase";
 import { buildUserMcpTools, type McpToolEvent } from "../mcpConnectors";
+import type { SourceDocument } from "../sourceDocuments";
 import {
   COURTLISTENER_TOOLS,
   type CaseCitationEvent,
@@ -32,10 +33,11 @@ import {
   createCitation,
   CITATIONS_OPEN_TAG,
 } from "./citations";
+import { runToolCalls } from "./tools/toolDispatcher";
 import {
-  runToolCalls,
+  getCachedCaseOpinionTexts,
   type CourtlistenerTurnState,
-} from "./tools/toolDispatcher";
+} from "./tools/courtlistenerTurnState";
 import {
   readDocumentContent,
   type TurnEditState,
@@ -47,7 +49,7 @@ import {
   createFastModelExternalSourceSummarizer,
   ExternalSourceCache,
 } from "../../altien/externalSources/cache";
-import { verifyDocumentCitations } from "./verifyCitations";
+import { verifyCitations } from "./verifyCitations";
 
 export type AssistantEvent =
   | { type: "reasoning"; text: string }
@@ -106,7 +108,11 @@ export type AssistantEvent =
   | CourtlistenerToolEvent
   | McpToolEvent
   | AuthorityTraceEvent
-  | { type: "case_opinions"; cluster_id: number; case: unknown }
+  | {
+      type: "case_opinions";
+      cluster_id: number;
+      document: SourceDocument;
+    }
   | { type: "content"; text: string }
   | { type: "error"; message: string };
 
@@ -606,10 +612,10 @@ export async function runLLMStream(params: {
     const rawCitations = parsedCitations.map((c) =>
       createCitation(c, docIndex, courtlistenerTurnState.casesByClusterId),
     );
-    // Server-side document-quote verification. Fetch each document's extracted
-    // source text at most once per turn (memoized by doc_id), reading only the
-    // bytes already in storage with emitEvents:false so no new events fire and
-    // the air-gap guarantee holds. Case citations pass through untouched.
+    // Server-side quote verification. Fetch each document's extracted source
+    // text at most once per turn (memoized by doc_id), reading only bytes
+    // already in storage with emitEvents:false. Case citations are matched
+    // against the opinion text cached during this turn.
     const sourceTextByDocId = new Map<string, Promise<string>>();
     const getSourceText = (docId: string): Promise<string> => {
       let pending = sourceTextByDocId.get(docId);
@@ -624,7 +630,12 @@ export async function runLLMStream(params: {
       }
       return pending;
     };
-    citations = await verifyDocumentCitations(rawCitations, getSourceText);
+    citations = await verifyCitations(
+      rawCitations,
+      getSourceText,
+      async (clusterId) =>
+        getCachedCaseOpinionTexts(courtlistenerTurnState, clusterId, externalSourceCache),
+    );
   }
   devLog("[chat/stream] final citations", {
     hasCitationsBlock: citationDiagnostics.hasBlock,

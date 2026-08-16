@@ -458,7 +458,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                 return (
                                     <div
                                         key={doc.id}
-                                        className="inline-flex items-center rounded-[10px] border border-white/70 bg-white text-xs text-gray-800 shadow-[0_2px_6px_rgba(15,23,42,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-xl"
+                                        className="inline-flex items-center rounded-[10px] border border-white/70 bg-white text-xs text-gray-800 shadow-sm backdrop-blur-xl"
                                     >
                                         {onDocumentClick ? (
                                             <button

@@ -3,43 +3,50 @@ import {
     mergeAssistantSidePanelTab,
     reorderAssistantSidePanelTabs,
     type AssistantSidePanelTab,
+    type DocumentTab,
 } from "./AssistantSidePanel";
 
-function documentTab(
-    overrides: Partial<AssistantSidePanelTab> = {},
-): AssistantSidePanelTab {
+function documentTab(id = "document-1"): DocumentTab {
     return {
         kind: "document",
-        id: "document-1",
-        documentId: "document-1",
-        filename: "agreement.docx",
-        versionId: null,
-        versionNumber: null,
-        ...overrides,
-    } as AssistantSidePanelTab;
+        id,
+        document: {
+            document_id: id,
+            title: "agreement.docx",
+            type: "docx",
+            metadata: [],
+            quotes: [],
+            version_id: null,
+            version_number: null,
+        },
+    };
 }
 
 describe("mergeAssistantSidePanelTab", () => {
     it("returns the existing tab for another plain-document link", () => {
         const existing = documentTab();
-        const incoming = documentTab({
-            versionId: "explicit-version",
-            versionNumber: 3,
-        });
+        const incoming = documentTab();
+        incoming.document.version_id = "explicit-version";
+        incoming.document.version_number = 3;
 
         expect(mergeAssistantSidePanelTab(existing, incoming)).toBe(existing);
     });
 
     it("changes citation context without changing the mounted viewer tuple", () => {
-        const existing = documentTab({
+        const existing: AssistantSidePanelTab = {
+            ...documentTab(),
             warning: "Preserved warning",
             initialScrollTop: 240,
-        });
-        const incoming = documentTab({
+        };
+        const incoming: AssistantSidePanelTab = {
+            ...documentTab(),
             kind: "citation",
-            filename: "renamed-agreement.docx",
-            versionId: "citation-version",
-            versionNumber: 4,
+            document: {
+                ...documentTab().document,
+                title: "renamed-agreement.docx",
+                version_id: "citation-version",
+                version_number: 4,
+            },
             citation: {
                 type: "citation_data",
                 kind: "document",
@@ -51,15 +58,16 @@ describe("mergeAssistantSidePanelTab", () => {
                 quote: "Relevant clause",
                 quotes: [{ page: 2, quote: "Relevant clause" }],
             },
-        });
+        };
 
         expect(mergeAssistantSidePanelTab(existing, incoming)).toMatchObject({
             kind: "citation",
             id: "document-1",
-            documentId: "document-1",
-            filename: "agreement.docx",
-            versionId: null,
-            versionNumber: null,
+            document: {
+                document_id: "document-1",
+                version_id: null,
+                version_number: null,
+            },
             warning: "Preserved warning",
             initialScrollTop: 240,
         });
@@ -68,9 +76,9 @@ describe("mergeAssistantSidePanelTab", () => {
 
 describe("reorderAssistantSidePanelTabs", () => {
     const tabs = [
-        documentTab({ id: "a", documentId: "a" }),
-        documentTab({ id: "b", documentId: "b" }),
-        documentTab({ id: "c", documentId: "c" }),
+        documentTab("a"),
+        documentTab("b"),
+        documentTab("c"),
     ];
 
     it("moves a tab before the drop target", () => {

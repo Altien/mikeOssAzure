@@ -56,7 +56,7 @@ import {
     getApiKeyStatus,
     getChat,
     getAuditHistory,
-    getCourtlistenerOpinions,
+    getPanelDocument,
     getDocumentUrl,
     getLibrary,
     getLibraryLevels,
@@ -2342,22 +2342,71 @@ describe("unwrapping and blob wrappers", () => {
     // Upstream's getOllamaModels case removed: NOT SUPPORTED in dev
     // (sync-log: fe942475).
 
-    it("getCourtlistenerOpinions posts the cluster id and unwraps opinions", async () => {
-        const opinions = [
-            {
-                opinionId: 7,
-                type: "majority",
-                author: "Judge X",
-                url: "https://example.test/op/7",
-            },
-        ];
-        fetchMock.mockResolvedValue(jsonResponse({ opinions }));
+    it("getPanelDocument fetches a normalized document by opaque ID", async () => {
+        const document = {
+            document_id: "case:123",
+            title: "Example v Example, 123 U.S. 456",
+            type: "case",
+            metadata: [],
+            quotes: [],
+        };
+        fetchMock.mockResolvedValue(jsonResponse(document));
 
-        await expect(getCourtlistenerOpinions(123)).resolves.toEqual(opinions);
+        await expect(getPanelDocument("case:123")).resolves.toEqual(document);
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/api/case-law/case-opinions");
-        expect(init.method).toBe("POST");
-        expect(JSON.parse(init.body as string)).toEqual({ clusterId: 123 });
+        expect(url).toBe("http://localhost:3001/api/documents/case%3A123");
+        expect(init.method).toBeUndefined();
+    });
+
+    it("coalesces concurrent panel-document hydration requests", async () => {
+        const document = {
+            document_id: "case:456",
+            title: "Concurrent case",
+            type: "case",
+            metadata: [],
+            quotes: [],
+        };
+        let resolveResponse: ((response: Response) => void) | undefined;
+        fetchMock.mockImplementation(
+            () =>
+                new Promise<Response>((resolve) => {
+                    resolveResponse = resolve;
+                }),
+        );
+
+        const first = getPanelDocument("case:456");
+        const second = getPanelDocument("case:456");
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+        resolveResponse?.(jsonResponse(document));
+        await expect(Promise.all([first, second])).resolves.toEqual([
+            document,
+            document,
+        ]);
+    });
+
+    it("rejects invalid panel documents and permits a later retry", async () => {
+        fetchMock
+            .mockResolvedValueOnce(
+                jsonResponse({ document_id: "case:invalid", title: "Broken" }),
+            )
+            .mockResolvedValueOnce(
+                jsonResponse({
+                    document_id: "case:invalid",
+                    title: "Recovered",
+                    type: "case",
+                    metadata: [],
+                    quotes: [],
+                }),
+            );
+
+        await expect(getPanelDocument("case:invalid")).rejects.toThrow(
+            "Invalid source document response",
+        );
+        await expect(getPanelDocument("case:invalid")).resolves.toMatchObject({
+            title: "Recovered",
+        });
+        expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
     it("exportChatData and exportTabularReviewsData hit their export routes", async () => {
