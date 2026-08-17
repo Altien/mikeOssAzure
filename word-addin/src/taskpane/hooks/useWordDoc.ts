@@ -3,6 +3,7 @@
 import { useCallback } from "react";
 import { toWordText } from "../lib/wordText";
 import type { RedlineEdit } from "../lib/redline";
+import { isParagraphStyleFormat } from "../lib/redline";
 import { createSecureUuid } from "../lib/secureUuid";
 import {
   bookmarkNameForEdit,
@@ -242,11 +243,28 @@ function normalizeBreaks(value: string): string {
   return value.replace(/[\r\n\v]+/g, "\n");
 }
 
+/** True when the edit changes only character formatting, never text. */
+function isFormatEdit(edit: RedlineEdit): boolean {
+  return !!edit.format && edit.format.length > 0;
+}
+
 function trackedChangesMatchEdit(
   changes: readonly Word.TrackedChange[],
   edit: RedlineEdit,
 ): boolean {
   if (changes.length === 0) return false;
+  if (isFormatEdit(edit)) {
+    // A formatting pass generates only "Formatted" revisions whose combined
+    // text is the passage that was restyled.
+    const allFormatted = changes.every(
+      (change) => String(change.type).toLowerCase() === "formatted",
+    );
+    const formattedText = changes.map((change) => change.text).join("");
+    return (
+      allFormatted &&
+      normalizeBreaks(formattedText) === normalizeBreaks(edit.original)
+    );
+  }
   const addedText = changes
     .filter((change) => String(change.type).toLowerCase() === "added")
     .map((change) => change.text)
@@ -289,33 +307,59 @@ function pickEditRevisionSubset(
   const sides = editRevisionSides(edit);
   if (sides.added && matches.added.length !== 1) return null;
   if (sides.deleted && matches.deleted.length !== 1) return null;
+  // Formatted revisions may arrive split (one per font property or run), all
+  // over the same passage text. Every text-matching formatted revision
+  // belongs to this edit — apply requires a unique search match, so no other
+  // edit can produce formatted revisions with this exact text.
+  if (sides.formatted && matches.formatted.length === 0) return null;
 
   const subset = [
     ...(sides.added ? matches.added : []),
     ...(sides.deleted ? matches.deleted : []),
+    ...(sides.formatted ? matches.formatted : []),
   ];
   return subset.length > 0 ? subset : null;
 }
 
-/** Which halves of a replacement an operation still has to account for. */
+/** Which revision kinds an operation still has to account for. */
 interface EditRevisionSides {
   added: boolean;
   deleted: boolean;
+  formatted: boolean;
 }
 
 function editRevisionSides(edit: RedlineEdit): EditRevisionSides {
+  if (isFormatEdit(edit)) {
+    return { added: false, deleted: false, formatted: true };
+  }
   return {
     added: toWordText(edit.replacement).length > 0,
     deleted: edit.original.length > 0,
+    formatted: false,
   };
 }
 
 function matchesForSides(
   changes: readonly Word.TrackedChange[],
   edit: RedlineEdit,
-): { added: Word.TrackedChange[]; deleted: Word.TrackedChange[] } {
+): {
+  added: Word.TrackedChange[];
+  deleted: Word.TrackedChange[];
+  formatted: Word.TrackedChange[];
+} {
   const wordReplacement = normalizeBreaks(toWordText(edit.replacement));
   const original = normalizeBreaks(edit.original);
+  // A heading style restyles the whole paragraph, so its Formatted revision
+  // reports the paragraph's text — or, on Word for the web, NO text at all
+  // (an empty-string paragraph-format revision). Ranges only report the
+  // revisions they intersect, so an empty-text match stays scoped to the
+  // passage the caller is looking at. Character formats keep the strict
+  // equality match.
+  const styleScoped = (edit.format ?? []).some(isParagraphStyleFormat);
+  const formattedTextMatches = (text: string): boolean =>
+    styleScoped
+      ? text.length === 0 || normalizeBreaks(text).includes(original)
+      : normalizeBreaks(text) === original;
   return {
     added: changes.filter(
       (change) =>
@@ -326,6 +370,11 @@ function matchesForSides(
       (change) =>
         String(change.type).toLowerCase() === "deleted" &&
         normalizeBreaks(change.text) === original,
+    ),
+    formatted: changes.filter(
+      (change) =>
+        String(change.type).toLowerCase() === "formatted" &&
+        formattedTextMatches(change.text),
     ),
   };
 }
@@ -375,6 +424,7 @@ interface AnchorEditScan {
   pendingCount: number;
   addedMatches: number;
   deletedMatches: number;
+  formattedMatches: number;
 }
 
 /**
@@ -391,7 +441,12 @@ async function scanAnchorForEdit(
     collection.load("items");
     await context.sync();
     if (collection.items.length === 0) {
-      return { pendingCount: 0, addedMatches: 0, deletedMatches: 0 };
+      return {
+        pendingCount: 0,
+        addedMatches: 0,
+        deletedMatches: 0,
+        formattedMatches: 0,
+      };
     }
     for (const change of collection.items) change.load(["type", "text"]);
     await context.sync();
@@ -400,6 +455,7 @@ async function scanAnchorForEdit(
       pendingCount: collection.items.length,
       addedMatches: matches.added.length,
       deletedMatches: matches.deleted.length,
+      formattedMatches: matches.formatted.length,
     };
   });
 }
@@ -425,9 +481,13 @@ async function resolveEditSidesThroughAnchor(
     if (sides.deleted && matches.deleted.length !== 1) {
       return "changed" as const;
     }
+    if (sides.formatted && matches.formatted.length === 0) {
+      return "changed" as const;
+    }
     const targets = [
       ...(sides.added ? matches.added : []),
       ...(sides.deleted ? matches.deleted : []),
+      ...(sides.formatted ? matches.formatted : []),
     ];
     for (const change of targets) {
       if (decision === "accept") change.accept();
@@ -464,9 +524,23 @@ async function resolveEditThroughBody(
     if (sides.deleted && matches.deleted.length !== 1) {
       return "changed" as const;
     }
+    if (sides.formatted && matches.formatted.length === 0) {
+      return "changed" as const;
+    }
+    // Style revisions can carry empty text, which cannot disambiguate two
+    // pending paragraph-format revisions at document scope — the body-wide
+    // fallback therefore demands a unique match for style edits.
+    if (
+      sides.formatted &&
+      (edit.format ?? []).some(isParagraphStyleFormat) &&
+      matches.formatted.length !== 1
+    ) {
+      return "changed" as const;
+    }
     const targets = [
       ...(sides.added ? matches.added : []),
       ...(sides.deleted ? matches.deleted : []),
+      ...(sides.formatted ? matches.formatted : []),
     ];
     if (targets.length === 0) return "changed" as const;
     for (const change of targets) {
@@ -531,6 +605,7 @@ async function resolveTrackedEditNow(
       const sidesNeeded = editRevisionSides(entry.expectedEdit);
       let addedAnchor: Word.Range | null = null;
       let deletedAnchor: Word.Range | null = null;
+      let formattedAnchor: Word.Range | null = null;
       let ambiguous = false;
       let sawAnyPending = false;
       let anchorFailure: unknown;
@@ -559,8 +634,16 @@ async function resolveTrackedEditNow(
             deletedAnchor = range;
           }
           if (
+            sidesNeeded.formatted &&
+            !formattedAnchor &&
+            scan.formattedMatches >= 1
+          ) {
+            formattedAnchor = range;
+          }
+          if (
             (!sidesNeeded.added || addedAnchor) &&
-            (!sidesNeeded.deleted || deletedAnchor)
+            (!sidesNeeded.deleted || deletedAnchor) &&
+            (!sidesNeeded.formatted || formattedAnchor)
           ) {
             break;
           }
@@ -572,7 +655,8 @@ async function resolveTrackedEditNow(
       const planComplete =
         !ambiguous &&
         (!sidesNeeded.added || !!addedAnchor) &&
-        (!sidesNeeded.deleted || !!deletedAnchor);
+        (!sidesNeeded.deleted || !!deletedAnchor) &&
+        (!sidesNeeded.formatted || !!formattedAnchor);
       if (!planComplete) {
         if (ambiguous) throw new ChangedRevisionSetError();
         // The anchors could not account for every side (Word for the web
@@ -600,12 +684,20 @@ async function resolveTrackedEditNow(
               : (childBatchFailure ?? new NoRemainingRevisionsError()))
           );
         }
+      } else if (sidesNeeded.formatted && formattedAnchor) {
+        const outcome = await resolveEditSidesThroughAnchor(
+          formattedAnchor,
+          decision,
+          entry.expectedEdit,
+          { added: false, deleted: false, formatted: true },
+        );
+        if (outcome !== "resolved") throw new ChangedRevisionSetError();
       } else if (addedAnchor && addedAnchor === deletedAnchor) {
         const outcome = await resolveEditSidesThroughAnchor(
           addedAnchor,
           decision,
           entry.expectedEdit,
-          { added: true, deleted: true },
+          { added: true, deleted: true, formatted: false },
         );
         if (outcome !== "resolved") throw new ChangedRevisionSetError();
       } else {
@@ -616,7 +708,7 @@ async function resolveTrackedEditNow(
             addedAnchor,
             decision,
             entry.expectedEdit,
-            { added: true, deleted: false },
+            { added: true, deleted: false, formatted: false },
           );
           if (outcome !== "resolved") throw new ChangedRevisionSetError();
         }
@@ -625,7 +717,7 @@ async function resolveTrackedEditNow(
             deletedAnchor,
             decision,
             entry.expectedEdit,
-            { added: false, deleted: true },
+            { added: false, deleted: true, formatted: false },
           );
           if (outcome !== "resolved") throw new ChangedRevisionSetError();
         }
@@ -1215,6 +1307,58 @@ export function revealPersistedTrackedEdit(
   });
 }
 
+export type DocumentTextRevealStatus = "selected" | "not-found" | "error";
+
+/**
+ * Scroll Word to a cited passage: search the body for the exact quote and
+ * select the first occurrence (selection is Word's scroll-and-highlight).
+ * Falls back to a case-insensitive search before giving up, since citations
+ * are model-copied text and the document may have changed since.
+ */
+export function selectDocumentText(
+  text: string,
+): Promise<DocumentTextRevealStatus> {
+  return serializeWordMutation(async () => {
+    const target = text.trim();
+    if (
+      !target ||
+      target.includes("\n") ||
+      target.includes("\r") ||
+      target.includes("^") ||
+      target.length > MAX_SEARCH_CHARS
+    ) {
+      return "not-found" as const;
+    }
+    try {
+      return await Word.run(async (context) => {
+        let matches = context.document.body.search(target, {
+          matchCase: true,
+        });
+        matches.load("items");
+        await context.sync();
+        if (matches.items.length === 0) {
+          matches = context.document.body.search(target, {
+            matchCase: false,
+          });
+          matches.load("items");
+          await context.sync();
+        }
+        const first = matches.items[0];
+        if (!first) return "not-found" as const;
+        first.select();
+        await context.sync();
+        return "selected" as const;
+      });
+    } catch (error) {
+      console.debug(
+        "[citation] Word couldn’t select the cited text.",
+        getErrorMessage(error),
+      );
+      return "error" as const;
+    }
+  });
+}
+
 export function resolveTrackedEdit(
   handle: TrackedEditHandle,
   decision: TrackedEditDecision,
@@ -1426,17 +1570,51 @@ export function useWordDoc() {
                 // Because every target range was revision-free immediately
                 // above, the changes obtained from those same ranges after the
                 // queued replacements are exactly the changes this edit made.
-                const wordReplacement = toWordText(edit.replacement);
+                const formatOnly = isFormatEdit(edit);
+                const wordReplacement = formatOnly
+                  ? ""
+                  : toWordText(edit.replacement);
                 const insertedRanges: Word.Range[] = [];
                 const generatedCollections = matches.items.map((match) => {
-                  // The range Word returns for the inserted text is the sturdier
-                  // anchor: replacing a search range can leave that original
-                  // proxy stale, which Word then reports as a bare exception.
-                  const inserted = match.insertText(
-                    wordReplacement,
-                    Word.InsertLocation.replace,
-                  );
-                  if (inserted) insertedRanges.push(inserted);
+                  if (formatOnly) {
+                    // Restyling under TrackAll produces a "Formatted"
+                    // revision over the same text; the search range stays
+                    // valid because nothing was replaced. Heading styles are
+                    // paragraph-scoped by Word's own model, so they restyle
+                    // the paragraph containing the passage (the prompt
+                    // instructs the model to only target heading-worthy
+                    // paragraphs).
+                    for (const format of edit.format ?? []) {
+                      if (format === "bold") match.font.bold = true;
+                      else if (format === "italic") match.font.italic = true;
+                      else if (format === "underline") {
+                        match.font.underline = Word.UnderlineType.single;
+                      } else if (isParagraphStyleFormat(format)) {
+                        const styleByFormat = {
+                          heading1: Word.BuiltInStyleName.heading1,
+                          heading2: Word.BuiltInStyleName.heading2,
+                          heading3: Word.BuiltInStyleName.heading3,
+                        } as const;
+                        const style =
+                          styleByFormat[
+                            format as keyof typeof styleByFormat
+                          ];
+                        if (style) {
+                          match.paragraphs.getFirst().styleBuiltIn = style;
+                        }
+                      }
+                    }
+                  } else {
+                    // The range Word returns for the inserted text is the
+                    // sturdier anchor: replacing a search range can leave
+                    // that original proxy stale, which Word then reports as
+                    // a bare exception.
+                    const inserted = match.insertText(
+                      wordReplacement,
+                      Word.InsertLocation.replace,
+                    );
+                    if (inserted) insertedRanges.push(inserted);
+                  }
                   const collection = match.getTrackedChanges();
                   collection.load("items");
                   return collection;

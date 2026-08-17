@@ -9,11 +9,57 @@
  * boundaries for Word's search API.
  */
 
+/**
+ * Formatting a format-only edit applies to the original text: character
+ * formats, or a Word paragraph heading style (which restyles the whole
+ * paragraph containing the passage).
+ */
+export type WordEditFormat =
+  | "bold"
+  | "italic"
+  | "underline"
+  | "heading1"
+  | "heading2"
+  | "heading3";
+
+const WORD_EDIT_FORMATS: readonly WordEditFormat[] = [
+  "bold",
+  "italic",
+  "underline",
+  "heading1",
+  "heading2",
+  "heading3",
+];
+
+/** True for formats that apply a paragraph style rather than a font change. */
+export function isParagraphStyleFormat(format: WordEditFormat): boolean {
+  return format.startsWith("heading");
+}
+
+/** Parse a <format> tag value into the recognized formats, in stable order. */
+export function parseWordEditFormats(value: string): WordEditFormat[] {
+  const requested = new Set(
+    value
+      // "heading 1" / "Heading-2" normalize to their canonical tokens.
+      .replace(/heading[\s-]+(\d)/gi, "heading$1")
+      .split(/[\s,]+/)
+      .map((token) => token.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  return WORD_EDIT_FORMATS.filter((format) => requested.has(format));
+}
+
 export interface RedlineEdit {
   /** Exact text to locate in the document (verbatim, case-sensitive). */
   original: string;
-  /** Text to put in its place. */
+  /**
+   * Text to put in its place. A format-only edit carries "" here and lists
+   * its formatting in `format`; consumers must check `format` before
+   * interpreting an empty replacement as a deletion.
+   */
   replacement: string;
+  /** Present (non-empty) only for format-only edits. */
+  format?: WordEditFormat[];
   /** Model's one-line justification; display-only. */
   reason?: string;
 }
@@ -32,6 +78,8 @@ export interface StreamingRedlineEdit {
   blockIndex: number;
   original: string;
   replacement?: string;
+  /** Present (non-empty) only for format-only edits. */
+  format?: WordEditFormat[];
   reason?: string;
   sealed: boolean;
 }
@@ -201,8 +249,11 @@ function projectLegacyRedlineStream(
   };
 }
 
+// A block carries either a text replacement or a formatting instruction —
+// never both. A malformed block with both fields fails this match and stays
+// provisional, surfacing as an incomplete card rather than a guessed edit.
 const COMPLETE_TAGGED_EDIT =
-  /<original>([\s\S]*?)<\/original>\s*<replacement>([\s\S]*?)<\/replacement>\s*<reason>([\s\S]*?)<\/reason>/gi;
+  /<original>([\s\S]*?)<\/original>\s*(?:<replacement>([\s\S]*?)<\/replacement>|<format>([\s\S]*?)<\/format>)\s*<reason>([\s\S]*?)<\/reason>/gi;
 const ORIGINAL_OPEN = "<original>";
 
 function normalizeVisibleProse(value: string): string {
@@ -251,41 +302,71 @@ function parseProvisionalTaggedEdit(
   const afterOriginal = source.slice(cursor).trimStart();
   cursor = source.length - afterOriginal.length;
   const replacementOpen = "<replacement>";
-  if (!afterOriginal.toLowerCase().startsWith(replacementOpen)) {
+  const formatOpen = "<format>";
+  const afterOriginalLower = afterOriginal.toLowerCase();
+
+  let replacement: string | undefined;
+  let format: WordEditFormat[] | undefined;
+  if (afterOriginalLower.startsWith(replacementOpen)) {
+    const replacementValueStart = cursor + replacementOpen.length;
+    const replacementClose = "</replacement>";
+    const replacementEnd = lower.indexOf(
+      replacementClose,
+      replacementValueStart,
+    );
+    if (replacementEnd < 0) {
+      return {
+        blockIndex,
+        original,
+        replacement: withoutPartialClosingTag(
+          source.slice(replacementValueStart),
+          replacementClose,
+        ).trim(),
+        sealed: false,
+      };
+    }
+    replacement = source.slice(replacementValueStart, replacementEnd).trim();
+    cursor = replacementEnd + replacementClose.length;
+  } else if (afterOriginalLower.startsWith(formatOpen)) {
+    const formatValueStart = cursor + formatOpen.length;
+    const formatClose = "</format>";
+    const formatEnd = lower.indexOf(formatClose, formatValueStart);
+    if (formatEnd < 0) {
+      const partial = parseWordEditFormats(
+        withoutPartialClosingTag(source.slice(formatValueStart), formatClose),
+      );
+      return {
+        blockIndex,
+        original,
+        ...(partial.length > 0 ? { format: partial } : {}),
+        sealed: false,
+      };
+    }
+    format = parseWordEditFormats(source.slice(formatValueStart, formatEnd));
+    cursor = formatEnd + formatClose.length;
+  } else {
     return { blockIndex, original, sealed: false };
   }
 
-  const replacementValueStart = cursor + replacementOpen.length;
-  const replacementClose = "</replacement>";
-  const replacementEnd = lower.indexOf(replacementClose, replacementValueStart);
-  if (replacementEnd < 0) {
+  const afterField = source.slice(cursor).trimStart();
+  cursor = source.length - afterField.length;
+  const reasonOpen = "<reason>";
+  if (!afterField.toLowerCase().startsWith(reasonOpen)) {
     return {
       blockIndex,
       original,
-      replacement: withoutPartialClosingTag(
-        source.slice(replacementValueStart),
-        replacementClose,
-      ).trim(),
+      ...(replacement !== undefined ? { replacement } : {}),
+      ...(format && format.length > 0 ? { format } : {}),
       sealed: false,
     };
-  }
-
-  const replacement = source
-    .slice(replacementValueStart, replacementEnd)
-    .trim();
-  cursor = replacementEnd + replacementClose.length;
-  const afterReplacement = source.slice(cursor).trimStart();
-  cursor = source.length - afterReplacement.length;
-  const reasonOpen = "<reason>";
-  if (!afterReplacement.toLowerCase().startsWith(reasonOpen)) {
-    return { blockIndex, original, replacement, sealed: false };
   }
 
   const reasonValueStart = cursor + reasonOpen.length;
   return {
     blockIndex,
     original,
-    replacement,
+    ...(replacement !== undefined ? { replacement } : {}),
+    ...(format && format.length > 0 ? { format } : {}),
     reason: withoutPartialClosingTag(
       source.slice(reasonValueStart),
       "</reason>",
@@ -312,22 +393,35 @@ function projectTaggedRedlineStream(text: string): RedlineStreamProjection {
   while ((match = matcher.exec(text)) !== null) {
     visibleParts.push(text.slice(cursor, match.index));
     const original = (match[1] ?? "").trim();
-    const replacement = (match[2] ?? "").trim();
-    const reason = (match[3] ?? "").trim();
+    const rawReplacement = match[2];
+    const rawFormat = match[3];
+    const reason = (match[4] ?? "").trim();
+    const format =
+      rawFormat === undefined ? undefined : parseWordEditFormats(rawFormat);
+    // A format block whose value names no recognized formatting is not safe
+    // to apply; surface it as an incomplete card rather than guessing.
+    const usable =
+      original &&
+      (rawReplacement !== undefined || (format && format.length > 0));
     if (original && !seenSafeOriginals.has(original)) {
       seenSafeOriginals.add(original);
+      const replacement = (rawReplacement ?? "").trim();
       edits.push({
         blockIndex,
         original,
-        replacement,
+        ...(rawReplacement !== undefined ? { replacement } : {}),
+        ...(format && format.length > 0 ? { format } : {}),
         ...(reason ? { reason } : {}),
-        sealed: true,
+        sealed: !!usable,
       });
-      safeEdits.push({
-        original,
-        replacement,
-        ...(reason ? { reason } : {}),
-      });
+      if (usable) {
+        safeEdits.push({
+          original,
+          replacement,
+          ...(format && format.length > 0 ? { format } : {}),
+          ...(reason ? { reason } : {}),
+        });
+      }
     }
     blockIndex += 1;
     cursor = matcher.lastIndex;

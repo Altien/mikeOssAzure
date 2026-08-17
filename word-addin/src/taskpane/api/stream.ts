@@ -40,6 +40,11 @@ export async function streamAssistant(
     onReasoningBlockEnd?: () => void;
     /** Called only when the backend reports a model-triggered document read. */
     onDocumentRead?: (event: WordChatDocumentReadEvent) => void;
+    /**
+     * Streams the citation rows behind the answer's `[n]` markers. Fired per
+     * citations frame; the final frame supersedes earlier partial ones.
+     */
+    onCitations?: (citations: unknown[]) => void;
   },
   onText: (text: string) => void,
 ): Promise<void> {
@@ -92,6 +97,8 @@ export async function streamAssistant(
             ? { documentId: d.document_id }
             : {}),
         });
+      } else if (d.type === "citations" && Array.isArray(d.citations)) {
+        params.onCitations?.(d.citations);
       } else if (d.type === "error") {
         streamError =
           typeof d.message === "string" ? d.message : "Stream error";

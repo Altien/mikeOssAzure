@@ -208,6 +208,7 @@ export function useWordAssistantChat({
 
         let streamedContent = "";
         let completedDocReads: DocumentReadActivity[] = [];
+        let assistantCitations: SavedMessage["citations"];
         // Fast streams deliver many SSE events per frame; committing React
         // state per event re-renders the transcript far more often than the
         // screen can paint. Publishes coalesce onto one rAF, and the flush
@@ -236,10 +237,17 @@ export function useWordAssistantChat({
               );
             }
           }
+          const citationSnapshot = assistantCitations;
           setMessages((current) =>
             current.map((message) =>
               message.id === messageId && message.role === "assistant"
-                ? { ...message, events: eventSnapshot }
+                ? {
+                    ...message,
+                    events: eventSnapshot,
+                    ...(citationSnapshot && citationSnapshot.length > 0
+                      ? { citations: citationSnapshot }
+                      : {}),
+                  }
                 : message,
             ),
           );
@@ -321,6 +329,14 @@ export function useWordAssistantChat({
                 assistantEvents = finishAssistantReasoning(assistantEvents);
                 publishAssistantEvents();
               },
+              onCitations: (citations) => {
+                if (!requestIsCurrent()) return;
+                // Later frames supersede earlier partial ones; the final
+                // frame arrives before [DONE].
+                assistantCitations =
+                  citations as SavedMessage["citations"];
+                publishAssistantEvents();
+              },
               onDocumentRead: (event) => {
                 if (!requestIsCurrent()) return;
                 const read: DocumentReadActivity = {
@@ -363,6 +379,14 @@ export function useWordAssistantChat({
             true,
             assistantMessageHasStableId,
           );
+          // A malformed block (e.g. no usable replacement or format) never
+          // seals; settle its card on "incomplete" rather than leaving the
+          // receiving spinner up forever. Already-scheduled edits are skipped
+          // by the controller, so this cannot demote an applied change.
+          editController.markIncompleteRedlines(
+            assistantMessageId,
+            streamedContent,
+          );
           await editController.waitForMessageEdits(assistantMessageId);
           if (wordChatStorage === "local" && requestChatId) {
             await saveLocalWordMessage({
@@ -376,6 +400,7 @@ export function useWordAssistantChat({
                 docReads:
                   completedDocReads.length > 0 ? completedDocReads : undefined,
                 events: completeAssistantEvents(assistantEvents),
+                citations: assistantCitations,
               },
             });
           } else if (wordChatStorage === "cloud") {
@@ -412,6 +437,7 @@ export function useWordAssistantChat({
                       ? completedDocReads
                       : undefined,
                   events: completeAssistantEvents(assistantEvents),
+                  citations: assistantCitations,
                 },
               }).catch(() => {});
             } else if (wordChatStorage === "cloud") {
@@ -443,6 +469,7 @@ export function useWordAssistantChat({
                 docReads:
                   completedDocReads.length > 0 ? completedDocReads : undefined,
                 events: completeAssistantEvents(assistantEvents),
+                citations: assistantCitations,
               },
             }).catch(() => {});
           } else if (wordChatStorage === "cloud") {
