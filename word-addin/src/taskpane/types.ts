@@ -104,6 +104,17 @@ export type WordAssistantEvent =
   | WordErrorEvent
   | WordAssistantStoredEvent;
 
+/**
+ * One backend citation: the shared chat pipeline emits `[n]` markers in the
+ * answer and a citations array carrying each marker's verbatim quote. Only
+ * the fields the pane needs are typed; rows pass through storage unchanged.
+ */
+export interface WordCitation {
+  marker?: string | null;
+  quote?: string | null;
+  text?: string | null;
+}
+
 export interface Message {
   id?: string;
   role: "user" | "assistant";
@@ -120,6 +131,8 @@ export interface Message {
    * and `docReads` remain as the backward-compatible storage projection.
    */
   events?: WordAssistantEvent[];
+  /** Assistant turns only: quotes behind the answer's `[n]` markers. */
+  citations?: WordCitation[];
 }
 
 export interface Workflow {

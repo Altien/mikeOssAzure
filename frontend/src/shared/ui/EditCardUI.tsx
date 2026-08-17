@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { PillButtonUI, type PillButtonUITone } from "./PillButtonUI";
 
 export interface EditCardUIAction {
@@ -12,6 +13,11 @@ export interface EditCardUIAction {
 export interface EditCardUIProps {
     originalText?: string;
     replacementText?: string;
+    /**
+     * Replaces the default red/green diff inside the text slab — for changes
+     * that keep the text but restyle it (e.g. Word formatting cards).
+     */
+    previewContent?: ReactNode;
     reason?: string;
     changeNumber?: number;
     status?: string;
@@ -54,6 +60,7 @@ function ActionButton({
 export function EditCardUI({
     originalText,
     replacementText,
+    previewContent,
     reason,
     changeNumber,
     status,
@@ -110,18 +117,24 @@ export function EditCardUI({
                 </div>
             )}
 
-            {hasEditText && (
+            {(hasEditText || previewContent !== undefined) && (
                 <div className="rounded-lg bg-gray-100/70 px-2 py-2 font-sans text-xs leading-relaxed">
-                    {hasReplacement && (
-                        <span className="text-green-700">
-                            {replacementText}
-                        </span>
-                    )}
-                    {hasReplacement && hasOriginal && " "}
-                    {hasOriginal && (
-                        <span className="text-red-600 line-through">
-                            {originalText}
-                        </span>
+                    {previewContent !== undefined ? (
+                        previewContent
+                    ) : (
+                        <>
+                            {hasReplacement && (
+                                <span className="text-green-700">
+                                    {replacementText}
+                                </span>
+                            )}
+                            {hasReplacement && hasOriginal && " "}
+                            {hasOriginal && (
+                                <span className="text-red-600 line-through">
+                                    {originalText}
+                                </span>
+                            )}
+                        </>
                     )}
                 </div>
             )}

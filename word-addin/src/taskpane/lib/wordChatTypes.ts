@@ -55,6 +55,8 @@ export interface WordAssistantMessage extends RuntimeMessageBase {
   role: "assistant";
   /** Canonical assistant content and activity, in arrival order. */
   events: WordAssistantEvent[];
+  /** Quotes behind the answer's `[n]` markers, from the backend pipeline. */
+  citations?: SavedMessage["citations"];
 }
 
 export type WordChatMessage = WordUserMessage | WordAssistantMessage;

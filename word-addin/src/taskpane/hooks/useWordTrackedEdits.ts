@@ -11,7 +11,23 @@ import {
 import type { TrackedEditHandle } from "./useWordDoc";
 import type { Message as SavedMessage } from "../types";
 import { projectRedlineStream } from "../lib/redline";
-import type { RedlineEdit } from "../lib/redline";
+import type { RedlineEdit, StreamingRedlineEdit } from "../lib/redline";
+
+/**
+ * Shape a sealed streamed block for `applyTrackedEdits`. Returns null for a
+ * block that carries neither a replacement nor a usable format list — such a
+ * block is never safe to apply.
+ */
+function toRedlineEdit(edit: StreamingRedlineEdit): RedlineEdit | null {
+  const isFormatEdit = !!edit.format && edit.format.length > 0;
+  if (edit.replacement === undefined && !isFormatEdit) return null;
+  return {
+    original: edit.original,
+    replacement: edit.replacement ?? "",
+    ...(isFormatEdit ? { format: edit.format } : {}),
+    ...(edit.reason ? { reason: edit.reason } : {}),
+  };
+}
 import type {
   EditDecision,
   EditRuntimeState,
@@ -94,14 +110,12 @@ export function useWordTrackedEdits({
       if (message.role !== "assistant" || !message.id) continue;
       const projection = projectRedlineStream(message.content, true);
       for (const edit of projection.edits) {
-        if (!edit.sealed || edit.replacement === undefined) continue;
+        if (!edit.sealed) continue;
+        const sealedEdit = toRedlineEdit(edit);
+        if (!sealedEdit) continue;
         descriptors.push({
           key: getEditKey(message.id, edit.blockIndex),
-          edit: {
-            original: edit.original,
-            replacement: edit.replacement,
-            ...(edit.reason ? { reason: edit.reason } : {}),
-          },
+          edit: sealedEdit,
         });
       }
     }
@@ -342,17 +356,10 @@ export function useWordTrackedEdits({
       });
 
       projection.edits.forEach((edit) => {
-        if (!edit.sealed || edit.replacement === undefined) return;
-        applyStreamedEdit(
-          messageId,
-          edit.blockIndex,
-          {
-            original: edit.original,
-            replacement: edit.replacement,
-            ...(edit.reason ? { reason: edit.reason } : {}),
-          },
-          persistent,
-        );
+        if (!edit.sealed) return;
+        const sealedEdit = toRedlineEdit(edit);
+        if (!sealedEdit) return;
+        applyStreamedEdit(messageId, edit.blockIndex, sealedEdit, persistent);
       });
     },
     [applyStreamedEdit],

@@ -69,6 +69,28 @@ export function EditCard({
   error,
   disabled = false,
 }: EditCardProps): React.ReactElement {
+  const formats = edit.format ?? [];
+  const isFormatCard = formats.length > 0;
+  const formatPreviewClass = [
+    formats.includes("bold") ? "font-bold" : "",
+    formats.includes("italic") ? "italic" : "",
+    formats.includes("underline") ? "underline" : "",
+    // Heading styles: approximate Word's visual hierarchy in the preview.
+    formats.includes("heading1") ? "font-bold text-lg" : "",
+    formats.includes("heading2") ? "font-bold text-base" : "",
+    formats.includes("heading3") ? "font-semibold" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const formatLabels = formats
+    .map((format) =>
+      format.startsWith("heading")
+        ? `heading ${format.slice("heading".length)}`
+        : format,
+    )
+    .join(", ");
+  const hasEditText =
+    edit.replacement !== undefined || edit.original !== undefined;
   const statusCopy = status === "pending" ? undefined : STATUS_COPY[status];
   // Every other status already says something precise; only these two learn
   // more from Word's own message — and a pending change can carry one too
@@ -87,6 +109,18 @@ export function EditCard({
     <EditCardUI
       originalText={edit.original}
       replacementText={edit.replacement}
+      previewContent={
+        // A format-only change keeps the text; preview the styling on the
+        // original passage instead of a red/green replacement.
+        isFormatCard && hasEditText ? (
+          <>
+            <span className={`text-gray-800 ${formatPreviewClass}`}>
+              {edit.original}
+            </span>
+            <span className="ml-2 text-gray-400">{formatLabels}</span>
+          </>
+        ) : undefined
+      }
       reason={edit.reason}
       changeNumber={changeNumber}
       status={status}

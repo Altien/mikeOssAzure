@@ -61,7 +61,7 @@ export interface WordDocumentSnapshot {
 interface StoredRevision {
   id: string;
   groupId: string;
-  type: "Added" | "Deleted";
+  type: "Added" | "Deleted" | "Formatted";
   text: string;
   resolution: "accepted" | "rejected" | null;
 }
@@ -554,6 +554,33 @@ export function installOfficeMock(seed: OfficeSeed): void {
       return revisions.map((revision) => revision.id);
     };
 
+    // Restyling a revision-free range under TrackAll yields one "Formatted"
+    // revision covering the passage, mirroring real Word.
+    const createFormattedRevisionGroup = (
+      entry: WordCall,
+      text: string
+    ): string[] => {
+      documentState.groupSequence++;
+      const groupId = `revision-group-${documentState.groupSequence}`;
+      documentState.revisionSequence++;
+      const revisionId = `tracked-change-${documentState.revisionSequence}`;
+      documentState.revisions[revisionId] = {
+        id: revisionId,
+        groupId,
+        type: "Formatted",
+        text,
+        resolution: null,
+      };
+      documentState.groups[groupId] = {
+        id: groupId,
+        entry: { ...entry },
+        revisionIds: [revisionId],
+        resolution: null,
+      };
+      persistDocumentState();
+      return [revisionId];
+    };
+
     const body = {
       get text() {
         return w.__OFFICE_SEED__.documentText as string;
@@ -638,6 +665,40 @@ export function installOfficeMock(seed: OfficeSeed): void {
             }
             return makeSearchRange("Inserted");
           };
+          // Formatting the found passage: each font-property write is
+          // recorded, and the first one under TrackAll materializes one
+          // Formatted revision (Word coalesces per contiguous run).
+          const recordFormatWrite = (property: string): void => {
+            const entry = recordWrite(query, `Format:${property}`, query);
+            lastWrite = entry;
+            if (
+              doc.changeTrackingMode === ChangeTrackingMode.trackAll &&
+              generatedRevisionIds.length === 0
+            ) {
+              generatedRevisionIds = createFormattedRevisionGroup(entry, query);
+            }
+          };
+          range.font = {
+            set bold(_value: boolean) {
+              recordFormatWrite("bold");
+            },
+            set italic(_value: boolean) {
+              recordFormatWrite("italic");
+            },
+            set underline(_value: unknown) {
+              recordFormatWrite("underline");
+            },
+          };
+          // Paragraph styles are paragraph-scoped; the mock's paragraph is
+          // the range itself, so a style write records like a font write.
+          range.paragraphs = {
+            getFirst: () => ({
+              getRange: (_location?: string) => range,
+              set styleBuiltIn(value: unknown) {
+                recordFormatWrite(`style:${String(value)}`);
+              },
+            }),
+          };
           return range;
         });
         return { items, load: (_properties?: any) => undefined };
@@ -674,6 +735,12 @@ export function installOfficeMock(seed: OfficeSeed): void {
   }
 
   w.Word = {
+    UnderlineType: { single: "Single" },
+    BuiltInStyleName: {
+      heading1: "Heading1",
+      heading2: "Heading2",
+      heading3: "Heading3",
+    },
     run: (objectOrCallback: any, maybeCallback?: any) => {
       const callback = maybeCallback ?? objectOrCallback;
       const target = Array.isArray(objectOrCallback)
