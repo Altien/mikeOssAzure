@@ -1,4 +1,9 @@
 import { type DocIndex, resolveDoc } from "./types";
+import {
+  normalizeCaseDocument,
+  sourceDocumentType,
+  type SourceDocumentQuote,
+} from "../sourceDocuments";
 
 // ---------------------------------------------------------------------------
 // Internal citation parse types
@@ -277,10 +282,20 @@ export function createCitation(
 ) {
   if (citation.kind === "case") {
     const caseRecord = casesByClusterId?.get(citation.cluster_id);
+    const document = normalizeCaseDocument({
+      clusterId: citation.cluster_id,
+      caseName: caseRecord?.caseName,
+      citations: caseRecord?.citations,
+      url: caseRecord?.url,
+      pdfUrl: caseRecord?.pdfUrl,
+      dateFiled: caseRecord?.dateFiled,
+      quotes: citation.quotes,
+    });
     return {
       type: "citation_data",
       kind: "case",
       ref: citation.ref,
+      document,
       cluster_id: citation.cluster_id,
       case_name: caseRecord?.caseName ?? null,
       citation: caseRecord?.citations[0] ?? null,
@@ -292,15 +307,34 @@ export function createCitation(
   }
 
   const docInfo = resolveDoc(citation.doc_id, docIndex);
+  const documentId = docInfo?.document_id ?? citation.doc_id;
+  const filename = docInfo?.filename ?? citation.doc_id;
+  const quotes: SourceDocumentQuote[] = citation.quotes.map((quote) => ({
+    quote: quote.quote,
+    target: {
+      page: quote.page,
+      ...(quote.sheet ? { sheet: quote.sheet } : {}),
+      ...(quote.cell ? { cell: quote.cell } : {}),
+    },
+  }));
   return {
     type: "citation_data",
     kind: "document",
     ref: citation.ref,
+    document: {
+      document_id: documentId,
+      title: filename,
+      type: sourceDocumentType(filename),
+      metadata: [],
+      quotes,
+      version_id: docInfo?.version_id ?? null,
+      version_number: docInfo?.version_number ?? null,
+    },
     doc_id: citation.doc_id,
     document_id: docInfo?.document_id,
     version_id: docInfo?.version_id ?? null,
     version_number: docInfo?.version_number ?? null,
-    filename: docInfo?.filename ?? citation.doc_id,
+    filename,
     page: citation.page,
     quote: citation.quote,
     sheet: citation.sheet,

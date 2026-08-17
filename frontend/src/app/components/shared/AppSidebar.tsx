@@ -1,12 +1,12 @@
 "use client";
 
 import {
-  useState,
-  useEffect,
-  useMemo,
-  useCallback,
-  useRef,
-  type UIEvent,
+    useState,
+    useEffect,
+    useMemo,
+    useCallback,
+    useRef,
+    type UIEvent,
 } from "react";
 import { PanelLeft, ChevronsUpDown, ChevronDown, Loader2 } from "lucide-react";
 import { useAuth } from "@/app/contexts/AuthContext";
@@ -31,6 +31,7 @@ import { listProjectSummaries } from "@/app/lib/mikeApi";
 import type { Project } from "@/app/components/shared/types";
 import { cn } from "@/app/lib/utils";
 import {
+    APP_PANEL_SHADOW_CLASS,
     APP_SURFACE_ACTIVE_CLASS,
     APP_SURFACE_HOVER_CLASS,
 } from "@/app/components/ui/liquid-surface";
@@ -39,11 +40,11 @@ const NAV_ITEMS = [
     { href: "/assistant", label: "Assistant", icon: ChatSkeuoIcon },
     { href: "/projects", label: "Projects", icon: FolderSkeuoIcon },
     { href: "/library", label: "Library", icon: LibrarySkeuoIcon },
-  {
-    href: "/tabular-reviews",
-    label: "Tabular Review",
-    icon: TabularReviewSkeuoIcon,
-  },
+    {
+        href: "/tabular-reviews",
+        label: "Tabular Review",
+        icon: TabularReviewSkeuoIcon,
+    },
     { href: "/workflows", label: "Workflows", icon: WorkflowSkeuoIcon },
 ];
 
@@ -184,23 +185,23 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
         }
     }, [hasMoreRecentProjects, recentProjects, userId]);
 
-  const handleRecentProjectsScroll = useCallback(
-    (event: UIEvent<HTMLDivElement>) => {
-      if (isNearScrollEnd(event.currentTarget)) {
-        void loadMoreRecentProjects();
-      }
-    },
-    [loadMoreRecentProjects],
-  );
+    const handleRecentProjectsScroll = useCallback(
+        (event: UIEvent<HTMLDivElement>) => {
+            if (isNearScrollEnd(event.currentTarget)) {
+                void loadMoreRecentProjects();
+            }
+        },
+        [loadMoreRecentProjects],
+    );
 
-  const handleChatHistoryScroll = useCallback(
-    (event: UIEvent<HTMLDivElement>) => {
-      if (isNearScrollEnd(event.currentTarget)) {
-        void loadMoreChats();
-      }
-    },
-    [loadMoreChats],
-  );
+    const handleChatHistoryScroll = useCallback(
+        (event: UIEvent<HTMLDivElement>) => {
+            if (isNearScrollEnd(event.currentTarget)) {
+                void loadMoreChats();
+            }
+        },
+        [loadMoreChats],
+    );
 
     const handleToggle = () => {
         if (isOpen) setShouldAnimate(true);
@@ -255,7 +256,8 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                     isOpen
                         ? "w-64 h-[calc(100dvh-1rem)] md:h-[calc(100dvh-1.5rem)] bg-app-surface"
                         : "max-md:hidden w-14 md:h-[calc(100dvh-1.5rem)] md:bg-app-surface h-auto bg-transparent pointer-events-none md:pointer-events-auto",
-                    "my-2 ml-2 mr-0 md:my-3 md:ml-3 md:mr-0 rounded-2xl border border-white/70 shadow-[0_-1px_6px_rgba(15,23,42,0.034),0_4px_9px_rgba(15,23,42,0.074),inset_0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-2xl overflow-visible",
+                    "my-2 ml-2 mr-0 md:my-3 md:ml-3 md:mr-0 rounded-2xl border border-white/70 backdrop-blur-2xl overflow-visible",
+                    APP_PANEL_SHADOW_CLASS,
                     "flex flex-col transition-all duration-300 absolute md:relative z-[99]",
                 )}
             >
@@ -341,7 +343,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                 })}
 
                 {isOpen && (
-          <div className="mt-4 flex min-h-0 flex-1 flex-col gap-4">
+                    <div className="mt-4 flex min-h-0 flex-1 flex-col gap-4">
                         {/* Recent Projects */}
                         <div>
                             <button
@@ -358,13 +360,13 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                 />
                             </button>
                             {!projectsCollapsed && (
-                <div
-                  className={cn(
-                    RECENT_PROJECT_LIST_HEIGHT_CLASS,
-                    "overflow-y-auto",
-                  )}
-                  onScroll={handleRecentProjectsScroll}
-                >
+                                <div
+                                    className={cn(
+                                        RECENT_PROJECT_LIST_HEIGHT_CLASS,
+                                        "overflow-y-auto",
+                                    )}
+                                    onScroll={handleRecentProjectsScroll}
+                                >
                                     {!displayedRecentProjects ? (
                                         <div className="space-y-1 px-2.5">
                                             {[50, 65, 45].map((w, i) => (
@@ -393,7 +395,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                         </div>
                                     ) : (
                                         <div
-                      className={`space-y-1 px-2.5 pb-1 ${
+                                            className={`space-y-1 px-2.5 pb-1 ${
                                                 shouldAnimate
                                                     ? "sidebar-fade-in-2"
                                                     : ""
@@ -401,57 +403,57 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                         >
                                             {displayedRecentProjects.map(
                                                 (project) => {
-                                                const isActive =
+                                                    const isActive =
                                                         pathname ===
                                                             `/projects/${project.id}` ||
                                                         pathname.startsWith(
                                                             `/projects/${project.id}/`,
                                                         );
-                                                return (
-                                                    <button
-                                                        key={project.id}
-                                                        onClick={() =>
+                                                    return (
+                                                        <button
+                                                            key={project.id}
+                                                            onClick={() =>
                                                                 router.push(
                                                                     `/projects/${project.id}`,
                                                                 )
-                                                        }
-                                                        title={project.name}
-                                                        className={cn(
-                                                            "flex h-8 w-full items-center gap-2 rounded-md px-2.5 py-1 text-left text-xs transition-colors",
-                                                            isActive
-                                                                ? `${APP_SURFACE_ACTIVE_CLASS} text-gray-900`
-                                                                : `text-gray-700 ${APP_SURFACE_HOVER_CLASS}`,
-                                                        )}
-                                                    >
-                                                        <ProjectSvgIcon
-                                                            open={isActive}
-                                                            className="h-3.5 w-3.5 shrink-0"
-                                                        />
-                                                        <span className="min-w-0 flex-1 truncate">
-                                                            {project.name}
-                                                        </span>
-                                                    </button>
-                                                );
+                                                            }
+                                                            title={project.name}
+                                                            className={cn(
+                                                                "flex h-8 w-full items-center gap-2 rounded-md px-2.5 py-1 text-left text-xs transition-colors",
+                                                                isActive
+                                                                    ? `${APP_SURFACE_ACTIVE_CLASS} text-gray-900`
+                                                                    : `text-gray-700 ${APP_SURFACE_HOVER_CLASS}`,
+                                                            )}
+                                                        >
+                                                            <ProjectSvgIcon
+                                                                open={isActive}
+                                                                className="h-3.5 w-3.5 shrink-0"
+                                                            />
+                                                            <span className="min-w-0 flex-1 truncate">
+                                                                {project.name}
+                                                            </span>
+                                                        </button>
+                                                    );
                                                 },
                                             )}
-                      {loadingMoreRecentProjects && (
-                        <div className="flex h-8 items-center justify-center">
-                          <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
+                                            {loadingMoreRecentProjects && (
+                                                <div className="flex h-8 items-center justify-center">
+                                                    <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
+                                                </div>
+                                            )}
                                         </div>
                                     )}
-                    </div>
-                  )}
-                </div>
+                                </div>
                             )}
                         </div>
 
                         {/* Assistant History */}
-            <div
-              className={cn(
-                "flex min-h-0 flex-col",
-                !historyCollapsed && "flex-1",
-              )}
-            >
+                        <div
+                            className={cn(
+                                "flex min-h-0 flex-col",
+                                !historyCollapsed && "flex-1",
+                            )}
+                        >
                             <button
                                 onClick={() => setHistoryCollapsed((v) => !v)}
                                 className={`mb-2 flex w-full items-center justify-between px-5 text-xs font-semibold text-gray-500 transition-colors hover:text-gray-700 ${
@@ -466,11 +468,11 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                 />
                             </button>
                             <div
-                className={cn(
-                  "min-h-0 flex-1 overflow-y-auto",
-                  historyCollapsed && "hidden",
-                )}
-                onScroll={handleChatHistoryScroll}
+                                className={cn(
+                                    "min-h-0 flex-1 overflow-y-auto",
+                                    historyCollapsed && "hidden",
+                                )}
+                                onScroll={handleChatHistoryScroll}
                             >
                                 {!chats ? (
                                     <div className="space-y-1.5 px-2.5">
@@ -530,9 +532,9 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                                 />
                                             ))}
                                         </div>
-                    {loadingMoreChats && (
-                      <div className="flex h-8 items-center justify-center">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
+                                        {loadingMoreChats && (
+                                            <div className="flex h-8 items-center justify-center">
+                                                <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
                                             </div>
                                         )}
                                     </>

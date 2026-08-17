@@ -49,7 +49,7 @@ import {
     getApiKeyStatus,
     getChat,
     getAuditHistory,
-    getCourtlistenerOpinions,
+    getPanelDocument,
     getDocumentUrl,
     getLibrary,
     getLibraryLevels,
@@ -60,7 +60,7 @@ import {
     getOllamaModels,
     getProject,
     getProjectDirectoryLevel,
-  getProjectFilterOptions,
+    getProjectFilterOptions,
     getProjectPeople,
     getTabularChatMessages,
     getTabularChats,
@@ -69,7 +69,7 @@ import {
     getUserProfile,
     getWorkflow,
     getWorkflowAddon,
-  getWorkflowFilterOptions,
+    getWorkflowFilterOptions,
     getWorkflowReferenceUrl,
     hideWorkflow,
     isMfaRequiredError,
@@ -80,7 +80,7 @@ import {
     listMcpConnectors,
     listProjectChats,
     listProjectIds,
-  listProjectSummaries,
+    listProjectSummaries,
     listProjects,
     listProjectsPage,
     listStandaloneDocuments,
@@ -110,10 +110,11 @@ import {
     renameProjectFolder,
     renameTabularChat,
     replaceDocumentVersionFile,
-  saveApiKey,
-  bulkDeleteLibraryDocuments,
-  searchProjectDirectory,
-  searchLibraryDocuments,
+    resolveDocumentEdit,
+    saveApiKey,
+    bulkDeleteLibraryDocuments,
+    searchProjectDirectory,
+    searchLibraryDocuments,
     setMcpToolEnabled,
     shareWorkflow,
     startMcpConnectorOAuth,
@@ -284,8 +285,8 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         );
     });
 
-  // Regression guard: legacy tabular-review project pickers call
-  // listProjects() with no
+    // Regression guard: legacy tabular-review project pickers call
+    // listProjects() with no
     // arguments and need every project back. The backend route decides
     // whether to paginate purely by checking whether pagination-related
     // query params are present at all — if listProjects() ever started
@@ -375,10 +376,10 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         );
 
         fetchMock.mockResolvedValue(jsonResponse([]));
-    await listChats({ limit: 5, offset: 10 });
-    expect(lastFetchCall().url).toBe(
-      "http://localhost:3001/chat?limit=5&offset=10",
-    );
+        await listChats({ limit: 5, offset: 10 });
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/chat?limit=5&offset=10",
+        );
     });
 });
 
@@ -623,7 +624,7 @@ describe("getChat message mapping", () => {
 
 describe("mapTRMessages", () => {
     it("maps user and assistant rows including annotations", () => {
-    const events: AssistantEvent[] = [{ type: "content", text: "Answer" }];
+        const events: AssistantEvent[] = [{ type: "content", text: "Answer" }];
         const mapped = mapTRMessages([
             {
                 id: "m1",
@@ -947,81 +948,81 @@ describe("listProjectsPage", () => {
         expect(lastFetchCall().url).toBe(
             "http://localhost:3001/projects?limit=10",
         );
-  });
+    });
 });
 
 describe("listProjectSummaries", () => {
-  it("uses the projects collection with the summary view", async () => {
-    fetchMock.mockResolvedValue(jsonResponse([]));
+    it("uses the projects collection with the summary view", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
 
-    await listProjectSummaries({ limit: 11, offset: 10 });
+        await listProjectSummaries({ limit: 11, offset: 10 });
 
         expect(lastFetchCall().url).toBe(
-      "http://localhost:3001/projects?limit=11&offset=10&view=summary",
+            "http://localhost:3001/projects?limit=11&offset=10&view=summary",
         );
     });
 });
 
 describe("searchProjectDirectory", () => {
-  it("uses the projects collection directory-search view", async () => {
-    fetchMock.mockResolvedValue(jsonResponse([]));
-    const controller = new AbortController();
+    it("uses the projects collection directory-search view", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+        const controller = new AbortController();
 
-    await searchProjectDirectory({
-      search: "agreement",
-      limit: 51,
-      offset: 10,
-      signal: controller.signal,
+        await searchProjectDirectory({
+            search: "agreement",
+            limit: 51,
+            offset: 10,
+            signal: controller.signal,
+        });
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe(
+            "http://localhost:3001/projects?view=directory-search&search=agreement&limit=51&offset=10",
+        );
+        expect(init.signal).toBe(controller.signal);
     });
-
-    const { url, init } = lastFetchCall();
-    expect(url).toBe(
-      "http://localhost:3001/projects?view=directory-search&search=agreement&limit=51&offset=10",
-    );
-    expect(init.signal).toBe(controller.signal);
-  });
 });
 
 describe("getProjectDirectoryLevel", () => {
-  it("serializes a folder level, pagination, and abort signal", async () => {
-    fetchMock.mockResolvedValue(
+    it("serializes a folder level, pagination, and abort signal", async () => {
+        fetchMock.mockResolvedValue(
             jsonResponse({
                 documents: [],
                 folders: [],
                 documentsHasMore: false,
             }),
-    );
-    const controller = new AbortController();
+        );
+        const controller = new AbortController();
 
-    await getProjectDirectoryLevel("p1", {
-      parentFolderId: "folder-1",
-      limit: 50,
-      offset: 100,
-      signal: controller.signal,
+        await getProjectDirectoryLevel("p1", {
+            parentFolderId: "folder-1",
+            limit: 50,
+            offset: 100,
+            signal: controller.signal,
+        });
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe(
+            "http://localhost:3001/projects/p1/directory?parent_folder_id=folder-1&limit=50&offset=100",
+        );
+        expect(init.signal).toBe(controller.signal);
     });
 
-    const { url, init } = lastFetchCall();
-    expect(url).toBe(
-      "http://localhost:3001/projects/p1/directory?parent_folder_id=folder-1&limit=50&offset=100",
-    );
-    expect(init.signal).toBe(controller.signal);
-  });
-
-  it("requests the root level without optional query parameters", async () => {
-    fetchMock.mockResolvedValue(
+    it("requests the root level without optional query parameters", async () => {
+        fetchMock.mockResolvedValue(
             jsonResponse({
                 documents: [],
                 folders: [],
                 documentsHasMore: false,
             }),
-    );
+        );
 
-    await getProjectDirectoryLevel("p1");
+        await getProjectDirectoryLevel("p1");
 
-    expect(lastFetchCall().url).toBe(
-      "http://localhost:3001/projects/p1/directory",
-    );
-  });
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/projects/p1/directory",
+        );
+    });
 });
 
 describe("listProjectIds", () => {
@@ -1068,18 +1069,18 @@ describe("listProjectIds", () => {
 });
 
 describe("getProjectFilterOptions", () => {
-  it("loads lightweight project facets and forwards cancellation", async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({ practices: ["Litigation"], owners: [] }),
-    );
-    const controller = new AbortController();
+    it("loads lightweight project facets and forwards cancellation", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({ practices: ["Litigation"], owners: [] }),
+        );
+        const controller = new AbortController();
 
-    await getProjectFilterOptions(controller.signal);
+        await getProjectFilterOptions(controller.signal);
 
-    const { url, init } = lastFetchCall();
-    expect(url).toBe("http://localhost:3001/projects/filter-options");
-    expect(init.signal).toBe(controller.signal);
-  });
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/projects/filter-options");
+        expect(init.signal).toBe(controller.signal);
+    });
 });
 
 describe("listWorkflows", () => {
@@ -1198,151 +1199,151 @@ describe("listSystemWorkflows", () => {
 });
 
 describe("getWorkflowFilterOptions", () => {
-  it("scopes workflow facets by type and ownership", async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({ practices: [], languages: [], jurisdictions: [] }),
-    );
-    const controller = new AbortController();
+    it("scopes workflow facets by type and ownership", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({ practices: [], languages: [], jurisdictions: [] }),
+        );
+        const controller = new AbortController();
 
-    await getWorkflowFilterOptions({
-      type: "assistant",
-      scope: "shared",
-      signal: controller.signal,
+        await getWorkflowFilterOptions({
+            type: "assistant",
+            scope: "shared",
+            signal: controller.signal,
+        });
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe(
+            "http://localhost:3001/workflows/filter-options?type=assistant&scope=shared",
+        );
+        expect(init.signal).toBe(controller.signal);
     });
-
-    const { url, init } = lastFetchCall();
-    expect(url).toBe(
-      "http://localhost:3001/workflows/filter-options?type=assistant&scope=shared",
-    );
-    expect(init.signal).toBe(controller.signal);
-  });
 });
 
 describe("Library search", () => {
-  it("sends every server-side query option and returns flat results", async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({ documents: [{ id: "d1" }], documentsHasMore: true }),
-    );
-    const controller = new AbortController();
+    it("sends every server-side query option and returns flat results", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({ documents: [{ id: "d1" }], documentsHasMore: true }),
+        );
+        const controller = new AbortController();
 
-    const result = await searchLibraryDocuments("templates", {
-      limit: 50,
-      offset: 100,
-      search: "agreement",
-      fileType: "docx",
-      sortKey: "updated",
-      sortDirection: "desc",
-      signal: controller.signal,
+        const result = await searchLibraryDocuments("templates", {
+            limit: 50,
+            offset: 100,
+            search: "agreement",
+            fileType: "docx",
+            sortKey: "updated",
+            sortDirection: "desc",
+            signal: controller.signal,
+        });
+
+        expect(result.documentsHasMore).toBe(true);
+        const { url, init } = lastFetchCall();
+        expect(url).toBe(
+            "http://localhost:3001/library/templates?view=search&limit=50&offset=100" +
+                "&search=agreement&file_type=docx&sort_key=updated&sort_direction=desc",
+        );
+        expect(init.signal).toBe(controller.signal);
     });
 
-    expect(result.documentsHasMore).toBe(true);
-    const { url, init } = lastFetchCall();
-    expect(url).toBe(
-      "http://localhost:3001/library/templates?view=search&limit=50&offset=100" +
-        "&search=agreement&file_type=docx&sort_key=updated&sort_direction=desc",
-    );
-    expect(init.signal).toBe(controller.signal);
-  });
+    it("supports a search view with no optional filters", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({ documents: [], documentsHasMore: false }),
+        );
 
-  it("supports a search view with no optional filters", async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({ documents: [], documentsHasMore: false }),
-    );
+        await searchLibraryDocuments("files", {});
 
-    await searchLibraryDocuments("files", {});
-
-    expect(lastFetchCall().url).toBe(
-      "http://localhost:3001/library/files?view=search",
-    );
-  });
-
-  it("loads multiple open directory levels in one request", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ levels: [] }));
-
-    await getLibraryLevels("templates", [
-      { parentId: null, limit: 50 },
-      { parentId: "folder-1", limit: 100 },
-    ]);
-
-    const { url, init } = lastFetchCall();
-    expect(url).toBe("http://localhost:3001/library/templates/levels");
-    expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body as string)).toEqual({
-      levels: [
-        { parentId: null, limit: 50 },
-        { parentId: "folder-1", limit: 100 },
-      ],
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/library/files?view=search",
+        );
     });
-  });
 
-  it("loads another page of one Library folder", async () => {
-    fetchMock.mockResolvedValue(
+    it("loads multiple open directory levels in one request", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ levels: [] }));
+
+        await getLibraryLevels("templates", [
+            { parentId: null, limit: 50 },
+            { parentId: "folder-1", limit: 100 },
+        ]);
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/library/templates/levels");
+        expect(init.method).toBe("POST");
+        expect(JSON.parse(init.body as string)).toEqual({
+            levels: [
+                { parentId: null, limit: 50 },
+                { parentId: "folder-1", limit: 100 },
+            ],
+        });
+    });
+
+    it("loads another page of one Library folder", async () => {
+        fetchMock.mockResolvedValue(
             jsonResponse({
                 documents: [],
                 folders: [],
                 documentsHasMore: false,
             }),
-    );
+        );
 
-    await getLibraryFolderChildren("files", "folder-1", { offset: 50 });
+        await getLibraryFolderChildren("files", "folder-1", { offset: 50 });
 
-    expect(lastFetchCall().url).toBe(
-      "http://localhost:3001/library/files?parent_folder_id=folder-1&offset=50",
-    );
-  });
-
-  it("loads filtered Library IDs and forwards the abort signal", async () => {
-    fetchMock.mockResolvedValue(jsonResponse(["d1"]));
-    const controller = new AbortController();
-
-    await listLibraryDocumentIds("templates", {
-      search: "agreement",
-      fileType: "docx",
-      signal: controller.signal,
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/library/files?parent_folder_id=folder-1&offset=50",
+        );
     });
 
-    const { url, init } = lastFetchCall();
-    expect(url).toBe(
-      "http://localhost:3001/library/templates/ids?search=agreement&file_type=docx",
-    );
-    expect(init.signal).toBe(controller.signal);
-  });
+    it("loads filtered Library IDs and forwards the abort signal", async () => {
+        fetchMock.mockResolvedValue(jsonResponse(["d1"]));
+        const controller = new AbortController();
 
-  it("loads all Library IDs without optional filters", async () => {
-    fetchMock.mockResolvedValue(jsonResponse([]));
+        await listLibraryDocumentIds("templates", {
+            search: "agreement",
+            fileType: "docx",
+            signal: controller.signal,
+        });
 
-    await listLibraryDocumentIds("files");
+        const { url, init } = lastFetchCall();
+        expect(url).toBe(
+            "http://localhost:3001/library/templates/ids?search=agreement&file_type=docx",
+        );
+        expect(init.signal).toBe(controller.signal);
+    });
 
-    expect(lastFetchCall().url).toBe(
-      "http://localhost:3001/library/files/ids",
-    );
-  });
+    it("loads all Library IDs without optional filters", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
 
-  it("bulk deletes Library documents", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ deletedIds: ["d1", "d2"] }));
+        await listLibraryDocumentIds("files");
 
-    const result = await bulkDeleteLibraryDocuments("files", ["d1", "d2"]);
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/library/files/ids",
+        );
+    });
 
-    const { url, init } = lastFetchCall();
-    expect(result).toEqual({ deletedIds: ["d1", "d2"] });
-    expect(url).toBe(
-      "http://localhost:3001/library/files/documents/bulk-delete",
-    );
-    expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body as string)).toEqual({ ids: ["d1", "d2"] });
-  });
+    it("bulk deletes Library documents", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ deletedIds: ["d1", "d2"] }));
 
-  it("loads the complete file-type facet list", async () => {
+        const result = await bulkDeleteLibraryDocuments("files", ["d1", "d2"]);
+
+        const { url, init } = lastFetchCall();
+        expect(result).toEqual({ deletedIds: ["d1", "d2"] });
+        expect(url).toBe(
+            "http://localhost:3001/library/files/documents/bulk-delete",
+        );
+        expect(init.method).toBe("POST");
+        expect(JSON.parse(init.body as string)).toEqual({ ids: ["d1", "d2"] });
+    });
+
+    it("loads the complete file-type facet list", async () => {
         fetchMock.mockResolvedValue(
             jsonResponse({ fileTypes: ["docx", "pdf"] }),
         );
 
-    await getLibraryFilterOptions("files");
+        await getLibraryFilterOptions("files");
 
-    expect(lastFetchCall().url).toBe(
-      "http://localhost:3001/library/files/filter-options",
-    );
-  });
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/library/files/filter-options",
+        );
+    });
 });
 
 describe("tabular review CRUD", () => {
@@ -1458,8 +1459,8 @@ describe("uploadReviewDocument", () => {
         expect(
             JSON.parse((patchCall[1] as RequestInit).body as string),
         ).toEqual({
-      document_ids: ["new-doc"],
-    });
+            document_ids: ["new-doc"],
+        });
     });
 });
 
@@ -1806,7 +1807,7 @@ describe("thin endpoint wrappers", () => {
         // Account & profile
         {
             name: "createProject",
-      call: () =>
+            call: () =>
                 createProject("Acme v. Zenith", "CM-42", "litigation", [
                     "a@b.c",
                 ]),
@@ -2028,7 +2029,7 @@ describe("thin endpoint wrappers", () => {
         },
         {
             name: "getLibraryFolderChildren with pagination",
-      call: () => getLibraryFolderChildren("files", "f1", { limit: 50 }),
+            call: () => getLibraryFolderChildren("files", "f1", { limit: 50 }),
             url: "/library/files?parent_folder_id=f1&limit=50",
         },
         {
@@ -2076,6 +2077,12 @@ describe("thin endpoint wrappers", () => {
             call: () => deleteDocument("d1"),
             url: "/single-documents/d1",
             method: "DELETE",
+        },
+        {
+            name: "resolveDocumentEdit",
+            call: () => resolveDocumentEdit("doc/1", "edit/1", "accept"),
+            url: "/single-documents/doc%2F1/edits/edit%2F1/accept",
+            method: "POST",
         },
         {
             name: "listDocumentVersions",
@@ -2302,29 +2309,29 @@ describe("thin endpoint wrappers", () => {
         },
     ];
 
-  it.each(cases)(
-    "$name → $method $url",
-    async ({ call, url, method, body }) => {
-        fetchMock.mockResolvedValue(jsonResponse({}));
+    it.each(cases)(
+        "$name → $method $url",
+        async ({ call, url, method, body }) => {
+            fetchMock.mockResolvedValue(jsonResponse({}));
 
-        await call();
+            await call();
 
-        const { url: actualUrl, init } = lastFetchCall();
-        expect(actualUrl).toBe(`http://localhost:3001${url}`);
-        expect(init.method ?? "GET").toBe(method ?? "GET");
-        if (body !== undefined) {
-            expect(JSON.parse(init.body as string)).toEqual(body);
+            const { url: actualUrl, init } = lastFetchCall();
+            expect(actualUrl).toBe(`http://localhost:3001${url}`);
+            expect(init.method ?? "GET").toBe(method ?? "GET");
+            if (body !== undefined) {
+                expect(JSON.parse(init.body as string)).toEqual(body);
+                expect(init.headers).toMatchObject({
+                    "Content-Type": "application/json",
+                });
+            } else {
+                expect(init.body).toBeUndefined();
+            }
             expect(init.headers).toMatchObject({
-                "Content-Type": "application/json",
+                Authorization: "Bearer token-123",
             });
-        } else {
-            expect(init.body).toBeUndefined();
-        }
-        expect(init.headers).toMatchObject({
-            Authorization: "Bearer token-123",
-        });
-    },
-  );
+        },
+    );
 });
 
 // ---------------------------------------------------------------------------
@@ -2343,22 +2350,71 @@ describe("unwrapping and blob wrappers", () => {
         expect(lastFetchCall().url).toBe("http://localhost:3001/models/ollama");
     });
 
-    it("getCourtlistenerOpinions posts the cluster id and unwraps opinions", async () => {
-        const opinions = [
-            {
-                opinionId: 7,
-                type: "majority",
-                author: "Judge X",
-                url: "https://example.test/op/7",
-            },
-        ];
-        fetchMock.mockResolvedValue(jsonResponse({ opinions }));
+    it("getPanelDocument fetches a normalized document by opaque ID", async () => {
+        const document = {
+            document_id: "case:123",
+            title: "Example v Example, 123 U.S. 456",
+            type: "case",
+            metadata: [],
+            quotes: [],
+        };
+        fetchMock.mockResolvedValue(jsonResponse(document));
 
-        await expect(getCourtlistenerOpinions(123)).resolves.toEqual(opinions);
+        await expect(getPanelDocument("case:123")).resolves.toEqual(document);
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/case-law/case-opinions");
-        expect(init.method).toBe("POST");
-        expect(JSON.parse(init.body as string)).toEqual({ clusterId: 123 });
+        expect(url).toBe("http://localhost:3001/documents/case%3A123");
+        expect(init.method).toBeUndefined();
+    });
+
+    it("coalesces concurrent panel-document hydration requests", async () => {
+        const document = {
+            document_id: "case:456",
+            title: "Concurrent case",
+            type: "case",
+            metadata: [],
+            quotes: [],
+        };
+        let resolveResponse: ((response: Response) => void) | undefined;
+        fetchMock.mockImplementation(
+            () =>
+                new Promise<Response>((resolve) => {
+                    resolveResponse = resolve;
+                }),
+        );
+
+        const first = getPanelDocument("case:456");
+        const second = getPanelDocument("case:456");
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+        resolveResponse?.(jsonResponse(document));
+        await expect(Promise.all([first, second])).resolves.toEqual([
+            document,
+            document,
+        ]);
+    });
+
+    it("rejects invalid panel documents and permits a later retry", async () => {
+        fetchMock
+            .mockResolvedValueOnce(
+                jsonResponse({ document_id: "case:invalid", title: "Broken" }),
+            )
+            .mockResolvedValueOnce(
+                jsonResponse({
+                    document_id: "case:invalid",
+                    title: "Recovered",
+                    type: "case",
+                    metadata: [],
+                    quotes: [],
+                }),
+            );
+
+        await expect(getPanelDocument("case:invalid")).rejects.toThrow(
+            "Invalid source document response",
+        );
+        await expect(getPanelDocument("case:invalid")).resolves.toMatchObject({
+            title: "Recovered",
+        });
+        expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
     it("exportChatData and exportTabularReviewsData hit their export routes", async () => {

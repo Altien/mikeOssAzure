@@ -32,7 +32,7 @@ export const ModalTextInput = forwardRef<
       ref={ref}
       className={cn(
         variant === "minimal"
-          ? "w-full bg-transparent font-serif text-2xl font-medium text-gray-800 outline-none placeholder:text-gray-300 disabled:cursor-not-allowed disabled:text-gray-400"
+          ? "w-full bg-transparent font-serif text-2xl text-gray-800 outline-none placeholder:text-gray-300 disabled:cursor-not-allowed disabled:text-gray-400"
           : "h-10 w-full rounded-xl border border-white/70 bg-white px-3 text-sm text-gray-700 shadow-[0_3px_9px_rgba(15,23,42,0.052),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] outline-none placeholder:text-gray-400 backdrop-blur-xl transition-colors disabled:cursor-not-allowed disabled:opacity-60",
         className
       )}
@@ -68,12 +68,19 @@ export function ModalSelect({
 }: {
   id: string;
   value: string;
-  options: readonly string[];
+  options: readonly (string | { value: string; label: string })[];
   onChange: (value: string) => void;
   disabled?: boolean;
   placeholder?: string;
   className?: string;
 }): React.ReactElement {
+  const normalizedOptions = options.map((option) =>
+    typeof option === "string" ? { value: option, label: option } : option,
+  );
+  const selectedLabel = normalizedOptions.find(
+    (option) => option.value === value,
+  )?.label;
+
   return (
     <Dropdown>
       <DropdownTrigger asChild>
@@ -87,7 +94,7 @@ export function ModalSelect({
           )}
         >
           <span className={cn("truncate", !value && "text-gray-400")}>
-            {value || placeholder}
+            {selectedLabel || placeholder}
           </span>
           <ChevronDown className="ml-2 h-3.5 w-3.5 shrink-0 text-gray-400" />
         </button>
@@ -108,14 +115,14 @@ export function ModalSelect({
         }}
         className="max-h-56 w-[var(--radix-dropdown-menu-trigger-width)] overflow-y-auto"
       >
-        {options.map((option) => (
+        {normalizedOptions.map((option) => (
           <DropdownItem
-            key={option}
-            selected={option === value}
-            onSelect={() => onChange(option)}
+            key={option.value}
+            selected={option.value === value}
+            onSelect={() => onChange(option.value)}
             className="text-sm"
           >
-            <span className="truncate">{option}</span>
+            <span className="truncate">{option.label}</span>
           </DropdownItem>
         ))}
       </DropdownContent>

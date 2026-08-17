@@ -77,6 +77,7 @@ interface Props {
     projectCmNumber?: string | null;
     projectId?: string;
     onDocumentsUploaded?: (documents: Document[]) => void;
+    onDocumentClick?: (document: Document) => void;
 }
 
 export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
@@ -90,6 +91,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         projectCmNumber,
         projectId,
         onDocumentsUploaded,
+        onDocumentClick,
     }: Props,
     ref,
 ) {
@@ -442,11 +444,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                 </div>
                             )}
                             {attachedDocs.map((doc) => {
-                                return (
-                                    <div
-                                        key={doc.id}
-                                        className="inline-flex items-center gap-1 rounded-[10px] border border-white/70 bg-white py-0.5 pl-2 pr-1 text-xs text-gray-800 shadow-[0_2px_6px_rgba(15,23,42,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-xl"
-                                    >
+                                const documentLabel = (
+                                    <>
                                         <FileTypeIcon
                                             fileType={doc.file_type}
                                             className="h-2.5 w-2.5"
@@ -454,6 +453,29 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                         <span className="max-w-[140px] truncate">
                                             {doc.filename}
                                         </span>
+                                    </>
+                                );
+                                return (
+                                    <div
+                                        key={doc.id}
+                                        className="inline-flex items-center rounded-[10px] border border-white/70 bg-white text-xs text-gray-800 shadow-sm backdrop-blur-xl"
+                                    >
+                                        {onDocumentClick ? (
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    onDocumentClick(doc)
+                                                }
+                                                aria-label={`Open ${doc.filename}`}
+                                                className="inline-flex min-w-0 items-center gap-1 py-0.5 pl-2 transition-colors hover:text-gray-950"
+                                            >
+                                                {documentLabel}
+                                            </button>
+                                        ) : (
+                                            <span className="inline-flex min-w-0 items-center gap-1 py-0.5 pl-2">
+                                                {documentLabel}
+                                            </span>
+                                        )}
                                         <button
                                             type="button"
                                             onClick={() =>
@@ -463,7 +485,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                                     ),
                                                 )
                                             }
-                                            className="ml-0.5 rounded-full p-0.5 text-gray-400 transition-colors hover:bg-gray-900/5 hover:text-gray-700"
+                                            aria-label={`Remove ${doc.filename}`}
+                                            className="mx-1 rounded-full p-0.5 text-gray-400 transition-colors hover:bg-gray-900/5 hover:text-gray-700"
                                         >
                                             <X className="h-2.5 w-2.5" />
                                         </button>

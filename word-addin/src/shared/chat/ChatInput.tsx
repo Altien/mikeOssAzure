@@ -138,8 +138,8 @@ export function ChatInput({
                         disabled={!isLoading && !canSend}
                         aria-label={isLoading ? "Stop" : "Send"}
                         className={cn(
-                            "relative flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-white/30 bg-gradient-to-b from-neutral-700 to-black text-white backdrop-blur-xl transition-all duration-150 cursor-pointer active:enabled:scale-95 disabled:cursor-default disabled:from-neutral-600 disabled:to-black",
-                            "shadow-[0_5px_14px_rgba(15,23,42,0.18),inset_0_1px_0_rgba(255,255,255,0.24)]",
+                            "relative flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[11px] border-0 bg-gradient-to-b from-neutral-700 to-black text-white backdrop-blur-xl transition-all duration-150 active:enabled:scale-95 disabled:cursor-default disabled:from-neutral-600 disabled:to-black",
+                            "shadow-[0_3px_9px_rgba(15,23,42,0.10),inset_1px_1px_0_rgba(255,255,255,0.22),inset_-1px_-1px_0_rgba(255,255,255,0.10),inset_-4px_-4px_9px_rgba(15,23,42,0.2)]",
                         )}
                     >
                         {isLoading ? (

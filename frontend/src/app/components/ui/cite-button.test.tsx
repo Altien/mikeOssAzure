@@ -9,7 +9,7 @@ describe("CiteButton", () => {
     });
 
     it("renders the default 'Cite' label", () => {
-        render(<CiteButton quoteText="hello" citationText="Doe 2020" />);
+        render(<CiteButton quoteText="hello" quoteLabel="Page 2" />);
         expect(
             screen.getByRole("button", { name: /cite/i }),
         ).toBeInTheDocument();
@@ -19,7 +19,7 @@ describe("CiteButton", () => {
         render(
             <CiteButton
                 quoteText="hello"
-                citationText="Doe 2020"
+                quoteLabel="Page 2"
                 showText={false}
             />,
         );
@@ -30,11 +30,11 @@ describe("CiteButton", () => {
         // userEvent.setup() installs a clipboard stub on navigator; spy on it.
         const user = userEvent.setup();
         const writeText = vi.spyOn(navigator.clipboard, "writeText");
-        render(<CiteButton quoteText={`he said "hi"`} citationText="Doe 2020" />);
+        render(<CiteButton quoteText={`he said "hi"`} quoteLabel="Page 2" />);
 
         await user.click(screen.getByRole("button"));
 
-        expect(writeText).toHaveBeenCalledWith(`"he said 'hi'" Doe 2020`);
+        expect(writeText).toHaveBeenCalledWith(`"he said 'hi'" (Page 2)`);
         expect(await screen.findByText("Copied")).toBeInTheDocument();
     });
 });

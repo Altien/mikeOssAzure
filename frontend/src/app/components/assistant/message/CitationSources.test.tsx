@@ -40,7 +40,7 @@ describe("CitationsBlock verification states", () => {
 
   it("includes only unverified warnings in citation tooltips", () => {
     expect(citationTooltip(documentCitation(3, false))).toContain(
-      "Quote could not be matched to the extracted document text.",
+      "Quote could not be matched to the source text.",
     );
     expect(citationTooltip(documentCitation(3, true))).not.toContain("matched");
   });

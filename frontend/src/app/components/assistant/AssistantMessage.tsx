@@ -2,7 +2,12 @@
 
 import { useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
-import type { AssistantEvent, Citation, EditAnnotation } from "../shared/types";
+import type {
+    AssistantEvent,
+    Citation,
+    EditAnnotation,
+    PanelDocument,
+} from "../shared/types";
 import { EditCard } from "./EditCard";
 import { PreResponseWrapper } from "./PreResponseWrapper";
 import { ResponseStatus, type StatusState } from "./message/ResponseStatus";
@@ -17,7 +22,7 @@ import {
     CourtListenerBlock,
     DocCreatedBlock,
     DocDownloadBlock,
-    DocEditedBlock,
+    DocEditBlock,
     DocFindBlock,
     DocReadBlock,
     DocReplicatedBlock,
@@ -211,10 +216,7 @@ export function AssistantMessage({
         string,
         Extract<AssistantEvent, { type: "case_citation" }>
     >();
-    const caseOpinions = new Map<
-        number,
-        Extract<AssistantEvent, { type: "case_opinions" }>["case"]
-    >();
+    const caseDocuments = new Map<number, PanelDocument>();
     const processedTexts: string[] = [];
     if (events) {
         for (let i = 0; i < events.length; i++) {
@@ -223,7 +225,9 @@ export function AssistantMessage({
                 const hrefKey = internalCaseHref(event.cluster_id);
                 if (hrefKey) caseCitations.set(hrefKey, event);
             } else if (event.type === "case_opinions") {
-                caseOpinions.set(event.cluster_id, event.case);
+                if (event.document) {
+                    caseDocuments.set(event.cluster_id, event.document);
+                }
             }
             processedTexts.push(
                 event.type === "content"
@@ -518,7 +522,7 @@ export function AssistantMessage({
         }
         if (event.type === "doc_edited") {
             return (
-                <DocEditedBlock
+                <DocEditBlock
                     key={globalIdx}
                     filename={event.filename}
                     isStreaming={event.isStreaming}
@@ -807,7 +811,7 @@ export function AssistantMessage({
                                                 inlineCitationTargets
                                             }
                                             caseCitations={caseCitations}
-                                            caseOpinions={caseOpinions}
+                                            caseDocuments={caseDocuments}
                                             onCitationClick={onCitationClick}
                                             onCaseClick={onCaseClick}
                                             divRef={
@@ -945,7 +949,22 @@ export function AssistantMessage({
                                         filenameByDocId={filenameByDocId}
                                         cards={cards}
                                         resolvedCount={resolvedCount}
-                                        onViewClick={onEditViewClick}
+                                        onViewClick={
+                                            onOpenDocument
+                                                ? (annotation, filename) =>
+                                                      onOpenDocument({
+                                                          documentId:
+                                                              annotation.document_id,
+                                                          filename,
+                                                          versionId:
+                                                              annotation.version_id ??
+                                                              null,
+                                                          versionNumber:
+                                                              annotation.version_number ??
+                                                              null,
+                                                      })
+                                                : undefined
+                                        }
                                         onResolveStart={onEditResolveStart}
                                         onResolved={handleEditResolved}
                                         onError={onEditError}

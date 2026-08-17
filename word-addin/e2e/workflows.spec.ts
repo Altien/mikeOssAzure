@@ -99,6 +99,7 @@ test("shows a full-pane workflow list and opens skill details", async ({
     /font-medium/,
   );
   await expect(page.getByPlaceholder("Search workflows...")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add-ons" })).toHaveCount(0);
   await expect(page.getByRole("combobox")).toHaveCount(0);
   const summaryRow = page.getByRole("button", {
     name: /Summarize document.*Litigation/,
@@ -211,7 +212,11 @@ test("creates an assistant workflow and edits its Markdown with Tiptap", async (
   await expect(modal).toBeVisible();
   await expect(modal.getByText("Type", { exact: true })).toHaveCount(0);
   await expect(modal.getByText("Assistant", { exact: true })).toHaveCount(0);
-  await modal.getByLabel("Title").fill("Review defined terms");
+  const titleInput = modal.getByLabel("Title");
+  await expect(titleInput).not.toHaveClass(/font-medium/);
+  await titleInput.pressSequentially("Review defined terms");
+  await expect(titleInput).toBeFocused();
+  await expect(modal.getByRole("button", { name: "Close" })).not.toBeFocused();
   await modal.getByLabel("Practice area").click();
   await page.getByRole("menuitem", { name: "Corporate", exact: true }).click();
   await modal.getByLabel("Jurisdiction").click();

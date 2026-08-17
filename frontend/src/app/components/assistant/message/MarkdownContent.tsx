@@ -4,7 +4,11 @@ import remarkMath from "remark-math";
 import remarkGfm from "remark-gfm";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
-import type { AssistantEvent, Citation } from "../../shared/types";
+import type {
+    AssistantEvent,
+    Citation,
+    PanelDocument,
+} from "../../shared/types";
 import { RESPONSE_GLASS_ANNOTATION, withoutMarkdownNode } from "./messageStyles";
 import { citationTooltip } from "./CitationSources";
 import {
@@ -17,7 +21,7 @@ export function MarkdownContent({
     text,
     inlineCitationTargets,
     caseCitations,
-    caseOpinions,
+    caseDocuments,
     onCitationClick,
     onCaseClick,
     divRef,
@@ -28,10 +32,7 @@ export function MarkdownContent({
         string,
         Extract<AssistantEvent, { type: "case_citation" }>
     >;
-    caseOpinions: Map<
-        number,
-        Extract<AssistantEvent, { type: "case_opinions" }>["case"]
-    >;
+    caseDocuments: Map<number, PanelDocument>;
     onCitationClick?: (c: Citation) => void;
     onCaseClick?: (
         c: Extract<AssistantEvent, { type: "case_citation" }>,
@@ -226,12 +227,12 @@ export function MarkdownContent({
                                         onClick={() =>
                                             onCaseClick({
                                                 ...citation,
-                                                case:
+                                                document:
                                                     citation.cluster_id !== null
-                                                        ? caseOpinions.get(
+                                                        ? caseDocuments.get(
                                                               citation.cluster_id,
-                                                          )
-                                                        : undefined,
+                                                          ) ?? citation.document
+                                                        : citation.document,
                                             })
                                         }
                                         className="text-left text-blue-600 hover:text-blue-700 underline"

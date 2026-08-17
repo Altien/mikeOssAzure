@@ -11,6 +11,8 @@ import { AskInputPopup } from "./AskInputPopup";
 import {
     AssistantSidePanel,
     mergeAssistantSidePanelTab,
+    reorderAssistantSidePanelTabs,
+    type AssistantTabDropPosition,
     type AssistantSidePanelTab,
 } from "./AssistantSidePanel";
 import { AssistantWorkflowModal } from "./AssistantWorkflowModal";
@@ -19,6 +21,11 @@ import type {
     Citation,
     EditAnnotation,
     Message,
+} from "../shared/types";
+import {
+    panelDocumentFromCaseEvent,
+    panelDocumentFromCitation,
+    panelDocumentType,
 } from "../shared/types";
 import { useSidebar } from "@/app/contexts/SidebarContext";
 import { invalidateDocxBytes } from "@/app/hooks/useFetchDocxBytes";
@@ -178,8 +185,26 @@ export function ChatView({
         [activeTabId, hidePanel, unmountPanel],
     );
 
+    const reorderTabs = useCallback(
+        (
+            draggedTabId: string,
+            targetTabId: string,
+            position: AssistantTabDropPosition,
+        ) => {
+            setTabs((current) =>
+                reorderAssistantSidePanelTabs(
+                    current,
+                    draggedTabId,
+                    targetTabId,
+                    position,
+                ),
+            );
+        },
+        [],
+    );
+
     /**
-     * One tab per document. If a tab for `tab.documentId` already exists,
+     * One tab per normalized document ID. If a tab already exists,
      * the panel stays mounted and only the header-relevant fields swap
      * (kind, citation/edit, version, filename). Per-tab UI state — the
      * dismissable warning and the saved scroll position — is preserved
@@ -189,10 +214,10 @@ export function ChatView({
     const upsertTab = useCallback(
         (tab: AssistantSidePanelTab) => {
             setTabs((prev) => {
-                const idx = prev.findIndex((t) =>
-                    tab.kind === "case"
-                        ? t.kind === "case" && t.id === tab.id
-                        : t.kind !== "case" && t.documentId === tab.documentId,
+                const idx = prev.findIndex(
+                    (current) =>
+                        current.document.document_id ===
+                        tab.document.document_id,
                 );
                 if (idx >= 0) {
                     const existing = prev[idx];
@@ -217,68 +242,36 @@ export function ChatView({
     const openCitation = useCallback(
         (citation: Citation, options?: { showQuotes?: boolean }) => {
             const showQuotes = options?.showQuotes ?? true;
-            if (citation.kind === "case") {
-                if (!chatId) return;
-                upsertTab({
-                    kind: "case",
-                    id: `case:${citation.cluster_id}`,
-                    chatId,
-                    clusterId: citation.cluster_id,
-                    citationRef: citation.ref,
-                    caseName: citation.case_name ?? null,
-                    citation: citation.citation ?? null,
-                    url: citation.url ?? null,
-                    dateFiled: citation.dateFiled ?? null,
-                    pdfUrl: citation.pdfUrl ?? null,
-                    quotes: showQuotes ? citation.quotes : undefined,
-                    opinions: undefined,
-                });
-                return;
-            }
+            const document = panelDocumentFromCitation(citation, showQuotes);
             if (!showQuotes) {
                 upsertTab({
                     kind: "document",
-                    id: citation.document_id,
-                    documentId: citation.document_id,
-                    filename: citation.filename,
-                    versionId: citation.version_id ?? null,
-                    versionNumber: citation.version_number ?? null,
+                    id: document.document_id,
+                    document,
                 });
                 return;
             }
             upsertTab({
                 kind: "citation",
-                id: citation.document_id,
-                documentId: citation.document_id,
-                filename: citation.filename,
-                versionId: citation.version_id ?? null,
-                versionNumber: citation.version_number ?? null,
+                id: document.document_id,
+                document,
                 citation,
             });
         },
-        [chatId, upsertTab],
+        [upsertTab],
     );
 
     const openCase = useCallback(
         (citation: Extract<AssistantEvent, { type: "case_citation" }>) => {
-            if (!citation.cluster_id) return;
-            if (!chatId) return;
+            const document = panelDocumentFromCaseEvent(citation);
+            if (!document) return;
             upsertTab({
-                kind: "case",
-                id: `case:${citation.cluster_id}`,
-                chatId,
-                clusterId: citation.cluster_id,
-                citationRef: undefined,
-                caseName: citation.case_name,
-                citation: citation.citation,
-                url: citation.url,
-                dateFiled: citation.dateFiled ?? null,
-                pdfUrl: citation.pdfUrl ?? null,
-                quotes: undefined,
-                opinions: citation.case?.opinions,
+                kind: "document",
+                id: document.document_id,
+                document,
             });
         },
-        [chatId, upsertTab],
+        [upsertTab],
     );
 
     /**
@@ -290,10 +283,15 @@ export function ChatView({
             upsertTab({
                 kind: "edit",
                 id: ann.document_id,
-                documentId: ann.document_id,
-                filename,
-                versionId: ann.version_id ?? null,
-                versionNumber: ann.version_number ?? null,
+                document: {
+                    document_id: ann.document_id,
+                    title: filename,
+                    type: panelDocumentType(filename),
+                    metadata: [],
+                    quotes: [],
+                    version_id: ann.version_id ?? null,
+                    version_number: ann.version_number ?? null,
+                },
                 edit: ann,
                 changeNumber,
             });
@@ -315,10 +313,15 @@ export function ChatView({
             upsertTab({
                 kind: "document",
                 id: args.documentId,
-                documentId: args.documentId,
-                filename: args.filename,
-                versionId: args.versionId,
-                versionNumber: args.versionNumber,
+                document: {
+                    document_id: args.documentId,
+                    title: args.filename,
+                    type: panelDocumentType(args.filename),
+                    metadata: [],
+                    quotes: [],
+                    version_id: args.versionId,
+                    version_number: args.versionNumber,
+                },
             });
         },
         [upsertTab],
@@ -408,7 +411,6 @@ export function ChatView({
             setTabs((prev) => {
                 const idx = prev.findIndex((t) => t.id === tabId);
                 if (idx < 0) return prev;
-                if (prev[idx].kind === "case") return prev;
                 const copy = prev.slice();
                 copy[idx] = { ...copy[idx], ...patch };
                 return copy;
@@ -427,7 +429,7 @@ export function ChatView({
             // Surface the warning on every tab tied to this document.
             setTabs((prev) =>
                 prev.map((t) =>
-                    t.kind !== "case" && t.documentId === args.documentId
+                    t.document.document_id === args.documentId
                         ? { ...t, warning: args.message }
                         : t,
                 ),
@@ -682,6 +684,18 @@ export function ChatView({
                                                 content={msg.content ?? ""}
                                                 files={msg.files}
                                                 workflow={msg.workflow}
+                                                onFileClick={(file) => {
+                                                    if (!file.document_id)
+                                                        return;
+                                                    openDocument({
+                                                        documentId:
+                                                            file.document_id,
+                                                        filename:
+                                                            file.filename,
+                                                        versionId: null,
+                                                        versionNumber: null,
+                                                    });
+                                                }}
                                             />
                                         ) : (
                                             <AssistantMessage
@@ -817,6 +831,16 @@ export function ChatView({
                                     onSubmit={handleChat}
                                     onCancel={cancel}
                                     isLoading={isResponseLoading}
+                                    onDocumentClick={(document) =>
+                                        openDocument({
+                                            documentId: document.id,
+                                            filename: document.filename,
+                                            versionId: null,
+                                            versionNumber:
+                                                document.active_version_number ??
+                                                null,
+                                        })
+                                    }
                                 />
                             )}
                         </div>
@@ -841,6 +865,7 @@ export function ChatView({
                         onActivateTab={setActiveTabId}
                         onCloseTab={closeTab}
                         onCloseAll={closeAllTabs}
+                        onReorderTabs={reorderTabs}
                         isEditorReloading={(documentId) =>
                             reloadingDocIds.has(documentId)
                         }

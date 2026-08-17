@@ -139,31 +139,10 @@ export interface Workflow {
 export interface QuickAction {
   id: string;
   workflow_id: string;
+  name?: string | null;
   prompt: string;
   document_upload: boolean;
   enabled: boolean;
   sort_order: number;
   workflow: { id: string; title: string };
-}
-
-export interface WorkflowAddon {
-  id: string;
-  addon_key: string;
-  pack_key: string | null;
-  pack_title: string | null;
-  pack_description: string | null;
-  pack_version: string | null;
-  version: string | null;
-  title: string;
-  description: string | null;
-  type: "assistant" | "tabular";
-  language: string | null;
-  practice: string | null;
-  jurisdictions: string[] | null;
-  reference_files?: {
-    id: string;
-    filename: string;
-    file_type: string;
-    size_bytes: number | null;
-  }[];
 }

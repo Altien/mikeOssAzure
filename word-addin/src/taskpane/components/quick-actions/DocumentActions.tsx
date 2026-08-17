@@ -1,71 +1,126 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { ToggleSwitch } from "../../../shared/ui/toggle-switch";
-import { updateQuickAction } from "../../api/mikeApi";
-import type { QuickAction } from "../../types";
 import {
+  createQuickAction,
+  listWorkflows,
+  updateQuickAction,
+} from "../../api/mikeApi";
+import type { QuickAction, Workflow } from "../../types";
+import {
+  addQuickAction,
   replaceQuickAction,
   useQuickActions,
 } from "../../lib/quickActionStore";
+import { quickActionDisplayName } from "../../lib/quickActions";
 import { Modal } from "../primitives/Modal";
 import {
   ModalFieldLabel,
+  ModalSelect,
   ModalTextArea,
   ModalTextInput,
 } from "../primitives/ModalForm";
 import { PageTitle } from "../primitives/PageTitle";
 
-export function DocumentActions(): React.ReactElement {
+interface DocumentActionsProps {
+  createOpen: boolean;
+  onCreateClose: () => void;
+}
+
+export function DocumentActions({
+  createOpen,
+  onCreateClose,
+}: DocumentActionsProps): React.ReactElement {
   const [search, setSearch] = useState("");
   const [selectedAction, setSelectedAction] = useState<QuickAction | null>(null);
-  const actions = useQuickActions();
+  const [workflows, setWorkflows] = useState<Workflow[]>([]);
+  const [workflowsError, setWorkflowsError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [workflowId, setWorkflowId] = useState("");
+  const [name, setName] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [documentUpload, setDocumentUpload] = useState(false);
+  const actions = useQuickActions();
+
+  useEffect(() => {
+    let cancelled = false;
+    void listWorkflows("assistant")
+      .then((rows) => {
+        if (cancelled) return;
+        setWorkflows(rows);
+        setWorkflowsError(null);
+      })
+      .catch((reason: unknown) => {
+        if (cancelled) return;
+        setWorkflowsError(
+          reason instanceof Error
+            ? reason.message
+            : "Could not load assistant workflows.",
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!createOpen) return;
+    setWorkflowId("");
+    setName("");
+    setPrompt("");
+    setDocumentUpload(false);
+    setCreateError(null);
+  }, [createOpen]);
+
+  const availableWorkflows = useMemo(() => {
+    const used = new Set(actions.map((action) => action.workflow_id));
+    return workflows.filter((workflow) => !used.has(workflow.id));
+  }, [actions, workflows]);
   const filteredActions = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) return actions;
     return actions.filter((action) =>
-      action.workflow.title.toLowerCase().includes(query)
+      `${quickActionDisplayName(action)} ${action.workflow.title}`
+        .toLowerCase()
+        .includes(query),
     );
   }, [actions, search]);
+  const selectedHasChanges = useMemo(() => {
+    if (!selectedAction) return false;
+    const original = actions.find((action) => action.id === selectedAction.id);
+    if (!original) return false;
+    return (
+      selectedAction.workflow_id !== original.workflow_id ||
+      quickActionDisplayName(selectedAction) !== quickActionDisplayName(original) ||
+      selectedAction.prompt !== original.prompt ||
+      selectedAction.document_upload !== original.document_upload ||
+      selectedAction.enabled !== original.enabled
+    );
+  }, [actions, selectedAction]);
 
-  // The modal's selectedAction can hold unsaved prompt/document_upload edits,
-  // so toggling Active must only move `enabled` between the modal and the
-  // LIST: the list is merged from the server response alone, and the modal
-  // keeps its local draft with only `enabled` updated.
-  async function setActionActive(action: QuickAction, enabled: boolean) {
-    replaceQuickAction({ ...action, enabled });
-    setSelectedAction({ ...action, enabled });
-    try {
-      const updated = await updateQuickAction(action.id, { enabled });
-      replaceQuickAction(updated);
-      setSelectedAction((current) =>
-        current && current.id === updated.id
-          ? { ...current, enabled: updated.enabled }
-          : current,
-      );
-    } catch {
-      replaceQuickAction(action);
-      setSelectedAction((current) =>
-        current && current.id === action.id
-          ? { ...current, enabled: action.enabled }
-          : current,
-      );
-    }
+  function openAction(action: QuickAction): void {
+    setSaveError(null);
+    setSelectedAction({ ...action, name: quickActionDisplayName(action) });
   }
 
-  async function saveActionDetails(action: QuickAction) {
+  async function saveActionDetails(action: QuickAction): Promise<void> {
+    if (!action.name?.trim() || !selectedHasChanges || saving) return;
     setSaving(true);
     setSaveError(null);
     try {
       const updated = await updateQuickAction(action.id, {
+        workflow_id: action.workflow_id,
+        name: action.name.trim(),
         prompt: action.prompt,
         document_upload: action.document_upload,
+        enabled: action.enabled,
       });
       replaceQuickAction(updated);
       setSelectedAction(null);
     } catch (reason) {
-      // Keep the modal open so the user can retry, and say why it failed.
       setSaveError(
         reason instanceof Error
           ? reason.message
@@ -73,6 +128,32 @@ export function DocumentActions(): React.ReactElement {
       );
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function createAction(): Promise<void> {
+    if (!workflowId || !name.trim() || creating) return;
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const created = await createQuickAction({
+        workflow_id: workflowId,
+        name: name.trim(),
+        prompt,
+        document_upload: documentUpload,
+        enabled: true,
+        sort_order: actions.length,
+      });
+      addQuickAction(created);
+      onCreateClose();
+    } catch (reason) {
+      setCreateError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not create quick action.",
+      );
+    } finally {
+      setCreating(false);
     }
   }
 
@@ -98,7 +179,7 @@ export function DocumentActions(): React.ReactElement {
       <div className="mt-2 min-h-0 flex-1 overflow-y-auto rounded-sm pb-3">
         {filteredActions.length === 0 ? (
           <p className="py-8 text-center text-sm text-gray-400">
-            No matches found
+            No quick actions found.
           </p>
         ) : (
           <div className="space-y-px">
@@ -106,21 +187,18 @@ export function DocumentActions(): React.ReactElement {
               <button
                 key={action.id}
                 type="button"
-                onClick={() => {
-                  setSaveError(null);
-                  setSelectedAction(action);
-                }}
-                className="flex w-full min-w-0 items-center gap-3 rounded-md px-3 py-2.5 text-left text-xs text-gray-700 transition-all hover:bg-gray-100"
+                onClick={() => openAction(action)}
+                className="flex w-full min-w-0 items-center gap-3 rounded-md px-3 py-2.5 text-left text-xs text-gray-700 transition-colors hover:bg-gray-100"
               >
                 <span className="min-w-0 flex-1 truncate font-medium">
-                  {action.workflow.title}
+                  {quickActionDisplayName(action)}
                 </span>
                 <span
-                  className={`shrink-0 text-[11px] ${
+                  className={
                     action.enabled
-                      ? "text-green-500"
-                      : "text-gray-400"
-                  }`}
+                      ? "shrink-0 text-xs text-green-600"
+                      : "shrink-0 text-xs text-gray-400"
+                  }
                 >
                   {action.enabled ? "Active" : "Inactive"}
                 </span>
@@ -133,88 +211,221 @@ export function DocumentActions(): React.ReactElement {
       <Modal
         open={!!selectedAction}
         onClose={() => {
+          if (saving) return;
           setSelectedAction(null);
           setSaveError(null);
         }}
         parentLabel="Quick Actions"
-        title={selectedAction?.workflow.title ?? "Quick action details"}
+        title={
+          selectedAction
+            ? quickActionDisplayName(selectedAction)
+            : "Quick action"
+        }
         primaryAction={{
-          label: saving ? "Saving…" : "Done",
-          disabled: saving,
-          onClick: () => selectedAction && void saveActionDetails(selectedAction),
+          label: saving ? "Saving…" : "Save",
+          disabled:
+            saving || !selectedHasChanges || !selectedAction?.name?.trim(),
+          onClick: () =>
+            selectedAction && void saveActionDetails(selectedAction),
         }}
       >
         {selectedAction && (
-          <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto pb-5">
-            <div>
-              <ModalFieldLabel htmlFor="quick-action-workflow">
-                Workflow used
-              </ModalFieldLabel>
-              <ModalTextInput
-                id="quick-action-workflow"
-                value={selectedAction.workflow.title}
-                readOnly
-              />
-            </div>
-            <div>
-              <ModalFieldLabel htmlFor="quick-action-prompt">
-                Prompt
-              </ModalFieldLabel>
-              <ModalTextArea
-                id="quick-action-prompt"
-                value={selectedAction.prompt}
-                onChange={(event) =>
-                  setSelectedAction({
-                    ...selectedAction,
-                    prompt: event.target.value,
-                  })
-                }
-                className="min-h-40"
-              />
-            </div>
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-xs font-medium text-gray-700">
-                  Request document upload
-                </p>
-                <p className="mt-1 text-xs leading-relaxed text-gray-400">
-                  Ask for source documents before launching this workflow.
-                </p>
-              </div>
-              <ToggleSwitch
-                checked={selectedAction.document_upload}
-                onCheckedChange={(documentUpload) =>
-                  setSelectedAction({
-                    ...selectedAction,
-                    document_upload: documentUpload,
-                  })
-                }
-                aria-label="Request document upload"
-              />
-            </div>
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-xs font-medium text-gray-700">Active</p>
-                <p className="mt-1 text-xs leading-relaxed text-gray-400">
-                  Show this action in the Assistant initial view.
-                </p>
-              </div>
-              <ToggleSwitch
-                checked={selectedAction.enabled}
-                onCheckedChange={(active) =>
-                  void setActionActive(selectedAction, active)
-                }
-                aria-label="Active"
-              />
-            </div>
-            {saveError && (
-              <p className="text-[11px] text-red-500" role="alert">
-                {saveError}
-              </p>
-            )}
-          </div>
+          <QuickActionForm
+            name={selectedAction.name ?? ""}
+            workflowId={selectedAction.workflow_id}
+            workflowOptions={[
+              {
+                value: selectedAction.workflow_id,
+                label: selectedAction.workflow.title,
+              },
+              ...availableWorkflows.map((workflow) => ({
+                value: workflow.id,
+                label: workflow.metadata.title,
+              })),
+            ]}
+            prompt={selectedAction.prompt}
+            documentUpload={selectedAction.document_upload}
+            enabled={selectedAction.enabled}
+            onNameChange={(value) =>
+              setSelectedAction({ ...selectedAction, name: value })
+            }
+            onWorkflowChange={(value) => {
+              const workflow = workflows.find((item) => item.id === value);
+              if (!workflow) return;
+              setSelectedAction({
+                ...selectedAction,
+                workflow_id: workflow.id,
+                workflow: {
+                  id: workflow.id,
+                  title: workflow.metadata.title,
+                },
+              });
+            }}
+            onPromptChange={(value) =>
+              setSelectedAction({ ...selectedAction, prompt: value })
+            }
+            onDocumentUploadChange={(value) =>
+              setSelectedAction({
+                ...selectedAction,
+                document_upload: value,
+              })
+            }
+            onEnabledChange={(value) =>
+              setSelectedAction({ ...selectedAction, enabled: value })
+            }
+            error={saveError}
+          />
         )}
       </Modal>
+
+      <Modal
+        open={createOpen}
+        onClose={() => {
+          if (!creating) onCreateClose();
+        }}
+        parentLabel="Quick Actions"
+        title="New Quick Action"
+        primaryAction={{
+          label: creating ? "Creating…" : "Create",
+          disabled: creating || !workflowId || !name.trim(),
+          onClick: () => void createAction(),
+        }}
+      >
+        <QuickActionForm
+          name={name}
+          workflowId={workflowId}
+          workflowOptions={availableWorkflows.map((workflow) => ({
+            value: workflow.id,
+            label: workflow.metadata.title,
+          }))}
+          prompt={prompt}
+          documentUpload={documentUpload}
+          onNameChange={setName}
+          onWorkflowChange={(value) => {
+            setWorkflowId(value);
+            if (!name.trim()) {
+              setName(
+                availableWorkflows.find((workflow) => workflow.id === value)
+                  ?.metadata.title ?? "",
+              );
+            }
+          }}
+          onPromptChange={setPrompt}
+          onDocumentUploadChange={setDocumentUpload}
+          error={createError ?? workflowsError}
+        />
+      </Modal>
+    </div>
+  );
+}
+
+function QuickActionForm({
+  name,
+  workflowId,
+  workflowOptions,
+  prompt,
+  documentUpload,
+  enabled,
+  onNameChange,
+  onWorkflowChange,
+  onPromptChange,
+  onDocumentUploadChange,
+  onEnabledChange,
+  error,
+}: {
+  name: string;
+  workflowId: string;
+  workflowOptions: { value: string; label: string }[];
+  prompt: string;
+  documentUpload: boolean;
+  enabled?: boolean;
+  onNameChange: (value: string) => void;
+  onWorkflowChange: (value: string) => void;
+  onPromptChange: (value: string) => void;
+  onDocumentUploadChange: (value: boolean) => void;
+  onEnabledChange?: (value: boolean) => void;
+  error: string | null;
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto pb-5">
+      <div>
+        <ModalFieldLabel htmlFor="quick-action-name">Name</ModalFieldLabel>
+        <ModalTextInput
+          id="quick-action-name"
+          value={name}
+          onChange={(event) => onNameChange(event.target.value)}
+          placeholder="Quick action name"
+          variant="minimal"
+          autoFocus
+        />
+      </div>
+      <div>
+        <ModalFieldLabel htmlFor="quick-action-workflow">
+          Workflow used
+        </ModalFieldLabel>
+        <ModalSelect
+          id="quick-action-workflow"
+          value={workflowId}
+          placeholder="Select an assistant workflow"
+          options={workflowOptions}
+          onChange={onWorkflowChange}
+        />
+      </div>
+      <div>
+        <ModalFieldLabel htmlFor="quick-action-prompt">Prompt</ModalFieldLabel>
+        <ModalTextArea
+          id="quick-action-prompt"
+          value={prompt}
+          onChange={(event) => onPromptChange(event.target.value)}
+          className="h-28 min-h-28"
+          placeholder="Prompt placed in the Assistant composer"
+        />
+      </div>
+      <ToggleRow
+        label="Request document upload"
+        caption="Ask for source documents before launching this workflow."
+        checked={documentUpload}
+        onChange={onDocumentUploadChange}
+      />
+      {enabled !== undefined && onEnabledChange && (
+        <ToggleRow
+          label="Active"
+          caption="Show this action in the Assistant initial view."
+          checked={enabled}
+          onChange={onEnabledChange}
+        />
+      )}
+      {error && (
+        <p className="text-xs text-red-600" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ToggleRow({
+  label,
+  caption,
+  checked,
+  onChange,
+}: {
+  label: string;
+  caption: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div>
+        <p className="text-sm font-medium text-gray-700">{label}</p>
+        <p className="mt-1 text-xs leading-relaxed text-gray-400">{caption}</p>
+      </div>
+      <ToggleSwitch
+        checked={checked}
+        onCheckedChange={onChange}
+        aria-label={label}
+      />
     </div>
   );
 }

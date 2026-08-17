@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { supabase } from "@/app/lib/supabase";
-import { PillButton } from "@/app/components/ui/pill-button";
+import { useEffect, useState } from "react";
+import { EditCardUI } from "@/shared/ui/EditCardUI";
+import { resolveDocumentEdit } from "@/app/lib/mikeApi";
 import type { EditAnnotation } from "../shared/types";
 import { RESPONSE_GLASS_SURFACE } from "./message/messageStyles";
 
@@ -203,6 +203,11 @@ export function EditCard({
     const status = resolvedStatus ?? localStatus;
     const setStatus = setLocalStatus;
 
+    useEffect(() => {
+        if (busy) return;
+        setLocalStatus(annotation.status);
+    }, [annotation.edit_id, annotation.status, busy]);
+
     const resolved = status !== "pending";
     // True while an accept/reject request for any edit on this card's
     // document is in flight — triggered here, in DocPanel, or in the
@@ -224,29 +229,11 @@ export function EditCard({
             console.error("[EditCard] optimistic update threw", e);
         }
         try {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-            const token = session?.access_token;
-            const apiBase =
-                process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
-            const resp = await fetch(
-                `${apiBase}/single-documents/${annotation.document_id}/edits/${annotation.edit_id}/${verb}`,
-                {
-                    method: "POST",
-                    headers: token
-                        ? { Authorization: `Bearer ${token}` }
-                        : undefined,
-                },
+            const data = await resolveDocumentEdit(
+                annotation.document_id,
+                annotation.edit_id,
+                verb,
             );
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const data = (await resp.json()) as {
-                ok: boolean;
-                already_resolved?: boolean;
-                status?: "accepted" | "rejected";
-                version_id: string | null;
-                download_url: string | null;
-            };
             const nextStatus =
                 data.status ?? (verb === "accept" ? "accepted" : "rejected");
             setStatus(nextStatus);
@@ -279,61 +266,35 @@ export function EditCard({
     };
 
     return (
-        <div className={`${RESPONSE_GLASS_SURFACE} p-3`}>
-            {changeNumber !== undefined && (
-                <p className="text-xs text-gray-400 mb-1.5">{changeNumber}</p>
-            )}
-            {annotation.reason && (
-                <p className="text-xs text-gray-500 mb-2">
-                    {annotation.reason}
-                </p>
-            )}
-            <div className="text-sm leading-relaxed font-serif bg-gray-100/70 rounded-lg px-2 py-2">
-                {annotation.inserted_text && (
-                    <span className="text-green-700">
-                        {annotation.inserted_text}
-                    </span>
-                )}
-                {annotation.deleted_text && (
-                    <span className="text-red-600 line-through">
-                        {annotation.deleted_text}
-                    </span>
-                )}
-            </div>
-            <div className="flex gap-2 mt-3">
-                <PillButton
-                    tone="blue"
-                    size="sm"
-                    onClick={() => handle("accept")}
-                    disabled={inFlight || resolved}
-                >
-                    {status === "accepted" ? "Accepted" : "Accept"}
-                </PillButton>
-                <PillButton
-                    tone="white"
-                    size="sm"
-                    onClick={() => handle("reject")}
-                    disabled={inFlight || resolved}
-                >
-                    {status === "rejected" ? "Rejected" : "Reject"}
-                </PillButton>
-                {onViewClick && (
-                    <PillButton
-                        tone="black"
-                        size="sm"
-                        onClick={() => onViewClick(annotation)}
-                        disabled={resolved}
-                        title={
-                            resolved
-                                ? "This change has been resolved and is no longer in the document."
-                                : undefined
-                        }
-                        className="ml-auto"
-                    >
-                        View
-                    </PillButton>
-                )}
-            </div>
-        </div>
+        <EditCardUI
+            originalText={annotation.deleted_text}
+            replacementText={annotation.inserted_text}
+            reason={annotation.reason}
+            changeNumber={changeNumber}
+            status={status}
+            className={`${RESPONSE_GLASS_SURFACE} p-2`}
+            acceptAction={{
+                label: status === "accepted" ? "Accepted" : "Accept",
+                onClick: () => handle("accept"),
+                disabled: inFlight || resolved,
+            }}
+            rejectAction={{
+                label: status === "rejected" ? "Rejected" : "Reject",
+                onClick: () => handle("reject"),
+                disabled: inFlight || resolved,
+            }}
+            viewAction={
+                onViewClick
+                    ? {
+                          label: "View",
+                          onClick: () => onViewClick(annotation),
+                          disabled: resolved,
+                          title: resolved
+                              ? "This change has been resolved and is no longer in the document."
+                              : undefined,
+                      }
+                    : undefined
+            }
+        />
     );
 }

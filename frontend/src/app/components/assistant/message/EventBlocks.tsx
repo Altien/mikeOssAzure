@@ -5,6 +5,11 @@ import { ChevronDown, Download, Loader2 } from "lucide-react";
 import { supabase } from "@/app/lib/supabase";
 import type { AssistantEvent } from "../../shared/types";
 import { FileTypeIcon } from "../../shared/FileTypeIcon";
+import {
+    DocEditBlockUI,
+    DocFindBlockUI,
+    DocReadBlockUI,
+} from "@/shared/ui/DocumentEventBlocksUI";
 import { RESPONSE_GLASS_SURFACE, withoutMarkdownNode } from "./messageStyles";
 
 const THINKING_PHRASES = [
@@ -203,51 +208,20 @@ export function DocReadBlock({
     showFileIcon?: boolean;
 }) {
     return (
-        <EventBlock
+        <DocReadBlockUI
+            filename={filename}
+            fileIcon={
+                showFileIcon ? (
+                    <FileTypeIcon
+                        fileType={filename}
+                        className="h-3.5 w-3.5"
+                    />
+                ) : undefined
+            }
+            onClick={onClick}
             showConnector={showConnector}
             isStreaming={isStreaming}
-            dotColor="green"
-        >
-            <div className="flex min-w-0 items-center gap-1.5">
-                <span className="shrink-0 font-medium">
-                    {isStreaming ? "Reading" : "Read"}
-                </span>
-                {isStreaming ? (
-                    <span className="flex min-w-0 items-center gap-1.5">
-                        {showFileIcon && (
-                            <FileTypeIcon
-                                fileType={filename}
-                                className="h-3.5 w-3.5"
-                            />
-                        )}
-                        <span className="truncate">{filename}...</span>
-                    </span>
-                ) : onClick ? (
-                    <button
-                        onClick={onClick}
-                        className="flex min-w-0 items-center gap-1.5 text-left transition-colors hover:text-gray-700 cursor-pointer"
-                    >
-                        {showFileIcon && (
-                            <FileTypeIcon
-                                fileType={filename}
-                                className="h-3.5 w-3.5"
-                            />
-                        )}
-                        <span className="truncate">{filename}</span>
-                    </button>
-                ) : (
-                    <span className="flex min-w-0 items-center gap-1.5">
-                        {showFileIcon && (
-                            <FileTypeIcon
-                                fileType={filename}
-                                className="h-3.5 w-3.5"
-                            />
-                        )}
-                        <span className="truncate">{filename}</span>
-                    </span>
-                )}
-            </div>
-        </EventBlock>
+        />
     );
 }
 
@@ -266,35 +240,15 @@ export function DocFindBlock({
     showConnector?: boolean;
     onClick?: () => void;
 }) {
-    const matchSuffix = isStreaming
-        ? ""
-        : ` (${totalMatches} ${totalMatches === 1 ? "match" : "matches"})`;
     return (
-        <EventBlock
-            showConnector={showConnector}
+        <DocFindBlockUI
+            filename={filename}
+            query={query}
+            totalMatches={totalMatches}
             isStreaming={isStreaming}
-            dotColor={totalMatches > 0 ? "green" : "gray"}
-        >
-            <span className="font-medium">
-                {isStreaming ? "Finding" : "Found"}
-            </span>{" "}
-            <span>
-                &ldquo;{query}&rdquo;{matchSuffix}
-                <span className="ml-1 text-gray-400">in </span>
-                {!isStreaming && onClick ? (
-                    <button
-                        type="button"
-                        onClick={onClick}
-                        className="cursor-pointer text-left text-gray-400 transition-colors hover:text-gray-700"
-                    >
-                        {filename}
-                    </button>
-                ) : (
-                    <span className="text-gray-400">{filename}</span>
-                )}
-                {isStreaming && "..."}
-            </span>
-        </EventBlock>
+            showConnector={showConnector}
+            onClick={onClick}
+        />
     );
 }
 
@@ -431,7 +385,6 @@ export function DocDownloadBlock({
         Number.isFinite(versionNumber) &&
         versionNumber > 0;
     const extMatch = filename.match(/\.(\w+)$/);
-    const ext = extMatch ? extMatch[1].toUpperCase() : "FILE";
     const rawBasename = extMatch
         ? filename.slice(0, -extMatch[0].length)
         : filename;
@@ -483,18 +436,18 @@ export function DocDownloadBlock({
 
     const body = (
         <div className="flex items-center gap-3 px-4 py-3 min-w-0 flex-1">
+            <FileTypeIcon fileType={filename} className="h-4 w-4" />
             <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 min-w-0">
-                    <p className="text-base font-serif text-gray-900 text-wrap">
+                    <p className="text-lg font-serif text-gray-900 text-wrap">
                         {basename}
                     </p>
                     {hasVersion && (
-                        <span className="shrink-0 inline-flex items-center rounded-md border border-white/70 bg-white/55 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] backdrop-blur-xl">
+                        <span className="shrink-0 inline-flex items-center rounded-md border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
                             V{versionNumber}
                         </span>
                     )}
                 </div>
-                <p className="text-xs text-blue-500 mt-0.5">{ext}</p>
             </div>
         </div>
     );
@@ -519,7 +472,7 @@ export function DocDownloadBlock({
     if (onOpen) {
         return (
             <div
-                className={`flex items-stretch overflow-hidden w-full font-sans ${RESPONSE_GLASS_SURFACE}`}
+                className={`flex items-stretch overflow-hidden w-full font-serif ${RESPONSE_GLASS_SURFACE}`}
             >
                 <button
                     type="button"
@@ -536,7 +489,7 @@ export function DocDownloadBlock({
     if (spinning) {
         return (
             <div
-                className={`flex items-stretch overflow-hidden w-full font-sans ${RESPONSE_GLASS_SURFACE}`}
+                className={`flex items-stretch overflow-hidden w-full font-serif ${RESPONSE_GLASS_SURFACE}`}
             >
                 {body}
                 {downloadIcon}
@@ -546,7 +499,7 @@ export function DocDownloadBlock({
 
     return (
         <div
-            className={`flex items-stretch overflow-hidden w-full font-sans ${RESPONSE_GLASS_SURFACE}`}
+            className={`flex items-stretch overflow-hidden w-full font-serif ${RESPONSE_GLASS_SURFACE}`}
         >
             <button
                 type="button"
@@ -749,7 +702,7 @@ export function CourtListenerBlock({
     );
 }
 
-export function DocEditedBlock({
+export function DocEditBlock({
     filename,
     showConnector,
     isStreaming,
@@ -762,26 +715,16 @@ export function DocEditedBlock({
     hasError?: boolean;
     onClick?: () => void;
 }) {
+    const label = isStreaming ? "Editing" : hasError ? "Edit failed" : "Edited";
+
     return (
-        <EventBlock
+        <DocEditBlockUI
+            label={label}
+            filename={filename}
+            onClick={onClick}
             showConnector={showConnector}
             isStreaming={isStreaming}
             dotColor={hasError ? "red" : "green"}
-        >
-            <span className="font-medium">
-                {isStreaming ? "Editing" : hasError ? "Edit failed" : "Edited"}
-            </span>{" "}
-            {!isStreaming && onClick ? (
-                <button
-                    type="button"
-                    onClick={onClick}
-                    className="cursor-pointer text-left transition-colors hover:text-gray-700"
-                >
-                    {filename}
-                </button>
-            ) : (
-                <span>{isStreaming ? `${filename}...` : filename}</span>
-            )}
-        </EventBlock>
+        />
     );
 }

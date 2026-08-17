@@ -6,6 +6,10 @@ import {
   LiquidIconButton,
   LiquidTextButton,
 } from "../primitives/LiquidActionRow";
+import {
+  HeaderButtonUI,
+  HeaderButtonsUI,
+} from "@mike/header-buttons-ui";
 import chatIcon from "@icons/features/chat.svg";
 import quickActionsIcon from "@icons/features/quick-actions.svg";
 import workflowIcon from "@icons/features/workflow.svg";
@@ -33,12 +37,14 @@ interface FloatingHeaderProps {
   section: AddinSection;
   onSectionChange: (section: AddinSection) => void;
   onNewChat: () => void;
+  hasActiveChat: boolean;
   onSelectHistoryChat: (chatId: string, messages: Message[]) => void;
   workflowDetailOpen?: boolean;
   onWorkflowBack?: () => void;
   onOpenWorkflowDetails?: () => void;
   onUseWorkflow?: () => void;
   onNewWorkflow?: () => void;
+  onNewQuickAction?: () => void;
   onSignOut: () => void;
   wordDocumentId: string;
   wordChatStorage: WordChatStorageMode;
@@ -65,12 +71,14 @@ export function FloatingHeader({
   section,
   onSectionChange,
   onNewChat,
+  hasActiveChat,
   onSelectHistoryChat,
   workflowDetailOpen = false,
   onWorkflowBack,
   onOpenWorkflowDetails,
   onUseWorkflow,
   onNewWorkflow,
+  onNewQuickAction,
   onSignOut,
   wordDocumentId,
   wordChatStorage,
@@ -169,45 +177,72 @@ export function FloatingHeader({
       </div>
 
       {section === "chat" ? (
-        <LiquidActionRow className="pointer-events-auto relative z-10">
-          <LiquidIconButton
-            onClick={onNewChat}
-            aria-label="New chat"
-            title="New chat"
-          >
-            <Plus className="h-4 w-4" />
-          </LiquidIconButton>
+        <HeaderButtonsUI className="pointer-events-auto relative z-10">
+          {hasActiveChat && (
+            <HeaderButtonUI
+              iconOnly
+              onClick={onNewChat}
+              aria-label="New chat"
+              title="New chat"
+            >
+              <Plus className="h-4 w-4" />
+            </HeaderButtonUI>
+          )}
           <ChatHistoryDropdown
             onSelect={onSelectHistoryChat}
             documentId={wordDocumentId}
             ownerId={wordChatOwnerId}
             storageMode={wordChatStorage}
           />
-        </LiquidActionRow>
+        </HeaderButtonsUI>
       ) : workflowDetailOpen ? (
-        <LiquidActionRow className="pointer-events-auto relative z-10">
-          <LiquidIconButton
+        <HeaderButtonsUI className="pointer-events-auto relative z-10">
+          <HeaderButtonUI
+            iconOnly
             onClick={onOpenWorkflowDetails}
             aria-label="Workflow details"
             title="Workflow details"
           >
             <Ellipsis className="h-4 w-4" />
-          </LiquidIconButton>
+          </HeaderButtonUI>
           <LiquidTextButton onClick={onUseWorkflow}>
             <Check className="h-3.5 w-3.5" />
             Use
           </LiquidTextButton>
-        </LiquidActionRow>
+        </HeaderButtonsUI>
+      ) : section === "history" ? (
+        <HeaderButtonsUI className="pointer-events-auto relative z-10">
+          <HeaderButtonUI
+            iconOnly
+            onClick={onNewChat}
+            aria-label="New chat"
+            title="New chat"
+          >
+            <Plus className="h-4 w-4" />
+          </HeaderButtonUI>
+        </HeaderButtonsUI>
       ) : section === "workflows" ? (
-        <LiquidActionRow className="pointer-events-auto relative z-10">
-          <LiquidIconButton
+        <HeaderButtonsUI className="pointer-events-auto relative z-10">
+          <HeaderButtonUI
+            iconOnly
             onClick={onNewWorkflow}
             aria-label="New workflow"
             title="New workflow"
           >
             <Plus className="h-4 w-4" />
-          </LiquidIconButton>
-        </LiquidActionRow>
+          </HeaderButtonUI>
+        </HeaderButtonsUI>
+      ) : section === "actions" ? (
+        <HeaderButtonsUI className="pointer-events-auto relative z-10">
+          <HeaderButtonUI
+            iconOnly
+            onClick={onNewQuickAction}
+            aria-label="New quick action"
+            title="New quick action"
+          >
+            <Plus className="h-4 w-4" />
+          </HeaderButtonUI>
+        </HeaderButtonsUI>
       ) : null}
     </header>
   );

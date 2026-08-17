@@ -94,6 +94,10 @@ test("Chat History page searches and loads 20 more chats at the bottom", async (
   await expect(page.getByTestId("chat-history-page-title")).toHaveClass(
     /font-serif/,
   );
+  const newChatButton = page
+    .getByTestId("floating-header")
+    .getByRole("button", { name: "New chat" });
+  await expect(newChatButton).toBeVisible();
   const list = page.getByTestId("chat-history-list-20");
   await expect(list.getByRole("button")).toHaveCount(20);
   expect(requests).toEqual([
@@ -118,6 +122,14 @@ test("Chat History page searches and loads 20 more chats at the bottom", async (
   await page.getByPlaceholder("Search chat history...").fill("Chat 37");
   await expect(list.getByRole("button", { name: /Chat 37/ })).toBeVisible();
   await expect(list.getByRole("button")).toHaveCount(1);
+
+  await newChatButton.click();
+  await expect(page.getByText("Quick actions", { exact: true })).toBeVisible();
+  await expect(
+    page.getByTestId("floating-header").getByRole("button", {
+      name: "New chat",
+    }),
+  ).toHaveCount(0);
 });
 
 test("history reports a failed request and retries it", async ({

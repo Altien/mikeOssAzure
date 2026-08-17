@@ -7,9 +7,10 @@ interface Props {
     content: string;
     files?: { filename: string; document_id?: string }[];
     workflow?: { id: string; title: string };
+    onFileClick?: (file: { filename: string; document_id?: string }) => void;
 }
 
-export function UserMessage({ content, files, workflow }: Props) {
+export function UserMessage({ content, files, workflow, onFileClick }: Props) {
     const hasFiles = files && files.length > 0;
 
     return (
@@ -24,15 +25,37 @@ export function UserMessage({ content, files, workflow }: Props) {
                                 <span className="max-w-[140px] truncate">{workflow.title}</span>
                             </div>
                         )}
-                        {hasFiles && files.map((f, i) => (
-                            <div
-                                key={i}
-                                className="inline-flex items-center gap-1 rounded-[10px] border border-white/70 bg-white py-0.5 pl-2 pr-2.5 text-xs text-gray-800 shadow-[0_2px_6px_rgba(15,23,42,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-xl"
-                            >
-                                <FileTypeIcon fileType={f.filename} className="h-2.5 w-2.5" />
-                                <span className="max-w-[140px] truncate">{f.filename}</span>
-                            </div>
-                        ))}
+                        {hasFiles &&
+                            files.map((f, i) => {
+                                const className =
+                                    "inline-flex items-center gap-1 rounded-[10px] border border-white/70 bg-white py-0.5 pl-2 pr-2.5 text-xs text-gray-800 shadow-sm backdrop-blur-xl";
+                                const fileContent = (
+                                    <>
+                                        <FileTypeIcon
+                                            fileType={f.filename}
+                                            className="h-2.5 w-2.5"
+                                        />
+                                        <span className="max-w-[140px] truncate">
+                                            {f.filename}
+                                        </span>
+                                    </>
+                                );
+                                return f.document_id && onFileClick ? (
+                                    <button
+                                        key={i}
+                                        type="button"
+                                        onClick={() => onFileClick(f)}
+                                        aria-label={`Open ${f.filename}`}
+                                        className={`${className} cursor-pointer transition-colors hover:bg-white/80`}
+                                    >
+                                        {fileContent}
+                                    </button>
+                                ) : (
+                                    <div key={i} className={className}>
+                                        {fileContent}
+                                    </div>
+                                );
+                            })}
                     </div>
                 )}
             </div>

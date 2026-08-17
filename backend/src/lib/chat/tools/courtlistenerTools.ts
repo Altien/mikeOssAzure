@@ -1,3 +1,5 @@
+import type { SourceDocument } from "../../sourceDocuments";
+
 export type CourtlistenerToolEvent =
     | {
           type: "courtlistener_search_case_law";
@@ -59,6 +61,7 @@ export type CaseCitationEvent = {
     url: string;
     pdfUrl?: string | null;
     dateFiled?: string | null;
+    document: SourceDocument;
 };
 
 export const COURTLISTENER_TOOL_NAMES = {
@@ -179,7 +182,7 @@ export const COURTLISTENER_TOOLS = [
         function: {
             name: COURTLISTENER_TOOL_NAMES.verifyCitations,
             description:
-                "Verify legal case citations using CourtListener's citation lookup. Accepts only an array of clean reporter citations, not case names. Example: {\"citations\":[\"467 U.S. 837\",\"323 U.S. 134\"]}. This returns citation metadata and clickable case refs; call courtlistener_get_cases only for matched cases that need full opinion text.",
+                'Verify legal case citations using CourtListener\'s citation lookup. Accepts only an array of clean reporter citations, not case names. Example: {"citations":["467 U.S. 837","323 U.S. 134"]}. This returns citation metadata and clickable case refs; call courtlistener_get_cases only for matched cases that need full opinion text.',
             parameters: {
                 type: "object",
                 properties: {
@@ -187,7 +190,7 @@ export const COURTLISTENER_TOOLS = [
                         type: "array",
                         items: { type: "string" },
                         description:
-                            "Required list of clean reporter citations only. Put each reporter citation in its own array item, e.g. [\"467 U.S. 837\", \"323 U.S. 134\"]. Do not include case names. Up to 250 items.",
+                            'Required list of clean reporter citations only. Put each reporter citation in its own array item, e.g. ["467 U.S. 837", "323 U.S. 134"]. Do not include case names. Up to 250 items.',
                     },
                 },
                 required: ["citations"],

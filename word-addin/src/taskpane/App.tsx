@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useCallback, useState } from "react";
 import { useAuth } from "./auth/useAuth";
 import { LoginPage } from "./auth/LoginPage";
 import { ApiKeyBanner } from "./components/shell/ApiKeyBanner";
@@ -47,15 +47,22 @@ export default function App(): React.ReactElement {
   const [selectedSection, setSelectedSection] = useState<AddinSection>("chat");
   const [chatSessionKey, setChatSessionKey] = useState(0);
   const [chatId, setChatId] = useState<string | null>(null);
+  const [chatInSession, setChatInSession] = useState(false);
   const [initialMessages, setInitialMessages] = useState<Message[]>([]);
   const [workflowPageSelection, setWorkflowPageSelection] =
     useState<Workflow | null>(null);
   const [workflowDetailsOpen, setWorkflowDetailsOpen] = useState(false);
   const [newWorkflowOpen, setNewWorkflowOpen] = useState(false);
+  const [newQuickActionOpen, setNewQuickActionOpen] = useState(false);
   const [chatWorkflow, setChatWorkflow] = useState<{
     id: string;
     title: string;
   } | null>(null);
+  const handleChatIdChange = useCallback((nextChatId: string) => {
+    setChatId(nextChatId);
+    setChatInSession(true);
+  }, []);
+  const markChatStarted = useCallback(() => setChatInSession(true), []);
 
   // Show a minimal spinner while the token is being read from storage
   if (loading) {
@@ -94,7 +101,12 @@ export default function App(): React.ReactElement {
       case "chat":
         return <></>;
       case "actions":
-        return <DocumentActions />;
+        return (
+          <DocumentActions
+            createOpen={newQuickActionOpen}
+            onCreateClose={() => setNewQuickActionOpen(false)}
+          />
+        );
       case "workflows":
         return (
           <WorkflowPicker
@@ -118,6 +130,7 @@ export default function App(): React.ReactElement {
             onStorageModeChange={async (mode) => {
               await wordChatStorage.setMode(mode);
               setChatId(null);
+              setChatInSession(false);
               setInitialMessages([]);
               setChatSessionKey((current) => current + 1);
             }}
@@ -133,12 +146,14 @@ export default function App(): React.ReactElement {
     setWorkflowDetailsOpen(false);
     setChatWorkflow(null);
     setChatId(selectedChatId);
+    setChatInSession(true);
     setInitialMessages(messages);
     setChatSessionKey((current) => current + 1);
   }
 
   const changeSection = (section: AddinSection): void => {
     setSelectedSection(section);
+    if (section !== "actions") setNewQuickActionOpen(false);
     if (section !== "workflows") {
       setWorkflowPageSelection(null);
       setWorkflowDetailsOpen(false);
@@ -151,6 +166,7 @@ export default function App(): React.ReactElement {
     setWorkflowDetailsOpen(false);
     setChatWorkflow(null);
     setChatId(null);
+    setChatInSession(false);
     setInitialMessages([]);
     setChatSessionKey((current) => current + 1);
   };
@@ -172,6 +188,7 @@ export default function App(): React.ReactElement {
         section={selectedSection}
         onSectionChange={changeSection}
         onNewChat={startNewChat}
+        hasActiveChat={chatInSession}
         onSelectHistoryChat={openSelectedChat}
         workflowDetailOpen={
           selectedSection === "workflows" && !!workflowPageSelection
@@ -183,6 +200,7 @@ export default function App(): React.ReactElement {
         onOpenWorkflowDetails={() => setWorkflowDetailsOpen(true)}
         onUseWorkflow={useSelectedWorkflow}
         onNewWorkflow={() => setNewWorkflowOpen(true)}
+        onNewQuickAction={() => setNewQuickActionOpen(true)}
         onSignOut={() => void logout()}
         wordDocumentId={wordDocumentId}
         wordChatStorage={wordChatStorage.mode}
@@ -208,7 +226,8 @@ export default function App(): React.ReactElement {
             initialMessages={initialMessages}
             selectedWorkflow={chatWorkflow}
             onSelectedWorkflowChange={setChatWorkflow}
-            onChatIdChange={setChatId}
+            onChatIdChange={handleChatIdChange}
+            onChatStarted={markChatStarted}
             wordDocumentId={wordDocumentId}
             wordChatStorage={wordChatStorage.mode}
             wordChatOwnerId={wordChatOwnerId}

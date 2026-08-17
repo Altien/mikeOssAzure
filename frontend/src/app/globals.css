@@ -528,12 +528,14 @@
     color: inherit !important;
 }
 
-.case-opinion-content span.docx-text-highlight,
-.case-opinion-content .docx-text-highlight {
-    background-color: rgba(96, 165, 250, 0.55) !important;
+.case-document-content span.case-quote-highlight,
+.case-document-content .case-quote-highlight {
+    background-color: rgb(191, 219, 254) !important;
     border-radius: 2px;
     padding: 0 1px;
     color: inherit !important;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
 }
 
 /* docx-preview tracked-change styling */
