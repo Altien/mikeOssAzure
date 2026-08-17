@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import { AlertCircle, Check, ChevronDown, Settings2 } from "lucide-react";
 import { getOllamaModels, type ApiKeyStatus } from "../../api/mikeApi";
 import {
   isModelAvailable,
@@ -80,6 +80,7 @@ export function ModelToggle({
     [models],
   );
   const selected = models.find((model) => model.id === value);
+  const selectedAvailable = isModelAvailable(value, keyStatus);
 
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen);
@@ -106,25 +107,20 @@ export function ModelToggle({
               ? "Checking API keys"
               : models.length === 0
                 ? "No API key configured"
-                : "Choose model"
+                : selectedAvailable
+                  ? `Choose model — ${selected?.label ?? "Model"}`
+                  : "API key missing for selected model"
           }
           disabled={keyStatusLoading || models.length === 0}
-          className={`flex h-8 items-center gap-1.5 rounded-full px-2 text-sm text-gray-400 transition-colors hover:text-gray-700 ${
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-gray-400 transition-colors hover:text-gray-700 ${
             open ? "text-gray-700" : ""
           } disabled:cursor-not-allowed disabled:hover:text-gray-400`}
         >
-          <span className="max-w-[200px] truncate">
-            {keyStatusLoading
-              ? (selected?.label ?? "Select model")
-              : models.length === 0
-                ? "No API Key"
-                : (selected?.label ?? "Select model")}
-          </span>
-          <ChevronDown
-            className={`h-3 w-3 shrink-0 transition-transform duration-200 ${
-              open ? "rotate-180" : ""
-            }`}
-          />
+          {!selectedAvailable && !keyStatusLoading ? (
+            <AlertCircle className="h-4 w-4 shrink-0 text-red-500" />
+          ) : (
+            <Settings2 className="h-4 w-4 shrink-0" />
+          )}
         </button>
       </DropdownTrigger>
       <DropdownContent

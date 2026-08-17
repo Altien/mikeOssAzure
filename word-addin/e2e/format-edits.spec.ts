@@ -99,7 +99,8 @@ test("direct mode applies a format edit as final formatting with no pending revi
   await addin.gotoTaskpane({ documentText: DOCUMENT_TEXT });
   await addin.expectAuthedShell();
 
-  await page.getByRole("switch", { name: "Review" }).click();
+  await page.getByTestId("edit-apply-toggle").click();
+  await page.getByRole("menuitem", { name: /Edit/ }).click();
   await page.getByPlaceholder("How can I help?").fill("Bold the heading");
   await page.getByRole("button", { name: "Send" }).click();
 

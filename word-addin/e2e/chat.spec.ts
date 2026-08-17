@@ -933,12 +933,12 @@ test("document context and tracked-edit behavior are fixed on without switches",
   await addin.gotoTaskpane({ documentText: docText });
   await addin.expectAuthedShell();
 
-  // Document context and change tracking have no opt-out controls. The only
-  // switch in the pane is the Review apply-mode toggle, which governs how
-  // edits are resolved — never whether the document is sent or tracked.
-  const switches = page.getByRole("switch");
-  await expect(switches).toHaveCount(1);
-  await expect(switches.first()).toHaveText("Review");
+  // Document context and change tracking have no opt-out controls. The
+  // apply-mode control is a menu button (Review/Direct), which governs how
+  // edits are resolved — never whether the document is sent or tracked — so
+  // the pane exposes no switches at all.
+  await expect(page.getByRole("switch")).toHaveCount(0);
+  await expect(page.getByTestId("edit-apply-toggle")).toHaveText(/Review/);
 
   await page.getByPlaceholder("How can I help?").fill("Hello");
 
@@ -1347,7 +1347,7 @@ test("uploads desktop files directly from the document source menu", async ({
   ]);
 });
 
-test("selects a workflow from the add-workflow modal and attaches it to chat", async ({
+test("selects a workflow from the plus menu and attaches it to chat", async ({
   addin,
   page,
 }) => {
@@ -1393,7 +1393,10 @@ test("selects a workflow from the add-workflow modal and attaches it to chat", a
   await addin.gotoTaskpane({ documentText: "Current Word document" });
   await addin.expectAuthedShell();
 
-  await page.getByRole("button", { name: "Add workflows" }).click();
+  // Workflows are reached through the "+" menu rather than a dedicated
+  // composer button.
+  await page.getByRole("button", { name: "Add documents" }).click();
+  await page.getByRole("menuitem", { name: "Workflows" }).click();
   const modal = page.getByRole("dialog", { name: "Add workflow" });
   await expect(modal).toBeVisible();
   await expect(modal.getByText("Contract review")).toBeVisible();
@@ -1455,12 +1458,11 @@ test("model toggle sends the selected frontend model", async ({
   expect(body.model).toBe("gpt-5.4");
 });
 
-test("composer controls and workflow modal fit a narrow Word task pane", async ({
+test("composer controls fit a narrow Word task pane", async ({
   addin,
   page,
 }) => {
   await page.setViewportSize({ width: 360, height: 760 });
-  await addin.mockApiJson("GET", "**/workflows**", []);
   await addin.mockApiJson("GET", "**/library/files?*", {
     documents: [],
     folders: [],
@@ -1471,9 +1473,7 @@ test("composer controls and workflow modal fit a narrow Word task pane", async (
   await expect(
     page.getByRole("button", { name: "Add documents" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Add workflows" }),
-  ).toBeVisible();
+  await expect(page.getByTestId("edit-apply-toggle")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Choose model" }),
   ).toBeVisible();
@@ -1491,8 +1491,8 @@ test("composer controls and workflow modal fit a narrow Word task pane", async (
   const addDocumentBounds = await page
     .getByRole("button", { name: "Add documents" })
     .boundingBox();
-  const workflowBounds = await page
-    .getByRole("button", { name: "Add workflows" })
+  const applyModeBounds = await page
+    .getByTestId("edit-apply-toggle")
     .boundingBox();
   const modelBounds = await page
     .getByRole("button", { name: "Choose model" })
@@ -1500,13 +1500,14 @@ test("composer controls and workflow modal fit a narrow Word task pane", async (
   expect(placeholderBounds).not.toBeNull();
   expect(plusBounds).not.toBeNull();
   expect(addDocumentBounds).not.toBeNull();
-  expect(workflowBounds).not.toBeNull();
+  expect(applyModeBounds).not.toBeNull();
   expect(modelBounds).not.toBeNull();
   expect(Math.abs(plusBounds!.x - placeholderBounds!.x)).toBeLessThanOrEqual(3);
-  expect(
-    workflowBounds!.x - (addDocumentBounds!.x + addDocumentBounds!.width),
-  ).toBeLessThanOrEqual(4);
-  expect(modelBounds!.width).toBeGreaterThan(100);
+  // The whole action row shares one line: mode pill after the documents
+  // button, icon-only model button flush inside the pane.
+  expect(Math.abs(applyModeBounds!.y - addDocumentBounds!.y)).toBeLessThanOrEqual(2);
+  expect(Math.abs(modelBounds!.y - addDocumentBounds!.y)).toBeLessThanOrEqual(2);
+  expect(modelBounds!.x + modelBounds!.width).toBeLessThanOrEqual(360);
 
   await page.getByRole("button", { name: "Add documents" }).click();
   await page.getByRole("menuitem", { name: "Web files" }).click();
@@ -1518,13 +1519,6 @@ test("composer controls and workflow modal fit a narrow Word task pane", async (
   expect(documentsBounds!.x + documentsBounds!.width).toBeLessThanOrEqual(360);
   await documentsModal.getByRole("button", { name: "Close" }).click();
 
-  await page.getByRole("button", { name: "Add workflows" }).click();
-  const modal = page.getByRole("dialog", { name: "Add workflow" });
-  await expect(modal).toBeVisible();
-  const bounds = await modal.boundingBox();
-  expect(bounds).not.toBeNull();
-  expect(bounds!.x).toBeGreaterThanOrEqual(0);
-  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(360);
   expect(
     await page.evaluate(
       () =>
