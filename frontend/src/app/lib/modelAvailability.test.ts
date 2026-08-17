@@ -24,9 +24,9 @@ const keys = (configured: {
 
 describe("getModelProvider", () => {
     it("maps each settings model to a provider via its group", () => {
-        expect(getModelProvider("claude-haiku-4-5")).toBe("claude");
-        expect(getModelProvider("gemini-3-flash-preview")).toBe("gemini");
-        expect(getModelProvider("gpt-5.4-lite")).toBe("openai");
+        expect(getModelProvider("claude-opus-5")).toBe("claude");
+        expect(getModelProvider("gemini-3.7-flash")).toBe("gemini");
+        expect(getModelProvider("gpt-5.6-sol")).toBe("openai");
     });
 
     it("resolves any ollama/-prefixed id without consulting SETTINGS_MODELS", () => {

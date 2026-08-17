@@ -3,8 +3,14 @@ import type {
   StreamChatResult,
   NormalizedToolCall,
 } from "./types";
+import type { ThinkingLevel } from "@google/genai" with {
+  "resolution-mode": "import",
+};
 import { toGeminiTools } from "./tools";
 import { createRawLlmStreamRecorder, logRawLlmStream } from "./rawStreamLog";
+
+const LOW_THINKING_LEVEL = "LOW" as ThinkingLevel;
+const HIGH_THINKING_LEVEL = "HIGH" as ThinkingLevel;
 
 type GeminiPart = {
   text?: string;
@@ -193,13 +199,12 @@ export async function streamGemini(
             tools: functionDeclarations.length
               ? [{ functionDeclarations } as never]
               : undefined,
-            // When enabled, ask Gemini to surface thought summaries.
-            // When disabled, explicitly zero the thinking budget so the
-            // model skips thinking entirely (saves tokens and latency
-            // for bulk extraction jobs).
+            // Gemini 3.x replaced numeric thinking budgets with thinking
+            // levels. "low" is the least expensive supported level; unlike
+            // earlier models, thinking cannot be disabled completely.
             thinkingConfig: enableThinking
-              ? { includeThoughts: true }
-              : { thinkingBudget: 0 },
+              ? { includeThoughts: true, thinkingLevel: HIGH_THINKING_LEVEL }
+              : { thinkingLevel: LOW_THINKING_LEVEL },
           },
         });
       } catch (error) {

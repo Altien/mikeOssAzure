@@ -11,7 +11,6 @@ import {
   Dropdown,
   DropdownContent,
   DropdownItem,
-  DropdownLabel,
   DropdownSeparator,
   DropdownTrigger,
 } from "../primitives/Dropdown";
@@ -28,6 +27,7 @@ export function ModelToggle({
   keyStatus: ApiKeyStatus | null;
 }): React.ReactElement {
   const [open, setOpen] = useState(false);
+  const [expandedGroup, setExpandedGroup] = useState<ModelGroup | null>(null);
   const [ollamaModels, setOllamaModels] = useState<ModelOption[]>([]);
 
   useEffect(() => {
@@ -49,8 +49,22 @@ export function ModelToggle({
   const selected = models.find((model) => model.id === value);
   const selectedAvailable = isModelAvailable(value, keyStatus);
 
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (nextOpen) {
+      setExpandedGroup(
+        selected?.group ??
+          (value.startsWith("ollama/") ? "Local" : null) ??
+          GROUPS.find((group) =>
+            models.some((model) => model.group === group),
+          ) ??
+          null,
+      );
+    }
+  };
+
   return (
-    <Dropdown open={open} onOpenChange={setOpen}>
+    <Dropdown open={open} onOpenChange={handleOpenChange}>
       <DropdownTrigger asChild>
         <button
           type="button"
@@ -86,32 +100,48 @@ export function ModelToggle({
         {GROUPS.map((group, groupIndex) => {
           const items = models.filter((model) => model.group === group);
           if (items.length === 0) return null;
+          const expanded = expandedGroup === group;
           return (
             <React.Fragment key={group}>
               {groupIndex > 0 && <DropdownSeparator />}
-              <DropdownLabel>{group}</DropdownLabel>
-              {items.map((model) => {
-                const available = isModelAvailable(model.id, keyStatus);
-                return (
-                  <DropdownItem
-                    key={model.id}
-                    onSelect={() => onChange(model.id)}
-                    selected={model.id === value}
-                    className="py-1.5 text-sm text-gray-700 data-[highlighted]:text-gray-900"
-                  >
-                    <span
-                      className={`flex-1 ${available ? "" : "text-gray-400"}`}
+              <DropdownItem
+                aria-expanded={expanded}
+                className="py-2 text-sm font-medium text-gray-700 data-[highlighted]:text-gray-900"
+                onSelect={(event) => {
+                  event.preventDefault();
+                  setExpandedGroup(expanded ? null : group);
+                }}
+              >
+                <span className="flex-1">{group}</span>
+                <ChevronDown
+                  className={`h-3.5 w-3.5 text-gray-400 transition-transform duration-200 ${
+                    expanded ? "rotate-180" : ""
+                  }`}
+                />
+              </DropdownItem>
+              {expanded &&
+                items.map((model) => {
+                  const available = isModelAvailable(model.id, keyStatus);
+                  return (
+                    <DropdownItem
+                      key={model.id}
+                      onSelect={() => onChange(model.id)}
+                      selected={model.id === value}
+                      className="ml-2 py-1.5 text-sm text-gray-700 data-[highlighted]:text-gray-900"
                     >
-                      {model.label}
-                    </span>
-                    {!available ? (
-                      <AlertCircle className="ml-1 h-3.5 w-3.5 text-red-500" />
-                    ) : model.id === value ? (
-                      <Check className="ml-1 h-3.5 w-3.5 text-gray-600" />
-                    ) : null}
-                  </DropdownItem>
-                );
-              })}
+                      <span
+                        className={`flex-1 ${available ? "" : "text-gray-400"}`}
+                      >
+                        {model.label}
+                      </span>
+                      {!available ? (
+                        <AlertCircle className="ml-1 h-3.5 w-3.5 text-red-500" />
+                      ) : model.id === value ? (
+                        <Check className="ml-1 h-3.5 w-3.5 text-gray-600" />
+                      ) : null}
+                    </DropdownItem>
+                  );
+                })}
             </React.Fragment>
           );
         })}
