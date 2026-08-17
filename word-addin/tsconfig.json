@@ -18,6 +18,12 @@
       "lucide-react": [
         "node_modules/lucide-react"
       ],
+      "clsx": [
+        "node_modules/clsx"
+      ],
+      "tailwind-merge": [
+        "node_modules/tailwind-merge"
+      ],
       "@mike/edit-card-ui": [
         "../frontend/src/shared/ui/EditCardUI.tsx"
       ],
