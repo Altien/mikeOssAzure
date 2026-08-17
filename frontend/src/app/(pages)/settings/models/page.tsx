@@ -106,7 +106,7 @@ export default function ModelPreferencesPage() {
                         value={
                             optimisticValues.titleModel ??
                             profile?.titleModel ??
-                            "gemini-3.1-flash-lite-preview"
+                            "gemini-3.5-flash-lite"
                         }
                         options={[...SETTINGS_MODELS, ...aoai.modelOptions]}
                         extraModels={aoai.modelOptions}
