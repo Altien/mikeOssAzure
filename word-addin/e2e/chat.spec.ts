@@ -933,7 +933,12 @@ test("document context and tracked-edit behavior are fixed on without switches",
   await addin.gotoTaskpane({ documentText: docText });
   await addin.expectAuthedShell();
 
-  await expect(page.getByRole("switch")).toHaveCount(0);
+  // Document context and change tracking have no opt-out controls. The only
+  // switch in the pane is the Review apply-mode toggle, which governs how
+  // edits are resolved — never whether the document is sent or tracked.
+  const switches = page.getByRole("switch");
+  await expect(switches).toHaveCount(1);
+  await expect(switches.first()).toHaveText("Review");
 
   await page.getByPlaceholder("How can I help?").fill("Hello");
 

@@ -1,8 +1,9 @@
 /**
- * E2E coverage for the edit apply-mode toggle: "Review" (default) keeps the
- * approval flow — streamed edits land as pending tracked changes resolved
- * from their cards — while "Direct" applies each streamed edit and accepts it
- * immediately, so the document shows final text with no review step.
+ * E2E coverage for the edit apply-mode toggle: a "Review" switch in the
+ * composer, on by default. On keeps the approval flow — streamed edits land
+ * as pending tracked changes resolved from their cards — while off applies
+ * each streamed edit and accepts it immediately, so the document shows final
+ * text with no review step.
  */
 import { test, expect } from "./support/fixtures";
 
@@ -19,19 +20,24 @@ test.beforeEach(async ({ addin }) => {
   addin.seedToken(TOKEN);
 });
 
-test("shows the apply-mode toggle in the chat header with Review active by default", async ({
+test("shows the Review switch in the composer, on by default", async ({
   addin,
   page,
 }) => {
   await addin.gotoTaskpane();
   await addin.expectAuthedShell();
 
-  const direct = page.getByRole("button", { name: "Direct", exact: true });
-  const review = page.getByRole("button", { name: "Review", exact: true });
-  await expect(direct).toBeVisible();
+  // The toggle lives inside the chat input, next to the composer accessories:
+  // a single "Review" label with an on/off switch. On = approval flow,
+  // off = edits apply directly.
+  const composer = page.getByTestId("chat-input");
+  const review = composer.getByRole("switch", { name: "Review" });
   await expect(review).toBeVisible();
-  await expect(review).toHaveAttribute("aria-pressed", "true");
-  await expect(direct).toHaveAttribute("aria-pressed", "false");
+  await expect(review).toHaveAttribute("aria-checked", "true");
+  // And nothing renders in the floating header any more.
+  await expect(
+    page.getByTestId("floating-header").getByTestId("edit-apply-toggle"),
+  ).toHaveCount(0);
 });
 
 test("direct mode applies streamed edits to the document and accepts them immediately", async ({
@@ -45,8 +51,8 @@ test("direct mode applies streamed edits to the document and accepts them immedi
   await addin.gotoTaskpane({ documentText: DOCUMENT_TEXT });
   await addin.expectAuthedShell();
 
-  await page.getByRole("button", { name: "Direct", exact: true }).click();
-  await page.getByPlaceholder("Ask Mike…").fill("Fix the contract");
+  await page.getByRole("switch", { name: "Review" }).click();
+  await page.getByPlaceholder("How can I help?").fill("Fix the contract");
   await page.getByRole("button", { name: "Send" }).click();
 
   // Both edits are written as tracked changes and then accepted without any
@@ -92,7 +98,7 @@ test("review mode still routes streamed edits through pending cards", async ({
   await addin.gotoTaskpane({ documentText: DOCUMENT_TEXT });
   await addin.expectAuthedShell();
 
-  await page.getByPlaceholder("Ask Mike…").fill("Fix the contract");
+  await page.getByPlaceholder("How can I help?").fill("Fix the contract");
   await page.getByRole("button", { name: "Send" }).click();
 
   await expect
@@ -120,19 +126,16 @@ test("the chosen apply mode survives a task-pane reload", async ({
   await addin.gotoTaskpane();
   await addin.expectAuthedShell();
 
-  await page.getByRole("button", { name: "Direct", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Direct", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
+  const review = page.getByRole("switch", { name: "Review" });
+  await review.click();
+  await expect(review).toHaveAttribute("aria-checked", "false");
 
   await addin.reloadTaskpane();
   await addin.expectAuthedShell();
-  await expect(
-    page.getByRole("button", { name: "Direct", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
-  await expect(
-    page.getByRole("button", { name: "Review", exact: true }),
-  ).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByRole("switch", { name: "Review" })).toHaveAttribute(
+    "aria-checked",
+    "false",
+  );
 });
 
 test("a mid-stream toggle only affects edits that have not been applied yet", async ({
@@ -143,7 +146,7 @@ test("a mid-stream toggle only affects edits that have not been applied yet", as
   await addin.gotoTaskpane({ documentText: DOCUMENT_TEXT });
   await addin.expectAuthedShell();
 
-  await page.getByPlaceholder("Ask Mike…").fill("Fix the contract");
+  await page.getByPlaceholder("How can I help?").fill("Fix the contract");
   await page.getByRole("button", { name: "Send" }).click();
   // The mock stream arrives as one response body, so both edits apply under
   // whichever mode was active at send time — this guards state bleed rather
@@ -151,7 +154,7 @@ test("a mid-stream toggle only affects edits that have not been applied yet", as
   await expect
     .poll(async () => (await addin.wordCalls()).trackedChanges.length)
     .toBe(2);
-  await page.getByRole("button", { name: "Direct", exact: true }).click();
+  await page.getByRole("switch", { name: "Review" }).click();
 
   // Already-applied edits keep their pending review cards.
   await expect(

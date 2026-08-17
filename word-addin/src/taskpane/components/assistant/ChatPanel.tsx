@@ -21,6 +21,7 @@ interface ChatPanelProps {
   wordChatStorage: WordChatStorageMode;
   wordChatOwnerId: string;
   editApplyMode: WordEditApplyMode;
+  onEditApplyModeChange: (mode: WordEditApplyMode) => void;
 }
 
 /**
@@ -40,6 +41,7 @@ export function ChatPanel({
   wordChatStorage,
   wordChatOwnerId,
   editApplyMode,
+  onEditApplyModeChange,
 }: ChatPanelProps): React.ReactElement {
   const trackedEdits = useWordTrackedEdits({
     sessionKey,
@@ -67,6 +69,8 @@ export function ChatPanel({
       sessionKey={sessionKey}
       selectedWorkflow={selectedWorkflow}
       onSelectedWorkflowChange={onSelectedWorkflowChange}
+      editApplyMode={editApplyMode}
+      onEditApplyModeChange={onEditApplyModeChange}
     />
   );
 }

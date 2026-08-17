@@ -209,8 +209,6 @@ export default function App(): React.ReactElement {
         wordDocumentId={wordDocumentId}
         wordChatStorage={wordChatStorage.mode}
         wordChatOwnerId={wordChatOwnerId}
-        editApplyMode={editApply.mode}
-        onEditApplyModeChange={editApply.setMode}
       />
 
       <div className="absolute inset-x-3 top-14 z-30">
@@ -236,6 +234,7 @@ export default function App(): React.ReactElement {
             onChatStarted={markChatStarted}
             wordDocumentId={wordDocumentId}
             editApplyMode={editApply.mode}
+            onEditApplyModeChange={editApply.setMode}
             wordChatStorage={wordChatStorage.mode}
             wordChatOwnerId={wordChatOwnerId}
           />
