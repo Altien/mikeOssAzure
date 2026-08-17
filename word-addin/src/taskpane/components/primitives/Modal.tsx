@@ -1,7 +1,7 @@
 import React, { type ReactNode } from "react";
 import { ModalUI } from "@mike/modal-ui";
 import { cn } from "../../../shared/lib/utils";
-import { PillButton } from "./PillButton";
+import { PillButtonUI as PillButton } from "@mike/pill-button-ui";
 
 interface ModalProps {
   open: boolean;

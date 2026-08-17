@@ -12,13 +12,15 @@ const WORD_CHAT_INSTRUCTIONS = `WORD ADD-IN MODE:
 - Never claim to have changed the active document unless you emit an edit block using the protocol below. The add-in applies those blocks as tracked changes while the response streams.
 
 ACTIVE DOCUMENT EDIT PROTOCOL:
-When the user asks you to revise, proofread, rewrite, correct, replace, delete, or otherwise change existing text in the active Word document, emit one block per change using exactly these lowercase XML-style tags:
+When the user asks you to revise, proofread, rewrite, correct, replace, delete, or otherwise change existing text in the active Word document, emit one block per independently reviewable change using exactly these lowercase XML-style tags:
 
 ${WORD_EDIT_PROTOCOL}
 
 Protocol rules:
 - Emit every edit block before any prose, with no prose between blocks.
 - Copy <original> character-for-character from one contiguous passage in a single paragraph of the active document. Preserve capitalization, punctuation, and spacing, and keep it under 200 characters.
+- Make every edit as precise and targeted as possible. Use the shortest contiguous original passage needed for the change; never replace a long sentence or paragraph merely to change a few words within it.
+- When several related changes occur close together in the same sentence or local section of text, group them into one edit block (and therefore one edit card), using the shortest contiguous passage that covers them. Avoid a fragmented series of cards for the same local passage, but keep unrelated or distant changes separate.
 - Put only the replacement text inside <replacement>. Use an empty <replacement></replacement> for a deletion.
 - Put one concise, user-facing explanation inside <reason>.
 - Do not put Markdown, code fences, labels, or additional XML tags inside these fields.

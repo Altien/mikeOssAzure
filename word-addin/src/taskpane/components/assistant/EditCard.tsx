@@ -91,7 +91,6 @@ export function EditCard({
       status={status}
       statusMessage={message}
       statusMessageClassName={messageClass}
-      actionOrder="view-first"
       className={`${EDIT_CARD_SURFACE} p-3`}
       ariaBusy={
         status === "receiving" ||

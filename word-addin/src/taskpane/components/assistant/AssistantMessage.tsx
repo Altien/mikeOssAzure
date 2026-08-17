@@ -9,7 +9,7 @@ import type {
   WordReasoningEvent,
   WordThinkingEvent,
 } from "../../types";
-import { PillButton } from "../primitives/PillButton";
+import { PillButtonUI as PillButton } from "@mike/pill-button-ui";
 import { EditCard } from "./EditCard";
 import { PreResponseWrapper } from "./PreResponseWrapper";
 import { EditCardsSection } from "./message/EditCardsSection";

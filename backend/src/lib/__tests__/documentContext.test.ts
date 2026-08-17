@@ -329,6 +329,9 @@ describe("active Word document context", () => {
         expect(prompt).toContain("Microsoft Word");
         expect(prompt).toContain("read_document");
         expect(prompt).toContain(ACTIVE_WORD_DOCUMENT_LABEL);
+        expect(prompt).toContain("precise and targeted as possible");
+        expect(prompt).toContain("one edit block (and therefore one edit card)");
+        expect(prompt).toContain("keep unrelated or distant changes separate");
         expect(prompt).not.toContain("CONTRACT BODY TEXT");
     });
 

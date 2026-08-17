@@ -38,6 +38,9 @@
       ],
       "@mike/header-buttons-ui": [
         "../frontend/src/shared/ui/HeaderButtonsUI.tsx"
+      ],
+      "@mike/pill-button-ui": [
+        "../frontend/src/shared/ui/PillButtonUI.tsx"
       ]
     },
     "jsx": "react-jsx",

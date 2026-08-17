@@ -149,6 +149,7 @@ module.exports = async (_env, options) => {
         "@mike/header-buttons-ui": frontendSharedUi(
           "HeaderButtonsUI.tsx",
         ),
+        "@mike/pill-button-ui": frontendSharedUi("PillButtonUI.tsx"),
       },
     },
     module: {

@@ -2,7 +2,7 @@ import React from "react";
 import { Trash2 } from "lucide-react";
 import { ToggleSwitch } from "../../../shared/ui/toggle-switch";
 import { PageTitle } from "../primitives/PageTitle";
-import { PillButton } from "../primitives/PillButton";
+import { PillButtonUI as PillButton } from "@mike/pill-button-ui";
 import type { WordChatStorageMode } from "../../lib/wordChatSettings";
 import { Modal } from "../primitives/Modal";
 import { GlassCardUI } from "@mike/glass-card-ui";
