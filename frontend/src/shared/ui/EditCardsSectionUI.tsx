@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { Children, useState, type ReactNode } from "react";
 
 export interface EditCardsSectionUIProps {
     summary: string;
@@ -25,6 +25,10 @@ export function EditCardsSectionUI({
     defaultOpen = true,
 }: EditCardsSectionUIProps) {
     const [isOpen, setIsOpen] = useState(defaultOpen);
+
+    if (Children.count(children) === 1) {
+        return <>{children}</>;
+    }
 
     return (
         <div className={className}>

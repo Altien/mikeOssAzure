@@ -36,6 +36,9 @@ describe("EditCardUI", () => {
             "font-serif",
             "text-sm",
         );
+        expect(
+            screen.getAllByRole("button").map((button) => button.textContent),
+        ).toEqual(["Accept", "Reject", "View"]);
 
         await user.click(screen.getByRole("button", { name: "View" }));
         await user.click(screen.getByRole("button", { name: "Accept" }));
