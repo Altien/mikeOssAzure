@@ -1,5 +1,5 @@
 import React from "react";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2, Plus, Waypoints } from "lucide-react";
 import { ComposerButton } from "../primitives/ComposerButton";
 import {
   Dropdown,
@@ -16,6 +16,7 @@ interface DocumentSourceMenuProps {
   uploading?: boolean;
   onLocalFiles: () => void;
   onWebFiles: () => void;
+  onWorkflows: () => void;
 }
 
 export function DocumentSourceMenu({
@@ -24,6 +25,7 @@ export function DocumentSourceMenu({
   uploading = false,
   onLocalFiles,
   onWebFiles,
+  onWorkflows,
 }: DocumentSourceMenuProps): React.ReactElement {
   return (
     <Dropdown>
@@ -69,6 +71,10 @@ export function DocumentSourceMenu({
             className="h-4 w-4 shrink-0 object-contain"
           />
           Web files
+        </DropdownItem>
+        <DropdownItem onSelect={onWorkflows}>
+          <Waypoints className="h-4 w-4 shrink-0 text-gray-500" />
+          Workflows
         </DropdownItem>
       </DropdownContent>
     </Dropdown>
