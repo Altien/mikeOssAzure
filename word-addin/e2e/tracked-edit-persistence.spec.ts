@@ -131,7 +131,7 @@ test("rehydrates View from a hidden Word bookmark after the task pane reloads", 
   await view.click();
   await expect
     .poll(async () => (await addin.wordCalls()).revealedChanges)
-    .toEqual([{ text: REPLACEMENT, location: "Replace", original: ORIGINAL }]);
+    .toEqual([{ text: REPLACEMENT, location: "After", original: ORIGINAL }]);
   // The exact stored range is selected; View never searches for source text.
   expect((await addin.wordCalls()).searches).toBe(0);
 
@@ -146,7 +146,7 @@ test("rehydrates View from a hidden Word bookmark after the task pane reloads", 
   const calls = await addin.wordCalls();
   expect(calls.deletedBookmarks).toEqual([bookmark.name]);
   expect(calls.acceptedChanges).toEqual([
-    { text: REPLACEMENT, location: "Replace", original: ORIGINAL },
+    { text: REPLACEMENT, location: "After", original: ORIGINAL },
   ]);
 });
 
@@ -287,7 +287,7 @@ test("keeps review controls when the bookmark holds an unrelated sibling revisio
   await expect(page.getByText("Accepted.", { exact: true })).toBeVisible();
   const calls = await addin.wordCalls();
   expect(calls.acceptedChanges).toEqual([
-    { text: REPLACEMENT, location: "Replace", original: ORIGINAL },
+    { text: REPLACEMENT, location: "After", original: ORIGINAL },
   ]);
   expect(calls.rejectedChanges).toEqual([]);
   expect(calls.searches).toBe(0);

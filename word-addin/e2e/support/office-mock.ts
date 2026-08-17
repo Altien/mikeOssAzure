@@ -530,14 +530,20 @@ export function installOfficeMock(seed: OfficeSeed): void {
       const groupId = `revision-group-${documentState.groupSequence}`;
       const revisions: StoredRevision[] = [
         { id: "", groupId, type: "Deleted", text: original, resolution: null },
-        {
-          id: "",
-          groupId,
-          type: "Added",
-          // Real Word exposes inserted paragraph marks as carriage returns.
-          text: replacement.replace(/\n/g, "\r"),
-          resolution: null,
-        },
+        // A pure deletion produces no Added revision in real Word.
+        ...(replacement.length > 0
+          ? [
+              {
+                id: "",
+                groupId,
+                type: "Added" as const,
+                // Real Word exposes inserted paragraph marks as carriage
+                // returns.
+                text: replacement.replace(/\n/g, "\r"),
+                resolution: null,
+              },
+            ]
+          : []),
       ];
       for (const revision of revisions) {
         documentState.revisionSequence++;
@@ -664,6 +670,26 @@ export function installOfficeMock(seed: OfficeSeed): void {
               generatedRevisionIds = [];
             }
             return makeSearchRange("Inserted");
+          };
+          // Tracked deletion of the matched passage. The app authors a
+          // replacement as insertText(after) + delete(); when insertText
+          // already materialized the revision group (which the mock builds
+          // whole, mirroring the host's replace pair), this is a no-op —
+          // but a pure deletion (no insert) materializes a Deleted-only
+          // group here.
+          range.delete = () => {
+            if (
+              doc.changeTrackingMode === ChangeTrackingMode.trackAll &&
+              generatedRevisionIds.length === 0
+            ) {
+              const entry = recordWrite("", "Delete", query);
+              lastWrite = entry;
+              generatedRevisionIds = createStoredRevisionGroup(
+                entry,
+                query,
+                "",
+              );
+            }
           };
           // Formatting the found passage: each font-property write is
           // recorded, and the first one under TrackAll materializes one

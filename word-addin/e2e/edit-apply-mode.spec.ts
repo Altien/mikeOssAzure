@@ -60,10 +60,10 @@ test("direct mode applies streamed edits to the document and accepts them immedi
   await expect
     .poll(async () => (await addin.wordCalls()).acceptedChanges)
     .toEqual([
-      { text: "The Supplier", location: "Replace", original: "The Suplier" },
+      { text: "The Supplier", location: "After", original: "The Suplier" },
       {
         text: "shall deliver the goods",
-        location: "Replace",
+        location: "After",
         original: "shall deliver goods",
       },
     ]);
@@ -115,7 +115,7 @@ test("review mode still routes streamed edits through pending cards", async ({
     .click();
   await expect(page.getByText("Accepted.", { exact: true })).toBeVisible();
   expect((await addin.wordCalls()).acceptedChanges).toEqual([
-    { text: "The Supplier", location: "Replace", original: "The Suplier" },
+    { text: "The Supplier", location: "After", original: "The Suplier" },
   ]);
 });
 

@@ -552,6 +552,181 @@ async function resolveEditThroughBody(
   });
 }
 
+/**
+ * Desktop Word ships a second, richer revision surface (WordApiDesktop 1.4:
+ * Document.revisions / Word.Revision) on a separate host code path from
+ * getTrackedChanges(), which office-js#5188 breaks on Mac (Deleted revisions
+ * report empty text, or are missing entirely). Prefer it where supported.
+ */
+function supportsDesktopRevisions(): boolean {
+  try {
+    return (
+      Office.context?.requirements?.isSetSupported?.("WordApiDesktop", "1.4") ??
+      false
+    );
+  } catch {
+    return false;
+  }
+}
+
+const FORMAT_REVISION_TYPES = new Set([
+  "Property",
+  "ParagraphProperty",
+  "Style",
+  "StyleDefinition",
+]);
+
+/**
+ * Document-level fallback for desktop hosts, mirroring
+ * resolveEditThroughBody()'s contract and exactly-one-per-side scope safety,
+ * but reading Word.Revision objects. Two desktop-specific rules:
+ * - A Delete revision's text may read empty on Mac (office-js#5188) even
+ *   though the revision is real; an empty-text Delete may stand in for the
+ *   edit's deleted side only when it is the SOLE pending Delete revision in
+ *   the document, so the match stays provably unambiguous.
+ * - Formatting revisions arrive as Property/Style types rather than
+ *   "Formatted", with the same text-based matching rules as the body path.
+ */
+interface DocumentRevisionView {
+  revision: Word.Revision;
+  type: string;
+  text: string;
+}
+
+/**
+ * Select, from the document's Word.Revision inventory, the exact revisions
+ * that provably belong to this edit — or null when no unambiguous selection
+ * exists. Mirrors pickEditRevisionSubset()'s exactly-one-per-side scope
+ * safety for the desktop revision surface.
+ */
+function pickEditDocumentRevisions(
+  views: readonly DocumentRevisionView[],
+  edit: RedlineEdit,
+): DocumentRevisionView[] | null {
+  const wordReplacement = normalizeBreaks(toWordText(edit.replacement));
+  const original = normalizeBreaks(edit.original);
+  const sides = editRevisionSides(edit);
+
+  const added = views.filter(
+    (view) => view.type === "Insert" && view.text === wordReplacement,
+  );
+  const allDeletes = views.filter((view) => view.type === "Delete");
+  const deletedExact = allDeletes.filter((view) => view.text === original);
+  const soleDelete = allDeletes.length === 1 ? allDeletes[0] : undefined;
+  const deleted =
+    deletedExact.length > 0
+      ? deletedExact
+      : soleDelete && soleDelete.text.length === 0
+        ? [soleDelete]
+        : [];
+  const styleScoped = (edit.format ?? []).some(isParagraphStyleFormat);
+  const formatted = views.filter(
+    (view) =>
+      FORMAT_REVISION_TYPES.has(view.type) &&
+      (styleScoped
+        ? view.text.length === 0 || view.text.includes(original)
+        : view.text === original),
+  );
+
+  if (sides.added && added.length !== 1) return null;
+  if (sides.deleted && deleted.length !== 1) return null;
+  if (sides.formatted && formatted.length === 0) return null;
+  // Same rule as the body path: empty-text style revisions cannot
+  // disambiguate two pending paragraph-format revisions document-wide.
+  if (sides.formatted && styleScoped && formatted.length !== 1) return null;
+  const targets = [
+    ...(sides.added ? added : []),
+    ...(sides.deleted ? deleted : []),
+    ...(sides.formatted ? formatted : []),
+  ];
+  return targets.length > 0 ? targets : null;
+}
+
+/**
+ * pickEditDocumentRevisions plus one escalation: when several pending Delete
+ * revisions all read empty text (office-js#5188 hides deleted text on Mac),
+ * the edit's own Delete is identified by position — split authoring writes
+ * the insertion immediately after the deleted original, so exactly one empty
+ * Delete revision is adjacent to the edit's uniquely matched Insert.
+ */
+async function pickEditDocumentRevisionsInContext(
+  context: Word.RequestContext,
+  views: readonly DocumentRevisionView[],
+  edit: RedlineEdit,
+): Promise<DocumentRevisionView[] | null> {
+  const direct = pickEditDocumentRevisions(views, edit);
+  if (direct) return direct;
+
+  const sides = editRevisionSides(edit);
+  if (!sides.added || !sides.deleted) return null;
+  const wordReplacement = normalizeBreaks(toWordText(edit.replacement));
+  const added = views.filter(
+    (view) => view.type === "Insert" && view.text === wordReplacement,
+  );
+  const addedMatch = added.length === 1 ? added[0] : undefined;
+  if (!addedMatch) return null;
+  const emptyDeletes = views.filter(
+    (view) => view.type === "Delete" && view.text.length === 0,
+  );
+  if (emptyDeletes.length < 2) return null;
+
+  const relations = emptyDeletes.map((view) =>
+    view.revision.range.compareLocationWith(addedMatch.revision.range),
+  );
+  await context.sync();
+  const adjacent = emptyDeletes.filter((_view, index) => {
+    const relation = String(relations[index]?.value ?? "").toLowerCase();
+    return relation === "adjacentbefore" || relation === "adjacentafter";
+  });
+  if (adjacent.length !== 1) return null;
+  const adjacentDelete = adjacent[0];
+  return adjacentDelete ? [addedMatch, adjacentDelete] : null;
+}
+
+/** Load the document's pending revisions as plain views (two syncs). */
+async function loadDocumentRevisionViews(
+  context: Word.RequestContext,
+): Promise<DocumentRevisionView[]> {
+  const collection = context.document.revisions;
+  collection.load("items/type");
+  await context.sync();
+  if (collection.items.length === 0) return [];
+  for (const revision of collection.items) revision.range.load("text");
+  await context.sync();
+  return collection.items.map((revision) => ({
+    revision,
+    type: String(revision.type),
+    text: normalizeBreaks(revision.range.text ?? ""),
+  }));
+}
+
+async function resolveEditThroughDocumentRevisions(
+  decision: TrackedEditDecision,
+  edit: RedlineEdit,
+): Promise<"resolved" | "changed" | "empty"> {
+  return Word.run(async (context) => {
+    const views = await loadDocumentRevisionViews(context);
+    if (views.length === 0) return "empty" as const;
+    console.debug(
+      `[tracked-edit/resolve] document revisions ${JSON.stringify(
+        views.map(({ type, text }) => ({ type, textLength: text.length })),
+      )}`,
+    );
+    const targets = await pickEditDocumentRevisionsInContext(
+      context,
+      views,
+      edit,
+    );
+    if (!targets) return "changed" as const;
+    for (const view of targets) {
+      if (decision === "accept") view.revision.accept();
+      else view.revision.reject();
+    }
+    await context.sync();
+    return "resolved" as const;
+  });
+}
+
 /** Resolve one retained logical edit without touching any other revisions. */
 async function resolveTrackedEditNow(
   handle: TrackedEditHandle,
@@ -592,6 +767,7 @@ async function resolveTrackedEditNow(
         // live revisions and verify them by content, so a stale child batch
         // is recoverable rather than terminal.
         childBatchFailure = error;
+        console.debug("[tracked-edit/resolve] child batch failed", error);
       }
     }
     if (!resolvedViaChildren) {
@@ -649,6 +825,7 @@ async function resolveTrackedEditNow(
           }
         } catch (error) {
           anchorFailure = error;
+          console.debug("[tracked-edit/resolve] anchor scan failed", error);
         }
       }
 
@@ -663,11 +840,14 @@ async function resolveTrackedEditNow(
         // routinely hides the Deleted half from them). Fall through to the
         // document-level collection, which reports revisions reliably.
         let bodyOutcome: "resolved" | "changed" | "empty";
+        const viaDesktopRevisions = supportsDesktopRevisions();
         try {
-          bodyOutcome = await resolveEditThroughBody(
-            decision,
-            entry.expectedEdit,
-          );
+          bodyOutcome = viaDesktopRevisions
+            ? await resolveEditThroughDocumentRevisions(
+                decision,
+                entry.expectedEdit,
+              )
+            : await resolveEditThroughBody(decision, entry.expectedEdit);
         } catch (error) {
           throw (
             anchorFailure ??
@@ -675,13 +855,22 @@ async function resolveTrackedEditNow(
             (childBatchFailure ?? new NoRemainingRevisionsError())
           );
         }
-        console.debug(`[tracked-edit/resolve] body fallback ${bodyOutcome}`);
+        console.debug(
+          `[tracked-edit/resolve] ${
+            viaDesktopRevisions ? "document revisions" : "body"
+          } fallback ${bodyOutcome}`,
+        );
         if (bodyOutcome !== "resolved") {
+          // The fallback read the live document and reached a semantic
+          // verdict; a dead retained proxy from the anchor pass must not
+          // mask it behind an opaque host exception.
+          if (bodyOutcome === "changed" || sawAnyPending) {
+            throw new ChangedRevisionSetError();
+          }
           throw (
             anchorFailure ??
-            (bodyOutcome === "changed" || sawAnyPending
-              ? new ChangedRevisionSetError()
-              : (childBatchFailure ?? new NoRemainingRevisionsError()))
+            childBatchFailure ??
+            new NoRemainingRevisionsError()
           );
         }
       } else if (sidesNeeded.formatted && formattedAnchor) {
@@ -754,6 +943,7 @@ async function resolveTrackedEditNow(
     // Office batches can fail after executing earlier queued commands. Never
     // retry stale proxies, but rebuild a fresh handle from the durable bookmark
     // when Word still reports the exact expected revision set.
+    console.error("[tracked-edit/resolve] failure", error);
     pendingTrackedEdits.delete(handle);
     try {
       await Word.run(trackedObjectsFor(entry), async (context) => {
@@ -922,6 +1112,24 @@ async function restoreTrackedEditNow(
         await context.sync();
         editRevisions = pickEditRevisionSubset(bodyCollection.items, edit);
         managedCollection = bodyCollection;
+      }
+      if (!editRevisions && supportsDesktopRevisions()) {
+        // Desktop hosts under-report Deleted halves through getTrackedChanges
+        // (office-js#5188); a match against the Word.Revision surface keeps
+        // the card actionable with no retained revision proxies — resolution
+        // re-verifies through that same surface at decision time.
+        const views = await loadDocumentRevisionViews(context);
+        if (await pickEditDocumentRevisionsInContext(context, views, edit)) {
+          collection.track();
+          range.track();
+          await context.sync();
+          return {
+            status: "restored" as const,
+            collection,
+            changes: [] as Word.TrackedChange[],
+            range,
+          };
+        }
       }
       if (!editRevisions) {
         return { status: "view-only" as const };
@@ -1116,6 +1324,42 @@ async function restoreTrackedEditsNow(
             changes: subset,
             range: entry.range,
           });
+        }
+        if (bodyFallback.length > 0 && supportsDesktopRevisions()) {
+          // Desktop hosts under-report Deleted halves through
+          // getTrackedChanges (office-js#5188), so verify these candidates
+          // against the Word.Revision surface instead. A verified candidate
+          // restores with no retained revision proxies — resolution
+          // re-verifies through the same surface at decision time — and the
+          // consumed set keeps two edits from claiming the same revision.
+          const views = await loadDocumentRevisionViews(context);
+          const consumedRevisions = new Set<Word.Revision>();
+          for (const entry of [...bodyFallback]) {
+            const targets = await pickEditDocumentRevisionsInContext(
+              context,
+              views,
+              entry.candidate.edit,
+            );
+            if (
+              !targets ||
+              targets.some((target) => consumedRevisions.has(target.revision))
+            ) {
+              continue;
+            }
+            for (const target of targets) {
+              consumedRevisions.add(target.revision);
+            }
+            entry.collection.track();
+            entry.range.track();
+            trackingQueued = true;
+            byCandidate.set(entry.candidate, {
+              status: "restored",
+              collection: entry.collection,
+              changes: [],
+              range: entry.range,
+            });
+            bodyFallback.splice(bodyFallback.indexOf(entry), 1);
+          }
         }
         if (bodyFallback.length > 0) {
           // One shared document-level read verifies the candidates whose
@@ -1605,15 +1849,25 @@ export function useWordDoc() {
                       }
                     }
                   } else {
-                    // The range Word returns for the inserted text is the
-                    // sturdier anchor: replacing a search range can leave
-                    // that original proxy stale, which Word then reports as
-                    // a bare exception.
-                    const inserted = match.insertText(
-                      wordReplacement,
-                      Word.InsertLocation.replace,
-                    );
-                    if (inserted) insertedRanges.push(inserted);
+                    // Author the replacement as two tracked operations —
+                    // insert the new text after the match, then delete the
+                    // matched original — never insertText(Replace). Word for
+                    // Mac decomposes a tracked Replace into an untracked
+                    // deletion plus a tracked insertion (office-js#5188
+                    // family), leaving no Deleted revision to review or
+                    // resolve; separate insert/delete ops are the only form
+                    // every host records as a full revision pair. The range
+                    // Word returns for the inserted text is also the sturdier
+                    // anchor: a replaced search range can go stale, which
+                    // Word then reports as a bare exception.
+                    if (wordReplacement.length > 0) {
+                      const inserted = match.insertText(
+                        wordReplacement,
+                        Word.InsertLocation.after,
+                      );
+                      if (inserted) insertedRanges.push(inserted);
+                    }
+                    match.delete();
                   }
                   const collection = match.getTrackedChanges();
                   collection.load("items");

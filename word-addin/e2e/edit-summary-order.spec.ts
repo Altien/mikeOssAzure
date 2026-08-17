@@ -98,7 +98,7 @@ test("keeps the summary hidden until the streamed edit has been applied", async 
   await expect
     .poll(async () => (await addin.wordCalls()).trackedChanges)
     .toEqual([
-      { text: "The Supplier", location: "Replace", original: "The Suplier" },
+      { text: "The Supplier", location: "After", original: "The Suplier" },
     ]);
   await expect(page.getByText(SUMMARY, { exact: true })).toHaveCount(0);
 
