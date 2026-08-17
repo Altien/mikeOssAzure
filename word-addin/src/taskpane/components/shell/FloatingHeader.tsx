@@ -24,11 +24,7 @@ import {
   DropdownSeparator,
   DropdownTrigger,
 } from "../primitives/Dropdown";
-import type {
-  WordChatStorageMode,
-  WordEditApplyMode,
-} from "../../lib/wordChatSettings";
-import { TabPillButton } from "../../../shared/ui/tab-pill-button";
+import type { WordChatStorageMode } from "../../lib/wordChatSettings";
 
 export type AddinSection =
   | "chat"
@@ -53,8 +49,6 @@ interface FloatingHeaderProps {
   wordDocumentId: string;
   wordChatStorage: WordChatStorageMode;
   wordChatOwnerId: string;
-  editApplyMode: WordEditApplyMode;
-  onEditApplyModeChange: (mode: WordEditApplyMode) => void;
 }
 
 const SECTIONS = [
@@ -89,8 +83,6 @@ export function FloatingHeader({
   wordDocumentId,
   wordChatStorage,
   wordChatOwnerId,
-  editApplyMode,
-  onEditApplyModeChange,
 }: FloatingHeaderProps): React.ReactElement {
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -183,30 +175,6 @@ export function FloatingHeader({
           </LiquidActionRow>
         )}
       </div>
-
-      {section === "chat" && (
-        <div
-          className="pointer-events-auto relative z-10 flex items-center gap-1"
-          role="group"
-          aria-label="How edits are applied"
-          data-testid="edit-apply-toggle"
-        >
-          <TabPillButton
-            active={editApplyMode === "direct"}
-            title="Edits are applied to the document immediately"
-            onClick={() => onEditApplyModeChange("direct")}
-          >
-            Direct
-          </TabPillButton>
-          <TabPillButton
-            active={editApplyMode === "approval"}
-            title="Edits arrive as tracked changes for you to accept or reject"
-            onClick={() => onEditApplyModeChange("approval")}
-          >
-            Review
-          </TabPillButton>
-        </div>
-      )}
 
       {section === "chat" ? (
         <HeaderButtonsUI className="pointer-events-auto relative z-10">

@@ -20,6 +20,8 @@ import {
   SUPPORTED_DOCUMENT_ACCEPT,
 } from "../../lib/documentUpload";
 import { ComposerButton } from "../primitives/ComposerButton";
+import { ToggleSwitch } from "../../../shared/ui/toggle-switch";
+import type { WordEditApplyMode } from "../../lib/wordChatSettings";
 import { AddDocumentsModal } from "../documents/AddDocumentsModal";
 import { FileTypeIcon } from "../documents/DirectoryIcons";
 import { DocumentSourceMenu } from "../documents/DocumentSourceMenu";
@@ -52,6 +54,8 @@ interface ChatInputProps {
   onDismissRequestError: () => void;
   onTurnReady: () => void;
   containerRef: React.Ref<HTMLDivElement>;
+  editApplyMode: WordEditApplyMode;
+  onEditApplyModeChange: (mode: WordEditApplyMode) => void;
 }
 
 export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
@@ -67,6 +71,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       onDismissRequestError,
       onTurnReady,
       containerRef,
+      editApplyMode,
+      onEditApplyModeChange,
     },
     ref,
   ): React.ReactElement {
@@ -348,6 +354,23 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
                     <Waypoints className="h-3.5 w-3.5" />
                   )}
                 </ComposerButton>
+                {/* On: edits arrive as tracked changes to accept or reject.
+                    Off: edits are applied to the document immediately. */}
+                <ToggleSwitch
+                  checked={editApplyMode === "approval"}
+                  onCheckedChange={(reviewOn) =>
+                    onEditApplyModeChange(reviewOn ? "approval" : "direct")
+                  }
+                  title={
+                    editApplyMode === "approval"
+                      ? "Review is on — edits arrive as tracked changes for you to accept or reject"
+                      : "Review is off — edits are applied to the document immediately"
+                  }
+                  data-testid="edit-apply-toggle"
+                  className="ml-1 shrink-0 text-xs text-gray-500"
+                >
+                  Review
+                </ToggleSwitch>
               </div>
             }
             rightSlot={
