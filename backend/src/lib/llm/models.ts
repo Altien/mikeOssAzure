@@ -100,8 +100,17 @@ export function isAllowedModelId(id: string): boolean {
     return ALL_MODELS.has(id) || id.startsWith(AZURE_OPENAI_PREFIX) || /^(?:openrouter|vercel)\/[^\s/]+\/[^\s]+$/.test(id);
 }
 
+// Renamed/retired static ids → their current equivalents. Stored preferences
+// and localStorage selections outlive catalog renames; mapping here keeps an
+// old saved value working instead of silently kicking it to the fallback.
+export const LEGACY_MODEL_IDS: Record<string, string> = {
+    "gemini-3.1-flash-lite-preview": "gemini-3.5-flash-lite",
+    "gpt-5.4-lite": "gpt-5.4-mini",
+};
+
 export function resolveModel(id: string | null | undefined, fallback: string): string {
-    if (id && isAllowedModelId(id)) return id;
+    const canonical = id ? (LEGACY_MODEL_IDS[id] ?? id) : id;
+    if (canonical && isAllowedModelId(canonical)) return canonical;
     return fallback;
 }
 

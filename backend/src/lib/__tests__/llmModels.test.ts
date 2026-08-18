@@ -126,6 +126,17 @@ describe("resolveModel", () => {
         }
     });
 
+    it("maps renamed legacy ids to their current equivalents", () => {
+        // Stored preferences outlive catalog renames; without the mapping the
+        // saved value silently degrades to the fallback.
+        expect(
+            resolveModel("gemini-3.1-flash-lite-preview", DEFAULT_MAIN_MODEL),
+        ).toBe("gemini-3.5-flash-lite");
+        expect(resolveModel("gpt-5.4-lite", DEFAULT_MAIN_MODEL)).toBe(
+            "gpt-5.4-mini",
+        );
+    });
+
     it("accepts namespaced OpenRouter model ids", () => {
         expect(
             resolveModel(

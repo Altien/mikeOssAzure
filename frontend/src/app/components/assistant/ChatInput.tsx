@@ -98,12 +98,19 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         id: string;
         title: string;
     } | null>(null);
-    const [model, setModel] = useSelectedModel();
     const {
         profile,
         loading: profileLoading,
         apiKeysDegraded,
     } = useUserProfile();
+    const [model, setModel] = useSelectedModel(
+        profile
+            ? {
+                  openRouterModels: profile.openRouterModels,
+                  vercelModels: profile.vercelModels,
+              }
+            : null,
+    );
     // Degraded profile → key availability is UNKNOWN; undefined here makes
     // every key gate (submit check + model toggle) fail open instead of
     // treating "we couldn't ask" as "no keys configured".
