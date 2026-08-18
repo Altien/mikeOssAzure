@@ -30,20 +30,34 @@ export function isRouterModelSelected(
     return selection.includes(catalogId);
 }
 
+/** Router labels as the settings UI names them, for user-facing messages. */
+const ROUTER_LABELS: Record<RouterSlug, string> = {
+    openrouter: "OpenRouter",
+    vercel: "Vercel AI Gateway",
+};
+
 /**
  * Request-time model resolution for chat-style requests. Router-prefixed ids
  * are accepted by SHAPE in resolveModel, so on their own they would let any
  * authenticated user hand-craft a request that runs an arbitrary, arbitrarily
  * expensive gateway model on the operator's env key. This choke point
  * additionally requires a router model to be in the requesting user's saved
- * selection; anything else degrades exactly like an invalid model id — fall
- * back to the caller's default — with a warning for operators.
+ * selection.
+ *
+ * `onOutsideSelection` picks what "not in the selection" means to the caller:
+ * - "throw" (the request path): the user named this model in THIS request, so
+ *   quietly answering with a different one is a lie about which model wrote
+ *   the response. Fail loudly with an actionable message instead.
+ * - "fallback" (the default, for stored preferences): a preference the user
+ *   set long ago must not brick every request; degrade to the caller's
+ *   default exactly like an invalid model id, with a warning for operators.
  */
 export async function resolveRequestedModel(
     requested: string | null | undefined,
     fallback: string,
     userId: string,
     db: Db = createServerSupabase(),
+    onOutsideSelection: "throw" | "fallback" = "fallback",
 ): Promise<string> {
     const resolved = resolveModel(requested, fallback);
     const router = routerForModelId(resolved);
@@ -51,6 +65,11 @@ export async function resolveRequestedModel(
     const selection = await getUserRouterModels(userId, router, db);
     if (selection.includes(resolved.slice(router.length + 1))) {
         return resolved;
+    }
+    if (onOutsideSelection === "throw") {
+        throw new Error(
+            `Model ${resolved} is not in your saved ${ROUTER_LABELS[router]} models — add it in Settings → BYOK → Routers.`,
+        );
     }
     console.warn(
         `[router-models] user ${userId} requested ${router} model "${resolved}" outside their saved selection; using ${fallback}`,

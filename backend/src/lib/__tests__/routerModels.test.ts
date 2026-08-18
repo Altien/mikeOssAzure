@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
     getUserRouterModels,
     replaceUserRouterModels,
+    resolveRequestedModel,
 } from "../routerModels";
 
 function queryResult(data: unknown[], error: unknown = null) {
@@ -110,5 +111,52 @@ describe("router model persistence", () => {
         await expect(
             replaceUserRouterModels("user-1", "openrouter", [], db as never),
         ).rejects.toThrow("write failed");
+    });
+});
+
+describe("resolveRequestedModel outside-selection behaviour", () => {
+    const db = (rows: { model_id: string }[]) => ({
+        from: vi.fn(() => queryResult(rows)),
+    });
+
+    it("returns a model that is in the saved selection", async () => {
+        await expect(
+            resolveRequestedModel(
+                "openrouter/allowed/model",
+                "gemini-3-flash-preview",
+                "user-1",
+                db([{ model_id: "allowed/model" }]) as never,
+                "throw",
+            ),
+        ).resolves.toBe("openrouter/allowed/model");
+    });
+
+    it("throws an actionable error for an explicitly requested non-member", async () => {
+        await expect(
+            resolveRequestedModel(
+                "vercel/pricy/frontier",
+                "gemini-3-flash-preview",
+                "user-1",
+                db([]) as never,
+                "throw",
+            ),
+        ).rejects.toThrow(
+            "Model vercel/pricy/frontier is not in your saved Vercel AI Gateway models — add it in Settings → BYOK → Routers.",
+        );
+    });
+
+    it("still degrades silently for stored preferences", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        await expect(
+            resolveRequestedModel(
+                "openrouter/pricy/frontier",
+                "gemini-3-flash-preview",
+                "user-1",
+                db([]) as never,
+            ),
+        ).resolves.toBe("gemini-3-flash-preview");
+        expect(warn).toHaveBeenCalled();
+        warn.mockRestore();
     });
 });
