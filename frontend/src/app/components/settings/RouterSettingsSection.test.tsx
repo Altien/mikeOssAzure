@@ -150,7 +150,7 @@ describe("RouterSettingsSection", () => {
         );
     });
 
-    it("treats Enter as a no-op while the text is not id-shaped", async () => {
+    it("explains why Enter did nothing while the text is not id-shaped", async () => {
         render(<RouterSettingsSection />);
         const input = screen.getByRole("combobox", {
             name: "OpenRouter models",
@@ -161,8 +161,52 @@ describe("RouterSettingsSection", () => {
         fireEvent.keyDown(input, { key: "Enter" });
 
         expect(updateOpenRouterModels).not.toHaveBeenCalled();
-        // The search text stays so the user can keep narrowing the catalog.
+        // The search text stays so the user can keep narrowing the catalog…
         expect(input).toHaveValue("qwen");
+        // …but silence would read as a broken key. Say what is wrong.
+        expect(
+            screen.getByText(/is not a model ID/),
+        ).toBeInTheDocument();
+    });
+
+    it("rejects an over-long typed id client-side with a length message", async () => {
+        render(<RouterSettingsSection />);
+        const input = screen.getByRole("combobox", {
+            name: "OpenRouter models",
+        });
+        await waitFor(() => expect(getOpenRouterModels).toHaveBeenCalled());
+
+        fireEvent.change(input, {
+            target: { value: `vendor/${"m".repeat(220)}` },
+        });
+        fireEvent.keyDown(input, { key: "Enter" });
+
+        expect(updateOpenRouterModels).not.toHaveBeenCalled();
+        expect(
+            screen.getByText("Model IDs are at most 200 characters."),
+        ).toBeInTheDocument();
+    });
+
+    it("keeps the add-verbatim hint outside the listbox", async () => {
+        // ARIA: a listbox may only contain option/group children. A stray div
+        // inside it makes the option count and index reported to assistive
+        // tech disagree with what aria-activedescendant points at.
+        render(<RouterSettingsSection />);
+        const input = screen.getByRole("combobox", {
+            name: "OpenRouter models",
+        });
+        await waitFor(() => expect(getOpenRouterModels).toHaveBeenCalled());
+
+        fireEvent.change(input, { target: { value: "qwen/qwen-2" } });
+
+        const listbox = screen.getByRole("listbox", {
+            name: "OpenRouter model catalog",
+        });
+        const hint = screen.getByText("Press Enter to add this model ID.");
+        expect(listbox.contains(hint)).toBe(false);
+        for (const child of Array.from(listbox.children)) {
+            expect(child.getAttribute("role")).toBe("option");
+        }
     });
 
     it("adds a router-slug catalog id verbatim instead of rejecting it", async () => {
@@ -223,5 +267,17 @@ describe("normalizeTypedModelId", () => {
         expect(normalizeTypedModelId("auto", "openrouter")).toBeNull();
         expect(normalizeTypedModelId("two words/x", "openrouter")).toBeNull();
         expect(normalizeTypedModelId("", "openrouter")).toBeNull();
+    });
+
+    it("enforces the backend's 200-character model_id limit", () => {
+        // user_router_models CHECKs char_length(model_id) between 1 and 200,
+        // so anything longer is a guaranteed 400 — catch it where the user is
+        // still looking at the box they typed it into.
+        const at200 = `vendor/${"m".repeat(193)}`;
+        expect(at200).toHaveLength(200);
+        expect(normalizeTypedModelId(at200, "openrouter")).toBe(at200);
+        expect(
+            normalizeTypedModelId(`${at200}m`, "openrouter"),
+        ).toBeNull();
     });
 });

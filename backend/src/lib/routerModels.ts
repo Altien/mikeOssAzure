@@ -83,6 +83,12 @@ export async function resolveRequestedModel(
 // raises undefined_table (42P01); PostgREST reports a relation missing from
 // its schema cache as PGRST205 (the analog of the 42703 missing-column shape
 // selectProfile already tolerates).
+//
+// BOTH arms require the message to name user_router_models. Neither code
+// means "THIS table is missing" on its own — a policy, view or trigger that
+// references some other dropped relation raises 42P01 from this query too,
+// and answering that with an empty selection would turn a schema fault into
+// a silent "you have no router models".
 function isMissingRouterModelsTable(error: unknown): boolean {
     const record =
         error && typeof error === "object"
@@ -91,8 +97,8 @@ function isMissingRouterModelsTable(error: unknown): boolean {
     const code = typeof record.code === "string" ? record.code : "";
     const message = typeof record.message === "string" ? record.message : "";
     return (
-        code === "42P01" ||
-        (code === "PGRST205" && message.includes("user_router_models"))
+        (code === "42P01" || code === "PGRST205") &&
+        message.includes("user_router_models")
     );
 }
 

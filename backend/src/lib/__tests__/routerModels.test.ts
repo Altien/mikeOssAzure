@@ -70,6 +70,25 @@ describe("router model persistence", () => {
         },
     );
 
+    it("still surfaces an undefined_table error about a different relation", async () => {
+        // 42P01 says "some relation is missing", not "user_router_models is
+        // missing" — a policy or view referencing another dropped table raises
+        // it too. Swallowing that would report an empty selection for a real
+        // schema fault, exactly what the PGRST205 arm already guards against.
+        const db = {
+            from: vi.fn(() =>
+                queryResult([], {
+                    code: "42P01",
+                    message: 'relation "public.user_profiles" does not exist',
+                }),
+            ),
+        };
+
+        await expect(
+            getUserRouterModels("user-1", "openrouter", db as never),
+        ).rejects.toMatchObject({ code: "42P01" });
+    });
+
     it("still surfaces unrelated read errors", async () => {
         const db = {
             from: vi.fn(() =>

@@ -64,6 +64,7 @@ export function useSelectedModel(
 
     useEffect(() => {
         if (!openRouterModels || !vercelModels) return;
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- reconciles state with data that arrives asynchronously (the loaded router lists); the functional update is a no-op unless the stored selection is genuinely stale, so it cannot cascade
         setModelState((current) => {
             const router = current.startsWith("openrouter/")
                 ? "openrouter"

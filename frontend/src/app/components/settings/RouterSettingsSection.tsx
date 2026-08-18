@@ -49,19 +49,35 @@ function modelCostLabel(model: RouterCatalogModel): string | null {
 const CATALOG_MODEL_ID_RE = /^[^\s/]+\/[^\s]+$/;
 
 /**
- * Canonical form of a hand-typed model id, or null when it isn't id-shaped.
- * The router slug is stripped only when the remainder is still a full
- * vendor/model id: some catalog ids legitimately start with the router's own
- * slug (OpenRouter's "openrouter/auto", Vercel's "vercel/v0-1.5-md") and must
- * be kept verbatim — mirrors the backend's normalizeRouterModels.
+ * user_router_models CHECKs `char_length(model_id) between 1 and 200`, so a
+ * longer id is a guaranteed 400 from the profile PATCH. Enforcing it here
+ * turns that round trip into an immediate, specific message.
  */
+export const MAX_MODEL_ID_LENGTH = 200;
+
+/**
+ * The id a typed string would become, before it is validated. The router slug
+ * is stripped only when the remainder is still a full vendor/model id: some
+ * catalog ids legitimately start with the router's own slug (OpenRouter's
+ * "openrouter/auto", Vercel's "vercel/v0-1.5-md") and must be kept verbatim —
+ * mirrors the backend's normalizeRouterModels.
+ */
+function typedModelCandidate(
+    input: string,
+    provider: "openrouter" | "vercel",
+): string {
+    const raw = input.trim();
+    const stripped = raw.replace(new RegExp(`^${provider}/`), "");
+    return CATALOG_MODEL_ID_RE.test(stripped) ? stripped : raw;
+}
+
+/** Canonical form of a hand-typed model id, or null when it is not usable. */
 export function normalizeTypedModelId(
     input: string,
     provider: "openrouter" | "vercel",
 ): string | null {
-    const raw = input.trim();
-    const stripped = raw.replace(new RegExp(`^${provider}/`), "");
-    const model = CATALOG_MODEL_ID_RE.test(stripped) ? stripped : raw;
+    const model = typedModelCandidate(input, provider);
+    if (model.length > MAX_MODEL_ID_LENGTH) return null;
     return CATALOG_MODEL_ID_RE.test(model) ? model : null;
 }
 
@@ -195,12 +211,24 @@ function RouterModelsSetting({
         if (!ok) setError(`${label} model preferences could not be saved.`);
     };
 
-    // Enter with no explicit highlight adds exactly what the user typed —
-    // and is a silent no-op while the text is not yet id-shaped, so pressing
-    // Enter mid-search never errors and never adds a lookalike.
+    // Enter with no explicit highlight adds exactly what the user typed — and
+    // never a lookalike. When the text is not usable as an id, Enter explains
+    // why: a keypress that does nothing and says nothing reads as a broken
+    // control, and the user has no way to learn what shape is expected.
     const add = () => {
+        const candidate = typedModelCandidate(input, provider);
+        // An empty box is the one silent case — nothing was asked for.
+        if (!candidate) return;
         const model = normalizeTypedModelId(input, provider);
-        if (!model) return;
+        if (!model) {
+            setError(
+                candidate.length > MAX_MODEL_ID_LENGTH
+                    ? `Model IDs are at most ${MAX_MODEL_ID_LENGTH} characters.`
+                    : `"${candidate}" is not a model ID — pick one from the list, or type it as vendor/model.`,
+            );
+            return;
+        }
+        setError(null);
         setInput("");
         setCatalogOpen(false);
         setActiveCatalogIndex(-1);
@@ -258,20 +286,25 @@ function RouterModelsSetting({
             >
                 {catalogOpen && (
                     <LiquidDropdownSurface
-                        id={catalogId}
                         data-testid={`${provider}-model-catalog`}
-                        role="listbox"
-                        aria-multiselectable="true"
-                        aria-label={`${label} model catalog`}
                         className="absolute bottom-full left-0 z-50 mb-1.5 max-h-72 w-full overflow-y-auto p-1.5"
                     >
+                        {/* Outside the listbox below: ARIA allows a listbox
+                            only option/group children, and a stray div makes
+                            the option indices a screen reader announces
+                            disagree with aria-activedescendant. */}
                         {typedModelId && (
                             <div className="px-3 py-2 text-xs text-gray-400">
                                 Press Enter to add this model ID.
                             </div>
                         )}
-                        {visibleCatalog.length > 0 ? (
-                            visibleCatalog.map((model, index) => {
+                        <div
+                            id={catalogId}
+                            role="listbox"
+                            aria-multiselectable="true"
+                            aria-label={`${label} model catalog`}
+                        >
+                            {visibleCatalog.map((model, index) => {
                                 const selected = selection.includes(model.id);
                                 const active = index === activeCatalogIndex;
                                 const costLabel = modelCostLabel(model);
@@ -313,8 +346,9 @@ function RouterModelsSetting({
                                         )}
                                     </LiquidDropdownButton>
                                 );
-                            })
-                        ) : (
+                            })}
+                        </div>
+                        {visibleCatalog.length === 0 && (
                             <div className="px-3 py-2 text-xs text-gray-400">
                                 No matching models.
                             </div>

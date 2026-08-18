@@ -129,8 +129,12 @@ begin
   -- An advisory xact lock is keyed by an application-chosen value (here a
   -- hash of user+router), blocks only the matching key, and releases itself
   -- at commit/rollback — no table-wide locking, nothing left behind.
+  -- hashtextextended (int8, the repo's convention for advisory locks) rather
+  -- than hashtext (int4): the wider namespace makes an accidental collision
+  -- with an unrelated lock key vastly less likely, and every other advisory
+  -- lock in this schema is already keyed the same way.
   perform pg_advisory_xact_lock(
-    hashtext(target_user_id::text || ':' || target_router)
+    hashtextextended(target_user_id::text || ':' || target_router, 0)
   );
 
   delete from public.user_router_models
