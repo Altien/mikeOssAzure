@@ -478,6 +478,15 @@ function validateProfilePayload(body: unknown):
                 detail: "openRouterModels must be an array of model IDs",
             };
         }
+        // Check the cap before normalizing: normalizeRouterModels truncates
+        // at 50, so a longer payload would otherwise surface as the
+        // misleading "invalid or duplicate model ID".
+        if (raw.openRouterModels.length > 50) {
+            return {
+                ok: false,
+                detail: "openRouterModels can include at most 50 models",
+            };
+        }
         const models = normalizeRouterModels(
             raw.openRouterModels,
             "openrouter",
@@ -496,6 +505,12 @@ function validateProfilePayload(body: unknown):
             return {
                 ok: false,
                 detail: "vercelModels must be an array of model IDs",
+            };
+        }
+        if (raw.vercelModels.length > 50) {
+            return {
+                ok: false,
+                detail: "vercelModels can include at most 50 models",
             };
         }
         const models = normalizeRouterModels(raw.vercelModels, "vercel");

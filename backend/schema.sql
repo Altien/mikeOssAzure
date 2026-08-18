@@ -123,6 +123,16 @@ begin
     raise exception 'A router can have at most 50 selected models';
   end if;
 
+  -- Serialize concurrent replacements of the SAME user+router selection.
+  -- Two overlapping PATCHes would otherwise interleave delete+insert and one
+  -- of them would die on the (user_id, router, model_id) unique constraint.
+  -- An advisory xact lock is keyed by an application-chosen value (here a
+  -- hash of user+router), blocks only the matching key, and releases itself
+  -- at commit/rollback — no table-wide locking, nothing left behind.
+  perform pg_advisory_xact_lock(
+    hashtext(target_user_id::text || ':' || target_router)
+  );
+
   delete from public.user_router_models
   where user_id = target_user_id and router = target_router;
 

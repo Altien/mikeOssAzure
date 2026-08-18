@@ -184,6 +184,23 @@ describe("PATCH /user/profile router model selections", () => {
         );
     });
 
+    it("reports the 50-model cap instead of 'invalid or duplicate'", async () => {
+        const models = Array.from(
+            { length: 51 },
+            (_, index) => `vendor/model-${index}`,
+        );
+
+        const response = await request(app)
+            .patch("/user/profile")
+            .send({ openRouterModels: models });
+
+        expect(response.status).toBe(400);
+        expect(response.body.detail).toBe(
+            "openRouterModels can include at most 50 models",
+        );
+        expect(replaceUserRouterModels).not.toHaveBeenCalled();
+    });
+
     it("rejects ids that are not vendor/model shaped", async () => {
         const response = await request(app)
             .patch("/user/profile")
