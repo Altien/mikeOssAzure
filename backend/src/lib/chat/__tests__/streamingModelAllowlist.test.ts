@@ -74,29 +74,46 @@ describe("runLLMStream router-model allowlist", () => {
         expect(tablesQueried(db)).toContain("user_router_models");
     });
 
-    it("falls back to the default for a router model the user never saved", async () => {
-        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    it("fails the request for a router model the user never saved", async () => {
+        // The request NAMED this model. Answering with a different one would
+        // silently attribute the reply to a model the user did not choose, so
+        // the stream errors with an actionable message instead.
         const db = routerModelsDb([{ model_id: "allowed/model" }]);
-        await runStreamWithModel(db, "openrouter/pricy/frontier-model");
 
-        expect(streamChatWithTools).toHaveBeenCalledWith(
-            expect.objectContaining({ model: "gemini-3-flash-preview" }),
+        await expect(
+            runStreamWithModel(db, "openrouter/pricy/frontier-model"),
+        ).rejects.toThrow(
+            /openrouter\/pricy\/frontier-model is not in your saved OpenRouter models .* Settings → BYOK → Routers/,
         );
-        expect(warn).toHaveBeenCalled();
-        warn.mockRestore();
+        expect(streamChatWithTools).not.toHaveBeenCalled();
     });
 
-    it("also falls back for non-members when the user brings their own key", async () => {
-        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    it("also fails for non-members when the user brings their own key", async () => {
         const db = routerModelsDb([]);
-        await runStreamWithModel(db, "vercel/pricy/frontier-model", {
-            vercel: "user-byok-key",
-        });
 
-        expect(streamChatWithTools).toHaveBeenCalledWith(
-            expect.objectContaining({ model: "gemini-3-flash-preview" }),
+        await expect(
+            runStreamWithModel(db, "vercel/pricy/frontier-model", {
+                vercel: "user-byok-key",
+            }),
+        ).rejects.toThrow(
+            /is not in your saved Vercel AI Gateway models/,
         );
-        warn.mockRestore();
+        expect(streamChatWithTools).not.toHaveBeenCalled();
+    });
+
+    it("surfaces the rejection through the stream's error event", async () => {
+        const error = await runStreamWithModel(
+            routerModelsDb([]),
+            "openrouter/pricy/frontier-model",
+        ).catch((err: unknown) => err as AssistantStreamError);
+
+        expect(error).toBeInstanceOf(AssistantStreamError);
+        expect(error.events).toContainEqual(
+            expect.objectContaining({
+                type: "error",
+                message: expect.stringContaining("Settings → BYOK → Routers"),
+            }),
+        );
     });
 
     it("reports a selection-lookup failure through the stream's error path", async () => {

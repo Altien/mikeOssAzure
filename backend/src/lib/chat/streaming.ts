@@ -350,18 +350,24 @@ export async function runLLMStream(params: {
     throwIfAborted(signal);
     // Single request-time choke point for every runLLMStream caller (chat,
     // project chat, Word chat, tabular): router-prefixed models must be in the
-    // user's saved selection or the request degrades to the default model.
+    // user's saved selection.
     //
     // This lives INSIDE the try because it touches the database. Above it, a
     // read failure escaped as a bare rejection — before any error event was
     // pushed and before AssistantStreamError could carry the partial turn — so
     // the SSE client saw the socket end with no explanation. Inside, a blip
     // takes the same path as any other mid-stream failure.
+    //
+    // "throw" (not silent fallback) because `model` here is what the caller
+    // asked for in THIS request. Tabular's stored preference has already been
+    // normalized by getUserModelSettings, so what arrives here is either an
+    // in-selection router model or a first-party id.
     const selectedModel = await resolveRequestedModel(
       model,
       DEFAULT_MAIN_MODEL,
       userId,
       db,
+      "throw",
     );
     await streamChatWithTools({
       model: selectedModel,
