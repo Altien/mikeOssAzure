@@ -46,6 +46,25 @@ function modelCostLabel(model: RouterCatalogModel): string | null {
     return costs.join(" · ");
 }
 
+const CATALOG_MODEL_ID_RE = /^[^\s/]+\/[^\s]+$/;
+
+/**
+ * Canonical form of a hand-typed model id, or null when it isn't id-shaped.
+ * The router slug is stripped only when the remainder is still a full
+ * vendor/model id: some catalog ids legitimately start with the router's own
+ * slug (OpenRouter's "openrouter/auto", Vercel's "vercel/v0-1.5-md") and must
+ * be kept verbatim — mirrors the backend's normalizeRouterModels.
+ */
+export function normalizeTypedModelId(
+    input: string,
+    provider: "openrouter" | "vercel",
+): string | null {
+    const raw = input.trim();
+    const stripped = raw.replace(new RegExp(`^${provider}/`), "");
+    const model = CATALOG_MODEL_ID_RE.test(stripped) ? stripped : raw;
+    return CATALOG_MODEL_ID_RE.test(model) ? model : null;
+}
+
 function catalogModelMatches(model: RouterCatalogModel, query: string) {
     return (
         !query ||
@@ -177,8 +196,8 @@ function RouterModelsSetting({
     };
 
     const add = () => {
-        const model = input.trim().replace(new RegExp(`^${provider}/`), "");
-        if (!/^[^\s/]+\/[^\s]+$/.test(model)) {
+        const model = normalizeTypedModelId(input, provider);
+        if (!model) {
             setError(
                 `Enter a ${label} model ID such as anthropic/claude-sonnet-5.`,
             );
@@ -186,6 +205,7 @@ function RouterModelsSetting({
         }
         setInput("");
         setCatalogOpen(false);
+        setActiveCatalogIndex(-1);
         if (!selection.includes(model)) void save([...selection, model]);
     };
 
