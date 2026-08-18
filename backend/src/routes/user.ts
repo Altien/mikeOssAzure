@@ -442,6 +442,9 @@ function validateProfilePayload(
                 detail: "openRouterModels must be an array of model IDs",
             };
         }
+        if (raw.openRouterModels.length > 50) {
+            return { ok: false, detail: "openRouterModels can include at most 50 models" };
+        }
         const models = normalizeRouterModels(
             raw.openRouterModels,
             "openrouter",
@@ -461,6 +464,9 @@ function validateProfilePayload(
                 ok: false,
                 detail: "vercelModels must be an array of model IDs",
             };
+        }
+        if (raw.vercelModels.length > 50) {
+            return { ok: false, detail: "vercelModels can include at most 50 models" };
         }
         const models = normalizeRouterModels(raw.vercelModels, "vercel");
         if (models.length !== raw.vercelModels.length) {
