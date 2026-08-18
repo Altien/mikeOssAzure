@@ -132,7 +132,11 @@ begin
     model_id,
     sort_order
   )
-  select target_user_id, target_router, model_id, ordinality - 1
+  select
+    target_user_id,
+    target_router,
+    model_id,
+    ordinality - 1
   from unnest(coalesce(target_model_ids, '{}'::text[]))
     with ordinality as selected(model_id, ordinality);
 end;
