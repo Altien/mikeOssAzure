@@ -40,6 +40,47 @@ describe("router model persistence", () => {
         });
     });
 
+    it.each([
+        {
+            label: "Postgres undefined_table",
+            error: {
+                code: "42P01",
+                message: 'relation "public.user_router_models" does not exist',
+            },
+        },
+        {
+            label: "PostgREST missing relation",
+            error: {
+                code: "PGRST205",
+                message:
+                    "Could not find the table 'public.user_router_models' in the schema cache",
+            },
+        },
+    ])(
+        "returns empty selections when the table is missing ($label)",
+        async ({ error }) => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+            const db = { from: vi.fn(() => queryResult([], error)) };
+
+            await expect(
+                getUserRouterModels("user-1", "openrouter", db as never),
+            ).resolves.toEqual([]);
+            warn.mockRestore();
+        },
+    );
+
+    it("still surfaces unrelated read errors", async () => {
+        const db = {
+            from: vi.fn(() =>
+                queryResult([], { code: "57014", message: "canceled" }),
+            ),
+        };
+
+        await expect(
+            getUserRouterModels("user-1", "openrouter", db as never),
+        ).rejects.toMatchObject({ code: "57014" });
+    });
+
     it("uses the atomic router-neutral replacement function", async () => {
         const rpc = vi.fn().mockResolvedValue({ data: null, error: null });
         const db = { rpc };
