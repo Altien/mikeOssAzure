@@ -195,14 +195,12 @@ function RouterModelsSetting({
         if (!ok) setError(`${label} model preferences could not be saved.`);
     };
 
+    // Enter with no explicit highlight adds exactly what the user typed —
+    // and is a silent no-op while the text is not yet id-shaped, so pressing
+    // Enter mid-search never errors and never adds a lookalike.
     const add = () => {
         const model = normalizeTypedModelId(input, provider);
-        if (!model) {
-            setError(
-                `Enter a ${label} model ID such as anthropic/claude-sonnet-5.`,
-            );
-            return;
-        }
+        if (!model) return;
         setInput("");
         setCatalogOpen(false);
         setActiveCatalogIndex(-1);
@@ -213,6 +211,7 @@ function RouterModelsSetting({
         const query = input.trim().toLowerCase();
         return catalogModelMatches(model, query);
     });
+    const typedModelId = normalizeTypedModelId(input, provider);
 
     const selectCatalogModel = (model: string) => {
         setInput("");
@@ -266,6 +265,11 @@ function RouterModelsSetting({
                         aria-label={`${label} model catalog`}
                         className="absolute bottom-full left-0 z-50 mb-1.5 max-h-72 w-full overflow-y-auto p-1.5"
                     >
+                        {typedModelId && (
+                            <div className="px-3 py-2 text-xs text-gray-400">
+                                Press Enter to add this model ID.
+                            </div>
+                        )}
                         {visibleCatalog.length > 0 ? (
                             visibleCatalog.map((model, index) => {
                                 const selected = selection.includes(model.id);
@@ -312,8 +316,7 @@ function RouterModelsSetting({
                             })
                         ) : (
                             <div className="px-3 py-2 text-xs text-gray-400">
-                                No matching models. Press Enter to add this
-                                model ID.
+                                No matching models.
                             </div>
                         )}
                     </LiquidDropdownSurface>
@@ -339,16 +342,14 @@ function RouterModelsSetting({
                         placeholder="e.g. anthropic/claude-sonnet-5"
                         className="h-full min-w-0 flex-1 bg-transparent text-sm text-gray-900 outline-none placeholder:text-gray-400 disabled:cursor-not-allowed"
                         onChange={(event) => {
-                            const nextInput = event.target.value;
-                            setInput(nextInput);
-                            if (catalog.length > 0) {
-                                const query = nextInput.trim().toLowerCase();
-                                const hasMatches = catalog.some((model) =>
-                                    catalogModelMatches(model, query),
-                                );
-                                setCatalogOpen(true);
-                                setActiveCatalogIndex(hasMatches ? 0 : -1);
-                            }
+                            setInput(event.target.value);
+                            // Typing never claims a highlight: Enter must add
+                            // the typed id verbatim unless the user points at
+                            // a row (arrow keys or hover). A default top-row
+                            // highlight made Enter after typing a full valid
+                            // id add a substring-matching catalog row instead.
+                            setActiveCatalogIndex(-1);
+                            if (catalog.length > 0) setCatalogOpen(true);
                         }}
                         onKeyDown={(event) => {
                             if (event.key === "ArrowDown") {
@@ -392,9 +393,10 @@ function RouterModelsSetting({
                         onClick={() => {
                             const nextOpen = !catalogOpen;
                             setCatalogOpen(nextOpen);
-                            setActiveCatalogIndex(
-                                nextOpen && visibleCatalog.length > 0 ? 0 : -1,
-                            );
+                            // Highlight only ever follows an explicit arrow
+                            // key or pointer hover — opening the list doesn't
+                            // pre-claim a row for Enter.
+                            setActiveCatalogIndex(-1);
                             if (nextOpen) inputRef.current?.focus();
                         }}
                         className="flex h-full shrink-0 items-center justify-end text-gray-400 transition-colors hover:text-gray-700 disabled:cursor-default disabled:opacity-40"

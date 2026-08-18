@@ -47,6 +47,10 @@ describe("RouterSettingsSection", () => {
                 id: "anthropic/claude-sonnet-4.5",
                 label: "Claude Sonnet 4.5",
             },
+            {
+                id: "qwen/qwen-2.5-72b-instruct",
+                label: "Qwen 2.5 72B Instruct",
+            },
         ]);
     });
 
@@ -115,6 +119,50 @@ describe("RouterSettingsSection", () => {
                 "openai/gpt-5.4",
             ]),
         );
+    });
+
+    it("adds the typed id verbatim even when it substring-matches a catalog row", async () => {
+        // Typing the full valid id "qwen/qwen-2" also matches the catalog's
+        // "qwen/qwen-2.5-72b-instruct". Enter must add what was typed, not
+        // the highlighted lookalike.
+        updateOpenRouterModels.mockResolvedValue(true);
+        render(<RouterSettingsSection />);
+        const input = screen.getByRole("combobox", {
+            name: "OpenRouter models",
+        });
+        await waitFor(() => expect(getOpenRouterModels).toHaveBeenCalled());
+
+        fireEvent.change(input, { target: { value: "qwen/qwen-2" } });
+        // Typing never claims a highlight …
+        expect(input).not.toHaveAttribute("aria-activedescendant");
+        // … and the add-verbatim hint shows although catalog rows match.
+        expect(screen.getByText("Qwen 2.5 72B Instruct")).toBeInTheDocument();
+        expect(
+            screen.getByText("Press Enter to add this model ID."),
+        ).toBeInTheDocument();
+
+        fireEvent.keyDown(input, { key: "Enter" });
+        await waitFor(() =>
+            expect(updateOpenRouterModels).toHaveBeenCalledWith([
+                "anthropic/claude-sonnet-4.5",
+                "qwen/qwen-2",
+            ]),
+        );
+    });
+
+    it("treats Enter as a no-op while the text is not id-shaped", async () => {
+        render(<RouterSettingsSection />);
+        const input = screen.getByRole("combobox", {
+            name: "OpenRouter models",
+        });
+        await waitFor(() => expect(getOpenRouterModels).toHaveBeenCalled());
+
+        fireEvent.change(input, { target: { value: "qwen" } });
+        fireEvent.keyDown(input, { key: "Enter" });
+
+        expect(updateOpenRouterModels).not.toHaveBeenCalled();
+        // The search text stays so the user can keep narrowing the catalog.
+        expect(input).toHaveValue("qwen");
     });
 
     it("adds a router-slug catalog id verbatim instead of rejecting it", async () => {
