@@ -7,7 +7,7 @@ import {
     type UserApiKeys,
 } from "./llm";
 import { getOrganisationApiKeys } from "./userApiKeys";
-import { getUserRouterModels } from "./routerModels";
+import { getUserRouterModels, isRouterModelSelected, routerForModelId } from "./routerModels";
 
 export type UserModelSettings = {
     fast_model: string;
@@ -71,10 +71,28 @@ export async function getUserModelSettings(
         getUserRouterModels(userId, "openrouter", client),
         getUserRouterModels(userId, "vercel", client),
     ]);
+    // A stored preference can name a router model the user has since removed
+    // from (or never had in) their saved selection — e.g. a hand-crafted
+    // profile PATCH. Treat that exactly like an invalid model id and fall
+    // back, so the env-key spend path can't be steered onto arbitrary
+    // gateway models.
+    const guardRouterModel = (model: string, fallback: string): string => {
+        if (
+            !routerForModelId(model) ||
+            isRouterModelSelected(model, openRouterModels, vercelModels)
+        ) {
+            return model;
+        }
+        console.warn(
+            `[router-models] user ${userId} preference "${model}" is outside their saved selection; using ${fallback}`,
+        );
+        return fallback;
+    };
+    const titleFallback = resolveFastModel(api_keys, null, openRouterModels, vercelModels);
     return {
-        fast_model: resolveFastModel(api_keys, modelRow.data?.fast_model, openRouterModels, vercelModels),
-        tabular_model: resolveModel(
-            modelRow.data?.tabular_model,
+        fast_model: guardRouterModel(resolveModel(modelRow.data?.fast_model?.trim(), titleFallback), titleFallback),
+        tabular_model: guardRouterModel(
+            resolveModel(modelRow.data?.tabular_model, DEFAULT_TABULAR_MODEL),
             DEFAULT_TABULAR_MODEL,
         ),
         // Upstream (3132e04) folded legal_research_us into
