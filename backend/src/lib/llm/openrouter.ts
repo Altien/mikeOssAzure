@@ -118,14 +118,26 @@ async function postChat(args: {
 function parseToolCalls(
     partials: Map<number, PartialToolCall>,
     provider: RouterProvider,
+    endedCleanly: boolean,
 ) {
     return [...partials.values()].map((partial): NormalizedToolCall => {
-        // No arguments at all is legitimate (parameter-less tools stream "");
-        // arguments that are PRESENT but unparseable mean the stream was
+        // Arguments that are PRESENT but unparseable mean the stream was
         // truncated or corrupted mid-call. Coercing those to {} would run a
         // side-effecting tool with empty input, so fail the stream instead —
         // the same path a mid-stream {"error"} chunk takes.
+        //
+        // No arguments AT ALL is ambiguous by content: a parameter-less tool
+        // streams "", and so does a call whose connection died between the
+        // name delta and the first argument byte. Only the upstream's own
+        // termination signal (finish_reason "tool_calls", or the [DONE]
+        // sentinel) separates them, so the "" → {} carve-out is keyed on that
+        // rather than on the empty string.
         let input: Record<string, unknown> = {};
+        if (!partial.arguments.trim() && !endedCleanly) {
+            throw new Error(
+                `${routerLabel(provider)} stream ended before any arguments arrived for tool "${partial.name}"; refusing to execute it with empty input.`,
+            );
+        }
         if (partial.arguments.trim()) {
             let parsed: unknown;
             try {
@@ -227,12 +239,20 @@ export async function streamOpenRouter(
             let assistantText = "";
             let assistantReasoning = "";
             let buffer = "";
+            // Did the upstream tell us WHY it stopped, or did the socket just
+            // go quiet? Only the former makes an empty tool-argument string
+            // trustworthy — see parseToolCalls.
+            let endedCleanly = false;
 
             const processSseLine = (rawLine: string) => {
                 const line = rawLine.trim();
                 if (!line.startsWith("data:")) return;
                 const data = line.slice(5).trim();
-                if (!data || data === "[DONE]") return;
+                if (data === "[DONE]") {
+                    endedCleanly = true;
+                    return;
+                }
+                if (!data) return;
 
                 let chunk: Record<string, unknown>;
                 try {
@@ -270,9 +290,15 @@ export async function streamOpenRouter(
 
                 const choice = (
                     chunk.choices as
-                        | Array<{ delta?: Record<string, unknown> }>
+                        | Array<{
+                              delta?: Record<string, unknown>;
+                              finish_reason?: unknown;
+                          }>
                         | undefined
                 )?.[0];
+                if (choice?.finish_reason === "tool_calls") {
+                    endedCleanly = true;
+                }
                 const delta = choice?.delta;
                 if (!delta) return;
 
@@ -343,7 +369,7 @@ export async function streamOpenRouter(
             }
 
             if (assistantReasoning) callbacks.onReasoningBlockEnd?.();
-            const toolCalls = parseToolCalls(partials, provider);
+            const toolCalls = parseToolCalls(partials, provider, endedCleanly);
             if (!toolCalls.length || !runTools) break;
 
             messages.push({
