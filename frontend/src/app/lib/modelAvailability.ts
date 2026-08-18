@@ -1,4 +1,7 @@
-import { SETTINGS_MODELS, type ModelOption } from "../components/assistant/ModelToggle";
+import {
+    SETTINGS_MODELS,
+    type ModelOption,
+} from "../components/assistant/ModelToggle";
 import type { ApiKeyState } from "@/app/lib/mikeApi";
 
 // Upstream divergence (OSS-6, §2.3 item 3 — AOAI and org Key Vault keys):
@@ -14,6 +17,8 @@ export type ModelProvider =
     | "claude"
     | "gemini"
     | "openai"
+    | "openrouter"
+    | "vercel"
     | "ollama"
     | "kimi"
     | "azureOpenai";
@@ -23,6 +28,8 @@ export function getModelProvider(
     extraModels?: ModelOption[],
 ): ModelProvider | null {
     if (modelId.startsWith("ollama/")) return "ollama"; // dynamic, not in the static list
+    if (modelId.startsWith("openrouter/")) return "openrouter";
+    if (modelId.startsWith("vercel/")) return "vercel";
     if (modelId.startsWith("aoai:")) return "azureOpenai"; // dynamic (dev)
     const model =
         SETTINGS_MODELS.find((m) => m.id === modelId) ??
@@ -58,6 +65,8 @@ export function isProviderAvailable(
 export function providerLabel(provider: ModelProvider): string {
     if (provider === "claude") return "Anthropic (Claude)";
     if (provider === "openai") return "OpenAI";
+    if (provider === "openrouter") return "OpenRouter";
+    if (provider === "vercel") return "Vercel AI Gateway";
     if (provider === "ollama") return "Local (Ollama)";
     if (provider === "kimi") return "Kimi K3";
     if (provider === "azureOpenai") return "Azure OpenAI";
@@ -69,6 +78,8 @@ export function modelGroupToProvider(
 ): ModelProvider {
     if (group === "Anthropic") return "claude";
     if (group === "OpenAI") return "openai";
+    if (group === "OpenRouter") return "openrouter";
+    if (group === "Vercel AI Gateway") return "vercel";
     if (group === "Local") return "ollama";
     if (group === "Kimi") return "kimi";
     if (group === "Azure OpenAI") return "azureOpenai";

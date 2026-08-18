@@ -110,8 +110,8 @@ export function CitationQuotesSection({
 
     return (
         <div className="px-2 pb-2">
-            <div className={RESPONSE_GLASS_SURFACE}>
-                <div className="flex h-10 items-center justify-between px-2">
+            <div className={`${RESPONSE_GLASS_SURFACE} p-2`}>
+                <div className="mb-2 flex items-center justify-between">
                     <ContextNumberBadge number={citationRef} label="Citation" />
                     <div className="ml-auto flex items-center gap-2">
                         {hasMultipleQuotes && (
@@ -152,7 +152,7 @@ export function CitationQuotesSection({
                         )}
                     </div>
                 </div>
-                <div className="px-2 pb-2">
+                <div>
                     {isLoading ? (
                         <RelevantQuoteSkeleton />
                     ) : error ? (
@@ -181,7 +181,7 @@ export function CitationQuotesSection({
 
 function RelevantQuoteSkeleton() {
     return (
-        <div className={`animate-pulse px-3 py-2.5 ${QUOTE_CARD_SURFACE}`}>
+        <div className={`animate-pulse px-3 py-2 ${QUOTE_CARD_SURFACE}`}>
             <div className="h-3 w-28 rounded bg-gray-200" />
             <div className="mt-2.5 h-3 w-full rounded bg-gray-200" />
             <div className="mt-2 h-3 w-11/12 rounded bg-gray-200" />
@@ -198,7 +198,7 @@ function RelevantQuoteMessage({
     tone?: "neutral" | "error";
 }) {
     return (
-        <div className={`px-3 py-2.5 ${QUOTE_CARD_SURFACE}`}>
+        <div className={`px-3 py-2 ${QUOTE_CARD_SURFACE}`}>
             <p
                 className={`font-serif text-sm leading-6 ${
                     tone === "error" ? "text-red-700" : "text-gray-600"
@@ -227,7 +227,7 @@ function QuoteItem({
     return (
         <div>
             <div
-                className={`w-full rounded-xl px-3 py-2.5 text-left ${
+                className={`w-full rounded-xl px-3 py-2 text-left ${
                     isSelected
                         ? "bg-blue-100/70"
                         : "bg-gray-100"

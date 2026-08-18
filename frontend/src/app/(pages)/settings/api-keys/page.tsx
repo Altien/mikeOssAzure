@@ -35,6 +35,11 @@ const PROVIDERS: ReadonlyArray<{
         secret: "openrouter-api-key",
     },
     {
+        provider: "vercel",
+        label: "Vercel AI Gateway",
+        secret: "ai-gateway-api-key",
+    },
+    {
         provider: "courtlistener",
         label: "CourtListener",
         secret: "courtlistener-api-token",

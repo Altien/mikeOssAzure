@@ -78,7 +78,12 @@ export type ToolCall = {
 export type ChatMessage = {
   role: string;
   content: string | null;
-  files?: { filename: string; document_id?: string }[];
+  files?: {
+    filename: string;
+    document_id?: string;
+    version_id?: string;
+    version_number?: number;
+  }[];
   workflow?: { id: string; title: string };
 };
 

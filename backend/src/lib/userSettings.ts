@@ -7,6 +7,7 @@ import {
     type UserApiKeys,
 } from "./llm";
 import { getOrganisationApiKeys } from "./userApiKeys";
+import { getUserRouterModels } from "./routerModels";
 
 export type UserModelSettings = {
     fast_model: string;
@@ -34,6 +35,8 @@ export type UserModelSettings = {
 function resolveFastModel(
     apiKeys: UserApiKeys,
     explicit: string | null | undefined,
+    openRouterModels: string[],
+    vercelModels: string[],
 ): string {
     const pick = explicit?.trim();
     if (pick) return pick;
@@ -46,6 +49,8 @@ function resolveFastModel(
         process.env.AZURE_OPENAI_DEPLOYMENT?.trim() ||
         "";
     if (aoaiDeployment) return `aoai:${aoaiDeployment}`;
+    if (apiKeys.openrouter?.trim() && openRouterModels[0]) return `openrouter/${openRouterModels[0]}`;
+    if (apiKeys.vercel?.trim() && vercelModels[0]) return `vercel/${vercelModels[0]}`;
     return DEFAULT_TITLE_MODEL;
 }
 
@@ -56,16 +61,18 @@ export async function getUserModelSettings(
     const client = db ?? createServerSupabase();
     // Provider credentials are deployment-wide and Key Vault-backed; model
     // preferences remain per-user on `user_profiles`.
-    const [modelRow, api_keys] = await Promise.all([
+    const [modelRow, api_keys, openRouterModels, vercelModels] = await Promise.all([
         client
             .from("user_profiles")
             .select("tabular_model, fast_model, legal_research_us")
             .eq("user_id", userId)
             .single(),
         getOrganisationApiKeys(),
+        getUserRouterModels(userId, "openrouter", client),
+        getUserRouterModels(userId, "vercel", client),
     ]);
     return {
-        fast_model: resolveFastModel(api_keys, modelRow.data?.fast_model),
+        fast_model: resolveFastModel(api_keys, modelRow.data?.fast_model, openRouterModels, vercelModels),
         tabular_model: resolveModel(
             modelRow.data?.tabular_model,
             DEFAULT_TABULAR_MODEL,

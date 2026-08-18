@@ -7,7 +7,9 @@ export type Provider =
     | "gemini"
     | "openai"
     | "kimi"
-    | "azureOpenai";
+    | "azureOpenai"
+    | "openrouter"
+    | "vercel";
 
 export type OpenAIToolSchema = {
     type: "function";
@@ -47,6 +49,7 @@ export type UserApiKeys = {
     openai?: string | null;
     kimi?: string | null;
     openrouter?: string | null;
+    vercel?: string | null;
     courtlistener?: string | null;
     azureOpenai?: AzureOpenaiSettings | null;
 };

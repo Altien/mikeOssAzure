@@ -2,12 +2,13 @@
 
 import { Library } from "lucide-react";
 import { FileTypeIcon } from "../shared/FileTypeIcon";
+import type { MessageFile } from "../shared/types";
 
 interface Props {
     content: string;
-    files?: { filename: string; document_id?: string }[];
+    files?: MessageFile[];
     workflow?: { id: string; title: string };
-    onFileClick?: (file: { filename: string; document_id?: string }) => void;
+    onFileClick?: (file: MessageFile) => void;
 }
 
 export function UserMessage({ content, files, workflow, onFileClick }: Props) {

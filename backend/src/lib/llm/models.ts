@@ -29,7 +29,10 @@ export const OPENAI_MAIN_MODELS = [
 export const KIMI_MAIN_MODELS = ["kimi-k3"] as const;
 
 // Mid-tier (used for tabular review) — user picks one in account settings.
-export const CLAUDE_MID_MODELS = ["claude-sonnet-5", "claude-sonnet-4-6"] as const;
+export const CLAUDE_MID_MODELS = [
+    "claude-sonnet-5",
+    "claude-sonnet-4-6",
+] as const;
 export const GEMINI_MID_MODELS = [
     "gemini-3.7-flash",
     "gemini-3.6-flash",
@@ -80,6 +83,8 @@ const ALL_MODELS = new Set<string>([
 // behaviour during conflict resolution; do not re-enable this upstream feature
 // until the complete feature is intentionally adopted.
 export function providerForModel(model: string): Provider {
+    if (model.startsWith("openrouter/")) return "openrouter";
+    if (model.startsWith("vercel/")) return "vercel";
     if (model.startsWith("claude")) return "claude";
     if (model.startsWith("gemini")) return "gemini";
     if (model.startsWith("kimi-")) return "kimi";
@@ -92,10 +97,18 @@ export function isAllowedModelId(id: string): boolean {
     // Static models are listed in ALL_MODELS; AOAI ids are accepted by
     // prefix because deployment names are user-defined and only known
     // at runtime via deployment discovery.
-    return ALL_MODELS.has(id) || id.startsWith(AZURE_OPENAI_PREFIX);
+    return ALL_MODELS.has(id) || id.startsWith(AZURE_OPENAI_PREFIX) || /^(?:openrouter|vercel)\/[^\s/]+\/[^\s]+$/.test(id);
 }
 
 export function resolveModel(id: string | null | undefined, fallback: string): string {
     if (id && isAllowedModelId(id)) return id;
     return fallback;
+}
+
+export function openRouterModelId(model: string): string {
+    return model.replace(/^openrouter\//, "");
+}
+
+export function vercelModelId(model: string): string {
+    return model.replace(/^vercel\//, "");
 }

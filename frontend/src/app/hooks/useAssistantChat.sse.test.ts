@@ -135,14 +135,16 @@ describe("useAssistantChat SSE parsing", () => {
 
     it("preserves document identity across streamed search lifecycle events", async () => {
         const { assistant } = await sendAndGetAssistant([
-            'data: {"type":"doc_find_start","filename":"agreement.pdf","document_id":"document-1","query":"termination"}\n\n',
-            'data: {"type":"doc_find","filename":"agreement.pdf","document_id":"document-1","query":"termination","total_matches":2}\n\n',
+            'data: {"type":"doc_find_start","filename":"agreement.pdf","document_id":"document-1","version_id":"version-2","version_number":2,"query":"termination"}\n\n',
+            'data: {"type":"doc_find","filename":"agreement.pdf","document_id":"document-1","version_id":"version-2","version_number":2,"query":"termination","total_matches":2}\n\n',
         ]);
 
         expect(assistant?.events).toContainEqual({
             type: "doc_find",
             filename: "agreement.pdf",
             document_id: "document-1",
+            version_id: "version-2",
+            version_number: 2,
             query: "termination",
             total_matches: 2,
             isStreaming: false,

@@ -11,11 +11,15 @@ describe("AssistantMessage document events", () => {
                 type: "doc_read",
                 filename: "read.docx",
                 document_id: "document-read",
+                version_id: "version-read",
+                version_number: 2,
             },
             {
                 type: "doc_find",
                 filename: "searched.pdf",
                 document_id: "document-find",
+                version_id: "version-find",
+                version_number: 5,
                 query: "termination",
                 total_matches: 2,
             },
@@ -90,16 +94,16 @@ describe("AssistantMessage document events", () => {
                 {
                     documentId: "document-read",
                     filename: "read.docx",
-                    versionId: null,
-                    versionNumber: null,
+                    versionId: "version-read",
+                    versionNumber: 2,
                 },
             ],
             [
                 {
                     documentId: "document-find",
                     filename: "searched.pdf",
-                    versionId: null,
-                    versionNumber: null,
+                    versionId: "version-find",
+                    versionNumber: 5,
                 },
             ],
             [

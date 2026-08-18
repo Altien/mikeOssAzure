@@ -1,7 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ALLOWED_MODEL_IDS, DEFAULT_MODEL_ID } from "../components/assistant/ModelToggle";
+import {
+    ALLOWED_MODEL_IDS,
+    DEFAULT_MODEL_ID,
+} from "../components/assistant/ModelToggle";
 
 const STORAGE_KEY = "mike.selectedModel";
 
@@ -12,7 +15,9 @@ function isAllowed(id: string): boolean {
     return (
         ALLOWED_MODEL_IDS.has(id) ||
         id.startsWith("ollama/") ||
-        id.startsWith("aoai:")
+        id.startsWith("aoai:") ||
+        id.startsWith("openrouter/") ||
+        id.startsWith("vercel/")
     );
 }
 

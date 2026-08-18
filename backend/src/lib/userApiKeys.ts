@@ -37,6 +37,7 @@ export type ApiKeyProvider =
     | "gemini"
     | "openai"
     | "openrouter"
+    | "vercel"
     | "courtlistener"
     | "azure_openai";
 
@@ -52,6 +53,7 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         openai,
         kimi,
         openrouter,
+        vercel,
         courtlistener,
         azureEndpoint,
         azureApiKey,
@@ -63,6 +65,7 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         resolveSecret("openai-api-key"),
         resolveSecret("moonshot-api-key"),
         resolveSecret("openrouter-api-key"),
+        resolveVercelApiKey(),
         resolveSecret("courtlistener-api-token"),
         resolveSecret("azure-openai-endpoint"),
         resolveSecret("azure-openai-api-key"),
@@ -76,6 +79,7 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         openai: openai || null,
         kimi: kimi || null,
         openrouter: openrouter || null,
+        vercel: vercel || null,
         courtlistener: courtlistener || null,
         azureOpenai:
             azureEndpoint && azureApiKey
@@ -87,6 +91,13 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
                   }
                 : null,
     };
+}
+
+// Upstream divergence (sync-log: 972cf22): router credentials use the same
+// organization Key Vault boundary as other providers; never env-only reads.
+export async function resolveVercelApiKey(): Promise<string> {
+    return (await resolveSecret("ai-gateway-api-key")) ||
+        (await resolveSecret("vercel-ai-gateway-api-key"));
 }
 
 const ENCRYPTION_SECRET_NAME = "user-api-keys-encryption-key";
@@ -280,6 +291,7 @@ export async function getUserApiKeys(
         gemini: decrypted.gemini ?? legacy?.gemini ?? null,
         openai: decrypted.openai ?? legacy?.openai ?? null,
         openrouter: openrouter || null,
+        vercel: decrypted.vercel || (await resolveVercelApiKey()) || null,
         courtlistener: courtlistener || null,
         azureOpenai: decrypted.azure_openai
             ? parseAzureOpenaiBlob(decrypted.azure_openai)
@@ -372,6 +384,7 @@ export async function getConfiguredProviders(
         gemini: false,
         openai: false,
         openrouter: false,
+        vercel: false,
         courtlistener: false,
         azure_openai: false,
     };

@@ -84,7 +84,6 @@ export function WorkflowPickerContent({
               [
                   workflow.metadata.title,
                   workflow.metadata.practice ?? "",
-                  workflow.is_system ? "System" : "Custom",
               ]
                   .join(" ")
                   .toLowerCase()
@@ -180,13 +179,12 @@ export function WorkflowPickerContent({
                                         </span>
                                         {showTypeIcon ? (
                                             <TypeIcon className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-                                        ) : (
+                                        ) : !selected &&
+                                          workflow.metadata.practice ? (
                                             <span className="shrink-0 text-xs text-gray-400">
-                                                {workflow.is_system
-                                                    ? "System"
-                                                    : "Custom"}
+                                                {workflow.metadata.practice}
                                             </span>
-                                        )}
+                                        ) : null}
                                     </button>
                                 );
                             })}

@@ -18,6 +18,7 @@ import { tabularRouter } from "./routes/tabular";
 import { workflowsRouter } from "./routes/workflows";
 import { quickActionsRouter } from "./routes/quickActions";
 import { workflowAddonsRouter } from "./routes/workflowAddons";
+import { modelsRouter } from "./routes/models";
 import { userRouter } from "./routes/user";
 import { downloadsRouter } from "./routes/downloads";
 import { authRouter } from "./routes/auth";
@@ -317,6 +318,7 @@ export function buildApp(): express.Express {
   app.use("/api/workflows", workflowsRouter);
   app.use("/api/quick-actions", quickActionsRouter);
   app.use("/api/workflow-addons", workflowAddonsRouter);
+  app.use("/api/models", modelsRouter);
   app.use("/api/user", userRouter);
   app.use("/api/users", userRouter);
   app.use("/api/download", downloadsRouter);

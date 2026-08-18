@@ -112,7 +112,9 @@ async function fetchSourceDocuments(
     if (documentIds.length === 0) return [];
     const { data, error } = await db
         .from("documents")
-    .select("id, current_version_id, project_id, folder_id, library_folder_id")
+        .select(
+            "id, current_version_id, project_id, folder_id, library_folder_id",
+        )
         .in("id", documentIds);
     if (error) throw new Error(error.message);
     const docs = (data ?? []) as (Omit<
@@ -167,7 +169,9 @@ async function getFolderPathMaps(
 }> {
     const projectIds = [
         ...new Set(
-      docs.map((doc) => doc.project_id).filter((id): id is string => !!id),
+            docs
+                .map((doc) => doc.project_id)
+                .filter((id): id is string => !!id),
         ),
     ];
     const [projectResult, libraryResult] = await Promise.all([
@@ -318,7 +322,9 @@ async function createRowsForReview(
         })),
     );
     if (cells.length) {
-    const { error: cellError } = await db.from("tabular_cells").insert(cells);
+        const { error: cellError } = await db
+            .from("tabular_cells")
+            .insert(cells);
         if (cellError) throw new Error(cellError.message);
     }
 }
@@ -411,10 +417,10 @@ async function loadReviewRows(
     const { data: sources, error: sourceError } = await db
         .from("tabular_review_row_sources")
         .select("row_id, document_id")
-    .in(
-      "row_id",
-      rows.map((row) => row.id),
-    )
+        .in(
+            "row_id",
+            rows.map((row) => row.id),
+        )
         .order("sort_index", { ascending: true });
     if (sourceError) throw new Error(sourceError.message);
     const byRow = new Map<string, string[]>();
@@ -471,7 +477,10 @@ async function loadRowDocumentText(
             const buf = await downloadFile(storagePath);
             if (buf) {
                 try {
-          markdown = await extractDocumentMarkdown(buf, doc.file_type);
+                    markdown = await extractDocumentMarkdown(
+                        buf,
+                        doc.file_type,
+                    );
                 } catch (error) {
                     console.error(
                         `[tabular] extraction error doc=${doc.id}`,
@@ -492,6 +501,8 @@ function providerLabel(provider: Provider): string {
     if (provider === "openai") return "OpenAI";
     if (provider === "kimi") return "Kimi K3";
     if (provider === "azureOpenai") return "Azure OpenAI";
+    if (provider === "openrouter") return "OpenRouter";
+    if (provider === "vercel") return "Vercel AI Gateway";
     return "Gemini";
 }
 
@@ -503,6 +514,8 @@ const SERVER_KEY_SECRETS: Record<Exclude<Provider, "azureOpenai">, string> = {
     gemini: "gemini-api-key",
     openai: "openai-api-key",
     kimi: "moonshot-api-key",
+    openrouter: "openrouter-api-key",
+    vercel: "ai-gateway-api-key",
 };
 
 // Upstream divergence (sync-log: f39f175): upstream returns the 422
@@ -547,13 +560,16 @@ tabularRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
         userId,
         userEmail,
         projectIdFilter,
-    scope: parseTabularReviewScope(req.query.scope),
-    pagination: parsePaginationQuery(req.query as Record<string, unknown>),
-    searchTerm: normalizeSearchTerm(req.query.search),
-    sort: parseTabularReviewSort(req.query as Record<string, unknown>),
+        scope: parseTabularReviewScope(req.query.scope),
+        pagination: parsePaginationQuery(req.query as Record<string, unknown>),
+        searchTerm: normalizeSearchTerm(req.query.search),
+        sort: parseTabularReviewSort(req.query as Record<string, unknown>),
     });
 
-    const { data, error } = await db.rpc("get_tabular_reviews_overview", rpcArgs);
+    const { data, error } = await db.rpc(
+        "get_tabular_reviews_overview",
+        rpcArgs,
+    );
     if (error) return void res.status(500).json({ detail: error.message });
 
     res.json(data ?? []);
@@ -633,7 +649,12 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
 
     const db = createServerSupabase();
     if (project_id) {
-    const access = await checkProjectAccess(project_id, userId, userEmail, db);
+        const access = await checkProjectAccess(
+            project_id,
+            userId,
+            userEmail,
+            db,
+        );
         if (!access.ok)
             return void res.status(404).json({ detail: "Project not found" });
     }
@@ -676,7 +697,9 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
         await db.from("tabular_reviews").delete().eq("id", review.id);
         return void res.status(500).json({
             detail:
-        error instanceof Error ? error.message : "Failed to create review rows",
+                error instanceof Error
+                    ? error.message
+                    : "Failed to create review rows",
         });
     }
 
@@ -695,8 +718,10 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
 // POST /tabular-review/prompt (must come before /:reviewId routes)
 tabularRouter.post("/prompt", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
-  const title = typeof req.body.title === "string" ? req.body.title.trim() : "";
-  if (!title) return void res.status(400).json({ detail: "title is required" });
+    const title =
+        typeof req.body.title === "string" ? req.body.title.trim() : "";
+    if (!title)
+        return void res.status(400).json({ detail: "title is required" });
 
     const format: string =
         typeof req.body.format === "string" ? req.body.format : "text";
@@ -827,13 +852,16 @@ tabularRouter.get("/:reviewId/people", requireAuth, async (req, res) => {
         .select("id, user_id, project_id, shared_with")
         .eq("id", reviewId)
         .single();
-  if (!review) return void res.status(404).json({ detail: "Review not found" });
+    if (!review)
+        return void res.status(404).json({ detail: "Review not found" });
     const access = await ensureReviewAccess(review, userId, userEmail, db);
     if (!access.ok)
         return void res.status(404).json({ detail: "Review not found" });
 
     const sharedWith: string[] = (
-    Array.isArray(review.shared_with) ? (review.shared_with as string[]) : []
+        Array.isArray(review.shared_with)
+            ? (review.shared_with as string[])
+            : []
     ).map((e) => (e ?? "").toLowerCase());
 
     // Same pattern as /projects/:id/people: resolve email ↔ user_id ↔
@@ -894,7 +922,8 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
     const projectIdUpdate =
         req.body.project_id === null
             ? null
-      : typeof req.body.project_id === "string" && req.body.project_id.trim()
+            : typeof req.body.project_id === "string" &&
+                req.body.project_id.trim()
               ? req.body.project_id.trim()
               : undefined;
     if (projectIdUpdateProvided && projectIdUpdate === undefined) {
@@ -1150,7 +1179,9 @@ tabularRouter.post(
         if (!rows) return;
         const row = rows.find((candidate) => candidate.id === row_id);
         if (!row)
-      return void res.status(404).json({ detail: "Review row not found" });
+            return void res
+                .status(404)
+                .json({ detail: "Review row not found" });
         const sourceIds = row.source_document_ids ?? [];
         const allowedSourceIds = await filterAccessibleDocumentIds(
             sourceIds,
@@ -1159,7 +1190,9 @@ tabularRouter.post(
             db,
         );
         if (allowedSourceIds.length !== sourceIds.length)
-      return void res.status(404).json({ detail: "Review row not found" });
+            return void res
+                .status(404)
+                .json({ detail: "Review row not found" });
 
         const { tabular_model, api_keys } = await getUserModelSettings(
             userId,
@@ -1307,7 +1340,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     try {
         await Promise.all(
             rows.map(async (row) => {
-        const markdown = await loadRowDocumentText(db, row);
+                const markdown = await loadRowDocumentText(db, row);
 
                 // Filter to only columns that need processing
                 const columnsToProcess = columns.filter((col) => {
@@ -1553,9 +1586,11 @@ function extractTabularAnnotations(
         ref: c.ref,
         col_index: c.col_index,
         row_index: c.row_index,
-    col_name: tabularStore.columns[c.col_index]?.name ?? `Col ${c.col_index}`,
+        col_name:
+            tabularStore.columns[c.col_index]?.name ?? `Col ${c.col_index}`,
         doc_name:
-      tabularStore.documents[c.row_index]?.filename ?? `Row ${c.row_index}`,
+            tabularStore.documents[c.row_index]?.filename ??
+            `Row ${c.row_index}`,
         quote: c.quote,
     }));
 }
@@ -1652,7 +1687,12 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
         .single();
     if (error || !review)
         return void res.status(404).json({ detail: "Review not found" });
-  const reviewAccess = await ensureReviewAccess(review, userId, userEmail, db);
+    const reviewAccess = await ensureReviewAccess(
+        review,
+        userId,
+        userEmail,
+        db,
+    );
     if (!reviewAccess.ok)
         return void res.status(404).json({ detail: "Review not found" });
 
@@ -1766,7 +1806,8 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
             extraTools: TABULAR_TOOLS,
             includeResearchTools: false,
             tabularStore,
-      buildCitations: (text) => extractTabularAnnotations(text, tabularStore),
+            buildCitations: (text) =>
+                extractTabularAnnotations(text, tabularStore),
             model: tabular_model,
             apiKeys: api_keys,
             signal: streamAbort.signal,
@@ -1827,7 +1868,7 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
                         chat_id: chatId,
                         role: "assistant",
                         content: partial.events.length ? partial.events : null,
-            annotations: annotations.length ? annotations : null,
+                        annotations: annotations.length ? annotations : null,
                     });
                 if (saveError) {
                     console.error(
@@ -1844,10 +1885,10 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
         }
         console.error("[tabular/chat] error", safeErrorLog(err));
         const message = safeErrorMessage(err, "Stream error");
-    const errorEvents =
-      err instanceof AssistantStreamError
-            ? stripTransientAssistantEvents(err.events)
-            : [{ type: "error" as const, message }];
+        const errorEvents =
+            err instanceof AssistantStreamError
+                ? stripTransientAssistantEvents(err.events)
+                : [{ type: "error" as const, message }];
         const errorFullText =
             err instanceof AssistantStreamError ? err.fullText : "";
         if (chatId) {
@@ -1865,13 +1906,16 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
                         annotations: annotations.length ? annotations : null,
                     });
                 if (saveError)
-                    console.error("[tabular/chat] failed to save error", saveError);
+                    console.error(
+                        "[tabular/chat] failed to save error",
+                        saveError,
+                    );
             } catch (saveErr) {
                 console.error("[tabular/chat] failed to save error", saveErr);
             }
         }
         try {
-      write(`data: ${JSON.stringify({ type: "error", message })}\n\n`);
+            write(`data: ${JSON.stringify({ type: "error", message })}\n\n`);
             write("data: [DONE]\n\n");
         } catch {
             /* ignore */
@@ -1955,7 +1999,10 @@ The "summary" field must contain only the extracted value with inline citations 
             apiKeys,
         });
     } catch (err) {
-        console.error("[queryTabularCell] completion failed", safeErrorLog(err));
+        console.error(
+            "[queryTabularCell] completion failed",
+            safeErrorLog(err),
+        );
         return null;
     }
     try {
@@ -1972,7 +2019,8 @@ The "summary" field must contain only the extracted value with inline citations 
         };
         return {
             summary:
-        String(parsed.summary ?? parsed.value ?? "").trim() || "Not addressed",
+                String(parsed.summary ?? parsed.value ?? "").trim() ||
+                "Not addressed",
             flag: (["green", "grey", "yellow", "red"] as const).includes(
                 parsed.flag as "green",
             )
@@ -2106,7 +2154,10 @@ Rules:
                     contentBuffer += delta;
                     let newlineIdx: number;
                     while ((newlineIdx = contentBuffer.indexOf("\n")) !== -1) {
-            const completedLine = contentBuffer.slice(0, newlineIdx);
+                        const completedLine = contentBuffer.slice(
+                            0,
+                            newlineIdx,
+                        );
                         contentBuffer = contentBuffer.slice(newlineIdx + 1);
                         pending.push(processLine(completedLine));
                     }
@@ -2114,7 +2165,10 @@ Rules:
             },
         });
     } catch (err) {
-        console.error("[queryTabularAllColumns] stream failed", safeErrorLog(err));
+        console.error(
+            "[queryTabularAllColumns] stream failed",
+            safeErrorLog(err),
+        );
     }
 
     if (contentBuffer.trim()) pending.push(processLine(contentBuffer));
@@ -2151,7 +2205,9 @@ async function extractDocumentMarkdown(
 
 async function extractPdfMarkdown(buf: ArrayBuffer): Promise<string> {
     try {
-    const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs" as string);
+        const pdfjsLib = await import(
+            "pdfjs-dist/legacy/build/pdf.mjs" as string
+        );
         const pdf = await (
             pdfjsLib as unknown as {
                 getDocument: (opts: unknown) => {

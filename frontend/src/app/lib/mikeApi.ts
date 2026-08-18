@@ -26,6 +26,7 @@ import type {
     Folder,
     LibraryFolder,
     Message,
+    MessageFile,
     PanelDocument,
     OpenSourceWorkflowContributorMode,
     OpenSourceWorkflowResponse,
@@ -46,7 +47,7 @@ interface ServerMessage {
     chat_id: string;
     role: "user" | "assistant";
     content: string | AssistantEvent[] | null;
-    files?: { filename: string; document_id?: string }[] | null;
+    files?: MessageFile[] | null;
     workflow?: { id: string; title: string } | null;
     citations?: Citation[] | null;
     created_at: string;
@@ -428,6 +429,8 @@ export interface UserProfile {
     mfaOnLogin: boolean;
     legalResearchUs: boolean;
     quickActionsVisible: boolean;
+    openRouterModels: string[];
+    vercelModels: string[];
     apiKeyStatus: ApiKeyStatus;
 }
 
@@ -531,6 +534,8 @@ export async function updateUserProfile(payload: {
     tabularModel?: string;
     legalResearchUs?: boolean;
     quickActionsVisible?: boolean;
+    openRouterModels?: string[];
+    vercelModels?: string[];
 }): Promise<UserProfile> {
     return apiRequest<UserProfile>("/user/profile", {
         method: "PATCH",
@@ -556,6 +561,7 @@ export type ApiKeyProvider =
     | "gemini"
     | "openai"
     | "openrouter"
+    | "vercel"
     | "courtlistener"
     | "kimi"
     | "azure_openai";
@@ -580,6 +586,23 @@ export async function getApiKeyStatus(): Promise<ApiKeyStatus> {
 // getOllamaModels (GET /models/ollama, local Ollama models) is omitted.
 // Dev's backend does not serve local models (see providerForModel in
 // backend/src/lib/llm/models.ts). Do not re-add during conflict resolution.
+
+export interface RouterCatalogModel { id: string; label: string; }
+export type OpenRouterCatalogModel = RouterCatalogModel;
+
+export async function getOpenRouterModels(): Promise<OpenRouterCatalogModel[]> {
+    const { models } = await apiRequest<{
+        models: OpenRouterCatalogModel[];
+    }>("/api/models/openrouter");
+    return models;
+}
+
+export async function getVercelModels(): Promise<RouterCatalogModel[]> {
+    const { models } = await apiRequest<{ models: RouterCatalogModel[] }>(
+        "/api/models/vercel",
+    );
+    return models;
+}
 
 export async function saveApiKey(
     provider: ApiKeyProvider,
@@ -1426,7 +1449,7 @@ export async function streamChat(payload: {
     messages: {
         role: string;
         content: string;
-        files?: { filename: string; document_id?: string }[];
+        files?: MessageFile[];
         workflow?: { id: string; title: string };
     }[];
     chat_id?: string;
@@ -1470,7 +1493,7 @@ export async function streamChat(payload: {
 type StreamChatMessage = {
     role: string;
     content: string;
-    files?: { filename: string; document_id?: string }[];
+    files?: MessageFile[];
     workflow?: { id: string; title: string };
 };
 

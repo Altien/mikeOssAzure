@@ -914,6 +914,14 @@ export function useAssistantChat({
                   typeof data.document_id === "string"
                     ? (data.document_id as string)
                     : undefined,
+                version_id:
+                  typeof data.version_id === "string"
+                    ? (data.version_id as string)
+                    : null,
+                version_number:
+                  typeof data.version_number === "number"
+                    ? (data.version_number as number)
+                    : null,
                 isStreaming: true,
               });
               continue;
@@ -1016,6 +1024,14 @@ export function useAssistantChat({
                       typeof data.document_id === "string"
                         ? (data.document_id as string)
                         : event.document_id,
+                    version_id:
+                      typeof data.version_id === "string"
+                        ? (data.version_id as string)
+                        : event.version_id,
+                    version_number:
+                      typeof data.version_number === "number"
+                        ? (data.version_number as number)
+                        : event.version_number,
                     isStreaming: false,
                   };
                 },
@@ -1032,6 +1048,14 @@ export function useAssistantChat({
                   typeof data.document_id === "string"
                     ? (data.document_id as string)
                     : undefined,
+                version_id:
+                  typeof data.version_id === "string"
+                    ? (data.version_id as string)
+                    : null,
+                version_number:
+                  typeof data.version_number === "number"
+                    ? (data.version_number as number)
+                    : null,
                 query: (data.query as string) ?? "",
                 total_matches: 0,
                 isStreaming: true,
@@ -1057,6 +1081,14 @@ export function useAssistantChat({
                       typeof data.document_id === "string"
                         ? (data.document_id as string)
                         : event.document_id,
+                    version_id:
+                      typeof data.version_id === "string"
+                        ? (data.version_id as string)
+                        : event.version_id,
+                    version_number:
+                      typeof data.version_number === "number"
+                        ? (data.version_number as number)
+                        : event.version_number,
                     isStreaming: false,
                     total_matches:
                       typeof data.total_matches === "number"

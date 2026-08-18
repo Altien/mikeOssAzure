@@ -64,6 +64,8 @@ import {
     getLibraryFolderChildren,
     getLibraryFolderPath,
     getMcpConnector,
+    getOpenRouterModels,
+    getVercelModels,
     getProject,
     getProjectDirectoryLevel,
   getProjectFilterOptions,
@@ -550,7 +552,14 @@ describe("getChat message mapping", () => {
                         chat_id: "c1",
                         role: "user",
                         content: "hello",
-                        files: [{ filename: "a.pdf", document_id: "d1" }],
+                        files: [
+                            {
+                                filename: "a.pdf",
+                                document_id: "d1",
+                                version_id: "v2",
+                                version_number: 2,
+                            },
+                        ],
                         workflow: { id: "w1", title: "NDA review" },
                         created_at: "2026-01-01",
                     },
@@ -571,7 +580,14 @@ describe("getChat message mapping", () => {
             id: "m1",
             role: "user",
             content: "hello",
-            files: [{ filename: "a.pdf", document_id: "d1" }],
+            files: [
+                {
+                    filename: "a.pdf",
+                    document_id: "d1",
+                    version_id: "v2",
+                    version_number: 2,
+                },
+            ],
             workflow: { id: "w1", title: "NDA review" },
         });
         // Non-string user content degrades to an empty string.
@@ -2348,6 +2364,17 @@ describe("thin endpoint wrappers", () => {
 describe("unwrapping and blob wrappers", () => {
     // Upstream's getOllamaModels case removed: NOT SUPPORTED in dev
     // (sync-log: fe942475).
+
+    it.each([
+        ["OpenRouter", getOpenRouterModels, "/api/models/openrouter"],
+        ["Vercel AI Gateway", getVercelModels, "/api/models/vercel"],
+    ])("loads the %s model catalog", async (_label, load, path) => {
+        const models = [{ id: "openai/gpt-5.4", label: "GPT-5.4" }];
+        fetchMock.mockResolvedValue(jsonResponse({ models }));
+
+        await expect(load()).resolves.toEqual(models);
+        expect(lastFetchCall().url).toBe(`http://localhost:3001${path}`);
+    });
 
     it("getPanelDocument fetches a normalized document by opaque ID", async () => {
         const document = {

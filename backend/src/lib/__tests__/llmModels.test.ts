@@ -14,6 +14,8 @@ import {
     DEFAULT_TABULAR_MODEL,
     providerForModel,
     resolveModel,
+    openRouterModelId,
+    vercelModelId,
 } from "../llm/models";
 
 // ---------------------------------------------------------------------------
@@ -22,21 +24,45 @@ import {
 
 describe("providerForModel", () => {
     it("maps claude-* ids to the claude provider", () => {
-        for (const model of [...CLAUDE_MAIN_MODELS, ...CLAUDE_MID_MODELS, ...CLAUDE_LOW_MODELS]) {
+        for (const model of [
+            ...CLAUDE_MAIN_MODELS,
+            ...CLAUDE_MID_MODELS,
+            ...CLAUDE_LOW_MODELS,
+        ]) {
             expect(providerForModel(model)).toBe("claude");
         }
     });
 
     it("maps gemini-* ids to the gemini provider", () => {
-        for (const model of [...GEMINI_MAIN_MODELS, ...GEMINI_MID_MODELS, ...GEMINI_LOW_MODELS]) {
+        for (const model of [
+            ...GEMINI_MAIN_MODELS,
+            ...GEMINI_MID_MODELS,
+            ...GEMINI_LOW_MODELS,
+        ]) {
             expect(providerForModel(model)).toBe("gemini");
         }
     });
 
     it("maps gpt-* ids to the openai provider", () => {
-        for (const model of [...OPENAI_MAIN_MODELS, ...OPENAI_MID_MODELS, ...OPENAI_LOW_MODELS]) {
+        for (const model of [
+            ...OPENAI_MAIN_MODELS,
+            ...OPENAI_MID_MODELS,
+            ...OPENAI_LOW_MODELS,
+        ]) {
             expect(providerForModel(model)).toBe("openai");
         }
+    });
+
+    it("maps namespaced OpenRouter ids to the openrouter provider", () => {
+        expect(providerForModel("openrouter/anthropic/claude-sonnet-4.5")).toBe(
+            "openrouter",
+        );
+    });
+
+    it("maps namespaced Vercel AI Gateway ids to the vercel provider", () => {
+        expect(providerForModel("vercel/anthropic/claude-sonnet-4.5")).toBe(
+            "vercel",
+        );
     });
 
     it("throws on an unknown model id", () => {
@@ -99,6 +125,41 @@ describe("resolveModel", () => {
             expect(resolveModel(model, "fallback-model")).toBe(model);
         }
     });
+
+    it("accepts namespaced OpenRouter model ids", () => {
+        expect(
+            resolveModel(
+                "openrouter/meta-llama/llama-4-maverick",
+                DEFAULT_MAIN_MODEL,
+            ),
+        ).toBe("openrouter/meta-llama/llama-4-maverick");
+        expect(resolveModel("openrouter/invalid", DEFAULT_MAIN_MODEL)).toBe(
+            DEFAULT_MAIN_MODEL,
+        );
+    });
+
+    it("accepts namespaced Vercel AI Gateway model ids", () => {
+        expect(resolveModel("vercel/openai/gpt-5.4", DEFAULT_MAIN_MODEL)).toBe(
+            "vercel/openai/gpt-5.4",
+        );
+        expect(resolveModel("vercel/invalid", DEFAULT_MAIN_MODEL)).toBe(
+            DEFAULT_MAIN_MODEL,
+        );
+    });
+});
+
+describe("openRouterModelId", () => {
+    it("removes only the internal provider namespace", () => {
+        expect(openRouterModelId("openrouter/openai/gpt-5.4")).toBe(
+            "openai/gpt-5.4",
+        );
+    });
+});
+
+describe("vercelModelId", () => {
+    it("removes only the internal provider namespace", () => {
+        expect(vercelModelId("vercel/openai/gpt-5.4")).toBe("openai/gpt-5.4");
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -108,7 +169,9 @@ describe("resolveModel", () => {
 describe("default models", () => {
     it("every default resolves to itself (defaults are in the catalog)", () => {
         expect(resolveModel(DEFAULT_MAIN_MODEL, "x")).toBe(DEFAULT_MAIN_MODEL);
-        expect(resolveModel(DEFAULT_TITLE_MODEL, "x")).toBe(DEFAULT_TITLE_MODEL);
+        expect(resolveModel(DEFAULT_TITLE_MODEL, "x")).toBe(
+            DEFAULT_TITLE_MODEL,
+        );
         expect(resolveModel(DEFAULT_TABULAR_MODEL, "x")).toBe(
             DEFAULT_TABULAR_MODEL,
         );

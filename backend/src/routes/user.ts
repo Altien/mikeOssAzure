@@ -2,7 +2,7 @@ import crypto from "crypto";
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
-import { getUserApiKeys } from "../lib/userApiKeys";
+import { resolveVercelApiKey, getUserApiKeys } from "../lib/userApiKeys";
 import { resolveSecret } from "../lib/envSecrets";
 import { recordAudit } from "../lib/audit";
 import { DEFAULT_TABULAR_MODEL, resolveModel } from "../lib/llm/models";
@@ -31,6 +31,10 @@ import {
   userExportFilename,
 } from "../lib/userDataExport";
 import { findProfileUserByEmail } from "../lib/userLookup";
+import {
+    getUserRouterModels,
+    replaceUserRouterModels,
+} from "../lib/routerModels";
 
 export const userRouter = Router();
 
@@ -55,6 +59,7 @@ const ORGANISATION_CREDENTIALS = {
     label: "OpenRouter",
     secretNames: ["openrouter-api-key"],
   },
+  vercel: { label: "Vercel AI Gateway", secretNames: ["ai-gateway-api-key"] },
   courtlistener: {
     label: "CourtListener",
     secretNames: ["courtlistener-api-token"],
@@ -193,6 +198,7 @@ async function buildProfileApiKeyStatus(
     openai: !!userKeys.openai,
     kimi: !!userKeys.kimi,
     openrouter: !!userKeys.openrouter,
+    vercel: !!userKeys.vercel,
     courtlistener: !!userKeys.courtlistener,
     azure_openai: !!userKeys.azureOpenai,
   };
@@ -207,7 +213,7 @@ async function buildProfileApiKeyStatus(
         resolveSecret(name),
       ),
     );
-    const organisation = values.every(Boolean);
+    const organisation = provider === "vercel" ? !!(await resolveVercelApiKey()) : values.every(Boolean);
     const source = organisation ? "env" : userConfigured[provider] ? "user" : null;
     status[provider] = source !== null;
     sources[provider] = source;
@@ -215,10 +221,37 @@ async function buildProfileApiKeyStatus(
   return { ...status, sources };
 }
 
+function normalizeRouterModels(
+    value: unknown,
+    provider: "openrouter" | "vercel",
+): string[] {
+    if (!Array.isArray(value)) return [];
+    const models: string[] = [];
+    const seen = new Set<string>();
+    for (const item of value) {
+        if (typeof item !== "string") continue;
+        const model = item.trim().replace(new RegExp(`^${provider}/`), "");
+        if (
+            !model ||
+            model.length > 200 ||
+            !/^[^\s/]+\/[^\s]+$/.test(model) ||
+            seen.has(model)
+        ) {
+            continue;
+        }
+        seen.add(model);
+        models.push(model);
+        if (models.length === 50) break;
+    }
+    return models;
+}
+
 function serializeProfile(
   row: UserProfileRow,
   credits: { used: number; resetDate: string },
   apiKeyStatus: ProfileApiKeyStatus,
+  openRouterModels: string[],
+  vercelModels: string[],
 ) {
   const titleModel = row.fast_model?.trim()
     ? resolveModel(row.fast_model.trim(), "")
@@ -238,6 +271,8 @@ function serializeProfile(
     legalResearchUs: row.legal_research_us !== false,
     quickActionsVisible: row.quick_actions_visible !== false,
     apiKeyStatus,
+    openRouterModels,
+    vercelModels,
   };
 }
 
@@ -283,14 +318,22 @@ async function loadProfile(
     if (updateError) return { data: null, error: updateError };
   }
 
+  try {
+  const [openRouterModels, vercelModels] = await Promise.all([
+    getUserRouterModels(userId, "openrouter", db),
+    getUserRouterModels(userId, "vercel", db),
+  ]);
   return {
     data: serializeProfile(
       row,
       { used: messageCreditsUsed, resetDate: creditsResetDate },
       apiKeyStatus,
+      openRouterModels,
+      vercelModels,
     ),
     error: null,
   };
+  } catch (error) { return { data: null, error: { message: errorMessage(error) } }; }
 }
 
 type ProfileUpdate = {
@@ -307,7 +350,7 @@ type ProfileUpdate = {
 // and accepts "" (= no preference, stored as null).
 function validateProfilePayload(
   body: unknown,
-): { ok: true; update: ProfileUpdate } | { ok: false; detail: string } {
+): { ok: true; update: ProfileUpdate; openRouterModels?: string[]; vercelModels?: string[] } | { ok: false; detail: string } {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return { ok: false, detail: "Expected a JSON object" };
   }
@@ -320,6 +363,8 @@ function validateProfilePayload(
     "tabularModel",
     "legalResearchUs",
     "quickActionsVisible",
+    "openRouterModels",
+    "vercelModels",
   ]);
   const invalidField = Object.keys(raw).find((key) => !allowedFields.has(key));
   if (invalidField) {
@@ -378,7 +423,47 @@ function validateProfilePayload(
     update.quick_actions_visible = raw.quickActionsVisible;
   }
 
-  return { ok: true, update };
+  let openRouterModels: string[] | undefined;
+  let vercelModels: string[] | undefined;
+    if ("openRouterModels" in raw) {
+        if (!Array.isArray(raw.openRouterModels)) {
+            return {
+                ok: false,
+                detail: "openRouterModels must be an array of model IDs",
+            };
+        }
+        const models = normalizeRouterModels(
+            raw.openRouterModels,
+            "openrouter",
+  "vercel",
+        );
+        if (models.length !== raw.openRouterModels.length) {
+            return {
+                ok: false,
+                detail: "openRouterModels contains an invalid or duplicate model ID",
+            };
+        }
+        openRouterModels = models;
+    }
+
+    if ("vercelModels" in raw) {
+        if (!Array.isArray(raw.vercelModels)) {
+            return {
+                ok: false,
+                detail: "vercelModels must be an array of model IDs",
+            };
+        }
+        const models = normalizeRouterModels(raw.vercelModels, "vercel");
+        if (models.length !== raw.vercelModels.length) {
+            return {
+                ok: false,
+                detail: "vercelModels contains an invalid or duplicate model ID",
+            };
+        }
+        vercelModels = models;
+    }
+
+  return { ok: true, update, ...(openRouterModels ? {openRouterModels} : {}), ...(vercelModels ? {vercelModels} : {}) };
 }
 
 // GET /user/profile
@@ -432,6 +517,36 @@ userRouter.patch("/profile", requireAuth, async (req, res) => {
     .eq("user_id", userId);
   if (updateError)
     return void res.status(500).json({ detail: updateError.message });
+
+    if (parsed.openRouterModels !== undefined) {
+        try {
+            await replaceUserRouterModels(
+                userId,
+                "openrouter",
+                parsed.openRouterModels,
+                db,
+            );
+        } catch (routerModelsError) {
+            return void res.status(500).json({
+                detail: errorMessage(routerModelsError),
+            });
+        }
+    }
+
+    if (parsed.vercelModels !== undefined) {
+        try {
+            await replaceUserRouterModels(
+                userId,
+                "vercel",
+                parsed.vercelModels,
+                db,
+            );
+        } catch (routerModelsError) {
+            return void res.status(500).json({
+                detail: errorMessage(routerModelsError),
+            });
+        }
+    }
 
   // Re-fetch to return the canonical post-update view (same shape as GET).
   const { data, error } = await loadProfile(db, userId);

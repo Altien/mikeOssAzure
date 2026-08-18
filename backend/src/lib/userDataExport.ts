@@ -296,6 +296,7 @@ export async function buildUserAccountExport(
     const [
         profile,
         apiKeys,
+        routerModels,
         projects,
         standaloneDocuments,
         libraryFolders,
@@ -316,6 +317,12 @@ export async function buildUserAccountExport(
     ] = await Promise.all([
         selectAll(db, "user_profiles", (query) => query.eq("user_id", userId)),
         loadApiKeyStatus(db, userId),
+        selectAll(db, "user_router_models", (query) =>
+            query
+                .eq("user_id", userId)
+                .order("router", { ascending: true })
+                .order("sort_order", { ascending: true }),
+        ),
         selectAll(db, "projects", (query) =>
             query.eq("user_id", userId).order("created_at", { ascending: true }),
         ),
@@ -422,6 +429,7 @@ export async function buildUserAccountExport(
         user: { id: userId, email: userEmail ?? null },
         profile,
         api_keys: apiKeys,
+        router_models: routerModels,
         projects,
         project_subfolders: folders,
         library_folders: libraryFolders,

@@ -26,10 +26,7 @@ import {
     type TRChat,
     type TRCitationAnnotation,
 } from "@/app/lib/mikeApi";
-import {
-    isPanelDocument,
-    type AssistantEvent,
-} from "../shared/types";
+import { isPanelDocument, type AssistantEvent } from "../shared/types";
 import { ModelToggle } from "../assistant/ModelToggle";
 import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
 import { PreResponseWrapper } from "../assistant/PreResponseWrapper";
@@ -439,6 +436,8 @@ function TRChatInput({
     model,
     onModelChange,
     apiKeys,
+    openRouterModels,
+    vercelModels,
     onHeightChange,
 }: {
     isLoading: boolean;
@@ -447,6 +446,8 @@ function TRChatInput({
     model: string;
     onModelChange: (id: string) => void;
     apiKeys?: ApiKeyState;
+    openRouterModels?: string[];
+    vercelModels?: string[];
     onHeightChange: (height: number) => void;
 }) {
     const [value, setValue] = useState("");
@@ -531,6 +532,8 @@ function TRChatInput({
                         value={model}
                         onChange={onModelChange}
                         apiKeys={apiKeys}
+                        openRouterModels={openRouterModels}
+                        vercelModels={vercelModels}
                     />
                     <button
                         type="button"
@@ -1644,8 +1647,8 @@ export function TRChatPanel({
                                         ? (data.cluster_id as number)
                                         : 0,
                                 document: isPanelDocument(data.document)
-                                        ? data.document
-                                        : undefined,
+                                    ? data.document
+                                    : undefined,
                             });
                             continue;
                         }
@@ -1919,6 +1922,8 @@ export function TRChatPanel({
                     updateModelPreference("tabularModel", id)
                 }
                 apiKeys={apiKeys}
+                openRouterModels={profile?.openRouterModels}
+                vercelModels={profile?.vercelModels}
                 onHeightChange={setInputHeight}
             />
 
