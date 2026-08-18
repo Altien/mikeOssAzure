@@ -7,7 +7,11 @@ import {
     type UserApiKeys,
 } from "./llm";
 import { getUserApiKeys as getStoredUserApiKeys } from "./userApiKeys";
-import { getUserRouterModels } from "./routerModels";
+import {
+    getUserRouterModels,
+    isRouterModelSelected,
+    routerForModelId,
+} from "./routerModels";
 
 export type UserModelSettings = {
     title_model: string;
@@ -56,12 +60,38 @@ export async function getUserModelSettings(
         ]);
     const data = profileResult.data;
 
+    // A stored preference can name a router model the user has since removed
+    // from (or never had in) their saved selection — e.g. a hand-crafted
+    // profile PATCH. Treat that exactly like an invalid model id and fall
+    // back, so the env-key spend path can't be steered onto arbitrary
+    // gateway models.
+    const guardRouterModel = (model: string, fallback: string): string => {
+        if (
+            !routerForModelId(model) ||
+            isRouterModelSelected(model, openRouterModels, vercelModels)
+        ) {
+            return model;
+        }
+        console.warn(
+            `[router-models] user ${userId} preference "${model}" is outside their saved selection; using ${fallback}`,
+        );
+        return fallback;
+    };
+    const titleFallback = resolveTitleModel(
+        api_keys,
+        openRouterModels,
+        vercelModels,
+    );
+
     return {
-        title_model: resolveModel(
-            data?.title_model,
-            resolveTitleModel(api_keys, openRouterModels, vercelModels),
+        title_model: guardRouterModel(
+            resolveModel(data?.title_model, titleFallback),
+            titleFallback,
         ),
-        tabular_model: resolveModel(data?.tabular_model, DEFAULT_TABULAR_MODEL),
+        tabular_model: guardRouterModel(
+            resolveModel(data?.tabular_model, DEFAULT_TABULAR_MODEL),
+            DEFAULT_TABULAR_MODEL,
+        ),
         legal_research_us:
             (data as { legal_research_us?: boolean | null } | null)
                 ?.legal_research_us !== false,

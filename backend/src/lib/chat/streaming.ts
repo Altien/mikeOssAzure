@@ -1,10 +1,10 @@
 import {
   streamChatWithTools,
-  resolveModel,
   DEFAULT_MAIN_MODEL,
   type LlmMessage,
   type OpenAIToolSchema,
 } from "../llm";
+import { resolveRequestedModel } from "../routerModels";
 import { safeErrorMessage } from "../safeError";
 import { createServerSupabase } from "../supabase";
 import { buildUserMcpTools, type McpToolEvent } from "../mcpConnectors";
@@ -346,7 +346,15 @@ export async function runLLMStream(params: {
     }
   };
 
-  const selectedModel = resolveModel(model, DEFAULT_MAIN_MODEL);
+  // Single request-time choke point for every runLLMStream caller (chat,
+  // project chat, Word chat, tabular): router-prefixed models must be in the
+  // user's saved selection or the request degrades to the default model.
+  const selectedModel = await resolveRequestedModel(
+    model,
+    DEFAULT_MAIN_MODEL,
+    userId,
+    db,
+  );
 
   try {
     throwIfAborted(signal);
