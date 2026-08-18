@@ -15,10 +15,14 @@ import {
 import {
     STATIC_MODELS,
     DEFAULT_MODEL_ID as ADDIN_DEFAULT_MODEL_ID,
+    isModelAvailable as addinIsModelAvailable,
     modelDisplayName as addinModelDisplayName,
     openRouterModelOptions as addinOpenRouterModelOptions,
     vercelModelOptions as addinVercelModelOptions,
 } from "../../../word-addin/src/taskpane/lib/modelCatalog";
+import type { ApiKeyStatus } from "../../../word-addin/src/taskpane/api/client";
+import { isModelAvailable as webIsModelAvailable } from "../app/lib/modelAvailability";
+import type { ApiKeyState } from "../app/lib/mikeApi";
 
 describe("word add-in catalog parity", () => {
     it("offers exactly the web app's static models (id, label, group)", () => {
@@ -73,5 +77,48 @@ describe("word add-in catalog parity", () => {
         expect(
             addinOpenRouterModelOptions(["openrouter/auto"])[0]?.id,
         ).toBe("openrouter/openrouter/auto");
+    });
+
+    it("gates every shared model on the same provider key in both clients", () => {
+        const providers = [
+            "claude",
+            "gemini",
+            "openai",
+            "openrouter",
+            "vercel",
+        ] as const;
+        const sharedIds = [
+            ...MODELS.map((model) => model.id),
+            "openrouter/openai/gpt-5.4",
+            "vercel/openai/gpt-5.4",
+        ];
+        for (const configured of providers) {
+            const addinStatus = {
+                claude: false,
+                gemini: false,
+                openai: false,
+                openrouter: false,
+                vercel: false,
+                courtlistener: false,
+                [configured]: true,
+            } as unknown as ApiKeyStatus;
+            const webState = Object.fromEntries(
+                [...providers, "courtlistener"].map((provider) => [
+                    provider,
+                    {
+                        configured: provider === configured,
+                        source: provider === configured ? "user" : null,
+                    },
+                ]),
+            ) as ApiKeyState;
+            for (const id of sharedIds) {
+                expect
+                    .soft(
+                        addinIsModelAvailable(id, addinStatus),
+                        `${id} with only ${configured} configured`,
+                    )
+                    .toBe(webIsModelAvailable(id, webState));
+            }
+        }
     });
 });
