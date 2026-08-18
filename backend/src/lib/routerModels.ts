@@ -58,6 +58,27 @@ export async function resolveRequestedModel(
     return fallback;
 }
 
+// Deploy-before-migrate tolerance: on a database that predates the
+// user_router_models migration, reads report "no selections" instead of
+// exploding every profile/chat/title/tabular request into a 500. Postgres
+// raises undefined_table (42P01); PostgREST reports a relation missing from
+// its schema cache as PGRST205 (the analog of the 42703 missing-column shape
+// selectProfile already tolerates).
+function isMissingRouterModelsTable(error: unknown): boolean {
+    const record =
+        error && typeof error === "object"
+            ? (error as { code?: unknown; message?: unknown })
+            : {};
+    const code = typeof record.code === "string" ? record.code : "";
+    const message = typeof record.message === "string" ? record.message : "";
+    return (
+        code === "42P01" ||
+        (code === "PGRST205" && message.includes("user_router_models"))
+    );
+}
+
+let warnedMissingTable = false;
+
 export async function getUserRouterModels(
     userId: string,
     router: string,
@@ -70,7 +91,20 @@ export async function getUserRouterModels(
         .eq("router", router)
         .order("sort_order", { ascending: true })
         .order("created_at", { ascending: true });
-    if (error) throw error;
+    if (error) {
+        if (isMissingRouterModelsTable(error)) {
+            if (!warnedMissingTable) {
+                warnedMissingTable = true;
+                console.warn(
+                    "[router-models] user_router_models table is missing; " +
+                        "treating router selections as empty until the " +
+                        "20260818_01 migration is applied",
+                );
+            }
+            return [];
+        }
+        throw error;
+    }
 
     return (data ?? []).flatMap((row) =>
         typeof row.model_id === "string" && row.model_id.trim()
