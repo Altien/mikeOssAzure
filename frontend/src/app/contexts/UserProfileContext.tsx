@@ -42,9 +42,12 @@ interface UserProfileContextType {
     loading: boolean;
     /**
      * True when the profile fetch failed (after a retry) and `profile` holds
-     * the local fallback. Its apiKeys then say "nothing configured" only
-     * because the truth is unknown — key-gated UI should fail open rather
-     * than treat that as a real all-keys-missing state.
+     * the local fallback. Every field on it is a placeholder, not an answer:
+     * apiKeys say "nothing configured" and the router model lists are empty
+     * only because the truth is unknown. Consumers must distinguish this from
+     * a real profile that loaded with the same values — key-gated UI fails
+     * open, and destructive normalization (e.g. resetting a saved composer
+     * selection that is absent from the router lists) must not run at all.
      */
     apiKeysDegraded: boolean;
     updateDisplayName: (name: string) => Promise<boolean>;

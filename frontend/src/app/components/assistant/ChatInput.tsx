@@ -103,8 +103,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         loading: profileLoading,
         apiKeysDegraded,
     } = useUserProfile();
+    // A degraded profile is the local fallback, whose router lists are empty
+    // because the truth is UNKNOWN. Passing them on would let one dropped
+    // /user/profile request rewrite the saved composer selection to the
+    // default — permanently. null means "not loaded", which the hook leaves
+    // the stored selection alone for.
     const [model, setModel] = useSelectedModel(
-        profile
+        profile && !apiKeysDegraded
             ? {
                   openRouterModels: profile.openRouterModels,
                   vercelModels: profile.vercelModels,
