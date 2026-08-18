@@ -20,6 +20,7 @@ import {
   type TabularCellStore,
   type WorkflowStore,
   type ToolCall,
+  type AskInputResponseItem,
   type AskInputsEvent,
   type EditAnnotation,
   devLog,
@@ -49,14 +50,7 @@ export type AssistantEvent =
   | AskInputsEvent
   | {
       type: "ask_inputs_response";
-      responses: {
-        id: string;
-        kind: "choice" | "text" | "documents";
-        question?: string;
-        answer?: string;
-        filenames?: string[];
-        skipped?: boolean;
-      }[];
+      responses: AskInputResponseItem[];
     }
   | {
       type: "doc_read";

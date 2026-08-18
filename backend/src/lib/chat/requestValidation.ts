@@ -1,5 +1,9 @@
 import { parseAskInputsResponsePayload } from "./contextBuilders";
-import type { AskInputsResponseRequest, ChatMessage } from "./types";
+import {
+  MAX_ASK_INPUT_TEXT_LENGTH,
+  type AskInputsResponseRequest,
+  type ChatMessage,
+} from "./types";
 
 type ValidationResult<T> =
   | { ok: true; value: T }
@@ -330,6 +334,16 @@ export function parseOptionalAskInputsResponse(
         return {
           ok: false,
           detail: `${field}.answer must be a non-empty string unless skipped`,
+        };
+      }
+      if (
+        response.kind === "text" &&
+        typeof response.answer === "string" &&
+        response.answer.length > MAX_ASK_INPUT_TEXT_LENGTH
+      ) {
+        return {
+          ok: false,
+          detail: `${field}.answer must be at most ${MAX_ASK_INPUT_TEXT_LENGTH} characters`,
         };
       }
       continue;

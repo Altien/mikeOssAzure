@@ -260,6 +260,19 @@ describe("chat request validation", () => {
             {
                 responses: [
                     {
+                        id: "text-1",
+                        kind: "text",
+                        question: "Address?",
+                        answer: "a".repeat(5_001),
+                    },
+                ],
+            },
+            "ask_inputs_response.responses[0].answer must be at most 5000 characters",
+        ],
+        [
+            {
+                responses: [
+                    {
                         id: "docs-1",
                         kind: "documents",
                         filenames: ["valid.pdf", 42],

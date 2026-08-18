@@ -136,6 +136,8 @@ export type AskInputOption = {
   value: string;
 };
 
+export const MAX_ASK_INPUT_TEXT_LENGTH = 5_000;
+
 export type AskInputItem =
   | {
       id: string;

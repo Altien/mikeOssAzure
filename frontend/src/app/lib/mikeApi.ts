@@ -6,6 +6,7 @@
 import { supabase } from "@/app/lib/supabase";
 import { isPanelDocument } from "@/app/components/shared/types";
 import type {
+    AskInputResponseItem,
     AssistantEvent,
     Chat,
     ChatDetailOut,
@@ -27,6 +28,10 @@ import type {
     TabularReview,
     TabularReviewDetailOut,
 } from "@/app/components/shared/types";
+
+type AskInputsResponsePayload = {
+    responses: AskInputResponseItem[];
+};
 
 // Server-side shape before mapping
 interface ServerMessage {
@@ -533,8 +538,6 @@ export interface RouterCatalogModel {
     };
 }
 
-export type OpenRouterCatalogModel = RouterCatalogModel;
-
 export async function getOllamaModels(): Promise<OllamaModelOption[]> {
     const { models } = await apiRequest<{ models: OllamaModelOption[] }>(
         "/models/ollama",
@@ -542,10 +545,10 @@ export async function getOllamaModels(): Promise<OllamaModelOption[]> {
     return models;
 }
 
-export async function getOpenRouterModels(): Promise<OpenRouterCatalogModel[]> {
-    const { models } = await apiRequest<{
-        models: OpenRouterCatalogModel[];
-    }>("/models/openrouter");
+export async function getOpenRouterModels(): Promise<RouterCatalogModel[]> {
+    const { models } = await apiRequest<{ models: RouterCatalogModel[] }>(
+        "/models/openrouter",
+    );
     return models;
 }
 
@@ -1353,30 +1356,7 @@ export async function streamChat(payload: {
     chat_id?: string;
     project_id?: string;
     model?: string;
-    ask_inputs_response?: {
-        responses: (
-            | {
-                  id: string;
-                  kind: "choice";
-                  question: string;
-                  answer?: string;
-                  skipped?: boolean;
-              }
-            | {
-                  id: string;
-                  kind: "text";
-                  question: string;
-                  answer?: string;
-                  skipped?: boolean;
-              }
-            | {
-                  id: string;
-                  kind: "documents";
-                  filenames: string[];
-                  skipped?: boolean;
-              }
-        )[];
-    };
+    ask_inputs_response?: AskInputsResponsePayload;
     signal?: AbortSignal;
 }): Promise<Response> {
     const { signal, ...body } = payload;
@@ -1407,30 +1387,7 @@ export async function streamProjectChat(payload: {
     model?: string;
     displayed_doc?: { filename: string; document_id: string };
     attached_documents?: { filename: string; document_id: string }[];
-    ask_inputs_response?: {
-        responses: (
-            | {
-                  id: string;
-                  kind: "choice";
-                  question: string;
-                  answer?: string;
-                  skipped?: boolean;
-              }
-            | {
-                  id: string;
-                  kind: "text";
-                  question: string;
-                  answer?: string;
-                  skipped?: boolean;
-              }
-            | {
-                  id: string;
-                  kind: "documents";
-                  filenames: string[];
-                  skipped?: boolean;
-              }
-        )[];
-    };
+    ask_inputs_response?: AskInputsResponsePayload;
     signal?: AbortSignal;
 }): Promise<Response> {
     const { projectId, signal, ...body } = payload;

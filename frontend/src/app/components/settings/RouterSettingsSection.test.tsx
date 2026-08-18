@@ -77,7 +77,7 @@ describe("RouterSettingsSection", () => {
         await waitFor(() => expect(getOpenRouterModels).toHaveBeenCalled());
 
         const chevron = screen.getByRole("button", {
-            name: "Choose a OpenRouter model",
+            name: "Choose OpenRouter model",
         });
         fireEvent.click(chevron);
         expect(
@@ -88,6 +88,30 @@ describe("RouterSettingsSection", () => {
         expect(
             screen.queryByTestId("openrouter-model-catalog"),
         ).not.toBeInTheDocument();
+    });
+
+    it("supports keyboard navigation and selection from the model field", async () => {
+        updateOpenRouterModels.mockResolvedValue(true);
+        render(<RouterSettingsSection />);
+        const input = screen.getByRole("combobox", {
+            name: "OpenRouter models",
+        });
+        await waitFor(() => expect(getOpenRouterModels).toHaveBeenCalled());
+
+        fireEvent.keyDown(input, { key: "ArrowDown" });
+        expect(input).toHaveAttribute("aria-expanded", "true");
+        expect(input).toHaveAttribute(
+            "aria-activedescendant",
+            "openrouter-model-catalog-option-0",
+        );
+
+        fireEvent.keyDown(input, { key: "Enter" });
+        await waitFor(() =>
+            expect(updateOpenRouterModels).toHaveBeenCalledWith([
+                "anthropic/claude-sonnet-4.5",
+                "openai/gpt-5.4",
+            ]),
+        );
     });
 
     it("renders saved models with the small pill button primitive", () => {
