@@ -15,10 +15,13 @@ vi.mock("../../mcpConnectors", () => ({
     buildUserMcpTools: vi.fn(async () => []),
 }));
 
-import { runLLMStream } from "../streaming";
+import { AssistantStreamError, runLLMStream } from "../streaming";
 
 // Supabase mock that only has to serve getUserRouterModels' query chain.
-function routerModelsDb(rows: { model_id: string }[]) {
+function routerModelsDb(
+    rows: { model_id: string }[],
+    error: unknown = null,
+) {
     const chain: Record<string, unknown> = {};
     for (const method of ["from", "select", "eq", "order"]) {
         chain[method] = vi.fn(() => chain);
@@ -26,7 +29,7 @@ function routerModelsDb(rows: { model_id: string }[]) {
     chain.then = (
         resolve: (value: unknown) => unknown,
         reject?: (reason: unknown) => unknown,
-    ) => Promise.resolve({ data: rows, error: null }).then(resolve, reject);
+    ) => Promise.resolve({ data: rows, error }).then(resolve, reject);
     return chain;
 }
 
@@ -94,6 +97,32 @@ describe("runLLMStream router-model allowlist", () => {
             expect.objectContaining({ model: "gemini-3-flash-preview" }),
         );
         warn.mockRestore();
+    });
+
+    it("reports a selection-lookup failure through the stream's error path", async () => {
+        // A database blip while reading user_router_models must surface as a
+        // normal SSE stream error (error event + AssistantStreamError), not as
+        // a bare rejection thrown before the stream's error machinery exists.
+        const db = routerModelsDb([], {
+            code: "57014",
+            message: "canceling statement due to statement timeout",
+        });
+
+        await expect(
+            runStreamWithModel(db, "openrouter/allowed/model"),
+        ).rejects.toBeInstanceOf(AssistantStreamError);
+        expect(streamChatWithTools).not.toHaveBeenCalled();
+
+        const error = await runStreamWithModel(
+            routerModelsDb([], {
+                code: "57014",
+                message: "canceling statement due to statement timeout",
+            }),
+            "openrouter/allowed/model",
+        ).catch((err: unknown) => err as AssistantStreamError);
+        expect(error.events).toContainEqual(
+            expect.objectContaining({ type: "error" }),
+        );
     });
 
     it("does not consult the router selection for first-party models", async () => {
