@@ -131,8 +131,10 @@ export function TRView({ reviewId, projectId }: Props) {
     const actionsRef = useRef<HTMLDivElement>(null);
     const tableRef = useRef<TRTableHandle>(null);
     const router = useRouter();
-    const { profile } = useUserProfile();
-    const apiKeys = profile?.apiKeys;
+    const { profile, apiKeysDegraded } = useUserProfile();
+    // Unknown key state fails open; the submit gates below already skip when
+    // apiKeys is undefined.
+    const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
     const tabularModel = profile?.tabularModel ?? "gemini-3-flash-preview";
 
     useEffect(() => {
