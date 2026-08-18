@@ -46,6 +46,14 @@ function modelCostLabel(model: RouterCatalogModel): string | null {
     return costs.join(" · ");
 }
 
+function catalogModelMatches(model: RouterCatalogModel, query: string) {
+    return (
+        !query ||
+        model.id.toLowerCase().includes(query) ||
+        model.label.toLowerCase().includes(query)
+    );
+}
+
 export function RouterSettingsSection() {
     const {
         profile,
@@ -103,10 +111,12 @@ function RouterModelsSetting({
     const [catalog, setCatalog] = useState<RouterCatalogModel[]>([]);
     const [input, setInput] = useState("");
     const [catalogOpen, setCatalogOpen] = useState(false);
+    const [activeCatalogIndex, setActiveCatalogIndex] = useState(-1);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const typeaheadRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
+    const catalogId = `${provider}-model-catalog`;
 
     useEffect(() => {
         let cancelled = false;
@@ -141,10 +151,14 @@ function RouterModelsSetting({
                 !typeaheadRef.current?.contains(event.target)
             ) {
                 setCatalogOpen(false);
+                setActiveCatalogIndex(-1);
             }
         };
         const closeOnEscape = (event: KeyboardEvent) => {
-            if (event.key === "Escape") setCatalogOpen(false);
+            if (event.key === "Escape") {
+                setCatalogOpen(false);
+                setActiveCatalogIndex(-1);
+            }
         };
         document.addEventListener("pointerdown", closeOnOutsidePointer);
         document.addEventListener("keydown", closeOnEscape);
@@ -177,17 +191,28 @@ function RouterModelsSetting({
 
     const visibleCatalog = catalog.filter((model) => {
         const query = input.trim().toLowerCase();
-        return (
-            !query ||
-            model.id.toLowerCase().includes(query) ||
-            model.label.toLowerCase().includes(query)
-        );
+        return catalogModelMatches(model, query);
     });
 
     const selectCatalogModel = (model: string) => {
         setInput("");
         setCatalogOpen(false);
+        setActiveCatalogIndex(-1);
         if (!selection.includes(model)) void save([...selection, model]);
+    };
+
+    const moveCatalogHighlight = (direction: 1 | -1) => {
+        if (visibleCatalog.length === 0) return;
+        setCatalogOpen(true);
+        setActiveCatalogIndex((current) => {
+            if (current < 0) {
+                return direction === 1 ? 0 : visibleCatalog.length - 1;
+            }
+            return (
+                (current + direction + visibleCatalog.length) %
+                visibleCatalog.length
+            );
+        });
     };
 
     return (
@@ -202,30 +227,47 @@ function RouterModelsSetting({
                 Choose from {label}&apos;s catalog or type a model ID. Saved
                 models appear in model selectors.
             </p>
-            <div ref={typeaheadRef} className="relative">
+            <div
+                ref={typeaheadRef}
+                className="relative"
+                onBlur={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget)) {
+                        setCatalogOpen(false);
+                        setActiveCatalogIndex(-1);
+                    }
+                }}
+            >
                 {catalogOpen && (
                     <LiquidDropdownSurface
+                        id={catalogId}
                         data-testid={`${provider}-model-catalog`}
                         role="listbox"
+                        aria-multiselectable="true"
                         aria-label={`${label} model catalog`}
                         className="absolute bottom-full left-0 z-50 mb-1.5 max-h-72 w-full overflow-y-auto p-1.5"
                     >
                         {visibleCatalog.length > 0 ? (
-                            visibleCatalog.map((model) => {
+                            visibleCatalog.map((model, index) => {
                                 const selected = selection.includes(model.id);
+                                const active = index === activeCatalogIndex;
                                 const costLabel = modelCostLabel(model);
                                 return (
                                     <LiquidDropdownButton
                                         key={model.id}
+                                        id={`${catalogId}-option-${index}`}
                                         role="option"
                                         aria-selected={selected}
+                                        tabIndex={-1}
                                         onMouseDown={(event) =>
                                             event.preventDefault()
+                                        }
+                                        onMouseEnter={() =>
+                                            setActiveCatalogIndex(index)
                                         }
                                         onClick={() =>
                                             selectCatalogModel(model.id)
                                         }
-                                        className="flex w-full items-center gap-2 rounded-xl px-3 py-1.5 text-left"
+                                        className={`flex w-full items-center gap-2 rounded-xl px-3 py-1.5 text-left ${active ? "bg-app-surface-hover text-gray-800" : ""}`}
                                     >
                                         <span className="min-w-0 flex-1">
                                             <span className="block truncate text-gray-700">
@@ -262,17 +304,59 @@ function RouterModelsSetting({
                     <input
                         ref={inputRef}
                         type="text"
+                        role="combobox"
+                        aria-label={`${label} models`}
+                        aria-autocomplete="list"
+                        aria-controls={catalogId}
+                        aria-expanded={catalogOpen}
+                        aria-activedescendant={
+                            catalogOpen && activeCatalogIndex >= 0
+                                ? `${catalogId}-option-${activeCatalogIndex}`
+                                : undefined
+                        }
                         value={input}
                         disabled={saving}
                         placeholder="e.g. anthropic/claude-sonnet-5"
                         className="h-full min-w-0 flex-1 bg-transparent text-sm text-gray-900 outline-none placeholder:text-gray-400 disabled:cursor-not-allowed"
                         onChange={(event) => {
-                            setInput(event.target.value);
-                            if (catalog.length > 0) setCatalogOpen(true);
+                            const nextInput = event.target.value;
+                            setInput(nextInput);
+                            if (catalog.length > 0) {
+                                const query = nextInput.trim().toLowerCase();
+                                const hasMatches = catalog.some((model) =>
+                                    catalogModelMatches(model, query),
+                                );
+                                setCatalogOpen(true);
+                                setActiveCatalogIndex(hasMatches ? 0 : -1);
+                            }
                         }}
                         onKeyDown={(event) => {
+                            if (event.key === "ArrowDown") {
+                                event.preventDefault();
+                                moveCatalogHighlight(1);
+                                return;
+                            }
+                            if (event.key === "ArrowUp") {
+                                event.preventDefault();
+                                moveCatalogHighlight(-1);
+                                return;
+                            }
+                            if (event.key === "Escape") {
+                                event.preventDefault();
+                                setCatalogOpen(false);
+                                setActiveCatalogIndex(-1);
+                                return;
+                            }
                             if (event.key === "Enter") {
                                 event.preventDefault();
+                                const highlighted =
+                                    catalogOpen && activeCatalogIndex >= 0
+                                        ? visibleCatalog[activeCatalogIndex]
+                                        : undefined;
+                                if (highlighted) {
+                                    selectCatalogModel(highlighted.id);
+                                    return;
+                                }
                                 add();
                             }
                         }}
@@ -280,10 +364,19 @@ function RouterModelsSetting({
                     <button
                         type="button"
                         disabled={saving || catalog.length === 0}
-                        aria-label={`Choose a ${label} model`}
+                        aria-label={`Choose ${label} model`}
+                        aria-controls={catalogId}
                         aria-expanded={catalogOpen}
+                        aria-haspopup="listbox"
                         onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => setCatalogOpen((open) => !open)}
+                        onClick={() => {
+                            const nextOpen = !catalogOpen;
+                            setCatalogOpen(nextOpen);
+                            setActiveCatalogIndex(
+                                nextOpen && visibleCatalog.length > 0 ? 0 : -1,
+                            );
+                            if (nextOpen) inputRef.current?.focus();
+                        }}
                         className="flex h-full shrink-0 items-center justify-end text-gray-400 transition-colors hover:text-gray-700 disabled:cursor-default disabled:opacity-40"
                     >
                         <ChevronDown

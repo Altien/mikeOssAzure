@@ -15,6 +15,8 @@ type AskInputsResponse = Extract<
     { type: "ask_inputs_response" }
 >;
 
+const OPEN_TEXT_MAX_LENGTH = 5_000;
+
 export function AskInputPopup({
     event,
     onSubmit,
@@ -60,6 +62,15 @@ export function AskInputPopup({
         [docsByInput],
     );
 
+    const clearConfirmation = (id: string) => {
+        setConfirmed((prev) => {
+            if (!prev.has(id)) return prev;
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+        });
+    };
+
     const itemAnswered = useCallback(
         (item: AskInputItem) => {
             if (item.kind !== "documents") {
@@ -72,8 +83,9 @@ export function AskInputPopup({
 
     const itemResolved = useCallback(
         (item: AskInputItem) =>
-            skipped.has(item.id) || confirmed.has(item.id),
-        [confirmed, skipped],
+            skipped.has(item.id) ||
+            (confirmed.has(item.id) && itemAnswered(item)),
+        [confirmed, itemAnswered, skipped],
     );
 
     const firstUnresolvedId = useCallback(
@@ -94,6 +106,7 @@ export function AskInputPopup({
     );
 
     const setSkippedFor = (id: string, shouldSkip = true) => {
+        if (shouldSkip) clearConfirmation(id);
         setSkipped((prev) => {
             const next = new Set(prev);
             if (shouldSkip) next.add(id);
@@ -118,6 +131,7 @@ export function AskInputPopup({
         selected: Document[],
     ) => {
         if (selected.length === 0) return;
+        clearConfirmation(inputId);
         setSkippedFor(inputId, false);
         setDocsByInput((prev) => {
             const byType = prev[inputId] ?? {};
@@ -137,6 +151,7 @@ export function AskInputPopup({
     };
 
     const removeDoc = (inputId: string, typeIndex: number, docId: string) => {
+        clearConfirmation(inputId);
         setDocsByInput((prev) => {
             const byType = prev[inputId] ?? {};
             return {
@@ -157,6 +172,7 @@ export function AskInputPopup({
     ) => {
         const trimmed = answer.trim();
         if (!trimmed || submitted) return;
+        clearConfirmation(item.id);
         setSkippedFor(item.id, false);
         setAnswers((prev) => ({ ...prev, [item.id]: trimmed }));
         setOtherOpen((prev) => ({ ...prev, [item.id]: false }));
@@ -171,10 +187,10 @@ export function AskInputPopup({
             if (skipped.has(item.id)) {
                 if (item.kind === "documents") {
                     return {
-                          id: item.id,
-                          kind: "documents" as const,
-                          filenames: [],
-                          skipped: true,
+                        id: item.id,
+                        kind: "documents" as const,
+                        filenames: [],
+                        skipped: true,
                     };
                 }
                 return {
@@ -202,7 +218,9 @@ export function AskInputPopup({
     };
 
     const responseFiles = (response: AskInputsResponse) => {
-        const responseById = new Map(response.responses.map((item) => [item.id, item]));
+        const responseById = new Map(
+            response.responses.map((item) => [item.id, item]),
+        );
         const docs = event.items.flatMap((item) => {
             const responseItem = responseById.get(item.id);
             if (
@@ -368,6 +386,9 @@ export function AskInputPopup({
                                                 chooseAnswer(activeItem, answer)
                                             }
                                             onOtherOpen={() => {
+                                                clearConfirmation(
+                                                    activeItem.id,
+                                                );
                                                 setOtherOpen((prev) => ({
                                                     ...prev,
                                                     [activeItem.id]: true,
@@ -382,6 +403,9 @@ export function AskInputPopup({
                                                 }));
                                             }}
                                             onOtherValue={(value) => {
+                                                clearConfirmation(
+                                                    activeItem.id,
+                                                );
                                                 setOtherValues((prev) => ({
                                                     ...prev,
                                                     [activeItem.id]: value,
@@ -407,6 +431,9 @@ export function AskInputPopup({
                                                 skipped.has(activeItem.id)
                                             }
                                             onChange={(value) => {
+                                                clearConfirmation(
+                                                    activeItem.id,
+                                                );
                                                 setAnswers((prev) => ({
                                                     ...prev,
                                                     [activeItem.id]: value,
@@ -534,16 +561,29 @@ function OpenTextInput({
     onChange: (value: string) => void;
 }) {
     return (
-        <textarea
-            name={`answer-${item.id}`}
-            aria-label={item.question}
-            rows={4}
-            value={value}
-            disabled={disabled}
-            onChange={(event) => onChange(event.target.value)}
-            placeholder="Type your answer..."
-            className="mt-2 min-h-24 w-full resize-y rounded-lg bg-gray-100/70 px-3 py-2 text-sm leading-5 text-gray-700 outline-none transition-colors placeholder:text-gray-400 focus:bg-gray-200/70 disabled:cursor-default disabled:opacity-60"
-        />
+        <div className="mt-2">
+            <textarea
+                name={`answer-${item.id}`}
+                aria-label={item.question}
+                aria-describedby={`answer-${item.id}-limit`}
+                rows={5}
+                maxLength={OPEN_TEXT_MAX_LENGTH}
+                value={value}
+                disabled={disabled}
+                onChange={(event) =>
+                    onChange(event.target.value.slice(0, OPEN_TEXT_MAX_LENGTH))
+                }
+                placeholder="Type your answer..."
+                className="min-h-28 w-full resize-y rounded-lg bg-gray-100/70 px-3 py-2 text-sm leading-5 text-gray-700 outline-none transition-colors placeholder:text-gray-400 focus:bg-gray-200/70 disabled:cursor-default disabled:opacity-60"
+            />
+            <p
+                id={`answer-${item.id}-limit`}
+                className="mt-1 text-right font-sans text-[10px] text-gray-400"
+            >
+                {value.length.toLocaleString()} /{" "}
+                {OPEN_TEXT_MAX_LENGTH.toLocaleString()}
+            </p>
+        </div>
     );
 }
 

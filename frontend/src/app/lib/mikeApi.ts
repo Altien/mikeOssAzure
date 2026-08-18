@@ -18,6 +18,7 @@ import {
 } from "@/app/lib/auth-token";
 import { isPanelDocument } from "@/app/components/shared/types";
 import type {
+    AskInputResponseItem,
     AssistantEvent,
     Chat,
     ChatDetailOut,
@@ -40,6 +41,10 @@ import type {
     TabularReviewDetailOut,
 } from "@/app/components/shared/types";
 import type { ChatDetailSkillBinding } from "@/altien/skillRuntime/api";
+
+type AskInputsResponsePayload = {
+    responses: AskInputResponseItem[];
+};
 
 // Server-side shape before mapping
 interface ServerMessage {
@@ -597,12 +602,10 @@ export interface RouterCatalogModel {
     };
 }
 
-export type OpenRouterCatalogModel = RouterCatalogModel;
-
-export async function getOpenRouterModels(): Promise<OpenRouterCatalogModel[]> {
-    const { models } = await apiRequest<{
-        models: OpenRouterCatalogModel[];
-    }>("/api/models/openrouter");
+export async function getOpenRouterModels(): Promise<RouterCatalogModel[]> {
+    const { models } = await apiRequest<{ models: RouterCatalogModel[] }>(
+        "/models/openrouter",
+    );
     return models;
 }
 
@@ -1464,30 +1467,7 @@ export async function streamChat(payload: {
     chat_id?: string;
     project_id?: string;
     model?: string;
-    ask_inputs_response?: {
-        responses: (
-            | {
-                  id: string;
-                  kind: "choice";
-                  question: string;
-                  answer?: string;
-                  skipped?: boolean;
-              }
-            | {
-                  id: string;
-                  kind: "text";
-                  question: string;
-                  answer?: string;
-                  skipped?: boolean;
-              }
-            | {
-                  id: string;
-                  kind: "documents";
-                  filenames: string[];
-                  skipped?: boolean;
-              }
-        )[];
-    };
+    ask_inputs_response?: AskInputsResponsePayload;
     signal?: AbortSignal;
 }): Promise<Response> {
     const { signal, ...body } = payload;
@@ -1520,30 +1500,7 @@ export async function streamProjectChat(payload: {
     model?: string;
     displayed_doc?: { filename: string; document_id: string };
     attached_documents?: { filename: string; document_id: string }[];
-    ask_inputs_response?: {
-        responses: (
-            | {
-                  id: string;
-                  kind: "choice";
-                  question: string;
-                  answer?: string;
-                  skipped?: boolean;
-              }
-            | {
-                  id: string;
-                  kind: "text";
-                  question: string;
-                  answer?: string;
-                  skipped?: boolean;
-              }
-            | {
-                  id: string;
-                  kind: "documents";
-                  filenames: string[];
-                  skipped?: boolean;
-              }
-        )[];
-    };
+    ask_inputs_response?: AskInputsResponsePayload;
     signal?: AbortSignal;
 }): Promise<Response> {
     const { projectId, signal, ...body } = payload;

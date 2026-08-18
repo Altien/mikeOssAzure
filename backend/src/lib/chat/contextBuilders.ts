@@ -10,6 +10,7 @@ import {
   type ChatMessage,
   type AskInputsResponseRequest,
   type AskInputResponseItem,
+  MAX_ASK_INPUT_TEXT_LENGTH,
   devLog,
 } from "./types";
 import { buildSystemPrompt } from "./prompts";
@@ -176,7 +177,7 @@ export async function enrichWithPriorEvents(
           (row.kind === "choice" || row.kind === "text") &&
           typeof row.answer === "string"
         ) {
-          lines.push(`- user answered: "${row.answer}"`);
+          lines.push(`- user answered: ${untrustedRef(row.answer)}`);
         } else if (
           row.kind === "documents" &&
           Array.isArray(row.filenames)
@@ -361,7 +362,10 @@ export function parseAskInputsResponsePayload(
           typeof current.answer === "string"
             ? current.answer
                 .trim()
-                .slice(0, kind === "text" ? 5000 : 1000)
+                .slice(
+                  0,
+                  kind === "text" ? MAX_ASK_INPUT_TEXT_LENGTH : 1_000,
+                )
             : "";
         if (!question || (!answer && !skipped)) return null;
         return {

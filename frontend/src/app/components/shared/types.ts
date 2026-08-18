@@ -13,6 +13,11 @@ import type {
     SourceDocumentType,
     SourceSubdocument,
 } from "../../../../../backend/src/lib/sourceDocuments";
+import type {
+    AskInputItem as SharedAskInputItem,
+    AskInputResponseItem as SharedAskInputResponseItem,
+    AskInputsEvent as SharedAskInputsEvent,
+} from "../../../../../backend/src/lib/chat/types";
 
 export interface Folder {
     id: string;
@@ -143,6 +148,15 @@ export interface EditAnnotation {
     status: "pending" | "accepted" | "rejected";
 }
 
+export type AskInputItem = SharedAskInputItem;
+export type AskInputResponseItem = SharedAskInputResponseItem;
+export type AskInputsEvent = SharedAskInputsEvent;
+
+export type AskInputsResponseEvent = {
+    type: "ask_inputs_response";
+    responses: AskInputResponseItem[];
+};
+
 export type AssistantEvent =
     | AuthorityTraceAssistantEvent
     | { type: "reasoning"; text: string; isStreaming?: boolean }
@@ -162,59 +176,8 @@ export type AssistantEvent =
           error?: string;
           isStreaming?: boolean;
       }
-    | {
-          type: "ask_inputs";
-          items: (
-              | {
-                    id: string;
-                    kind: "choice";
-                    question: string;
-                    options: {
-                        value: string;
-                    }[];
-                    allow_other: boolean;
-                    other_label: string;
-                    response_prefix?: string;
-                }
-              | {
-                    id: string;
-                    kind: "text";
-                    question: string;
-                    response_prefix?: string;
-                }
-              | {
-                    id: string;
-                    kind: "documents";
-                    document_types: string[];
-                    response_prefix?: string;
-                }
-          )[];
-      }
-    | {
-          type: "ask_inputs_response";
-          responses: (
-              | {
-                    id: string;
-                    kind: "choice";
-                    question: string;
-                    answer?: string;
-                    skipped?: boolean;
-                }
-              | {
-                    id: string;
-                    kind: "text";
-                    question: string;
-                    answer?: string;
-                    skipped?: boolean;
-                }
-              | {
-                    id: string;
-                    kind: "documents";
-                    filenames: string[];
-                    skipped?: boolean;
-                }
-          )[];
-      }
+    | AskInputsEvent
+    | AskInputsResponseEvent
     | { type: "thinking"; isStreaming?: boolean }
     | {
           type: "doc_read";
