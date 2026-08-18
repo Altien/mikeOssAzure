@@ -4,6 +4,8 @@ import { getOllamaModels, type ApiKeyStatus } from "../../api/mikeApi";
 import {
   isModelAvailable,
   modelDisplayName,
+  openRouterModelOptions,
+  vercelModelOptions,
   STATIC_MODELS,
   type ModelGroup,
   type ModelOption,
@@ -55,16 +57,8 @@ export function ModelToggle({
   }, []);
 
   const models = useMemo(() => {
-    const openRouterOptions: ModelOption[] = openRouterModels.map((model) => ({
-      id: `openrouter/${model.replace(/^openrouter\//, "")}`,
-      label: modelDisplayName(model),
-      group: "OpenRouter",
-    }));
-    const vercelOptions: ModelOption[] = vercelModels.map((model) => ({
-      id: `vercel/${model.replace(/^vercel\//, "")}`,
-      label: modelDisplayName(model),
-      group: "Vercel AI Gateway",
-    }));
+    const openRouterOptions = openRouterModelOptions(openRouterModels);
+    const vercelOptions = vercelModelOptions(vercelModels);
     const localOptions = ollamaModels.map((model) => ({
       ...model,
       label: modelDisplayName(model.id),

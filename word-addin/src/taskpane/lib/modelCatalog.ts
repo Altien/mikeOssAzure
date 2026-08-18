@@ -1,4 +1,7 @@
-import type { ApiKeyStatus } from "../api/mikeApi";
+// Imported from the base client (not the ../api/mikeApi barrel) so this
+// module's compile graph stays free of Office globals: the drift-guard test in
+// frontend/src/wordAddin imports this file across packages.
+import type { ApiKeyStatus } from "../api/client";
 
 /**
  * Keep this catalog, its labels, and DEFAULT_MODEL_ID in sync with
@@ -74,6 +77,29 @@ export function modelDisplayName(modelId: string): string {
     .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
     .join(" ");
   return `${label} (${variantLabel})`;
+}
+
+/**
+ * The stored selection is the router's raw catalog id (e.g.
+ * "anthropic/claude-sonnet-4.5" or "openrouter/auto"); the app-level model id
+ * always prefixes the router slug verbatim, with no inner stripping, so both
+ * this client and the web app send the identical string for the same stored
+ * selection ("openrouter/openrouter/auto" for OpenRouter's "openrouter/auto").
+ */
+export function openRouterModelOptions(models: string[]): ModelOption[] {
+  return models.map((model) => ({
+    id: `openrouter/${model}`,
+    label: modelDisplayName(model),
+    group: "OpenRouter",
+  }));
+}
+
+export function vercelModelOptions(models: string[]): ModelOption[] {
+  return models.map((model) => ({
+    id: `vercel/${model}`,
+    label: modelDisplayName(model),
+    group: "Vercel AI Gateway",
+  }));
 }
 
 export function isAllowedModelId(id: string): boolean {

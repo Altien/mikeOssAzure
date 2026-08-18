@@ -26,7 +26,10 @@ vi.mock("@/app/contexts/UserProfileContext", () => ({
     }),
 }));
 
-import { RouterSettingsSection } from "./RouterSettingsSection";
+import {
+    RouterSettingsSection,
+    normalizeTypedModelId,
+} from "./RouterSettingsSection";
 
 describe("RouterSettingsSection", () => {
     beforeEach(() => {
@@ -114,6 +117,28 @@ describe("RouterSettingsSection", () => {
         );
     });
 
+    it("adds a router-slug catalog id verbatim instead of rejecting it", async () => {
+        // OpenRouter's catalog contains "openrouter/auto". Stripping the
+        // router prefix before validating leaves "auto", which is not
+        // vendor/model shaped, so the add used to fail with an error.
+        updateOpenRouterModels.mockResolvedValue(true);
+        render(<RouterSettingsSection />);
+        const input = screen.getByRole("combobox", {
+            name: "OpenRouter models",
+        });
+        await waitFor(() => expect(getOpenRouterModels).toHaveBeenCalled());
+
+        fireEvent.change(input, { target: { value: "openrouter/auto" } });
+        fireEvent.keyDown(input, { key: "Enter" });
+
+        await waitFor(() =>
+            expect(updateOpenRouterModels).toHaveBeenCalledWith([
+                "anthropic/claude-sonnet-4.5",
+                "openrouter/auto",
+            ]),
+        );
+    });
+
     it("renders saved models with the small pill button primitive", () => {
         render(<RouterSettingsSection />);
 
@@ -121,5 +146,34 @@ describe("RouterSettingsSection", () => {
             name: "Remove anthropic/claude-sonnet-4.5",
         });
         expect(pill).toHaveClass("rounded-full", "text-xs");
+    });
+});
+
+describe("normalizeTypedModelId", () => {
+    it("keeps router-slug catalog ids verbatim", () => {
+        expect(normalizeTypedModelId("openrouter/auto", "openrouter")).toBe(
+            "openrouter/auto",
+        );
+        expect(normalizeTypedModelId("vercel/v0-1.5-md", "vercel")).toBe(
+            "vercel/v0-1.5-md",
+        );
+    });
+
+    it("strips the router prefix only when the remainder is a full id", () => {
+        expect(
+            normalizeTypedModelId(
+                " openrouter/deepseek/deepseek-v3 ",
+                "openrouter",
+            ),
+        ).toBe("deepseek/deepseek-v3");
+        expect(normalizeTypedModelId("openai/gpt-5.4", "openrouter")).toBe(
+            "openai/gpt-5.4",
+        );
+    });
+
+    it("returns null for text that is not id-shaped", () => {
+        expect(normalizeTypedModelId("auto", "openrouter")).toBeNull();
+        expect(normalizeTypedModelId("two words/x", "openrouter")).toBeNull();
+        expect(normalizeTypedModelId("", "openrouter")).toBeNull();
     });
 });
