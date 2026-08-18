@@ -31,6 +31,7 @@ import type {
   WordChatSubmitOptions,
 } from "../../lib/wordChatTypes";
 import { isModelAvailable, missingModelProvider } from "../../lib/modelCatalog";
+import { loadWithRetry } from "../../lib/composerPreflight";
 
 export interface ChatInputHandle {
   setDraft: (prompt: string) => void;
@@ -79,6 +80,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
     const [workflowModalOpen, setWorkflowModalOpen] = useState(false);
     const [model, setModel] = useSelectedModel();
     const [keyStatus, setKeyStatus] = useState<ApiKeyStatus | null>(null);
+    const [keyStatusLoading, setKeyStatusLoading] = useState(true);
     const [openRouterModels, setOpenRouterModels] = useState<string[]>([]);
     const [vercelModels, setVercelModels] = useState<string[]>([]);
     const [modelError, setModelError] = useState<string | null>(null);
@@ -105,18 +107,34 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
 
     useEffect(() => {
       let cancelled = false;
-      void Promise.allSettled([getApiKeyStatus(), getUserProfile()]).then(
-        ([statusResult, profileResult]) => {
-          if (cancelled) return;
-          if (statusResult.status === "fulfilled") {
-            setKeyStatus(statusResult.value);
-          }
-          if (profileResult.status === "fulfilled") {
-            setOpenRouterModels(profileResult.value.openRouterModels ?? []);
-            setVercelModels(profileResult.value.vercelModels ?? []);
-          }
-        },
-      );
+      // Three-state preflight: while it runs the model toggle stays neutral
+      // (no "No API Key"); each request retries once with backoff; after a
+      // final failure keyStatus stays null and availability FAILS OPEN (the
+      // backend still authoritatively rejects models it cannot serve).
+      void Promise.all([
+        loadWithRetry(getApiKeyStatus, {
+          onFinalFailure: (error) =>
+            console.warn(
+              "[word-addin] API key status unavailable after retry; model availability fails open",
+              error,
+            ),
+        }),
+        loadWithRetry(getUserProfile, {
+          onFinalFailure: (error) =>
+            console.warn(
+              "[word-addin] user profile unavailable after retry; router models hidden this session",
+              error,
+            ),
+        }),
+      ]).then(([status, profile]) => {
+        if (cancelled) return;
+        setKeyStatus(status);
+        if (profile) {
+          setOpenRouterModels(profile.openRouterModels ?? []);
+          setVercelModels(profile.vercelModels ?? []);
+        }
+        setKeyStatusLoading(false);
+      });
       return () => {
         cancelled = true;
       };
@@ -340,6 +358,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
                   setModel(next);
                 }}
                 keyStatus={keyStatus}
+                keyStatusLoading={keyStatusLoading}
                 openRouterModels={openRouterModels}
                 vercelModels={vercelModels}
               />

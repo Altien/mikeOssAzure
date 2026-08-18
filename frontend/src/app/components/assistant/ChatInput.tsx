@@ -99,8 +99,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         title: string;
     } | null>(null);
     const [model, setModel] = useSelectedModel();
-    const { profile } = useUserProfile();
-    const apiKeys = profile?.apiKeys;
+    const {
+        profile,
+        loading: profileLoading,
+        apiKeysDegraded,
+    } = useUserProfile();
+    // Degraded profile → key availability is UNKNOWN; undefined here makes
+    // every key gate (submit check + model toggle) fail open instead of
+    // treating "we couldn't ask" as "no keys configured".
+    const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const controlsRef = useRef<HTMLDivElement>(null);
     const [compactControls, setCompactControls] = useState(false);
@@ -593,6 +600,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                 value={model}
                                 onChange={setModel}
                                 apiKeys={apiKeys}
+                                apiKeysLoading={profileLoading && !profile}
                                 openRouterModels={profile?.openRouterModels}
                                 vercelModels={profile?.vercelModels}
                                 compact={compactControls}

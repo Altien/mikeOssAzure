@@ -116,7 +116,15 @@ const itemClassName =
 interface Props {
     value: string;
     onChange: (id: string) => void;
+    /**
+     * Loaded key state, or undefined when it is UNKNOWN (profile still
+     * loading, or the fetch failed and the app degrades). Unknown state fails
+     * open — the backend authoritatively rejects models it cannot serve.
+     */
     apiKeys?: ApiKeyState;
+    /** True while the profile is still loading: render a neutral disabled
+     *  trigger instead of flashing "No API Key" on every page load. */
+    apiKeysLoading?: boolean;
     openRouterModels?: string[];
     vercelModels?: string[];
     compact?: boolean;
@@ -142,6 +150,7 @@ export function ModelToggle({
     value,
     onChange,
     apiKeys,
+    apiKeysLoading = false,
     openRouterModels = [],
     vercelModels = [],
     compact = false,
@@ -162,12 +171,15 @@ export function ModelToggle({
     ];
     const availableModels = models.filter((model) => {
         if (model.group === "Local") return true;
-        return apiKeys ? isModelAvailable(model.id, apiKeys) : false;
+        if (apiKeysLoading) return false; // nothing offered until known
+        if (!apiKeys) return true; // unknown after a failed load → fail open
+        return isModelAvailable(model.id, apiKeys);
     });
     const selected = availableModels.find((model) => model.id === value);
-    const selectedLabel =
-        selected?.label ??
-        (availableModels.length > 0 ? "Select model" : "No API Key");
+    const selectedLabel = apiKeysLoading
+        ? (models.find((model) => model.id === value)?.label ?? "Select model")
+        : (selected?.label ??
+          (availableModels.length > 0 ? "Select model" : "No API Key"));
     const availableGroups = GROUP_ORDER.flatMap((group) => {
         const items = availableModels.filter((model) => model.group === group);
         return items.length ? [{ group, items }] : [];
@@ -193,12 +205,14 @@ export function ModelToggle({
                 <button
                     type="button"
                     aria-label="Choose model"
-                    disabled={availableModels.length === 0}
+                    disabled={apiKeysLoading || availableModels.length === 0}
                     className={`flex h-8 items-center rounded-full text-sm text-gray-400 transition-colors enabled:cursor-pointer enabled:hover:text-gray-700 disabled:cursor-default ${compact ? "w-8 justify-center px-0" : "gap-1.5 px-2"} ${isOpen ? "text-gray-700" : ""}`}
                     title={
-                        availableModels.length
-                            ? "Choose model"
-                            : "No API key configured"
+                        apiKeysLoading
+                            ? "Checking API keys"
+                            : availableModels.length
+                              ? "Choose model"
+                              : "No API key configured"
                     }
                 >
                     {compact ? (

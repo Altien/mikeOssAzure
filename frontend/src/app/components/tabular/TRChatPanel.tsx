@@ -435,6 +435,7 @@ function TRChatInput({
     model,
     onModelChange,
     apiKeys,
+    apiKeysLoading,
     openRouterModels,
     vercelModels,
     onHeightChange,
@@ -445,6 +446,7 @@ function TRChatInput({
     model: string;
     onModelChange: (id: string) => void;
     apiKeys?: ApiKeyState;
+    apiKeysLoading?: boolean;
     openRouterModels?: string[];
     vercelModels?: string[];
     onHeightChange: (height: number) => void;
@@ -531,6 +533,7 @@ function TRChatInput({
                         value={model}
                         onChange={onModelChange}
                         apiKeys={apiKeys}
+                        apiKeysLoading={apiKeysLoading}
                         openRouterModels={openRouterModels}
                         vercelModels={vercelModels}
                     />
@@ -760,8 +763,16 @@ export function TRChatPanel({
     initialChatId,
     onChatIdChange,
 }: Props) {
-    const { profile, updateModelPreference } = useUserProfile();
-    const apiKeys = profile?.apiKeys;
+    const {
+        profile,
+        loading: profileLoading,
+        apiKeysDegraded,
+        updateModelPreference,
+    } = useUserProfile();
+    // Unknown key state (still loading, or degraded after a failed profile
+    // fetch) fails open — see ModelToggle.
+    const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
+    const apiKeysLoading = profileLoading && !profile;
     const currentModel = profile?.tabularModel ?? "gemini-3-flash-preview";
     const [apiKeyModalProvider, setApiKeyModalProvider] =
         useState<ModelProvider | null>(null);
@@ -1917,6 +1928,7 @@ export function TRChatPanel({
                     updateModelPreference("tabularModel", id)
                 }
                 apiKeys={apiKeys}
+                apiKeysLoading={apiKeysLoading}
                 openRouterModels={profile?.openRouterModels}
                 vercelModels={profile?.vercelModels}
                 onHeightChange={setInputHeight}
