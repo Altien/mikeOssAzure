@@ -17,6 +17,7 @@ import { type ApiKeyState } from "@/app/lib/mikeApi";
 import {
     MODELS,
     SETTINGS_MODELS,
+    canonicalModelId,
     openRouterModelOptions,
     vercelModelOptions,
     type ModelOption,
@@ -95,11 +96,11 @@ export default function ModelPreferencesPage() {
                             Used for naming chats and other lightweight titles.
                         </p>
                         <ModelPreferenceDropdown
-                            value={
+                            value={canonicalModelId(
                                 optimisticValues.titleModel ??
-                                profile?.titleModel ??
-                                "gemini-3.5-flash-lite"
-                            }
+                                    profile?.titleModel ??
+                                    "gemini-3.5-flash-lite",
+                            )}
                             options={[
                                 ...SETTINGS_MODELS,
                                 ...selectedOpenRouterOptions,
@@ -123,11 +124,11 @@ export default function ModelPreferencesPage() {
                             reviews to reduce token costs.
                         </p>
                         <ModelPreferenceDropdown
-                            value={
+                            value={canonicalModelId(
                                 optimisticValues.tabularModel ??
-                                profile?.tabularModel ??
-                                "gemini-3-flash-preview"
-                            }
+                                    profile?.tabularModel ??
+                                    "gemini-3-flash-preview",
+                            )}
                             options={[
                                 ...MODELS,
                                 ...selectedOpenRouterOptions,

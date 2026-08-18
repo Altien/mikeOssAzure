@@ -67,6 +67,19 @@ export const DEFAULT_MODEL_ID = "gemini-3-flash-preview";
 
 export const ALLOWED_MODEL_IDS = new Set(MODELS.map((m) => m.id));
 
+// Renamed/retired static ids → their current equivalents. Stored preferences
+// (profile fields, localStorage selections) outlive catalog renames; mapping
+// them on read keeps an old saved value working instead of orphaning it.
+// Kept in sync with backend/src/lib/llm/models.ts LEGACY_MODEL_IDS.
+export const LEGACY_MODEL_IDS: Record<string, string> = {
+    "gemini-3.1-flash-lite-preview": "gemini-3.5-flash-lite",
+    "gpt-5.4-lite": "gpt-5.4-mini",
+};
+
+export function canonicalModelId(id: string): string {
+    return LEGACY_MODEL_IDS[id] ?? id;
+}
+
 const MODEL_NAME_ACRONYMS: Record<string, string> = {
     ai: "AI",
     gpt: "GPT",

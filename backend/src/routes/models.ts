@@ -68,8 +68,15 @@ modelsRouter.get("/openrouter", requireAuth, async (_req, res) => {
             });
         }
 
+        // Honor the same base-URL override as the chat adapter so a proxy or
+        // test double sees the catalog request too (read per request, like
+        // the Vercel route below, so tests and re-configuration work).
+        const baseUrl = (
+            process.env.OPENROUTER_BASE_URL?.trim() ||
+            "https://openrouter.ai/api/v1"
+        ).replace(/\/+$/, "");
         const response = await fetch(
-            "https://openrouter.ai/api/v1/models?output_modalities=text&supported_parameters=tools&sort=most-popular&limit=1000",
+            `${baseUrl}/models?output_modalities=text&supported_parameters=tools&sort=most-popular&limit=1000`,
             { headers: { Authorization: `Bearer ${key}` } },
         );
         if (!response.ok) {
