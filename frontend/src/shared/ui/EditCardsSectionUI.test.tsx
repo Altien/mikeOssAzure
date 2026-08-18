@@ -4,6 +4,27 @@ import { describe, expect, it } from "vitest";
 import { EditCardsSectionUI } from "./EditCardsSectionUI";
 
 describe("EditCardsSectionUI", () => {
+    it("renders a single edit directly without the section wrapper", () => {
+        const { container } = render(
+            <EditCardsSectionUI
+                summary="1 tracked change"
+                actions={<button type="button">Accept all</button>}
+                className="test-surface"
+            >
+                <article>Only edit</article>
+            </EditCardsSectionUI>,
+        );
+
+        expect(container.firstElementChild).toBe(
+            screen.getByText("Only edit"),
+        );
+        expect(screen.queryByText("1 tracked change")).toBeNull();
+        expect(screen.queryByRole("button", { name: "Accept all" })).toBeNull();
+        expect(
+            screen.queryByRole("button", { name: "Collapse edits" }),
+        ).toBeNull();
+    });
+
     it("renders its summary and actions and toggles the cards", async () => {
         const user = userEvent.setup();
 
