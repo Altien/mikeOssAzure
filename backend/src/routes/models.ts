@@ -6,6 +6,33 @@ import { getUserApiKeys } from "../lib/userApiKeys";
 
 export const modelsRouter = Router();
 
+function catalogPrice(value: unknown): string | undefined {
+    if (typeof value !== "string" && typeof value !== "number") {
+        return undefined;
+    }
+    const normalized = String(value).trim();
+    const amount = Number(normalized);
+    return normalized && Number.isFinite(amount) && amount >= 0
+        ? normalized
+        : undefined;
+}
+
+function catalogPricing(
+    input: unknown,
+    output: unknown,
+    options?: { variesByProvider?: boolean; tiered?: boolean },
+) {
+    const normalizedInput = catalogPrice(input);
+    const normalizedOutput = catalogPrice(output);
+    if (!normalizedInput && !normalizedOutput) return undefined;
+    return {
+        ...(normalizedInput ? { input: normalizedInput } : {}),
+        ...(normalizedOutput ? { output: normalizedOutput } : {}),
+        ...(options?.variesByProvider ? { variesByProvider: true } : {}),
+        ...(options?.tiered ? { tiered: true } : {}),
+    };
+}
+
 // Live list of locally installed Ollama models, shaped like the frontend's
 // ModelOption. Returns [] when Ollama is unreachable so the app still works.
 modelsRouter.get("/ollama", requireAuth, async (_req, res) => {
@@ -53,10 +80,21 @@ modelsRouter.get("/openrouter", requireAuth, async (_req, res) => {
         }
 
         const payload = (await response.json()) as {
-            data?: Array<{ id?: unknown; name?: unknown }>;
+            data?: Array<{
+                id?: unknown;
+                name?: unknown;
+                pricing?: {
+                    prompt?: unknown;
+                    completion?: unknown;
+                };
+            }>;
         };
         const models = (payload.data ?? []).flatMap((model) => {
             if (typeof model.id !== "string" || !model.id.trim()) return [];
+            const pricing = catalogPricing(
+                model.pricing?.prompt,
+                model.pricing?.completion,
+            );
             return [
                 {
                     id: model.id.trim(),
@@ -64,6 +102,7 @@ modelsRouter.get("/openrouter", requireAuth, async (_req, res) => {
                         typeof model.name === "string" && model.name.trim()
                             ? model.name.trim()
                             : model.id.trim(),
+                    ...(pricing ? { pricing } : {}),
                 },
             ];
         });
@@ -112,6 +151,13 @@ modelsRouter.get("/vercel", requireAuth, async (_req, res) => {
                 tags?: unknown;
                 modalities?: { output?: unknown };
                 supported_parameters?: unknown;
+                pricing?: {
+                    input?: unknown;
+                    output?: unknown;
+                    input_tiers?: unknown;
+                    output_tiers?: unknown;
+                    varies_by_provider?: unknown;
+                };
             }>;
         };
         const models = (payload.data ?? []).flatMap((model) => {
@@ -134,6 +180,19 @@ modelsRouter.get("/vercel", requireAuth, async (_req, res) => {
             ) {
                 return [];
             }
+            const pricing = catalogPricing(
+                model.pricing?.input,
+                model.pricing?.output,
+                {
+                    variesByProvider:
+                        model.pricing?.varies_by_provider === true,
+                    tiered:
+                        (Array.isArray(model.pricing?.input_tiers) &&
+                            model.pricing.input_tiers.length > 0) ||
+                        (Array.isArray(model.pricing?.output_tiers) &&
+                            model.pricing.output_tiers.length > 0),
+                },
+            );
             return [
                 {
                     id: model.id.trim(),
@@ -141,6 +200,7 @@ modelsRouter.get("/vercel", requireAuth, async (_req, res) => {
                         typeof model.name === "string" && model.name.trim()
                             ? model.name.trim()
                             : model.id.trim(),
+                    ...(pricing ? { pricing } : {}),
                 },
             ];
         });

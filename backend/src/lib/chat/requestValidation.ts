@@ -294,10 +294,14 @@ export function parseOptionalAskInputsResponse(
       `${field}.id must be a non-empty string`,
     );
     if (!id.ok) return id;
-    if (response.kind !== "choice" && response.kind !== "documents") {
+    if (
+      response.kind !== "choice" &&
+      response.kind !== "text" &&
+      response.kind !== "documents"
+    ) {
       return {
         ok: false,
-        detail: `${field}.kind must be "choice" or "documents"`,
+        detail: `${field}.kind must be "choice", "text", or "documents"`,
       };
     }
     if (
@@ -307,7 +311,7 @@ export function parseOptionalAskInputsResponse(
       return { ok: false, detail: `${field}.skipped must be a boolean` };
     }
 
-    if (response.kind === "choice") {
+    if (response.kind === "choice" || response.kind === "text") {
       const question = parseNonEmptyString(
         response.question,
         `${field}.question must be a non-empty string`,

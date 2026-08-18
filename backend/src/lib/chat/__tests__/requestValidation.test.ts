@@ -199,6 +199,12 @@ describe("chat request validation", () => {
                         kind: "documents",
                         filenames: [" exhibit-a.pdf ", " exhibit-b.pdf "],
                     },
+                    {
+                        id: " text-1 ",
+                        kind: "text",
+                        question: " Registered address? ",
+                        answer: " 1 Legal Plaza\nSingapore 048583 ",
+                    },
                 ],
             }),
         ).toEqual({
@@ -216,6 +222,12 @@ describe("chat request validation", () => {
                         kind: "documents",
                         filenames: ["exhibit-a.pdf", "exhibit-b.pdf"],
                     },
+                    {
+                        id: "text-1",
+                        kind: "text",
+                        question: "Registered address?",
+                        answer: "1 Legal Plaza\nSingapore 048583",
+                    },
                 ],
             },
         });
@@ -229,7 +241,7 @@ describe("chat request validation", () => {
         ],
         [
             { responses: [{ id: "choice-1", kind: "other" }] },
-            'ask_inputs_response.responses[0].kind must be "choice" or "documents"',
+            'ask_inputs_response.responses[0].kind must be "choice", "text", or "documents"',
         ],
         [
             {

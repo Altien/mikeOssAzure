@@ -565,7 +565,7 @@ export function AssistantMessage({
             const response = askInputsResponseFor(globalIdx);
             return (
                 <AskInputsBlock
-                    key={globalIdx}
+                    key={`${globalIdx}-${response ? "complete" : "pending"}`}
                     event={event}
                     response={response}
                     showConnector={showConnector}

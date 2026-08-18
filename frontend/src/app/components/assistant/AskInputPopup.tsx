@@ -28,9 +28,7 @@ export function AskInputPopup({
     ) => void;
     onDismiss?: () => void;
 }) {
-    const [choiceAnswers, setChoiceAnswers] = useState<Record<string, string>>(
-        {},
-    );
+    const [answers, setAnswers] = useState<Record<string, string>>({});
     const [otherOpen, setOtherOpen] = useState<Record<string, boolean>>({});
     const [otherValues, setOtherValues] = useState<Record<string, string>>({});
     const [docsByInput, setDocsByInput] = useState<
@@ -64,10 +62,12 @@ export function AskInputPopup({
 
     const itemAnswered = useCallback(
         (item: AskInputItem) => {
-            if (item.kind === "choice") return !!choiceAnswers[item.id]?.trim();
+            if (item.kind !== "documents") {
+                return !!answers[item.id]?.trim();
+            }
             return docsForItem(item.id).length > 0;
         },
-        [choiceAnswers, docsForItem],
+        [answers, docsForItem],
     );
 
     const itemResolved = useCallback(
@@ -158,7 +158,7 @@ export function AskInputPopup({
         const trimmed = answer.trim();
         if (!trimmed || submitted) return;
         setSkippedFor(item.id, false);
-        setChoiceAnswers((prev) => ({ ...prev, [item.id]: trimmed }));
+        setAnswers((prev) => ({ ...prev, [item.id]: trimmed }));
         setOtherOpen((prev) => ({ ...prev, [item.id]: false }));
     };
 
@@ -169,26 +169,27 @@ export function AskInputPopup({
     const buildResponse = (): AskInputsResponse => {
         const responses = event.items.map((item) => {
             if (skipped.has(item.id)) {
-                return item.kind === "choice"
-                    ? {
-                          id: item.id,
-                          kind: "choice" as const,
-                          question: item.question,
-                          skipped: true,
-                      }
-                    : {
+                if (item.kind === "documents") {
+                    return {
                           id: item.id,
                           kind: "documents" as const,
                           filenames: [],
                           skipped: true,
-                      };
-            }
-            if (item.kind === "choice") {
+                    };
+                }
                 return {
                     id: item.id,
-                    kind: "choice" as const,
+                    kind: item.kind,
                     question: item.question,
-                    answer: choiceAnswers[item.id]?.trim() ?? "",
+                    skipped: true,
+                };
+            }
+            if (item.kind !== "documents") {
+                return {
+                    id: item.id,
+                    kind: item.kind,
+                    question: item.question,
+                    answer: answers[item.id]?.trim() ?? "",
                 };
             }
             return {
@@ -234,7 +235,7 @@ export function AskInputPopup({
 
     const buildContent = (response: AskInputsResponse) => {
         const lines = response.responses.map((item, index) => {
-            if (item.kind === "choice") {
+            if (item.kind !== "documents") {
                 if (item.skipped)
                     return `${index + 1}. Skipped: ${item.question}`;
                 return `${index + 1}. ${item.question}\n${item.answer ?? ""}`;
@@ -292,9 +293,9 @@ export function AskInputPopup({
                                             item.id === activeItem?.id;
                                         const isResolved = itemResolved(item);
                                         const label =
-                                            item.kind === "choice"
-                                                ? "Question"
-                                                : "Documents";
+                                            item.kind === "documents"
+                                                ? "Documents"
+                                                : "Question";
                                         return (
                                             <TabPillButton
                                                 key={item.id}
@@ -336,7 +337,7 @@ export function AskInputPopup({
                             <div>
                                 <div className="flex items-start justify-between gap-2">
                                     <div className="min-w-0 flex-1">
-                                        {activeItem.kind === "choice" ? (
+                                        {activeItem.kind !== "documents" ? (
                                             <p className="text-sm text-gray-800">
                                                 {activeItem.question}
                                             </p>
@@ -355,8 +356,7 @@ export function AskInputPopup({
                                                 skipped.has(activeItem.id)
                                             }
                                             selectedAnswer={
-                                                choiceAnswers[activeItem.id] ??
-                                                null
+                                                answers[activeItem.id] ?? null
                                             }
                                             otherOpen={
                                                 !!otherOpen[activeItem.id]
@@ -372,7 +372,7 @@ export function AskInputPopup({
                                                     ...prev,
                                                     [activeItem.id]: true,
                                                 }));
-                                                setChoiceAnswers((prev) => ({
+                                                setAnswers((prev) => ({
                                                     ...prev,
                                                     [activeItem.id]: (
                                                         otherValues[
@@ -386,7 +386,7 @@ export function AskInputPopup({
                                                     ...prev,
                                                     [activeItem.id]: value,
                                                 }));
-                                                setChoiceAnswers((prev) => ({
+                                                setAnswers((prev) => ({
                                                     ...prev,
                                                     [activeItem.id]:
                                                         value.trim(),
@@ -396,6 +396,27 @@ export function AskInputPopup({
                                                         activeItem.id,
                                                         false,
                                                     );
+                                            }}
+                                        />
+                                    ) : activeItem.kind === "text" ? (
+                                        <OpenTextInput
+                                            item={activeItem}
+                                            value={answers[activeItem.id] ?? ""}
+                                            disabled={
+                                                submitted ||
+                                                skipped.has(activeItem.id)
+                                            }
+                                            onChange={(value) => {
+                                                setAnswers((prev) => ({
+                                                    ...prev,
+                                                    [activeItem.id]: value,
+                                                }));
+                                                if (value.trim()) {
+                                                    setSkippedFor(
+                                                        activeItem.id,
+                                                        false,
+                                                    );
+                                                }
                                             }}
                                         />
                                     ) : (
@@ -498,6 +519,31 @@ export function AskInputPopup({
                 }
             />
         </>
+    );
+}
+
+function OpenTextInput({
+    item,
+    value,
+    disabled,
+    onChange,
+}: {
+    item: Extract<AskInputItem, { kind: "text" }>;
+    value: string;
+    disabled?: boolean;
+    onChange: (value: string) => void;
+}) {
+    return (
+        <textarea
+            name={`answer-${item.id}`}
+            aria-label={item.question}
+            rows={4}
+            value={value}
+            disabled={disabled}
+            onChange={(event) => onChange(event.target.value)}
+            placeholder="Type your answer..."
+            className="mt-2 min-h-24 w-full resize-y rounded-lg bg-gray-100/70 px-3 py-2 text-sm leading-5 text-gray-700 outline-none transition-colors placeholder:text-gray-400 focus:bg-gray-200/70 disabled:cursor-default disabled:opacity-60"
+        />
     );
 }
 

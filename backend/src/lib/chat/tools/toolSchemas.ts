@@ -125,7 +125,7 @@ export const TOOLS = [
     function: {
       name: "ask_inputs",
       description:
-        "Ask the user for one or more decisions, clarifications, or document uploads before continuing. Use this when guessing would materially affect the answer or when required documents have not been attached. Put all needed questions and document requests in one items array. After calling ask_inputs, do not continue the substantive task until the user responds in a later message.",
+        "Ask the user for one or more decisions, open-ended answers, clarifications, or document uploads before continuing. Use a text item when the user should type a free-form answer and there are no useful suggested options. Use this when guessing would materially affect the answer or when required documents have not been attached. Put all needed questions and document requests in one items array. After calling ask_inputs, do not continue the substantive task until the user responds in a later message.",
       parameters: {
         type: "object",
         properties: {
@@ -134,7 +134,7 @@ export const TOOLS = [
             minItems: 1,
             maxItems: 12,
             description:
-              "The list of user inputs needed before continuing. Use choice items for decisions/clarifications and documents items for required uploads.",
+              "The list of user inputs needed before continuing. Use choice items when useful options exist, text items for open-ended answers such as a name or address, and documents items for required uploads.",
             items: {
               type: "object",
               properties: {
@@ -145,12 +145,12 @@ export const TOOLS = [
                 },
                 kind: {
                   type: "string",
-                  enum: ["choice", "documents"],
+                  enum: ["choice", "text", "documents"],
                 },
                 question: {
                   type: "string",
                   description:
-                    "For choice items only: the concise question to show to the user.",
+                    "For choice and text items: the concise question to show to the user.",
                 },
                 options: {
                   type: "array",

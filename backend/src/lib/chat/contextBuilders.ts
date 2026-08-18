@@ -172,7 +172,10 @@ export async function enrichWithPriorEvents(
         const row = response as Record<string, unknown>;
         if (row.skipped) {
           lines.push("- user skipped an input");
-        } else if (row.kind === "choice" && typeof row.answer === "string") {
+        } else if (
+          (row.kind === "choice" || row.kind === "text") &&
+          typeof row.answer === "string"
+        ) {
           lines.push(`- user answered: "${row.answer}"`);
         } else if (
           row.kind === "documents" &&
@@ -344,15 +347,21 @@ export function parseAskInputsResponsePayload(
       const id = cleanAskInputResponseId(current.id);
       const kind = current.kind;
       const skipped = current.skipped === true;
-      if (!id || (kind !== "choice" && kind !== "documents")) return null;
-      if (kind === "choice") {
+      if (
+        !id ||
+        (kind !== "choice" && kind !== "text" && kind !== "documents")
+      )
+        return null;
+      if (kind === "choice" || kind === "text") {
         const question =
           typeof current.question === "string"
             ? current.question.trim().slice(0, 500)
             : "";
         const answer =
           typeof current.answer === "string"
-            ? current.answer.trim().slice(0, 1000)
+            ? current.answer
+                .trim()
+                .slice(0, kind === "text" ? 5000 : 1000)
             : "";
         if (!question || (!answer && !skipped)) return null;
         return {

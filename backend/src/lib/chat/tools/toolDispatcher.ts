@@ -98,7 +98,13 @@ function normalizeAskInputsEvent(
       const row = item as Record<string, unknown>;
       const id =
         cleanAskInputString(row.id) ||
-        `${row.kind === "documents" ? "documents" : "choice"}-${index + 1}`;
+        `${
+          row.kind === "documents"
+            ? "documents"
+            : row.kind === "text"
+              ? "text"
+              : "choice"
+        }-${index + 1}`;
       const responsePrefix = cleanAskInputString(row.response_prefix);
 
       if (row.kind === "documents") {
@@ -115,6 +121,21 @@ function normalizeAskInputsEvent(
           id: id.slice(0, 80),
           kind: "documents",
           document_types: documentTypes,
+          ...(responsePrefix
+            ? { response_prefix: responsePrefix.slice(0, 200) }
+            : {}),
+        };
+      }
+
+      if (row.kind === "text") {
+        const question = cleanAskInputString(
+          row.question,
+          "Please provide the requested information.",
+        );
+        return {
+          id: id.slice(0, 80),
+          kind: "text",
+          question: question.slice(0, 500),
           ...(responsePrefix
             ? { response_prefix: responsePrefix.slice(0, 200) }
             : {}),

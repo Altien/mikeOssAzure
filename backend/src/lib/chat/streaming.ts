@@ -51,7 +51,7 @@ export type AssistantEvent =
       type: "ask_inputs_response";
       responses: {
         id: string;
-        kind: "choice" | "documents";
+        kind: "choice" | "text" | "documents";
         question?: string;
         answer?: string;
         filenames?: string[];

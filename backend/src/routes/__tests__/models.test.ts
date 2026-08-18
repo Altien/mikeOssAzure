@@ -60,6 +60,10 @@ describe("GET /models/openrouter", () => {
                         {
                             id: "anthropic/claude-sonnet-4.5",
                             name: "Claude Sonnet 4.5",
+                            pricing: {
+                                prompt: "0.000003",
+                                completion: "0.000015",
+                            },
                         },
                         { id: "openai/gpt-5.4" },
                         { id: null, name: "Invalid" },
@@ -77,7 +81,11 @@ describe("GET /models/openrouter", () => {
 
         expect(response.status).toBe(200);
         expect(response.body.models).toEqual([
-            { id: "anthropic/claude-sonnet-4.5", label: "Claude Sonnet 4.5" },
+            {
+                id: "anthropic/claude-sonnet-4.5",
+                label: "Claude Sonnet 4.5",
+                pricing: { input: "0.000003", output: "0.000015" },
+            },
             { id: "openai/gpt-5.4", label: "openai/gpt-5.4" },
         ]);
         expect(fetchMock).toHaveBeenCalledWith(
@@ -140,11 +148,23 @@ describe("GET /models/vercel", () => {
                                 type: "language",
                                 tags: ["tool-use"],
                                 modalities: { output: ["text"] },
+                                pricing: {
+                                    input: "0.000003",
+                                    output: "0.000015",
+                                    varies_by_provider: true,
+                                },
                             },
                             {
                                 id: "openai/gpt-5.4",
                                 type: "language",
                                 supported_parameters: ["tools"],
+                                pricing: {
+                                    input: "0.00000125",
+                                    output: "0.00001",
+                                    input_tiers: [
+                                        { cost: "0.00000125", min: 0 },
+                                    ],
+                                },
                             },
                             {
                                 id: "image/model",
@@ -170,8 +190,24 @@ describe("GET /models/vercel", () => {
 
         expect(response.status).toBe(200);
         expect(response.body.models).toEqual([
-            { id: "anthropic/claude-sonnet-4.5", label: "Claude Sonnet 4.5" },
-            { id: "openai/gpt-5.4", label: "openai/gpt-5.4" },
+            {
+                id: "anthropic/claude-sonnet-4.5",
+                label: "Claude Sonnet 4.5",
+                pricing: {
+                    input: "0.000003",
+                    output: "0.000015",
+                    variesByProvider: true,
+                },
+            },
+            {
+                id: "openai/gpt-5.4",
+                label: "openai/gpt-5.4",
+                pricing: {
+                    input: "0.00000125",
+                    output: "0.00001",
+                    tiered: true,
+                },
+            },
         ]);
         expect(fetch).toHaveBeenCalledWith(
             "https://ai-gateway.vercel.sh/v1/models",

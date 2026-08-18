@@ -548,6 +548,7 @@ export function AskInputsBlock({
     response?: Extract<AssistantEvent, { type: "ask_inputs_response" }>;
     showConnector?: boolean;
 }) {
+    const [isOpen, setIsOpen] = useState(!response);
     const responseById = new Map(
         response?.responses.map((item) => [item.id, item]) ?? [],
     );
@@ -556,46 +557,56 @@ export function AskInputsBlock({
             showConnector={showConnector}
             dotColor={response ? "green" : "gray"}
         >
-            <p className="font-medium text-gray-600">
+            <button
+                type="button"
+                aria-expanded={isOpen}
+                onClick={() => setIsOpen((open) => !open)}
+                className="flex items-center gap-1 font-medium text-gray-600 transition-colors hover:text-gray-800"
+            >
                 {response ? "Asked for input" : "Asking for input"}
-            </p>
-            <div className="mt-2 space-y-2 text-gray-800">
-                {event.items.map((item, index) => {
-                    const itemResponse = responseById.get(item.id);
-                    const responseText = (() => {
-                        if (!itemResponse) return null;
-                        if (itemResponse.skipped) return "Skipped";
-                        if (itemResponse.kind === "choice") {
-                            return itemResponse.answer ?? "";
-                        }
-                        const filenames = itemResponse.filenames;
-                        return filenames.length
-                            ? filenames.join(", ")
-                            : "No documents attached";
-                    })();
-                    return (
-                        <div key={item.id}>
-                            <p className="text-xs text-gray-500">
-                                {index + 1}.{" "}
-                                {item.kind === "choice"
-                                    ? "Question"
-                                    : "Documents"}
-                            </p>
-                            <p className="mt-0.5">
-                                {item.kind === "choice"
-                                    ? item.question
-                                    : item.document_types.join(", ") ||
-                                      "Documents requested"}
-                            </p>
-                            {responseText !== null && (
-                                <p className="mt-0.5 text-gray-600">
-                                    {responseText}
+                <ChevronDown
+                    className={`h-3.5 w-3.5 transition-transform ${isOpen ? "rotate-180" : ""}`}
+                />
+            </button>
+            {isOpen && (
+                <div className="mt-2 space-y-2 text-gray-800">
+                    {event.items.map((item, index) => {
+                        const itemResponse = responseById.get(item.id);
+                        const responseText = (() => {
+                            if (!itemResponse) return null;
+                            if (itemResponse.skipped) return "Skipped";
+                            if (itemResponse.kind !== "documents") {
+                                return itemResponse.answer ?? "";
+                            }
+                            const filenames = itemResponse.filenames;
+                            return filenames.length
+                                ? filenames.join(", ")
+                                : "No documents attached";
+                        })();
+                        return (
+                            <div key={item.id}>
+                                <p className="text-xs text-gray-500">
+                                    {index + 1}.{" "}
+                                    {item.kind === "documents"
+                                        ? "Documents"
+                                        : "Question"}
                                 </p>
-                            )}
-                        </div>
-                    );
-                })}
-            </div>
+                                <p className="mt-0.5">
+                                    {item.kind === "documents"
+                                        ? item.document_types.join(", ") ||
+                                          "Documents requested"
+                                        : item.question}
+                                </p>
+                                {responseText !== null && (
+                                    <p className="mt-0.5 text-gray-600">
+                                        {responseText}
+                                    </p>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
         </EventBlock>
     );
 }

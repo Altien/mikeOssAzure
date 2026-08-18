@@ -525,6 +525,12 @@ export interface OllamaModelOption {
 export interface RouterCatalogModel {
     id: string;
     label: string;
+    pricing?: {
+        input?: string;
+        output?: string;
+        variesByProvider?: boolean;
+        tiered?: boolean;
+    };
 }
 
 export type OpenRouterCatalogModel = RouterCatalogModel;
@@ -1358,6 +1364,13 @@ export async function streamChat(payload: {
               }
             | {
                   id: string;
+                  kind: "text";
+                  question: string;
+                  answer?: string;
+                  skipped?: boolean;
+              }
+            | {
+                  id: string;
                   kind: "documents";
                   filenames: string[];
                   skipped?: boolean;
@@ -1399,6 +1412,13 @@ export async function streamProjectChat(payload: {
             | {
                   id: string;
                   kind: "choice";
+                  question: string;
+                  answer?: string;
+                  skipped?: boolean;
+              }
+            | {
+                  id: string;
+                  kind: "text";
                   question: string;
                   answer?: string;
                   skipped?: boolean;

@@ -965,6 +965,21 @@ export function useAssistantChat({
                   });
                   return acc;
                 }
+                if (row.kind === "text") {
+                  acc.push({
+                    id,
+                    kind: "text" as const,
+                    question:
+                      typeof row.question === "string"
+                        ? row.question
+                        : "Please provide the requested information.",
+                    response_prefix:
+                      typeof row.response_prefix === "string"
+                        ? row.response_prefix
+                        : undefined,
+                  });
+                  return acc;
+                }
                 if (row.kind === "documents") {
                   const documentTypes = Array.isArray(row.document_types)
                     ? (row.document_types as unknown[])
