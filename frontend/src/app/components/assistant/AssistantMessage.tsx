@@ -433,8 +433,9 @@ export function AssistantMessage({
                                   onOpenDocument({
                                       documentId: event.document_id!,
                                       filename: event.filename,
-                                      versionId: null,
-                                      versionNumber: null,
+                                      versionId: event.version_id ?? null,
+                                      versionNumber:
+                                          event.version_number ?? null,
                                   })
                             : !event.isStreaming && ann && onCitationClick
                               ? () => onCitationClick(ann)
@@ -461,8 +462,9 @@ export function AssistantMessage({
                                   onOpenDocument({
                                       documentId: event.document_id!,
                                       filename: event.filename,
-                                      versionId: null,
-                                      versionNumber: null,
+                                      versionId: event.version_id ?? null,
+                                      versionNumber:
+                                          event.version_number ?? null,
                                   })
                             : undefined
                     }

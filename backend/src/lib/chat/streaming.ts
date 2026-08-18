@@ -58,11 +58,19 @@ export type AssistantEvent =
         skipped?: boolean;
       }[];
     }
-  | { type: "doc_read"; filename: string; document_id?: string }
+  | {
+      type: "doc_read";
+      filename: string;
+      document_id?: string;
+      version_id?: string | null;
+      version_number?: number | null;
+    }
   | {
       type: "doc_find";
       filename: string;
       document_id?: string;
+      version_id?: string | null;
+      version_number?: number | null;
       query: string;
       total_matches: number;
     }
@@ -437,6 +445,8 @@ export async function runLLMStream(params: {
             type: "doc_read",
             filename: r.filename,
             document_id: r.document_id,
+            version_id: r.version_id,
+            version_number: r.version_number,
           });
         }
         for (const f of docsFound) {
@@ -444,6 +454,8 @@ export async function runLLMStream(params: {
             type: "doc_find",
             filename: f.filename,
             document_id: f.document_id,
+            version_id: f.version_id,
+            version_number: f.version_number,
             query: f.query,
             total_matches: f.total_matches,
           });

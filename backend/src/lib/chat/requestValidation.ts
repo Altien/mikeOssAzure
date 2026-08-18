@@ -95,9 +95,36 @@ function parseMessageFiles(
       documentId = parsedDocumentId.value;
     }
 
+    let versionId: string | undefined;
+    if (file.version_id !== undefined) {
+      const parsedVersionId = parseNonEmptyString(
+        file.version_id,
+        `messages[${messageIndex}].files[${fileIndex}].version_id must be a non-empty string`,
+      );
+      if (!parsedVersionId.ok) return parsedVersionId;
+      versionId = parsedVersionId.value;
+    }
+
+    let versionNumber: number | undefined;
+    if (file.version_number !== undefined) {
+      if (
+        typeof file.version_number !== "number" ||
+        !Number.isInteger(file.version_number) ||
+        file.version_number < 1
+      ) {
+        return {
+          ok: false,
+          detail: `messages[${messageIndex}].files[${fileIndex}].version_number must be a positive integer`,
+        };
+      }
+      versionNumber = file.version_number;
+    }
+
     files.push({
       filename: filename.value,
       ...(documentId ? { document_id: documentId } : {}),
+      ...(versionId ? { version_id: versionId } : {}),
+      ...(versionNumber !== undefined ? { version_number: versionNumber } : {}),
     });
   }
   return { ok: true, value: files };

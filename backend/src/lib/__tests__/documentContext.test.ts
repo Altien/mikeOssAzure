@@ -406,7 +406,12 @@ describe("active Word document context", () => {
         const toolContent = (result.toolResults[0] as { content: string }).content;
         expect(toolContent).toContain(spotlight(documentText, nonce));
         expect(result.docsRead).toEqual([
-            { filename: ACTIVE_WORD_DOCUMENT_FILENAME, document_id: undefined },
+            {
+                filename: ACTIVE_WORD_DOCUMENT_FILENAME,
+                document_id: undefined,
+                version_id: null,
+                version_number: null,
+            },
         ]);
     });
 

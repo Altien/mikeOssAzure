@@ -9,6 +9,7 @@ import { Check, Library, Waypoints, X } from "lucide-react";
 import { ChatInput as ChatInputShell } from "../../../shared/chat/ChatInput";
 import {
   getApiKeyStatus,
+  getUserProfile,
   uploadStandaloneDocument,
   type ApiKeyStatus,
 } from "../../api/mikeApi";
@@ -78,6 +79,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
     const [workflowModalOpen, setWorkflowModalOpen] = useState(false);
     const [model, setModel] = useSelectedModel();
     const [keyStatus, setKeyStatus] = useState<ApiKeyStatus | null>(null);
+    const [openRouterModels, setOpenRouterModels] = useState<string[]>([]);
+    const [vercelModels, setVercelModels] = useState<string[]>([]);
     const [modelError, setModelError] = useState<string | null>(null);
     const localFileInputRef = useRef<HTMLInputElement>(null);
     const mountedRef = useRef(true);
@@ -102,14 +105,18 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
 
     useEffect(() => {
       let cancelled = false;
-      void getApiKeyStatus()
-        .then((status) => {
-          if (!cancelled) setKeyStatus(status);
-        })
-        .catch(() => {
-          // The backend still validates provider credentials when this optional
-          // preflight status request is unavailable.
-        });
+      void Promise.allSettled([getApiKeyStatus(), getUserProfile()]).then(
+        ([statusResult, profileResult]) => {
+          if (cancelled) return;
+          if (statusResult.status === "fulfilled") {
+            setKeyStatus(statusResult.value);
+          }
+          if (profileResult.status === "fulfilled") {
+            setOpenRouterModels(profileResult.value.openRouterModels ?? []);
+            setVercelModels(profileResult.value.vercelModels ?? []);
+          }
+        },
+      );
       return () => {
         cancelled = true;
       };
@@ -333,6 +340,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
                   setModel(next);
                 }}
                 keyStatus={keyStatus}
+                openRouterModels={openRouterModels}
+                vercelModels={vercelModels}
               />
             }
           />

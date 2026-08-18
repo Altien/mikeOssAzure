@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, Check, AlertCircle } from "lucide-react";
+import { ChevronDown, Check, Settings2 } from "lucide-react";
 import {
     DropdownMenu,
     DropdownMenuSeparator,
@@ -18,7 +18,13 @@ import { useOllamaModels } from "@/app/hooks/useOllamaModels";
 export interface ModelOption {
     id: string;
     label: string;
-    group: "Anthropic" | "Google" | "OpenAI" | "Local";
+    group:
+        | "Anthropic"
+        | "Google"
+        | "OpenAI"
+        | "OpenRouter"
+        | "Vercel AI Gateway"
+        | "Local";
 }
 
 export const MODELS: ModelOption[] = [
@@ -61,7 +67,49 @@ export const DEFAULT_MODEL_ID = "gemini-3-flash-preview";
 
 export const ALLOWED_MODEL_IDS = new Set(MODELS.map((m) => m.id));
 
-const GROUP_ORDER: ModelOption["group"][] = ["Anthropic", "Google", "OpenAI", "Local"];
+const MODEL_NAME_ACRONYMS: Record<string, string> = {
+    ai: "AI",
+    gpt: "GPT",
+    oss: "OSS",
+    r1: "R1",
+};
+
+export function modelDisplayName(modelId: string): string {
+    const normalized = modelId
+        .replace(/^(?:openrouter|vercel|ollama)\//, "")
+        .split("/")
+        .at(-1)!
+        .replace(/(\d)-(\d)/g, "$1.$2");
+    const [rawName, variant] = normalized.split(":", 2);
+    const name = rawName ?? normalized;
+    const label = name
+        .split(/[-_\s]+/)
+        .filter(Boolean)
+        .map((token) => {
+            const lower = token.toLowerCase();
+            if (MODEL_NAME_ACRONYMS[lower]) {
+                return MODEL_NAME_ACRONYMS[lower];
+            }
+            if (/^\d+[bk]$/i.test(token)) return token.toUpperCase();
+            return token.charAt(0).toUpperCase() + token.slice(1);
+        })
+        .join(" ");
+    if (!variant) return label;
+    const variantLabel = variant
+        .split(/[-_]+/)
+        .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
+        .join(" ");
+    return `${label} (${variantLabel})`;
+}
+
+const GROUP_ORDER: ModelOption["group"][] = [
+    "Anthropic",
+    "Google",
+    "OpenAI",
+    "OpenRouter",
+    "Vercel AI Gateway",
+    "Local",
+];
 const itemClassName =
     "rounded-xl px-2.5 py-1.5 text-gray-700 focus:bg-app-surface-hover focus:text-gray-900 data-[highlighted]:bg-app-surface-hover data-[highlighted]:text-gray-900";
 
@@ -69,20 +117,61 @@ interface Props {
     value: string;
     onChange: (id: string) => void;
     apiKeys?: ApiKeyState;
+    openRouterModels?: string[];
+    vercelModels?: string[];
+    compact?: boolean;
 }
 
-export function ModelToggle({ value, onChange, apiKeys }: Props) {
+export function openRouterModelOptions(models: string[]): ModelOption[] {
+    return models.map((model) => ({
+        id: `openrouter/${model}`,
+        label: modelDisplayName(model),
+        group: "OpenRouter",
+    }));
+}
+
+export function vercelModelOptions(models: string[]): ModelOption[] {
+    return models.map((model) => ({
+        id: `vercel/${model}`,
+        label: modelDisplayName(model),
+        group: "Vercel AI Gateway",
+    }));
+}
+
+export function ModelToggle({
+    value,
+    onChange,
+    apiKeys,
+    openRouterModels = [],
+    vercelModels = [],
+    compact = false,
+}: Props) {
     const [isOpen, setIsOpen] = useState(false);
     const [expandedGroup, setExpandedGroup] = useState<
         ModelOption["group"] | null
     >(null);
     const ollamaModels = useOllamaModels();
-    const models = [...MODELS, ...ollamaModels];
-    const selected = models.find((m) => m.id === value);
-    const selectedLabel = selected?.label ?? "Model";
-    const selectedAvailable = apiKeys
-        ? isModelAvailable(value, apiKeys)
-        : true;
+    const models = [
+        ...MODELS,
+        ...openRouterModelOptions(openRouterModels),
+        ...vercelModelOptions(vercelModels),
+        ...ollamaModels.map((model) => ({
+            ...model,
+            label: modelDisplayName(model.id),
+        })),
+    ];
+    const availableModels = models.filter((model) => {
+        if (model.group === "Local") return true;
+        return apiKeys ? isModelAvailable(model.id, apiKeys) : false;
+    });
+    const selected = availableModels.find((model) => model.id === value);
+    const selectedLabel =
+        selected?.label ??
+        (availableModels.length > 0 ? "Select model" : "No API Key");
+    const availableGroups = GROUP_ORDER.flatMap((group) => {
+        const items = availableModels.filter((model) => model.group === group);
+        return items.length ? [{ group, items }] : [];
+    });
 
     const handleOpenChange = (open: boolean) => {
         setIsOpen(open);
@@ -91,9 +180,9 @@ export function ModelToggle({ value, onChange, apiKeys }: Props) {
                 selected?.group ??
                     (value.startsWith("ollama/") ? "Local" : null) ??
                     GROUP_ORDER.find((group) =>
-                        models.some((model) => model.group === group)
+                        availableModels.some((model) => model.group === group),
                     ) ??
-                    null
+                    null,
             );
         }
     };
@@ -103,20 +192,27 @@ export function ModelToggle({ value, onChange, apiKeys }: Props) {
             <DropdownMenuTrigger asChild>
                 <button
                     type="button"
-                    className={`flex h-8 cursor-pointer items-center gap-1.5 rounded-full px-2 text-sm text-gray-400 transition-colors hover:text-gray-700 ${isOpen ? "text-gray-700" : ""}`}
+                    aria-label="Choose model"
+                    disabled={availableModels.length === 0}
+                    className={`flex h-8 items-center rounded-full text-sm text-gray-400 transition-colors enabled:cursor-pointer enabled:hover:text-gray-700 disabled:cursor-default ${compact ? "w-8 justify-center px-0" : "gap-1.5 px-2"} ${isOpen ? "text-gray-700" : ""}`}
                     title={
-                        !selectedAvailable
-                            ? "API key missing for selected model"
-                            : "Choose model"
+                        availableModels.length
+                            ? "Choose model"
+                            : "No API key configured"
                     }
                 >
-                    {!selectedAvailable && (
-                        <AlertCircle className="h-3 w-3 shrink-0 text-red-500" />
+                    {compact ? (
+                        <Settings2 className="h-4 w-4 shrink-0" />
+                    ) : (
+                        <>
+                            <span className="max-w-[200px] truncate">
+                                {selectedLabel}
+                            </span>
+                            <ChevronDown
+                                className={`h-3 w-3 shrink-0 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
+                            />
+                        </>
                     )}
-                    <span className="max-w-[140px] truncate">{selectedLabel}</span>
-                    <ChevronDown
-                        className={`h-3 w-3 shrink-0 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
-                    />
                 </button>
             </DropdownMenuTrigger>
             <LiquidDropdownContent
@@ -124,13 +220,11 @@ export function ModelToggle({ value, onChange, apiKeys }: Props) {
                 side="top"
                 align="end"
             >
-                {GROUP_ORDER.map((group, gi) => {
-                    const items = models.filter((m) => m.group === group);
-                    if (items.length === 0) return null;
+                {availableGroups.map(({ group, items }, groupIndex) => {
                     const expanded = expandedGroup === group;
                     return (
                         <div key={group}>
-                            {gi > 0 && (
+                            {groupIndex > 0 && (
                                 <DropdownMenuSeparator className="-mx-1 my-1 bg-white/70" />
                             )}
                             <LiquidDropdownItem
@@ -148,27 +242,16 @@ export function ModelToggle({ value, onChange, apiKeys }: Props) {
                             </LiquidDropdownItem>
                             {expanded &&
                                 items.map((m) => {
-                                    const available = apiKeys
-                                        ? isModelAvailable(m.id, apiKeys)
-                                        : true;
                                     return (
                                         <LiquidDropdownItem
                                             key={m.id}
-                                            className={`${itemClassName} ml-2 ${m.id === value ? "bg-app-surface-hover text-gray-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]" : ""}`}
+                                            className={`${itemClassName} ${m.id === value ? "bg-app-surface-hover text-gray-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]" : ""}`}
                                             onSelect={() => onChange(m.id)}
                                         >
-                                            <span
-                                                className={`flex-1 ${available ? "" : "text-gray-400"}`}
-                                            >
+                                            <span className="flex-1">
                                                 {m.label}
                                             </span>
-                                            {!available && (
-                                                <AlertCircle
-                                                    className="ml-1 h-3.5 w-3.5 text-red-500"
-                                                    aria-label="API key missing"
-                                                />
-                                            )}
-                                            {m.id === value && available && (
+                                            {m.id === value && (
                                                 <Check className="ml-1 h-3.5 w-3.5 text-gray-600" />
                                             )}
                                         </LiquidDropdownItem>

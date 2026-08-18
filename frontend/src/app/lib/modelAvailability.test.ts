@@ -13,12 +13,15 @@ const keys = (configured: {
     claude?: boolean;
     gemini?: boolean;
     openai?: boolean;
+    openrouter?: boolean;
+    vercel?: boolean;
 }): ApiKeyState =>
     ({
         claude: { configured: !!configured.claude, source: null },
         gemini: { configured: !!configured.gemini, source: null },
         openai: { configured: !!configured.openai, source: null },
-        openrouter: { configured: false, source: null },
+        openrouter: { configured: !!configured.openrouter, source: null },
+        vercel: { configured: !!configured.vercel, source: null },
         courtlistener: { configured: false, source: null },
     }) as ApiKeyState;
 
@@ -27,6 +30,10 @@ describe("getModelProvider", () => {
         expect(getModelProvider("claude-opus-5")).toBe("claude");
         expect(getModelProvider("gemini-3.7-flash")).toBe("gemini");
         expect(getModelProvider("gpt-5.6-sol")).toBe("openai");
+        expect(getModelProvider("openrouter/openai/gpt-5.4")).toBe(
+            "openrouter",
+        );
+        expect(getModelProvider("vercel/openai/gpt-5.4")).toBe("vercel");
     });
 
     it("resolves any ollama/-prefixed id without consulting SETTINGS_MODELS", () => {
@@ -49,12 +56,24 @@ describe("getModelProvider", () => {
 
 describe("isModelAvailable", () => {
     it("is true only when the model's provider has a configured key", () => {
+        expect(isModelAvailable("claude-fable-5", keys({ claude: true }))).toBe(
+            true,
+        );
+        expect(isModelAvailable("claude-fable-5", keys({ gemini: true }))).toBe(
+            false,
+        );
         expect(
-            isModelAvailable("claude-fable-5", keys({ claude: true })),
+            isModelAvailable(
+                "openrouter/anthropic/claude-sonnet-4.5",
+                keys({ openrouter: true }),
+            ),
         ).toBe(true);
         expect(
-            isModelAvailable("claude-fable-5", keys({ gemini: true })),
-        ).toBe(false);
+            isModelAvailable(
+                "vercel/anthropic/claude-sonnet-4.5",
+                keys({ vercel: true }),
+            ),
+        ).toBe(true);
     });
 
     it("is false for an unknown model regardless of keys", () => {
@@ -97,6 +116,8 @@ describe("providerLabel", () => {
     it("returns the display label for each provider", () => {
         expect(providerLabel("claude")).toBe("Anthropic (Claude)");
         expect(providerLabel("openai")).toBe("OpenAI");
+        expect(providerLabel("openrouter")).toBe("OpenRouter");
+        expect(providerLabel("vercel")).toBe("Vercel AI Gateway");
         expect(providerLabel("ollama")).toBe("Local (Ollama)");
         expect(providerLabel("gemini")).toBe("Google (Gemini)");
     });
@@ -106,6 +127,8 @@ describe("modelGroupToProvider", () => {
     it("maps every model group to its provider id", () => {
         expect(modelGroupToProvider("Anthropic")).toBe("claude");
         expect(modelGroupToProvider("OpenAI")).toBe("openai");
+        expect(modelGroupToProvider("OpenRouter")).toBe("openrouter");
+        expect(modelGroupToProvider("Vercel AI Gateway")).toBe("vercel");
         expect(modelGroupToProvider("Local")).toBe("ollama");
         expect(modelGroupToProvider("Google")).toBe("gemini");
     });

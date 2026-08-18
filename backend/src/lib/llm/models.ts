@@ -30,7 +30,10 @@ export const OPENAI_MAIN_MODELS = [
 // the form "ollama/<tag>" is valid — see providerForModel / resolveModel.
 
 // Mid-tier (used for tabular review) — user picks one in account settings.
-export const CLAUDE_MID_MODELS = ["claude-sonnet-5", "claude-sonnet-4-6"] as const;
+export const CLAUDE_MID_MODELS = [
+    "claude-sonnet-5",
+    "claude-sonnet-4-6",
+] as const;
 export const GEMINI_MID_MODELS = [
     "gemini-3.7-flash",
     "gemini-3.6-flash",
@@ -70,13 +73,32 @@ const ALL_MODELS = new Set<string>([
 
 export function providerForModel(model: string): Provider {
     if (model.startsWith("ollama")) return "ollama";
+    if (model.startsWith("openrouter/")) return "openrouter";
+    if (model.startsWith("vercel/")) return "vercel";
     if (model.startsWith("claude")) return "claude";
     if (model.startsWith("gemini")) return "gemini";
     if (model.startsWith("gpt-")) return "openai";
     throw new Error(`Unknown model id: ${model}`);
 }
 
-export function resolveModel(id: string | null | undefined, fallback: string): string {
-    if (id && (ALL_MODELS.has(id) || id.startsWith("ollama/"))) return id;
+export function resolveModel(
+    id: string | null | undefined,
+    fallback: string,
+): string {
+    if (
+        id &&
+        (ALL_MODELS.has(id) ||
+            id.startsWith("ollama/") ||
+            /^(?:openrouter|vercel)\/[^\s/]+\/[^\s]+$/.test(id))
+    )
+        return id;
     return fallback;
+}
+
+export function openRouterModelId(model: string): string {
+    return model.replace(/^openrouter\//, "");
+}
+
+export function vercelModelId(model: string): string {
+    return model.replace(/^vercel\//, "");
 }

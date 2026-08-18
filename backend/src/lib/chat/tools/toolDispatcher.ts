@@ -251,10 +251,17 @@ export async function runToolCalls(
   nonce?: string,
 ): Promise<{
   toolResults: unknown[];
-  docsRead: { filename: string; document_id?: string }[];
+  docsRead: {
+    filename: string;
+    document_id?: string;
+    version_id?: string | null;
+    version_number?: number | null;
+  }[];
   docsFound: {
     filename: string;
     document_id?: string;
+    version_id?: string | null;
+    version_number?: number | null;
     query: string;
     total_matches: number;
   }[];
@@ -268,10 +275,17 @@ export async function runToolCalls(
   mcpEvents: McpToolEvent[];
 }> {
   const toolResults: unknown[] = [];
-  const docsRead: { filename: string; document_id?: string }[] = [];
+  const docsRead: {
+    filename: string;
+    document_id?: string;
+    version_id?: string | null;
+    version_number?: number | null;
+  }[] = [];
   const docsFound: {
     filename: string;
     document_id?: string;
+    version_id?: string | null;
+    version_number?: number | null;
     query: string;
     total_matches: number;
   }[] = [];
@@ -333,6 +347,8 @@ export async function runToolCalls(
         docIndex[newDocLabel] = {
           document_id: documentId,
           filename: dlFilename,
+          version_id: versionId ?? null,
+          version_number: versionNumber,
         };
         docStore.set(newDocLabel, {
           storage_path: storagePath,
@@ -457,13 +473,20 @@ export async function runToolCalls(
         write,
         docIndex,
         db,
+        { readIdentity },
       );
       const filename = docStore.get(docId)?.filename;
       const documentId = docIndex?.[docId]?.document_id;
       if (readIdentity && turnReadState) {
         turnReadState.set(readIdentity.key, readIdentity);
       }
-      if (filename) docsRead.push({ filename, document_id: documentId });
+      if (filename)
+        docsRead.push({
+          filename,
+          document_id: readIdentity?.documentId ?? documentId,
+          version_id: readIdentity?.versionId ?? null,
+          version_number: readIdentity?.versionNumber ?? null,
+        });
       // Wrap document content in the spotlight fence: the document body
       // is entirely user-controlled and may contain injected instructions.
       const fencedContent = nonce ? spotlight(content, nonce) : content;
@@ -505,6 +528,12 @@ export async function runToolCalls(
         typeof args.max_results === "number" ? args.max_results : undefined;
       const contextChars =
         typeof args.context_chars === "number" ? args.context_chars : undefined;
+      const readIdentity = await getTurnReadIdentity({
+        docLabel: docId,
+        docStore,
+        docIndex,
+        db,
+      });
       const content = await findInDocumentContent({
         docLabel: docId,
         query,
@@ -514,6 +543,7 @@ export async function runToolCalls(
         write,
         docIndex,
         db,
+        readIdentity,
       });
       const filename = docInfo?.filename;
       if (filename) {
@@ -528,7 +558,10 @@ export async function runToolCalls(
         }
         docsFound.push({
           filename,
-          document_id: docIndex?.[docId]?.document_id,
+          document_id:
+            readIdentity?.documentId ?? docIndex?.[docId]?.document_id,
+          version_id: readIdentity?.versionId ?? null,
+          version_number: readIdentity?.versionNumber ?? null,
           query,
           total_matches: totalMatches,
         });
@@ -577,6 +610,7 @@ export async function runToolCalls(
           write,
           docIndex,
           db,
+          { readIdentity },
         );
         const filename = docStore.get(docId)?.filename ?? docId;
         if (readIdentity && turnReadState) {
@@ -593,7 +627,12 @@ export async function runToolCalls(
         );
         if (docStore.get(docId)) {
           const documentId = docIndex?.[docId]?.document_id;
-          docsRead.push({ filename, document_id: documentId });
+          docsRead.push({
+            filename,
+            document_id: readIdentity?.documentId ?? documentId,
+            version_id: readIdentity?.versionId ?? null,
+            version_number: readIdentity?.versionNumber ?? null,
+          });
         }
       }
       toolResults.push({
@@ -1732,6 +1771,8 @@ export async function runToolCalls(
                   docIndex[slug] = {
                     document_id: d.id,
                     filename: d.filename,
+                    version_id: versionId,
+                    version_number: 1,
                   };
                   docStore.set(slug, {
                     storage_path: newKey,

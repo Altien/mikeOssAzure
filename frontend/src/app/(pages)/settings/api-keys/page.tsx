@@ -25,6 +25,11 @@ const MODEL_API_KEY_FIELDS = [
         label: "OpenRouter API Key",
         placeholder: "sk-or-...",
     },
+    {
+        provider: "vercel",
+        label: "Vercel AI Gateway API Key",
+        placeholder: "vck_...",
+    },
 ] as const;
 
 export default function ApiKeysPage() {
@@ -66,7 +71,6 @@ export default function ApiKeysPage() {
                     </div>
                 ))}
             </SettingsSection>
-
         </div>
     );
 }

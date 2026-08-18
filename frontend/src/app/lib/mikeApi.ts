@@ -14,6 +14,7 @@ import type {
     Folder,
     LibraryFolder,
     Message,
+    MessageFile,
     PanelDocument,
     OpenSourceWorkflowContributorMode,
     OpenSourceWorkflowResponse,
@@ -33,7 +34,7 @@ interface ServerMessage {
     chat_id: string;
     role: "user" | "assistant";
     content: string | AssistantEvent[] | null;
-    files?: { filename: string; document_id?: string }[] | null;
+    files?: MessageFile[] | null;
     workflow?: { id: string; title: string } | null;
     citations?: Citation[] | null;
     created_at: string;
@@ -371,6 +372,8 @@ export interface UserProfile {
     mfaOnLogin: boolean;
     legalResearchUs: boolean;
     quickActionsVisible: boolean;
+    openRouterModels: string[];
+    vercelModels: string[];
     apiKeyStatus: ApiKeyStatus;
 }
 
@@ -474,6 +477,8 @@ export async function updateUserProfile(payload: {
     tabularModel?: string;
     legalResearchUs?: boolean;
     quickActionsVisible?: boolean;
+    openRouterModels?: string[];
+    vercelModels?: string[];
 }): Promise<UserProfile> {
     return apiRequest<UserProfile>("/user/profile", {
         method: "PATCH",
@@ -493,7 +498,7 @@ export async function updateUserMfaOnLogin(
 }
 
 export type ApiKeyProvider =
-    "claude" | "gemini" | "openai" | "openrouter" | "courtlistener";
+    "claude" | "gemini" | "openai" | "openrouter" | "vercel" | "courtlistener";
 export type ApiKeySource = "user" | "env" | null;
 export type ApiKeyState = Record<
     ApiKeyProvider,
@@ -517,9 +522,30 @@ export interface OllamaModelOption {
     group: "Local";
 }
 
+export interface RouterCatalogModel {
+    id: string;
+    label: string;
+}
+
+export type OpenRouterCatalogModel = RouterCatalogModel;
+
 export async function getOllamaModels(): Promise<OllamaModelOption[]> {
     const { models } = await apiRequest<{ models: OllamaModelOption[] }>(
         "/models/ollama",
+    );
+    return models;
+}
+
+export async function getOpenRouterModels(): Promise<OpenRouterCatalogModel[]> {
+    const { models } = await apiRequest<{
+        models: OpenRouterCatalogModel[];
+    }>("/models/openrouter");
+    return models;
+}
+
+export async function getVercelModels(): Promise<RouterCatalogModel[]> {
+    const { models } = await apiRequest<{ models: RouterCatalogModel[] }>(
+        "/models/vercel",
     );
     return models;
 }
@@ -1315,7 +1341,7 @@ export async function streamChat(payload: {
     messages: {
         role: string;
         content: string;
-        files?: { filename: string; document_id?: string }[];
+        files?: MessageFile[];
         workflow?: { id: string; title: string };
     }[];
     chat_id?: string;
@@ -1357,7 +1383,7 @@ export async function streamChat(payload: {
 type StreamChatMessage = {
     role: string;
     content: string;
-    files?: { filename: string; document_id?: string }[];
+    files?: MessageFile[];
     workflow?: { id: string; title: string };
 };
 

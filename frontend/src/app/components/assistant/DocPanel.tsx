@@ -283,7 +283,7 @@ export function DocumentTitleRow({
     const versionNumber = document.version_number;
 
     return (
-        <div className="p-3">
+        <div className="px-3 py-2">
             <div className="flex items-start gap-3">
                 <div className="flex min-w-0 flex-1 items-start gap-2">
                     <span className="mt-0.5 shrink-0">
@@ -396,7 +396,7 @@ function UrlDownloadButton({
         <PillButton
             asChild
             tone="white"
-            className={compact ? "h-8 w-8 px-0 py-0" : undefined}
+            className={compact ? "h-6 w-6 px-0 py-0" : undefined}
         >
             <a
                 href={href}
@@ -426,7 +426,7 @@ function ExternalSourceLinkButton({
         <PillButton
             asChild
             tone="white"
-            className={compact ? "h-8 w-8 px-0 py-0" : undefined}
+            className={compact ? "h-6 w-6 px-0 py-0" : undefined}
         >
             <a
                 href={link.href}
@@ -499,7 +499,7 @@ function DownloadButton({
             tone="white"
             onClick={handleClick}
             disabled={spinning}
-            className={compact ? "h-8 w-8 px-0 py-0" : undefined}
+            className={compact ? "h-6 w-6 px-0 py-0" : undefined}
         >
             {spinning ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />

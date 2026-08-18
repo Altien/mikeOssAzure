@@ -67,6 +67,8 @@ export interface Document {
     status: "pending" | "processing" | "ready" | "error";
     created_at: string | null;
     updated_at?: string | null;
+    /** Stable id of the document version currently selected for this row. */
+    current_version_id?: string | null;
     /** Version number of the document row pointed to by current_version_id. */
     active_version_number?: number | null;
     /** Legacy: max version_number across assistant_edit rows, null if doc is unedited. */
@@ -199,12 +201,16 @@ export type AssistantEvent =
           type: "doc_read";
           filename: string;
           document_id?: string;
+          version_id?: string | null;
+          version_number?: number | null;
           isStreaming?: boolean;
       }
     | {
           type: "doc_find";
           filename: string;
           document_id?: string;
+          version_id?: string | null;
+          version_number?: number | null;
           query: string;
           total_matches: number;
           isStreaming?: boolean;
@@ -333,7 +339,7 @@ export interface Message {
     id?: string;
     role: "user" | "assistant";
     content: string;
-    files?: { filename: string; document_id?: string }[];
+    files?: MessageFile[];
     workflow?: { id: string; title: string };
     model?: string;
     citations?: Citation[];
@@ -342,6 +348,13 @@ export interface Message {
     /** Set when streaming failed; rendered as a red error block. */
     error?: string;
 }
+
+export type MessageFile = {
+    filename: string;
+    document_id?: string;
+    version_id?: string | null;
+    version_number?: number | null;
+};
 
 export interface CitationQuote {
     page?: number;

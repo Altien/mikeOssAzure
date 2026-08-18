@@ -5,7 +5,13 @@ import type { ApiKeyStatus } from "../api/mikeApi";
  * frontend/src/app/components/assistant/ModelToggle.tsx until both clients use
  * a single shared package.
  */
-export type ModelGroup = "Anthropic" | "Google" | "OpenAI" | "Local";
+export type ModelGroup =
+  | "Anthropic"
+  | "Google"
+  | "OpenAI"
+  | "OpenRouter"
+  | "Vercel AI Gateway"
+  | "Local";
 
 export interface ModelOption {
   id: string;
@@ -37,17 +43,58 @@ export const ALLOWED_MODEL_IDS = new Set(
   STATIC_MODELS.map((model) => model.id),
 );
 
+const MODEL_NAME_ACRONYMS: Record<string, string> = {
+  ai: "AI",
+  gpt: "GPT",
+  oss: "OSS",
+  r1: "R1",
+};
+
+export function modelDisplayName(modelId: string): string {
+  const normalized = modelId
+    .replace(/^(?:openrouter|vercel|ollama)\//, "")
+    .split("/")
+    .at(-1)!
+    .replace(/(\d)-(\d)/g, "$1.$2");
+  const [rawName, variant] = normalized.split(":", 2);
+  const name = rawName ?? normalized;
+  const label = name
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((token) => {
+      const lower = token.toLowerCase();
+      if (MODEL_NAME_ACRONYMS[lower]) return MODEL_NAME_ACRONYMS[lower];
+      if (/^\d+[bk]$/i.test(token)) return token.toUpperCase();
+      return token.charAt(0).toUpperCase() + token.slice(1);
+    })
+    .join(" ");
+  if (!variant) return label;
+  const variantLabel = variant
+    .split(/[-_]+/)
+    .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
+    .join(" ");
+  return `${label} (${variantLabel})`;
+}
+
 export function isAllowedModelId(id: string): boolean {
-  return ALLOWED_MODEL_IDS.has(id) || id.startsWith("ollama/");
+  return (
+    ALLOWED_MODEL_IDS.has(id) ||
+    id.startsWith("ollama/") ||
+    id.startsWith("openrouter/") ||
+    id.startsWith("vercel/")
+  );
 }
 
 export function isModelAvailable(
   modelId: string,
   status: ApiKeyStatus | null,
 ): boolean {
-  if (!status || modelId.startsWith("ollama/")) return true;
+  if (modelId.startsWith("ollama/")) return true;
+  if (modelId.startsWith("openrouter/")) return !!status?.openrouter;
+  if (modelId.startsWith("vercel/")) return !!status?.vercel;
+  if (!status) return false;
   const model = STATIC_MODELS.find((item) => item.id === modelId);
-  if (!model || model.group === "Local") return true;
+  if (!model || model.group === "Local") return false;
   if (model.group === "Anthropic") return !!status.claude;
   if (model.group === "Google") return !!status.gemini;
   return !!status.openai;
@@ -55,6 +102,12 @@ export function isModelAvailable(
 
 export function missingModelProvider(modelId: string): string {
   const group = STATIC_MODELS.find((item) => item.id === modelId)?.group;
+  if (modelId.startsWith("openrouter/") || group === "OpenRouter") {
+    return "OpenRouter";
+  }
+  if (modelId.startsWith("vercel/") || group === "Vercel AI Gateway") {
+    return "Vercel AI Gateway";
+  }
   return group === "Anthropic"
     ? "Anthropic"
     : group === "Google"

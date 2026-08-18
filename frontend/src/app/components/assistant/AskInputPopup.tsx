@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Check, X } from "lucide-react";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
-import type { AssistantEvent, Document } from "../shared/types";
+import type { AssistantEvent, Document, MessageFile } from "../shared/types";
 import { FileTypeIcon } from "../shared/FileTypeIcon";
 import { AddDocumentsModal } from "../modals/AddDocumentsModal";
 
@@ -24,7 +24,7 @@ export function AskInputPopup({
     onSubmit?: (
         response: AskInputsResponse,
         content: string,
-        files: { filename: string; document_id: string }[],
+        files: MessageFile[],
     ) => void;
     onDismiss?: () => void;
 }) {
@@ -217,7 +217,18 @@ export function AskInputPopup({
         return docs.flatMap((doc) => {
             if (seen.has(doc.id)) return [];
             seen.add(doc.id);
-            return [{ filename: doc.filename, document_id: doc.id }];
+            return [
+                {
+                    filename: doc.filename,
+                    document_id: doc.id,
+                    ...(doc.current_version_id
+                        ? { version_id: doc.current_version_id }
+                        : {}),
+                    ...(doc.active_version_number != null
+                        ? { version_number: doc.active_version_number }
+                        : {}),
+                },
+            ];
         });
     };
 
