@@ -148,6 +148,12 @@ export type AskInputItem =
     }
   | {
       id: string;
+      kind: "text";
+      question: string;
+      response_prefix?: string;
+    }
+  | {
+      id: string;
       kind: "documents";
       document_types: string[];
       response_prefix?: string;
@@ -162,6 +168,13 @@ export type AskInputResponseItem =
   | {
       id: string;
       kind: "choice";
+      question: string;
+      answer?: string;
+      skipped?: boolean;
+    }
+  | {
+      id: string;
+      kind: "text";
       question: string;
       answer?: string;
       skipped?: boolean;

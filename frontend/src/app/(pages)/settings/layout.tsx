@@ -25,7 +25,7 @@ const TABS: TabDef[] = [
     // adopt app-level Supabase MFA (Entra handles MFA at the IdP), so the
     // tab and page are omitted.
     { id: "models", label: "Model Preferences", href: "/settings/models" },
-    { id: "api-keys", label: "API Keys", href: "/settings/api-keys" },
+    { id: "api-keys", label: "BYOK", href: "/settings/api-keys" },
     { id: "connectors", label: "Connectors", href: "/settings/connectors" },
 ];
 

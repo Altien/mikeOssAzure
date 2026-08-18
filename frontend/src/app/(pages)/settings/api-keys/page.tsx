@@ -1,5 +1,6 @@
 "use client";
 
+import { RouterSettingsSection } from "@/app/components/settings/RouterSettingsSection";
 import { AlertTriangle, CheckCircle2, ExternalLink } from "lucide-react";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import type { ApiKeyProvider } from "@/app/lib/mikeApi";
@@ -119,6 +120,7 @@ export default function ApiKeysPage() {
                 Open organisation setup
                 <ExternalLink className="h-3.5 w-3.5" />
             </a>
+            <RouterSettingsSection />
         </div>
     );
 }

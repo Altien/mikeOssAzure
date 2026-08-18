@@ -586,8 +586,17 @@ export async function getApiKeyStatus(): Promise<ApiKeyStatus> {
 // getOllamaModels (GET /models/ollama, local Ollama models) is omitted.
 // Dev's backend does not serve local models (see providerForModel in
 // backend/src/lib/llm/models.ts). Do not re-add during conflict resolution.
+export interface RouterCatalogModel {
+    id: string;
+    label: string;
+    pricing?: {
+        input?: string;
+        output?: string;
+        variesByProvider?: boolean;
+        tiered?: boolean;
+    };
+}
 
-export interface RouterCatalogModel { id: string; label: string; }
 export type OpenRouterCatalogModel = RouterCatalogModel;
 
 export async function getOpenRouterModels(): Promise<OpenRouterCatalogModel[]> {
@@ -1466,6 +1475,13 @@ export async function streamChat(payload: {
               }
             | {
                   id: string;
+                  kind: "text";
+                  question: string;
+                  answer?: string;
+                  skipped?: boolean;
+              }
+            | {
+                  id: string;
                   kind: "documents";
                   filenames: string[];
                   skipped?: boolean;
@@ -1509,6 +1525,13 @@ export async function streamProjectChat(payload: {
             | {
                   id: string;
                   kind: "choice";
+                  question: string;
+                  answer?: string;
+                  skipped?: boolean;
+              }
+            | {
+                  id: string;
+                  kind: "text";
                   question: string;
                   answer?: string;
                   skipped?: boolean;
