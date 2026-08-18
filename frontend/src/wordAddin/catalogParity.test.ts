@@ -8,6 +8,8 @@ import { describe, expect, it } from "vitest";
 import {
     MODELS,
     DEFAULT_MODEL_ID,
+    LEGACY_MODEL_IDS,
+    canonicalModelId,
     modelDisplayName,
     openRouterModelOptions,
     vercelModelOptions,
@@ -15,6 +17,9 @@ import {
 import {
     STATIC_MODELS,
     DEFAULT_MODEL_ID as ADDIN_DEFAULT_MODEL_ID,
+    LEGACY_MODEL_IDS as ADDIN_LEGACY_MODEL_IDS,
+    canonicalModelId as addinCanonicalModelId,
+    isAllowedModelId as addinIsAllowedModelId,
     isModelAvailable as addinIsModelAvailable,
     modelDisplayName as addinModelDisplayName,
     openRouterModelOptions as addinOpenRouterModelOptions,
@@ -22,6 +27,7 @@ import {
 } from "../../../word-addin/src/taskpane/lib/modelCatalog";
 import type { ApiKeyStatus } from "../../../word-addin/src/taskpane/api/client";
 import { isModelAvailable as webIsModelAvailable } from "../app/lib/modelAvailability";
+import { isAllowedModelId as webIsAllowedModelId } from "../app/hooks/useSelectedModel";
 import type { ApiKeyState } from "../app/lib/mikeApi";
 
 describe("word add-in catalog parity", () => {
@@ -41,6 +47,47 @@ describe("word add-in catalog parity", () => {
 
     it("shares the web app's default model", () => {
         expect(ADDIN_DEFAULT_MODEL_ID).toBe(DEFAULT_MODEL_ID);
+    });
+
+    it("maps the same retired ids to the same current ids", () => {
+        // A rename is only survivable if BOTH clients map the old id. The web
+        // app maps it and the add-in did not, so the same localStorage value
+        // ("mike.selectedModel" is shared by key name) resolved differently
+        // depending on which client read it.
+        expect(ADDIN_LEGACY_MODEL_IDS).toEqual(LEGACY_MODEL_IDS);
+        for (const id of [
+            ...Object.keys(LEGACY_MODEL_IDS),
+            ...Object.values(LEGACY_MODEL_IDS),
+            ...MODELS.map((model) => model.id),
+            "openrouter/openai/gpt-5.4",
+            "ollama/llama3:8b",
+            "not-a-model",
+        ]) {
+            expect.soft(addinCanonicalModelId(id), id).toBe(
+                canonicalModelId(id),
+            );
+        }
+    });
+
+    it("accepts exactly the same set of stored selection ids", () => {
+        const probes = [
+            ...MODELS.map((model) => model.id),
+            ...Object.keys(LEGACY_MODEL_IDS),
+            ...Object.values(LEGACY_MODEL_IDS),
+            "claude-haiku-4-5",
+            "openrouter/openai/gpt-5.4",
+            "openrouter/openrouter/auto",
+            "vercel/openai/gpt-5.4",
+            "ollama/llama3:8b",
+            "openrouter",
+            "",
+            "gpt-5.4-turbo-imaginary",
+        ];
+        for (const id of probes) {
+            expect
+                .soft(addinIsAllowedModelId(id), id)
+                .toBe(webIsAllowedModelId(id));
+        }
     });
 
     it("renders identical display names for every shared id", () => {

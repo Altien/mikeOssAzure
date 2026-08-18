@@ -9,10 +9,12 @@ import {
 
 const STORAGE_KEY = "mike.selectedModel";
 
-// Upstream divergence (OSS-6, §2.3 item 3): Azure OpenAI deployments are
-// user-defined names discovered at runtime, so `aoai:` ids are accepted by
-// prefix. The `ollama/` prefix is upstream's (unreachable in dev, fe942475).
-function isAllowed(id: string): boolean {
+/**
+ * The composer's accepted-id surface. Exported so the Word add-in drift guard
+ * (frontend/src/wordAddin/catalogParity.test.ts) can compare it against the
+ * add-in's hand-mirrored copy instead of restating the rule.
+ */
+export function isAllowedModelId(id: string): boolean {
     return (
         ALLOWED_MODEL_IDS.has(id) ||
         id.startsWith("ollama/") ||
@@ -28,7 +30,7 @@ function readStored(): string {
     // Map renamed static ids to their current equivalents before validating,
     // so a selection stored before a catalog rename keeps working.
     const canonical = raw ? canonicalModelId(raw) : null;
-    if (canonical && isAllowed(canonical)) return canonical;
+    if (canonical && isAllowedModelId(canonical)) return canonical;
     return DEFAULT_MODEL_ID;
 }
 
@@ -82,7 +84,7 @@ export function useSelectedModel(
 
     const setModel = useCallback((id: string) => {
         const canonical = canonicalModelId(id);
-        const next = isAllowed(canonical) ? canonical : DEFAULT_MODEL_ID;
+        const next = isAllowedModelId(canonical) ? canonical : DEFAULT_MODEL_ID;
         setModelState(next);
         persist(next);
     }, []);
