@@ -56,17 +56,16 @@ export default defineConfig({
             // effectively fully tested: every mikeApi endpoint wrapper has a
             // route/method/body assertion, and the remaining gap is only the
             // dev-logging branch and a couple of `?? null` default arms.
-            // Measured on this tree: 99.69% statements, 98.53% branches,
-            // 100% functions, 100% lines. These floors sit ~2 points below
-            // that so an innocently small untested addition doesn't
-            // instantly red-flag main, while a real drop still fails CI.
+            // Measured on this tree: 99.81% statements, 97.09% branches,
+            // 100% functions, 100% lines. The floors are those measurements
+            // rounded down to whole percentages, so a real drop fails CI.
             // Floors only go up: when you add tests, raise them in the same
             // PR. Backlog + per-area status: docs/frontend-testing.md.
             thresholds: {
-                statements: 97,
-                branches: 96,
-                functions: 98,
-                lines: 98,
+                statements: 99,
+                branches: 97,
+                functions: 100,
+                lines: 100,
             },
         },
     },

@@ -3,16 +3,11 @@
  *
  * Four specs (chat rename, chat delete, project-assistant create+submit, and
  * the critical-path "ask a question" flow) create/populate a chat by sending a
- * message. This codebase ships no keyless model: every entry in the model
- * picker (frontend/src/app/components/assistant/ModelToggle.tsx MODELS) is an
- * Anthropic/Google/OpenAI model whose availability requires a configured
- * provider key — backend env var or user-stored key
- * (backend/src/lib/userApiKeys.ts) — and ChatInput.handleSubmit refuses to
- * send when the selected model's key is missing (ApiKeyMissingPopup). The
- * backend enforces the same model set server-side
- * (backend/src/lib/llm/models.ts ALL_MODELS/providerForModel). So with no key
- * there is no way for these specs to send a message at all; unguarded they
- * would hang to their timeout.
+ * message. Mike supports keyless local models through Ollama, but the GitHub
+ * Actions job does not provision an Ollama server or pull a model. Its only
+ * live model is therefore the Anthropic model enabled by ANTHROPIC_API_KEY.
+ * Without that secret, these specs cannot submit a message in CI and would
+ * otherwise hang until their timeout.
  *
  * The auto title-generation call (POST /chat/:id/generate-title) is NOT why
  * the gate exists: keyless it just returns 500, and the specs already treat it
@@ -22,7 +17,7 @@
  * `.github/workflows/e2e.yml` exposes both to the backend (backend/.env) and
  * to the Playwright process. Guarding with
  * `test.skip(!hasLlmKey, LLM_SKIP_REASON)` keeps a keyless run (a plain local
- * run, or a fork PR with no secret access) green and fast on the other 23
+ * run without Ollama, or a fork PR with no secret access) green on the other 27
  * specs, while still running — and enforcing — the LLM specs whenever the key
  * is present. Setup steps: docs/e2e-ci.md, "Enable the LLM specs".
  *
