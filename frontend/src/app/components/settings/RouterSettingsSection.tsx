@@ -46,6 +46,41 @@ function modelCostLabel(model: RouterCatalogModel): string | null {
     return costs.join(" · ");
 }
 
+const CATALOG_MODEL_ID_RE = /^[^\s/]+\/[^\s]+$/;
+
+/**
+ * user_router_models CHECKs `char_length(model_id) between 1 and 200`, so a
+ * longer id is a guaranteed 400 from the profile PATCH. Enforcing it here
+ * turns that round trip into an immediate, specific message.
+ */
+export const MAX_MODEL_ID_LENGTH = 200;
+
+/**
+ * The id a typed string would become, before it is validated. The router slug
+ * is stripped only when the remainder is still a full vendor/model id: some
+ * catalog ids legitimately start with the router's own slug (OpenRouter's
+ * "openrouter/auto", Vercel's "vercel/v0-1.5-md") and must be kept verbatim —
+ * mirrors the backend's normalizeRouterModels.
+ */
+function typedModelCandidate(
+    input: string,
+    provider: "openrouter" | "vercel",
+): string {
+    const raw = input.trim();
+    const stripped = raw.replace(new RegExp(`^${provider}/`), "");
+    return CATALOG_MODEL_ID_RE.test(stripped) ? stripped : raw;
+}
+
+/** Canonical form of a hand-typed model id, or null when it is not usable. */
+export function normalizeTypedModelId(
+    input: string,
+    provider: "openrouter" | "vercel",
+): string | null {
+    const model = typedModelCandidate(input, provider);
+    if (model.length > MAX_MODEL_ID_LENGTH) return null;
+    return CATALOG_MODEL_ID_RE.test(model) ? model : null;
+}
+
 function catalogModelMatches(model: RouterCatalogModel, query: string) {
     return (
         !query ||
@@ -176,16 +211,27 @@ function RouterModelsSetting({
         if (!ok) setError(`${label} model preferences could not be saved.`);
     };
 
+    // Enter with no explicit highlight adds exactly what the user typed — and
+    // never a lookalike. When the text is not usable as an id, Enter explains
+    // why: a keypress that does nothing and says nothing reads as a broken
+    // control, and the user has no way to learn what shape is expected.
     const add = () => {
-        const model = input.trim().replace(new RegExp(`^${provider}/`), "");
-        if (!/^[^\s/]+\/[^\s]+$/.test(model)) {
+        const candidate = typedModelCandidate(input, provider);
+        // An empty box is the one silent case — nothing was asked for.
+        if (!candidate) return;
+        const model = normalizeTypedModelId(input, provider);
+        if (!model) {
             setError(
-                `Enter a ${label} model ID such as anthropic/claude-sonnet-5.`,
+                candidate.length > MAX_MODEL_ID_LENGTH
+                    ? `Model IDs are at most ${MAX_MODEL_ID_LENGTH} characters.`
+                    : `"${candidate}" is not a model ID — pick one from the list, or type it as vendor/model.`,
             );
             return;
         }
+        setError(null);
         setInput("");
         setCatalogOpen(false);
+        setActiveCatalogIndex(-1);
         if (!selection.includes(model)) void save([...selection, model]);
     };
 
@@ -193,6 +239,7 @@ function RouterModelsSetting({
         const query = input.trim().toLowerCase();
         return catalogModelMatches(model, query);
     });
+    const typedModelId = normalizeTypedModelId(input, provider);
 
     const selectCatalogModel = (model: string) => {
         setInput("");
@@ -239,15 +286,25 @@ function RouterModelsSetting({
             >
                 {catalogOpen && (
                     <LiquidDropdownSurface
-                        id={catalogId}
                         data-testid={`${provider}-model-catalog`}
-                        role="listbox"
-                        aria-multiselectable="true"
-                        aria-label={`${label} model catalog`}
                         className="absolute bottom-full left-0 z-50 mb-1.5 max-h-72 w-full overflow-y-auto p-1.5"
                     >
-                        {visibleCatalog.length > 0 ? (
-                            visibleCatalog.map((model, index) => {
+                        {/* Outside the listbox below: ARIA allows a listbox
+                            only option/group children, and a stray div makes
+                            the option indices a screen reader announces
+                            disagree with aria-activedescendant. */}
+                        {typedModelId && (
+                            <div className="px-3 py-2 text-xs text-gray-400">
+                                Press Enter to add this model ID.
+                            </div>
+                        )}
+                        <div
+                            id={catalogId}
+                            role="listbox"
+                            aria-multiselectable="true"
+                            aria-label={`${label} model catalog`}
+                        >
+                            {visibleCatalog.map((model, index) => {
                                 const selected = selection.includes(model.id);
                                 const active = index === activeCatalogIndex;
                                 const costLabel = modelCostLabel(model);
@@ -289,11 +346,11 @@ function RouterModelsSetting({
                                         )}
                                     </LiquidDropdownButton>
                                 );
-                            })
-                        ) : (
+                            })}
+                        </div>
+                        {visibleCatalog.length === 0 && (
                             <div className="px-3 py-2 text-xs text-gray-400">
-                                No matching models. Press Enter to add this
-                                model ID.
+                                No matching models.
                             </div>
                         )}
                     </LiquidDropdownSurface>
@@ -319,16 +376,14 @@ function RouterModelsSetting({
                         placeholder="e.g. anthropic/claude-sonnet-5"
                         className="h-full min-w-0 flex-1 bg-transparent text-sm text-gray-900 outline-none placeholder:text-gray-400 disabled:cursor-not-allowed"
                         onChange={(event) => {
-                            const nextInput = event.target.value;
-                            setInput(nextInput);
-                            if (catalog.length > 0) {
-                                const query = nextInput.trim().toLowerCase();
-                                const hasMatches = catalog.some((model) =>
-                                    catalogModelMatches(model, query),
-                                );
-                                setCatalogOpen(true);
-                                setActiveCatalogIndex(hasMatches ? 0 : -1);
-                            }
+                            setInput(event.target.value);
+                            // Typing never claims a highlight: Enter must add
+                            // the typed id verbatim unless the user points at
+                            // a row (arrow keys or hover). A default top-row
+                            // highlight made Enter after typing a full valid
+                            // id add a substring-matching catalog row instead.
+                            setActiveCatalogIndex(-1);
+                            if (catalog.length > 0) setCatalogOpen(true);
                         }}
                         onKeyDown={(event) => {
                             if (event.key === "ArrowDown") {
@@ -372,9 +427,10 @@ function RouterModelsSetting({
                         onClick={() => {
                             const nextOpen = !catalogOpen;
                             setCatalogOpen(nextOpen);
-                            setActiveCatalogIndex(
-                                nextOpen && visibleCatalog.length > 0 ? 0 : -1,
-                            );
+                            // Highlight only ever follows an explicit arrow
+                            // key or pointer hover — opening the list doesn't
+                            // pre-claim a row for Enter.
+                            setActiveCatalogIndex(-1);
                             if (nextOpen) inputRef.current?.focus();
                         }}
                         className="flex h-full shrink-0 items-center justify-end text-gray-400 transition-colors hover:text-gray-700 disabled:cursor-default disabled:opacity-40"

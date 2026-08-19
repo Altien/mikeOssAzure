@@ -126,6 +126,17 @@ describe("resolveModel", () => {
         }
     });
 
+    it("maps renamed legacy ids to their current equivalents", () => {
+        // Stored preferences outlive catalog renames; without the mapping the
+        // saved value silently degrades to the fallback.
+        expect(
+            resolveModel("gemini-3.1-flash-lite-preview", DEFAULT_MAIN_MODEL),
+        ).toBe("gemini-3.5-flash-lite");
+        expect(resolveModel("gpt-5.4-lite", DEFAULT_MAIN_MODEL)).toBe(
+            "gpt-5.4-mini",
+        );
+    });
+
     it("accepts namespaced OpenRouter model ids", () => {
         expect(
             resolveModel(
@@ -154,11 +165,32 @@ describe("openRouterModelId", () => {
             "openai/gpt-5.4",
         );
     });
+
+    it("preserves catalog ids that begin with the router's own slug", () => {
+        // "openrouter/auto" is a real OpenRouter catalog id, so the app-level
+        // id is "openrouter/openrouter/auto": resolveModel must accept it and
+        // the adapter must strip exactly one namespace segment.
+        expect(
+            resolveModel("openrouter/openrouter/auto", DEFAULT_MAIN_MODEL),
+        ).toBe("openrouter/openrouter/auto");
+        expect(openRouterModelId("openrouter/openrouter/auto")).toBe(
+            "openrouter/auto",
+        );
+    });
 });
 
 describe("vercelModelId", () => {
     it("removes only the internal provider namespace", () => {
         expect(vercelModelId("vercel/openai/gpt-5.4")).toBe("openai/gpt-5.4");
+    });
+
+    it("preserves catalog ids that begin with the router's own slug", () => {
+        expect(resolveModel("vercel/vercel/v0-1.5-md", DEFAULT_MAIN_MODEL)).toBe(
+            "vercel/vercel/v0-1.5-md",
+        );
+        expect(vercelModelId("vercel/vercel/v0-1.5-md")).toBe(
+            "vercel/v0-1.5-md",
+        );
     });
 });
 

@@ -40,6 +40,16 @@ interface UserProfile {
 interface UserProfileContextType {
     profile: UserProfile | null;
     loading: boolean;
+    /**
+     * True when the profile fetch failed (after a retry) and `profile` holds
+     * the local fallback. Every field on it is a placeholder, not an answer:
+     * apiKeys say "nothing configured" and the router model lists are empty
+     * only because the truth is unknown. Consumers must distinguish this from
+     * a real profile that loaded with the same values — key-gated UI fails
+     * open, and destructive normalization (e.g. resetting a saved composer
+     * selection that is absent from the router lists) must not run at all.
+     */
+    apiKeysDegraded: boolean;
     updateDisplayName: (name: string) => Promise<boolean>;
     updateOrganisation: (organisation: string) => Promise<boolean>;
     updateModelPreference: (
@@ -112,13 +122,28 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     const { user, isAuthenticated } = useAuth();
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [loading, setLoading] = useState(true);
+    const [apiKeysDegraded, setApiKeysDegraded] = useState(false);
     const userId = user?.id ?? null;
 
     const loadProfile = useCallback(async () => {
         try {
-            const profileData = await getUserProfile();
+            let profileData: ApiUserProfile;
+            try {
+                profileData = await getUserProfile();
+            } catch {
+                // One retry with a short backoff absorbs a transient network
+                // blip before the app falls back to the degraded profile.
+                await new Promise((resolve) => setTimeout(resolve, 750));
+                profileData = await getUserProfile();
+            }
             setProfile(toProfile(profileData));
-        } catch {
+            setApiKeysDegraded(false);
+        } catch (error) {
+            console.warn(
+                "[profile] fetch failed after retry; API key availability is unknown and fails open",
+                error,
+            );
+            setApiKeysDegraded(true);
             // Calculate a default future reset date for fallback
             const futureResetDate = new Date();
             futureResetDate.setDate(futureResetDate.getDate() + 30);
@@ -353,6 +378,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             value={{
                 profile,
                 loading,
+                apiKeysDegraded,
                 updateDisplayName,
                 updateOrganisation,
                 updateModelPreference,

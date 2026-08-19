@@ -26,7 +26,10 @@ vi.mock("@/app/contexts/UserProfileContext", () => ({
     }),
 }));
 
-import { RouterSettingsSection } from "./RouterSettingsSection";
+import {
+    RouterSettingsSection,
+    normalizeTypedModelId,
+} from "./RouterSettingsSection";
 
 describe("RouterSettingsSection", () => {
     beforeEach(() => {
@@ -43,6 +46,10 @@ describe("RouterSettingsSection", () => {
             {
                 id: "anthropic/claude-sonnet-4.5",
                 label: "Claude Sonnet 4.5",
+            },
+            {
+                id: "qwen/qwen-2.5-72b-instruct",
+                label: "Qwen 2.5 72B Instruct",
             },
         ]);
     });
@@ -114,6 +121,116 @@ describe("RouterSettingsSection", () => {
         );
     });
 
+    it("adds the typed id verbatim even when it substring-matches a catalog row", async () => {
+        // Typing the full valid id "qwen/qwen-2" also matches the catalog's
+        // "qwen/qwen-2.5-72b-instruct". Enter must add what was typed, not
+        // the highlighted lookalike.
+        updateOpenRouterModels.mockResolvedValue(true);
+        render(<RouterSettingsSection />);
+        const input = screen.getByRole("combobox", {
+            name: "OpenRouter models",
+        });
+        await waitFor(() => expect(getOpenRouterModels).toHaveBeenCalled());
+
+        fireEvent.change(input, { target: { value: "qwen/qwen-2" } });
+        // Typing never claims a highlight …
+        expect(input).not.toHaveAttribute("aria-activedescendant");
+        // … and the add-verbatim hint shows although catalog rows match.
+        expect(screen.getByText("Qwen 2.5 72B Instruct")).toBeInTheDocument();
+        expect(
+            screen.getByText("Press Enter to add this model ID."),
+        ).toBeInTheDocument();
+
+        fireEvent.keyDown(input, { key: "Enter" });
+        await waitFor(() =>
+            expect(updateOpenRouterModels).toHaveBeenCalledWith([
+                "anthropic/claude-sonnet-4.5",
+                "qwen/qwen-2",
+            ]),
+        );
+    });
+
+    it("explains why Enter did nothing while the text is not id-shaped", async () => {
+        render(<RouterSettingsSection />);
+        const input = screen.getByRole("combobox", {
+            name: "OpenRouter models",
+        });
+        await waitFor(() => expect(getOpenRouterModels).toHaveBeenCalled());
+
+        fireEvent.change(input, { target: { value: "qwen" } });
+        fireEvent.keyDown(input, { key: "Enter" });
+
+        expect(updateOpenRouterModels).not.toHaveBeenCalled();
+        // The search text stays so the user can keep narrowing the catalog…
+        expect(input).toHaveValue("qwen");
+        // …but silence would read as a broken key. Say what is wrong.
+        expect(
+            screen.getByText(/is not a model ID/),
+        ).toBeInTheDocument();
+    });
+
+    it("rejects an over-long typed id client-side with a length message", async () => {
+        render(<RouterSettingsSection />);
+        const input = screen.getByRole("combobox", {
+            name: "OpenRouter models",
+        });
+        await waitFor(() => expect(getOpenRouterModels).toHaveBeenCalled());
+
+        fireEvent.change(input, {
+            target: { value: `vendor/${"m".repeat(220)}` },
+        });
+        fireEvent.keyDown(input, { key: "Enter" });
+
+        expect(updateOpenRouterModels).not.toHaveBeenCalled();
+        expect(
+            screen.getByText("Model IDs are at most 200 characters."),
+        ).toBeInTheDocument();
+    });
+
+    it("keeps the add-verbatim hint outside the listbox", async () => {
+        // ARIA: a listbox may only contain option/group children. A stray div
+        // inside it makes the option count and index reported to assistive
+        // tech disagree with what aria-activedescendant points at.
+        render(<RouterSettingsSection />);
+        const input = screen.getByRole("combobox", {
+            name: "OpenRouter models",
+        });
+        await waitFor(() => expect(getOpenRouterModels).toHaveBeenCalled());
+
+        fireEvent.change(input, { target: { value: "qwen/qwen-2" } });
+
+        const listbox = screen.getByRole("listbox", {
+            name: "OpenRouter model catalog",
+        });
+        const hint = screen.getByText("Press Enter to add this model ID.");
+        expect(listbox.contains(hint)).toBe(false);
+        for (const child of Array.from(listbox.children)) {
+            expect(child.getAttribute("role")).toBe("option");
+        }
+    });
+
+    it("adds a router-slug catalog id verbatim instead of rejecting it", async () => {
+        // OpenRouter's catalog contains "openrouter/auto". Stripping the
+        // router prefix before validating leaves "auto", which is not
+        // vendor/model shaped, so the add used to fail with an error.
+        updateOpenRouterModels.mockResolvedValue(true);
+        render(<RouterSettingsSection />);
+        const input = screen.getByRole("combobox", {
+            name: "OpenRouter models",
+        });
+        await waitFor(() => expect(getOpenRouterModels).toHaveBeenCalled());
+
+        fireEvent.change(input, { target: { value: "openrouter/auto" } });
+        fireEvent.keyDown(input, { key: "Enter" });
+
+        await waitFor(() =>
+            expect(updateOpenRouterModels).toHaveBeenCalledWith([
+                "anthropic/claude-sonnet-4.5",
+                "openrouter/auto",
+            ]),
+        );
+    });
+
     it("renders saved models with the small pill button primitive", () => {
         render(<RouterSettingsSection />);
 
@@ -121,5 +238,46 @@ describe("RouterSettingsSection", () => {
             name: "Remove anthropic/claude-sonnet-4.5",
         });
         expect(pill).toHaveClass("rounded-full", "text-xs");
+    });
+});
+
+describe("normalizeTypedModelId", () => {
+    it("keeps router-slug catalog ids verbatim", () => {
+        expect(normalizeTypedModelId("openrouter/auto", "openrouter")).toBe(
+            "openrouter/auto",
+        );
+        expect(normalizeTypedModelId("vercel/v0-1.5-md", "vercel")).toBe(
+            "vercel/v0-1.5-md",
+        );
+    });
+
+    it("strips the router prefix only when the remainder is a full id", () => {
+        expect(
+            normalizeTypedModelId(
+                " openrouter/deepseek/deepseek-v3 ",
+                "openrouter",
+            ),
+        ).toBe("deepseek/deepseek-v3");
+        expect(normalizeTypedModelId("openai/gpt-5.4", "openrouter")).toBe(
+            "openai/gpt-5.4",
+        );
+    });
+
+    it("returns null for text that is not id-shaped", () => {
+        expect(normalizeTypedModelId("auto", "openrouter")).toBeNull();
+        expect(normalizeTypedModelId("two words/x", "openrouter")).toBeNull();
+        expect(normalizeTypedModelId("", "openrouter")).toBeNull();
+    });
+
+    it("enforces the backend's 200-character model_id limit", () => {
+        // user_router_models CHECKs char_length(model_id) between 1 and 200,
+        // so anything longer is a guaranteed 400 — catch it where the user is
+        // still looking at the box they typed it into.
+        const at200 = `vendor/${"m".repeat(193)}`;
+        expect(at200).toHaveLength(200);
+        expect(normalizeTypedModelId(at200, "openrouter")).toBe(at200);
+        expect(
+            normalizeTypedModelId(`${at200}m`, "openrouter"),
+        ).toBeNull();
     });
 });

@@ -81,17 +81,26 @@ export function providerForModel(model: string): Provider {
     throw new Error(`Unknown model id: ${model}`);
 }
 
+// Renamed/retired static ids → their current equivalents. Stored preferences
+// and localStorage selections outlive catalog renames; mapping here keeps an
+// old saved value working instead of silently kicking it to the fallback.
+export const LEGACY_MODEL_IDS: Record<string, string> = {
+    "gemini-3.1-flash-lite-preview": "gemini-3.5-flash-lite",
+    "gpt-5.4-lite": "gpt-5.4-mini",
+};
+
 export function resolveModel(
     id: string | null | undefined,
     fallback: string,
 ): string {
+    const canonical = id ? (LEGACY_MODEL_IDS[id] ?? id) : id;
     if (
-        id &&
-        (ALL_MODELS.has(id) ||
-            id.startsWith("ollama/") ||
-            /^(?:openrouter|vercel)\/[^\s/]+\/[^\s]+$/.test(id))
+        canonical &&
+        (ALL_MODELS.has(canonical) ||
+            canonical.startsWith("ollama/") ||
+            /^(?:openrouter|vercel)\/[^\s/]+\/[^\s]+$/.test(canonical))
     )
-        return id;
+        return canonical;
     return fallback;
 }
 

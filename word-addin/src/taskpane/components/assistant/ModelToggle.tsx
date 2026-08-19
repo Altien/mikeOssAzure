@@ -4,6 +4,8 @@ import { getOllamaModels, type ApiKeyStatus } from "../../api/mikeApi";
 import {
   isModelAvailable,
   modelDisplayName,
+  openRouterModelOptions,
+  vercelModelOptions,
   STATIC_MODELS,
   type ModelGroup,
   type ModelOption,
@@ -29,12 +31,16 @@ export function ModelToggle({
   value,
   onChange,
   keyStatus,
+  keyStatusLoading = false,
   openRouterModels,
   vercelModels,
 }: {
   value: string;
   onChange: (model: string) => void;
   keyStatus: ApiKeyStatus | null;
+  /** True while the key-status preflight is in flight: render a neutral
+   *  disabled trigger instead of flashing "No API Key". */
+  keyStatusLoading?: boolean;
   openRouterModels: string[];
   vercelModels: string[];
 }): React.ReactElement {
@@ -55,16 +61,8 @@ export function ModelToggle({
   }, []);
 
   const models = useMemo(() => {
-    const openRouterOptions: ModelOption[] = openRouterModels.map((model) => ({
-      id: `openrouter/${model.replace(/^openrouter\//, "")}`,
-      label: modelDisplayName(model),
-      group: "OpenRouter",
-    }));
-    const vercelOptions: ModelOption[] = vercelModels.map((model) => ({
-      id: `vercel/${model.replace(/^vercel\//, "")}`,
-      label: modelDisplayName(model),
-      group: "Vercel AI Gateway",
-    }));
+    const openRouterOptions = openRouterModelOptions(openRouterModels);
+    const vercelOptions = vercelModelOptions(vercelModels);
     const localOptions = ollamaModels.map((model) => ({
       ...model,
       label: modelDisplayName(model.id),
@@ -103,16 +101,24 @@ export function ModelToggle({
         <button
           type="button"
           aria-label="Choose model"
-          title={models.length === 0 ? "No API key configured" : "Choose model"}
-          disabled={models.length === 0}
+          title={
+            keyStatusLoading
+              ? "Checking API keys"
+              : models.length === 0
+                ? "No API key configured"
+                : "Choose model"
+          }
+          disabled={keyStatusLoading || models.length === 0}
           className={`flex h-8 items-center gap-1.5 rounded-full px-2 text-sm text-gray-400 transition-colors hover:text-gray-700 ${
             open ? "text-gray-700" : ""
           } disabled:cursor-not-allowed disabled:hover:text-gray-400`}
         >
           <span className="max-w-[200px] truncate">
-            {models.length === 0
-              ? "No API Key"
-              : selected?.label ?? "Select model"}
+            {keyStatusLoading
+              ? (selected?.label ?? "Select model")
+              : models.length === 0
+                ? "No API Key"
+                : (selected?.label ?? "Select model")}
           </span>
           <ChevronDown
             className={`h-3 w-3 shrink-0 transition-transform duration-200 ${

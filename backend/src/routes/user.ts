@@ -305,7 +305,9 @@ async function selectProfileLegacy(
     return legacy;
 }
 
-function normalizeRouterModels(
+const CATALOG_MODEL_ID_RE = /^[^\s/]+\/[^\s]+$/;
+
+export function normalizeRouterModels(
     value: unknown,
     provider: "openrouter" | "vercel",
 ): string[] {
@@ -314,11 +316,19 @@ function normalizeRouterModels(
     const seen = new Set<string>();
     for (const item of value) {
         if (typeof item !== "string") continue;
-        const model = item.trim().replace(new RegExp(`^${provider}/`), "");
+        const trimmed = item.trim();
+        // Strip a leading router slug ("openrouter/deepseek/deepseek-v3" →
+        // "deepseek/deepseek-v3") only when what remains is still a full
+        // vendor/model catalog id. Some catalog ids legitimately begin with
+        // the router's own slug (OpenRouter's "openrouter/auto", Vercel's
+        // "vercel/v0-1.5-md"); for those the raw id IS the canonical form
+        // and stripping would destroy it.
+        const stripped = trimmed.replace(new RegExp(`^${provider}/`), "");
+        const model = CATALOG_MODEL_ID_RE.test(stripped) ? stripped : trimmed;
         if (
             !model ||
             model.length > 200 ||
-            !/^[^\s/]+\/[^\s]+$/.test(model) ||
+            !CATALOG_MODEL_ID_RE.test(model) ||
             seen.has(model)
         ) {
             continue;
@@ -468,6 +478,15 @@ function validateProfilePayload(body: unknown):
                 detail: "openRouterModels must be an array of model IDs",
             };
         }
+        // Check the cap before normalizing: normalizeRouterModels truncates
+        // at 50, so a longer payload would otherwise surface as the
+        // misleading "invalid or duplicate model ID".
+        if (raw.openRouterModels.length > 50) {
+            return {
+                ok: false,
+                detail: "openRouterModels can include at most 50 models",
+            };
+        }
         const models = normalizeRouterModels(
             raw.openRouterModels,
             "openrouter",
@@ -486,6 +505,12 @@ function validateProfilePayload(body: unknown):
             return {
                 ok: false,
                 detail: "vercelModels must be an array of model IDs",
+            };
+        }
+        if (raw.vercelModels.length > 50) {
+            return {
+                ok: false,
+                detail: "vercelModels can include at most 50 models",
             };
         }
         const models = normalizeRouterModels(raw.vercelModels, "vercel");

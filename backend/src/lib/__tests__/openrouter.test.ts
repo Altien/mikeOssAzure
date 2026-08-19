@@ -139,6 +139,172 @@ describe("OpenRouter LLM adapter", () => {
             ]),
         );
     });
+
+    it("fails the stream instead of executing a tool with truncated arguments", async () => {
+        // The upstream connection died mid-arguments: the JSON fragment can
+        // never parse. Coercing it to {} would EXECUTE a side-effecting tool
+        // with empty input; the stream must error like a mid-stream {"error"}.
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockResolvedValue(
+                streamResponse([
+                    {
+                        choices: [
+                            {
+                                delta: {
+                                    tool_calls: [
+                                        {
+                                            index: 0,
+                                            id: "call-1",
+                                            function: {
+                                                name: "delete_document",
+                                                arguments: '{"term":"contr',
+                                            },
+                                        },
+                                    ],
+                                },
+                            },
+                        ],
+                    },
+                ]),
+            ),
+        );
+        const runTools = vi.fn();
+
+        await expect(
+            streamOpenRouter({
+                model: "openrouter/anthropic/claude-sonnet-4.5",
+                systemPrompt: "Help",
+                messages: [{ role: "user", content: "Review" }],
+                apiKeys: { openrouter: "or-user-key" },
+                runTools,
+            }),
+        ).rejects.toThrow(/malformed JSON arguments .* "delete_document"/);
+        expect(runTools).not.toHaveBeenCalled();
+    });
+
+    it("fails the stream when it dies before any argument bytes arrive", async () => {
+        // The name delta landed, then the connection dropped: no arguments at
+        // all, no finish_reason, no [DONE]. Indistinguishable by content from
+        // a parameter-less tool call, so the CLEAN-TERMINATION signal is what
+        // separates them — without it, "" must not be coerced to {}.
+        const body = `data: ${JSON.stringify({
+            choices: [
+                {
+                    delta: {
+                        tool_calls: [
+                            {
+                                index: 0,
+                                id: "call-1",
+                                function: { name: "delete_document" },
+                            },
+                        ],
+                    },
+                },
+            ],
+        })}\n\n`;
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockResolvedValue(
+                new Response(body, {
+                    status: 200,
+                    headers: { "Content-Type": "text/event-stream" },
+                }),
+            ),
+        );
+        const runTools = vi.fn();
+
+        await expect(
+            streamOpenRouter({
+                model: "openrouter/anthropic/claude-sonnet-4.5",
+                systemPrompt: "Help",
+                messages: [{ role: "user", content: "Review" }],
+                apiKeys: { openrouter: "or-user-key" },
+                runTools,
+            }),
+        ).rejects.toThrow(/ended before any arguments .* "delete_document"/);
+        expect(runTools).not.toHaveBeenCalled();
+    });
+
+    it("runs a parameter-less tool with {} when the stream terminated cleanly", async () => {
+        // streamResponse appends [DONE], so the empty arguments string here is
+        // a real parameter-less call and must still execute.
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValueOnce(
+                streamResponse([
+                    {
+                        choices: [
+                            {
+                                delta: {
+                                    tool_calls: [
+                                        {
+                                            index: 0,
+                                            id: "call-1",
+                                            function: { name: "list_docs" },
+                                        },
+                                    ],
+                                },
+                                finish_reason: "tool_calls",
+                            },
+                        ],
+                    },
+                ]),
+            )
+            .mockResolvedValueOnce(
+                streamResponse([{ choices: [{ delta: { content: "Done" } }] }]),
+            );
+        vi.stubGlobal("fetch", fetchMock);
+        const runTools = vi
+            .fn()
+            .mockResolvedValue([{ tool_use_id: "call-1", content: "[]" }]);
+
+        const result = await streamOpenRouter({
+            model: "openrouter/anthropic/claude-sonnet-4.5",
+            systemPrompt: "Help",
+            messages: [{ role: "user", content: "List them" }],
+            apiKeys: { openrouter: "or-user-key" },
+            runTools,
+        });
+
+        expect(result.fullText).toBe("Done");
+        expect(runTools).toHaveBeenCalledWith([
+            { id: "call-1", name: "list_docs", input: {} },
+        ]);
+    });
+
+    it("processes a final SSE line that arrives without a trailing newline", async () => {
+        // Some proxies close the stream mid-line; the residual buffer still
+        // holds the last delta and must be flushed, not dropped.
+        const body =
+            `data: ${JSON.stringify({
+                choices: [{ delta: { content: "Hello " } }],
+            })}\n\n` +
+            `data: ${JSON.stringify({
+                choices: [{ delta: { content: "world" } }],
+            })}`;
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockResolvedValue(
+                new Response(body, {
+                    status: 200,
+                    headers: { "Content-Type": "text/event-stream" },
+                }),
+            ),
+        );
+        const onContentDelta = vi.fn();
+
+        const result = await streamOpenRouter({
+            model: "openrouter/anthropic/claude-sonnet-4.5",
+            systemPrompt: "Help",
+            messages: [{ role: "user", content: "Say hello" }],
+            apiKeys: { openrouter: "or-user-key" },
+            callbacks: { onContentDelta },
+        });
+
+        expect(result.fullText).toBe("Hello world");
+        expect(onContentDelta).toHaveBeenLastCalledWith("world");
+    });
 });
 
 describe("Vercel AI Gateway LLM adapter", () => {

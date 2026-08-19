@@ -98,9 +98,28 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         id: string;
         title: string;
     } | null>(null);
-    const [model, setModel] = useSelectedModel();
-    const { profile } = useUserProfile();
-    const apiKeys = profile?.apiKeys;
+    const {
+        profile,
+        loading: profileLoading,
+        apiKeysDegraded,
+    } = useUserProfile();
+    // A degraded profile is the local fallback, whose router lists are empty
+    // because the truth is UNKNOWN. Passing them on would let one dropped
+    // /user/profile request rewrite the saved composer selection to the
+    // default — permanently. null means "not loaded", which the hook leaves
+    // the stored selection alone for.
+    const [model, setModel] = useSelectedModel(
+        profile && !apiKeysDegraded
+            ? {
+                  openRouterModels: profile.openRouterModels,
+                  vercelModels: profile.vercelModels,
+              }
+            : null,
+    );
+    // Degraded profile → key availability is UNKNOWN; undefined here makes
+    // every key gate (submit check + model toggle) fail open instead of
+    // treating "we couldn't ask" as "no keys configured".
+    const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const controlsRef = useRef<HTMLDivElement>(null);
     const [compactControls, setCompactControls] = useState(false);
@@ -593,6 +612,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                 value={model}
                                 onChange={setModel}
                                 apiKeys={apiKeys}
+                                apiKeysLoading={profileLoading && !profile}
                                 openRouterModels={profile?.openRouterModels}
                                 vercelModels={profile?.vercelModels}
                                 compact={compactControls}

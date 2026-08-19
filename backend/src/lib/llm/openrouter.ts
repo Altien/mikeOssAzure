@@ -115,22 +115,48 @@ async function postChat(args: {
     return response;
 }
 
-function parseToolCalls(partials: Map<number, PartialToolCall>) {
+function parseToolCalls(
+    partials: Map<number, PartialToolCall>,
+    provider: RouterProvider,
+    endedCleanly: boolean,
+) {
     return [...partials.values()].map((partial): NormalizedToolCall => {
+        // Arguments that are PRESENT but unparseable mean the stream was
+        // truncated or corrupted mid-call. Coercing those to {} would run a
+        // side-effecting tool with empty input, so fail the stream instead —
+        // the same path a mid-stream {"error"} chunk takes.
+        //
+        // No arguments AT ALL is ambiguous by content: a parameter-less tool
+        // streams "", and so does a call whose connection died between the
+        // name delta and the first argument byte. Only the upstream's own
+        // termination signal (finish_reason "tool_calls", or the [DONE]
+        // sentinel) separates them, so the "" → {} carve-out is keyed on that
+        // rather than on the empty string.
         let input: Record<string, unknown> = {};
-        try {
-            const parsed = partial.arguments
-                ? JSON.parse(partial.arguments)
-                : {};
-            if (
-                parsed &&
-                typeof parsed === "object" &&
-                !Array.isArray(parsed)
-            ) {
-                input = parsed as Record<string, unknown>;
+        if (!partial.arguments.trim() && !endedCleanly) {
+            throw new Error(
+                `${routerLabel(provider)} stream ended before any arguments arrived for tool "${partial.name}"; refusing to execute it with empty input.`,
+            );
+        }
+        if (partial.arguments.trim()) {
+            let parsed: unknown;
+            try {
+                parsed = JSON.parse(partial.arguments);
+            } catch {
+                throw new Error(
+                    `${routerLabel(provider)} stream ended with malformed JSON arguments for tool "${partial.name}"; refusing to execute it with empty input.`,
+                );
             }
-        } catch {
-            input = {};
+            if (
+                !parsed ||
+                typeof parsed !== "object" ||
+                Array.isArray(parsed)
+            ) {
+                throw new Error(
+                    `${routerLabel(provider)} stream produced non-object arguments for tool "${partial.name}"; refusing to execute it with empty input.`,
+                );
+            }
+            input = parsed as Record<string, unknown>;
         }
         return {
             id: partial.id || partial.name,
@@ -213,111 +239,137 @@ export async function streamOpenRouter(
             let assistantText = "";
             let assistantReasoning = "";
             let buffer = "";
+            // Did the upstream tell us WHY it stopped, or did the socket just
+            // go quiet? Only the former makes an empty tool-argument string
+            // trustworthy — see parseToolCalls.
+            let endedCleanly = false;
+
+            const processSseLine = (rawLine: string) => {
+                const line = rawLine.trim();
+                if (!line.startsWith("data:")) return;
+                const data = line.slice(5).trim();
+                if (data === "[DONE]") {
+                    endedCleanly = true;
+                    return;
+                }
+                if (!data) return;
+
+                let chunk: Record<string, unknown>;
+                try {
+                    chunk = JSON.parse(data) as Record<string, unknown>;
+                } catch {
+                    return;
+                }
+                logRawLlmStream({
+                    provider,
+                    model,
+                    iteration,
+                    label: "chunk",
+                    payload: chunk,
+                });
+                rawStreamRecorder?.record({
+                    iteration,
+                    label: "chunk",
+                    payload: chunk,
+                });
+
+                const error = chunk.error as
+                    | { code?: unknown; message?: unknown }
+                    | undefined;
+                if (error) {
+                    const message =
+                        typeof error.message === "string"
+                            ? error.message
+                            : `${routerLabel(provider)} stream failed.`;
+                    throw new Error(
+                        error.code
+                            ? `${routerLabel(provider)} error (${String(error.code)}): ${message}`
+                            : `${routerLabel(provider)} error: ${message}`,
+                    );
+                }
+
+                const choice = (
+                    chunk.choices as
+                        | Array<{
+                              delta?: Record<string, unknown>;
+                              finish_reason?: unknown;
+                          }>
+                        | undefined
+                )?.[0];
+                if (choice?.finish_reason === "tool_calls") {
+                    endedCleanly = true;
+                }
+                const delta = choice?.delta;
+                if (!delta) return;
+
+                if (typeof delta.content === "string" && delta.content) {
+                    assistantText += delta.content;
+                    fullText += delta.content;
+                    callbacks.onContentDelta?.(delta.content);
+                }
+                if (typeof delta.reasoning === "string" && delta.reasoning) {
+                    assistantReasoning += delta.reasoning;
+                    callbacks.onReasoningDelta?.(delta.reasoning);
+                }
+                if (Array.isArray(delta.reasoning_details)) {
+                    reasoningDetails.push(...delta.reasoning_details);
+                }
+
+                const toolCallDeltas = Array.isArray(delta.tool_calls)
+                    ? (delta.tool_calls as Array<Record<string, unknown>>)
+                    : [];
+                for (const toolCall of toolCallDeltas) {
+                    const index =
+                        typeof toolCall.index === "number" ? toolCall.index : 0;
+                    const accumulated = partials.get(index) ?? {
+                        id: "",
+                        name: "",
+                        arguments: "",
+                    };
+                    if (typeof toolCall.id === "string") {
+                        accumulated.id = toolCall.id;
+                    }
+                    const fn = toolCall.function as
+                        | { name?: unknown; arguments?: unknown }
+                        | undefined;
+                    if (typeof fn?.name === "string") {
+                        accumulated.name = fn.name;
+                    }
+                    if (typeof fn?.arguments === "string") {
+                        accumulated.arguments += fn.arguments;
+                    }
+                    partials.set(index, accumulated);
+                }
+            };
 
             while (true) {
                 throwIfAborted(params.abortSignal);
                 const { done, value } = await reader.read();
-                if (done) break;
+                if (done) {
+                    // A proxy may close the stream without a trailing newline:
+                    // flush what the decoder still buffers and process the
+                    // residual line so the final delta is not dropped.
+                    buffer += decoder.decode();
+                    if (buffer.trim()) {
+                        for (const line of buffer.split("\n")) {
+                            processSseLine(line);
+                        }
+                    }
+                    buffer = "";
+                    break;
+                }
                 buffer += decoder.decode(value, { stream: true });
 
                 let newlineIndex: number;
                 while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
-                    const line = buffer.slice(0, newlineIndex).trim();
+                    const line = buffer.slice(0, newlineIndex);
                     buffer = buffer.slice(newlineIndex + 1);
-                    if (!line.startsWith("data:")) continue;
-                    const data = line.slice(5).trim();
-                    if (!data || data === "[DONE]") continue;
-
-                    let chunk: Record<string, unknown>;
-                    try {
-                        chunk = JSON.parse(data) as Record<string, unknown>;
-                    } catch {
-                        continue;
-                    }
-                    logRawLlmStream({
-                        provider,
-                        model,
-                        iteration,
-                        label: "chunk",
-                        payload: chunk,
-                    });
-                    rawStreamRecorder?.record({
-                        iteration,
-                        label: "chunk",
-                        payload: chunk,
-                    });
-
-                    const error = chunk.error as
-                        | { code?: unknown; message?: unknown }
-                        | undefined;
-                    if (error) {
-                        const message =
-                            typeof error.message === "string"
-                                ? error.message
-                                : `${routerLabel(provider)} stream failed.`;
-                        throw new Error(
-                            error.code
-                                ? `${routerLabel(provider)} error (${String(error.code)}): ${message}`
-                                : `${routerLabel(provider)} error: ${message}`,
-                        );
-                    }
-
-                    const choice = (
-                        chunk.choices as
-                            | Array<{ delta?: Record<string, unknown> }>
-                            | undefined
-                    )?.[0];
-                    const delta = choice?.delta;
-                    if (!delta) continue;
-
-                    if (typeof delta.content === "string" && delta.content) {
-                        assistantText += delta.content;
-                        fullText += delta.content;
-                        callbacks.onContentDelta?.(delta.content);
-                    }
-                    if (
-                        typeof delta.reasoning === "string" &&
-                        delta.reasoning
-                    ) {
-                        assistantReasoning += delta.reasoning;
-                        callbacks.onReasoningDelta?.(delta.reasoning);
-                    }
-                    if (Array.isArray(delta.reasoning_details)) {
-                        reasoningDetails.push(...delta.reasoning_details);
-                    }
-
-                    const toolCallDeltas = Array.isArray(delta.tool_calls)
-                        ? (delta.tool_calls as Array<Record<string, unknown>>)
-                        : [];
-                    for (const toolCall of toolCallDeltas) {
-                        const index =
-                            typeof toolCall.index === "number"
-                                ? toolCall.index
-                                : 0;
-                        const accumulated = partials.get(index) ?? {
-                            id: "",
-                            name: "",
-                            arguments: "",
-                        };
-                        if (typeof toolCall.id === "string") {
-                            accumulated.id = toolCall.id;
-                        }
-                        const fn = toolCall.function as
-                            | { name?: unknown; arguments?: unknown }
-                            | undefined;
-                        if (typeof fn?.name === "string") {
-                            accumulated.name = fn.name;
-                        }
-                        if (typeof fn?.arguments === "string") {
-                            accumulated.arguments += fn.arguments;
-                        }
-                        partials.set(index, accumulated);
-                    }
+                    processSseLine(line);
                 }
             }
 
             if (assistantReasoning) callbacks.onReasoningBlockEnd?.();
-            const toolCalls = parseToolCalls(partials);
+            const toolCalls = parseToolCalls(partials, provider, endedCleanly);
             if (!toolCalls.length || !runTools) break;
 
             messages.push({

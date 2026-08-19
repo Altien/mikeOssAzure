@@ -1,4 +1,7 @@
-import type { ApiKeyStatus } from "../api/mikeApi";
+// Imported from the base client (not the ../api/mikeApi barrel) so this
+// module's compile graph stays free of Office globals: the drift-guard test in
+// frontend/src/wordAddin imports this file across packages.
+import type { ApiKeyStatus } from "../api/client";
 
 /**
  * Keep this catalog, its labels, and DEFAULT_MODEL_ID in sync with
@@ -43,6 +46,23 @@ export const ALLOWED_MODEL_IDS = new Set(
   STATIC_MODELS.map((model) => model.id),
 );
 
+/**
+ * Renamed/retired static ids → their current equivalents. The pane stores its
+ * selection under the same "mike.selectedModel" key the web app uses, so a
+ * value written before a catalog rename must resolve the same way in both
+ * clients. Kept in sync with backend/src/lib/llm/models.ts LEGACY_MODEL_IDS
+ * and frontend ModelToggle.tsx — the drift guard in
+ * frontend/src/wordAddin/catalogParity.test.ts pins it.
+ */
+export const LEGACY_MODEL_IDS: Record<string, string> = {
+  "gemini-3.1-flash-lite-preview": "gemini-3.5-flash-lite",
+  "gpt-5.4-lite": "gpt-5.4-mini",
+};
+
+export function canonicalModelId(id: string): string {
+  return LEGACY_MODEL_IDS[id] ?? id;
+}
+
 const MODEL_NAME_ACRONYMS: Record<string, string> = {
   ai: "AI",
   gpt: "GPT",
@@ -76,6 +96,29 @@ export function modelDisplayName(modelId: string): string {
   return `${label} (${variantLabel})`;
 }
 
+/**
+ * The stored selection is the router's raw catalog id (e.g.
+ * "anthropic/claude-sonnet-4.5" or "openrouter/auto"); the app-level model id
+ * always prefixes the router slug verbatim, with no inner stripping, so both
+ * this client and the web app send the identical string for the same stored
+ * selection ("openrouter/openrouter/auto" for OpenRouter's "openrouter/auto").
+ */
+export function openRouterModelOptions(models: string[]): ModelOption[] {
+  return models.map((model) => ({
+    id: `openrouter/${model}`,
+    label: modelDisplayName(model),
+    group: "OpenRouter",
+  }));
+}
+
+export function vercelModelOptions(models: string[]): ModelOption[] {
+  return models.map((model) => ({
+    id: `vercel/${model}`,
+    label: modelDisplayName(model),
+    group: "Vercel AI Gateway",
+  }));
+}
+
 export function isAllowedModelId(id: string): boolean {
   return (
     ALLOWED_MODEL_IDS.has(id) ||
@@ -90,9 +133,13 @@ export function isModelAvailable(
   status: ApiKeyStatus | null,
 ): boolean {
   if (modelId.startsWith("ollama/")) return true;
-  if (modelId.startsWith("openrouter/")) return !!status?.openrouter;
-  if (modelId.startsWith("vercel/")) return !!status?.vercel;
-  if (!status) return false;
+  // Unknown status (the key-status preflight failed even after a retry) fails
+  // OPEN: the backend authoritatively rejects a model it cannot serve, so
+  // blocking sends here on a flaky WKWebView request would brick the composer
+  // for requests the backend would happily accept.
+  if (!status) return true;
+  if (modelId.startsWith("openrouter/")) return !!status.openrouter;
+  if (modelId.startsWith("vercel/")) return !!status.vercel;
   const model = STATIC_MODELS.find((item) => item.id === modelId);
   if (!model || model.group === "Local") return false;
   if (model.group === "Anthropic") return !!status.claude;

@@ -38,6 +38,24 @@ describe("GET /models/openrouter", () => {
     afterEach(() => {
         vi.unstubAllGlobals();
         vi.clearAllMocks();
+        delete process.env.OPENROUTER_BASE_URL;
+    });
+
+    it("honors OPENROUTER_BASE_URL like the chat adapter", async () => {
+        process.env.OPENROUTER_BASE_URL = "http://localhost:4141/api/v1/";
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValue(
+                new Response(JSON.stringify({ data: [] }), { status: 200 }),
+            );
+        vi.stubGlobal("fetch", fetchMock);
+
+        const response = await request(app).get("/models/openrouter");
+
+        expect(response.status).toBe(200);
+        expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(
+            /^http:\/\/localhost:4141\/api\/v1\/models\?/,
+        );
     });
 
     it("requires a configured OpenRouter key", async () => {
