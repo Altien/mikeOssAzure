@@ -116,6 +116,22 @@ This is a public repository. Do not commit:
 Use placeholders such as `<your-resource-group>` or
 `00000000-0000-0000-0000-000000000000` instead.
 
+## Frontend UI Work
+
+Before writing a new component, check whether one already exists. Look first in
+`frontend/src/app/components/ui/` (and `frontend/src/shared/ui/` for anything the
+Word add-in also renders), then in the [shadcn/ui](https://ui.shadcn.com)
+registry — the project is configured for it in `frontend/components.json`, so
+`npx shadcn@latest add <component>` lands a component in the right place with
+the right style and tokens. Write a one-off in the feature directory only when
+the markup is genuinely specific to that feature; once the same markup shows up
+in a second feature file, promote it into `components/ui/` with a test and
+replace the copies. Use the documented color, typography, spacing and radius
+tokens rather than raw hex values, and keep the accessibility baseline (visible
+focus ring, accessible name on icon-only controls, `type="button"`, ARIA state
+alongside color). See [docs/design-system.md](docs/design-system.md) for the
+tokens, the primitive inventory, and the full baseline.
+
 ## What "ready for review" looks like
 
 Before requesting review, please make sure:
