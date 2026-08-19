@@ -46,6 +46,7 @@ import {
     type TableSortDirection,
     TableStickyCell,
 } from "@/app/components/shared/TablePrimitive";
+import { EmptyState } from "@/app/components/ui/empty-state";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 import { useQueryParamTab } from "@/app/hooks/useQueryParamTab";
@@ -559,45 +560,42 @@ export function ProjectsOverview() {
                     </TableBody>
                 ) : loadError ? (
                     <TableEmptyState>
-                        <OpenProjectSvgIcon className="mb-4 h-8 w-8" />
-                        <p className="text-2xl font-medium font-serif text-gray-900">
-                            Projects
-                        </p>
-                        <p className="mt-1 text-xs text-red-500 max-w-xs">
-                            {loadError}
-                        </p>
-                        <PillButton
-                            tone="black"
-                            size="sm"
-                            onClick={retry}
-                            className="mt-4 px-3"
-                        >
-                            Try again
-                        </PillButton>
+                        <EmptyState
+                            icon={<OpenProjectSvgIcon />}
+                            title="Projects"
+                            description={loadError}
+                            tone="error"
+                            action={
+                                <PillButton
+                                    tone="black"
+                                    size="sm"
+                                    onClick={retry}
+                                    className="px-3"
+                                >
+                                    Try again
+                                </PillButton>
+                            }
+                        />
                     </TableEmptyState>
                 ) : visibleProjects.length === 0 ? (
                     <TableEmptyState>
                         {activeFilter === "all" || activeFilter === "mine" ? (
-                            <>
-                                <OpenProjectSvgIcon className="mb-4 h-8 w-8" />
-                                <p className="text-2xl font-medium font-serif text-gray-900">
-                                    Projects
-                                </p>
-                                <p className="mt-1 text-xs text-gray-400 max-w-xs">
-                                    Upload documents into projects and to
-                                    commence chats and tabular reviews with
-                                    them.
-                                </p>
-                                <PillButton
-                                    tone="black"
-                                    size="sm"
-                                    onClick={() => setModalOpen(true)}
-                                    className="mt-4 px-3"
-                                >
-                                    <Plus className="h-3.5 w-3.5" />
-                                    Create
-                                </PillButton>
-                            </>
+                            <EmptyState
+                                icon={<OpenProjectSvgIcon />}
+                                title="Projects"
+                                description="Upload documents into projects and to commence chats and tabular reviews with them."
+                                action={
+                                    <PillButton
+                                        tone="black"
+                                        size="sm"
+                                        onClick={() => setModalOpen(true)}
+                                        className="px-3"
+                                    >
+                                        <Plus className="h-3.5 w-3.5" />
+                                        Create
+                                    </PillButton>
+                                }
+                            />
                         ) : (
                             <p className="text-sm text-gray-400">
                                 No {activeFilter} projects

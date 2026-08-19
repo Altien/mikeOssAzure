@@ -25,7 +25,7 @@ export function TabPillButton({
             type={type}
             aria-pressed={active}
             className={cn(
-                "inline-flex h-7 items-center justify-center gap-1.5 rounded-full border px-3 text-xs font-medium shadow-[0_3px_9px_rgba(15,23,42,0.05),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] backdrop-blur-xl transition-all active:scale-[0.98] disabled:cursor-default disabled:opacity-40 disabled:active:scale-100",
+                "inline-flex h-7 items-center justify-center gap-1.5 rounded-full border px-3 text-xs font-medium shadow-[0_3px_9px_rgba(15,23,42,0.05),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] backdrop-blur-xl transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 disabled:cursor-default disabled:opacity-40 disabled:active:scale-100",
                 stateClass,
                 className,
             )}

@@ -13,6 +13,8 @@ type SearchBarProps = Omit<
     value: string;
     onValueChange: (value: string) => void;
     size?: SearchBarSize;
+    /** Accessible name for the input; the placeholder alone is not a label. */
+    label?: string;
     clearLabel?: string;
     wrapperClassName?: string;
     inputClassName?: string;
@@ -43,6 +45,7 @@ export const SearchBar = React.forwardRef<HTMLInputElement, SearchBarProps>(
             onValueChange,
             size = "normal",
             clearLabel = "Clear search",
+            label = "Search",
             placeholder = "Search...",
             className,
             wrapperClassName,
@@ -55,8 +58,9 @@ export const SearchBar = React.forwardRef<HTMLInputElement, SearchBarProps>(
 
         return (
             <div
+                data-slot="search-bar"
                 className={cn(
-                    "flex items-center border border-white/70 bg-white/55 text-gray-700 shadow-[0_3px_9px_rgba(15,23,42,0.06),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] backdrop-blur-xl transition-colors focus-within:border-white/90 focus-within:bg-white/70",
+                    "flex items-center border border-white/70 bg-white/55 text-gray-700 shadow-[0_3px_9px_rgba(15,23,42,0.06),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] backdrop-blur-xl transition-colors focus-within:border-white/90 focus-within:bg-white/70 focus-within:ring-2 focus-within:ring-blue-500/40",
                     classes.wrapper,
                     className,
                     wrapperClassName,
@@ -73,8 +77,11 @@ export const SearchBar = React.forwardRef<HTMLInputElement, SearchBarProps>(
                     type="search"
                     value={value}
                     placeholder={placeholder}
+                    aria-label={label}
                     onChange={(event) => onValueChange(event.target.value)}
                     className={cn(
+                        // The wrapper carries the focus ring, so the input's own
+                        // outline is suppressed to avoid a double indicator.
                         "min-w-0 flex-1 bg-transparent text-gray-700 outline-none placeholder:text-gray-400 [&::-webkit-search-cancel-button]:hidden",
                         classes.input,
                         inputClassName,
@@ -86,7 +93,7 @@ export const SearchBar = React.forwardRef<HTMLInputElement, SearchBarProps>(
                         type="button"
                         onClick={() => onValueChange("")}
                         className={cn(
-                            "flex shrink-0 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-white/70 hover:text-gray-600",
+                            "flex shrink-0 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-white/70 hover:text-gray-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40",
                             classes.clear,
                         )}
                         aria-label={clearLabel}

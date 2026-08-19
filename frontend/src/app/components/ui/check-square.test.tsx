@@ -51,19 +51,35 @@ describe("CheckSquare", () => {
         expect(square(container)).toHaveAttribute("aria-hidden", "true");
     });
 
-    it("forwards click handlers and extra props", () => {
-        const onClick = vi.fn();
+    it("stays exposed when the caller gives it a role", () => {
         render(
             <CheckSquare
+                state="indeterminate"
+                role="checkbox"
+                aria-checked="mixed"
+                aria-label="Select all files"
+            />,
+        );
+
+        const box = screen.getByRole("checkbox", { name: "Select all files" });
+        expect(box).not.toHaveAttribute("aria-hidden");
+        expect(box).toHaveAttribute("aria-checked", "mixed");
+    });
+
+    it("forwards click handlers and extra props", () => {
+        const onClick = vi.fn();
+        const { container } = render(
+            <CheckSquare
                 state="unchecked"
-                role="button"
-                aria-hidden={undefined}
                 title="Select all"
                 onClick={onClick}
             />,
         );
 
-        fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+        const el = square(container) as HTMLElement;
+        expect(el).toHaveAttribute("title", "Select all");
+
+        fireEvent.click(el);
         expect(onClick).toHaveBeenCalledTimes(1);
     });
 });
