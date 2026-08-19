@@ -24,6 +24,25 @@ export interface OfficeSeed {
   unmanagedTrackedChangeOriginals?: string[];
   staleInsertedRangeOriginals?: string[];
   unselectableOriginals?: string[];
+  /**
+   * Structured description of the document body for the markdown document
+   * context: when present, body.paragraphs/body.tables exist and describe
+   * these blocks; when absent (every pre-existing spec), those collections
+   * are undefined and the pane's structured read falls back to body.text —
+   * the same shape as a host without the structure APIs.
+   */
+  documentBlocks?: SeedDocumentBlock[];
+}
+
+export interface SeedDocumentBlock {
+  text?: string;
+  /** Built-in style name, e.g. "Heading1" or "Title". */
+  styleBuiltIn?: string;
+  /** Present marks the paragraph as a list item with this label. */
+  listString?: string;
+  listLevel?: number;
+  /** Renders this block as a table of these cell values instead. */
+  tableValues?: string[][];
 }
 
 interface WordCall {
@@ -730,6 +749,59 @@ export function installOfficeMock(seed: OfficeSeed): void {
         return { items, load: (_properties?: any) => undefined };
       },
     };
+
+    // Structure APIs exist only when the seed describes blocks; otherwise
+    // the pane's structured read throws on the missing collections and
+    // falls back to flat body.text, like a host without these APIs.
+    if (seed.documentBlocks) {
+      const blocks = seed.documentBlocks;
+      (body as any).paragraphs = {
+        load: (_properties?: any) => undefined,
+        items: blocks.flatMap((block) => {
+          if (block.tableValues) {
+            // One stand-in cell paragraph per table: the pane's body walker
+            // only needs the 0→N tableNestingLevel transition to splice the
+            // table (from body.tables) in at this position.
+            return [
+              {
+                text: "",
+                styleBuiltIn: "Normal",
+                isListItem: false,
+                tableNestingLevel: 1,
+                listItemOrNullObject: {
+                  isNullObject: true,
+                  load: (_p?: any) => undefined,
+                },
+              },
+            ];
+          }
+          return [
+            {
+              text: block.text ?? "",
+              styleBuiltIn: block.styleBuiltIn ?? "Normal",
+              isListItem: block.listString !== undefined,
+              tableNestingLevel: 0,
+              listItemOrNullObject: {
+                isNullObject: block.listString === undefined,
+                listString: block.listString,
+                level: block.listLevel ?? 0,
+                load: (_p?: any) => undefined,
+              },
+            },
+          ];
+        }),
+      };
+      (body as any).tables = {
+        load: (_properties?: any) => undefined,
+        items: blocks
+          .filter((block) => block.tableValues)
+          .map((block) => ({
+            nestingLevel: 1,
+            values: block.tableValues,
+            load: (_p?: any) => undefined,
+          })),
+      };
+    }
 
     doc.body = body;
     doc.getBookmarkRangeOrNullObject = (name: string) => {
