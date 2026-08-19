@@ -24,6 +24,7 @@ import {
     type TableSortDirection,
     TableStickyCell,
 } from "@/app/components/shared/TablePrimitive";
+import { EmptyState } from "@/app/components/ui/empty-state";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { TabularReviewSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import type { Document, TabularReview } from "@/app/components/shared/types";
@@ -247,26 +248,25 @@ export function ProjectReviewsTable({
                             No reviews found
                         </p>
                     ) : (
-                        <>
-                            <TabularReviewSkeuoIcon className="mb-4 h-8 w-8" />
-                            <p className="text-2xl font-medium font-serif text-gray-900">
-                                Tabular Reviews
-                            </p>
-                            <p className="mt-1 text-xs text-gray-400 max-w-xs">
-                                Extract data from project documents into tables
-                                using AI.
-                            </p>
-                            <PillButton
-                                tone="black"
-                                size="sm"
-                                onClick={onCreateReview}
-                                disabled={creatingReview || docs.length === 0}
-                                className="mt-4 px-3"
-                            >
-                                <Plus className="h-3.5 w-3.5" />
-                                Create
-                            </PillButton>
-                        </>
+                        <EmptyState
+                            icon={<TabularReviewSkeuoIcon />}
+                            title="Tabular Reviews"
+                            description="Extract data from project documents into tables using AI."
+                            action={
+                                <PillButton
+                                    tone="black"
+                                    size="sm"
+                                    onClick={onCreateReview}
+                                    disabled={
+                                        creatingReview || docs.length === 0
+                                    }
+                                    className="px-3"
+                                >
+                                    <Plus className="h-3.5 w-3.5" />
+                                    Create
+                                </PillButton>
+                            }
+                        />
                     )}
                 </TableEmptyState>
             ) : (

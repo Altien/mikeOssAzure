@@ -8,6 +8,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
+import { GlassIconButtonUI } from "./GlassIconButtonUI";
 
 export type ModalUISize = "sm" | "md" | "lg" | "xl";
 
@@ -158,14 +159,9 @@ export function ModalUI({
                             </div>
                             {headerAction}
                         </div>
-                        <button
-                            type="button"
-                            onClick={onClose}
-                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/70 bg-white/55 text-gray-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.75),inset_0_-1px_0_rgba(255,255,255,0.55),0_6px_18px_rgba(15,23,42,0.08)] backdrop-blur-xl transition-colors hover:bg-white/75 hover:text-gray-700"
-                            aria-label="Close"
-                        >
+                        <GlassIconButtonUI onClick={onClose} aria-label="Close">
                             <X className="h-3.5 w-3.5" />
-                        </button>
+                        </GlassIconButtonUI>
                     </header>
                 )}
 

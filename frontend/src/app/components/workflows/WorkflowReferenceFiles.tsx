@@ -20,6 +20,7 @@ import {
   formatUnsupportedDocumentWarning,
   partitionSupportedDocumentFiles,
 } from "@/app/lib/documentUploadValidation";
+import { EmptyState } from "@/app/components/ui/empty-state";
 import { ConfirmPopup } from "../popups/ConfirmPopup";
 import { FileTypeIcon } from "../shared/FileTypeIcon";
 import { RowActions } from "../shared/RowActions";
@@ -271,12 +272,10 @@ export const WorkflowReferenceFiles = forwardRef<
           </TableBody>
         ) : files.length === 0 ? (
           <TableEmptyState>
-            <p className="font-serif text-2xl font-medium text-gray-900">
-              Reference files
-            </p>
-            <p className="mt-1 text-xs text-gray-400">
-              Upload files that this workflow can reference when it runs.
-            </p>
+            <EmptyState
+              title="Reference files"
+              description="Upload files that this workflow can reference when it runs."
+            />
           </TableEmptyState>
         ) : (
           <TableBody>
