@@ -9,6 +9,7 @@ import React, {
 } from "react";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { supabase } from "@/app/lib/supabase";
+import { browserAuthCallbackUrl } from "@/app/lib/authRedirects";
 
 interface User {
     id: string;
@@ -74,10 +75,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     const updateEmail = async (email: string) => {
-        const redirectTo =
-            typeof window === "undefined"
-                ? undefined
-                : `${window.location.origin}/settings`;
+        const redirectTo = browserAuthCallbackUrl(
+            "/settings?emailChange=processed",
+        );
         const { data, error } = await supabase.auth.updateUser(
             { email },
             redirectTo ? { emailRedirectTo: redirectTo } : undefined,

@@ -48,6 +48,7 @@ services:
       GOTRUE_JWT_AUD: authenticated
       GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
       GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_PASSWORD_MIN_LENGTH: "10"
       # Open registration by default (localhost). On a public host, create your
       # account then set GOTRUE_DISABLE_SIGNUP=true to pull the ladder up.
       GOTRUE_DISABLE_SIGNUP: ${GOTRUE_DISABLE_SIGNUP:-false}

@@ -7,6 +7,7 @@ import { SiteLogo } from "@/app/components/site-logo";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { supabase } from "@/app/lib/supabase";
+import { authGlassCardClassName } from "@/app/components/auth/authStyles";
 import {
     needsMfaVerification,
     VerificationCodeInput,
@@ -19,9 +20,6 @@ type MfaFactor = {
     factor_type: string;
 };
 
-const authGlassCardClassName =
-    "rounded-2xl border border-white/70 bg-white/72 px-8 py-8 shadow-[0_4px_14px_rgba(15,23,42,0.045),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-8px_18px_rgba(255,255,255,0.12)] backdrop-blur-2xl";
-
 export default function VerifyMfaPage() {
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -32,12 +30,33 @@ export default function VerifyMfaPage() {
     const [loading, setLoading] = useState(true);
     const [verifying, setVerifying] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const isMfaPreview =
+        process.env.NODE_ENV !== "production" &&
+        searchParams.get("preview") === "mfa";
+    const displayedFactors = isMfaPreview
+        ? [
+              {
+                  id: "preview-factor",
+                  friendly_name: "Authenticator app",
+                  factor_type: "totp",
+              },
+          ]
+        : factors;
+    const displayedFactorId = isMfaPreview
+        ? "preview-factor"
+        : selectedFactorId;
+    const displayedLoading = isMfaPreview ? false : loading;
 
     const nextPath = safeNextPath(searchParams.get("next"));
     const canVerify =
-        !loading && !verifying && !!selectedFactorId && code.trim().length === 6;
+        !displayedLoading &&
+        !verifying &&
+        !!displayedFactorId &&
+        code.trim().length === 6;
 
     useEffect(() => {
+        if (isMfaPreview) return;
+
         if (authLoading) return;
         if (!user) {
             router.replace("/login");
@@ -88,7 +107,7 @@ export default function VerifyMfaPage() {
         return () => {
             cancelled = true;
         };
-    }, [authLoading, nextPath, router, user]);
+    }, [authLoading, isMfaPreview, nextPath, router, user]);
 
     async function verify() {
         if (!canVerify) return;
@@ -97,7 +116,7 @@ export default function VerifyMfaPage() {
         setError(null);
         const { error: verifyError } =
             await supabase.auth.mfa.challengeAndVerify({
-                factorId: selectedFactorId,
+                factorId: displayedFactorId,
                 code: code.trim(),
             });
         setVerifying(false);
@@ -118,13 +137,13 @@ export default function VerifyMfaPage() {
     }
 
     return (
-        <div className="relative flex min-h-dvh items-start justify-center bg-gray-50/80 px-6 pb-10 pt-32 md:pt-40">
+        <div className="relative flex min-h-dvh items-center justify-center bg-gray-50/80 px-6 py-10">
             <div className="absolute left-1/2 top-4 -translate-x-1/2 md:top-8">
                 <SiteLogo size="lg" asLink />
             </div>
             <div className={`w-full max-w-md ${authGlassCardClassName}`}>
                 <div className="mb-8 space-y-2">
-                    <h1 className="text-2xl font-serif">
+                    <h1 className="font-serif text-2xl font-medium text-gray-950">
                         Verify your identity
                     </h1>
                     <p className="text-sm text-gray-500">
@@ -134,27 +153,27 @@ export default function VerifyMfaPage() {
                 </div>
 
                 <div className="space-y-6">
-                    {loading ? (
+                    {displayedLoading ? (
                         <div className="flex h-13 items-center justify-center text-sm text-gray-500">
                             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                             Loading authenticator...
                         </div>
-                    ) : factors.length === 0 ? (
+                    ) : displayedFactors.length === 0 ? (
                         <p className="rounded-lg bg-gray-100 px-3 py-2 text-sm text-gray-600">
                             No verified authenticator factor is available for
                             this session.
                         </p>
                     ) : (
                         <>
-                            {factors.length > 1 && (
+                            {displayedFactors.length > 1 && (
                                 <select
-                                    value={selectedFactorId}
+                                    value={displayedFactorId}
                                     onChange={(event) =>
                                         setSelectedFactorId(event.target.value)
                                     }
                                     className="h-9 w-full rounded-lg border border-transparent bg-gray-100 px-3 text-sm text-gray-900 shadow-none outline-none focus-visible:border-gray-200 focus-visible:ring-2 focus-visible:ring-gray-300/45"
                                 >
-                                    {factors.map((factor) => (
+                                    {displayedFactors.map((factor) => (
                                         <option
                                             key={factor.id}
                                             value={factor.id}
@@ -169,7 +188,7 @@ export default function VerifyMfaPage() {
                                 value={code}
                                 onChange={setCode}
                                 disabled={verifying}
-                                autoFocus={!loading}
+                                autoFocus={!displayedLoading}
                                 canSubmit={canVerify}
                                 onSubmit={() => void verify()}
                             />
