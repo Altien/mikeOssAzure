@@ -9,10 +9,10 @@
 #
 # The suite is green with NO secret: of the 31 specs, the 4 LLM-dependent ones
 # (chat + critical path) skip themselves when ANTHROPIC_API_KEY is absent (see
-# e2e/llm.ts), so a keyless run passes the other 27 specs. The gate exists because the app has no
-# keyless model — with no provider key configured, ChatInput blocks every send —
-# not because of the (best-effort) title-generation call. To run and enforce
-# those 4, set the ANTHROPIC_API_KEY repository secret; exact steps, the
+# e2e/llm.ts), so a keyless run passes the other 27 specs. Mike supports local
+# Ollama models without a provider key, but this job does not provision Ollama;
+# the gate is not caused by the best-effort title-generation call. To run and
+# enforce those 4, set the ANTHROPIC_API_KEY repository secret; exact steps, the
 # fork-PR caveat (fork `pull_request` runs never receive secrets, so they
 # always take the skip path), cost, and how to verify the specs ran are in
 # docs/e2e-ci.md ("Enable the LLM specs").

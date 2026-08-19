@@ -7,7 +7,9 @@ Thanks for helping improve Mike. Please keep contributions small, focused, and e
 - Prefer targeted edits over broad refactors.
 - Keep each PR focused on one bug, feature, or cleanup.
 - Update docs or env examples when changing setup, config, or user-facing behavior.
-- Please do not propose local-hosting refactors for the main app, such as local LLMs, local databases, or local filesystem storage. Those ideas are better suited to a future fully local version of the project.
+- Keep self-hosting changes compatible with the supported Docker Compose,
+  Supabase, S3-compatible storage, and Ollama paths. Explain any new local
+  infrastructure or migration requirements in the same PR.
 - Do not commit secrets, API keys, private documents, or local `.env` files.
 
 ## Before Opening a PR
@@ -85,15 +87,15 @@ npm run build --prefix frontend
 npm test --prefix backend            # backend unit + route integration tests (vitest)
 npm test --prefix frontend           # frontend component/hook tests (vitest + jsdom)
 npm run test:e2e                     # Playwright end-to-end suite — see docs/e2e-ci.md
-node evals/run.mjs --threshold 1.0   # offline eval harness (no network, no API keys)
 npm run test:stack --prefix backend  # gated: real-Supabase auth/access tests (run `supabase start` first)
 ```
 
 - New features and bug fixes should come with a test at the lowest layer that
   can catch the regression: unit first, then route-level integration, then
   end-to-end only for flows a browser is genuinely needed to prove.
-- CI runs the build, unit/integration tests, and the eval harness on every PR
+- CI runs the build and unit/integration tests on every PR
   (`.github/workflows/ci.yml`), and the Playwright suite in a full local stack
-  (`.github/workflows/e2e.yml`).
+  (`.github/workflows/e2e.yml`). The CI workflow will also run the optional
+  offline eval harness if `evals/run.mjs` is added to the tree.
 - Tests that need a live Supabase or an LLM key are env-gated and skip cleanly
   when the environment is absent — a plain `npm test` should always be green.

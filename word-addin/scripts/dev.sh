@@ -191,7 +191,7 @@ else
         warn "Cert trusted — fully QUIT Word (Cmd-Q) before launching so it reloads trust."
     else
         warn "Certificate STILL not trusted — Word will refuse the pane."
-        warn "See word-addin/README.md → Troubleshooting → certificate trust drift."
+        warn "See docs/word-addin-development.md → Word reports an invalid development certificate."
         exit 1
     fi
 fi

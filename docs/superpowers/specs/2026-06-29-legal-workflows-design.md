@@ -1,4 +1,9 @@
-# Legal Workflows — Design Spec
+# Archived: Legal Workflows — Design Spec
+
+> Historical design proposal recorded on 2026-06-29. Its file paths and
+> workflow-loading architecture are no longer current. System workflows now
+> come from the `mike-workflows` repository and are generated into Mike as
+> described in [CONTRIBUTING.md](../../../CONTRIBUTING.md#system-workflows).
 
 Date: 2026-06-29
 

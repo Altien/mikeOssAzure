@@ -39,11 +39,12 @@ Per-file statement coverage of the gated lib layer from
 | `lib/deleteTabularReviewsWithConcurrency.ts` | 100 | ✓ |
 | `lib/folderDeleteState.ts` | 100 | ✓ |
 | `lib/modelAvailability.ts` | 100 | ✓ |
+| `lib/paginatedRows.ts` | 100 | ✓ |
 | `lib/utils.ts` | 100 | ✓ |
 | `lib/supabase.ts` | 100 | ✓ |
-| `lib/mikeApi.ts` | 99 | ✓ — every endpoint wrapper asserted |
+| `lib/mikeApi.ts` | 99.77 | ✓ — every endpoint wrapper asserted |
 
-Global (lib layer): **99.69% statements / 98.53% branches / 100% functions /
+Global (lib layer): **99.81% statements / 97.09% branches / 100% functions /
 100% lines**. The only uncovered code is the dev-only logging branch and a
 couple of `?? null` default arms. `mikeApi.ts` now has a route/method/body
 assertion for every thin endpoint wrapper (folders, library, workflows, MCP
@@ -93,8 +94,8 @@ are mostly composition.
 ## Ratchet policy
 
 `frontend/vitest.config.mts` enforces global coverage **floors** over
-`src/app/lib/**` (currently statements 97 / branches 96 / functions 98 /
-lines 98). Same rules as the backend
+`src/app/lib/**` (currently statements 99 / branches 97 / functions 100 /
+lines 100). Same rules as the backend
 ([testing-coverage.md](testing-coverage.md#ratchet-policy)):
 
 - **Floors only go up.** Never lower them to get a PR green — that means your

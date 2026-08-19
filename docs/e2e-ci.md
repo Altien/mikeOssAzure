@@ -16,15 +16,12 @@ job:
 
 1. installs the root (Playwright), `backend/`, and `frontend/` dependencies;
 2. boots **MinIO** (S3-compatible object storage — several specs upload documents);
-3. boots **local Supabase** (Auth + Postgres) via the Supabase CLI, loads
-   `backend/schema.sql`, then applies every dated migration in `backend/migrations/`
-   on top. `schema.sql` is meant to be the latest shape but in practice lags the
-   migrations (e.g. it is missing `workflow_open_source_submissions`, which
-   `GET /workflows/:id` queries — a 500 without the migrations). After the
-   migrations it re-grants `service_role` the same narrowed data privileges
-   `schema.sql` grants (`SELECT/INSERT/UPDATE/DELETE` on tables, `USAGE/SELECT`
-   on sequences): the schema's own `GRANT ... ON ALL` statements only cover
-   tables that existed when the schema loaded, not ones the migrations create;
+3. boots **local Supabase** (Auth + Postgres) via the Supabase CLI and loads the
+   current fresh-install shape from `backend/schema.sql`. It intentionally does
+   not replay historical migrations on top: doing so can replace current
+   functions with older definitions. The separate schema-drift workflow proves
+   that the supported upgrade path (its pinned baseline plus later migrations)
+   converges with this fresh-install path;
 4. writes `backend/.env` and `frontend/.env.local` from the live Supabase values;
 5. **builds** the web app (`next build`) and serves it with `next start` — a
    production build, not `next dev`, so there is no on-demand compilation (which
@@ -39,8 +36,9 @@ the local Supabase admin API, so no login secret is needed — the credentials
 baked into that file are the single source of truth.
 
 A keyless run is expected to end **27 passed / 4 skipped / 0 failed** — the
-suite has 31 specs, 4 of them LLM-gated (see "Confirm the specs ran" below).
-Typical run: **~7 minutes**.
+suite currently has 31 tests, 4 of them LLM-gated (see "Confirm the specs ran"
+below). Use the Playwright summary as the source of truth if tests are added or
+removed.
 
 ## Accessibility scans
 
@@ -70,13 +68,12 @@ screenshots, and step-by-step traces of what the browser did.
 
 The suite is green **without** any secret — the LLM specs skip themselves via
 `test.skip(!process.env.ANTHROPIC_API_KEY, …)`, which keeps keyless runs (local,
-and fork PRs with no secret access) green and fast. The gate is a blanket one on
-purpose: the app ships **no keyless model** — every model in the picker
-(`frontend/src/app/components/assistant/ModelToggle.tsx`) needs an
-Anthropic/Google/OpenAI key before `ChatInput` will send at all — so without a
-key the 4 specs cannot even submit a message. (The auto title-generation call is
-*not* the reason for the gate; keyless it returns a 500 the specs already
-tolerate.) Setup steps below.
+and fork PRs with no secret access) green and fast. Mike supports keyless local
+models through Ollama, but this CI job does not provision an Ollama server or
+pull a model. Without the Anthropic secret, the four live-response tests
+therefore have no model available in the CI environment and must skip. The
+auto title-generation call is not the reason for the gate; failures there are
+already treated as best-effort.
 
 ## Enable the LLM specs
 
@@ -131,23 +128,13 @@ Open the **Run Playwright** step in the Actions log:
 
 The uploaded `playwright-report` artifact shows the same per-spec statuses.
 
-### Model selection (gap fixed in this branch)
+### Model selection
 
-Earlier revisions of the four specs drove the model picker to a keyless
-**"Demo (no key needed)"** entry that exists in the amal66 fork but **not in
-this repository** (no `mike-demo` model id, no demo provider), so setting the
-secret unskipped them and they then failed at model selection. This branch
-carries the fix (commit `test(e2e): select a real Claude model in LLM-gated
-specs`): the specs' `selectClaudeModel` helper picks **Claude Sonnet 4.6** in
-the ModelToggle whenever the key is set, and the critical-path response
-assertion checks for a nonempty streamed assistant answer instead of the
-fork's canned demo reply. That commit measured **23 passed / 4 skipped**
-keyless and **27 passed / 0 skipped** with the key (the 4 accessibility specs
-this branch adds raise those totals to 27 and 31); the figures come from its
-own verification against a full local stack (backend, prod-build frontend, local
-Supabase + MinIO — see its commit message); they have not been re-measured
-since this branch was rebased onto current `main`. The secret setup above is
-all that is needed.
+When the secret is present, the shared `selectClaudeModel` helper selects a
+supported Anthropic model before each gated test submits. The response checks
+assert a nonempty streamed assistant answer rather than provider-specific text.
+Keep that helper synchronized with the current model catalog when model ids or
+display names change.
 
 ## Make it merge-blocking
 
