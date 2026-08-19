@@ -20,6 +20,24 @@ describe("PillButton", () => {
         );
     });
 
+    it("has a visible keyboard focus ring", () => {
+        render(<PillButton tone="black">Save</PillButton>);
+        expect(screen.getByRole("button", { name: "Save" })).toHaveClass(
+            "focus-visible:ring-2",
+        );
+    });
+
+    it("keeps the focus ring when rendered via asChild", () => {
+        render(
+            <PillButton tone="blue" asChild>
+                <a href="/docs">Docs</a>
+            </PillButton>,
+        );
+        expect(screen.getByRole("link", { name: "Docs" })).toHaveClass(
+            "focus-visible:ring-2",
+        );
+    });
+
     it("applies the tone class", () => {
         render(<PillButton tone="danger">Delete</PillButton>);
         expect(screen.getByRole("button", { name: "Delete" })).toHaveClass(
