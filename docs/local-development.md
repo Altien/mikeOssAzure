@@ -9,3 +9,8 @@ Provider credentials are organisation-managed. Configure them in Key Vault for A
 Start application packages in separate terminals with pnpm --dir backend dev and pnpm --dir frontend dev. The usual web/API origins are http://localhost:3000 and http://localhost:3001. For Word development, see the [add-in guide](word-addin-development.md); its HTTPS development server uses port 3200.
 
 Create a project and add public or synthetic documents to check the complete workflow. See [Safe local testing](safe-local-testing.md) and [Troubleshooting](troubleshooting.md).
+
+
+### Optional Supabase authentication recovery
+
+When runtime `/config` selects Supabase authentication, confirmation and password recovery use the frontend `/auth/callback` URL. Allow that exact URL in Supabase Auth, configure SMTP and the Site URL, and use a minimum password length of 10. Recovery responses intentionally do not reveal whether an account exists. Secure email changes require both addresses to confirm; expired links must be requested again. Entra and local deployments continue using their configured identity flow. These routes do not provision Supabase Auth or its database triggers in the Azure database.

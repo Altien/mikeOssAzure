@@ -1,35 +1,29 @@
 "use client";
+import { SupabaseAuthGate } from "@/app/components/auth/SupabaseAuthGate";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-// Upstream divergence (OSS-6, auth; decision 8): upstream's design and
-// Supabase sign-up form are kept for the "supabase" auth mode only. In
-// "entra"/"local" modes account creation is managed by the organisation's
-// identity provider, so the page shows a "sign up unavailable" card
-// (dev's behaviour) in upstream's glass styling.
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/app/lib/supabase";
-import { useConfig } from "@/app/contexts/ConfigContext";
-import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
+import { PillButton } from "@/app/components/ui/pill-button";
 import Link from "next/link";
 import { SiteLogo } from "@/app/components/site-logo";
-import { CheckCircle2 } from "lucide-react";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { updateUserProfile } from "@/app/lib/mikeApi";
+import { browserAuthCallbackUrl } from "@/app/lib/authRedirects";
+import { cn } from "@/app/lib/utils";
+import {
+    authGlassCardClassName,
+    authInputClassName,
+} from "@/app/components/auth/authStyles";
+import {
+    MIN_PASSWORD_LENGTH,
+    minimumPasswordMessage,
+} from "@/app/components/auth/passwordPolicy";
 
-const authGlassCardClassName =
-    "rounded-2xl border border-white/70 bg-white/72 p-8 shadow-[0_4px_14px_rgba(15,23,42,0.045),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-8px_18px_rgba(255,255,255,0.12)] backdrop-blur-2xl";
-const authInputClassName =
-    "rounded-lg border border-transparent bg-gray-100 px-3 shadow-none focus-visible:border-gray-200 focus-visible:ring-2 focus-visible:ring-gray-300/45";
-const authToggleClassName =
-    "flex gap-1 rounded-full bg-gray-200 p-1 text-xs font-medium";
-const authToggleActiveClassName =
-    "inline-flex h-6 items-center rounded-full border border-white/80 bg-white/86 px-3 text-gray-900 shadow-[0_2px_7px_rgba(15,23,42,0.08),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-3px_7px_rgba(229,231,235,0.32)] backdrop-blur-xl";
-const authToggleInactiveClassName =
-    "inline-flex h-6 items-center rounded-full border border-transparent px-3 text-gray-500 transition-colors hover:bg-white/38 hover:text-gray-900";
-
-export default function SignupPage() {
+function SignupContent() {
     const router = useRouter();
+    const searchParams = useSearchParams();
     const { isAuthenticated, authLoading } = useAuth();
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
@@ -39,19 +33,33 @@ export default function SignupPage() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState(false);
-    const config = useConfig();
-    const signupAvailable = config.authProvider === "supabase";
+    const isAccountCreatedPreview =
+        process.env.NODE_ENV !== "production" &&
+        searchParams.get("preview") === "account-created";
 
     useEffect(() => {
+        if (isAccountCreatedPreview) return;
         if (!authLoading && isAuthenticated && !success) {
             router.replace("/assistant");
         }
-    }, [authLoading, isAuthenticated, router, success]);
+    }, [
+        authLoading,
+        isAccountCreatedPreview,
+        isAuthenticated,
+        router,
+        success,
+    ]);
 
     const handleSignup = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
         setError(null);
+
+        if (!name.trim()) {
+            setError("Name is required");
+            setLoading(false);
+            return;
+        }
 
         // Validate passwords match
         if (password !== confirmPassword) {
@@ -61,24 +69,34 @@ export default function SignupPage() {
         }
 
         // Validate password length
-        if (password.length < 6) {
-            setError("Password must be at least 6 characters");
+        if (password.length < MIN_PASSWORD_LENGTH) {
+            setError(minimumPasswordMessage);
             setLoading(false);
             return;
         }
 
         try {
-            const supabase = getSupabaseClient();
-            const { data, error } = await supabase.auth.signUp({
-                email,
+            const trimmedEmail = email.trim();
+            const trimmedName = name.trim();
+            const trimmedOrg = organisation.trim();
+            const emailRedirectTo = browserAuthCallbackUrl(
+                "/assistant?confirmed=1",
+            );
+            const { data, error } = await getSupabaseClient().auth.signUp({
+                email: trimmedEmail,
                 password,
+                options: {
+                    ...(emailRedirectTo ? { emailRedirectTo } : {}),
+                    data: {
+                        display_name: trimmedName || null,
+                        organisation: trimmedOrg || null,
+                    },
+                },
             });
 
             if (error) throw error;
 
             if (data.session) {
-                const trimmedName = name.trim();
-                const trimmedOrg = organisation.trim();
                 if (trimmedName || trimmedOrg) {
                     try {
                         await updateUserProfile({
@@ -92,11 +110,13 @@ export default function SignupPage() {
                         );
                     }
                 }
+                setSuccess(true);
+                setTimeout(() => {
+                    router.push("/assistant");
+                }, 2000);
+            } else {
+                router.push("/signup/check-email");
             }
-            setSuccess(true);
-            setTimeout(() => {
-                router.push("/assistant");
-            }, 2000);
         } catch (error: unknown) {
             setError(
                 error instanceof Error
@@ -109,54 +129,28 @@ export default function SignupPage() {
     };
 
     // Success View
-    if (success) {
+    if (success || isAccountCreatedPreview) {
         return (
-            <div className="min-h-dvh bg-gray-50/80 flex items-start justify-center px-6 pt-32 md:pt-40 pb-10 relative">
+            <div className="relative flex min-h-dvh items-center justify-center bg-gray-50/80 px-6 py-10">
                 <div className="absolute top-4 md:top-8 left-1/2 -translate-x-1/2">
                     <SiteLogo size="lg" asLink />
                 </div>
                 <div className="w-full max-w-md">
-                    <div
-                        className={`${authGlassCardClassName} p-10 text-center`}
-                    >
-                        <div className="mx-auto w-12 h-12 bg-green-50 rounded-full flex items-center justify-center mb-6">
-                            <CheckCircle2 className="h-6 w-6 text-green-600" />
-                        </div>
-                        <h2 className="text-2xl font-bold text-gray-950 mb-3">
+                    <div className={authGlassCardClassName}>
+                        <h1 className="font-serif text-2xl font-medium text-gray-950">
                             Account created!
-                        </h2>
-                        <p className="text-gray-600 leading-relaxed">
+                        </h1>
+                        <p className="mt-3 text-sm leading-relaxed text-gray-600">
                             Redirecting you to the home page...
                         </p>
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
-    if (!signupAvailable) {
-        return (
-            <div className="min-h-dvh bg-gray-50/80 flex items-start justify-center px-6 pt-32 md:pt-40 pb-10 relative">
-                <div className="absolute top-4 md:top-8 left-1/2 -translate-x-1/2">
-                    <SiteLogo size="lg" asLink />
-                </div>
-                <div className="w-full max-w-md">
-                    <div
-                        className={`${authGlassCardClassName} p-10 text-center`}
-                    >
-                        <h2 className="text-2xl font-medium font-serif text-gray-950 mb-3">
-                            Sign up unavailable
-                        </h2>
-                        <p className="text-gray-600 leading-relaxed mb-6">
-                            Account creation is managed by your organisation.
-                            Please sign in with your organisation account.
-                        </p>
-                        <Link
-                            href="/login"
-                            className="inline-flex h-9 items-center justify-center rounded-lg bg-black px-4 text-sm text-white hover:bg-gray-900"
+                        <PillButton
+                            asChild
+                            tone="black"
+                            size="normal"
+                            className="mt-6"
                         >
-                            Go to login
-                        </Link>
+                            <Link href="/assistant">Continue</Link>
+                        </PillButton>
                     </div>
                 </div>
             </div>
@@ -170,23 +164,10 @@ export default function SignupPage() {
                 <SiteLogo size="lg" asLink />
             </div>
             <div className="w-full max-w-md">
-                <div className={`${authGlassCardClassName} mb-4`}>
-                    <div className="flex justify-between items-center mb-6">
-                        <h2 className="text-left text-2xl font-medium font-serif text-gray-950">
-                            Create Account
-                        </h2>
-                        <div className={authToggleClassName}>
-                            <Link
-                                href="/login"
-                                className={authToggleInactiveClassName}
-                            >
-                                Log in
-                            </Link>
-                            <span className={authToggleActiveClassName}>
-                                Sign up
-                            </span>
-                        </div>
-                    </div>
+                <div className={cn(authGlassCardClassName, "mb-4 pb-5")}>
+                    <h2 className="mb-6 text-left text-2xl font-medium font-serif text-gray-950">
+                        Sign Up
+                    </h2>
 
                     <form onSubmit={handleSignup} className="space-y-4">
                         <div>
@@ -194,17 +175,15 @@ export default function SignupPage() {
                                 htmlFor="name"
                                 className="block text-sm font-medium text-gray-700 mb-2"
                             >
-                                Name{" "}
-                                <span className="text-gray-400 font-normal">
-                                    (optional)
-                                </span>
+                                Name
                             </label>
                             <Input
                                 id="name"
                                 type="text"
                                 value={name}
                                 onChange={(e) => setName(e.target.value)}
-                                placeholder="Your name"
+                                maxLength={200}
+                                required
                                 className={`w-full ${authInputClassName}`}
                             />
                         </div>
@@ -226,7 +205,7 @@ export default function SignupPage() {
                                 onChange={(e) =>
                                     setOrganisation(e.target.value)
                                 }
-                                placeholder="Your organisation"
+                                maxLength={200}
                                 className={`w-full ${authInputClassName}`}
                             />
                         </div>
@@ -243,7 +222,6 @@ export default function SignupPage() {
                                 type="email"
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
-                                placeholder="Enter your email"
                                 required
                                 className={`w-full ${authInputClassName}`}
                             />
@@ -261,7 +239,7 @@ export default function SignupPage() {
                                 type="password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
-                                placeholder="Create a password (min. 6 characters)"
+                                placeholder={`Create a password (min. ${MIN_PASSWORD_LENGTH} characters)`}
                                 required
                                 className={`w-full ${authInputClassName}`}
                             />
@@ -281,7 +259,6 @@ export default function SignupPage() {
                                 onChange={(e) =>
                                     setConfirmPassword(e.target.value)
                                 }
-                                placeholder="Confirm your password"
                                 required
                                 className={`w-full ${authInputClassName}`}
                             />
@@ -293,38 +270,57 @@ export default function SignupPage() {
                             </div>
                         )}
 
-                        <Button
-                            type="submit"
-                            disabled={loading}
-                            className="w-full bg-black hover:bg-gray-900 text-white"
-                        >
-                            {loading ? "Creating account..." : "Sign up"}
-                        </Button>
+                        <div className="space-y-3 pt-2">
+                            <div className="text-center text-xs text-gray-500">
+                                By signing up, you agree to our{" "}
+                                <Link
+                                    href="https://mikeoss.com/terms"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-600 hover:underline"
+                                >
+                                    Terms of Use
+                                </Link>{" "}
+                                and{" "}
+                                <Link
+                                    href="https://mikeoss.com/privacy"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-600 hover:underline"
+                                >
+                                    Privacy Policy
+                                </Link>
+                            </div>
+                            <PillButton
+                                type="submit"
+                                tone="black"
+                                size="normal"
+                                disabled={loading}
+                                className="w-full"
+                            >
+                                {loading ? "Creating account..." : "Sign up"}
+                            </PillButton>
+                        </div>
+                        <div className="text-center text-sm text-gray-500">
+                            Have an account?{" "}
+                            <Link
+                                href="/login"
+                                className="font-medium transition-colors hover:text-gray-950"
+                            >
+                                Log in
+                            </Link>
+                        </div>
                     </form>
-
-                    {/* Terms and Privacy */}
-                    <div className="mt-4 text-center text-xs text-gray-500">
-                        By signing up, you agree to our{" "}
-                        <Link
-                            href="https://mikeoss.com/terms"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-blue-600 hover:underline"
-                        >
-                            Terms of Use
-                        </Link>{" "}
-                        and{" "}
-                        <Link
-                            href="https://mikeoss.com/privacy"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-blue-600 hover:underline"
-                        >
-                            Privacy Policy
-                        </Link>
-                    </div>
                 </div>
             </div>
         </div>
+    );
+}
+
+export default function SignupPage() {
+    return (
+        <Suspense fallback={null}>
+            <SupabaseAuthGate><SignupContent /></SupabaseAuthGate>
+        </Suspense>
     );
 }

@@ -23,6 +23,11 @@ const devLog = (...args: Parameters<typeof console.log>) => {
     if (isDev) console.log(...args);
 };
 
+interface EmailWarning {
+    title: string;
+    message: string;
+}
+
 export default function SettingsPage() {
     const router = useRouter();
     const { user, signOut, updateEmail } = useAuth();
@@ -40,7 +45,7 @@ export default function SettingsPage() {
     const [isSavingEmail, setIsSavingEmail] = useState(false);
     const [emailSaved, setEmailSaved] = useState(false);
     const [emailStatus, setEmailStatus] = useState<string | null>(null);
-    const [emailWarning, setEmailWarning] = useState<string | null>(null);
+    const [emailWarning, setEmailWarning] = useState<EmailWarning | null>(null);
     const [deleteConfirm, setDeleteConfirm] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
 
@@ -63,6 +68,22 @@ export default function SettingsPage() {
             setEmail(user.pendingEmail || user.email);
         }
     }, [user?.email, user?.pendingEmail]);
+
+    useEffect(() => {
+        if (
+            new URLSearchParams(window.location.search).get("emailChange") !==
+                "processed" ||
+            !user
+        ) {
+            return;
+        }
+        setEmailStatus(
+            user.pendingEmail
+                ? "One confirmation was accepted. Confirm the email change from both your current and new addresses to finish."
+                : "Email updated.",
+        );
+        window.history.replaceState({}, "", "/settings");
+    }, [user]);
 
     const handleDeleteAccount = async () => {
         devLog("[account] delete account requested");
@@ -94,7 +115,7 @@ export default function SettingsPage() {
             setEmailSaved(true);
             setEmailStatus(
                 pendingEmail
-                    ? `Confirmation sent to ${pendingEmail}. Your current email remains ${updatedUser.email} until the change is confirmed.`
+                    ? `Confirmation sent to your current address and ${pendingEmail}. Confirm both messages to finish the change. Your current email remains ${updatedUser.email} until then.`
                     : "Email updated.",
             );
             setTimeout(() => setEmailSaved(false), 2000);
@@ -107,7 +128,20 @@ export default function SettingsPage() {
 
             if (isAlreadyRegisteredEmailError(message)) {
                 setEmail(user?.pendingEmail || user?.email || "");
-                setEmailWarning(message);
+                setEmailWarning({
+                    title: "Email already registered",
+                    message,
+                });
+                return;
+            }
+
+            if (isEmailRateLimitError(message)) {
+                setEmail(user?.pendingEmail || user?.email || "");
+                setEmailWarning({
+                    title: "Email change unavailable",
+                    message:
+                        "You can’t change your email this often. Please wait before trying again.",
+                });
                 return;
             }
 
@@ -382,8 +416,8 @@ export default function SettingsPage() {
             />
             <WarningPopup
                 open={!!emailWarning}
-                title="Email already registered"
-                message={emailWarning}
+                title={emailWarning?.title}
+                message={emailWarning?.message}
                 onClose={() => setEmailWarning(null)}
             />
         </div>
@@ -394,4 +428,8 @@ function isAlreadyRegisteredEmailError(message: string) {
     return message
         .toLowerCase()
         .includes("a user with this email address has already been registered");
+}
+
+function isEmailRateLimitError(message: string) {
+    return /email.*rate limit|rate limit.*email/i.test(message);
 }

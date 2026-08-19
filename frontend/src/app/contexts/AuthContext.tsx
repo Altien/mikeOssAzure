@@ -1,4 +1,5 @@
 "use client";
+import { browserAuthCallbackUrl } from "@/app/lib/authRedirects";
 
 import React, { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
@@ -179,7 +180,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       );
     }
     const supabase = getSupabaseClient();
-    const redirectTo = typeof window === "undefined" ? undefined : `${window.location.origin}/settings`;
+    const redirectTo = typeof window === "undefined" ? undefined : browserAuthCallbackUrl("/settings?emailChange=processed");
     const { data, error } = await supabase.auth.updateUser(
       { email },
       redirectTo ? { emailRedirectTo: redirectTo } : undefined,

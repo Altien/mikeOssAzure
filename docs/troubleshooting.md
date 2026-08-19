@@ -19,3 +19,8 @@ Check backend logs, Blob/Azurite configuration, the configured container, and Li
 ## Word add-in fails
 
 The [Word development guide](word-addin-development.md#troubleshooting) covers HTTPS certificate trust, port 3200, Entra sign-in, CORS, and tracked-change requirements.
+
+
+### Optional Supabase authentication recovery
+
+When runtime `/config` selects Supabase authentication, confirmation and password recovery use the frontend `/auth/callback` URL. Allow that exact URL in Supabase Auth, configure SMTP and the Site URL, and use a minimum password length of 10. Recovery responses intentionally do not reveal whether an account exists. Secure email changes require both addresses to confirm; expired links must be requested again. Entra and local deployments continue using their configured identity flow. These routes do not provision Supabase Auth or its database triggers in the Azure database.

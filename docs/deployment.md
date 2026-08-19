@@ -17,3 +17,8 @@ Store model credentials in Key Vault with local environment fallback. Azure Open
 User credential settings are read-only. Model and router selections remain user preferences. For the Word add-in, configure its public HTTPS origin and CORS and Entra redirect URIs as described in [Word deployment](word-addin-development.md#production-build).
 
 LibreOffice must be available for DOC/DOCX conversion. See [Troubleshooting](troubleshooting.md), [Safe local testing](safe-local-testing.md), and the [security policy](../SECURITY.md).
+
+
+### Optional Supabase authentication recovery
+
+When runtime `/config` selects Supabase authentication, confirmation and password recovery use the frontend `/auth/callback` URL. Allow that exact URL in Supabase Auth, configure SMTP and the Site URL, and use a minimum password length of 10. Recovery responses intentionally do not reveal whether an account exists. Secure email changes require both addresses to confirm; expired links must be requested again. Entra and local deployments continue using their configured identity flow. These routes do not provision Supabase Auth or its database triggers in the Azure database.
