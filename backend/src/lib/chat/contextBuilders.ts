@@ -224,10 +224,12 @@ export const MAX_DOCUMENT_CONTEXT_CHARS = 200_000;
 
 /**
  * Parses the optional `document_context` field the Word add-in sends on
- * POST /word-chat: the plain-text body of the user's active document, read via
- * Word.run() and posted inline rather than uploaded (there is no stored
- * document record). Absent/empty values normalize to `undefined`; anything
- * that is present but not a string is a 400.
+ * POST /word-chat: the body of the user's active document rendered as
+ * structure-annotated markdown (heading marks, list markers, pipe tables —
+ * passage text itself verbatim), read via Word.run() and posted inline
+ * rather than uploaded (there is no stored document record). Absent/empty
+ * values normalize to `undefined`; anything that is present but not a
+ * string is a 400.
  */
 export function parseOptionalDocumentContext(value: unknown):
   | { ok: true; documentContext: string | undefined }
