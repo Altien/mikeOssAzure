@@ -1,4 +1,10 @@
-# Word add-in assistant scroll-jump report
+# Archived: Word add-in assistant scroll-jump report
+
+> Historical investigation recorded on 2026-08-11. References to `HEAD`, the
+> current worktree, implementation paths, and measured behavior describe the
+> tree inspected on that date, not the current application. Use
+> [Word add-in development and deployment](word-addin-development.md) for active
+> operational guidance.
 
 Date: 2026-08-11
 
@@ -46,7 +52,7 @@ There is also a target-calculation mismatch. The current worktree requests a 24 
 
 The sluggishness has two parts: the visible scroll uses an implementation-dependent native smooth duration, and each streamed event causes the whole chat view to render again while also removing/re-adding the scroll listener. Rendering additionally repeats redline projection and Markdown work over the growing response.
 
-The current uncommitted implementation replaces native smooth scrolling with a deterministic animation, but sets it to 450 ms for both pinning and the arrow. The deterministic timing removes one source of cross-WebView variance, but 450 ms remains visibly slow and the arrow behavior directly contradicts the immediate-jump requirement.
+The uncommitted implementation inspected at the time replaced native smooth scrolling with a deterministic animation, but set it to 450 ms for both pinning and the arrow. The deterministic timing removed one source of cross-WebView variance, but 450 ms remained visibly slow and the arrow behavior directly contradicted the immediate-jump requirement.
 
 Confidence in the primary scroll diagnosis: high. Confidence in the relative contribution of each rendering cost: medium until an Office WebView performance trace is captured.
 
@@ -63,7 +69,7 @@ Relevant locations:
 
 ### Pinning and reserved space
 
-In the committed implementation (`HEAD`), `ChatView.tsx` calculates the assistant `min-height` in a normal `useEffect`. A normal effect runs after the browser has already painted. The first visible layout can consequently have an assistant height of zero, followed by a second layout with the reserved spacer.
+In the committed implementation inspected at the time (`HEAD`), `ChatView.tsx` calculated the assistant `min-height` in a normal `useEffect`. A normal effect runs after the browser has already painted. The first visible layout could consequently have an assistant height of zero, followed by a second layout with the reserved spacer.
 
 The pin is a separate native call:
 

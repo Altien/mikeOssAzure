@@ -13,46 +13,44 @@ npm test              # run all unit tests
 npm run test:coverage # same, plus the per-file coverage table + floor check
 ```
 
-Tests live in `backend/src/lib/__tests__/*.test.ts`. Read a couple of the
-existing suites first (`access.test.ts`, `userDataCleanup.test.ts`) and match
-their conventions: plain in-memory Supabase query mocks (no network, no real
-database), one `describe` block per exported function, and tests that assert
-current behavior.
+Tests live throughout `backend/src/**/*.test.ts`, including `lib/__tests__/`,
+nested feature directories, `routes/__tests__/`, and `src/__tests__/integration/`.
+Read a couple of the existing suites first (`lib/__tests__/access.test.ts`,
+`lib/__tests__/userDataCleanup.test.ts`) and match their conventions: plain
+in-memory Supabase query mocks for unit tests, no real network, one `describe`
+block per function or concern, and assertions on current behavior. Tests that
+need a real local Supabase stack are explicitly gated.
 
-## Current coverage (measured 2026-07)
+## Current coverage (measured 2026-08)
 
 Per-area statement coverage from `npm run test:coverage`:
 
 | Lib area | % statements | Tested? |
 | --- | ---: | :---: |
-| `lib/safeError.ts` | 100 | ✓ |
-| `lib/userDataCleanup.ts` | 100 | ✓ |
-| `lib/llm/models.ts` | 100 | ✓ |
-| `lib/documentTypes.ts` | 100 | ✓ |
-| `lib/chat/prompts.ts` | 100 | ✓ |
-| `lib/systemWorkflows.ts` | 100 | ✓ |
+| `lib/safeError.ts`, `lib/userDataCleanup.ts`, `lib/manifestSigning.ts`, `lib/supabase.ts` | 100 | ✓ |
+| `lib/llm/models.ts` | 96 | ✓ |
+| `lib/chat/types.ts` | 95 | ✓ |
 | `lib/documentVersions.ts` | 98 | ✓ |
 | `lib/chat/citations.ts` | 98 | ✓ |
 | `lib/userLookup.ts` | 91 | ✓ |
 | `lib/docxTrackedChanges.ts` | 89 | ✓ |
 | `lib/downloadTokens.ts` | 87 | ✓ |
-| `lib/chat/types.ts` | 85 | ✓ |
 | `lib/access.ts` | 76 | ✓ |
-| `lib/storage.ts` | 33 | partial — key/disposition helpers only |
+| `lib/storage.ts`, `lib/upload.ts` | 58 | partial |
+| `lib/workflowCatalog.ts` | 55 | partial |
+| `lib/userDataExport.ts` | 43 | partial |
+| `lib/chat/contextBuilders.ts`, `lib/chat/tools/toolDispatcher.ts` | 37–38 | partial |
 | `lib/userApiKeys.ts` | 13 | partial — provider/env helpers only |
-| `lib/userSettings.ts`, `lib/upload.ts`, `lib/officeText.ts` | 0 | ✗ |
-| `lib/convert.ts`, `lib/spreadsheet.ts` | 0 | ✗ |
-| `lib/userDataExport.ts` | 0 | ✗ |
-| `lib/courtlistener.ts` | 0 | ✗ |
-| `lib/chat/contextBuilders.ts`, `lib/chat/streaming.ts` | 0 | ✗ |
-| `lib/chat/tools/**` (schemas, documentOps, toolDispatcher) | 0 | ✗ |
-| `lib/llm/**` (providers, tools, index, rawStreamLog) | ~4 | ✗ (only models.ts) |
-| `lib/mcp/**` (client, servers, oauth, types) | 0 | ✗ |
+| `lib/chat/tools/documentOps.ts` | 10 | partial |
+| `lib/convert.ts`, `lib/chat/streaming.ts`, `lib/courtlistener.ts` | 2–5 | minimal |
+| `lib/llm/**` | 5 | minimal outside `models.ts` |
+| `lib/mcp/**` | 6 | minimal |
+| `lib/userSettings.ts`, `lib/officeText.ts`, `lib/spreadsheet.ts` | 0 | ✗ |
 
-Global: **23.88% statements / 17.98% branches / 23.06% functions / 23.79%
-lines**. The global number is low because `src/lib/**` includes several very
-large feature libs (toolDispatcher, documentOps, courtlistener) that dominate
-the line count.
+Global: **39.84% statements / 35.64% branches / 42.32% functions / 40.77%
+lines**. The global number remains relatively low because `src/lib/**` includes
+several large feature libs (toolDispatcher, documentOps, CourtListener, MCP,
+and provider adapters) that dominate the line count.
 
 ## TODO — untested libs, in priority order
 
@@ -113,7 +111,7 @@ better exercised by the e2e suite.
 ## Ratchet policy
 
 `backend/vitest.config.mts` enforces global coverage **floors** (currently
-statements 23 / branches 17 / functions 23 / lines 23). They are a
+statements 39 / branches 35 / functions 42 / lines 40). They are a
 no-regression ratchet, not a target:
 
 - **Floors only go up.** Never lower them to get a PR green — that means your
