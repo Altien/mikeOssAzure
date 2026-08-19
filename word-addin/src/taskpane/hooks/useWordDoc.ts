@@ -2,6 +2,11 @@
 
 import { useCallback } from "react";
 import { toWordText } from "../lib/wordText";
+import {
+  renderDocumentMarkdown,
+  stripStructuralMarkers,
+  type DocumentBlock,
+} from "../lib/documentMarkdown";
 import type { RedlineEdit } from "../lib/redline";
 import { isParagraphStyleFormat } from "../lib/redline";
 import { createSecureUuid } from "../lib/secureUuid";
@@ -236,6 +241,65 @@ function getErrorMessage(error: unknown): string {
     return error.message;
   }
   return "Word operation failed.";
+}
+
+/**
+ * Walk the body in document order and describe it as DocumentBlocks for the
+ * markdown renderer. Paragraphs inside tables are skipped individually and
+ * replaced by one table block (from Table.values) at the position of the
+ * first cell paragraph; body.tables and the 0→N tableNestingLevel
+ * transitions occur in the same document order, which is what pairs them.
+ * Word cannot place two top-level tables adjacently without a paragraph
+ * between them, so each transition is exactly one table.
+ */
+async function renderBodyAsMarkdown(
+  context: Word.RequestContext,
+  body: Word.Body,
+): Promise<string> {
+  const paragraphs = body.paragraphs;
+  const tables = body.tables;
+  paragraphs.load(
+    "items/text,items/styleBuiltIn,items/tableNestingLevel,items/isListItem",
+  );
+  tables.load("items/nestingLevel,items/values");
+  await context.sync();
+
+  const listItems = paragraphs.items.map((paragraph) =>
+    paragraph.isListItem ? paragraph.listItemOrNullObject : null,
+  );
+  for (const item of listItems) {
+    if (item) item.load("isNullObject,listString,level");
+  }
+  await context.sync();
+
+  const topLevelTables = tables.items.filter(
+    (table) => table.nestingLevel === 1,
+  );
+  const blocks: DocumentBlock[] = [];
+  let tableIndex = 0;
+  let inTable = false;
+  paragraphs.items.forEach((paragraph, index) => {
+    if (paragraph.tableNestingLevel > 0) {
+      if (!inTable) {
+        inTable = true;
+        const table = topLevelTables[tableIndex];
+        tableIndex += 1;
+        if (table) blocks.push({ kind: "table", values: table.values });
+      }
+      return;
+    }
+    inTable = false;
+    const listItem = listItems[index] ?? null;
+    const isRealListItem = listItem !== null && !listItem.isNullObject;
+    blocks.push({
+      kind: "paragraph",
+      text: paragraph.text,
+      styleBuiltIn: paragraph.styleBuiltIn,
+      listString: isRealListItem ? listItem.listString : undefined,
+      listLevel: isRealListItem ? listItem.level : undefined,
+    });
+  });
+  return renderDocumentMarkdown(blocks);
 }
 
 /** Word reports paragraph breaks inconsistently (\r, \n, \v) across hosts. */
@@ -1575,19 +1639,28 @@ export function selectDocumentText(
     }
     try {
       return await Word.run(async (context) => {
-        let matches = context.document.body.search(target, {
-          matchCase: true,
-        });
-        matches.load("items");
-        await context.sync();
-        if (matches.items.length === 0) {
-          matches = context.document.body.search(target, {
-            matchCase: false,
+        // Cited quotes come from the markdown-rendered context, so a model
+        // may copy a renderer marker (heading #, list marker, table pipe)
+        // that isn't in the document — try the stripped variant too, each
+        // exact-case before case-insensitive.
+        const stripped = stripStructuralMarkers(target);
+        const candidates = stripped ? [target, stripped] : [target];
+        const attempts = candidates.flatMap((candidate) =>
+          [true, false].map((matchCase) => ({ candidate, matchCase })),
+        );
+        let matches: Word.RangeCollection | undefined;
+        for (const { candidate, matchCase } of attempts) {
+          const attempt = context.document.body.search(candidate, {
+            matchCase,
           });
-          matches.load("items");
+          attempt.load("items");
           await context.sync();
+          if (attempt.items.length > 0) {
+            matches = attempt;
+            break;
+          }
         }
-        const first = matches.items[0];
+        const first = matches?.items[0];
         if (!first) return "not-found" as const;
         first.select();
         await context.sync();
@@ -1685,14 +1758,31 @@ export function releaseTrackedEdits(
  */
 export function useWordDoc() {
   /** Read the plain text of the entire document body. */
-  const readDocumentText = useCallback(
+  /**
+   * Read the active document as structure-annotated markdown: heading
+   * paragraphs gain `#` marks, list items their markers, tables render as
+   * pipe tables — while every passage's own text stays byte-identical to
+   * what Word.search can locate, because edit blocks and citations quote it
+   * verbatim (see lib/documentMarkdown.ts). Falls back to the flat body
+   * text if any structure API misbehaves on the current host: a degraded
+   * context beats a failed send.
+   */
+  const readDocumentMarkdown = useCallback(
     (): Promise<string> =>
       serializeWordMutation(() =>
         Word.run(async (context) => {
           const body = context.document.body;
-          body.load("text");
-          await context.sync();
-          return body.text;
+          try {
+            return await renderBodyAsMarkdown(context, body);
+          } catch (error) {
+            console.warn(
+              "Structured document read failed; sending flat text",
+              getErrorMessage(error),
+            );
+            body.load("text");
+            await context.sync();
+            return body.text;
+          }
         }),
       ),
     [],
@@ -1737,8 +1827,9 @@ export function useWordDoc() {
             doc.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
             await context.sync();
 
-            for (const [index, edit] of edits.entries()) {
-              const original = edit.original;
+            for (const [index, suppliedEdit] of edits.entries()) {
+              let edit = suppliedEdit;
+              let original = edit.original;
               const result: TrackedEditApplyResult = {
                 index,
                 original,
@@ -1767,9 +1858,34 @@ export function useWordDoc() {
               }
 
               try {
-                const matches = doc.body.search(original, { matchCase: true });
+                let matches = doc.body.search(original, { matchCase: true });
                 matches.load("items");
                 await context.sync();
+
+                // The document reaches the model as structure-annotated
+                // markdown, and despite the prompt's instruction a model
+                // quoting a heading/list/table line sometimes copies the
+                // renderer's markers — characters that exist nowhere in the
+                // document. When the verbatim search misses, retry once with
+                // those markers stripped, and adopt the stripped text as the
+                // edit's original so every later phase (revision scanning,
+                // anchors, persistence) agrees with what was located.
+                if (matches.items.length === 0) {
+                  const stripped = stripStructuralMarkers(original);
+                  if (stripped) {
+                    const retry = doc.body.search(stripped, {
+                      matchCase: true,
+                    });
+                    retry.load("items");
+                    await context.sync();
+                    if (retry.items.length > 0) {
+                      matches = retry;
+                      original = stripped;
+                      edit = { ...edit, original: stripped };
+                      result.original = stripped;
+                    }
+                  }
+                }
 
                 result.matches = matches.items.length;
 
@@ -2150,7 +2266,7 @@ export function useWordDoc() {
   );
 
   return {
-    readDocumentText,
+    readDocumentMarkdown,
     applyTrackedEdits,
   };
 }

@@ -73,7 +73,7 @@ export function useWordAssistantChat({
   const sessionGenerationRef = useRef(0);
   const sendSequenceRef = useRef(0);
   const sendingRef = useRef(false);
-  const { readDocumentText } = useWordDoc();
+  const { readDocumentMarkdown } = useWordDoc();
 
   useEffect(() => {
     mountedRef.current = true;
@@ -144,7 +144,7 @@ export function useWordAssistantChat({
       try {
         let documentContext: string;
         try {
-          documentContext = await readDocumentText();
+          documentContext = await readDocumentMarkdown();
         } catch (error) {
           console.error("Failed to read the current Word document", error);
           if (requestIsCurrent()) {
@@ -521,7 +521,7 @@ export function useWordAssistantChat({
       editController,
       onChatIdChange,
       onChatStarted,
-      readDocumentText,
+      readDocumentMarkdown,
       wordChatOwnerId,
       wordChatStorage,
       wordDocumentId,

@@ -13,6 +13,7 @@ const WORD_CHAT_INSTRUCTIONS = `WORD ADD-IN MODE:
 - The user is chatting from Microsoft Word. When its text is available, the active document is listed as ${ACTIVE_WORD_DOCUMENT_LABEL} under AVAILABLE DOCUMENTS.
 - Decide whether the user's request actually requires the active document's contents. Call read_document with doc_id "${ACTIVE_WORD_DOCUMENT_LABEL}" only when you need to inspect, summarize, quote, or change that content. Do not read it for greetings or unrelated general questions.
 - Never assume you know the active document's contents before read_document returns them in the current response.
+- The active document is rendered as markdown so you can see its structure: heading paragraphs carry leading # marks, list items carry list markers and indentation, and tables are rendered as pipe tables. Those markers are annotations added by the renderer — they are NOT characters in the document itself. Inline formatting (bold/italic) is not represented.
 - Never claim to have changed the active document unless you emit an edit block using the protocol below. The add-in applies those blocks as tracked changes while the response streams.
 
 ACTIVE DOCUMENT EDIT PROTOCOL:
@@ -27,6 +28,7 @@ ${WORD_FORMAT_PROTOCOL}
 Protocol rules:
 - Emit every edit block before any prose, with no prose between blocks.
 - Copy <original> character-for-character from one contiguous passage in a single paragraph of the active document. Preserve capitalization, punctuation, and spacing, and keep it under 200 characters.
+- Never include the renderer's structural markers in <original>: no leading # heading marks, no list markers or their indentation, no table | pipes. Quote only the underlying document text between them.
 - Make every edit as precise and targeted as possible. Use the shortest contiguous original passage needed for the change; never replace a long sentence or paragraph merely to change a few words within it.
 - When several related changes occur close together in the same sentence or local section of text, group them into one edit block (and therefore one edit card), using the shortest contiguous passage that covers them. Avoid a fragmented series of cards for the same local passage, but keep unrelated or distant changes separate.
 - Put only the replacement text inside <replacement>. Use an empty <replacement></replacement> for a deletion.
@@ -40,7 +42,7 @@ Protocol rules:
 - The edit_document tool is for uploaded Mike documents. Do not use it for the active Word document available through read_document.
 
 DOCUMENT CITATIONS:
-- When your prose references a specific passage of the active document, cite it with the standard [n] markers. The add-in turns each marker into a control the user can click to jump to and highlight that passage in Word, so the citation's quote must be copied character-for-character from one contiguous passage in a single paragraph of the active document, kept under 200 characters.
+- When your prose references a specific passage of the active document, cite it with the standard [n] markers. The add-in turns each marker into a control the user can click to jump to and highlight that passage in Word, so the citation's quote must be copied character-for-character from one contiguous passage in a single paragraph of the active document, kept under 200 characters — again without the renderer's # marks, list markers, or table pipes.
 - Alternatively, wrapping a short verbatim quote directly in <cite>...</cite> (in prose, never inside edit blocks) renders the quote itself as that clickable control.
 - Only cite text you have actually seen via read_document in this conversation. Cite the key passages that support your answer; do not wrap every quote.`;
 
