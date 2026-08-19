@@ -14,6 +14,11 @@ describe("normalizeApiKeyProvider", () => {
         expect(normalizeApiKeyProvider("gemini")).toBe("gemini");
     });
 
+    it("returns the supported router providers", () => {
+        expect(normalizeApiKeyProvider("openrouter")).toBe("openrouter");
+        expect(normalizeApiKeyProvider("vercel")).toBe("vercel");
+    });
+
     it("returns null for unknown provider strings", () => {
         expect(normalizeApiKeyProvider("unknown")).toBeNull();
         expect(normalizeApiKeyProvider("")).toBeNull();
@@ -28,6 +33,9 @@ describe("hasEnvApiKey", () => {
         "CLAUDE_API_KEY",
         "OPENAI_API_KEY",
         "GEMINI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "AI_GATEWAY_API_KEY",
+        "VERCEL_AI_GATEWAY_API_KEY",
     ];
 
     // Clear before AND after each test so keys exported in the developer's
@@ -58,6 +66,16 @@ describe("hasEnvApiKey", () => {
     it("returns true for gemini when GEMINI_API_KEY is set", () => {
         process.env.GEMINI_API_KEY = "gemini-key-test";
         expect(hasEnvApiKey("gemini")).toBe(true);
+    });
+
+    it("returns true for Vercel when AI_GATEWAY_API_KEY is set", () => {
+        process.env.AI_GATEWAY_API_KEY = "vercel-key-test";
+        expect(hasEnvApiKey("vercel")).toBe(true);
+    });
+
+    it("accepts VERCEL_AI_GATEWAY_API_KEY as a compatibility alias", () => {
+        process.env.VERCEL_AI_GATEWAY_API_KEY = "vercel-key-test";
+        expect(hasEnvApiKey("vercel")).toBe(true);
     });
 
     it("returns false when no env key is set for the provider", () => {

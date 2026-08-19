@@ -22,10 +22,7 @@ import { UploadOverlay } from "./UploadOverlay";
 import { FileTypeIcon } from "../shared/FileTypeIcon";
 import { AddDocumentsModal } from "../modals/AddDocumentsModal";
 import { AssistantWorkflowModal } from "./AssistantWorkflowModal";
-import {
-    WORKFLOW_SLASH_MENU_ID,
-    WorkflowSlashMenu,
-} from "./WorkflowSlashMenu";
+import { WORKFLOW_SLASH_MENU_ID, WorkflowSlashMenu } from "./WorkflowSlashMenu";
 import {
     exactSlashWorkflow,
     matchingSlashWorkflows,
@@ -288,7 +285,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             event.stopPropagation();
             dragDepthRef.current = 0;
             setIsDraggingFiles(false);
-            void handleDroppedFiles(Array.from(event.dataTransfer?.files ?? []));
+            void handleDroppedFiles(
+                Array.from(event.dataTransfer?.files ?? []),
+            );
         };
 
         window.addEventListener("dragenter", handleDragEnter);
@@ -329,6 +328,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         const files = attachedDocs.map((d) => ({
             filename: d.filename,
             document_id: d.id,
+            ...(d.current_version_id
+                ? { version_id: d.current_version_id }
+                : {}),
+            ...(d.active_version_number != null
+                ? { version_number: d.active_version_number }
+                : {}),
         }));
         setAttachedDocs([]);
         setSelectedWorkflow(null);
@@ -359,10 +364,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     const handleSubmit = () => {
         const query = value.trim();
         if (slashCommandsLoading) return;
-        const slashWorkflow = exactSlashWorkflow(
-            slashWorkflows ?? [],
-            query,
-        );
+        const slashWorkflow = exactSlashWorkflow(slashWorkflows ?? [], query);
         if (slashWorkflow) {
             selectSlashWorkflow(slashWorkflow);
             return;
@@ -591,6 +593,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                 value={model}
                                 onChange={setModel}
                                 apiKeys={apiKeys}
+                                openRouterModels={profile?.openRouterModels}
+                                vercelModels={profile?.vercelModels}
+                                compact={compactControls}
                             />
                             <button
                                 type="button"

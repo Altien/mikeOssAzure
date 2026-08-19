@@ -184,6 +184,8 @@ interface UserProfile {
     tabularModel: string;
     mfaOnLogin: boolean;
     legalResearchUs: boolean;
+    openRouterModels: string[];
+    vercelModels: string[];
     apiKeyStatus: ApiKeyStatus;
 }
 
@@ -196,6 +198,7 @@ export interface ApiKeyStatus {
     gemini: boolean;
     openai: boolean;
     openrouter: boolean;
+    vercel: boolean;
     courtlistener: boolean;
 }
 

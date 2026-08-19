@@ -6,6 +6,7 @@
 import { supabase } from "@/app/lib/supabase";
 import { isPanelDocument } from "@/app/components/shared/types";
 import type {
+    AskInputResponseItem,
     AssistantEvent,
     Chat,
     ChatDetailOut,
@@ -14,6 +15,7 @@ import type {
     Folder,
     LibraryFolder,
     Message,
+    MessageFile,
     PanelDocument,
     OpenSourceWorkflowContributorMode,
     OpenSourceWorkflowResponse,
@@ -27,13 +29,17 @@ import type {
     TabularReviewDetailOut,
 } from "@/app/components/shared/types";
 
+type AskInputsResponsePayload = {
+    responses: AskInputResponseItem[];
+};
+
 // Server-side shape before mapping
 interface ServerMessage {
     id: string;
     chat_id: string;
     role: "user" | "assistant";
     content: string | AssistantEvent[] | null;
-    files?: { filename: string; document_id?: string }[] | null;
+    files?: MessageFile[] | null;
     workflow?: { id: string; title: string } | null;
     citations?: Citation[] | null;
     created_at: string;
@@ -371,6 +377,8 @@ export interface UserProfile {
     mfaOnLogin: boolean;
     legalResearchUs: boolean;
     quickActionsVisible: boolean;
+    openRouterModels: string[];
+    vercelModels: string[];
     apiKeyStatus: ApiKeyStatus;
 }
 
@@ -474,6 +482,8 @@ export async function updateUserProfile(payload: {
     tabularModel?: string;
     legalResearchUs?: boolean;
     quickActionsVisible?: boolean;
+    openRouterModels?: string[];
+    vercelModels?: string[];
 }): Promise<UserProfile> {
     return apiRequest<UserProfile>("/user/profile", {
         method: "PATCH",
@@ -493,7 +503,7 @@ export async function updateUserMfaOnLogin(
 }
 
 export type ApiKeyProvider =
-    "claude" | "gemini" | "openai" | "openrouter" | "courtlistener";
+    "claude" | "gemini" | "openai" | "openrouter" | "vercel" | "courtlistener";
 export type ApiKeySource = "user" | "env" | null;
 export type ApiKeyState = Record<
     ApiKeyProvider,
@@ -517,9 +527,34 @@ export interface OllamaModelOption {
     group: "Local";
 }
 
+export interface RouterCatalogModel {
+    id: string;
+    label: string;
+    pricing?: {
+        input?: string;
+        output?: string;
+        variesByProvider?: boolean;
+        tiered?: boolean;
+    };
+}
+
 export async function getOllamaModels(): Promise<OllamaModelOption[]> {
     const { models } = await apiRequest<{ models: OllamaModelOption[] }>(
         "/models/ollama",
+    );
+    return models;
+}
+
+export async function getOpenRouterModels(): Promise<RouterCatalogModel[]> {
+    const { models } = await apiRequest<{ models: RouterCatalogModel[] }>(
+        "/models/openrouter",
+    );
+    return models;
+}
+
+export async function getVercelModels(): Promise<RouterCatalogModel[]> {
+    const { models } = await apiRequest<{ models: RouterCatalogModel[] }>(
+        "/models/vercel",
     );
     return models;
 }
@@ -1315,29 +1350,13 @@ export async function streamChat(payload: {
     messages: {
         role: string;
         content: string;
-        files?: { filename: string; document_id?: string }[];
+        files?: MessageFile[];
         workflow?: { id: string; title: string };
     }[];
     chat_id?: string;
     project_id?: string;
     model?: string;
-    ask_inputs_response?: {
-        responses: (
-            | {
-                  id: string;
-                  kind: "choice";
-                  question: string;
-                  answer?: string;
-                  skipped?: boolean;
-              }
-            | {
-                  id: string;
-                  kind: "documents";
-                  filenames: string[];
-                  skipped?: boolean;
-              }
-        )[];
-    };
+    ask_inputs_response?: AskInputsResponsePayload;
     signal?: AbortSignal;
 }): Promise<Response> {
     const { signal, ...body } = payload;
@@ -1357,7 +1376,7 @@ export async function streamChat(payload: {
 type StreamChatMessage = {
     role: string;
     content: string;
-    files?: { filename: string; document_id?: string }[];
+    files?: MessageFile[];
     workflow?: { id: string; title: string };
 };
 
@@ -1368,23 +1387,7 @@ export async function streamProjectChat(payload: {
     model?: string;
     displayed_doc?: { filename: string; document_id: string };
     attached_documents?: { filename: string; document_id: string }[];
-    ask_inputs_response?: {
-        responses: (
-            | {
-                  id: string;
-                  kind: "choice";
-                  question: string;
-                  answer?: string;
-                  skipped?: boolean;
-              }
-            | {
-                  id: string;
-                  kind: "documents";
-                  filenames: string[];
-                  skipped?: boolean;
-              }
-        )[];
-    };
+    ask_inputs_response?: AskInputsResponsePayload;
     signal?: AbortSignal;
 }): Promise<Response> {
     const { projectId, signal, ...body } = payload;

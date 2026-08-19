@@ -8,6 +8,11 @@ import type {
     SourceDocumentType,
     SourceSubdocument,
 } from "../../../../../backend/src/lib/sourceDocuments";
+import type {
+    AskInputItem as SharedAskInputItem,
+    AskInputResponseItem as SharedAskInputResponseItem,
+    AskInputsEvent as SharedAskInputsEvent,
+} from "../../../../../backend/src/lib/chat/types";
 
 export interface Folder {
     id: string;
@@ -67,6 +72,8 @@ export interface Document {
     status: "pending" | "processing" | "ready" | "error";
     created_at: string | null;
     updated_at?: string | null;
+    /** Stable id of the document version currently selected for this row. */
+    current_version_id?: string | null;
     /** Version number of the document row pointed to by current_version_id. */
     active_version_number?: number | null;
     /** Legacy: max version_number across assistant_edit rows, null if doc is unedited. */
@@ -136,6 +143,15 @@ export interface EditAnnotation {
     status: "pending" | "accepted" | "rejected";
 }
 
+export type AskInputItem = SharedAskInputItem;
+export type AskInputResponseItem = SharedAskInputResponseItem;
+export type AskInputsEvent = SharedAskInputsEvent;
+
+export type AskInputsResponseEvent = {
+    type: "ask_inputs_response";
+    responses: AskInputResponseItem[];
+};
+
 export type AssistantEvent =
     | { type: "reasoning"; text: string; isStreaming?: boolean }
     | { type: "error"; message: string }
@@ -154,57 +170,23 @@ export type AssistantEvent =
           error?: string;
           isStreaming?: boolean;
       }
-    | {
-          type: "ask_inputs";
-          items: (
-              | {
-                    id: string;
-                    kind: "choice";
-                    question: string;
-                    options: {
-                        value: string;
-                    }[];
-                    allow_other: boolean;
-                    other_label: string;
-                    response_prefix?: string;
-                }
-              | {
-                    id: string;
-                    kind: "documents";
-                    document_types: string[];
-                    response_prefix?: string;
-                }
-          )[];
-      }
-    | {
-          type: "ask_inputs_response";
-          responses: (
-              | {
-                    id: string;
-                    kind: "choice";
-                    question: string;
-                    answer?: string;
-                    skipped?: boolean;
-                }
-              | {
-                    id: string;
-                    kind: "documents";
-                    filenames: string[];
-                    skipped?: boolean;
-                }
-          )[];
-      }
+    | AskInputsEvent
+    | AskInputsResponseEvent
     | { type: "thinking"; isStreaming?: boolean }
     | {
           type: "doc_read";
           filename: string;
           document_id?: string;
+          version_id?: string | null;
+          version_number?: number | null;
           isStreaming?: boolean;
       }
     | {
           type: "doc_find";
           filename: string;
           document_id?: string;
+          version_id?: string | null;
+          version_number?: number | null;
           query: string;
           total_matches: number;
           isStreaming?: boolean;
@@ -333,7 +315,7 @@ export interface Message {
     id?: string;
     role: "user" | "assistant";
     content: string;
-    files?: { filename: string; document_id?: string }[];
+    files?: MessageFile[];
     workflow?: { id: string; title: string };
     model?: string;
     citations?: Citation[];
@@ -342,6 +324,13 @@ export interface Message {
     /** Set when streaming failed; rendered as a red error block. */
     error?: string;
 }
+
+export type MessageFile = {
+    filename: string;
+    document_id?: string;
+    version_id?: string | null;
+    version_number?: number | null;
+};
 
 export interface CitationQuote {
     page?: number;

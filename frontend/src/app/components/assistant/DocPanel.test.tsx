@@ -29,6 +29,43 @@ describe("DocumentTitleRow", () => {
             container.querySelector('img[src*="/icons/file-types/word.svg"]'),
         ).toBeInTheDocument();
     });
+
+    it("uses pill-height source actions when the side panel is minimized", () => {
+        render(
+            <DocumentTitleRow
+                document={{
+                    document_id: "case:123",
+                    title: "Example v Example",
+                    type: "case",
+                    metadata: [],
+                    quotes: [],
+                    actions: [
+                        {
+                            type: "download",
+                            url: "https://example.com/opinion.pdf",
+                            label: "Download",
+                        },
+                        {
+                            type: "link",
+                            url: "https://example.com/source",
+                            label: "Source",
+                        },
+                    ],
+                }}
+                isReloading={false}
+                compactActions
+            />,
+        );
+
+        expect(screen.getByRole("link", { name: "Download" })).toHaveClass(
+            "h-6",
+            "w-6",
+        );
+        expect(screen.getByRole("link", { name: "Source" })).toHaveClass(
+            "h-6",
+            "w-6",
+        );
+    });
 });
 
 describe("case document", () => {

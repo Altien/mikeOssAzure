@@ -66,7 +66,7 @@ create trigger on_auth_user_created
 create table if not exists public.user_api_keys (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
-  provider text not null check (provider in ('claude', 'gemini', 'openai', 'openrouter', 'courtlistener')),
+  provider text not null check (provider in ('claude', 'gemini', 'openai', 'openrouter', 'vercel', 'courtlistener')),
   encrypted_key text not null,
   iv text not null,
   auth_tag text not null,
@@ -79,6 +79,68 @@ create index if not exists idx_user_api_keys_user
   on public.user_api_keys(user_id);
 
 alter table public.user_api_keys enable row level security;
+
+-- Ordered, user-selected models for API routing gateways. Router slugs are
+-- deliberately provider-neutral (for example `openrouter` or `vercel`).
+create table if not exists public.user_router_models (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  router text not null
+    check (router ~ '^[a-z0-9][a-z0-9_-]{0,63}$'),
+  model_id text not null
+    check (
+      model_id = btrim(model_id)
+      and char_length(model_id) between 1 and 200
+      and model_id !~ '\s'
+    ),
+  sort_order integer not null default 0 check (sort_order >= 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, router, model_id)
+);
+
+create index if not exists idx_user_router_models_user_router_order
+  on public.user_router_models (user_id, router, sort_order, created_at);
+
+alter table public.user_router_models enable row level security;
+
+create or replace function public.replace_user_router_models(
+  target_user_id uuid,
+  target_router text,
+  target_model_ids text[]
+)
+returns void
+language plpgsql
+security invoker
+set search_path = public
+as $$
+begin
+  if target_router !~ '^[a-z0-9][a-z0-9_-]{0,63}$' then
+    raise exception 'Invalid router slug';
+  end if;
+
+  if coalesce(array_length(target_model_ids, 1), 0) > 50 then
+    raise exception 'A router can have at most 50 selected models';
+  end if;
+
+  delete from public.user_router_models
+  where user_id = target_user_id and router = target_router;
+
+  insert into public.user_router_models (
+    user_id,
+    router,
+    model_id,
+    sort_order
+  )
+  select
+    target_user_id,
+    target_router,
+    model_id,
+    ordinality - 1
+  from unnest(coalesce(target_model_ids, '{}'::text[]))
+    with ordinality as selected(model_id, ordinality);
+end;
+$$;
 
 create table if not exists public.user_mcp_connectors (
   id uuid primary key default gen_random_uuid(),
@@ -2165,6 +2227,7 @@ revoke all on public.tabular_review_row_sources from anon, authenticated;
 revoke all on public.tabular_review_chats from anon, authenticated;
 revoke all on public.tabular_review_chat_messages from anon, authenticated;
 revoke all on public.user_api_keys from anon, authenticated;
+revoke all on public.user_router_models from anon, authenticated;
 revoke all on public.user_mcp_connectors from anon, authenticated;
 revoke all on public.user_mcp_oauth_tokens from anon, authenticated;
 revoke all on public.user_mcp_oauth_states from anon, authenticated;
@@ -2174,6 +2237,8 @@ revoke all on public.courtlistener_citation_index from anon, authenticated;
 revoke all on public.courtlistener_opinion_cluster_index from anon, authenticated;
 revoke all on public.audit_events from anon, authenticated;
 revoke all on function public.install_missing_default_workflows(text, jsonb)
+  from public, anon, authenticated;
+revoke all on function public.replace_user_router_models(uuid, text, text[])
   from public, anon, authenticated;
 
 grant select, insert, update, delete
@@ -2186,6 +2251,9 @@ grant select, insert, update, delete
 
 grant execute
   on function public.install_missing_default_workflows(text, jsonb)
+  to service_role;
+grant execute
+  on function public.replace_user_router_models(uuid, text, text[])
   to service_role;
 
 -- Tables created by this file are owned by the database bootstrap role. The

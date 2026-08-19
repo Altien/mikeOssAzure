@@ -32,7 +32,7 @@ const PUBLIC_TABLES = [
     "tabular_review_chat_messages", "tabular_review_chats", "tabular_reviews",
     "user_api_keys", "user_mcp_connector_tools", "user_mcp_connectors",
     "user_mcp_oauth_states", "user_mcp_oauth_tokens",
-    "user_mcp_tool_audit_logs", "user_profiles",
+    "user_mcp_tool_audit_logs", "user_profiles", "user_router_models",
     "word_chat_messages", "word_chats", "word_documents",
     "workflow_open_source_submissions", "workflow_shares", "workflows",
 ];

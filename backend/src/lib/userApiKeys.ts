@@ -8,6 +8,7 @@ export type ApiKeyProvider =
     | "gemini"
     | "openai"
     | "openrouter"
+    | "vercel"
     | "courtlistener";
 export type ApiKeySource = "user" | "env" | null;
 export type ApiKeyStatus = Record<ApiKeyProvider, boolean> & {
@@ -26,6 +27,7 @@ const PROVIDERS: ApiKeyProvider[] = [
     "gemini",
     "openai",
     "openrouter",
+    "vercel",
     "courtlistener",
 ];
 
@@ -43,6 +45,12 @@ function envApiKey(provider: ApiKeyProvider): string | null {
             return process.env.OPENAI_API_KEY?.trim() || null;
         case "openrouter":
             return process.env.OPENROUTER_API_KEY?.trim() || null;
+        case "vercel":
+            return (
+                process.env.AI_GATEWAY_API_KEY?.trim() ||
+                process.env.VERCEL_AI_GATEWAY_API_KEY?.trim() ||
+                null
+            );
         case "courtlistener":
             return process.env.COURTLISTENER_API_TOKEN?.trim() || null;
         default:
@@ -115,12 +123,14 @@ export async function getUserApiKeyStatus(
         gemini: false,
         openai: false,
         openrouter: false,
+        vercel: false,
         courtlistener: false,
         sources: {
             claude: null,
             gemini: null,
             openai: null,
             openrouter: null,
+            vercel: null,
             courtlistener: null,
         },
     };
@@ -158,6 +168,7 @@ export async function getUserApiKeys(
         gemini: envApiKey("gemini"),
         openai: envApiKey("openai"),
         openrouter: envApiKey("openrouter"),
+        vercel: envApiKey("vercel"),
         courtlistener: envApiKey("courtlistener"),
     };
 

@@ -50,16 +50,24 @@ export type EditTab = CommonTab & {
 export type AssistantSidePanelTab = DocumentTab | CitationTab | EditTab;
 
 /**
- * Keep the mounted document viewer's identity stable when another link opens
- * the same document. Event links commonly omit a version while citation and
- * download links include one; replacing that tuple would trigger a fresh
- * fetch/render even though the panel is already showing the document.
+ * A document version owns one panel tab. Explicit versions use their stable
+ * version id; older links without one fall back to the version number and then
+ * to the document's current version.
  */
+export function assistantSidePanelTabId(document: PanelDocument): string {
+    const version = document.version_id
+        ? `id:${document.version_id}`
+        : document.version_number != null
+          ? `number:${document.version_number}`
+          : "current";
+    return `${document.document_id}::${version}`;
+}
+
 export function mergeAssistantSidePanelTab(
     existing: AssistantSidePanelTab,
     incoming: AssistantSidePanelTab,
 ): AssistantSidePanelTab {
-    if (existing.document.document_id !== incoming.document.document_id) {
+    if (existing.id !== incoming.id) {
         return incoming;
     }
     if (existing.kind === "document" && incoming.kind === "document") {
@@ -77,15 +85,25 @@ export function mergeAssistantSidePanelTab(
     return {
         ...incoming,
         id: existing.id,
-        document: {
-            ...incoming.document,
-            document_id: existing.document.document_id,
-            version_id: existing.document.version_id,
-            version_number: existing.document.version_number,
-        },
         warning: existing.warning,
         initialScrollTop: existing.initialScrollTop,
     };
+}
+
+export function upsertAssistantSidePanelTab(
+    tabs: AssistantSidePanelTab[],
+    incoming: AssistantSidePanelTab,
+): AssistantSidePanelTab[] {
+    const index = tabs.findIndex((tab) => tab.id === incoming.id);
+    if (index < 0) return [...tabs, incoming];
+
+    const existing = tabs[index];
+    const merged = mergeAssistantSidePanelTab(existing, incoming);
+    if (merged === existing) return tabs;
+
+    const next = tabs.slice();
+    next[index] = merged;
+    return next;
 }
 
 export type AssistantTabDropPosition = "before" | "after";

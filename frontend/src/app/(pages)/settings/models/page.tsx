@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, Check, ChevronDown, Loader2 } from "lucide-react";
+import { Check, ChevronDown, Loader2 } from "lucide-react";
 import {
     DropdownMenu,
     DropdownMenuLabel,
@@ -13,20 +13,16 @@ import {
     LiquidDropdownItem,
 } from "@/app/components/ui/liquid-dropdown";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
-import type { ApiKeyState } from "@/app/lib/mikeApi";
+import { type ApiKeyState } from "@/app/lib/mikeApi";
 import {
     MODELS,
     SETTINGS_MODELS,
+    openRouterModelOptions,
+    vercelModelOptions,
     type ModelOption,
 } from "@/app/components/assistant/ModelToggle";
-import {
-    isModelAvailable,
-    modelGroupToProvider,
-    providerLabel,
-} from "@/app/lib/modelAvailability";
-import {
-    FieldLabel,
-} from "@/app/components/ui/form-field";
+import { isModelAvailable } from "@/app/lib/modelAvailability";
+import { FieldLabel } from "@/app/components/ui/form-field";
 import { SETTINGS_CONTROL_CLASS } from "@/app/components/settings/SettingsTextInput";
 import { SettingsSection } from "../SettingsSection";
 import { useOllamaModels } from "@/app/hooks/useOllamaModels";
@@ -46,6 +42,11 @@ export default function ModelPreferencesPage() {
         Partial<Record<ModelPreferenceField, string>>
     >({});
     const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const openRouterSelection = profile?.openRouterModels ?? [];
+    const vercelSelection = profile?.vercelModels ?? [];
+    const selectedOpenRouterOptions =
+        openRouterModelOptions(openRouterSelection);
+    const selectedVercelOptions = vercelModelOptions(vercelSelection);
 
     useEffect(() => {
         return () => {
@@ -66,7 +67,9 @@ export default function ModelPreferencesPage() {
             setSavedField(field);
             if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
             savedTimerRef.current = setTimeout(() => {
-                setSavedField((current) => (current === field ? null : current));
+                setSavedField((current) =>
+                    current === field ? null : current,
+                );
             }, 1600);
         } else {
             setOptimisticValues((current) => {
@@ -78,55 +81,69 @@ export default function ModelPreferencesPage() {
     };
 
     return (
-        <div>
-            <div className="flex items-center gap-2 mb-4">
-                <h2 className="text-2xl font-medium font-serif">
+        <div className="space-y-8">
+            <section className="space-y-3">
+                <h2 className="text-2xl font-medium font-serif text-gray-900">
                     Model Preferences
                 </h2>
-            </div>
-            <SettingsSection>
-                <div className="px-4 py-5">
-                    <FieldLabel className="text-sm">
-                        Title generation model
-                    </FieldLabel>
-                    <p className="text-xs text-gray-400 mb-2">
-                        Used for naming chats and other lightweight titles.
-                    </p>
-                    <ModelPreferenceDropdown
-                        value={
-                            optimisticValues.titleModel ??
-                            profile?.titleModel ??
-                            "gemini-3.1-flash-lite-preview"
-                        }
-                        options={[...SETTINGS_MODELS, ...ollamaModels]}
-                        apiKeys={profile?.apiKeys}
-                        isSaving={savingField === "titleModel"}
-                        isSaved={savedField === "titleModel"}
-                        onChange={(id) => handleModelChange("titleModel", id)}
-                    />
-                </div>
-                <div className="px-4 py-5">
-                    <FieldLabel className="text-sm">
-                        Tabular review model
-                    </FieldLabel>
-                    <p className="text-xs text-gray-400 mb-2">
-                        We recommend using a smaller model for tabular reviews
-                        to reduce token costs.
-                    </p>
-                    <ModelPreferenceDropdown
-                        value={
-                            optimisticValues.tabularModel ??
-                            profile?.tabularModel ??
-                            "gemini-3-flash-preview"
-                        }
-                        options={[...MODELS, ...ollamaModels]}
-                        apiKeys={profile?.apiKeys}
-                        isSaving={savingField === "tabularModel"}
-                        isSaved={savedField === "tabularModel"}
-                        onChange={(id) => handleModelChange("tabularModel", id)}
-                    />
-                </div>
-            </SettingsSection>
+                <SettingsSection>
+                    <div className="px-4 py-5">
+                        <FieldLabel className="text-sm">
+                            Title generation model
+                        </FieldLabel>
+                        <p className="text-xs text-gray-400 mb-2">
+                            Used for naming chats and other lightweight titles.
+                        </p>
+                        <ModelPreferenceDropdown
+                            value={
+                                optimisticValues.titleModel ??
+                                profile?.titleModel ??
+                                "gemini-3.5-flash-lite"
+                            }
+                            options={[
+                                ...SETTINGS_MODELS,
+                                ...selectedOpenRouterOptions,
+                                ...selectedVercelOptions,
+                                ...ollamaModels,
+                            ]}
+                            apiKeys={profile?.apiKeys}
+                            isSaving={savingField === "titleModel"}
+                            isSaved={savedField === "titleModel"}
+                            onChange={(id) =>
+                                handleModelChange("titleModel", id)
+                            }
+                        />
+                    </div>
+                    <div className="px-4 py-5">
+                        <FieldLabel className="text-sm">
+                            Tabular review model
+                        </FieldLabel>
+                        <p className="text-xs text-gray-400 mb-2">
+                            We recommend using a smaller model for tabular
+                            reviews to reduce token costs.
+                        </p>
+                        <ModelPreferenceDropdown
+                            value={
+                                optimisticValues.tabularModel ??
+                                profile?.tabularModel ??
+                                "gemini-3-flash-preview"
+                            }
+                            options={[
+                                ...MODELS,
+                                ...selectedOpenRouterOptions,
+                                ...selectedVercelOptions,
+                                ...ollamaModels,
+                            ]}
+                            apiKeys={profile?.apiKeys}
+                            isSaving={savingField === "tabularModel"}
+                            isSaved={savedField === "tabularModel"}
+                            onChange={(id) =>
+                                handleModelChange("tabularModel", id)
+                            }
+                        />
+                    </div>
+                </SettingsSection>
+            </section>
         </div>
     );
 }
@@ -147,29 +164,38 @@ function ModelPreferenceDropdown({
     isSaved?: boolean;
 }) {
     const [isOpen, setIsOpen] = useState(false);
-    const selected = options.find((m) => m.id === value);
-    const selectedAvailable = apiKeys ? isModelAvailable(value, apiKeys) : true;
+    const availableOptions = options.filter((model) => {
+        if (model.group === "Local") return true;
+        return apiKeys ? isModelAvailable(model.id, apiKeys) : false;
+    });
+    const selected = availableOptions.find((model) => model.id === value);
     const groups: ModelOption["group"][] = [
         "Anthropic",
         "Google",
         "OpenAI",
+        "OpenRouter",
+        "Vercel AI Gateway",
         "Local",
     ];
+    const availableGroups = groups.flatMap((group) => {
+        const items = availableOptions.filter((model) => model.group === group);
+        return items.length ? [{ group, items }] : [];
+    });
 
     return (
         <DropdownMenu onOpenChange={setIsOpen}>
             <DropdownMenuTrigger asChild>
                 <button
                     type="button"
-                    disabled={isSaving}
+                    disabled={isSaving || availableOptions.length === 0}
                     className={`flex h-9 items-center justify-between gap-2 hover:bg-gray-200/70 ${SETTINGS_CONTROL_CLASS}`}
                 >
                     <span className="flex items-center gap-2 min-w-0">
-                        {!selectedAvailable && (
-                            <AlertCircle className="h-3.5 w-3.5 shrink-0 text-red-500" />
-                        )}
                         <span className="truncate text-gray-900">
-                            {selected?.label ?? "Select a model"}
+                            {selected?.label ??
+                                (availableOptions.length
+                                    ? "Select a model"
+                                    : "No available models")}
                         </span>
                     </span>
                     {isSaving ? (
@@ -188,40 +214,24 @@ function ModelPreferenceDropdown({
                 style={{ width: "var(--radix-dropdown-menu-trigger-width)" }}
                 align="start"
             >
-                {groups.map((group, gi) => {
-                    const items = options.filter((m) => m.group === group);
-                    if (items.length === 0) return null;
+                {availableGroups.map(({ group, items }, groupIndex) => {
                     return (
                         <div key={group}>
-                            {gi > 0 && <DropdownMenuSeparator />}
+                            {groupIndex > 0 && <DropdownMenuSeparator />}
                             <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-gray-400">
                                 {group}
                             </DropdownMenuLabel>
                             {items.map((m) => {
-                                const provider = modelGroupToProvider(m.group);
-                                const available = apiKeys
-                                    ? isModelAvailable(m.id, apiKeys)
-                                    : true;
                                 return (
                                     <LiquidDropdownItem
                                         key={m.id}
                                         className="cursor-pointer"
                                         onSelect={() => onChange(m.id)}
-                                        title={
-                                            !available
-                                                ? `Add a ${providerLabel(provider)} API key to use this model`
-                                                : undefined
-                                        }
                                     >
-                                        <span
-                                            className={`flex-1 ${available ? "" : "text-gray-400"}`}
-                                        >
+                                        <span className="flex-1">
                                             {m.label}
                                         </span>
-                                        {!available && (
-                                            <AlertCircle className="h-3.5 w-3.5 text-red-500 ml-1" />
-                                        )}
-                                        {m.id === value && available && (
+                                        {m.id === value && (
                                             <Check className="h-3.5 w-3.5 text-gray-600 ml-1" />
                                         )}
                                     </LiquidDropdownItem>

@@ -136,6 +136,12 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
             const files = selectedDocuments.map((document) => ({
                 filename: document.filename,
                 document_id: document.id,
+                ...(document.current_version_id
+                    ? { version_id: document.current_version_id }
+                    : {}),
+                ...(document.active_version_number != null
+                    ? { version_number: document.active_version_number }
+                    : {}),
             }));
             const content = assistantPrompt.trim()
                 ? `implement workflow\n${assistantPrompt.trim()}`

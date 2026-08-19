@@ -1441,7 +1441,8 @@ test("model toggle sends the selected frontend model", async ({
   await addin.expectAuthedShell();
 
   await page.getByRole("button", { name: "Choose model" }).click();
-  await page.getByRole("menuitem", { name: /GPT-5\.4/ }).click();
+  await page.getByRole("menuitem", { name: "OpenAI", exact: true }).click();
+  await page.getByRole("menuitem", { name: "GPT-5.4", exact: true }).click();
   await page.getByPlaceholder("How can I help?").fill("Hello");
   const requestPromise = page.waitForRequest("**/word-chat");
   await page.getByRole("button", { name: "Send" }).click();

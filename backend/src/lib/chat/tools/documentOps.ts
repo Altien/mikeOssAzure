@@ -1100,8 +1100,9 @@ export async function generatePpt(
 export async function loadCurrentVersionBytes(
   documentId: string,
   db: ReturnType<typeof createServerSupabase>,
+  versionId?: string | null,
 ): Promise<{ bytes: Buffer; storage_path: string } | null> {
-  const active = await loadActiveVersion(documentId, db);
+  const active = await loadActiveVersion(documentId, db, versionId);
   if (!active) return null;
   const raw = await downloadFile(active.storage_path);
   if (!raw) return null;
@@ -1362,6 +1363,7 @@ export async function getTurnReadIdentity(params: {
   filename: string;
   documentId?: string;
   versionId?: string | null;
+  versionNumber?: number | null;
   storagePath: string;
 } | null> {
   const { docLabel, docStore, docIndex, db } = params;
@@ -1378,6 +1380,7 @@ export async function getTurnReadIdentity(params: {
         filename: docInfo.filename,
         documentId,
         versionId: active.id,
+        versionNumber: active.version_number,
         storagePath: active.storage_path,
       };
     }
@@ -1389,6 +1392,7 @@ export async function getTurnReadIdentity(params: {
     filename: docInfo.filename,
     documentId,
     versionId: docIndex?.[docLabel]?.version_id ?? null,
+    versionNumber: docIndex?.[docLabel]?.version_number ?? null,
     storagePath: docInfo.storage_path,
   };
 }
@@ -1427,7 +1431,10 @@ export async function readDocumentContent(
   write: (s: string) => void,
   docIndex?: DocIndex,
   db?: ReturnType<typeof createServerSupabase>,
-  opts?: { emitEvents?: boolean },
+  opts?: {
+    emitEvents?: boolean;
+    readIdentity?: Awaited<ReturnType<typeof getTurnReadIdentity>>;
+  },
 ): Promise<string> {
   const emitEvents = opts?.emitEvents ?? true;
   devLog(`[read_document] called with docLabel="${docLabel}"`);
@@ -1444,13 +1451,24 @@ export async function readDocumentContent(
   );
 
   const documentId = docIndex?.[docLabel]?.document_id;
+  const readIdentity =
+    opts?.readIdentity ??
+    (emitEvents
+      ? await getTurnReadIdentity({ docLabel, docStore, docIndex, db })
+      : null);
+  const versionId =
+    readIdentity?.versionId ?? docIndex?.[docLabel]?.version_id ?? null;
+  const versionNumber =
+    readIdentity?.versionNumber ?? docIndex?.[docLabel]?.version_number ?? null;
   const emitDocRead = () => {
     if (!emitEvents) return;
     write(
       `data: ${JSON.stringify({
         type: "doc_read",
         filename: docInfo.filename,
-        document_id: documentId,
+        document_id: readIdentity?.documentId ?? documentId,
+        version_id: versionId,
+        version_number: versionNumber,
       })}\n\n`,
     );
   };
@@ -1459,7 +1477,9 @@ export async function readDocumentContent(
       `data: ${JSON.stringify({
         type: "doc_read_start",
         filename: docInfo.filename,
-        document_id: documentId,
+        document_id: readIdentity?.documentId ?? documentId,
+        version_id: versionId,
+        version_number: versionNumber,
       })}\n\n`,
     );
   try {
@@ -1480,7 +1500,7 @@ export async function readDocumentContent(
     let raw: ArrayBuffer | null = null;
     let sourcePath = docInfo.storage_path;
     if (documentId && db) {
-      const current = await loadCurrentVersionBytes(documentId, db);
+      const current = await loadCurrentVersionBytes(documentId, db, versionId);
       if (current) {
         raw = current.bytes.buffer.slice(
           current.bytes.byteOffset,
@@ -1604,7 +1624,13 @@ export async function readDocumentContent(
     );
     if (emitEvents)
       write(
-        `data: ${JSON.stringify({ type: "doc_read", filename: docInfo.filename })}\n\n`,
+        `data: ${JSON.stringify({
+          type: "doc_read",
+          filename: docInfo.filename,
+          document_id: readIdentity?.documentId ?? documentId,
+          version_id: versionId,
+          version_number: versionNumber,
+        })}\n\n`,
       );
     return "Document could not be read.";
   }
@@ -1724,6 +1750,7 @@ export async function findInDocumentContent(params: {
   write: (s: string) => void;
   docIndex?: DocIndex;
   db?: ReturnType<typeof createServerSupabase>;
+  readIdentity?: Awaited<ReturnType<typeof getTurnReadIdentity>>;
 }): Promise<string> {
   const {
     docLabel,
@@ -1748,6 +1775,13 @@ export async function findInDocumentContent(params: {
     });
   }
   const documentId = docIndex?.[docLabel]?.document_id;
+  const readIdentity =
+    params.readIdentity ??
+    (await getTurnReadIdentity({ docLabel, docStore, docIndex, db }));
+  const versionId =
+    readIdentity?.versionId ?? docIndex?.[docLabel]?.version_id ?? null;
+  const versionNumber =
+    readIdentity?.versionNumber ?? docIndex?.[docLabel]?.version_number ?? null;
 
   // Announce the search to the UI, then reuse readDocumentContent for its
   // fallbacks — but suppress its own doc_read events so the user only sees
@@ -1756,7 +1790,9 @@ export async function findInDocumentContent(params: {
     `data: ${JSON.stringify({
       type: "doc_find_start",
       filename: docInfo.filename,
-      document_id: documentId,
+      document_id: readIdentity?.documentId ?? documentId,
+      version_id: versionId,
+      version_number: versionNumber,
       query,
     })}\n\n`,
   );
@@ -1767,14 +1803,16 @@ export async function findInDocumentContent(params: {
     write,
     docIndex,
     db,
-    { emitEvents: false },
+    { emitEvents: false, readIdentity },
   );
   if (!text || text === "Document could not be read.") {
     write(
       `data: ${JSON.stringify({
         type: "doc_find",
         filename: docInfo.filename,
-        document_id: documentId,
+        document_id: readIdentity?.documentId ?? documentId,
+        version_id: versionId,
+        version_number: versionNumber,
         query,
         total_matches: 0,
       })}\n\n`,
@@ -1805,7 +1843,9 @@ export async function findInDocumentContent(params: {
     `data: ${JSON.stringify({
       type: "doc_find",
       filename: docInfo.filename,
-      document_id: documentId,
+      document_id: readIdentity?.documentId ?? documentId,
+      version_id: versionId,
+      version_number: versionNumber,
       query,
       total_matches: totalMatches,
     })}\n\n`,
@@ -1843,6 +1883,7 @@ export type TurnReadState = Map<
     filename: string;
     documentId?: string;
     versionId?: string | null;
+    versionNumber?: number | null;
     storagePath: string;
   }
 >;

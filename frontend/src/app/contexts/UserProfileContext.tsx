@@ -32,6 +32,8 @@ interface UserProfile {
     mfaOnLogin: boolean;
     legalResearchUs: boolean;
     quickActionsVisible: boolean;
+    openRouterModels: string[];
+    vercelModels: string[];
     apiKeys: ApiKeyState;
 }
 
@@ -47,6 +49,8 @@ interface UserProfileContextType {
     updateMfaOnLogin: (enabled: boolean) => Promise<boolean>;
     updateLegalResearchUs: (enabled: boolean) => Promise<boolean>;
     updateQuickActionsVisible: (visible: boolean) => Promise<boolean>;
+    updateOpenRouterModels: (models: string[]) => Promise<boolean>;
+    updateVercelModels: (models: string[]) => Promise<boolean>;
     updateApiKey: (
         provider: ApiKeyProvider,
         value: string | null,
@@ -64,6 +68,7 @@ const API_KEY_PROVIDERS: ApiKeyProvider[] = [
     "gemini",
     "openai",
     "openrouter",
+    "vercel",
     "courtlistener",
 ];
 
@@ -73,6 +78,7 @@ function emptyApiKeys(): ApiKeyState {
         gemini: { configured: false, source: null },
         openai: { configured: false, source: null },
         openrouter: { configured: false, source: null },
+        vercel: { configured: false, source: null },
         courtlistener: { configured: false, source: null },
     };
 }
@@ -92,6 +98,12 @@ function toProfile(data: ApiUserProfile): UserProfile {
     return {
         ...profile,
         mfaOnLogin: profile.mfaOnLogin === true,
+        openRouterModels: Array.isArray(profile.openRouterModels)
+            ? profile.openRouterModels
+            : [],
+        vercelModels: Array.isArray(profile.vercelModels)
+            ? profile.vercelModels
+            : [],
         apiKeys,
     };
 }
@@ -119,11 +131,13 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 creditsResetDate: futureResetDate.toISOString(),
                 creditsRemaining: 999999, // temporarily unlimited
                 tier: "Free",
-                titleModel: "gemini-3.1-flash-lite-preview",
+                titleModel: "gemini-3.5-flash-lite",
                 tabularModel: "gemini-3-flash-preview",
                 mfaOnLogin: false,
                 legalResearchUs: true,
                 quickActionsVisible: true,
+                openRouterModels: [],
+                vercelModels: [],
                 apiKeys: emptyApiKeys(),
             });
         } finally {
@@ -251,6 +265,38 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         [user],
     );
 
+    const updateOpenRouterModels = useCallback(
+        async (openRouterModels: string[]): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                const updated = await updateUserProfile({ openRouterModels });
+                setProfile((prev) =>
+                    prev ? { ...prev, ...toProfile(updated) } : null,
+                );
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [user],
+    );
+
+    const updateVercelModels = useCallback(
+        async (vercelModels: string[]): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                const updated = await updateUserProfile({ vercelModels });
+                setProfile((prev) =>
+                    prev ? { ...prev, ...toProfile(updated) } : null,
+                );
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [user],
+    );
+
     const updateApiKey = useCallback(
         async (
             provider: ApiKeyProvider,
@@ -313,6 +359,8 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 updateMfaOnLogin,
                 updateLegalResearchUs,
                 updateQuickActionsVisible,
+                updateOpenRouterModels,
+                updateVercelModels,
                 updateApiKey,
                 reloadProfile,
                 incrementMessageCredits,

@@ -20,6 +20,8 @@ describe("chat request validation", () => {
                         {
                             filename: " contract.pdf ",
                             document_id: " document-1 ",
+                            version_id: " version-3 ",
+                            version_number: 3,
                         },
                         { filename: " local-draft.docx " },
                     ],
@@ -35,7 +37,12 @@ describe("chat request validation", () => {
                     role: "user",
                     content: "  keep message whitespace  ",
                     files: [
-                        { filename: "contract.pdf", document_id: "document-1" },
+                        {
+                            filename: "contract.pdf",
+                            document_id: "document-1",
+                            version_id: "version-3",
+                            version_number: 3,
+                        },
                         { filename: "local-draft.docx" },
                     ],
                     workflow: { id: "workflow-1", title: "Review NDA" },
@@ -71,6 +78,26 @@ describe("chat request validation", () => {
                 },
             ],
             "messages[0].files[0].document_id must be a non-empty string",
+        ],
+        [
+            [
+                {
+                    role: "user",
+                    content: "hello",
+                    files: [{ filename: "contract.pdf", version_id: " " }],
+                },
+            ],
+            "messages[0].files[0].version_id must be a non-empty string",
+        ],
+        [
+            [
+                {
+                    role: "user",
+                    content: "hello",
+                    files: [{ filename: "contract.pdf", version_number: 0 }],
+                },
+            ],
+            "messages[0].files[0].version_number must be a positive integer",
         ],
         [
             [{ role: "user", content: "hello", workflow: [] }],
@@ -172,6 +199,12 @@ describe("chat request validation", () => {
                         kind: "documents",
                         filenames: [" exhibit-a.pdf ", " exhibit-b.pdf "],
                     },
+                    {
+                        id: " text-1 ",
+                        kind: "text",
+                        question: " Registered address? ",
+                        answer: " 1 Legal Plaza\nSingapore 048583 ",
+                    },
                 ],
             }),
         ).toEqual({
@@ -189,6 +222,12 @@ describe("chat request validation", () => {
                         kind: "documents",
                         filenames: ["exhibit-a.pdf", "exhibit-b.pdf"],
                     },
+                    {
+                        id: "text-1",
+                        kind: "text",
+                        question: "Registered address?",
+                        answer: "1 Legal Plaza\nSingapore 048583",
+                    },
                 ],
             },
         });
@@ -202,7 +241,7 @@ describe("chat request validation", () => {
         ],
         [
             { responses: [{ id: "choice-1", kind: "other" }] },
-            'ask_inputs_response.responses[0].kind must be "choice" or "documents"',
+            'ask_inputs_response.responses[0].kind must be "choice", "text", or "documents"',
         ],
         [
             {
@@ -216,6 +255,19 @@ describe("chat request validation", () => {
                 ],
             },
             "ask_inputs_response.responses[0].answer must be a non-empty string unless skipped",
+        ],
+        [
+            {
+                responses: [
+                    {
+                        id: "text-1",
+                        kind: "text",
+                        question: "Address?",
+                        answer: "a".repeat(5_001),
+                    },
+                ],
+            },
+            "ask_inputs_response.responses[0].answer must be at most 5000 characters",
         ],
         [
             {

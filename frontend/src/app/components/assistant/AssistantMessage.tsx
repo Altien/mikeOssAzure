@@ -433,8 +433,9 @@ export function AssistantMessage({
                                   onOpenDocument({
                                       documentId: event.document_id!,
                                       filename: event.filename,
-                                      versionId: null,
-                                      versionNumber: null,
+                                      versionId: event.version_id ?? null,
+                                      versionNumber:
+                                          event.version_number ?? null,
                                   })
                             : !event.isStreaming && ann && onCitationClick
                               ? () => onCitationClick(ann)
@@ -461,8 +462,9 @@ export function AssistantMessage({
                                   onOpenDocument({
                                       documentId: event.document_id!,
                                       filename: event.filename,
-                                      versionId: null,
-                                      versionNumber: null,
+                                      versionId: event.version_id ?? null,
+                                      versionNumber:
+                                          event.version_number ?? null,
                                   })
                             : undefined
                     }
@@ -563,7 +565,7 @@ export function AssistantMessage({
             const response = askInputsResponseFor(globalIdx);
             return (
                 <AskInputsBlock
-                    key={globalIdx}
+                    key={`${globalIdx}-${response ? "complete" : "pending"}`}
                     event={event}
                     response={response}
                     showConnector={showConnector}

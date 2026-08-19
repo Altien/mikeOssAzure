@@ -900,6 +900,14 @@ export function useAssistantChat({
                   typeof data.document_id === "string"
                     ? (data.document_id as string)
                     : undefined,
+                version_id:
+                  typeof data.version_id === "string"
+                    ? (data.version_id as string)
+                    : null,
+                version_number:
+                  typeof data.version_number === "number"
+                    ? (data.version_number as number)
+                    : null,
                 isStreaming: true,
               });
               continue;
@@ -957,6 +965,21 @@ export function useAssistantChat({
                   });
                   return acc;
                 }
+                if (row.kind === "text") {
+                  acc.push({
+                    id,
+                    kind: "text" as const,
+                    question:
+                      typeof row.question === "string"
+                        ? row.question
+                        : "Please provide the requested information.",
+                    response_prefix:
+                      typeof row.response_prefix === "string"
+                        ? row.response_prefix
+                        : undefined,
+                  });
+                  return acc;
+                }
                 if (row.kind === "documents") {
                   const documentTypes = Array.isArray(row.document_types)
                     ? (row.document_types as unknown[])
@@ -1002,6 +1025,14 @@ export function useAssistantChat({
                       typeof data.document_id === "string"
                         ? (data.document_id as string)
                         : event.document_id,
+                    version_id:
+                      typeof data.version_id === "string"
+                        ? (data.version_id as string)
+                        : event.version_id,
+                    version_number:
+                      typeof data.version_number === "number"
+                        ? (data.version_number as number)
+                        : event.version_number,
                     isStreaming: false,
                   };
                 },
@@ -1018,6 +1049,14 @@ export function useAssistantChat({
                   typeof data.document_id === "string"
                     ? (data.document_id as string)
                     : undefined,
+                version_id:
+                  typeof data.version_id === "string"
+                    ? (data.version_id as string)
+                    : null,
+                version_number:
+                  typeof data.version_number === "number"
+                    ? (data.version_number as number)
+                    : null,
                 query: (data.query as string) ?? "",
                 total_matches: 0,
                 isStreaming: true,
@@ -1043,6 +1082,14 @@ export function useAssistantChat({
                       typeof data.document_id === "string"
                         ? (data.document_id as string)
                         : event.document_id,
+                    version_id:
+                      typeof data.version_id === "string"
+                        ? (data.version_id as string)
+                        : event.version_id,
+                    version_number:
+                      typeof data.version_number === "number"
+                        ? (data.version_number as number)
+                        : event.version_number,
                     isStreaming: false,
                     total_matches:
                       typeof data.total_matches === "number"

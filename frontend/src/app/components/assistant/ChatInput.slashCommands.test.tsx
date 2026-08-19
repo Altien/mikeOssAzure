@@ -89,6 +89,45 @@ describe("ChatInput workflow slash commands", () => {
         ).toBeInTheDocument();
     });
 
+    it("submits the attached document's current version", async () => {
+        const ref = createRef<ChatInputHandle>();
+        const onSubmit = vi.fn();
+        const user = userEvent.setup();
+        const document = {
+            id: "document-1",
+            filename: "agreement.docx",
+            file_type: "docx",
+            current_version_id: "version-4",
+            active_version_number: 4,
+        } as Document;
+
+        render(
+            <ChatInput
+                ref={ref}
+                onSubmit={onSubmit}
+                onCancel={vi.fn()}
+                isLoading={false}
+            />,
+        );
+
+        act(() => ref.current?.addDoc(document));
+        await user.type(screen.getByRole("combobox"), "Review this");
+        await user.keyboard("{Enter}");
+
+        expect(onSubmit).toHaveBeenCalledWith(
+            expect.objectContaining({
+                files: [
+                    {
+                        filename: "agreement.docx",
+                        document_id: "document-1",
+                        version_id: "version-4",
+                        version_number: 4,
+                    },
+                ],
+            }),
+        );
+    });
+
     it("attaches the selected workflow without submitting", async () => {
         const onSubmit = vi.fn();
         const user = userEvent.setup();

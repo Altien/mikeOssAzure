@@ -1,5 +1,9 @@
 import { parseAskInputsResponsePayload } from "./contextBuilders";
-import type { AskInputsResponseRequest, ChatMessage } from "./types";
+import {
+  MAX_ASK_INPUT_TEXT_LENGTH,
+  type AskInputsResponseRequest,
+  type ChatMessage,
+} from "./types";
 
 type ValidationResult<T> =
   | { ok: true; value: T }
@@ -95,9 +99,36 @@ function parseMessageFiles(
       documentId = parsedDocumentId.value;
     }
 
+    let versionId: string | undefined;
+    if (file.version_id !== undefined) {
+      const parsedVersionId = parseNonEmptyString(
+        file.version_id,
+        `messages[${messageIndex}].files[${fileIndex}].version_id must be a non-empty string`,
+      );
+      if (!parsedVersionId.ok) return parsedVersionId;
+      versionId = parsedVersionId.value;
+    }
+
+    let versionNumber: number | undefined;
+    if (file.version_number !== undefined) {
+      if (
+        typeof file.version_number !== "number" ||
+        !Number.isInteger(file.version_number) ||
+        file.version_number < 1
+      ) {
+        return {
+          ok: false,
+          detail: `messages[${messageIndex}].files[${fileIndex}].version_number must be a positive integer`,
+        };
+      }
+      versionNumber = file.version_number;
+    }
+
     files.push({
       filename: filename.value,
       ...(documentId ? { document_id: documentId } : {}),
+      ...(versionId ? { version_id: versionId } : {}),
+      ...(versionNumber !== undefined ? { version_number: versionNumber } : {}),
     });
   }
   return { ok: true, value: files };
@@ -267,10 +298,14 @@ export function parseOptionalAskInputsResponse(
       `${field}.id must be a non-empty string`,
     );
     if (!id.ok) return id;
-    if (response.kind !== "choice" && response.kind !== "documents") {
+    if (
+      response.kind !== "choice" &&
+      response.kind !== "text" &&
+      response.kind !== "documents"
+    ) {
       return {
         ok: false,
-        detail: `${field}.kind must be "choice" or "documents"`,
+        detail: `${field}.kind must be "choice", "text", or "documents"`,
       };
     }
     if (
@@ -280,7 +315,7 @@ export function parseOptionalAskInputsResponse(
       return { ok: false, detail: `${field}.skipped must be a boolean` };
     }
 
-    if (response.kind === "choice") {
+    if (response.kind === "choice" || response.kind === "text") {
       const question = parseNonEmptyString(
         response.question,
         `${field}.question must be a non-empty string`,
@@ -299,6 +334,16 @@ export function parseOptionalAskInputsResponse(
         return {
           ok: false,
           detail: `${field}.answer must be a non-empty string unless skipped`,
+        };
+      }
+      if (
+        response.kind === "text" &&
+        typeof response.answer === "string" &&
+        response.answer.length > MAX_ASK_INPUT_TEXT_LENGTH
+      ) {
+        return {
+          ok: false,
+          detail: `${field}.answer must be at most ${MAX_ASK_INPUT_TEXT_LENGTH} characters`,
         };
       }
       continue;
