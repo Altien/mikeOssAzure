@@ -9,6 +9,12 @@ interface EditCardProps {
   edit: Partial<RedlineEdit>;
   changeNumber?: number;
   status?: EditCardStatus;
+  /** How many places Word found the original text, when it reported it. */
+  matches?: number;
+  /** How many occurrences a replace-all edit actually applied. */
+  appliedMatches?: number;
+  /** Snippet of the paragraph the edit landed in. */
+  locationHint?: string;
   /** Scrolls Word to the revision this card applied. */
   onView?: () => void;
   onAccept?: () => void;
@@ -41,6 +47,14 @@ const STATUS_COPY: Record<
     copy: "Skipped — source text appears more than once.",
     className: "text-gray-500",
   },
+  unsearchable: {
+    copy: "Skipped — this passage is too long for Word’s search or spans paragraphs.",
+    className: "text-gray-500",
+  },
+  conflicted: {
+    copy: "Skipped — the target text already has tracked changes. Resolve those in Word first.",
+    className: "text-gray-500",
+  },
   incomplete: {
     copy: "Incomplete change — not applied.",
     className: "text-gray-500",
@@ -63,6 +77,9 @@ export function EditCard({
   edit,
   changeNumber,
   status = "pending",
+  matches,
+  appliedMatches,
+  locationHint,
   onView,
   onAccept,
   onReject,
@@ -92,6 +109,18 @@ export function EditCard({
   const hasEditText =
     edit.replacement !== undefined || edit.original !== undefined;
   const statusCopy = status === "pending" ? undefined : STATUS_COPY[status];
+  // The generic ambiguous copy upgrades to an actionable one when Word
+  // reported how many places the passage matched.
+  const ambiguousCopy =
+    status === "ambiguous" && matches !== undefined && matches > 1
+      ? `Skipped — this text appears ${matches} times in the document. Tell Mike which one to change.`
+      : undefined;
+  // A replace-all edit names its breadth so "Applied" can't be misread as a
+  // single change.
+  const multiApplyCopy =
+    status === "applied" && appliedMatches !== undefined && appliedMatches > 1
+      ? `Applied to the document in ${appliedMatches} places.`
+      : undefined;
   // Every other status already says something precise; only these two learn
   // more from Word's own message — and a pending change can carry one too
   // (a view that could not scroll, say).
@@ -101,7 +130,7 @@ export function EditCard({
     status === "error" ||
     status === "historical"
       ? (error ?? statusCopy?.copy)
-      : statusCopy?.copy;
+      : (ambiguousCopy ?? multiApplyCopy ?? statusCopy?.copy);
   const messageClass =
     status === "pending" ? "text-amber-700" : (statusCopy?.className ?? "");
 
@@ -122,6 +151,13 @@ export function EditCard({
         ) : undefined
       }
       reason={edit.reason}
+      locationHint={
+        // Show where the change landed only while its location is still
+        // reviewable; resolved and skipped cards drop the extra line.
+        status === "pending" || status === "applied" || status === "unmanaged"
+          ? locationHint
+          : undefined
+      }
       changeNumber={changeNumber}
       status={status}
       statusMessage={message}
