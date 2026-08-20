@@ -19,6 +19,11 @@ export interface EditCardUIProps {
      */
     previewContent?: ReactNode;
     reason?: string;
+    /**
+     * Where the change landed: a snippet of its surrounding passage, shown
+     * under the diff so a wrong-location edit is catchable before Accept.
+     */
+    locationHint?: string;
     changeNumber?: number;
     status?: string;
     statusMessage?: string;
@@ -62,6 +67,7 @@ export function EditCardUI({
     replacementText,
     previewContent,
     reason,
+    locationHint,
     changeNumber,
     status,
     statusMessage,
@@ -137,6 +143,15 @@ export function EditCardUI({
                         </>
                     )}
                 </div>
+            )}
+
+            {locationHint && (
+                <p
+                    className="mt-1 truncate font-sans text-[11px] text-gray-400"
+                    title={locationHint}
+                >
+                    In: “{locationHint}”
+                </p>
             )}
 
             {hasActions && actionOrder === "view-first" && (

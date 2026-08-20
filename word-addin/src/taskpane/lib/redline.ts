@@ -60,8 +60,21 @@ export interface RedlineEdit {
   replacement: string;
   /** Present (non-empty) only for format-only edits. */
   format?: WordEditFormat[];
+  /**
+   * "all" applies the edit to every occurrence of `original`. Absent means
+   * the historical contract: `original` must match exactly one place. There
+   * is deliberately no numeric form — models miscount, tracked deletions
+   * keep deleted text searchable so the index space shifts mid-stream, and
+   * Word silently drops overlapping matches (office-js#4992).
+   */
+  occurrence?: "all";
   /** Model's one-line justification; display-only. */
   reason?: string;
+}
+
+/** Parse an <occurrence> tag value; anything but "all" fails closed. */
+export function parseWordEditOccurrence(value: string): "all" | undefined {
+  return value.trim().toLowerCase() === "all" ? "all" : undefined;
 }
 
 /**
@@ -80,6 +93,8 @@ export interface StreamingRedlineEdit {
   replacement?: string;
   /** Present (non-empty) only for format-only edits. */
   format?: WordEditFormat[];
+  /** "all" marks a replace-every-occurrence block. */
+  occurrence?: "all";
   reason?: string;
   sealed: boolean;
 }
@@ -252,8 +267,9 @@ function projectLegacyRedlineStream(
 // A block carries either a text replacement or a formatting instruction —
 // never both. A malformed block with both fields fails this match and stays
 // provisional, surfacing as an incomplete card rather than a guessed edit.
+// The optional <occurrence> tag sits between the change field and <reason>.
 const COMPLETE_TAGGED_EDIT =
-  /<original>([\s\S]*?)<\/original>\s*(?:<replacement>([\s\S]*?)<\/replacement>|<format>([\s\S]*?)<\/format>)\s*<reason>([\s\S]*?)<\/reason>/gi;
+  /<original>([\s\S]*?)<\/original>\s*(?:<replacement>([\s\S]*?)<\/replacement>|<format>([\s\S]*?)<\/format>)\s*(?:<occurrence>([\s\S]*?)<\/occurrence>\s*)?<reason>([\s\S]*?)<\/reason>/gi;
 const ORIGINAL_OPEN = "<original>";
 
 function normalizeVisibleProse(value: string): string {
@@ -348,8 +364,35 @@ function parseProvisionalTaggedEdit(
     return { blockIndex, original, sealed: false };
   }
 
-  const afterField = source.slice(cursor).trimStart();
+  let afterField = source.slice(cursor).trimStart();
   cursor = source.length - afterField.length;
+
+  // Optional <occurrence> between the change field and <reason>. While the
+  // tag is still streaming, hold the card provisional without ever leaking
+  // the raw marker into the visible fields.
+  let occurrence: "all" | undefined;
+  const occurrenceOpen = "<occurrence>";
+  if (afterField.toLowerCase().startsWith(occurrenceOpen)) {
+    const occurrenceValueStart = cursor + occurrenceOpen.length;
+    const occurrenceClose = "</occurrence>";
+    const occurrenceEnd = lower.indexOf(occurrenceClose, occurrenceValueStart);
+    if (occurrenceEnd < 0) {
+      return {
+        blockIndex,
+        original,
+        ...(replacement !== undefined ? { replacement } : {}),
+        ...(format && format.length > 0 ? { format } : {}),
+        sealed: false,
+      };
+    }
+    occurrence = parseWordEditOccurrence(
+      source.slice(occurrenceValueStart, occurrenceEnd),
+    );
+    cursor = occurrenceEnd + occurrenceClose.length;
+    afterField = source.slice(cursor).trimStart();
+    cursor = source.length - afterField.length;
+  }
+
   const reasonOpen = "<reason>";
   if (!afterField.toLowerCase().startsWith(reasonOpen)) {
     return {
@@ -357,6 +400,7 @@ function parseProvisionalTaggedEdit(
       original,
       ...(replacement !== undefined ? { replacement } : {}),
       ...(format && format.length > 0 ? { format } : {}),
+      ...(occurrence ? { occurrence } : {}),
       sealed: false,
     };
   }
@@ -367,6 +411,7 @@ function parseProvisionalTaggedEdit(
     original,
     ...(replacement !== undefined ? { replacement } : {}),
     ...(format && format.length > 0 ? { format } : {}),
+    ...(occurrence ? { occurrence } : {}),
     reason: withoutPartialClosingTag(
       source.slice(reasonValueStart),
       "</reason>",
@@ -395,9 +440,16 @@ function projectTaggedRedlineStream(text: string): RedlineStreamProjection {
     const original = (match[1] ?? "").trim();
     const rawReplacement = match[2];
     const rawFormat = match[3];
-    const reason = (match[4] ?? "").trim();
+    const rawOccurrence = match[4];
+    const reason = (match[5] ?? "").trim();
     const format =
       rawFormat === undefined ? undefined : parseWordEditFormats(rawFormat);
+    // An unrecognized <occurrence> value fails closed to the historical
+    // single-occurrence contract rather than guessing at scope.
+    const occurrence =
+      rawOccurrence === undefined
+        ? undefined
+        : parseWordEditOccurrence(rawOccurrence);
     // A format block whose value names no recognized formatting is not safe
     // to apply; surface it as an incomplete card rather than guessing.
     const usable =
@@ -411,6 +463,7 @@ function projectTaggedRedlineStream(text: string): RedlineStreamProjection {
         original,
         ...(rawReplacement !== undefined ? { replacement } : {}),
         ...(format && format.length > 0 ? { format } : {}),
+        ...(occurrence ? { occurrence } : {}),
         ...(reason ? { reason } : {}),
         sealed: !!usable,
       });
@@ -419,6 +472,7 @@ function projectTaggedRedlineStream(text: string): RedlineStreamProjection {
           original,
           replacement,
           ...(format && format.length > 0 ? { format } : {}),
+          ...(occurrence ? { occurrence } : {}),
           ...(reason ? { reason } : {}),
         });
       }

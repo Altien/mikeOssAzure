@@ -14,6 +14,8 @@ export type EditCardStatus =
   | "rejected"
   | "skipped"
   | "ambiguous"
+  | "unsearchable"
+  | "conflicted"
   | "incomplete"
   | "unmanaged"
   | "error"
@@ -32,6 +34,10 @@ export type DocEditStatus =
 export interface EditRuntimeState {
   status: EditCardStatus;
   matches?: number;
+  /** How many occurrences a replace-all edit actually applied. */
+  appliedMatches?: number;
+  /** Snippet of the paragraph the edit landed in, for wrong-place review. */
+  locationHint?: string;
   error?: string;
   /** Navigation failures do not change the tracked edit's lifecycle. */
   viewError?: string;
