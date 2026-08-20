@@ -4,6 +4,48 @@ const TOKEN = "chat-storage-token";
 const LOCAL_CHAT_ID = "9ee585c2-7e55-44fa-afc0-2ed20cc62913";
 const ASSISTANT_MESSAGE_ID = "5b0a81db-df77-4c5f-83ab-f54e29057d24";
 
+test("cloud edit decisions are persisted against the assistant message", async ({
+  addin,
+  page,
+}) => {
+  await addin.mockChatStream(
+    [
+      "<original>Suplier</original>" +
+        "<replacement>Supplier</replacement>" +
+        "<reason>Correct the party name.</reason>",
+    ],
+    {
+      chatId: LOCAL_CHAT_ID,
+      assistantMessageId: ASSISTANT_MESSAGE_ID,
+    },
+  );
+  await addin.gotoTaskpane({
+    token: TOKEN,
+    documentText: "The Suplier shall deliver the goods.",
+  });
+  await addin.expectAuthedShell();
+  await page.getByPlaceholder("How can I help?").fill("Correct the typo");
+  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Accept", exact: true }),
+  ).toBeEnabled();
+
+  const persistenceRequest = page.waitForRequest(
+    (request) =>
+      request.method() === "PATCH" &&
+      request.url().includes(
+        `/word-chat/messages/${ASSISTANT_MESSAGE_ID}/edit-decisions`,
+      ),
+  );
+  await page.getByRole("button", { name: "Accept", exact: true }).click();
+  const request = await persistenceRequest;
+
+  expect(request.postDataJSON()).toEqual({ decisions: { 0: "accepted" } });
+  expect(new URL(request.url()).searchParams.get("document_id")).toBeTruthy();
+  await expect(page.getByText("Accepted.", { exact: true })).toBeVisible();
+});
+
 test("cloud is default and local mode persists document chats in IndexedDB", async ({
   addin,
   page,
@@ -67,6 +109,76 @@ test("cloud is default and local mode persists document chats in IndexedDB", asy
   expect(userBox).not.toBeNull();
   expect(assistantBox).not.toBeNull();
   expect(userBox!.y).toBeLessThan(assistantBox!.y);
+});
+
+test("device-only history restores accepted and rejected edit outcomes", async ({
+  addin,
+  page,
+}) => {
+  const firstOriginal = "Suplier";
+  const firstReplacement = "Supplier";
+  const secondOriginal = "deliver goods";
+  const secondReplacement = "deliver the goods";
+  const response =
+    `<original>${firstOriginal}</original>` +
+    `<replacement>${firstReplacement}</replacement>` +
+    "<reason>Correct the party name.</reason>" +
+    `<original>${secondOriginal}</original>` +
+    `<replacement>${secondReplacement}</replacement>` +
+    "<reason>Add the missing article.</reason>";
+
+  await addin.mockChatStream([response], {
+    chatId: "19ca5c94-0e23-4d56-8404-b3775154f8f8",
+    assistantMessageId: "9a8d3cc4-a120-4ec1-886f-c7721daeb1a1",
+  });
+  await addin.gotoTaskpane({
+    token: TOKEN,
+    documentText: "The Suplier shall deliver goods to the Buyer.",
+  });
+  await addin.expectAuthedShell();
+  await page.getByRole("button", { name: "Open menu" }).click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
+  await page.getByRole("switch", { name: "Save chats in the cloud" }).click();
+  await page.getByRole("button", { name: "Open menu" }).click();
+  await page.getByRole("menuitem", { name: "Assistant" }).click();
+
+  await page
+    .getByPlaceholder("How can I help?")
+    .fill("Correct both drafting issues");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Apply", exact: true }).first().click();
+  await expect(page.locator('[data-edit-status="pending"]')).toHaveCount(1);
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
+  await expect(page.locator('[data-edit-status="pending"]')).toHaveCount(2);
+
+  await page
+    .locator('[data-edit-status="pending"]')
+    .first()
+    .getByRole("button", { name: "Accept", exact: true })
+    .click();
+  await expect(page.locator('[data-edit-status="accepted"]')).toHaveCount(1);
+  await page
+    .locator('[data-edit-status="pending"]')
+    .first()
+    .getByRole("button", { name: "Reject", exact: true })
+    .click();
+  await expect(page.locator('[data-edit-status="rejected"]')).toHaveCount(1);
+
+  await addin.reloadTaskpane();
+  await addin.expectAuthedShell();
+  await page.getByRole("button", { name: "Chat history" }).click();
+  await page
+    .getByRole("menu")
+    .getByRole("button", { name: /Correct both drafting issues/ })
+    .click();
+
+  await expect(page.locator('[data-edit-status="accepted"]')).toHaveCount(1);
+  await expect(page.locator('[data-edit-status="rejected"]')).toHaveCount(1);
+  await expect(page.getByText("Accepted.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Rejected.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Historical change.")).toHaveCount(0);
 });
 
 test("stopping a local edit stream preserves the assistant turn for reload", async ({

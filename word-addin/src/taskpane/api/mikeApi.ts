@@ -10,7 +10,12 @@
  * configureMikeApiClient() below before the first request leaves.
  */
 import { configureMikeApiClient } from "./client";
-import type { Chat, Document, Message } from "../types";
+import type {
+  Chat,
+  Document,
+  Message,
+  WordEditDecisionStatus,
+} from "../types";
 import { getFreshAccessToken, refreshSession } from "../auth/session";
 import {
   assistantContentFromEvents,
@@ -123,6 +128,23 @@ interface WordChatServerMessage {
   content: string | unknown[] | null;
   files?: { filename: string; document_id?: string }[] | null;
   workflow?: { id: string; title: string } | null;
+  edit_decisions?: unknown;
+}
+
+function normalizeEditDecisions(
+  value: unknown,
+): Record<string, WordEditDecisionStatus> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const decisions = Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, WordEditDecisionStatus] =>
+        /^(0|[1-9]\d*)$/.test(entry[0]) &&
+        (entry[1] === "accepted" || entry[1] === "rejected"),
+    ),
+  );
+  return Object.keys(decisions).length > 0 ? decisions : undefined;
 }
 
 async function throwWordChatResponseError(
@@ -200,7 +222,32 @@ export async function getCloudWordChat(
         content,
         docReads: docReads.length > 0 ? docReads : undefined,
         events: hasEventContent ? events : undefined,
+        editDecisions: normalizeEditDecisions(message.edit_decisions),
       };
     }),
   };
+}
+
+export async function updateCloudWordEditDecisions(
+  documentId: string,
+  messageId: string,
+  decisions: Record<string, WordEditDecisionStatus>,
+): Promise<void> {
+  const params = new URLSearchParams({ document_id: documentId });
+  const res = await fetchWithRefresh(
+    `${BASE_URL}/word-chat/messages/${encodeURIComponent(messageId)}/edit-decisions?${params}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        ...(await getAuthHeaders()),
+      },
+      body: JSON.stringify({ decisions }),
+      keepalive: true,
+    },
+  );
+  if (!res.ok) {
+    await throwWordChatResponseError(res, "Failed to save edit decision");
+  }
 }

@@ -300,6 +300,24 @@ export const test = base.extend<{ addin: Addin }>({
       });
     });
 
+    // Accept/Reject persists terminal edit-card outcomes independently from
+    // the streamed assistant response. Keep that write hermetic by default;
+    // storage specs can register a newer route when asserting its payload.
+    await page.route(
+      "**/word-chat/messages/*/edit-decisions?*",
+      (route, request) => {
+        if (request.method() !== "PATCH") return route.fallback();
+        const decisions = (
+          request.postDataJSON() as { decisions?: Record<string, string> }
+        ).decisions;
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ edit_decisions: decisions ?? {} }),
+        });
+      },
+    );
+
     let seed: OfficeSeed = {};
 
     /** Add a method-scoped JSON route; falls through to other routes on mismatch. */

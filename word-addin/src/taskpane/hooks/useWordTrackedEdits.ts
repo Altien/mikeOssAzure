@@ -11,7 +11,10 @@ import {
   useWordDoc,
 } from "./useWordDoc";
 import type { TrackedEditHandle } from "./useWordDoc";
-import type { Message as SavedMessage } from "../types";
+import type {
+  Message as SavedMessage,
+  WordEditDecisionStatus,
+} from "../types";
 import { projectRedlineStream } from "../lib/redline";
 import type { RedlineEdit, StreamingRedlineEdit } from "../lib/redline";
 
@@ -70,21 +73,24 @@ function editFailureState(result: {
 import type {
   EditDecision,
   EditRuntimeState,
+  PersistWordEditDecisions,
   WordEditStreamController,
   WordTrackedEditsController,
 } from "../lib/wordChatTypes";
 import type { WordEditApplyMode } from "../lib/wordChatSettings";
-import { getEditKey } from "../lib/wordTrackedEditKeys";
+import { getEditKey, parseEditKey } from "../lib/wordTrackedEditKeys";
 import { listWordEditAnchorIds } from "../lib/wordEditAnchors";
 
 export function useWordTrackedEdits({
   sessionKey,
   initialMessages,
   applyMode = "approval",
+  onPersistEditDecisions,
 }: {
   sessionKey: number;
   initialMessages: SavedMessage[];
   applyMode?: WordEditApplyMode;
+  onPersistEditDecisions?: PersistWordEditDecisions;
 }): WordTrackedEditsController {
   const [editStateByKey, setEditStateByKey] = useState<
     Record<string, EditRuntimeState>
@@ -104,6 +110,9 @@ export function useWordTrackedEdits({
   // a reload (a replace-all card's first restored pass, else the key itself).
   const persistentViewEditKeysRef = useRef(new Map<string, string>());
   const resolvingEditKeysRef = useRef(new Set<string>());
+  const persistEditDecisionsRef = useRef(onPersistEditDecisions);
+  persistEditDecisionsRef.current = onPersistEditDecisions;
+  const decisionPersistenceQueueRef = useRef<Promise<void>>(Promise.resolve());
   // Read at apply time so a mid-stream toggle governs only edits that have
   // not been scheduled yet; already-applied cards keep their lifecycle.
   const applyModeRef = useRef(applyMode);
@@ -136,6 +145,40 @@ export function useWordTrackedEdits({
       });
     },
     [],
+  );
+
+  const persistTerminalDecision = useCallback(
+    (key: string, status: WordEditDecisionStatus): Promise<void> => {
+      const parsed = parseEditKey(key);
+      if (!parsed || !persistEditDecisionsRef.current) {
+        return Promise.resolve();
+      }
+      const persist = persistEditDecisionsRef.current;
+      const next = decisionPersistenceQueueRef.current
+        .catch(() => undefined)
+        .then(() =>
+          persist(parsed.messageId, {
+            [String(parsed.blockIndex)]: status,
+          }),
+        );
+      decisionPersistenceQueueRef.current = next.catch((error: unknown) => {
+        console.warn("[word-addin] failed to persist edit decision", error);
+      });
+      return decisionPersistenceQueueRef.current;
+    },
+    [],
+  );
+
+  const recordTerminalDecision = useCallback(
+    async (key: string, status: WordEditDecisionStatus): Promise<void> => {
+      await persistTerminalDecision(key, status);
+      setEditRuntimeState(key, {
+        status,
+        busy: false,
+        error: undefined,
+      });
+    },
+    [persistTerminalDecision, setEditRuntimeState],
   );
 
   useEffect(() => {
@@ -173,6 +216,7 @@ export function useWordTrackedEdits({
       stableEditId: string;
       edit: RedlineEdit;
     }[] = [];
+    const durableStates: Record<string, EditRuntimeState> = {};
     for (const message of initialMessages) {
       if (message.role !== "assistant" || !message.id) continue;
       const projection = projectRedlineStream(message.content, true);
@@ -181,6 +225,18 @@ export function useWordTrackedEdits({
         const sealedEdit = toRedlineEdit(edit);
         if (!sealedEdit) continue;
         const cardKey = getEditKey(message.id, edit.blockIndex);
+        const durableDecision =
+          message.editDecisions?.[String(edit.blockIndex)];
+        if (
+          durableDecision === "accepted" ||
+          durableDecision === "rejected"
+        ) {
+          durableStates[cardKey] = {
+            status: durableDecision,
+            busy: false,
+          };
+          continue;
+        }
         if (sealedEdit.occurrence === "all") {
           // A replace-all edit persisted one bookmark per applied pass under
           // `${cardKey}#${pass}`; the anchor registry says how many. When
@@ -207,15 +263,14 @@ export function useWordTrackedEdits({
         descriptors.push({ cardKey, stableEditId: cardKey, edit: sealedEdit });
       }
     }
-    if (descriptors.length === 0) return;
-
-    setEditStateByKey((current) => {
-      const next = { ...current };
+    setEditStateByKey(() => {
+      const next = { ...durableStates };
       for (const { cardKey } of descriptors) {
         next[cardKey] = { status: "restoring", busy: true };
       }
       return next;
     });
+    if (descriptors.length === 0) return;
 
     // One batched restore: every bookmark lookup shares a single Word.run
     // behind the global mutation queue, instead of ~4 serialized syncs per
@@ -783,22 +838,17 @@ export function useWordTrackedEdits({
           if (result.status === "accepted" || result.status === "rejected") {
             editHandlesRef.current.delete(key);
             persistentViewEditKeysRef.current.delete(key);
-            setEditRuntimeState(key, {
-              status: result.status,
-              busy: false,
-              error: undefined,
-            });
+            await recordTerminalDecision(key, result.status);
           } else if (
             result.status === "already-resolved" &&
             result.resolvedAs
           ) {
             editHandlesRef.current.delete(key);
             persistentViewEditKeysRef.current.delete(key);
-            setEditRuntimeState(key, {
-              status: result.resolvedAs === "accept" ? "accepted" : "rejected",
-              busy: false,
-              error: undefined,
-            });
+            await recordTerminalDecision(
+              key,
+              result.resolvedAs === "accept" ? "accepted" : "rejected",
+            );
           } else {
             if (result.status === "error" && result.handle !== handle) {
               editHandlesRef.current.set(key, [result.handle]);
@@ -844,17 +894,9 @@ export function useWordTrackedEdits({
                 : null;
         const decisions = results.map(decisionOf);
         if (decisions.every((entry) => entry === "accept")) {
-          setEditRuntimeState(key, {
-            status: "accepted",
-            busy: false,
-            error: undefined,
-          });
+          await recordTerminalDecision(key, "accepted");
         } else if (decisions.every((entry) => entry === "reject")) {
-          setEditRuntimeState(key, {
-            status: "rejected",
-            busy: false,
-            error: undefined,
-          });
+          await recordTerminalDecision(key, "rejected");
         } else {
           setEditRuntimeState(key, {
             status: "error",
@@ -883,7 +925,7 @@ export function useWordTrackedEdits({
         resolvingEditKeysRef.current.delete(key);
       }
     },
-    [setEditRuntimeState],
+    [recordTerminalDecision, setEditRuntimeState],
   );
 
   const resolveMessageEdits = useCallback(
@@ -944,18 +986,10 @@ export function useWordTrackedEdits({
           const decisions = cardResults.map(decisionOf);
           if (decisions.every((item) => item === "accept")) {
             persistentViewEditKeysRef.current.delete(entry.key);
-            setEditRuntimeState(entry.key, {
-              status: "accepted",
-              busy: false,
-              error: undefined,
-            });
+            await recordTerminalDecision(entry.key, "accepted");
           } else if (decisions.every((item) => item === "reject")) {
             persistentViewEditKeysRef.current.delete(entry.key);
-            setEditRuntimeState(entry.key, {
-              status: "rejected",
-              busy: false,
-              error: undefined,
-            });
+            await recordTerminalDecision(entry.key, "rejected");
           } else {
             setEditRuntimeState(entry.key, {
               status: "error",
@@ -989,7 +1023,7 @@ export function useWordTrackedEdits({
         }
       }
     },
-    [setEditRuntimeState],
+    [recordTerminalDecision, setEditRuntimeState],
   );
 
   // handleChat lists the stream controller among its deps. Handing it an

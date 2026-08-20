@@ -33,6 +33,7 @@ export const wordChatRouter = Router();
 
 type Db = ReturnType<typeof createServerSupabase>;
 type WordChatStorageMode = "cloud" | "local";
+type StoredWordEditDecision = "accepted" | "rejected";
 type LookupResult<T> =
   | { ok: true; value: T | null }
   | { ok: false; detail: string };
@@ -51,6 +52,40 @@ function parseDocumentId(
 
 function isUuid(value: string): boolean {
   return UUID_PATTERN.test(value);
+}
+
+function parseEditDecisions(
+  value: unknown,
+):
+  | { ok: true; value: Record<string, StoredWordEditDecision> }
+  | { ok: false; detail: string } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ok: false, detail: "decisions must be an object" };
+  }
+  const entries = Object.entries(value);
+  if (entries.length === 0 || entries.length > 100) {
+    return {
+      ok: false,
+      detail: "decisions must contain between 1 and 100 edit outcomes",
+    };
+  }
+  const decisions: Record<string, StoredWordEditDecision> = {};
+  for (const [blockIndex, decision] of entries) {
+    if (!/^(0|[1-9]\d*)$/.test(blockIndex) || Number(blockIndex) > 10_000) {
+      return {
+        ok: false,
+        detail: "decision keys must be edit block indexes",
+      };
+    }
+    if (decision !== "accepted" && decision !== "rejected") {
+      return {
+        ok: false,
+        detail: 'decision values must be "accepted" or "rejected"',
+      };
+    }
+    decisions[blockIndex] = decision;
+  }
+  return { ok: true, value: decisions };
 }
 
 function parseStorageMode(
@@ -228,6 +263,48 @@ wordChatRouter.get("/:chatId", requireAuth, async (req, res) => {
     messages: withoutEmptyAssistantReservations(messages ?? []),
   });
 });
+
+// Store terminal Word decisions separately from streamed assistant content so
+// accepting an edit while the response is still saving cannot be overwritten.
+wordChatRouter.patch(
+  "/messages/:messageId/edit-decisions",
+  requireAuth,
+  async (req, res) => {
+    const userId = res.locals.userId as string;
+    const parsedDocumentId = parseDocumentId(req.query.document_id);
+    if (!parsedDocumentId.ok) {
+      return void res.status(400).json({ detail: parsedDocumentId.detail });
+    }
+    if (!isUuid(req.params.messageId)) {
+      return void res.status(404).json({ detail: "Message not found" });
+    }
+    const parsedDecisions = parseEditDecisions(req.body?.decisions);
+    if (!parsedDecisions.ok) {
+      return void res.status(400).json({ detail: parsedDecisions.detail });
+    }
+
+    const db = createServerSupabase();
+    const { data, error } = await db.rpc("merge_word_chat_edit_decisions", {
+      p_user_id: userId,
+      p_client_document_id: parsedDocumentId.value,
+      p_message_id: req.params.messageId,
+      p_decisions: parsedDecisions.value,
+    });
+    if (error) {
+      console.error(
+        "[word-chat] failed to save edit decisions",
+        safeErrorLog(error),
+      );
+      return void res
+        .status(500)
+        .json({ detail: "Failed to save edit decision" });
+    }
+    if (data !== true) {
+      return void res.status(404).json({ detail: "Message not found" });
+    }
+    res.json({ edit_decisions: parsedDecisions.value });
+  },
+);
 
 // POST /word-chat — Word-specific streaming endpoint.
 wordChatRouter.post("/", requireAuth, async (req, res) => {

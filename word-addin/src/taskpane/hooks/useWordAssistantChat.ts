@@ -45,6 +45,10 @@ interface UseWordAssistantChatOptions {
   wordChatStorage: WordChatStorageMode;
   wordChatOwnerId: string;
   editController: WordEditStreamController;
+  getEditDecisionsForMessage?: (
+    messageId: string,
+  ) => SavedMessage["editDecisions"];
+  onAssistantMessageSaved?: (messageId: string) => Promise<void>;
 }
 
 export function useWordAssistantChat({
@@ -57,6 +61,8 @@ export function useWordAssistantChat({
   wordChatStorage,
   wordChatOwnerId,
   editController,
+  getEditDecisionsForMessage,
+  onAssistantMessageSaved,
 }: UseWordAssistantChatOptions): WordAssistantChatController {
   const [messages, setMessages] = useState<WordChatMessage[]>([]);
   const [isResponseLoading, setIsResponseLoading] = useState(false);
@@ -401,8 +407,11 @@ export function useWordAssistantChat({
                   completedDocReads.length > 0 ? completedDocReads : undefined,
                 events: completeAssistantEvents(assistantEvents),
                 citations: assistantCitations,
+                editDecisions:
+                  getEditDecisionsForMessage?.(assistantMessageId),
               },
             });
+            await onAssistantMessageSaved?.(assistantMessageId);
           } else if (wordChatStorage === "cloud") {
             notifyWordChatHistoryChanged();
           }
@@ -438,8 +447,12 @@ export function useWordAssistantChat({
                       : undefined,
                   events: completeAssistantEvents(assistantEvents),
                   citations: assistantCitations,
+                  editDecisions:
+                    getEditDecisionsForMessage?.(assistantMessageId),
                 },
-              }).catch(() => {});
+              })
+                .then(() => onAssistantMessageSaved?.(assistantMessageId))
+                .catch(() => {});
             } else if (wordChatStorage === "cloud") {
               notifyWordChatHistoryChanged();
             }
@@ -470,8 +483,12 @@ export function useWordAssistantChat({
                   completedDocReads.length > 0 ? completedDocReads : undefined,
                 events: completeAssistantEvents(assistantEvents),
                 citations: assistantCitations,
+                editDecisions:
+                  getEditDecisionsForMessage?.(assistantMessageId),
               },
-            }).catch(() => {});
+            })
+              .then(() => onAssistantMessageSaved?.(assistantMessageId))
+              .catch(() => {});
           } else if (wordChatStorage === "cloud") {
             // The Word-chat backend persists non-abort stream failures before
             // sending its terminal error frame. Refresh history exactly once
@@ -519,8 +536,10 @@ export function useWordAssistantChat({
     [
       chatId,
       editController,
+      getEditDecisionsForMessage,
       onChatIdChange,
       onChatStarted,
+      onAssistantMessageSaved,
       readDocumentMarkdown,
       wordChatOwnerId,
       wordChatStorage,

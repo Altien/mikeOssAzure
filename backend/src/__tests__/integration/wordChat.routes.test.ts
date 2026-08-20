@@ -8,19 +8,22 @@ type RecordedQuery = {
   filters: { column: string; value: unknown }[];
 };
 
-const { dbState, recordedQueries } = vi.hoisted(() => ({
+const { dbState, recordedQueries, recordedRpcs } = vi.hoisted(() => ({
   dbState: {
     document: { data: { id: "word-document-row-1" }, error: null },
     chatList: { data: [], error: null },
     chatDetail: { data: null, error: null },
     messages: { data: [], error: null },
+    rpc: { data: true, error: null },
   } as {
     document: QueryResult;
     chatList: QueryResult;
     chatDetail: QueryResult;
     messages: QueryResult;
+    rpc: QueryResult;
   },
   recordedQueries: [] as RecordedQuery[],
+  recordedRpcs: [] as { name: string; args: Record<string, unknown> }[],
 }));
 
 function resultForAwaitedQuery(table: string): QueryResult {
@@ -78,7 +81,10 @@ function makeQuery(table: string) {
 function mockSupabase() {
   return {
     from: vi.fn((table: string) => makeQuery(table)),
-    rpc: vi.fn(() => Promise.resolve({ data: null, error: null })),
+    rpc: vi.fn((name: string, args: Record<string, unknown>) => {
+      recordedRpcs.push({ name, args });
+      return Promise.resolve(dbState.rpc);
+    }),
     auth: {
       getUser: () =>
         Promise.resolve({ data: { user: { id: "u1" } }, error: null }),
@@ -108,6 +114,7 @@ import { app } from "../../app";
 
 const DOCUMENT_ID = "123e4567-e89b-42d3-a456-426614174000";
 const CHAT_ID = "41eb8f61-d7af-454e-b680-cd28bd65c742";
+const MESSAGE_ID = "efca16cc-daca-40ef-83cb-1e974582691c";
 const AUTH = ["Authorization", "Bearer test"] as const;
 
 function resetDbState() {
@@ -118,12 +125,14 @@ function resetDbState() {
   dbState.chatList = { data: [], error: null };
   dbState.chatDetail = { data: null, error: null };
   dbState.messages = { data: [], error: null };
+  dbState.rpc = { data: true, error: null };
 }
 
 describe("Word chat history routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     recordedQueries.length = 0;
+    recordedRpcs.length = 0;
     resetDbState();
   });
 
@@ -227,5 +236,56 @@ describe("Word chat history routes", () => {
     expect(res.status).toBe(404);
     expect(res.body.detail).toBe("Chat not found");
     expect(recordedQueries).toEqual([]);
+  });
+
+  it("atomically stores validated edit decisions for the authenticated document", async () => {
+    const res = await request(app)
+      .patch(
+        `/word-chat/messages/${MESSAGE_ID}/edit-decisions?document_id=${DOCUMENT_ID}`,
+      )
+      .set(...AUTH)
+      .send({ decisions: { 0: "accepted", 3: "rejected" } });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      edit_decisions: { 0: "accepted", 3: "rejected" },
+    });
+    expect(recordedRpcs).toEqual([
+      {
+        name: "merge_word_chat_edit_decisions",
+        args: {
+          p_user_id: "u1",
+          p_client_document_id: DOCUMENT_ID,
+          p_message_id: MESSAGE_ID,
+          p_decisions: { 0: "accepted", 3: "rejected" },
+        },
+      },
+    ]);
+  });
+
+  it("rejects malformed edit decisions before calling Postgres", async () => {
+    const res = await request(app)
+      .patch(
+        `/word-chat/messages/${MESSAGE_ID}/edit-decisions?document_id=${DOCUMENT_ID}`,
+      )
+      .set(...AUTH)
+      .send({ decisions: { "edit-0": "accepted", 1: "pending" } });
+
+    expect(res.status).toBe(400);
+    expect(recordedRpcs).toEqual([]);
+  });
+
+  it("does not reveal an edit-decision target outside the document scope", async () => {
+    dbState.rpc = { data: false, error: null };
+
+    const res = await request(app)
+      .patch(
+        `/word-chat/messages/${MESSAGE_ID}/edit-decisions?document_id=${DOCUMENT_ID}`,
+      )
+      .set(...AUTH)
+      .send({ decisions: { 0: "accepted" } });
+
+    expect(res.status).toBe(404);
+    expect(res.body.detail).toBe("Message not found");
   });
 });

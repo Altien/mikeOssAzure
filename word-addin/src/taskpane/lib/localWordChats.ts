@@ -1,4 +1,8 @@
-import type { Chat, Message } from "../types";
+import type {
+  Chat,
+  Message,
+  WordEditDecisionStatus,
+} from "../types";
 import { notifyWordChatHistoryChanged } from "./wordChatHistoryEvents";
 
 const DATABASE_NAME = "mike-word-addin";
@@ -132,6 +136,55 @@ export async function saveLocalWordMessage(args: {
     } satisfies LocalMessageRow);
     await transactionDone(transaction);
     notifyWordChatHistoryChanged();
+  } finally {
+    database.close();
+  }
+}
+
+/** Merge terminal edit outcomes into an existing device-only message. */
+export async function updateLocalWordEditDecisions(args: {
+  documentId: string;
+  ownerId: string;
+  messageId: string;
+  decisions: Record<string, WordEditDecisionStatus>;
+}): Promise<boolean> {
+  const database = await openDatabase();
+  try {
+    const transaction = database.transaction(
+      [CHAT_STORE, MESSAGE_STORE],
+      "readwrite",
+    );
+    const chats = transaction.objectStore(CHAT_STORE);
+    const messages = transaction.objectStore(MESSAGE_STORE);
+    const message = (await requestResult(messages.get(args.messageId))) as
+      | LocalMessageRow
+      | undefined;
+    if (!message) {
+      await transactionDone(transaction);
+      return false;
+    }
+    const chat = (await requestResult(chats.get(message.chat_id))) as
+      | LocalChatRow
+      | undefined;
+    if (
+      !chat ||
+      chat.document_id !== args.documentId ||
+      chat.owner_id !== args.ownerId ||
+      message.role !== "assistant"
+    ) {
+      transaction.abort();
+      throw new Error("Local Word message is not available for this document.");
+    }
+    messages.put({
+      ...message,
+      editDecisions: {
+        ...(message.editDecisions ?? {}),
+        ...args.decisions,
+      },
+    } satisfies LocalMessageRow);
+    await transactionDone(transaction);
+    notifyWordChatHistoryChanged();
+    return true;
   } finally {
     database.close();
   }

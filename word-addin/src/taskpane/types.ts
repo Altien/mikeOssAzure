@@ -115,6 +115,8 @@ export interface WordCitation {
   text?: string | null;
 }
 
+export type WordEditDecisionStatus = "accepted" | "rejected";
+
 export interface Message {
   id?: string;
   role: "user" | "assistant";
@@ -133,6 +135,8 @@ export interface Message {
   events?: WordAssistantEvent[];
   /** Assistant turns only: quotes behind the answer's `[n]` markers. */
   citations?: WordCitation[];
+  /** Terminal edit-card outcomes keyed by the streamed edit block index. */
+  editDecisions?: Record<string, WordEditDecisionStatus>;
 }
 
 export interface Workflow {
