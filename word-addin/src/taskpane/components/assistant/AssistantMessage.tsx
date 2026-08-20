@@ -49,6 +49,8 @@ interface AssistantMessageProps {
   onViewEdit: (key: string) => void;
   onResolveEdit: (key: string, decision: EditDecision) => void;
   onResolveAll: (keys: string[], decision: EditDecision) => void;
+  /** Conflicted card: accept the occupying revisions, then apply the edit. */
+  onAcceptAndApplyEdit: (key: string) => void;
   /** Scrolls Word to a cited document passage and selects it. */
   onLocateCitation: (text: string) => void;
 }
@@ -102,6 +104,7 @@ function AssistantMessageImpl({
   onViewEdit,
   onResolveEdit,
   onResolveAll,
+  onAcceptAndApplyEdit,
   onLocateCitation,
 }: AssistantMessageProps): React.ReactElement {
   // Citation chips render as reserved-fragment links; one delegated handler
@@ -422,6 +425,11 @@ function AssistantMessageImpl({
                 onReject={
                   status === "pending"
                     ? () => onResolveEdit(key, "reject")
+                    : undefined
+                }
+                onAcceptAndApply={
+                  status === "conflicted"
+                    ? () => onAcceptAndApplyEdit(key)
                     : undefined
                 }
               />

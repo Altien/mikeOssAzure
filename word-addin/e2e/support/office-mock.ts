@@ -772,11 +772,29 @@ export function installOfficeMock(seed: OfficeSeed): void {
             seed.existingTrackedChangeOriginals ?? []
           ).includes(query)
             ? [
-                makeTransientTrackedChange({
-                  text: query,
-                  location: "Existing",
-                  original: query,
-                }),
+                (() => {
+                  const change = makeTransientTrackedChange({
+                    text: query,
+                    location: "Existing",
+                    original: query,
+                  });
+                  // Accepting a pre-existing revision (the conflicted
+                  // card's "Accept & apply") resolves it for real: record
+                  // the acceptance and retire the seed so subsequent
+                  // searches see the passage revision-free — mirroring
+                  // Word, where an accepted change stops being pending.
+                  change.accept = () => {
+                    wordCalls.acceptedChanges.push({
+                      text: query,
+                      location: "Existing",
+                      original: query,
+                    });
+                    seed.existingTrackedChangeOriginals = (
+                      seed.existingTrackedChangeOriginals ?? []
+                    ).filter((original) => original !== query);
+                  };
+                  return change;
+                })(),
               ]
             : [];
           const revisionsVisible = !(

@@ -2006,7 +2006,7 @@ test("skips an edit whose target already contains an unrelated tracked revision"
 
   await expect(
     page.getByText(
-      "Skipped — the target text already has tracked changes. Resolve those in Word first.",
+      "Skipped — the target text already has tracked changes. Accept & apply resolves them, then applies this change.",
     ),
   ).toBeVisible();
   await openActivityStrip(page);

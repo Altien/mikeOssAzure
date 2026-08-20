@@ -106,6 +106,11 @@ export interface WordTrackedEditsController {
     editKeys: string[],
     decision: EditDecision,
   ) => Promise<void>;
+  /**
+   * Conflicted-card action: accept the pending tracked changes occupying
+   * the edit's target passage, then apply the edit as a fresh redline.
+   */
+  acceptAndApplyEdit: (key: string) => Promise<void>;
 }
 
 export interface WordAssistantChatController {

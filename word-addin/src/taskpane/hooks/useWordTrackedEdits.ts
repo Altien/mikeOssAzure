@@ -70,7 +70,20 @@ export function useWordTrackedEdits({
   // not been scheduled yet; already-applied cards keep their lifecycle.
   const applyModeRef = useRef(applyMode);
   applyModeRef.current = applyMode;
-  const { applyTrackedEdits } = useWordDoc();
+  const { applyTrackedEdits, acceptPendingRevisionsForEdit } = useWordDoc();
+  // Conflicted cards keep their full apply arguments so "Accept & apply"
+  // can accept the occupying revisions and rerun the same lifecycle.
+  const conflictedRetryRef = useRef(
+    new Map<
+      string,
+      {
+        messageId: string;
+        editIndex: number;
+        edit: RedlineEdit;
+        persistent: boolean;
+      }
+    >(),
+  );
 
   const setEditRuntimeState = useCallback(
     (key: string, patch: Partial<EditRuntimeState>): void => {
@@ -99,6 +112,7 @@ export function useWordTrackedEdits({
       editApplyJobsRef.current.clear();
       persistentViewEditKeysRef.current.clear();
       resolvingEditKeysRef.current.clear();
+      conflictedRetryRef.current.clear();
       if (handles.length > 0) void releaseTrackedEdits(handles);
     };
   }, []);
@@ -113,6 +127,7 @@ export function useWordTrackedEdits({
     editApplyJobsRef.current.clear();
     persistentViewEditKeysRef.current.clear();
     resolvingEditKeysRef.current.clear();
+    conflictedRetryRef.current.clear();
     setEditStateByKey({});
 
     const descriptors: {
@@ -254,6 +269,7 @@ export function useWordTrackedEdits({
       const key = getEditKey(messageId, editIndex);
       if (scheduledEditKeysRef.current.has(key)) return;
       scheduledEditKeysRef.current.add(key);
+      conflictedRetryRef.current.delete(key);
       setEditRuntimeState(key, { status: "applying", busy: true });
       const generation = sessionGenerationRef.current;
       // Bind the mode per edit at scheduling time: a toggle flipped while
@@ -406,6 +422,14 @@ export function useWordTrackedEdits({
           });
           return;
         }
+        if (first.reason === "pre-existing-revisions") {
+          conflictedRetryRef.current.set(key, {
+            messageId,
+            editIndex,
+            edit,
+            persistent,
+          });
+        }
         setEditRuntimeState(key, {
           status:
             first.status === "error"
@@ -504,6 +528,56 @@ export function useWordTrackedEdits({
       });
     },
     [setEditRuntimeState],
+  );
+
+  /**
+   * The conflicted card's "Accept & apply": accept the pending revisions
+   * occupying the edit's target, then rerun the edit's normal apply
+   * lifecycle from scratch. Two explicit steps — never a layered redline —
+   * so a card's Accept/Reject always resolves exactly the revisions it
+   * created, and the embedded pending changes are resolved only on an
+   * explicit user click, never by a streaming model.
+   */
+  const acceptAndApplyEdit = useCallback(
+    async (key: string): Promise<void> => {
+      const retry = conflictedRetryRef.current.get(key);
+      if (!retry || resolvingEditKeysRef.current.has(key)) return;
+      const generation = sessionGenerationRef.current;
+      resolvingEditKeysRef.current.add(key);
+      setEditRuntimeState(key, {
+        status: "applying",
+        busy: true,
+        error: undefined,
+      });
+      try {
+        const outcome = await acceptPendingRevisionsForEdit(retry.edit);
+        if (
+          generation !== sessionGenerationRef.current ||
+          !mountedRef.current
+        ) {
+          return;
+        }
+        if ("error" in outcome) {
+          setEditRuntimeState(key, {
+            status: "conflicted",
+            busy: false,
+            error: outcome.error,
+          });
+          return;
+        }
+        conflictedRetryRef.current.delete(key);
+        scheduledEditKeysRef.current.delete(key);
+        applyStreamedEdit(
+          retry.messageId,
+          retry.editIndex,
+          retry.edit,
+          retry.persistent,
+        );
+      } finally {
+        resolvingEditKeysRef.current.delete(key);
+      }
+    },
+    [acceptPendingRevisionsForEdit, applyStreamedEdit, setEditRuntimeState],
   );
 
   const viewEdit = useCallback(
@@ -800,5 +874,6 @@ export function useWordTrackedEdits({
     viewEdit,
     resolveOneEdit,
     resolveMessageEdits,
+    acceptAndApplyEdit,
   };
 }
