@@ -436,6 +436,7 @@ export interface UserProfile {
     quickActionsVisible: boolean;
     openRouterModels: string[];
     vercelModels: string[];
+    openCodeGoModels: string[];
     apiKeyStatus: ApiKeyStatus;
 }
 
@@ -541,6 +542,7 @@ export async function updateUserProfile(payload: {
     quickActionsVisible?: boolean;
     openRouterModels?: string[];
     vercelModels?: string[];
+    openCodeGoModels?: string[];
 }): Promise<UserProfile> {
     return apiRequest<UserProfile>("/user/profile", {
         method: "PATCH",
@@ -566,6 +568,7 @@ export type ApiKeyProvider =
     | "gemini"
     | "openai"
     | "openrouter"
+    | "opencode-go"
     | "vercel"
     | "courtlistener"
     | "kimi"
@@ -612,6 +615,13 @@ export async function getOpenRouterModels(): Promise<RouterCatalogModel[]> {
 export async function getVercelModels(): Promise<RouterCatalogModel[]> {
     const { models } = await apiRequest<{ models: RouterCatalogModel[] }>(
         "/models/vercel",
+    );
+    return models;
+}
+
+export async function getOpenCodeGoModels(): Promise<RouterCatalogModel[]> {
+    const { models } = await apiRequest<{ models: RouterCatalogModel[] }>(
+        "/models/opencode-go",
     );
     return models;
 }

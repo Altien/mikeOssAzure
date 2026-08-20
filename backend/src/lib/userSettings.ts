@@ -7,7 +7,13 @@ import {
     type UserApiKeys,
 } from "./llm";
 import { getOrganisationApiKeys } from "./userApiKeys";
-import { getUserRouterModels, isRouterModelSelected, routerForModelId } from "./routerModels";
+import {
+    getAllUserRouterModels,
+    isRouterModelSelected,
+    ROUTER_SLUGS,
+    routerForModelId,
+    type RouterModelSelections,
+} from "./routerModels";
 
 export type UserModelSettings = {
     fast_model: string;
@@ -16,41 +22,25 @@ export type UserModelSettings = {
     api_keys: UserApiKeys;
 };
 
-// "Fast model" = the LLM used for lightweight tasks (chat-title
-// generation today, room for more). The user can pick one explicitly on
-// the Account → Models page; if they haven't, we fall through a chain
-// based on which providers they have keys for:
-//   1. Gemini Flash Lite (cheapest)
-//   2. OpenAI low tier (OPENAI_LOW_MODELS[0])
-//   3. Claude Haiku
-//   4. Kimi K3
-//   5. Azure OpenAI default deployment (user's stored deployment, then
-//      env-level AZURE_OPENAI_DEPLOYMENT)
-// With nothing configured, falls back to the Gemini default — callers
-// must tolerate a "no provider available" LLM failure (chat.ts does
-// this for the title route).
-// Upstream divergence (sync-log: 44e868e): upstream added a stored
-// title_model preference on user_profiles; dev's fast_model already
-// covers that intent, so the column was not adopted.
-function resolveFastModel(
+// Title generation is a lightweight task — always routed to the cheapest model
+// of whichever provider the user has keys for: Gemini Flash Lite if Gemini is
+// available, otherwise OpenAI lite, Claude Haiku, or the user's first saved
+// router model. With no usable provider, defaults to Gemini (the dev-mode env
+// fallback).
+function resolveTitleModel(
     apiKeys: UserApiKeys,
-    explicit: string | null | undefined,
-    openRouterModels: string[],
-    vercelModels: string[],
+    routerModels: RouterModelSelections,
 ): string {
-    const pick = explicit?.trim();
-    if (pick) return pick;
     if (apiKeys.gemini?.trim()) return DEFAULT_TITLE_MODEL;
     if (apiKeys.openai?.trim()) return OPENAI_LOW_MODELS[0];
     if (apiKeys.claude?.trim()) return "claude-haiku-4-5";
     if (apiKeys.kimi?.trim()) return "kimi-k3";
-    const aoaiDeployment =
-        apiKeys.azureOpenai?.deployment?.trim() ||
-        process.env.AZURE_OPENAI_DEPLOYMENT?.trim() ||
-        "";
-    if (aoaiDeployment) return `aoai:${aoaiDeployment}`;
-    if (apiKeys.openrouter?.trim() && openRouterModels[0]) return `openrouter/${openRouterModels[0]}`;
-    if (apiKeys.vercel?.trim() && vercelModels[0]) return `vercel/${vercelModels[0]}`;
+    const deployment = apiKeys.azureOpenai?.deployment?.trim() || process.env.AZURE_OPENAI_DEPLOYMENT?.trim();
+    if (deployment) return `aoai:${deployment}`;
+    for (const slug of ROUTER_SLUGS) {
+        const first = routerModels[slug][0];
+        if (apiKeys[slug]?.trim() && first) return `${slug}/${first}`;
+    }
     return DEFAULT_TITLE_MODEL;
 }
 
@@ -59,18 +49,17 @@ export async function getUserModelSettings(
     db?: ReturnType<typeof createServerSupabase>,
 ): Promise<UserModelSettings> {
     const client = db ?? createServerSupabase();
-    // Provider credentials are deployment-wide and Key Vault-backed; model
-    // preferences remain per-user on `user_profiles`.
-    const [modelRow, api_keys, openRouterModels, vercelModels] = await Promise.all([
+    const [profileResult, api_keys, routerModels] = await Promise.all([
         client
             .from("user_profiles")
-            .select("tabular_model, fast_model, legal_research_us")
+            .select("fast_model, tabular_model, legal_research_us")
             .eq("user_id", userId)
             .single(),
         getOrganisationApiKeys(),
-        getUserRouterModels(userId, "openrouter", client),
-        getUserRouterModels(userId, "vercel", client),
+        getAllUserRouterModels(userId, client),
     ]);
+    const data = profileResult.data;
+
     // A stored preference can name a router model the user has since removed
     // from (or never had in) their saved selection — e.g. a hand-crafted
     // profile PATCH. Treat that exactly like an invalid model id and fall
@@ -79,7 +68,7 @@ export async function getUserModelSettings(
     const guardRouterModel = (model: string, fallback: string): string => {
         if (
             !routerForModelId(model) ||
-            isRouterModelSelected(model, openRouterModels, vercelModels)
+            isRouterModelSelected(model, routerModels)
         ) {
             return model;
         }
@@ -88,101 +77,27 @@ export async function getUserModelSettings(
         );
         return fallback;
     };
-    const titleFallback = resolveFastModel(api_keys, null, openRouterModels, vercelModels);
+    const titleFallback = resolveTitleModel(api_keys, routerModels);
+
     return {
-        fast_model: guardRouterModel(resolveModel(modelRow.data?.fast_model?.trim(), titleFallback), titleFallback),
+        fast_model: guardRouterModel(
+            resolveModel(data?.fast_model, titleFallback),
+            titleFallback,
+        ),
         tabular_model: guardRouterModel(
-            resolveModel(modelRow.data?.tabular_model, DEFAULT_TABULAR_MODEL),
+            resolveModel(data?.tabular_model, DEFAULT_TABULAR_MODEL),
             DEFAULT_TABULAR_MODEL,
         ),
-        // Upstream (3132e04) folded legal_research_us into
-        // getUserModelSettings (replacing the standalone
-        // getLegalResearchUsEnabled helper); same default-true semantics,
-        // applied in dev's parallel-query idiom.
         legal_research_us:
-            (modelRow.data as { legal_research_us?: boolean | null } | null)
+            (data as { legal_research_us?: boolean | null } | null)
                 ?.legal_research_us !== false,
         api_keys,
     };
 }
 
 export async function getUserApiKeys(
-    _userId: string,
-    _db?: ReturnType<typeof createServerSupabase>,
+    userId: string,
+    db?: ReturnType<typeof createServerSupabase>,
 ): Promise<UserApiKeys> {
     return getOrganisationApiKeys();
-}
-
-
-export async function upsertUserProfile(
-    userId: string,
-    email?: string | null,
-    displayName?: string | null,
-    db?: ReturnType<typeof createServerSupabase>,
-): Promise<void> {
-    const client = db ?? createServerSupabase();
-    const lowercaseEmail = email?.trim().toLowerCase() || null;
-    const seedDisplayName = displayName?.trim() || null;
-
-    // Two-phase to keep IdP-provided display names from clobbering whatever
-    // a user has typed into their Account page:
-    //   1. SELECT the existing row (if any) — we need to know whether
-    //      display_name is currently null, which is the back-fill condition.
-    //   2a. New user → conflict-safe INSERT with email + display_name from the
-    //       IdP. Several first-page requests run concurrently, so every caller
-    //       can observe the row as missing. Ignore a duplicate user_id here;
-    //       the winning request inserted the same authenticated principal.
-    //   2b. Returning user → UPDATE email always (IdP is source of truth);
-    //       only update display_name when the existing value is null.
-    const { data: existing, error: selectError } = await client
-        .from("user_profiles")
-        .select("email, display_name")
-        .eq("user_id", userId)
-        .maybeSingle();
-    if (selectError) {
-        throw new Error(`Failed to read user profile: ${selectError.message}`);
-    }
-
-    if (!existing) {
-        const { error: insertError } = await client
-            .from("user_profiles")
-            .upsert(
-                {
-                    user_id: userId,
-                    email: lowercaseEmail,
-                    display_name: seedDisplayName,
-                },
-                {
-                    onConflict: "user_id",
-                    ignoreDuplicates: true,
-                },
-            );
-        if (insertError) {
-            throw new Error(
-                `Failed to create user profile: ${insertError.message}`,
-            );
-        }
-        return;
-    }
-
-    const updates: Record<string, string | null> = {};
-    if ((existing.email as string | null) !== lowercaseEmail) {
-        updates.email = lowercaseEmail;
-    }
-    if (
-        seedDisplayName &&
-        ((existing.display_name as string | null) ?? "").trim() === ""
-    ) {
-        updates.display_name = seedDisplayName;
-    }
-
-    if (Object.keys(updates).length === 0) return;
-
-    const { error: updateError } = await client
-        .from("user_profiles")
-        .update(updates)
-        .eq("user_id", userId);
-    if (updateError) {
-        throw new Error(`Failed to update user profile: ${updateError.message}`);
-    }
 }

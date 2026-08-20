@@ -34,6 +34,7 @@ interface UserProfile {
     quickActionsVisible: boolean;
     openRouterModels: string[];
     vercelModels: string[];
+    openCodeGoModels: string[];
     apiKeys: ApiKeyState;
 }
 
@@ -61,6 +62,7 @@ interface UserProfileContextType {
     updateQuickActionsVisible: (visible: boolean) => Promise<boolean>;
     updateOpenRouterModels: (models: string[]) => Promise<boolean>;
     updateVercelModels: (models: string[]) => Promise<boolean>;
+    updateOpenCodeGoModels: (models: string[]) => Promise<boolean>;
     updateApiKey: (
         provider: ApiKeyProvider,
         value: string | null,
@@ -79,6 +81,7 @@ const API_KEY_PROVIDERS: ApiKeyProvider[] = [
     "openai",
     "openrouter",
     "vercel",
+    "opencode-go",
     "courtlistener",
     // Upstream divergence (OSS-6, §2.3 item 3): dev's organisation
     // credentials (Key Vault) for Kimi and Azure OpenAI. The Azure OpenAI
@@ -94,6 +97,7 @@ function emptyApiKeys(): ApiKeyState {
         openai: { configured: false, source: null },
         openrouter: { configured: false, source: null },
         vercel: { configured: false, source: null },
+        "opencode-go": { configured: false, source: null },
         courtlistener: { configured: false, source: null },
         kimi: { configured: false, source: null },
         azure_openai: { configured: false, source: null },
@@ -120,6 +124,9 @@ function toProfile(data: ApiUserProfile): UserProfile {
             : [],
         vercelModels: Array.isArray(profile.vercelModels)
             ? profile.vercelModels
+            : [],
+        openCodeGoModels: Array.isArray(profile.openCodeGoModels)
+            ? profile.openCodeGoModels
             : [],
         apiKeys,
     };
@@ -170,6 +177,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 quickActionsVisible: true,
                 openRouterModels: [],
                 vercelModels: [],
+                openCodeGoModels: [],
                 apiKeys: emptyApiKeys(),
             });
         } finally {
@@ -329,6 +337,22 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         [user],
     );
 
+    const updateOpenCodeGoModels = useCallback(
+        async (openCodeGoModels: string[]): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                const updated = await updateUserProfile({ openCodeGoModels });
+                setProfile((prev) =>
+                    prev ? { ...prev, ...toProfile(updated) } : null,
+                );
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [user],
+    );
+
     const updateApiKey = useCallback(
         async (
             provider: ApiKeyProvider,
@@ -394,6 +418,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 updateQuickActionsVisible,
                 updateOpenRouterModels,
                 updateVercelModels,
+                updateOpenCodeGoModels,
                 updateApiKey,
                 reloadProfile,
                 incrementMessageCredits,

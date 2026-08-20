@@ -15,6 +15,7 @@ const keys = (configured: {
     openai?: boolean;
     openrouter?: boolean;
     vercel?: boolean;
+    opencodego?: boolean;
 }): ApiKeyState =>
     ({
         claude: { configured: !!configured.claude, source: null },
@@ -22,6 +23,10 @@ const keys = (configured: {
         openai: { configured: !!configured.openai, source: null },
         openrouter: { configured: !!configured.openrouter, source: null },
         vercel: { configured: !!configured.vercel, source: null },
+        "opencode-go": {
+            configured: !!configured.opencodego,
+            source: null,
+        },
         courtlistener: { configured: false, source: null },
     }) as ApiKeyState;
 
@@ -34,6 +39,7 @@ describe("getModelProvider", () => {
             "openrouter",
         );
         expect(getModelProvider("vercel/openai/gpt-5.4")).toBe("vercel");
+        expect(getModelProvider("opencode-go/glm-5")).toBe("opencode-go");
     });
 
     it("resolves any ollama/-prefixed id without consulting SETTINGS_MODELS", () => {
@@ -74,6 +80,13 @@ describe("isModelAvailable", () => {
                 keys({ vercel: true }),
             ),
         ).toBe(true);
+        expect(
+            isModelAvailable("opencode-go/glm-5", keys({ opencodego: true })),
+        ).toBe(true);
+        // Each router gates on its own key, never a sibling's.
+        expect(
+            isModelAvailable("opencode-go/glm-5", keys({ vercel: true })),
+        ).toBe(false);
     });
 
     it("is false for an unknown model regardless of keys", () => {
@@ -118,6 +131,7 @@ describe("providerLabel", () => {
         expect(providerLabel("openai")).toBe("OpenAI");
         expect(providerLabel("openrouter")).toBe("OpenRouter");
         expect(providerLabel("vercel")).toBe("Vercel AI Gateway");
+        expect(providerLabel("opencode-go")).toBe("OpenCode Go");
         expect(providerLabel("ollama")).toBe("Local (Ollama)");
         expect(providerLabel("gemini")).toBe("Google (Gemini)");
     });
@@ -128,6 +142,7 @@ describe("modelGroupToProvider", () => {
         expect(modelGroupToProvider("Anthropic")).toBe("claude");
         expect(modelGroupToProvider("OpenAI")).toBe("openai");
         expect(modelGroupToProvider("OpenRouter")).toBe("openrouter");
+        expect(modelGroupToProvider("OpenCode Go")).toBe("opencode-go");
         expect(modelGroupToProvider("Vercel AI Gateway")).toBe("vercel");
         expect(modelGroupToProvider("Local")).toBe("ollama");
         expect(modelGroupToProvider("Google")).toBe("gemini");

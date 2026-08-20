@@ -88,6 +88,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
     const [keyStatusLoading, setKeyStatusLoading] = useState(true);
     const [openRouterModels, setOpenRouterModels] = useState<string[]>([]);
     const [vercelModels, setVercelModels] = useState<string[]>([]);
+    const [openCodeGoModels, setOpenCodeGoModels] = useState<string[]>([]);
     const [modelError, setModelError] = useState<string | null>(null);
     const localFileInputRef = useRef<HTMLInputElement>(null);
     const composerRef = useRef<HTMLDivElement>(null);
@@ -149,6 +150,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         if (profile) {
           setOpenRouterModels(profile.openRouterModels ?? []);
           setVercelModels(profile.vercelModels ?? []);
+          setOpenCodeGoModels(profile.openCodeGoModels ?? []);
         }
         setKeyStatusLoading(false);
       });
@@ -371,6 +373,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
                   keyStatusLoading={keyStatusLoading}
                   openRouterModels={openRouterModels}
                   vercelModels={vercelModels}
+                  openCodeGoModels={openCodeGoModels}
                   compact={compactControls}
                 />
               }

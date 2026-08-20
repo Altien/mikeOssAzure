@@ -37,6 +37,7 @@ export type ApiKeyProvider =
     | "gemini"
     | "openai"
     | "openrouter"
+    | "opencode-go"
     | "vercel"
     | "courtlistener"
     | "azure_openai";
@@ -54,6 +55,7 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         kimi,
         openrouter,
         vercel,
+        openCodeGo,
         courtlistener,
         azureEndpoint,
         azureApiKey,
@@ -66,6 +68,7 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         resolveSecret("moonshot-api-key"),
         resolveProviderSecret("openrouter-api-key"),
         resolveVercelApiKey(),
+        resolveProviderSecret("opencode-api-key"),
         resolveSecret("courtlistener-api-token"),
         resolveSecret("azure-openai-endpoint"),
         resolveSecret("azure-openai-api-key"),
@@ -80,6 +83,7 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         kimi: kimi || null,
         openrouter: openrouter || null,
         vercel: vercel || null,
+        "opencode-go": openCodeGo || null,
         courtlistener: courtlistener || null,
         azureOpenai:
             azureEndpoint && azureApiKey
@@ -291,6 +295,7 @@ export async function getUserApiKeys(
         openai: decrypted.openai ?? legacy?.openai ?? null,
         openrouter: openrouter || null,
         vercel: decrypted.vercel || (await resolveVercelApiKey()) || null,
+        "opencode-go": decrypted["opencode-go"] || (await resolveProviderSecret("opencode-api-key")) || null,
         courtlistener: courtlistener || null,
         azureOpenai: decrypted.azure_openai
             ? parseAzureOpenaiBlob(decrypted.azure_openai)
@@ -384,6 +389,7 @@ export async function getConfiguredProviders(
         openai: false,
         openrouter: false,
         vercel: false,
+        "opencode-go": false,
         courtlistener: false,
         azure_openai: false,
     };

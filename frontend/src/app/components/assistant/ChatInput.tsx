@@ -113,6 +113,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             ? {
                   openRouterModels: profile.openRouterModels,
                   vercelModels: profile.vercelModels,
+                  openCodeGoModels: profile.openCodeGoModels,
               }
             : null,
     );
@@ -615,6 +616,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                 apiKeysLoading={profileLoading && !profile}
                                 openRouterModels={profile?.openRouterModels}
                                 vercelModels={profile?.vercelModels}
+                                openCodeGoModels={profile?.openCodeGoModels}
                                 compact={compactControls}
                             />
                             <button

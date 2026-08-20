@@ -64,6 +64,7 @@ import {
     getLibraryFolderChildren,
     getLibraryFolderPath,
     getMcpConnector,
+    getOpenCodeGoModels,
     getOpenRouterModels,
     getVercelModels,
     getProject,
@@ -2370,6 +2371,7 @@ describe("unwrapping and blob wrappers", () => {
     it.each([
         ["OpenRouter", getOpenRouterModels, "/api/models/openrouter"],
         ["Vercel AI Gateway", getVercelModels, "/api/models/vercel"],
+        ["OpenCode Go", getOpenCodeGoModels, "/api/models/opencode-go"],
     ])("loads the %s model catalog", async (_label, load, path) => {
         const models = [{ id: "openai/gpt-5.4", label: "GPT-5.4" }];
         fetchMock.mockResolvedValue(jsonResponse({ models }));

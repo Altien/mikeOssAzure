@@ -85,6 +85,7 @@ const ALL_MODELS = new Set<string>([
 export function providerForModel(model: string): Provider {
     if (model.startsWith("openrouter/")) return "openrouter";
     if (model.startsWith("vercel/")) return "vercel";
+    if (model.startsWith("opencode-go/")) return "opencode-go";
     if (model.startsWith("claude")) return "claude";
     if (model.startsWith("gemini")) return "gemini";
     if (model.startsWith("kimi-")) return "kimi";
@@ -97,7 +98,7 @@ export function isAllowedModelId(id: string): boolean {
     // Static models are listed in ALL_MODELS; AOAI ids are accepted by
     // prefix because deployment names are user-defined and only known
     // at runtime via deployment discovery.
-    return ALL_MODELS.has(id) || id.startsWith(AZURE_OPENAI_PREFIX) || /^(?:openrouter|vercel)\/[^\s/]+\/[^\s]+$/.test(id);
+    return ALL_MODELS.has(id) || /^opencode-go\/[^\s]+$/.test(id) || id.startsWith(AZURE_OPENAI_PREFIX) || /^(?:openrouter|vercel)\/[^\s/]+\/[^\s]+$/.test(id);
 }
 
 // Renamed/retired static ids → their current equivalents. Stored preferences
@@ -120,4 +121,8 @@ export function openRouterModelId(model: string): string {
 
 export function vercelModelId(model: string): string {
     return model.replace(/^vercel\//, "");
+}
+
+export function openCodeGoModelId(model: string): string {
+    return model.replace(/^opencode-go\//, "");
 }

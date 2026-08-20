@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+    completeOpenCodeGoText,
     completeOpenRouterText,
     completeVercelText,
     streamOpenRouter,
@@ -344,5 +345,57 @@ describe("Vercel AI Gateway LLM adapter", () => {
             model: "openai/gpt-5.4",
             stream: false,
         });
+    });
+});
+
+describe("OpenCode Go LLM adapter", () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.clearAllMocks();
+    });
+
+    it("uses the OpenCode Go key, endpoint, and unprefixed model ID", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(
+            new Response(
+                JSON.stringify({
+                    choices: [{ message: { content: "An OpenCode title" } }],
+                }),
+                {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                },
+            ),
+        );
+        vi.stubGlobal("fetch", fetchMock);
+
+        const result = await completeOpenCodeGoText({
+            model: "opencode-go/glm-5",
+            user: "Title this",
+            apiKeys: { "opencode-go": "oc-user-key" },
+        });
+
+        expect(result).toBe("An OpenCode title");
+        const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+        expect(url).toBe("https://opencode.ai/zen/go/v1/chat/completions");
+        expect(init.headers).toMatchObject({
+            Authorization: "Bearer oc-user-key",
+        });
+        // OpenRouter-only attribution headers must not leak to other routers.
+        expect(init.headers).not.toHaveProperty("X-Title");
+        expect(JSON.parse(String(init.body))).toMatchObject({
+            model: "glm-5",
+            stream: false,
+        });
+    });
+
+    it("names OpenCode Go when no key is configured", async () => {
+        await expect(
+            completeOpenCodeGoText({
+                model: "opencode-go/glm-5",
+                user: "Title this",
+            }),
+        ).rejects.toThrow(
+            "OpenCode Go API key is not configured. Set OPENCODE_API_KEY",
+        );
     });
 });

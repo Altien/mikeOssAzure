@@ -21,6 +21,7 @@ export type ModelToggleGroup =
   | "OpenAI"
   | "OpenRouter"
   | "Vercel AI Gateway"
+  | "OpenCode Go"
   | "Local"
   | "Kimi"
   | "Azure OpenAI";
@@ -37,6 +38,7 @@ export const MODEL_TOGGLE_GROUPS: readonly ModelToggleGroup[] = [
   "OpenAI",
   "OpenRouter",
   "Vercel AI Gateway",
+  "OpenCode Go",
   "Local",
   "Kimi",
   "Azure OpenAI",

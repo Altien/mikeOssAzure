@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ModelToggle } from "./ModelToggle";
 import type { ApiKeyState } from "@/app/lib/mikeApi";
@@ -14,6 +15,7 @@ function keys(configured: Partial<Record<keyof ApiKeyState, boolean>>) {
         "openai",
         "openrouter",
         "vercel",
+        "opencode-go",
         "courtlistener",
     ] as const;
     return Object.fromEntries(
@@ -115,5 +117,40 @@ describe("ModelToggle availability states", () => {
         expect(
             screen.getByRole("button", { name: "Choose model" }),
         ).toHaveTextContent("Select model");
+    });
+});
+
+describe("ModelToggle OpenCode Go group", () => {
+    it("offers the user's saved OpenCode Go models once the key is configured", async () => {
+        const user = userEvent.setup();
+        render(
+            <ModelToggle
+                value="gemini-3-flash-preview"
+                onChange={vi.fn()}
+                apiKeys={keys({ gemini: true, "opencode-go": true })}
+                openCodeGoModels={["glm-5"]}
+            />,
+        );
+
+        await user.click(screen.getByRole("button", { name: "Choose model" }));
+        await user.click(await screen.findByText("OpenCode Go"));
+
+        expect(await screen.findByText("Glm 5")).toBeInTheDocument();
+    });
+
+    it("hides the group when the OpenCode Go key is missing", async () => {
+        const user = userEvent.setup();
+        render(
+            <ModelToggle
+                value="gemini-3-flash-preview"
+                onChange={vi.fn()}
+                apiKeys={keys({ gemini: true })}
+                openCodeGoModels={["glm-5"]}
+            />,
+        );
+
+        await user.click(screen.getByRole("button", { name: "Choose model" }));
+
+        expect(screen.queryByText("OpenCode Go")).not.toBeInTheDocument();
     });
 });

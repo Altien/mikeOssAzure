@@ -73,7 +73,7 @@ const MODEL_NAME_ACRONYMS: Record<string, string> = {
 
 export function modelDisplayName(modelId: string): string {
   const normalized = modelId
-    .replace(/^(?:openrouter|vercel|ollama)\//, "")
+    .replace(/^(?:openrouter|vercel|opencode-go|ollama)\//, "")
     .split("/")
     .at(-1)!
     .replace(/(\d)-(\d)/g, "$1.$2");
@@ -99,6 +99,13 @@ export function modelDisplayName(modelId: string): string {
   return `${label} (${variantLabel})`;
 }
 
+/**
+ * Router slugs, which double as model-id prefixes and API-key provider names.
+ * Kept in sync with backend/src/lib/routerModels.ts ROUTER_SLUGS.
+ */
+export const ROUTER_SLUGS = ["openrouter", "vercel", "opencode-go"] as const;
+export type RouterSlug = (typeof ROUTER_SLUGS)[number];
+
 interface Props {
   value: string;
   onChange: (id: string) => void;
@@ -113,6 +120,7 @@ interface Props {
   apiKeysLoading?: boolean;
   openRouterModels?: string[];
   vercelModels?: string[];
+  openCodeGoModels?: string[];
   compact?: boolean;
 }
 
@@ -132,6 +140,14 @@ export function vercelModelOptions(models: string[]): ModelOption[] {
   }));
 }
 
+export function openCodeGoModelOptions(models: string[]): ModelOption[] {
+  return models.map((model) => ({
+    id: `opencode-go/${model}`,
+    label: modelDisplayName(model),
+    group: "OpenCode Go",
+  }));
+}
+
 export function ModelToggle({
   value,
   onChange,
@@ -139,6 +155,7 @@ export function ModelToggle({
   apiKeysLoading = false,
   openRouterModels = [],
   vercelModels = [],
+  openCodeGoModels = [],
   compact = false,
 }: Props) {
   const { modelOptions: extraModels } = useAoaiDeployments();
@@ -146,6 +163,7 @@ export function ModelToggle({
     ...MODELS,
     ...openRouterModelOptions(openRouterModels),
     ...vercelModelOptions(vercelModels),
+    ...openCodeGoModelOptions(openCodeGoModels),
     ...extraModels.map((model) => ({
       ...model,
       label: modelDisplayName(model.id),

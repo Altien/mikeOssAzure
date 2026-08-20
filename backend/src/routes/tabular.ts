@@ -503,6 +503,7 @@ function providerLabel(provider: Provider): string {
     if (provider === "azureOpenai") return "Azure OpenAI";
     if (provider === "openrouter") return "OpenRouter";
     if (provider === "vercel") return "Vercel AI Gateway";
+    if (provider === "opencode-go") return "OpenCode Go";
     return "Gemini";
 }
 
@@ -516,6 +517,7 @@ const SERVER_KEY_SECRETS: Record<Exclude<Provider, "azureOpenai">, string> = {
     kimi: "moonshot-api-key",
     openrouter: "openrouter-api-key",
     vercel: "ai-gateway-api-key",
+    "opencode-go": "opencode-api-key",
 };
 
 // Upstream divergence (sync-log: f39f175): upstream returns the 422

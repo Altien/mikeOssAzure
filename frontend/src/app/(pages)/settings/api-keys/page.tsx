@@ -27,6 +27,7 @@ const PROVIDERS: ReadonlyArray<{
         label: "Anthropic (Claude)",
         secret: "anthropic-api-key",
     },
+    { provider: "opencode-go", label: "OpenCode Go", secret: "opencode-api-key" },
     { provider: "gemini", label: "Google (Gemini)", secret: "gemini-api-key" },
     { provider: "openai", label: "OpenAI", secret: "openai-api-key" },
     { provider: "kimi", label: "Kimi K3", secret: "moonshot-api-key" },

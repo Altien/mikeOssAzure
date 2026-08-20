@@ -7,7 +7,11 @@ import type {
     StreamChatParams,
     StreamChatResult,
 } from "./types";
-import { openRouterModelId, vercelModelId } from "./models";
+import {
+    openCodeGoModelId,
+    openRouterModelId,
+    vercelModelId,
+} from "./models";
 import { createRawLlmStreamRecorder, logRawLlmStream } from "./rawStreamLog";
 
 const OPENROUTER_CHAT_URL =
@@ -16,15 +20,53 @@ const OPENROUTER_CHAT_URL =
 const VERCEL_CHAT_URL =
     process.env.VERCEL_AI_GATEWAY_BASE_URL?.trim().replace(/\/+$/, "") ||
     "https://ai-gateway.vercel.sh/v1";
+const OPENCODE_GO_CHAT_URL =
+    process.env.OPENCODE_GO_BASE_URL?.trim().replace(/\/+$/, "") ||
+    "https://opencode.ai/zen/go/v1";
 
-type RouterProvider = "openrouter" | "vercel";
+type RouterProvider = "openrouter" | "vercel" | "opencode-go";
+
+const ROUTER_LABELS: Record<RouterProvider, string> = {
+    openrouter: "OpenRouter",
+    vercel: "Vercel AI Gateway",
+    "opencode-go": "OpenCode Go",
+};
+
+const ROUTER_BASE_URLS: Record<RouterProvider, string> = {
+    openrouter: OPENROUTER_CHAT_URL,
+    vercel: VERCEL_CHAT_URL,
+    "opencode-go": OPENCODE_GO_CHAT_URL,
+};
 
 function routerForModel(model: string): RouterProvider {
-    return model.startsWith("vercel/") ? "vercel" : "openrouter";
+    if (model.startsWith("vercel/")) return "vercel";
+    if (model.startsWith("opencode-go/")) return "opencode-go";
+    return "openrouter";
 }
 
 function routerLabel(provider: RouterProvider): string {
-    return provider === "vercel" ? "Vercel AI Gateway" : "OpenRouter";
+    return ROUTER_LABELS[provider];
+}
+
+/** The upstream's own id for an app-level router model id. */
+function routerModelId(provider: RouterProvider, model: string): string {
+    if (provider === "vercel") return vercelModelId(model);
+    if (provider === "opencode-go") return openCodeGoModelId(model);
+    return openRouterModelId(model);
+}
+
+/** The user's key for a router, out of the per-request key bundle. */
+function routerUserKey(
+    provider: RouterProvider,
+    apiKeys?: {
+        openrouter?: string | null;
+        vercel?: string | null;
+        "opencode-go"?: string | null;
+    },
+): string | null | undefined {
+    if (provider === "vercel") return apiKeys?.vercel;
+    if (provider === "opencode-go") return apiKeys?.["opencode-go"];
+    return apiKeys?.openrouter;
 }
 
 type ToolCallPayload = {
@@ -50,12 +92,12 @@ type PartialToolCall = { id: string; name: string; arguments: string };
 async function apiKey(provider: RouterProvider, override?: string | null): Promise<string> {
     const key =
         override?.trim() ||
-        (provider === "vercel" ? await resolveVercelApiKey() : await resolveProviderSecret("openrouter-api-key")) ||
+        (provider === "opencode-go" ? await resolveProviderSecret("opencode-api-key") : provider === "vercel" ? await resolveVercelApiKey() : await resolveProviderSecret("openrouter-api-key")) ||
         "";
     if (!key) {
         throw new Error(
             `${routerLabel(provider)} API key is not configured. ${
-                provider === "vercel"
+                provider === "opencode-go" ? "Set OPENCODE_API_KEY" : provider === "vercel"
                     ? "Set AI_GATEWAY_API_KEY"
                     : "Set OPENROUTER_API_KEY"
             } or configure the organisation credential in Key Vault.`,
@@ -91,8 +133,7 @@ async function postChat(args: {
     body: unknown;
     signal?: AbortSignal;
 }): Promise<Response> {
-    const baseUrl =
-        args.provider === "vercel" ? VERCEL_CHAT_URL : OPENROUTER_CHAT_URL;
+    const baseUrl = ROUTER_BASE_URLS[args.provider];
     const response = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
@@ -178,12 +219,7 @@ export async function streamOpenRouter(
         enableThinking,
     } = params;
     const provider = routerForModel(model);
-    const key = await apiKey(
-        provider,
-        provider === "vercel"
-            ? params.apiKeys?.vercel
-            : params.apiKeys?.openrouter,
-    );
+    const key = await apiKey(provider, routerUserKey(provider, params.apiKeys));
     const maxIterations = params.maxIterations ?? 10;
     const messages = initialMessages(systemPrompt, params.messages);
     const rawStreamRecorder = createRawLlmStreamRecorder({
@@ -200,10 +236,7 @@ export async function streamOpenRouter(
                 key,
                 signal: params.abortSignal,
                 body: {
-                    model:
-                        provider === "vercel"
-                            ? vercelModelId(model)
-                            : openRouterModelId(model),
+                    model: routerModelId(provider, model),
                     messages,
                     tools: tools.length
                         ? (tools as OpenAIToolSchema[])
@@ -419,22 +452,15 @@ export async function completeOpenRouterText(params: {
     apiKeys?: {
         openrouter?: string | null;
         vercel?: string | null;
+        "opencode-go"?: string | null;
     };
 }): Promise<string> {
     const provider = routerForModel(params.model);
     const response = await postChat({
         provider,
-        key: await apiKey(
-            provider,
-            provider === "vercel"
-                ? params.apiKeys?.vercel
-                : params.apiKeys?.openrouter,
-        ),
+        key: await apiKey(provider, routerUserKey(provider, params.apiKeys)),
         body: {
-            model:
-                provider === "vercel"
-                    ? vercelModelId(params.model)
-                    : openRouterModelId(params.model),
+            model: routerModelId(provider, params.model),
             messages: initialMessages(params.systemPrompt ?? "", [
                 { role: "user", content: params.user },
             ]),
@@ -450,3 +476,5 @@ export async function completeOpenRouterText(params: {
 
 export const streamVercel = streamOpenRouter;
 export const completeVercelText = completeOpenRouterText;
+export const streamOpenCodeGo = streamOpenRouter;
+export const completeOpenCodeGoText = completeOpenRouterText;

@@ -9,6 +9,7 @@ export type Provider =
     | "kimi"
     | "azureOpenai"
     | "openrouter"
+    | "opencode-go"
     | "vercel";
 
 export type OpenAIToolSchema = {
@@ -50,6 +51,7 @@ export type UserApiKeys = {
     kimi?: string | null;
     openrouter?: string | null;
     vercel?: string | null;
+    "opencode-go"?: string | null;
     courtlistener?: string | null;
     azureOpenai?: AzureOpenaiSettings | null;
 };
