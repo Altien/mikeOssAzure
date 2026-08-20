@@ -24,6 +24,9 @@
       "tailwind-merge": [
         "node_modules/tailwind-merge"
       ],
+      "@radix-ui/react-dropdown-menu": [
+        "node_modules/@radix-ui/react-dropdown-menu"
+      ],
       "@mike/edit-card-ui": [
         "../frontend/src/shared/ui/EditCardUI.tsx"
       ],
