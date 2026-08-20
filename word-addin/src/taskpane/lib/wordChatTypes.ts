@@ -1,4 +1,8 @@
-import type { Message as SavedMessage, WordAssistantEvent } from "../types";
+import type {
+  Message as SavedMessage,
+  WordAssistantEvent,
+  WordEditDecisionStatus,
+} from "../types";
 
 export type WorkflowAttachment = { id: string; title: string };
 export type EditDecision = "accept" | "reject";
@@ -107,6 +111,11 @@ export interface WordTrackedEditsController {
    */
   acceptAndApplyEdit: (key: string) => Promise<void>;
 }
+
+export type PersistWordEditDecisions = (
+  messageId: string,
+  decisions: Record<string, WordEditDecisionStatus>,
+) => Promise<void>;
 
 export interface WordAssistantChatController {
   messages: WordChatMessage[];
