@@ -19,14 +19,16 @@ import type {
 import {
   appendAssistantContent,
   appendAssistantReasoning,
-  assistantContent,
+  assistantContentForModel,
+  assistantContentFromEvents,
   completeAssistantEvents,
   finishAssistantReasoning,
   messageFromStorage,
+  normalizeLocalWordEditEvents,
   setAssistantError,
-  upsertDocumentReadActivity,
   upsertDocumentReadEvent,
 } from "../lib/wordChatEvents";
+import { readCurrentDocumentName } from "../lib/wordDocumentIdentity";
 
 let localMessageSequence = 0;
 
@@ -44,11 +46,8 @@ interface UseWordAssistantChatOptions {
   wordDocumentId: string;
   wordChatStorage: WordChatStorageMode;
   wordChatOwnerId: string;
+  editApplyMode: "direct" | "approval";
   editController: WordEditStreamController;
-  getEditDecisionsForMessage?: (
-    messageId: string,
-  ) => SavedMessage["editDecisions"];
-  onAssistantMessageSaved?: (messageId: string) => Promise<void>;
 }
 
 export function useWordAssistantChat({
@@ -60,9 +59,8 @@ export function useWordAssistantChat({
   wordDocumentId,
   wordChatStorage,
   wordChatOwnerId,
+  editApplyMode,
   editController,
-  getEditDecisionsForMessage,
-  onAssistantMessageSaved,
 }: UseWordAssistantChatOptions): WordAssistantChatController {
   const [messages, setMessages] = useState<WordChatMessage[]>([]);
   const [isResponseLoading, setIsResponseLoading] = useState(false);
@@ -213,8 +211,22 @@ export function useWordAssistantChat({
         if (!requestIsCurrent()) return;
 
         let streamedContent = "";
-        let completedDocReads: DocumentReadActivity[] = [];
         let assistantCitations: SavedMessage["citations"];
+        const buildLocalAssistantMessage = (
+          fallbackContent = "",
+        ): SavedMessage => {
+          const events = normalizeLocalWordEditEvents(
+            completeAssistantEvents(assistantEvents),
+            assistantMessageId,
+          );
+          return {
+            id: assistantMessageId,
+            role: "assistant",
+            content: assistantContentFromEvents(events) || fallbackContent,
+            events,
+            citations: assistantCitations,
+          };
+        };
         // Fast streams deliver many SSE events per frame; committing React
         // state per event re-renders the transcript far more often than the
         // screen can paint. Publishes coalesce onto one rAF, and the flush
@@ -238,7 +250,6 @@ export function useWordAssistantChat({
               editController.processLiveRedlines(
                 messageId,
                 streamedContent,
-                false,
                 assistantMessageHasStableId,
               );
             }
@@ -286,7 +297,7 @@ export function useWordAssistantChat({
                 role: message.role,
                 content:
                   message.role === "assistant"
-                    ? assistantContent(message)
+                    ? assistantContentForModel(message)
                     : message.content,
                 files: message.files,
                 workflow: message.workflow,
@@ -295,7 +306,9 @@ export function useWordAssistantChat({
               model: submission.model,
               chatId: requestChatId,
               wordDocumentId,
+              documentName: readCurrentDocumentName(),
               wordChatStorage,
+              editApplyMode,
               signal: controller.signal,
               onMetadata: (metadata) => {
                 if (!requestIsCurrent()) return;
@@ -339,8 +352,7 @@ export function useWordAssistantChat({
                 if (!requestIsCurrent()) return;
                 // Later frames supersede earlier partial ones; the final
                 // frame arrives before [DONE].
-                assistantCitations =
-                  citations as SavedMessage["citations"];
+                assistantCitations = citations as SavedMessage["citations"];
                 publishAssistantEvents();
               },
               onDocumentRead: (event) => {
@@ -350,12 +362,6 @@ export function useWordAssistantChat({
                   ...(event.documentId ? { documentId: event.documentId } : {}),
                   status: event.type === "doc_read" ? "read" : "reading",
                 };
-                if (read.status === "read") {
-                  completedDocReads = upsertDocumentReadActivity(
-                    completedDocReads,
-                    read,
-                  );
-                }
                 assistantEvents = upsertDocumentReadEvent(
                   assistantEvents,
                   read,
@@ -382,7 +388,6 @@ export function useWordAssistantChat({
           editController.processLiveRedlines(
             assistantMessageId,
             streamedContent,
-            true,
             assistantMessageHasStableId,
           );
           // A malformed block (e.g. no usable replacement or format) never
@@ -399,19 +404,8 @@ export function useWordAssistantChat({
               documentId: wordDocumentId,
               ownerId: wordChatOwnerId,
               chatId: requestChatId,
-              message: {
-                id: assistantMessageId,
-                role: "assistant",
-                content: streamedContent,
-                docReads:
-                  completedDocReads.length > 0 ? completedDocReads : undefined,
-                events: completeAssistantEvents(assistantEvents),
-                citations: assistantCitations,
-                editDecisions:
-                  getEditDecisionsForMessage?.(assistantMessageId),
-              },
+              message: buildLocalAssistantMessage(),
             });
-            await onAssistantMessageSaved?.(assistantMessageId);
           } else if (wordChatStorage === "cloud") {
             notifyWordChatHistoryChanged();
           }
@@ -431,28 +425,15 @@ export function useWordAssistantChat({
             if (
               wordChatStorage === "local" &&
               requestChatId &&
-              (streamedContent || completedDocReads.length > 0)
+              (streamedContent ||
+                completeAssistantEvents(assistantEvents).length > 0)
             ) {
               await saveLocalWordMessage({
                 documentId: wordDocumentId,
                 ownerId: wordChatOwnerId,
                 chatId: requestChatId,
-                message: {
-                  id: assistantMessageId,
-                  role: "assistant",
-                  content: streamedContent,
-                  docReads:
-                    completedDocReads.length > 0
-                      ? completedDocReads
-                      : undefined,
-                  events: completeAssistantEvents(assistantEvents),
-                  citations: assistantCitations,
-                  editDecisions:
-                    getEditDecisionsForMessage?.(assistantMessageId),
-                },
-              })
-                .then(() => onAssistantMessageSaved?.(assistantMessageId))
-                .catch(() => {});
+                message: buildLocalAssistantMessage(),
+              }).catch(() => {});
             } else if (wordChatStorage === "cloud") {
               notifyWordChatHistoryChanged();
             }
@@ -475,20 +456,8 @@ export function useWordAssistantChat({
               documentId: wordDocumentId,
               ownerId: wordChatOwnerId,
               chatId: requestChatId,
-              message: {
-                id: assistantMessageId,
-                role: "assistant",
-                content: streamedContent || errorMessage,
-                docReads:
-                  completedDocReads.length > 0 ? completedDocReads : undefined,
-                events: completeAssistantEvents(assistantEvents),
-                citations: assistantCitations,
-                editDecisions:
-                  getEditDecisionsForMessage?.(assistantMessageId),
-              },
-            })
-              .then(() => onAssistantMessageSaved?.(assistantMessageId))
-              .catch(() => {});
+              message: buildLocalAssistantMessage(errorMessage),
+            }).catch(() => {});
           } else if (wordChatStorage === "cloud") {
             // The Word-chat backend persists non-abort stream failures before
             // sending its terminal error frame. Refresh history exactly once
@@ -536,10 +505,9 @@ export function useWordAssistantChat({
     [
       chatId,
       editController,
-      getEditDecisionsForMessage,
+      editApplyMode,
       onChatIdChange,
       onChatStarted,
-      onAssistantMessageSaved,
       readDocumentMarkdown,
       wordChatOwnerId,
       wordChatStorage,

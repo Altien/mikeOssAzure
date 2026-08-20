@@ -1,4 +1,4 @@
-import { type DocIndex, resolveDoc } from "./types";
+import { type DocIndex, type DocStore, resolveDoc } from "./types";
 import {
   normalizeCaseDocument,
   sourceDocumentType,
@@ -279,6 +279,7 @@ export function createCitation(
   citation: ParsedCitation,
   docIndex: DocIndex,
   casesByClusterId?: CasesByClusterId,
+  docStore?: DocStore,
 ) {
   if (citation.kind === "case") {
     const caseRecord = casesByClusterId?.get(citation.cluster_id);
@@ -307,8 +308,10 @@ export function createCitation(
   }
 
   const docInfo = resolveDoc(citation.doc_id, docIndex);
+  const requestScopedDocument = docStore?.get(citation.doc_id);
   const documentId = docInfo?.document_id ?? citation.doc_id;
-  const filename = docInfo?.filename ?? citation.doc_id;
+  const filename =
+    docInfo?.filename ?? requestScopedDocument?.filename ?? citation.doc_id;
   const quotes: SourceDocumentQuote[] = citation.quotes.map((quote) => ({
     quote: quote.quote,
     target: {

@@ -3,7 +3,7 @@ import { LoaderCircle } from "lucide-react";
 import { EditCardUI } from "@mike/edit-card-ui";
 import type { RedlineEdit } from "../../lib/redline";
 import { EDIT_CARD_SURFACE } from "./message/messageStyles";
-import type { EditCardStatus } from "../../lib/wordChatTypes";
+import type { EditBusyAction, EditCardStatus } from "../../lib/wordChatTypes";
 
 interface EditCardProps {
   /** Fields can arrive independently while a streamed edit is being parsed. */
@@ -30,6 +30,17 @@ interface EditCardProps {
   error?: string;
   /** Disables both resolution actions while a Word operation is in flight. */
   disabled?: boolean;
+  /** The action currently mutating or navigating the Word document. */
+  busyAction?: EditBusyAction;
+}
+
+function BusyLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <>
+      <LoaderCircle aria-hidden="true" className="h-3 w-3 animate-spin" />
+      <span>{children}</span>
+    </>
+  );
 }
 
 const STATUS_COPY: Record<
@@ -95,6 +106,7 @@ export function EditCard({
   onAcceptAndApply,
   error,
   disabled = false,
+  busyAction,
 }: EditCardProps): React.ReactElement {
   const formats = edit.format ?? [];
   const isFormatCard = formats.length > 0;
@@ -180,6 +192,7 @@ export function EditCard({
       statusMessageClassName={messageClass}
       className={`${EDIT_CARD_SURFACE} p-3`}
       ariaBusy={
+        disabled ||
         status === "receiving" ||
         status === "validating" ||
         status === "applying" ||
@@ -187,46 +200,54 @@ export function EditCard({
         status === "restoring"
       }
       viewAction={
-        status === "ready" || status === "pending" || status === "view-only"
+        status === "ready" ||
+        status === "pending" ||
+        status === "view-only" ||
+        status === "conflicted"
           ? {
               label: "View",
               onClick: onView,
               disabled: disabled || !onView,
             }
-          : status === "conflicted" && onAcceptAndApply
-            ? {
-                // Supersede the occupying revisions on an explicit click:
-                // accept them, then apply this edit as a clean redline.
-                label: "Accept & apply",
-                onClick: onAcceptAndApply,
-                disabled,
-              }
-            : undefined
+          : undefined
       }
       applyAction={
-        status === "ready" || status === "applying-approved"
+        status === "conflicted" && onAcceptAndApply
           ? {
+              // Supersede the occupying revisions on an explicit click:
+              // accept them, then apply this edit as a clean redline.
               label:
-                status === "applying-approved" ? (
-                  <>
-                    <LoaderCircle
-                      aria-hidden="true"
-                      className="h-3 w-3 animate-spin"
-                    />
-                    <span>Applying...</span>
-                  </>
+                busyAction === "accept-and-apply" ? (
+                  <BusyLabel>Accepting & applying...</BusyLabel>
                 ) : (
-                  "Apply"
+                  "Accept & apply"
                 ),
-              onClick: status === "ready" ? onApply : undefined,
-              disabled: status === "applying-approved" || disabled || !onApply,
+              onClick: onAcceptAndApply,
+              disabled,
             }
-          : undefined
+          : status === "ready" || status === "applying-approved"
+            ? {
+                label:
+                  status === "applying-approved" ? (
+                    <BusyLabel>Applying...</BusyLabel>
+                  ) : (
+                    "Apply"
+                  ),
+                onClick: status === "ready" ? onApply : undefined,
+                disabled:
+                  status === "applying-approved" || disabled || !onApply,
+              }
+            : undefined
       }
       acceptAction={
         status === "pending"
           ? {
-              label: "Accept",
+              label:
+                busyAction === "accept" ? (
+                  <BusyLabel>Accepting...</BusyLabel>
+                ) : (
+                  "Accept"
+                ),
               onClick: onAccept,
               disabled: disabled || !onAccept,
             }
@@ -235,7 +256,12 @@ export function EditCard({
       rejectAction={
         status === "pending"
           ? {
-              label: "Reject",
+              label:
+                busyAction === "reject" ? (
+                  <BusyLabel>Rejecting...</BusyLabel>
+                ) : (
+                  "Reject"
+                ),
               onClick: onReject,
               disabled: disabled || !onReject,
             }

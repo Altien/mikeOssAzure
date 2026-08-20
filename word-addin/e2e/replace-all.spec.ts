@@ -1,5 +1,5 @@
 /**
- * E2E coverage for <occurrence>all</occurrence>: one edit block replaces
+ * E2E coverage for `occurrence: "all"`: one edit object replaces
  * every occurrence of its original text. The client applies one occurrence
  * per pass (last revision-free match first — office-js#2800 makes forward
  * batched replacement unsafe on Word for the web) and aggregates all passes
@@ -8,14 +8,22 @@
 import { test, expect } from "./support/fixtures";
 import type { Addin } from "./support/fixtures";
 import type { Page } from "@playwright/test";
+import { replacementEdit, wordEdits } from "./support/editProtocol";
 
 const TOKEN = "test-jwt-token";
 const CHAT_ID = "chat-replace-all";
 const ASSISTANT_MESSAGE_ID = "assistant-replace-all";
+const PERSISTED_EDIT_ID = "44444444-4444-4444-8444-444444444444";
 const DOC_TEXT =
   "Acme Corp leads the market.\nWe trust Acme Corp.\nAcme Corp wins again.";
-const REPLACE_ALL_BLOCK =
-  "<original>Acme Corp</original>\n<replacement>Acme Ltd</replacement>\n<occurrence>all</occurrence>\n<reason>Rename the company everywhere.</reason>";
+const REPLACE_ALL_BLOCK = wordEdits(
+  replacementEdit(
+    "Acme Corp",
+    "Acme Ltd",
+    "Rename the company everywhere.",
+    "all",
+  ),
+);
 const WRITE = { text: "Acme Ltd", location: "After", original: "Acme Corp" };
 
 const CHAT = {
@@ -67,7 +75,24 @@ async function mockPersistedChat(addin: Addin): Promise<void> {
         id: ASSISTANT_MESSAGE_ID,
         chat_id: CHAT_ID,
         role: "assistant",
-        content: [{ type: "content", text: REPLACE_ALL_BLOCK }],
+        content: [{ type: "word_edit_ref", edit_id: PERSISTED_EDIT_ID }],
+        edits: [
+          {
+            id: PERSISTED_EDIT_ID,
+            word_chat_message_id: ASSISTANT_MESSAGE_ID,
+            block_index: 0,
+            original_text: "Acme Corp",
+            replacement_text: "Acme Ltd",
+            formats: [],
+            occurrence: "all",
+            reason: "Rename the company everywhere.",
+            apply_mode: "approval",
+            apply_status: "applied",
+            resolution_status: null,
+            matched_occurrences: 3,
+            applied_occurrences: 3,
+          },
+        ],
         created_at: "2026-08-19T00:00:01Z",
       },
     ],

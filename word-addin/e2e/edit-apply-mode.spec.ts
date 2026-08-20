@@ -6,13 +6,20 @@
  * available for explicit acceptance or rejection.
  */
 import { test, expect } from "./support/fixtures";
+import { replacementEdit, wordEdits } from "./support/editProtocol";
 
 const TOKEN = "test-jwt-token";
 
 const REDLINE_CHUNKS = [
   "Two issues found.\n\n",
-  "<original>The Suplier</original>\n<replacement>The Supplier</replacement>\n<reason>Typo.</reason>\n\n",
-  "<original>shall deliver goods</original>\n<replacement>shall deliver the goods</replacement>\n<reason>Missing article.</reason>",
+  wordEdits(
+    replacementEdit("The Suplier", "The Supplier", "Typo."),
+    replacementEdit(
+      "shall deliver goods",
+      "shall deliver the goods",
+      "Missing article.",
+    ),
+  ),
 ];
 const DOCUMENT_TEXT = "The Suplier shall deliver goods to the Buyer.";
 

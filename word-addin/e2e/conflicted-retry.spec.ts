@@ -8,6 +8,8 @@
  * Accept/Reject still resolves exactly the revisions it created.
  */
 import { test, expect } from "./support/fixtures";
+import { replacementEdit, wordEdits } from "./support/editProtocol";
+import type { Page } from "@playwright/test";
 
 const TOKEN = "test-jwt-token";
 
@@ -15,13 +17,41 @@ test.beforeEach(async ({ addin }) => {
   addin.seedToken(TOKEN);
 });
 
+async function pauseNextWordRun(page: Page): Promise<() => Promise<void>> {
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      Word: typeof Word;
+      __RELEASE_NEXT_WORD_RUN__?: () => void;
+    };
+    const originalRun = testWindow.Word.run.bind(testWindow.Word);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    testWindow.Word.run = (async (...args: Parameters<typeof Word.run>) => {
+      testWindow.Word.run = originalRun;
+      await gate;
+      return originalRun(...args);
+    }) as typeof Word.run;
+    testWindow.__RELEASE_NEXT_WORD_RUN__ = release;
+  });
+  return () =>
+    page.evaluate(() => {
+      const testWindow = window as typeof window & {
+        __RELEASE_NEXT_WORD_RUN__?: () => void;
+      };
+      testWindow.__RELEASE_NEXT_WORD_RUN__?.();
+      delete testWindow.__RELEASE_NEXT_WORD_RUN__;
+    });
+}
+
 test("Accept & apply supersedes the occupying revisions and lands the edit", async ({
   addin,
   page,
 }) => {
   await addin.mockChatStream([
     "One change.\n\n",
-    "<original>The Suplier</original>\n<replacement>The Supplier</replacement>\n<reason>Typo.</reason>",
+    wordEdits(replacementEdit("The Suplier", "The Supplier", "Typo.")),
   ]);
   await addin.gotoTaskpane({
     documentText: "The Suplier shall deliver the goods.",
@@ -36,10 +66,33 @@ test("Accept & apply supersedes the occupying revisions and lands the edit", asy
   // the retry action, and nothing has been written to the document.
   const retryButton = page.getByRole("button", { name: "Accept & apply" });
   await retryButton.waitFor();
+  await expect(retryButton).toHaveClass(/bg-blue-600/);
+  const viewButton = page.getByRole("button", { name: "View", exact: true });
+  await expect(viewButton).toBeVisible();
+  const [retryBounds, viewBounds] = await Promise.all([
+    retryButton.boundingBox(),
+    viewButton.boundingBox(),
+  ]);
+  expect(retryBounds).not.toBeNull();
+  expect(viewBounds).not.toBeNull();
+  expect(retryBounds!.x).toBeLessThan(viewBounds!.x);
   expect((await addin.wordCalls()).trackedChanges).toEqual([]);
   expect((await addin.wordCalls()).acceptedChanges).toEqual([]);
 
+  await viewButton.click();
+  await expect
+    .poll(async () => (await addin.wordCalls()).revealedChanges)
+    .toEqual([
+      { text: "The Suplier", location: "Select", original: "The Suplier" },
+    ]);
+  await expect(retryButton).toBeVisible();
+
+  const releaseAcceptAndApply = await pauseNextWordRun(page);
   await retryButton.click();
+  await expect(
+    page.getByRole("button", { name: "Accepting & applying..." }),
+  ).toBeDisabled();
+  await releaseAcceptAndApply();
 
   // Step 1: the occupying revision was accepted (and only it)…
   await expect
@@ -52,11 +105,19 @@ test("Accept & apply supersedes the occupying revisions and lands the edit", asy
   await expect
     .poll(async () => (await addin.wordCalls()).trackedChanges.length)
     .toBe(1);
-  const acceptButton = page.getByRole("button", { name: "Accept", exact: true });
+  const acceptButton = page.getByRole("button", {
+    name: "Accept",
+    exact: true,
+  });
   await expect(acceptButton).toHaveCount(1);
 
   // The new card's Accept resolves exactly the revision it created.
+  const releaseAccept = await pauseNextWordRun(page);
   await acceptButton.click();
+  await expect(
+    page.getByRole("button", { name: "Accepting..." }),
+  ).toBeDisabled();
+  await releaseAccept();
   await expect(page.getByText("Accepted.", { exact: true })).toBeVisible();
   expect(
     (await addin.wordCalls()).acceptedChanges.filter(

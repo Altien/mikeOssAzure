@@ -8,33 +8,39 @@ type RecordedQuery = {
   filters: { column: string; value: unknown }[];
 };
 
-const { dbState, recordedQueries, recordedRpcs } = vi.hoisted(() => ({
+const { dbState, recordedQueries } = vi.hoisted(() => ({
   dbState: {
     document: { data: { id: "word-document-row-1" }, error: null },
     chatList: { data: [], error: null },
     chatDetail: { data: null, error: null },
     messages: { data: [], error: null },
-    rpc: { data: true, error: null },
+    messageDetail: { data: null, error: null },
+    edits: { data: [], error: null },
+    editDetail: { data: null, error: null },
   } as {
     document: QueryResult;
     chatList: QueryResult;
     chatDetail: QueryResult;
     messages: QueryResult;
-    rpc: QueryResult;
+    messageDetail: QueryResult;
+    edits: QueryResult;
+    editDetail: QueryResult;
   },
   recordedQueries: [] as RecordedQuery[],
-  recordedRpcs: [] as { name: string; args: Record<string, unknown> }[],
 }));
 
 function resultForAwaitedQuery(table: string): QueryResult {
   if (table === "word_chats") return dbState.chatList;
   if (table === "word_chat_messages") return dbState.messages;
+  if (table === "word_document_edits") return dbState.edits;
   return { data: null, error: null };
 }
 
 function resultForSingleQuery(table: string): QueryResult {
   if (table === "word_documents") return dbState.document;
   if (table === "word_chats") return dbState.chatDetail;
+  if (table === "word_chat_messages") return dbState.messageDetail;
+  if (table === "word_document_edits") return dbState.editDetail;
   return { data: null, error: null };
 }
 
@@ -81,10 +87,6 @@ function makeQuery(table: string) {
 function mockSupabase() {
   return {
     from: vi.fn((table: string) => makeQuery(table)),
-    rpc: vi.fn((name: string, args: Record<string, unknown>) => {
-      recordedRpcs.push({ name, args });
-      return Promise.resolve(dbState.rpc);
-    }),
     auth: {
       getUser: () =>
         Promise.resolve({ data: { user: { id: "u1" } }, error: null }),
@@ -125,14 +127,15 @@ function resetDbState() {
   dbState.chatList = { data: [], error: null };
   dbState.chatDetail = { data: null, error: null };
   dbState.messages = { data: [], error: null };
-  dbState.rpc = { data: true, error: null };
+  dbState.messageDetail = { data: null, error: null };
+  dbState.edits = { data: [], error: null };
+  dbState.editDetail = { data: null, error: null };
 }
 
 describe("Word chat history routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     recordedQueries.length = 0;
-    recordedRpcs.length = 0;
     resetDbState();
   });
 
@@ -228,6 +231,47 @@ describe("Word chat history routes", () => {
     expect(res.body.detail).toBe("Chat not found");
   });
 
+  it("hydrates normalized edits alongside their assistant message", async () => {
+    dbState.chatDetail = {
+      data: {
+        id: CHAT_ID,
+        user_id: "u1",
+        word_document_id: "word-document-row-1",
+      },
+      error: null,
+    };
+    dbState.messages = {
+      data: [
+        {
+          id: MESSAGE_ID,
+          chat_id: CHAT_ID,
+          role: "assistant",
+          content: [{ type: "word_edit_ref", edit_id: "edit-1" }],
+        },
+      ],
+      error: null,
+    };
+    dbState.edits = {
+      data: [
+        {
+          id: "edit-1",
+          word_chat_message_id: MESSAGE_ID,
+          block_index: 0,
+          original_text: "ten days",
+          replacement_text: "five days",
+        },
+      ],
+      error: null,
+    };
+
+    const res = await request(app)
+      .get(`/word-chat/${CHAT_ID}?document_id=${DOCUMENT_ID}`)
+      .set(...AUTH);
+
+    expect(res.status).toBe(200);
+    expect(res.body.messages[0].edits).toEqual(dbState.edits.data);
+  });
+
   it("returns 404 before querying Postgres for a malformed chat id", async () => {
     const res = await request(app)
       .get(`/word-chat/not-a-uuid?document_id=${DOCUMENT_ID}`)
@@ -238,52 +282,91 @@ describe("Word chat history routes", () => {
     expect(recordedQueries).toEqual([]);
   });
 
-  it("atomically stores validated edit decisions for the authenticated document", async () => {
+  it("idempotently stores a normalized edit for the authenticated document", async () => {
+    dbState.messageDetail = {
+      data: { id: MESSAGE_ID, chat_id: CHAT_ID, role: "assistant" },
+      error: null,
+    };
+    dbState.chatDetail = {
+      data: {
+        id: CHAT_ID,
+        user_id: "u1",
+        word_document_id: "word-document-row-1",
+      },
+      error: null,
+    };
+    dbState.editDetail = {
+      data: {
+        id: "edit-1",
+        word_chat_message_id: MESSAGE_ID,
+        block_index: 0,
+      },
+      error: null,
+    };
     const res = await request(app)
-      .patch(
-        `/word-chat/messages/${MESSAGE_ID}/edit-decisions?document_id=${DOCUMENT_ID}`,
+      .put(
+        `/word-chat/messages/${MESSAGE_ID}/edits/0?document_id=${DOCUMENT_ID}`,
       )
       .set(...AUTH)
-      .send({ decisions: { 0: "accepted", 3: "rejected" } });
+      .send({
+        original_text: "ten days",
+        replacement_text: "five days",
+        formats: [],
+        reason: "Shortens the cure period",
+        apply_mode: "approval",
+      });
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({
-      edit_decisions: { 0: "accepted", 3: "rejected" },
-    });
-    expect(recordedRpcs).toEqual([
-      {
-        name: "merge_word_chat_edit_decisions",
-        args: {
-          p_user_id: "u1",
-          p_client_document_id: DOCUMENT_ID,
-          p_message_id: MESSAGE_ID,
-          p_decisions: { 0: "accepted", 3: "rejected" },
-        },
-      },
-    ]);
+    expect(res.body.id).toBe("edit-1");
+    expect(recordedQueries.map(({ table }) => table)).toContain(
+      "word_document_edits",
+    );
   });
 
-  it("rejects malformed edit decisions before calling Postgres", async () => {
+  it("rejects malformed normalized edits before querying their message", async () => {
     const res = await request(app)
-      .patch(
-        `/word-chat/messages/${MESSAGE_ID}/edit-decisions?document_id=${DOCUMENT_ID}`,
+      .put(
+        `/word-chat/messages/${MESSAGE_ID}/edits/0?document_id=${DOCUMENT_ID}`,
       )
       .set(...AUTH)
-      .send({ decisions: { "edit-0": "accepted", 1: "pending" } });
+      .send({ original_text: "", apply_mode: "approval" });
 
     expect(res.status).toBe(400);
-    expect(recordedRpcs).toEqual([]);
+    expect(recordedQueries).toEqual([]);
   });
 
-  it("does not reveal an edit-decision target outside the document scope", async () => {
-    dbState.rpc = { data: false, error: null };
+  it("rejects normalized edit anchors longer than the Word protocol limit", async () => {
+    const res = await request(app)
+      .put(
+        `/word-chat/messages/${MESSAGE_ID}/edits/0?document_id=${DOCUMENT_ID}`,
+      )
+      .set(...AUTH)
+      .send({
+        original_text: "x".repeat(201),
+        replacement_text: "replacement",
+        formats: [],
+        apply_mode: "approval",
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.detail).toBe(
+      "original_text must be at most 200 characters",
+    );
+    expect(recordedQueries).toEqual([]);
+  });
+
+  it("does not reveal a normalized edit target outside the document scope", async () => {
+    dbState.messageDetail = {
+      data: { id: MESSAGE_ID, chat_id: CHAT_ID, role: "assistant" },
+      error: null,
+    };
 
     const res = await request(app)
       .patch(
-        `/word-chat/messages/${MESSAGE_ID}/edit-decisions?document_id=${DOCUMENT_ID}`,
+        `/word-chat/messages/${MESSAGE_ID}/edits/0?document_id=${DOCUMENT_ID}`,
       )
       .set(...AUTH)
-      .send({ decisions: { 0: "accepted" } });
+      .send({ resolution_status: "accepted" });
 
     expect(res.status).toBe(404);
     expect(res.body.detail).toBe("Message not found");

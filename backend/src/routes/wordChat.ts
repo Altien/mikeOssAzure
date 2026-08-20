@@ -4,8 +4,7 @@ import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import {
   AssistantStreamError,
-  ACTIVE_WORD_DOCUMENT_FILENAME,
-  ACTIVE_WORD_DOCUMENT_LABEL,
+  ACTIVE_WORD_DOCUMENT_ID,
   buildCancelledAssistantMessage,
   buildDocContext,
   buildMessages,
@@ -28,15 +27,18 @@ import {
 } from "../lib/chat";
 import { getUserModelSettings } from "../lib/userSettings";
 import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
+import {
+  persistWordDocumentEdits,
+  WORD_EDIT_FORMATS,
+  type WordEditApplyMode,
+} from "../lib/chat/wordDocumentEdits";
 
 export const wordChatRouter = Router();
 
 type Db = ReturnType<typeof createServerSupabase>;
 type WordChatStorageMode = "cloud" | "local";
-type StoredWordEditDecision = "accepted" | "rejected";
 type LookupResult<T> =
-  | { ok: true; value: T | null }
-  | { ok: false; detail: string };
+  { ok: true; value: T | null } | { ok: false; detail: string };
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -50,42 +52,27 @@ function parseDocumentId(
   return { ok: true, value };
 }
 
-function isUuid(value: string): boolean {
-  return UUID_PATTERN.test(value);
-}
-
-function parseEditDecisions(
+function parseDocumentName(
   value: unknown,
-):
-  | { ok: true; value: Record<string, StoredWordEditDecision> }
-  | { ok: false; detail: string } {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return { ok: false, detail: "decisions must be an object" };
+): { ok: true; value: string } | { ok: false; detail: string } {
+  if (value === undefined || value === null) {
+    return { ok: true, value: "Word document" };
   }
-  const entries = Object.entries(value);
-  if (entries.length === 0 || entries.length > 100) {
+  if (typeof value !== "string" || !value.trim()) {
     return {
       ok: false,
-      detail: "decisions must contain between 1 and 100 edit outcomes",
+      detail: "document_name must be a non-empty string",
     };
   }
-  const decisions: Record<string, StoredWordEditDecision> = {};
-  for (const [blockIndex, decision] of entries) {
-    if (!/^(0|[1-9]\d*)$/.test(blockIndex) || Number(blockIndex) > 10_000) {
-      return {
-        ok: false,
-        detail: "decision keys must be edit block indexes",
-      };
-    }
-    if (decision !== "accepted" && decision !== "rejected") {
-      return {
-        ok: false,
-        detail: 'decision values must be "accepted" or "rejected"',
-      };
-    }
-    decisions[blockIndex] = decision;
+  const documentName = value.trim();
+  if (documentName.length > 255) {
+    return { ok: false, detail: "document_name must be at most 255 characters" };
   }
-  return { ok: true, value: decisions };
+  return { ok: true, value: documentName };
+}
+
+function isUuid(value: string): boolean {
+  return UUID_PATTERN.test(value);
 }
 
 function parseStorageMode(
@@ -96,6 +83,19 @@ function parseStorageMode(
   }
   if (value === "local") return { ok: true, value: "local" };
   return { ok: false, detail: 'storage must be "cloud" or "local"' };
+}
+
+function parseEditApplyMode(
+  value: unknown,
+): { ok: true; value: WordEditApplyMode } | { ok: false; detail: string } {
+  if (value === undefined || value === null || value === "approval") {
+    return { ok: true, value: "approval" };
+  }
+  if (value === "direct") return { ok: true, value: "direct" };
+  return {
+    ok: false,
+    detail: 'edit_apply_mode must be "direct" or "approval"',
+  };
 }
 
 async function getWordDocumentRowId(
@@ -156,6 +156,115 @@ async function getAccessibleWordChat(
   return {
     ok: true,
     value: { ...(data as Record<string, unknown>), project_id: null },
+  };
+}
+
+async function getAccessibleWordMessage(args: {
+  messageId: string;
+  clientDocumentId: string;
+  userId: string;
+  db: Db;
+}): Promise<LookupResult<Record<string, unknown>>> {
+  const documentLookup = await getWordDocumentRowId(
+    args.clientDocumentId,
+    args.userId,
+    args.db,
+  );
+  if (!documentLookup.ok) return documentLookup;
+  if (!documentLookup.value) return { ok: true, value: null };
+  const { data: message, error } = await args.db
+    .from("word_chat_messages")
+    .select("id, chat_id, role")
+    .eq("id", args.messageId)
+    .maybeSingle();
+  if (error) return { ok: false, detail: error.message };
+  if (!message || message.role !== "assistant") {
+    return { ok: true, value: null };
+  }
+  const chatLookup = await getAccessibleWordChat(
+    message.chat_id as string,
+    documentLookup.value,
+    args.userId,
+    args.db,
+  );
+  if (!chatLookup.ok || !chatLookup.value) return chatLookup;
+  return { ok: true, value: message as Record<string, unknown> };
+}
+
+function parseBlockIndex(
+  value: string,
+): { ok: true; value: number } | { ok: false; detail: string } {
+  if (!/^(0|[1-9]\d*)$/.test(value)) {
+    return { ok: false, detail: "blockIndex must be a non-negative integer" };
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed > 10_000) {
+    return { ok: false, detail: "blockIndex is out of range" };
+  }
+  return { ok: true, value: parsed };
+}
+
+function parseProposedWordEdit(value: unknown):
+  | {
+      ok: true;
+      value: {
+        original_text: string;
+        replacement_text: string;
+        formats: string[];
+        occurrence: "all" | null;
+        reason: string | null;
+        apply_mode: WordEditApplyMode;
+      };
+    }
+  | { ok: false; detail: string } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ok: false, detail: "edit body is required" };
+  }
+  const body = value as Record<string, unknown>;
+  const original =
+    typeof body.original_text === "string" ? body.original_text : "";
+  if (!original.trim()) {
+    return { ok: false, detail: "original_text is required" };
+  }
+  if (original.length > 200) {
+    return { ok: false, detail: "original_text must be at most 200 characters" };
+  }
+  const replacement =
+    typeof body.replacement_text === "string" ? body.replacement_text : "";
+  if (replacement.length > 200_000) {
+    return { ok: false, detail: "replacement_text is too long" };
+  }
+  const formats = Array.isArray(body.formats)
+    ? body.formats.filter(
+        (entry): entry is string =>
+          typeof entry === "string" && WORD_EDIT_FORMATS.has(entry),
+      )
+    : [];
+  if (Array.isArray(body.formats) && formats.length !== body.formats.length) {
+    return { ok: false, detail: "formats contains an unsupported value" };
+  }
+  const parsedMode = parseEditApplyMode(body.apply_mode);
+  if (!parsedMode.ok) return parsedMode;
+  if (
+    body.occurrence !== undefined &&
+    body.occurrence !== null &&
+    body.occurrence !== "all"
+  ) {
+    return { ok: false, detail: 'occurrence must be "all" or null' };
+  }
+  return {
+    ok: true,
+    value: {
+      original_text: original,
+      replacement_text: replacement,
+      formats,
+      occurrence: body.occurrence === "all" ? "all" : null,
+      reason:
+        typeof body.reason === "string" && body.reason.trim()
+          ? body.reason.trim().slice(0, 10_000)
+          : null,
+      apply_mode: parsedMode.value,
+    },
   };
 }
 
@@ -258,16 +367,51 @@ wordChatRouter.get("/:chatId", requireAuth, async (req, res) => {
     console.error("[word-chat] failed to load messages", safeErrorLog(error));
     return void res.status(500).json({ detail: "Failed to load Word chat" });
   }
+  const visibleMessages = withoutEmptyAssistantReservations(messages ?? []);
+  const assistantMessageIds = visibleMessages.flatMap((message) =>
+    message.role === "assistant" && typeof message.id === "string"
+      ? [message.id]
+      : [],
+  );
+  const editsByMessage = new Map<string, Record<string, unknown>[]>();
+  if (assistantMessageIds.length > 0) {
+    const { data: edits, error: editsError } = await db
+      .from("word_document_edits")
+      .select("*")
+      .in("word_chat_message_id", assistantMessageIds)
+      .order("block_index", { ascending: true });
+    if (editsError) {
+      console.error(
+        "[word-chat] failed to load document edits",
+        safeErrorLog(editsError),
+      );
+      return void res.status(500).json({ detail: "Failed to load Word chat" });
+    }
+    for (const edit of (edits ?? []) as Record<string, unknown>[]) {
+      const messageId = edit.word_chat_message_id;
+      if (typeof messageId !== "string") continue;
+      const current = editsByMessage.get(messageId) ?? [];
+      current.push(edit);
+      editsByMessage.set(messageId, current);
+    }
+  }
   res.json({
     chat,
-    messages: withoutEmptyAssistantReservations(messages ?? []),
+    messages: visibleMessages.map((message) => ({
+      ...message,
+      ...(typeof message.id === "string" && editsByMessage.has(message.id)
+        ? { edits: editsByMessage.get(message.id) }
+        : {}),
+    })),
   });
 });
 
-// Store terminal Word decisions separately from streamed assistant content so
-// accepting an edit while the response is still saving cannot be overwritten.
-wordChatRouter.patch(
-  "/messages/:messageId/edit-decisions",
+// PUT /word-chat/messages/:messageId/edits/:blockIndex
+// Idempotently creates the canonical edit row as soon as a streamed edit
+// block seals. The final assistant-message save later replaces the raw tags
+// with a lightweight reference to the same row.
+wordChatRouter.put(
+  "/messages/:messageId/edits/:blockIndex",
   requireAuth,
   async (req, res) => {
     const userId = res.locals.userId as string;
@@ -278,31 +422,176 @@ wordChatRouter.patch(
     if (!isUuid(req.params.messageId)) {
       return void res.status(404).json({ detail: "Message not found" });
     }
-    const parsedDecisions = parseEditDecisions(req.body?.decisions);
-    if (!parsedDecisions.ok) {
-      return void res.status(400).json({ detail: parsedDecisions.detail });
+    const parsedBlockIndex = parseBlockIndex(req.params.blockIndex);
+    if (!parsedBlockIndex.ok) {
+      return void res.status(400).json({ detail: parsedBlockIndex.detail });
     }
-
+    const parsedEdit = parseProposedWordEdit(req.body);
+    if (!parsedEdit.ok) {
+      return void res.status(400).json({ detail: parsedEdit.detail });
+    }
     const db = createServerSupabase();
-    const { data, error } = await db.rpc("merge_word_chat_edit_decisions", {
-      p_user_id: userId,
-      p_client_document_id: parsedDocumentId.value,
-      p_message_id: req.params.messageId,
-      p_decisions: parsedDecisions.value,
+    const messageLookup = await getAccessibleWordMessage({
+      messageId: req.params.messageId,
+      clientDocumentId: parsedDocumentId.value,
+      userId,
+      db,
     });
-    if (error) {
+    if (!messageLookup.ok) {
       console.error(
-        "[word-chat] failed to save edit decisions",
-        safeErrorLog(error),
+        "[word-chat] failed to validate edit message",
+        safeErrorLog(messageLookup.detail),
       );
-      return void res
-        .status(500)
-        .json({ detail: "Failed to save edit decision" });
+      return void res.status(500).json({ detail: "Failed to save Word edit" });
     }
-    if (data !== true) {
+    if (!messageLookup.value) {
       return void res.status(404).json({ detail: "Message not found" });
     }
-    res.json({ edit_decisions: parsedDecisions.value });
+    const { error: insertError } = await db
+      .from("word_document_edits")
+      .upsert(
+        {
+          word_chat_message_id: req.params.messageId,
+          block_index: parsedBlockIndex.value,
+          ...parsedEdit.value,
+        },
+        {
+          onConflict: "word_chat_message_id,block_index",
+          ignoreDuplicates: true,
+        },
+      )
+      .select("id");
+    if (insertError) {
+      console.error(
+        "[word-chat] failed to save edit",
+        safeErrorLog(insertError),
+      );
+      return void res.status(500).json({ detail: "Failed to save Word edit" });
+    }
+    // The first sealed payload is canonical. A retry returns that row without
+    // rewriting its text, apply mode, or any lifecycle state already recorded.
+    const { data, error } = await db
+      .from("word_document_edits")
+      .select("*")
+      .eq("word_chat_message_id", req.params.messageId)
+      .eq("block_index", parsedBlockIndex.value)
+      .maybeSingle();
+    if (error || !data) {
+      console.error("[word-chat] failed to load edit", safeErrorLog(error));
+      return void res.status(500).json({ detail: "Failed to save Word edit" });
+    }
+    res.json(data);
+  },
+);
+
+// PATCH /word-chat/messages/:messageId/edits/:blockIndex
+// Stores durable apply and accept/reject outcomes without rewriting the
+// assistant message JSON.
+wordChatRouter.patch(
+  "/messages/:messageId/edits/:blockIndex",
+  requireAuth,
+  async (req, res) => {
+    const userId = res.locals.userId as string;
+    const parsedDocumentId = parseDocumentId(req.query.document_id);
+    if (!parsedDocumentId.ok) {
+      return void res.status(400).json({ detail: parsedDocumentId.detail });
+    }
+    if (!isUuid(req.params.messageId)) {
+      return void res.status(404).json({ detail: "Message not found" });
+    }
+    const parsedBlockIndex = parseBlockIndex(req.params.blockIndex);
+    if (!parsedBlockIndex.ok) {
+      return void res.status(400).json({ detail: parsedBlockIndex.detail });
+    }
+    const body =
+      req.body && typeof req.body === "object" && !Array.isArray(req.body)
+        ? (req.body as Record<string, unknown>)
+        : {};
+    const patch: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+    };
+    if (body.apply_status !== undefined) {
+      if (
+        body.apply_status !== "proposed" &&
+        body.apply_status !== "applied" &&
+        body.apply_status !== "unmanaged" &&
+        body.apply_status !== "failed"
+      ) {
+        return void res.status(400).json({ detail: "Invalid apply_status" });
+      }
+      patch.apply_status = body.apply_status;
+      if (body.apply_status === "applied") {
+        patch.applied_at = new Date().toISOString();
+      }
+    }
+    if (body.resolution_status !== undefined) {
+      if (
+        body.resolution_status !== "accepted" &&
+        body.resolution_status !== "rejected"
+      ) {
+        return void res
+          .status(400)
+          .json({ detail: "Invalid resolution_status" });
+      }
+      patch.resolution_status = body.resolution_status;
+      patch.apply_status = "applied";
+      patch.resolved_at = new Date().toISOString();
+    }
+    for (const field of [
+      "matched_occurrences",
+      "applied_occurrences",
+    ] as const) {
+      if (body[field] === undefined) continue;
+      if (
+        typeof body[field] !== "number" ||
+        !Number.isSafeInteger(body[field]) ||
+        body[field] < 0
+      ) {
+        return void res.status(400).json({ detail: `Invalid ${field}` });
+      }
+      patch[field] = body[field];
+    }
+    for (const field of ["error_code", "error_message"] as const) {
+      if (body[field] === undefined) continue;
+      if (body[field] !== null && typeof body[field] !== "string") {
+        return void res.status(400).json({ detail: `Invalid ${field}` });
+      }
+      patch[field] =
+        typeof body[field] === "string" ? body[field].slice(0, 10_000) : null;
+    }
+    if (Object.keys(patch).length === 1) {
+      return void res.status(400).json({ detail: "No edit fields supplied" });
+    }
+    const db = createServerSupabase();
+    const messageLookup = await getAccessibleWordMessage({
+      messageId: req.params.messageId,
+      clientDocumentId: parsedDocumentId.value,
+      userId,
+      db,
+    });
+    if (!messageLookup.ok) {
+      return void res
+        .status(500)
+        .json({ detail: "Failed to update Word edit" });
+    }
+    if (!messageLookup.value) {
+      return void res.status(404).json({ detail: "Message not found" });
+    }
+    const { data, error } = await db
+      .from("word_document_edits")
+      .update(patch)
+      .eq("word_chat_message_id", req.params.messageId)
+      .eq("block_index", parsedBlockIndex.value)
+      .select("*")
+      .maybeSingle();
+    if (error) {
+      console.error("[word-chat] failed to update edit", safeErrorLog(error));
+      return void res
+        .status(500)
+        .json({ detail: "Failed to update Word edit" });
+    }
+    if (!data) return void res.status(404).json({ detail: "Edit not found" });
+    res.json(data);
   },
 );
 
@@ -340,15 +629,25 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
   if (!parsedDocumentId.ok) {
     return void res.status(400).json({ detail: parsedDocumentId.detail });
   }
+  const parsedDocumentName = parseDocumentName(body.document_name);
+  if (!parsedDocumentName.ok) {
+    return void res.status(400).json({ detail: parsedDocumentName.detail });
+  }
   const parsedStorage = parseStorageMode(body.storage);
   if (!parsedStorage.ok) {
     return void res.status(400).json({ detail: parsedStorage.detail });
+  }
+  const parsedEditApplyMode = parseEditApplyMode(body.edit_apply_mode);
+  if (!parsedEditApplyMode.ok) {
+    return void res.status(400).json({ detail: parsedEditApplyMode.detail });
   }
 
   const messages = parsedMessages.value;
   const model = parsedModel.value;
   const clientDocumentId = parsedDocumentId.value;
+  const activeDocumentName = parsedDocumentName.value;
   const persistChat = parsedStorage.value === "cloud";
+  const editApplyMode = parsedEditApplyMode.value;
   const db = createServerSupabase();
   let chatId = parsedChatId.value;
   let chatTitle: string | null = null;
@@ -436,11 +735,11 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
   );
   const activeDocumentText = parsedDocumentContext.documentContext;
   if (activeDocumentText !== undefined) {
-    docStore.set(ACTIVE_WORD_DOCUMENT_LABEL, {
+    docStore.set(ACTIVE_WORD_DOCUMENT_ID, {
       // This is an in-memory identity, never a Supabase storage path.
       storage_path: `inline:word-document:${clientDocumentId}`,
       file_type: "text/markdown",
-      filename: ACTIVE_WORD_DOCUMENT_FILENAME,
+      filename: activeDocumentName,
       inline_text: activeDocumentText,
     });
   }
@@ -448,8 +747,8 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
     ...(activeDocumentText !== undefined
       ? [
           {
-            doc_id: ACTIVE_WORD_DOCUMENT_LABEL,
-            filename: ACTIVE_WORD_DOCUMENT_FILENAME,
+            doc_id: ACTIVE_WORD_DOCUMENT_ID,
+            filename: activeDocumentName,
           },
         ]
       : []),
@@ -480,6 +779,7 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
     docIndex,
     false,
     nonce,
+    "replace",
   );
   const workflowStore = await buildWorkflowStore(userId, userEmail, db);
   const assistantMessageId = randomUUID();
@@ -508,6 +808,18 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
     chatId,
     enabled: persistChat,
   });
+  const normalizeAssistantEvents = async (
+    events: unknown[],
+  ): Promise<unknown[]> => {
+    if (!persistChat) return events;
+    const normalized = await persistWordDocumentEdits({
+      db,
+      messageId: assistantMessageId,
+      events,
+      applyMode: editApplyMode,
+    });
+    return normalized.events;
+  };
   const updateChatActivity = async (): Promise<void> => {
     if (!persistChat) return;
     const update =
@@ -556,7 +868,9 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
       nonce,
       emitDone: false,
     });
-    const persistedEvents = stripTransientAssistantEvents(events);
+    const persistedEvents = await normalizeAssistantEvents(
+      stripTransientAssistantEvents(events),
+    );
     const saveError = await updateAssistantMessage(
       persistedEvents.length ? persistedEvents : null,
       citations.length ? citations : null,
@@ -581,11 +895,12 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
         const partial = buildCancelledAssistantMessage({
           fullText: error.fullText,
           events: error.events,
-          buildCitations: (fullText, events) =>
-            extractCitations(fullText, docIndex, events),
+          buildCitations: (fullText) =>
+            extractCitations(fullText, docIndex, docStore),
         });
+        const partialEvents = await normalizeAssistantEvents(partial.events);
         const saveError = await updateAssistantMessage(
-          partial.events.length ? partial.events : null,
+          partialEvents.length ? partialEvents : null,
           partial.citations.length ? partial.citations : null,
         );
         if (saveError) {
@@ -604,9 +919,14 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
     const errorFullText =
       error instanceof AssistantStreamError ? error.fullText : "";
     try {
-      const citations = extractCitations(errorFullText, docIndex, errorEvents);
+      const citations = extractCitations(
+        errorFullText,
+        docIndex,
+        docStore,
+      );
+      const normalizedErrorEvents = await normalizeAssistantEvents(errorEvents);
       const saveError = await updateAssistantMessage(
-        errorEvents.length ? errorEvents : null,
+        normalizedErrorEvents.length ? normalizedErrorEvents : null,
         citations.length ? citations : null,
       );
       if (saveError) {

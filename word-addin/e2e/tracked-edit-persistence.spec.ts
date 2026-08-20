@@ -1,18 +1,19 @@
 import { test, expect } from "./support/fixtures";
 import type { Addin, WordBookmarkSnapshot } from "./support/fixtures";
 import type { Page } from "@playwright/test";
+import { replacementEdit, wordEdits } from "./support/editProtocol";
 
 const TOKEN = "tracked-edit-persistence-token";
 const CHAT_ID = "chat-persistent-edit";
 const ASSISTANT_MESSAGE_ID = "assistant-persistent-edit";
 const STABLE_EDIT_ID = `${ASSISTANT_MESSAGE_ID}:edit-0`;
+const PERSISTED_EDIT_ID = "33333333-3333-4333-8333-333333333333";
 const ANCHOR_SETTINGS_KEY = "mike.wordEditAnchors.v1";
 const ORIGINAL = "The Suplier shall deliver the goods.";
 const REPLACEMENT = "The Supplier shall deliver the goods.";
-const REDLINE =
-  `<original>${ORIGINAL}</original>` +
-  `<replacement>${REPLACEMENT}</replacement>` +
-  "<reason>Correct the defined party name.</reason>";
+const REDLINE = wordEdits(
+  replacementEdit(ORIGINAL, REPLACEMENT, "Correct the defined party name."),
+);
 
 const CHAT = {
   id: CHAT_ID,
@@ -46,7 +47,24 @@ async function mockPersistedChat(addin: Addin): Promise<void> {
         id: ASSISTANT_MESSAGE_ID,
         chat_id: CHAT_ID,
         role: "assistant",
-        content: [{ type: "content", text: REDLINE }],
+        content: [{ type: "word_edit_ref", edit_id: PERSISTED_EDIT_ID }],
+        edits: [
+          {
+            id: PERSISTED_EDIT_ID,
+            word_chat_message_id: ASSISTANT_MESSAGE_ID,
+            block_index: 0,
+            original_text: ORIGINAL,
+            replacement_text: REPLACEMENT,
+            formats: [],
+            occurrence: null,
+            reason: "Correct the defined party name.",
+            apply_mode: "approval",
+            apply_status: "applied",
+            resolution_status: null,
+            matched_occurrences: 1,
+            applied_occurrences: 1,
+          },
+        ],
         created_at: "2026-08-09T00:00:01Z",
       },
     ],
@@ -304,7 +322,7 @@ test("stays View-only when the bookmark's revisions no longer identify the edit"
   // A second identical Added revision makes Mike's insertion ambiguous, so
   // no revision may be resolved on the user's behalf.
   expect(
-    await addin.injectRevisionIntoBookmark(bookmark.name, "Added", REPLACEMENT)
+    await addin.injectRevisionIntoBookmark(bookmark.name, "Added", REPLACEMENT),
   ).toBe(true);
 
   await reloadAndOpenPersistedChat(addin, page);

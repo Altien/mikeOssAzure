@@ -8,6 +8,7 @@
  */
 import { test, expect } from "./support/fixtures";
 import type { Page } from "@playwright/test";
+import { replacementEdit, wordEdits } from "./support/editProtocol";
 
 const TOKEN = "test-jwt-token";
 
@@ -307,7 +308,7 @@ test("history button loads and opens a previous chat", async ({
         id: "message-2",
         role: "assistant",
         content: [
-          { type: "doc_read", filename: "Active Word document" },
+          { type: "doc_read", filename: "Demo Contract.docx" },
           { type: "content", text: "The lease has three risks." },
         ],
       },
@@ -469,7 +470,7 @@ test("history preserves assistant event order and stored errors", async ({
           },
           {
             type: "doc_read",
-            filename: "Active Word document",
+            filename: "Demo Contract.docx",
             document_id: "active-document",
           },
           { type: "content", text: "The document has three risks." },
@@ -690,6 +691,7 @@ test("sends a document snapshot without claiming the model read it", async ({
 
   const body = request.postDataJSON();
   expect(body.document_context).toBe(docText);
+  expect(body.document_name).toBe("Demo Contract.docx");
   expect(body.storage).toBe("cloud");
   expect(body.document_id).toMatch(
     /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
@@ -840,12 +842,12 @@ test("shows Reading and Read only when the model triggers the read tool", async 
           controller.enqueue(
             frame({
               type: "doc_read_start",
-              filename: "Active Word document",
+              filename: "Demo Contract.docx",
             }),
           );
           testWindow.__FINISH_DOCUMENT_READ__ = () => {
             controller.enqueue(
-              frame({ type: "doc_read", filename: "Active Word document" }),
+              frame({ type: "doc_read", filename: "Demo Contract.docx" }),
             );
             controller.enqueue(
               frame({
@@ -912,7 +914,7 @@ test("removes an unfinished Reading event when the stream is stopped", async ({
             encoder.encode(
               `data: ${JSON.stringify({
                 type: "doc_read_start",
-                filename: "Active Word document",
+                filename: "Demo Contract.docx",
               })}\n\n`,
             ),
           );
@@ -1614,10 +1616,16 @@ test("streams sealed edit cards into Word and resolves their exact revisions", a
   await addin.mockChatStream(
     [
       "Two issues found.\n\n",
-      "ORIGINAL: The Suplier\nREPLACEMENT: The Supplier\nREASON: Typo.\n\n",
-      "ORIGINAL: shall deliver goods\nREPLACEMENT: shall deliver the goods\nREASON: Missing article.",
+      wordEdits(
+        replacementEdit("The Suplier", "The Supplier", "Typo."),
+        replacementEdit(
+          "shall deliver goods",
+          "shall deliver the goods",
+          "Missing article.",
+        ),
+      ),
     ],
-    { docReads: ["Active Word document"] },
+    { docReads: ["Demo Contract.docx"] },
   );
   await addin.gotoTaskpane({
     documentText: "The Suplier shall deliver goods to the Buyer.",
@@ -1633,9 +1641,7 @@ test("streams sealed edit cards into Word and resolves their exact revisions", a
     .poll(async () => (await addin.wordCalls()).trackedChanges.length)
     .toBe(2);
   await expect(page.getByText("Two issues found.")).toBeVisible();
-  await expect(page.locator("body")).not.toContainText("ORIGINAL:");
-  await expect(page.locator("body")).not.toContainText("REPLACEMENT:");
-  await expect(page.locator("body")).not.toContainText("REASON:");
+  await expect(page.locator("body")).not.toContainText("<EDITS>");
   await expect(page.getByText("The Supplier", { exact: true })).toBeVisible();
   await expect(
     page.getByText("shall deliver the goods", { exact: true }),
@@ -1740,15 +1746,16 @@ test("hides a provisional edit card until it can be reviewed and applied", async
       const body = new ReadableStream<Uint8Array>({
         start(controller) {
           controller.enqueue(
-            event("<original>The Suplier</original><replacement>The Supp"),
+            event(
+              '<EDITS>[{"type":"edit_data","kind":"edit",' +
+                '"deleted_text":"The Suplier","inserted_text":"The Supp',
+            ),
           );
           let continued = false;
           streamWindow.__CONTINUE_REDLINE_STREAM__ = () => {
             if (continued) return;
             continued = true;
-            controller.enqueue(
-              event("lier</replacement><reason>Typo.</reason>\n\n"),
-            );
+            controller.enqueue(event('lier","reason":"Typo."}]</EDITS>\n\n'));
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
             controller.close();
           };
@@ -1774,8 +1781,7 @@ test("hides a provisional edit card until it can be reviewed and applied", async
 
   await expect(page.getByText("Receiving change…")).toHaveCount(0);
   await expect(page.getByText("The Supp", { exact: true })).toHaveCount(0);
-  await expect(page.locator("body")).not.toContainText("<original>");
-  await expect(page.locator("body")).not.toContainText("<replacement>");
+  await expect(page.locator("body")).not.toContainText("<EDITS>");
   expect((await addin.wordCalls()).trackedChanges).toEqual([]);
   await expect(
     page.getByRole("button", { name: "Accept", exact: true }),
@@ -1830,7 +1836,7 @@ test("View scrolls Word to a proposed change before it is applied", async ({
   page,
 }) => {
   await addin.mockChatStream([
-    "ORIGINAL: The Suplier\nREPLACEMENT: The Supplier\nREASON: Typo.",
+    wordEdits(replacementEdit("The Suplier", "The Supplier", "Typo.")),
   ]);
   await addin.gotoTaskpane({
     documentText: "The Suplier shall deliver the goods.",
@@ -1866,7 +1872,7 @@ test("View falls back to a second anchor when Word invalidates the first", async
   page,
 }) => {
   await addin.mockChatStream([
-    "ORIGINAL: The Suplier\nREPLACEMENT: The Supplier\nREASON: Typo.",
+    wordEdits(replacementEdit("The Suplier", "The Supplier", "Typo.")),
   ]);
   await addin.gotoTaskpane({
     documentText: "The Suplier shall deliver the goods.",
@@ -1892,7 +1898,7 @@ test("a change Word cannot scroll to reports plain language, not a Word error co
   page,
 }) => {
   await addin.mockChatStream([
-    "ORIGINAL: The Suplier\nREPLACEMENT: The Supplier\nREASON: Typo.",
+    wordEdits(replacementEdit("The Suplier", "The Supplier", "Typo.")),
   ]);
   await addin.gotoTaskpane({
     documentText: "The Suplier shall deliver the goods.",
@@ -1949,11 +1955,11 @@ test("stopping a stream leaves sealed edits reviewable and marks its tail incomp
         start(controller) {
           controller.enqueue(
             event(
-              "<original>The Suplier</original>" +
-                "<replacement>The Supplier</replacement>" +
-                "<reason>Typo.</reason>" +
-                "<original>goods</original>" +
-                "<replacement>the",
+              '<EDITS>[{"type":"edit_data","kind":"edit",' +
+                '"deleted_text":"The Suplier","inserted_text":' +
+                '"The Supplier","reason":"Typo."},{"type":"edit_data",' +
+                '"kind":"edit","deleted_text":"goods",' +
+                '"inserted_text":"the',
             ),
           );
           init?.signal?.addEventListener(
@@ -2004,8 +2010,14 @@ test("Accept all resolves every pending tracked-change handle", async ({
   page,
 }) => {
   await addin.mockChatStream([
-    "ORIGINAL: The Suplier\nREPLACEMENT: The Supplier\nREASON: Typo.\n\n",
-    "ORIGINAL: shall deliver goods\nREPLACEMENT: shall deliver the goods\nREASON: Missing article.",
+    wordEdits(
+      replacementEdit("The Suplier", "The Supplier", "Typo."),
+      replacementEdit(
+        "shall deliver goods",
+        "shall deliver the goods",
+        "Missing article.",
+      ),
+    ),
   ]);
   await addin.gotoTaskpane({
     documentText: "The Suplier shall deliver goods to the Buyer.",
@@ -2046,7 +2058,7 @@ test("skips an edit whose target already contains an unrelated tracked revision"
   page,
 }) => {
   await addin.mockChatStream([
-    "ORIGINAL: The Suplier\nREPLACEMENT: The Supplier\nREASON: Typo.",
+    wordEdits(replacementEdit("The Suplier", "The Supplier", "Typo.")),
   ]);
   await addin.gotoTaskpane({
     documentText: "The Suplier shall deliver the goods.",
@@ -2082,7 +2094,7 @@ test("explains when an edit's source text is missing from the document", async (
   page,
 }) => {
   await addin.mockChatStream([
-    "ORIGINAL: The Suplier\nREPLACEMENT: The Supplier\nREASON: Typo.",
+    wordEdits(replacementEdit("The Suplier", "The Supplier", "Typo.")),
   ]);
   await addin.gotoTaskpane({
     documentText: "The Buyer shall deliver the goods.",
@@ -2106,9 +2118,13 @@ test("explains when an edit's source passage cannot be safely searched", async (
 }) => {
   const oversizedSource = "x".repeat(256);
   await addin.mockChatStream([
-    `<original>${oversizedSource}</original>` +
-      "<replacement>Short passage</replacement>" +
-      "<reason>Condense the passage.</reason>",
+    wordEdits(
+      replacementEdit(
+        oversizedSource,
+        "Short passage",
+        "Condense the passage.",
+      ),
+    ),
   ]);
   await addin.gotoTaskpane({ documentText: oversizedSource });
   await addin.expectAuthedShell();
@@ -2117,9 +2133,7 @@ test("explains when an edit's source passage cannot be safely searched", async (
   await page.getByRole("button", { name: "Send" }).click();
 
   await expect(
-    page.getByText(
-      "Skipped — this passage is too long for Word’s search or spans paragraphs.",
-    ),
+    page.getByText("Incomplete change — not applied."),
   ).toBeVisible();
   expect((await addin.wordCalls()).trackedChanges).toEqual([]);
 });
@@ -2129,7 +2143,7 @@ test("keeps an edit reviewable through its passage when Word withholds revision 
   page,
 }) => {
   await addin.mockChatStream([
-    "ORIGINAL: The Suplier\nREPLACEMENT: The Supplier\nREASON: Typo.",
+    wordEdits(replacementEdit("The Suplier", "The Supplier", "Typo.")),
   ]);
   await addin.gotoTaskpane({
     documentText: "The Suplier will deliver the goods.",
@@ -2187,7 +2201,7 @@ test("edits sharing replacement text resolve independently by location", async (
   // errored with "The revisions in this passage changed…" before location
   // narrowing through the retained anchors.
   await addin.mockChatStream([
-    "<original>teh Buyer</original>\n<replacement>the Buyer</replacement>\n<reason>Fix the typo.</reason>",
+    wordEdits(replacementEdit("teh Buyer", "the Buyer", "Fix the typo.")),
   ]);
   await addin.gotoTaskpane({
     documentText:
@@ -2204,7 +2218,7 @@ test("edits sharing replacement text resolve independently by location", async (
   ).toBeVisible();
 
   await addin.mockChatStream([
-    "<original>hte Buyer</original>\n<replacement>the Buyer</replacement>\n<reason>Fix the typo.</reason>",
+    wordEdits(replacementEdit("hte Buyer", "the Buyer", "Fix the typo.")),
   ]);
   await page.getByPlaceholder("How can I help?").fill("Fix the second typo");
   await page.getByRole("button", { name: "Send" }).click();
@@ -2240,7 +2254,9 @@ test("does not broaden one edit across repeated exact passages", async ({
   page,
 }) => {
   await addin.mockChatStream([
-    "ORIGINAL: the Supplier\nREPLACEMENT: Supplier Ltd.\nREASON: Clarify the entity.",
+    wordEdits(
+      replacementEdit("the Supplier", "Supplier Ltd.", "Clarify the entity."),
+    ),
   ]);
   await addin.gotoTaskpane({
     documentText:
@@ -2250,7 +2266,6 @@ test("does not broaden one edit across repeated exact passages", async ({
 
   await page.getByPlaceholder("How can I help?").fill("Clarify the supplier");
   await page.getByRole("button", { name: "Send" }).click();
-  await page.getByRole("button", { name: "Apply", exact: true }).click();
 
   await expect(
     page.getByText(
@@ -2270,7 +2285,13 @@ test("an applied card names the paragraph the change landed in", async ({
   page,
 }) => {
   await addin.mockChatStream([
-    "<original>notify the Supplier</original>\n<replacement>notify Supplier Ltd.</replacement>\n<reason>Clarify the entity.</reason>",
+    wordEdits(
+      replacementEdit(
+        "notify the Supplier",
+        "notify Supplier Ltd.",
+        "Clarify the entity.",
+      ),
+    ),
   ]);
   await addin.gotoTaskpane({
     documentText:

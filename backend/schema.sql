@@ -906,10 +906,7 @@ create table if not exists public.chat_messages (
   files jsonb,
   workflow jsonb,
   citations jsonb,
-  edit_decisions jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  constraint word_chat_messages_edit_decisions_object_check
-    check (jsonb_typeof(edit_decisions) = 'object')
+  created_at timestamptz not null default now()
 );
 
 create index if not exists idx_chat_messages_chat
@@ -963,57 +960,46 @@ create table if not exists public.word_chat_messages (
 create index if not exists idx_word_chat_messages_chat_created
   on public.word_chat_messages(chat_id, created_at);
 
+create table if not exists public.word_document_edits (
+  id uuid primary key default gen_random_uuid(),
+  word_chat_message_id uuid not null
+    references public.word_chat_messages(id) on delete cascade,
+  block_index integer not null check (block_index >= 0),
+  original_text text not null check (length(original_text) > 0),
+  replacement_text text not null default '',
+  formats text[] not null default '{}',
+  occurrence text check (occurrence is null or occurrence = 'all'),
+  reason text,
+  apply_mode text not null
+    check (apply_mode in ('direct', 'approval')),
+  apply_status text not null default 'proposed'
+    check (apply_status in ('proposed', 'applied', 'unmanaged', 'failed')),
+  resolution_status text
+    check (resolution_status is null or resolution_status in ('accepted', 'rejected')),
+  matched_occurrences integer check (matched_occurrences is null or matched_occurrences >= 0),
+  applied_occurrences integer check (applied_occurrences is null or applied_occurrences >= 0),
+  error_code text,
+  error_message text,
+  applied_at timestamptz,
+  resolved_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (word_chat_message_id, block_index),
+  constraint word_document_edits_resolution_requires_application
+    check (resolution_status is null or apply_status = 'applied')
+);
+
+create index if not exists word_document_edits_message_idx
+  on public.word_document_edits(word_chat_message_id, block_index);
+
+create index if not exists word_document_edits_unresolved_idx
+  on public.word_document_edits(word_chat_message_id)
+  where apply_status = 'applied' and resolution_status is null;
+
 alter table public.word_documents enable row level security;
 alter table public.word_chats enable row level security;
 alter table public.word_chat_messages enable row level security;
-
-create or replace function public.merge_word_chat_edit_decisions(
-  p_user_id text,
-  p_client_document_id uuid,
-  p_message_id uuid,
-  p_decisions jsonb
-)
-returns boolean
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  updated_count integer := 0;
-begin
-  if jsonb_typeof(p_decisions) <> 'object' then
-    raise exception 'p_decisions must be a JSON object';
-  end if;
-
-  update public.word_chat_messages message
-  set edit_decisions = coalesce(message.edit_decisions, '{}'::jsonb) || p_decisions
-  from public.word_chats chat,
-       public.word_documents document
-  where message.id = p_message_id
-    and message.role = 'assistant'
-    and chat.id = message.chat_id
-    and document.id = chat.word_document_id
-    and chat.user_id::text = p_user_id
-    and document.user_id::text = p_user_id
-    and document.client_document_id = p_client_document_id;
-
-  get diagnostics updated_count = row_count;
-  return updated_count = 1;
-end;
-$$;
-
-revoke all on function public.merge_word_chat_edit_decisions(
-  text,
-  uuid,
-  uuid,
-  jsonb
-) from public, anon, authenticated;
-grant execute on function public.merge_word_chat_edit_decisions(
-  text,
-  uuid,
-  uuid,
-  jsonb
-) to service_role;
+alter table public.word_document_edits enable row level security;
 
 do $$
 begin
@@ -2317,6 +2303,7 @@ revoke all on public.chat_messages from anon, authenticated;
 revoke all on public.word_documents from anon, authenticated;
 revoke all on public.word_chats from anon, authenticated;
 revoke all on public.word_chat_messages from anon, authenticated;
+revoke all on public.word_document_edits from anon, authenticated;
 revoke all on public.tabular_reviews from anon, authenticated;
 revoke all on public.tabular_cells from anon, authenticated;
 revoke all on public.tabular_review_rows from anon, authenticated;

@@ -48,9 +48,10 @@ test("keeps edit activity out of the pre-response wrapper", async ({
             event({
               type: "content_delta",
               text:
-                "<original>The Suplier</original>" +
-                "<replacement>The Supplier</replacement>" +
-                "<reason>Correct the supplier typo.</reason>\n\n" +
+                '<EDITS>[{"type":"edit_data","kind":"edit",' +
+                '"deleted_text":"The Suplier","inserted_text":' +
+                '"The Supplier","reason":"Correct the supplier typo."}]' +
+                "</EDITS>\n\n" +
                 "I corrected the supplier name.",
             }),
           );

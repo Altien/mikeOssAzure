@@ -1,10 +1,11 @@
 /**
- * E2E coverage for format-only tracked changes: <original>/<format>/<reason>
- * blocks restyle existing text (bold/italic/underline) under TrackAll instead
+ * E2E coverage for format-only tracked changes. JSON edit objects restyle
+ * existing text (bold/italic/underline) under TrackAll instead
  * of replacing it, and their cards resolve the resulting "Formatted" revision
  * exactly like text edits.
  */
 import { test, expect } from "./support/fixtures";
+import { formatEdit, wordEdits } from "./support/editProtocol";
 
 const TOKEN = "test-jwt-token";
 const DOCUMENT_TEXT =
@@ -20,7 +21,9 @@ test("streams a format block into Word as a formatted tracked change and resolve
 }) => {
   await addin.mockChatStream([
     "One heading needs emphasis.\n\n",
-    "<original>GOVERNING LAW.</original>\n<format>bold</format>\n<reason>Emphasize the section heading.</reason>",
+    wordEdits(
+      formatEdit("GOVERNING LAW.", ["bold"], "Emphasize the section heading."),
+    ),
   ]);
   await addin.gotoTaskpane({ documentText: DOCUMENT_TEXT });
   await addin.expectAuthedShell();
@@ -65,7 +68,13 @@ test("rejecting a format edit leaves the passage's styling decision to Word", as
   page,
 }) => {
   await addin.mockChatStream([
-    "<original>GOVERNING LAW.</original>\n<format>italic, underline</format>\n<reason>Style the heading.</reason>",
+    wordEdits(
+      formatEdit(
+        "GOVERNING LAW.",
+        ["italic", "underline"],
+        "Style the heading.",
+      ),
+    ),
   ]);
   await addin.gotoTaskpane({ documentText: DOCUMENT_TEXT });
   await addin.expectAuthedShell();
@@ -96,7 +105,7 @@ test("Edit mode applies a format edit immediately and leaves it pending", async 
   page,
 }) => {
   await addin.mockChatStream([
-    "<original>GOVERNING LAW.</original>\n<format>bold</format>\n<reason>Emphasize the heading.</reason>",
+    wordEdits(formatEdit("GOVERNING LAW.", ["bold"], "Emphasize the heading.")),
   ]);
   await addin.gotoTaskpane({ documentText: DOCUMENT_TEXT });
   await addin.expectAuthedShell();
@@ -126,7 +135,13 @@ test("a heading format applies the paragraph style as a reviewable tracked chang
   page,
 }) => {
   await addin.mockChatStream([
-    "<original>GOVERNING LAW.</original>\n<format>heading 1</format>\n<reason>Make the section title a proper heading.</reason>",
+    wordEdits(
+      formatEdit(
+        "GOVERNING LAW.",
+        ["heading1"],
+        "Make the section title a proper heading.",
+      ),
+    ),
   ]);
   await addin.gotoTaskpane({ documentText: DOCUMENT_TEXT });
   await addin.expectAuthedShell();
@@ -165,7 +180,7 @@ test("a format block naming no recognized formatting settles as incomplete and n
   page,
 }) => {
   await addin.mockChatStream([
-    "<original>GOVERNING LAW.</original>\n<format>sparkly</format>\n<reason>Not a real format.</reason>",
+    wordEdits(formatEdit("GOVERNING LAW.", ["sparkly"], "Not a real format.")),
   ]);
   await addin.gotoTaskpane({ documentText: DOCUMENT_TEXT });
   await addin.expectAuthedShell();

@@ -14,6 +14,7 @@
 import type { Page } from "@playwright/test";
 import { test, expect } from "./support/fixtures";
 import type { Addin } from "./support/fixtures";
+import { replacementEdit, wordEdits } from "./support/editProtocol";
 
 const TOKEN = "test-jwt-token";
 
@@ -29,7 +30,7 @@ const NUMBERED_DOC = {
 
 const DELETE_ITEM_TWO = [
   "Removing point 2.\n\n",
-  "<original>Bar goes second.</original>\n<replacement></replacement>\n<reason>Requested removal.</reason>",
+  wordEdits(replacementEdit("Bar goes second.", "", "Requested removal.")),
 ];
 
 test.beforeEach(async ({ addin }) => {
@@ -151,7 +152,7 @@ test("a partial deletion inside an item never escalates to the paragraph", async
 }) => {
   await addin.mockChatStream([
     "Trimming.\n\n",
-    "<original>and wanders on.</original>\n<replacement></replacement>\n<reason>Tighter.</reason>",
+    wordEdits(replacementEdit("and wanders on.", "", "Tighter.")),
   ]);
   await addin.gotoTaskpane({
     documentText: "Foo goes first.\nBar goes second and wanders on.",
@@ -188,7 +189,7 @@ test("an original quoting the renderer's list marker still deletes the paragraph
 }) => {
   await addin.mockChatStream([
     "Removing point 2.\n\n",
-    "<original>2. Bar goes second.</original>\n<replacement></replacement>\n<reason>Requested removal.</reason>",
+    wordEdits(replacementEdit("2. Bar goes second.", "", "Requested removal.")),
   ]);
   await addin.gotoTaskpane(NUMBERED_DOC);
   await addin.expectAuthedShell();
@@ -214,7 +215,7 @@ test("an over-length item degrades to an honest skip, not a partial delete", asy
   expect(longItem.length).toBeGreaterThan(255);
   await addin.mockChatStream([
     "Removing the long clause.\n\n",
-    `<original>${longItem}</original>\n<replacement></replacement>\n<reason>Requested removal.</reason>`,
+    wordEdits(replacementEdit(longItem, "", "Requested removal.")),
   ]);
   await addin.gotoTaskpane({
     documentText: `Foo goes first.\n${longItem}`,
@@ -229,9 +230,7 @@ test("an over-length item degrades to an honest skip, not a partial delete", asy
   await page.getByRole("button", { name: "Send" }).click();
 
   await expect(
-    page.getByText(
-      "Skipped — this passage is too long for Word’s search or spans paragraphs.",
-    ),
+    page.getByText("Incomplete change — not applied."),
   ).toBeVisible();
   expect((await addin.wordCalls()).trackedChanges).toEqual([]);
 });
@@ -242,7 +241,7 @@ test("a whole plain paragraph deletes too, leaving no empty line", async ({
 }) => {
   await addin.mockChatStream([
     "Removing the aside.\n\n",
-    "<original>This aside adds nothing.</original>\n<replacement></replacement>\n<reason>Redundant.</reason>",
+    wordEdits(replacementEdit("This aside adds nothing.", "", "Redundant.")),
   ]);
   await addin.gotoTaskpane({
     documentText:

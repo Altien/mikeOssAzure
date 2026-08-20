@@ -233,7 +233,8 @@ export const test = base.extend<{ addin: Addin }>({
         id: "qa-proofread",
         workflow_id: "wf-proofread",
         name: "Proofread agreement",
-        prompt: "Review the current document for drafting quality, internal consistency, grammar, punctuation, formatting, numbering, defined terms, and cross-reference errors. List each issue with its location, severity, and a specific recommended fix.",
+        prompt:
+          "Review the current document for drafting quality, internal consistency, grammar, punctuation, formatting, numbering, defined terms, and cross-reference errors. List each issue with its location, severity, and a specific recommended fix.",
         document_upload: false,
         surface: "word",
         enabled: true,
@@ -244,7 +245,8 @@ export const test = base.extend<{ addin: Addin }>({
         id: "qa-extract",
         workflow_id: "wf-extract",
         name: "Extract key terms",
-        prompt: "Extract the key legal, commercial, and operational terms from the current document. Present them in a concise table with the term, value, location, and notes, and flag material omissions or ambiguities without inventing missing information.",
+        prompt:
+          "Extract the key legal, commercial, and operational terms from the current document. Present them in a concise table with the term, value, location, and notes, and flag material omissions or ambiguities without inventing missing information.",
         document_upload: false,
         surface: "word",
         enabled: true,
@@ -255,7 +257,8 @@ export const test = base.extend<{ addin: Addin }>({
         id: "qa-draft",
         workflow_id: "wf-draft",
         name: "Draft from template",
-        prompt: "Create a completed draft from the template I attach, using the current document and any additional materials as source context. Preserve the template's formatting and structure, replace placeholders consistently, and ask for any essential missing information.",
+        prompt:
+          "Create a completed draft from the template I attach, using the current document and any additional materials as source context. Preserve the template's formatting and structure, replace placeholders consistently, and ask for any essential missing information.",
         document_upload: false,
         surface: "word",
         enabled: true,
@@ -300,23 +303,48 @@ export const test = base.extend<{ addin: Addin }>({
       });
     });
 
-    // Accept/Reject persists terminal edit-card outcomes independently from
-    // the streamed assistant response. Keep that write hermetic by default;
-    // storage specs can register a newer route when asserting its payload.
-    await page.route(
-      "**/word-chat/messages/*/edit-decisions?*",
-      (route, request) => {
-        if (request.method() !== "PATCH") return route.fallback();
-        const decisions = (
-          request.postDataJSON() as { decisions?: Record<string, string> }
-        ).decisions;
+    // Normalized edit rows persist independently from the streamed assistant
+    // response. Keep those writes hermetic by default; storage specs can
+    // register a newer route when asserting a payload.
+    await page.route("**/word-chat/messages/*/edits/*?*", (route, request) => {
+      if (request.method() === "PATCH") {
         return route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify({ edit_decisions: decisions ?? {} }),
+          body: "{}",
         });
-      },
-    );
+      }
+      if (request.method() !== "PUT") return route.fallback();
+      const body = request.postDataJSON() as {
+        original_text: string;
+        replacement_text: string;
+        formats?: string[];
+        occurrence?: "all" | null;
+        reason?: string | null;
+        apply_mode: "direct" | "approval";
+      };
+      const url = new URL(request.url());
+      const match = url.pathname.match(/\/messages\/([^/]+)\/edits\/(\d+)$/);
+      const messageId = decodeURIComponent(match?.[1] ?? "assistant-message");
+      const blockIndex = Number(match?.[2] ?? 0);
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: `${messageId}:edit-${blockIndex}`,
+          word_chat_message_id: messageId,
+          block_index: blockIndex,
+          original_text: body.original_text,
+          replacement_text: body.replacement_text,
+          formats: body.formats ?? [],
+          occurrence: body.occurrence ?? null,
+          reason: body.reason ?? null,
+          apply_mode: body.apply_mode,
+          apply_status: "proposed",
+          resolution_status: null,
+        }),
+      });
+    });
 
     let seed: OfficeSeed = {};
 

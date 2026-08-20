@@ -1,18 +1,19 @@
 import { test, expect } from "./support/fixtures";
+import { replacementEdit, wordEdits } from "./support/editProtocol";
 
 const TOKEN = "chat-storage-token";
 const LOCAL_CHAT_ID = "9ee585c2-7e55-44fa-afc0-2ed20cc62913";
 const ASSISTANT_MESSAGE_ID = "5b0a81db-df77-4c5f-83ab-f54e29057d24";
 
-test("cloud edit decisions are persisted against the assistant message", async ({
+test("cloud edit resolution is persisted on the normalized edit row", async ({
   addin,
   page,
 }) => {
   await addin.mockChatStream(
     [
-      "<original>Suplier</original>" +
-        "<replacement>Supplier</replacement>" +
-        "<reason>Correct the party name.</reason>",
+      wordEdits(
+        replacementEdit("Suplier", "Supplier", "Correct the party name."),
+      ),
     ],
     {
       chatId: LOCAL_CHAT_ID,
@@ -34,14 +35,14 @@ test("cloud edit decisions are persisted against the assistant message", async (
   const persistenceRequest = page.waitForRequest(
     (request) =>
       request.method() === "PATCH" &&
-      request.url().includes(
-        `/word-chat/messages/${ASSISTANT_MESSAGE_ID}/edit-decisions`,
-      ),
+      request
+        .url()
+        .includes(`/word-chat/messages/${ASSISTANT_MESSAGE_ID}/edits/0`),
   );
   await page.getByRole("button", { name: "Accept", exact: true }).click();
   const request = await persistenceRequest;
 
-  expect(request.postDataJSON()).toEqual({ decisions: { 0: "accepted" } });
+  expect(request.postDataJSON()).toEqual({ resolution_status: "accepted" });
   expect(new URL(request.url()).searchParams.get("document_id")).toBeTruthy();
   await expect(page.getByText("Accepted.", { exact: true })).toBeVisible();
 });
@@ -53,7 +54,7 @@ test("cloud is default and local mode persists document chats in IndexedDB", asy
   await addin.mockChatStream(["A locally stored answer."], {
     chatId: LOCAL_CHAT_ID,
     assistantMessageId: ASSISTANT_MESSAGE_ID,
-    docReads: ["Active Word document"],
+    docReads: ["Demo Contract.docx"],
   });
   await addin.gotoTaskpane({ token: TOKEN });
   await addin.expectAuthedShell();
@@ -65,7 +66,9 @@ test("cloud is default and local mode persists document chats in IndexedDB", asy
     name: "Save chats in the cloud",
   });
   await expect(
-    cloudSwitch.locator("xpath=ancestor::div[contains(@class, 'rounded-xl')][1]"),
+    cloudSwitch.locator(
+      "xpath=ancestor::div[contains(@class, 'rounded-xl')][1]",
+    ),
   ).toHaveClass(/bg-white\/55/);
   await expect(
     page
@@ -119,13 +122,14 @@ test("device-only history restores accepted and rejected edit outcomes", async (
   const firstReplacement = "Supplier";
   const secondOriginal = "deliver goods";
   const secondReplacement = "deliver the goods";
-  const response =
-    `<original>${firstOriginal}</original>` +
-    `<replacement>${firstReplacement}</replacement>` +
-    "<reason>Correct the party name.</reason>" +
-    `<original>${secondOriginal}</original>` +
-    `<replacement>${secondReplacement}</replacement>` +
-    "<reason>Add the missing article.</reason>";
+  const response = wordEdits(
+    replacementEdit(firstOriginal, firstReplacement, "Correct the party name."),
+    replacementEdit(
+      secondOriginal,
+      secondReplacement,
+      "Add the missing article.",
+    ),
+  );
 
   await addin.mockChatStream([response], {
     chatId: "19ca5c94-0e23-4d56-8404-b3775154f8f8",
@@ -148,7 +152,10 @@ test("device-only history restores accepted and rejected edit outcomes", async (
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Apply", exact: true }).first().click();
+  await page
+    .getByRole("button", { name: "Apply", exact: true })
+    .first()
+    .click();
   await expect(page.locator('[data-edit-status="pending"]')).toHaveCount(1);
   await page.getByRole("button", { name: "Apply", exact: true }).click();
   await expect(page.locator('[data-edit-status="pending"]')).toHaveCount(2);
@@ -189,10 +196,9 @@ test("stopping a local edit stream preserves the assistant turn for reload", asy
   const replacement = "The Supplier shall deliver the goods.";
   const chatId = "7c1d920b-12f0-45cb-b121-ead5fb1b1241";
   const assistantMessageId = "70d0d343-4de8-4d33-88d4-a9f117e1c3f0";
-  const redline =
-    `<original>${original}</original>` +
-    `<replacement>${replacement}</replacement>` +
-    "<reason>Correct the party name.</reason>";
+  const redline = wordEdits(
+    replacementEdit(original, replacement, "Correct the party name."),
+  );
 
   await page.addInitScript(
     ({ persistedChatId, persistedAssistantId, streamedRedline }) => {
@@ -295,8 +301,8 @@ test("a clean SSE cancellation finalizes and persists a partial local turn", asy
   const chatId = "3bcd6af0-ff49-41a0-b0a5-fac156eb650e";
   const assistantMessageId = "3c20ca34-a6db-492d-b4d1-79c86c36ffad";
   const partialRedline =
-    "<original>The Suplier shall deliver the goods.</original>" +
-    "<replacement>The Supplier shall deliver the goods.";
+    '<EDITS>[{"type":"edit_data","kind":"edit","deleted_text":' +
+    '"The Suplier shall deliver the goods.","inserted_text":"The Supplier';
 
   await page.addInitScript(
     ({ persistedChatId, persistedAssistantId, streamedRedline }) => {
@@ -382,8 +388,6 @@ test("a clean SSE cancellation finalizes and persists a partial local turn", asy
     .getByRole("button", { name: /Finish this change locally/ })
     .click();
 
-  await expect(page.getByText("Historical change.")).toBeVisible();
-  await expect(
-    page.getByText("The Supplier shall deliver the goods."),
-  ).toBeVisible();
+  await expect(page.getByText("Historical change.")).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText("<EDITS>");
 });

@@ -1,12 +1,10 @@
 /**
  * Document citations in assistant prose.
  *
- * The Word-chat system prompt asks the model to wrap short verbatim quotes of
- * the active document in <cite>...</cite>. This module projects those markers
- * into Markdown links with a reserved fragment href, so the shared renderer
- * can style them as citation chips and a click can be routed to Word (search,
- * scroll, select) without ever showing the raw tags — even mid-stream, when a
- * tag may have arrived only partially.
+ * The model emits inline [n] markers plus the same hidden final CITATIONS JSON
+ * block used by web chat. The backend parses and verifies the block; this
+ * module resolves the returned citation rows into Markdown links so clicks can
+ * be routed to Word. Legacy <cite> markers remain readable in old histories.
  */
 
 export const CITATION_HREF_PREFIX = "#mike-cite:";
@@ -44,9 +42,16 @@ export function decodeCitationHref(href: string): string | null {
 
 /** The verbatim quote behind one of the backend's `[n]` citation markers. */
 export interface CitationQuoteSource {
+  ref?: number | null;
   marker?: string | null;
   quote?: string | null;
   text?: string | null;
+  quotes?:
+    | readonly {
+        quote?: string | null;
+        text?: string | null;
+      }[]
+    | null;
 }
 
 /** Map "[n]" -> verbatim quote for every citation that carries one. */
@@ -55,12 +60,25 @@ function quotesByMarker(
 ): Map<string, string> {
   const map = new Map<string, string>();
   for (const [index, citation] of (citations ?? []).entries()) {
-    const quote = (citation.quote ?? citation.text ?? "").trim();
+    const nestedQuote = citation.quotes?.find(
+      (candidate) => candidate.quote || candidate.text,
+    );
+    const quote = (
+      citation.quote ??
+      citation.text ??
+      nestedQuote?.quote ??
+      nestedQuote?.text ??
+      ""
+    ).trim();
     if (!quote) continue;
     const marker =
       typeof citation.marker === "string" && /^\[\d+\]$/.test(citation.marker)
         ? citation.marker
-        : `[${index + 1}]`;
+        : typeof citation.ref === "number" &&
+            Number.isSafeInteger(citation.ref) &&
+            citation.ref > 0
+          ? `[${citation.ref}]`
+          : `[${index + 1}]`;
     if (!map.has(marker)) map.set(marker, quote);
   }
   return map;
