@@ -102,6 +102,18 @@ export function getWordEditAnchor(stableEditId: string): WordEditAnchor | null {
   return anchor ? { ...anchor } : null;
 }
 
+/**
+ * Registered stable edit IDs starting with `prefix`. A replace-all edit
+ * persists one anchor per applied occurrence under `${cardKey}#${pass}`, and
+ * this is how a reloaded pane discovers how many passes were applied.
+ */
+export function listWordEditAnchorIds(prefix: string): string[] {
+  const settings = Office.context.document.settings;
+  return Object.keys(readRegistry(settings).anchors).filter((id) =>
+    id.startsWith(prefix),
+  );
+}
+
 export async function persistWordEditAnchor(
   stableEditId: string,
   bookmarkName: string

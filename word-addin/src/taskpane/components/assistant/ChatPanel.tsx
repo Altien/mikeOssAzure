@@ -2,7 +2,10 @@ import React from "react";
 import { useWordAssistantChat } from "../../hooks/useWordAssistantChat";
 import { useWordTrackedEdits } from "../../hooks/useWordTrackedEdits";
 import type { Message as SavedMessage } from "../../types";
-import type { WordChatStorageMode } from "../../lib/wordChatSettings";
+import type {
+  WordChatStorageMode,
+  WordEditApplyMode,
+} from "../../lib/wordChatSettings";
 import { ChatView } from "./ChatView";
 import type { WorkflowAttachment } from "../../lib/wordChatTypes";
 
@@ -17,6 +20,8 @@ interface ChatPanelProps {
   wordDocumentId: string;
   wordChatStorage: WordChatStorageMode;
   wordChatOwnerId: string;
+  editApplyMode: WordEditApplyMode;
+  onEditApplyModeChange: (mode: WordEditApplyMode) => void;
 }
 
 /**
@@ -35,10 +40,13 @@ export function ChatPanel({
   wordDocumentId,
   wordChatStorage,
   wordChatOwnerId,
+  editApplyMode,
+  onEditApplyModeChange,
 }: ChatPanelProps): React.ReactElement {
   const trackedEdits = useWordTrackedEdits({
     sessionKey,
     initialMessages,
+    applyMode: editApplyMode,
   });
   const chat = useWordAssistantChat({
     sessionKey,
@@ -61,6 +69,8 @@ export function ChatPanel({
       sessionKey={sessionKey}
       selectedWorkflow={selectedWorkflow}
       onSelectedWorkflowChange={onSelectedWorkflowChange}
+      editApplyMode={editApplyMode}
+      onEditApplyModeChange={onEditApplyModeChange}
     />
   );
 }

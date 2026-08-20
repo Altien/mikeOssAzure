@@ -933,7 +933,12 @@ test("document context and tracked-edit behavior are fixed on without switches",
   await addin.gotoTaskpane({ documentText: docText });
   await addin.expectAuthedShell();
 
+  // Document context and change tracking have no opt-out controls. The
+  // apply-mode control is a menu button (Review/Direct), which governs how
+  // edits are resolved — never whether the document is sent or tracked — so
+  // the pane exposes no switches at all.
   await expect(page.getByRole("switch")).toHaveCount(0);
+  await expect(page.getByTestId("edit-apply-toggle")).toHaveText(/Review/);
 
   await page.getByPlaceholder("How can I help?").fill("Hello");
 
@@ -1342,7 +1347,7 @@ test("uploads desktop files directly from the document source menu", async ({
   ]);
 });
 
-test("selects a workflow from the add-workflow modal and attaches it to chat", async ({
+test("selects a workflow from the plus menu and attaches it to chat", async ({
   addin,
   page,
 }) => {
@@ -1388,7 +1393,10 @@ test("selects a workflow from the add-workflow modal and attaches it to chat", a
   await addin.gotoTaskpane({ documentText: "Current Word document" });
   await addin.expectAuthedShell();
 
-  await page.getByRole("button", { name: "Add workflows" }).click();
+  // Workflows are reached through the "+" menu rather than a dedicated
+  // composer button.
+  await page.getByRole("button", { name: "Add documents" }).click();
+  await page.getByRole("menuitem", { name: "Workflows" }).click();
   const modal = page.getByRole("dialog", { name: "Add workflow" });
   await expect(modal).toBeVisible();
   await expect(modal.getByText("Contract review")).toBeVisible();
@@ -1450,12 +1458,11 @@ test("model toggle sends the selected frontend model", async ({
   expect(body.model).toBe("gpt-5.4");
 });
 
-test("composer controls and workflow modal fit a narrow Word task pane", async ({
+test("composer controls fit a narrow Word task pane", async ({
   addin,
   page,
 }) => {
   await page.setViewportSize({ width: 360, height: 760 });
-  await addin.mockApiJson("GET", "**/workflows**", []);
   await addin.mockApiJson("GET", "**/library/files?*", {
     documents: [],
     folders: [],
@@ -1466,9 +1473,7 @@ test("composer controls and workflow modal fit a narrow Word task pane", async (
   await expect(
     page.getByRole("button", { name: "Add documents" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Add workflows" }),
-  ).toBeVisible();
+  await expect(page.getByTestId("edit-apply-toggle")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Choose model" }),
   ).toBeVisible();
@@ -1486,8 +1491,8 @@ test("composer controls and workflow modal fit a narrow Word task pane", async (
   const addDocumentBounds = await page
     .getByRole("button", { name: "Add documents" })
     .boundingBox();
-  const workflowBounds = await page
-    .getByRole("button", { name: "Add workflows" })
+  const applyModeBounds = await page
+    .getByTestId("edit-apply-toggle")
     .boundingBox();
   const modelBounds = await page
     .getByRole("button", { name: "Choose model" })
@@ -1495,13 +1500,14 @@ test("composer controls and workflow modal fit a narrow Word task pane", async (
   expect(placeholderBounds).not.toBeNull();
   expect(plusBounds).not.toBeNull();
   expect(addDocumentBounds).not.toBeNull();
-  expect(workflowBounds).not.toBeNull();
+  expect(applyModeBounds).not.toBeNull();
   expect(modelBounds).not.toBeNull();
   expect(Math.abs(plusBounds!.x - placeholderBounds!.x)).toBeLessThanOrEqual(3);
-  expect(
-    workflowBounds!.x - (addDocumentBounds!.x + addDocumentBounds!.width),
-  ).toBeLessThanOrEqual(4);
-  expect(modelBounds!.width).toBeGreaterThan(100);
+  // The whole action row shares one line: mode pill after the documents
+  // button, icon-only model button flush inside the pane.
+  expect(Math.abs(applyModeBounds!.y - addDocumentBounds!.y)).toBeLessThanOrEqual(2);
+  expect(Math.abs(modelBounds!.y - addDocumentBounds!.y)).toBeLessThanOrEqual(2);
+  expect(modelBounds!.x + modelBounds!.width).toBeLessThanOrEqual(360);
 
   await page.getByRole("button", { name: "Add documents" }).click();
   await page.getByRole("menuitem", { name: "Web files" }).click();
@@ -1513,13 +1519,6 @@ test("composer controls and workflow modal fit a narrow Word task pane", async (
   expect(documentsBounds!.x + documentsBounds!.width).toBeLessThanOrEqual(360);
   await documentsModal.getByRole("button", { name: "Close" }).click();
 
-  await page.getByRole("button", { name: "Add workflows" }).click();
-  const modal = page.getByRole("dialog", { name: "Add workflow" });
-  await expect(modal).toBeVisible();
-  const bounds = await modal.boundingBox();
-  expect(bounds).not.toBeNull();
-  expect(bounds!.x).toBeGreaterThanOrEqual(0);
-  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(360);
   expect(
     await page.evaluate(
       () =>
@@ -1644,10 +1643,10 @@ test("streams sealed edit cards into Word and resolves their exact revisions", a
 
   let calls = await addin.wordCalls();
   expect(calls.trackedChanges).toEqual([
-    { text: "The Supplier", location: "Replace", original: "The Suplier" },
+    { text: "The Supplier", location: "After", original: "The Suplier" },
     {
       text: "shall deliver the goods",
-      location: "Replace",
+      location: "After",
       original: "shall deliver goods",
     },
   ]);
@@ -1672,12 +1671,12 @@ test("streams sealed edit cards into Word and resolves their exact revisions", a
 
   calls = await addin.wordCalls();
   expect(calls.acceptedChanges).toEqual([
-    { text: "The Supplier", location: "Replace", original: "The Suplier" },
+    { text: "The Supplier", location: "After", original: "The Suplier" },
   ]);
   expect(calls.rejectedChanges).toEqual([
     {
       text: "shall deliver the goods",
-      location: "Replace",
+      location: "After",
       original: "shall deliver goods",
     },
   ]);
@@ -1768,7 +1767,7 @@ test("shows a provisional edit card but waits for a sealed boundary before mutat
   await expect
     .poll(async () => (await addin.wordCalls()).trackedChanges)
     .toEqual([
-      { text: "The Supplier", location: "Replace", original: "The Suplier" },
+      { text: "The Supplier", location: "After", original: "The Suplier" },
     ]);
   await expect(
     page.getByRole("button", { name: "Accept", exact: true }),
@@ -1800,7 +1799,7 @@ test("View scrolls Word to the passage an edit changed", async ({
   await expect
     .poll(async () => (await addin.wordCalls()).revealedChanges)
     .toEqual([
-      { text: "The Supplier", location: "Replace", original: "The Suplier" },
+      { text: "The Supplier", location: "After", original: "The Suplier" },
     ]);
   // Viewing is navigation only: the change stays pending.
   await expect(view).toBeVisible();
@@ -1832,7 +1831,7 @@ test("View falls back to a second anchor when Word invalidates the first", async
   await expect
     .poll(async () => (await addin.wordCalls()).revealedChanges)
     .toEqual([
-      { text: "The Supplier", location: "Replace", original: "The Suplier" },
+      { text: "The Supplier", location: "After", original: "The Suplier" },
     ]);
   await expect(page.locator("body")).not.toContainText("GeneralException");
 });
@@ -1978,10 +1977,10 @@ test("Accept all resolves every pending tracked-change handle", async ({
   await expect
     .poll(async () => (await addin.wordCalls()).acceptedChanges)
     .toEqual([
-      { text: "The Supplier", location: "Replace", original: "The Suplier" },
+      { text: "The Supplier", location: "After", original: "The Suplier" },
       {
         text: "shall deliver the goods",
-        location: "Replace",
+        location: "After",
         original: "shall deliver goods",
       },
     ]);
@@ -2006,7 +2005,9 @@ test("skips an edit whose target already contains an unrelated tracked revision"
   await page.getByRole("button", { name: "Send" }).click();
 
   await expect(
-    page.getByText("Skipped — source text was not found."),
+    page.getByText(
+      "Skipped — the target text already has tracked changes. Accept & apply resolves them, then applies this change.",
+    ),
   ).toBeVisible();
   await openActivityStrip(page);
   await expect(page.getByText("Skipped tracked change")).toBeVisible();
@@ -2052,26 +2053,83 @@ test("keeps an edit reviewable through its passage when Word withholds revision 
     page.getByText("Applied in Word — review it from Word’s Review tab."),
   ).toHaveCount(0);
   expect((await addin.wordCalls()).trackedChanges).toEqual([
-    { text: "The Supplier", location: "Replace", original: "The Suplier" },
+    { text: "The Supplier", location: "After", original: "The Suplier" },
   ]);
 
   await view.click();
   await expect
     .poll(async () => (await addin.wordCalls()).revealedChanges)
     .toEqual([
-      { text: "The Supplier", location: "Replace", original: "The Suplier" },
+      { text: "The Supplier", location: "After", original: "The Suplier" },
     ]);
 
-  // Resolution re-reads the passage. This document reports nothing there, so
-  // the card says so rather than claiming a decision Word never made.
+  // Resolution re-reads the passage; its ranges report nothing here, so the
+  // decision falls through to the document-level collection — which is
+  // exactly how Word for the web behaves — and still resolves only this
+  // edit's Added/Deleted pair.
   await page.getByRole("button", { name: "Accept", exact: true }).click();
-  await expect(
-    page.getByText(
-      "Word no longer reports a revision for this change. Review it from Word’s Review tab.",
-    ),
-  ).toBeVisible();
+  await expect(page.getByText("Accepted.", { exact: true })).toBeVisible();
   const calls = await addin.wordCalls();
-  expect(calls.acceptedChanges).toEqual([]);
+  expect(calls.acceptedChanges).toEqual([
+    { text: "The Supplier", location: "After", original: "The Suplier" },
+  ]);
+  expect(calls.rejectedChanges).toEqual([]);
+});
+
+test("edits sharing replacement text resolve independently by location", async ({
+  addin,
+  page,
+}) => {
+  // Two different typos, one identical correction: both pending revisions
+  // carry the same Added text, and the host (like Word on the web) withholds
+  // revision proxies, so resolution goes through the document-level
+  // collection. Text alone cannot tell the two Added halves apart — this
+  // errored with "The revisions in this passage changed…" before location
+  // narrowing through the retained anchors.
+  await addin.mockChatStream([
+    "<original>teh Buyer</original>\n<replacement>the Buyer</replacement>\n<reason>Fix the typo.</reason>",
+  ]);
+  await addin.gotoTaskpane({
+    documentText:
+      "First teh Buyer pays the deposit.\nThen hte Buyer signs the lease.",
+    unmanagedTrackedChangeOriginals: ["teh Buyer", "hte Buyer"],
+  });
+  await addin.expectAuthedShell();
+
+  await page.getByPlaceholder("How can I help?").fill("Fix the first typo");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(
+    page.getByRole("button", { name: "Accept", exact: true }),
+  ).toBeVisible();
+
+  await addin.mockChatStream([
+    "<original>hte Buyer</original>\n<replacement>the Buyer</replacement>\n<reason>Fix the typo.</reason>",
+  ]);
+  await page.getByPlaceholder("How can I help?").fill("Fix the second typo");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(
+    page.getByRole("button", { name: "Accept", exact: true }),
+  ).toHaveCount(2);
+
+  // Accept the FIRST edit while the second's identical Added text is still
+  // pending — the collision the location narrowing exists for.
+  await page
+    .getByRole("button", { name: "Accept", exact: true })
+    .first()
+    .click();
+  await expect(page.getByText("Accepted.", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(/revisions in this passage changed/),
+  ).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Accept", exact: true }).click();
+  await expect(page.getByText("Accepted.", { exact: true })).toHaveCount(2);
+
+  const calls = await addin.wordCalls();
+  expect(calls.acceptedChanges).toEqual([
+    { text: "the Buyer", location: "After", original: "teh Buyer" },
+    { text: "the Buyer", location: "After", original: "hte Buyer" },
+  ]);
   expect(calls.rejectedChanges).toEqual([]);
 });
 
@@ -2092,7 +2150,9 @@ test("does not broaden one edit across repeated exact passages", async ({
   await page.getByRole("button", { name: "Send" }).click();
 
   await expect(
-    page.getByText("Skipped — source text appears more than once."),
+    page.getByText(
+      "Skipped — this text appears 2 times in the document. Tell Mike which one to change.",
+    ),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Accept", exact: true }),
@@ -2100,6 +2160,36 @@ test("does not broaden one edit across repeated exact passages", async ({
   const calls = await addin.wordCalls();
   expect(calls.searches).toBeGreaterThan(0);
   expect(calls.trackedChanges).toEqual([]);
+});
+
+test("an applied card names the paragraph the change landed in", async ({
+  addin,
+  page,
+}) => {
+  await addin.mockChatStream([
+    "<original>notify the Supplier</original>\n<replacement>notify Supplier Ltd.</replacement>\n<reason>Clarify the entity.</reason>",
+  ]);
+  await addin.gotoTaskpane({
+    documentText:
+      "Introduction\nThe Buyer will notify the Supplier before Friday.",
+    documentBlocks: [
+      { text: "Introduction", styleBuiltIn: "Heading1" },
+      { text: "The Buyer will notify the Supplier before Friday." },
+    ],
+  });
+  await addin.expectAuthedShell();
+
+  await page.getByPlaceholder("How can I help?").fill("Clarify the supplier");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  // The surrounding paragraph is shown so a wrong-location match is
+  // catchable before Accept.
+  await expect(
+    page.getByText("In: “The Buyer will notify the Supplier before Friday.”"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Accept", exact: true }),
+  ).toBeVisible();
 });
 
 test("plain prose answers offer no document mutation controls", async ({

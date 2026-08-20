@@ -5,7 +5,8 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Check, Library, Waypoints, X } from "lucide-react";
+import { Library, X } from "lucide-react";
+import { WorkflowModal } from "../workflows/WorkflowModal";
 import { ChatInput as ChatInputShell } from "../../../shared/chat/ChatInput";
 import {
   getApiKeyStatus,
@@ -19,11 +20,11 @@ import {
   partitionSupportedDocumentFiles,
   SUPPORTED_DOCUMENT_ACCEPT,
 } from "../../lib/documentUpload";
-import { ComposerButton } from "../primitives/ComposerButton";
+import { EditApplyModeMenu } from "./EditApplyModeMenu";
+import type { WordEditApplyMode } from "../../lib/wordChatSettings";
 import { AddDocumentsModal } from "../documents/AddDocumentsModal";
 import { FileTypeIcon } from "../documents/DirectoryIcons";
 import { DocumentSourceMenu } from "../documents/DocumentSourceMenu";
-import { WorkflowModal } from "../workflows/WorkflowModal";
 import { ModelToggle } from "./ModelToggle";
 import type {
   WorkflowAttachment,
@@ -52,6 +53,8 @@ interface ChatInputProps {
   onDismissRequestError: () => void;
   onTurnReady: () => void;
   containerRef: React.Ref<HTMLDivElement>;
+  editApplyMode: WordEditApplyMode;
+  onEditApplyModeChange: (mode: WordEditApplyMode) => void;
 }
 
 export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
@@ -67,17 +70,19 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       onDismissRequestError,
       onTurnReady,
       containerRef,
+      editApplyMode,
+      onEditApplyModeChange,
     },
     ref,
   ): React.ReactElement {
     const [input, setInput] = useState("");
     const [attachedDocuments, setAttachedDocuments] = useState<Document[]>([]);
     const [documentsModalOpen, setDocumentsModalOpen] = useState(false);
+    const [workflowModalOpen, setWorkflowModalOpen] = useState(false);
     const [uploadingLocalFiles, setUploadingLocalFiles] = useState(false);
     const [documentUploadError, setDocumentUploadError] = useState<
       string | null
     >(null);
-    const [workflowModalOpen, setWorkflowModalOpen] = useState(false);
     const [model, setModel] = useSelectedModel();
     const [keyStatus, setKeyStatus] = useState<ApiKeyStatus | null>(null);
     const [keyStatusLoading, setKeyStatusLoading] = useState(true);
@@ -334,20 +339,12 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
                   attachedCount={attachedDocuments.length}
                   onLocalFiles={() => localFileInputRef.current?.click()}
                   onWebFiles={() => setDocumentsModalOpen(true)}
+                  onWorkflows={() => setWorkflowModalOpen(true)}
                 />
-                <ComposerButton
-                  onClick={() => setWorkflowModalOpen(true)}
-                  disabled={isResponseLoading}
-                  active={!!selectedWorkflow}
-                  aria-label="Add workflows"
-                  title="Add workflows"
-                >
-                  {selectedWorkflow ? (
-                    <Check className="h-3.5 w-3.5 text-blue-600" />
-                  ) : (
-                    <Waypoints className="h-3.5 w-3.5" />
-                  )}
-                </ComposerButton>
+                <EditApplyModeMenu
+                  mode={editApplyMode}
+                  onModeChange={onEditApplyModeChange}
+                />
               </div>
             }
             rightSlot={

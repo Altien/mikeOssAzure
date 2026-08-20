@@ -29,16 +29,33 @@ const MARKDOWN_COMPONENTS: Components = {
     <ol className="mb-3 list-decimal pl-5 space-y-1 last:mb-0">{children}</ol>
   ),
   li: ({ children }) => <li className="pl-0.5">{children}</li>,
-  a: ({ children, href }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="text-blue-600 underline underline-offset-2 hover:text-blue-700"
-    >
-      {children}
-    </a>
-  ),
+  a: ({ children, href }) => {
+    // Reserved fragment for document citations (see taskpane/lib/citations):
+    // rendered as an in-pane chip, activated via click delegation on the
+    // prose container — never a navigation.
+    if (href?.startsWith("#mike-cite:")) {
+      return (
+        <a
+          href={href}
+          data-mike-citation=""
+          title="Show in the document"
+          className="mx-0.5 inline-flex max-w-full cursor-pointer items-baseline rounded-md border border-gray-200 bg-gray-50 px-1.5 py-0.5 align-baseline font-sans text-[0.85em] not-italic text-gray-600 no-underline transition-colors hover:border-gray-300 hover:bg-gray-100 hover:text-gray-900"
+        >
+          <span className="truncate">{children}</span>
+        </a>
+      );
+    }
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-blue-600 underline underline-offset-2 hover:text-blue-700"
+      >
+        {children}
+      </a>
+    );
+  },
   strong: ({ children }) => (
     <strong className="font-semibold">{children}</strong>
   ),

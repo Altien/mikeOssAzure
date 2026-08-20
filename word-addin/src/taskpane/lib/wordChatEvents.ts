@@ -199,6 +199,9 @@ export function messageFromStorage(
     files: message.files,
     workflow: message.workflow,
     events,
+    ...(message.citations && message.citations.length > 0
+      ? { citations: message.citations }
+      : {}),
     live: false,
   };
 }

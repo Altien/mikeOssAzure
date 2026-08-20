@@ -362,7 +362,7 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
     docStore.set(ACTIVE_WORD_DOCUMENT_LABEL, {
       // This is an in-memory identity, never a Supabase storage path.
       storage_path: `inline:word-document:${clientDocumentId}`,
-      file_type: "text/plain",
+      file_type: "text/markdown",
       filename: ACTIVE_WORD_DOCUMENT_FILENAME,
       inline_text: activeDocumentText,
     });

@@ -29,6 +29,10 @@ import {
   isWordThinkingEvent,
 } from "../../lib/wordChatEvents";
 import { getEditKey } from "../../lib/wordTrackedEditKeys";
+import {
+  decodeCitationHref,
+  projectCitationMarkdown,
+} from "../../lib/citations";
 import type {
   DocEditStatus,
   EditCardStatus,
@@ -45,6 +49,10 @@ interface AssistantMessageProps {
   onViewEdit: (key: string) => void;
   onResolveEdit: (key: string, decision: EditDecision) => void;
   onResolveAll: (keys: string[], decision: EditDecision) => void;
+  /** Conflicted card: accept the occupying revisions, then apply the edit. */
+  onAcceptAndApplyEdit: (key: string) => void;
+  /** Scrolls Word to a cited document passage and selects it. */
+  onLocateCitation: (text: string) => void;
 }
 
 type EventGroup =
@@ -96,7 +104,24 @@ function AssistantMessageImpl({
   onViewEdit,
   onResolveEdit,
   onResolveAll,
+  onAcceptAndApplyEdit,
+  onLocateCitation,
 }: AssistantMessageProps): React.ReactElement {
+  // Citation chips render as reserved-fragment links; one delegated handler
+  // on each prose block routes their clicks to Word instead of navigation.
+  const handleCitationClick = React.useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      const target = event.target as HTMLElement;
+      const anchor = target.closest?.("a[data-mike-citation]");
+      const href = anchor?.getAttribute("href");
+      if (!href) return;
+      const quote = decodeCitationHref(href);
+      if (quote === null) return;
+      event.preventDefault();
+      onLocateCitation(quote);
+    },
+    [onLocateCitation],
+  );
   const content = React.useMemo(() => assistantContent(message), [message]);
   const error = assistantError(message);
   const responseStatus: StatusState = error
@@ -136,13 +161,15 @@ function AssistantMessageImpl({
           ? "error"
           : pendingEditCount > 0
             ? "pending"
-            : editRows.some(({ status }) => status === "accepted")
-              ? "accepted"
-              : editRows.some(({ status }) => status === "rejected")
-                ? "rejected"
-                : editRows.some(({ status }) => status === "unmanaged")
-                  ? "unmanaged"
-                  : "skipped";
+            : editRows.some(({ status }) => status === "applied")
+              ? "applied"
+              : editRows.some(({ status }) => status === "accepted")
+                ? "accepted"
+                : editRows.some(({ status }) => status === "rejected")
+                  ? "rejected"
+                  : editRows.some(({ status }) => status === "unmanaged")
+                    ? "unmanaged"
+                    : "skipped";
   const firstEditError = editRows.find(({ runtime }) => runtime?.error)?.runtime
     ?.error;
   const editEvent =
@@ -251,8 +278,13 @@ function AssistantMessageImpl({
               <React.Fragment key={`content-${group.event.key ?? group.index}`}>
                 {insertStandaloneEdit}
                 {prose && !holdForEdit && (
-                  <div className="font-serif text-base leading-7 text-gray-900">
-                    <Markdown className="text-base leading-7">{prose}</Markdown>
+                  <div
+                    className="font-serif text-base leading-7 text-gray-900"
+                    onClick={handleCitationClick}
+                  >
+                    <Markdown className="text-base leading-7">
+                      {projectCitationMarkdown(prose, message.citations)}
+                    </Markdown>
                   </div>
                 )}
               </React.Fragment>
@@ -375,6 +407,9 @@ function AssistantMessageImpl({
                 edit={edit}
                 changeNumber={editIndex + 1}
                 status={status}
+                matches={runtime?.matches}
+                appliedMatches={runtime?.appliedMatches}
+                locationHint={runtime?.locationHint}
                 error={runtime?.viewError ?? runtime?.error}
                 disabled={anyEditBusy}
                 onView={
@@ -390,6 +425,11 @@ function AssistantMessageImpl({
                 onReject={
                   status === "pending"
                     ? () => onResolveEdit(key, "reject")
+                    : undefined
+                }
+                onAcceptAndApply={
+                  status === "conflicted"
+                    ? () => onAcceptAndApplyEdit(key)
                     : undefined
                 }
               />

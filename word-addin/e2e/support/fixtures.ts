@@ -67,6 +67,8 @@ interface ChatStreamOpts {
   assistantMessageId?: string;
   /** Emit model-triggered read start/completion frames before answer content. */
   docReads?: string[];
+  /** Emit a final `citations` frame (the quotes behind `[n]` markers). */
+  citations?: unknown[];
 }
 
 interface MockJsonOpts {
@@ -536,6 +538,13 @@ export const test = base.extend<{ addin: Addin }>({
             body += `data: ${JSON.stringify({
               type: "content_delta",
               text: chunk,
+            })}\n\n`;
+          }
+          if (opts?.citations) {
+            body += `data: ${JSON.stringify({
+              type: "citations",
+              status: "final",
+              citations: opts.citations,
             })}\n\n`;
           }
           if (opts?.errorBefore) {

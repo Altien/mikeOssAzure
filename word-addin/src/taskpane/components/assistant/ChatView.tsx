@@ -17,6 +17,8 @@ import type {
     WordTrackedEditsController,
     WorkflowAttachment,
 } from "../../lib/wordChatTypes";
+import type { WordEditApplyMode } from "../../lib/wordChatSettings";
+import { selectDocumentText } from "../../hooks/useWordDoc";
 
 const CHAT_MESSAGE_TOP_GAP = 12;
 const CHAT_MESSAGES_BOTTOM_GAP = 16;
@@ -33,10 +35,13 @@ interface ChatViewProps
             | "viewEdit"
             | "resolveOneEdit"
             | "resolveMessageEdits"
+            | "acceptAndApplyEdit"
         > {
     sessionKey: number;
     selectedWorkflow: WorkflowAttachment | null;
     onSelectedWorkflowChange: (workflow: WorkflowAttachment | null) => void;
+    editApplyMode: WordEditApplyMode;
+    onEditApplyModeChange: (mode: WordEditApplyMode) => void;
 }
 
 /**
@@ -136,8 +141,11 @@ export function ChatView({
     viewEdit,
     resolveOneEdit,
     resolveMessageEdits,
+    acceptAndApplyEdit,
     selectedWorkflow,
     onSelectedWorkflowChange,
+    editApplyMode,
+    onEditApplyModeChange,
 }: ChatViewProps): React.ReactElement {
     const messagesContainerRef = useRef<HTMLDivElement>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -227,6 +235,17 @@ export function ChatView({
         },
         [resolveMessageEdits],
     );
+    const handleAcceptAndApplyEdit = useCallback(
+        (key: string) => {
+            void acceptAndApplyEdit(key);
+        },
+        [acceptAndApplyEdit],
+    );
+    // Citation chips: scroll Word to the cited passage and select it. Kept
+    // identity-stable so memoized message rows never re-render per chunk.
+    const handleLocateCitation = useCallback((text: string) => {
+        void selectDocumentText(text);
+    }, []);
 
     const updateScrollButton = useCallback(() => {
         const container = messagesContainerRef.current;
@@ -721,6 +740,8 @@ export function ChatView({
                                 onViewEdit={handleViewEdit}
                                 onResolveEdit={handleResolveEdit}
                                 onResolveAll={handleResolveAll}
+                                onAcceptAndApplyEdit={handleAcceptAndApplyEdit}
+                                onLocateCitation={handleLocateCitation}
                             />
                         );
                     })}
@@ -763,6 +784,8 @@ export function ChatView({
                 onCancel={cancel}
                 onDismissRequestError={dismissRequestError}
                 onTurnReady={requestTurnLayout}
+                editApplyMode={editApplyMode}
+                onEditApplyModeChange={onEditApplyModeChange}
             />
         </div>
     );

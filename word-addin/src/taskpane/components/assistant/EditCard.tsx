@@ -9,10 +9,21 @@ interface EditCardProps {
   edit: Partial<RedlineEdit>;
   changeNumber?: number;
   status?: EditCardStatus;
+  /** How many places Word found the original text, when it reported it. */
+  matches?: number;
+  /** How many occurrences a replace-all edit actually applied. */
+  appliedMatches?: number;
+  /** Snippet of the paragraph the edit landed in. */
+  locationHint?: string;
   /** Scrolls Word to the revision this card applied. */
   onView?: () => void;
   onAccept?: () => void;
   onReject?: () => void;
+  /**
+   * Conflicted card only: accept the pending tracked changes occupying the
+   * target passage, then apply this edit as a fresh redline.
+   */
+  onAcceptAndApply?: () => void;
   /** What Word reported, shown in place of the generic status copy. */
   error?: string;
   /** Disables both resolution actions while a Word operation is in flight. */
@@ -30,6 +41,7 @@ const STATUS_COPY: Record<
     copy: "Tracked change found — review it in Word.",
     className: "text-gray-500",
   },
+  applied: { copy: "Applied to the document.", className: "text-green-700" },
   accepted: { copy: "Accepted.", className: "text-green-700" },
   rejected: { copy: "Rejected.", className: "text-gray-500" },
   skipped: {
@@ -38,6 +50,14 @@ const STATUS_COPY: Record<
   },
   ambiguous: {
     copy: "Skipped — source text appears more than once.",
+    className: "text-gray-500",
+  },
+  unsearchable: {
+    copy: "Skipped — this passage is too long for Word’s search or spans paragraphs.",
+    className: "text-gray-500",
+  },
+  conflicted: {
+    copy: "Skipped — the target text already has tracked changes. Accept & apply resolves them, then applies this change.",
     className: "text-gray-500",
   },
   incomplete: {
@@ -62,13 +82,51 @@ export function EditCard({
   edit,
   changeNumber,
   status = "pending",
+  matches,
+  appliedMatches,
+  locationHint,
   onView,
   onAccept,
   onReject,
+  onAcceptAndApply,
   error,
   disabled = false,
 }: EditCardProps): React.ReactElement {
+  const formats = edit.format ?? [];
+  const isFormatCard = formats.length > 0;
+  const formatPreviewClass = [
+    formats.includes("bold") ? "font-bold" : "",
+    formats.includes("italic") ? "italic" : "",
+    formats.includes("underline") ? "underline" : "",
+    // Heading styles: approximate Word's visual hierarchy in the preview.
+    formats.includes("heading1") ? "font-bold text-lg" : "",
+    formats.includes("heading2") ? "font-bold text-base" : "",
+    formats.includes("heading3") ? "font-semibold" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const formatLabels = formats
+    .map((format) =>
+      format.startsWith("heading")
+        ? `heading ${format.slice("heading".length)}`
+        : format,
+    )
+    .join(", ");
+  const hasEditText =
+    edit.replacement !== undefined || edit.original !== undefined;
   const statusCopy = status === "pending" ? undefined : STATUS_COPY[status];
+  // The generic ambiguous copy upgrades to an actionable one when Word
+  // reported how many places the passage matched.
+  const ambiguousCopy =
+    status === "ambiguous" && matches !== undefined && matches > 1
+      ? `Skipped — this text appears ${matches} times in the document. Tell Mike which one to change.`
+      : undefined;
+  // A replace-all edit names its breadth so "Applied" can't be misread as a
+  // single change.
+  const multiApplyCopy =
+    status === "applied" && appliedMatches !== undefined && appliedMatches > 1
+      ? `Applied to the document in ${appliedMatches} places.`
+      : undefined;
   // Every other status already says something precise; only these two learn
   // more from Word's own message — and a pending change can carry one too
   // (a view that could not scroll, say).
@@ -78,7 +136,7 @@ export function EditCard({
     status === "error" ||
     status === "historical"
       ? (error ?? statusCopy?.copy)
-      : statusCopy?.copy;
+      : (ambiguousCopy ?? multiApplyCopy ?? statusCopy?.copy);
   const messageClass =
     status === "pending" ? "text-amber-700" : (statusCopy?.className ?? "");
 
@@ -86,7 +144,26 @@ export function EditCard({
     <EditCardUI
       originalText={edit.original}
       replacementText={edit.replacement}
+      previewContent={
+        // A format-only change keeps the text; preview the styling on the
+        // original passage instead of a red/green replacement.
+        isFormatCard && hasEditText ? (
+          <>
+            <span className={`text-gray-800 ${formatPreviewClass}`}>
+              {edit.original}
+            </span>
+            <span className="ml-2 text-gray-400">{formatLabels}</span>
+          </>
+        ) : undefined
+      }
       reason={edit.reason}
+      locationHint={
+        // Show where the change landed only while its location is still
+        // reviewable; resolved and skipped cards drop the extra line.
+        status === "pending" || status === "applied" || status === "unmanaged"
+          ? locationHint
+          : undefined
+      }
       changeNumber={changeNumber}
       status={status}
       statusMessage={message}
@@ -104,7 +181,15 @@ export function EditCard({
               onClick: onView,
               disabled: disabled || !onView,
             }
-          : undefined
+          : status === "conflicted" && onAcceptAndApply
+            ? {
+                // Supersede the occupying revisions on an explicit click:
+                // accept them, then apply this edit as a clean redline.
+                label: "Accept & apply",
+                onClick: onAcceptAndApply,
+                disabled,
+              }
+            : undefined
       }
       acceptAction={
         status === "pending"

@@ -9,10 +9,13 @@ export type EditCardStatus =
   | "restoring"
   | "pending"
   | "view-only"
+  | "applied"
   | "accepted"
   | "rejected"
   | "skipped"
   | "ambiguous"
+  | "unsearchable"
+  | "conflicted"
   | "incomplete"
   | "unmanaged"
   | "error"
@@ -21,6 +24,7 @@ export type EditCardStatus =
 export type DocEditStatus =
   | "applying"
   | "pending"
+  | "applied"
   | "accepted"
   | "rejected"
   | "skipped"
@@ -30,6 +34,10 @@ export type DocEditStatus =
 export interface EditRuntimeState {
   status: EditCardStatus;
   matches?: number;
+  /** How many occurrences a replace-all edit actually applied. */
+  appliedMatches?: number;
+  /** Snippet of the paragraph the edit landed in, for wrong-place review. */
+  locationHint?: string;
   error?: string;
   /** Navigation failures do not change the tracked edit's lifecycle. */
   viewError?: string;
@@ -53,6 +61,8 @@ export interface WordAssistantMessage extends RuntimeMessageBase {
   role: "assistant";
   /** Canonical assistant content and activity, in arrival order. */
   events: WordAssistantEvent[];
+  /** Quotes behind the answer's `[n]` markers, from the backend pipeline. */
+  citations?: SavedMessage["citations"];
 }
 
 export type WordChatMessage = WordUserMessage | WordAssistantMessage;
@@ -96,6 +106,11 @@ export interface WordTrackedEditsController {
     editKeys: string[],
     decision: EditDecision,
   ) => Promise<void>;
+  /**
+   * Conflicted-card action: accept the pending tracked changes occupying
+   * the edit's target passage, then apply the edit as a fresh redline.
+   */
+  acceptAndApplyEdit: (key: string) => Promise<void>;
 }
 
 export interface WordAssistantChatController {
