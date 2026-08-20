@@ -333,6 +333,16 @@ describe("active Word document context", () => {
         expect(prompt).toContain("one edit block (and therefore one edit card)");
         expect(prompt).toContain("keep unrelated or distant changes separate");
         expect(prompt).toContain("put its ENTIRE text in <original>");
+        expect(prompt).toContain("USER-FACING OUTPUT SAFETY:");
+        expect(prompt).toContain(
+            "Never mention internal tool names, tool calls, or implementation details",
+        );
+        expect(prompt).toContain(
+            "Never reproduce, explain, or refer to raw transport tags",
+        );
+        expect(prompt).toContain(
+            "where the add-in parses and hides them from the user",
+        );
         expect(prompt).toContain(
             "Word renumbers the remaining items automatically",
         );

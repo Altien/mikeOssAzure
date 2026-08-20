@@ -27,6 +27,12 @@ describe("EditCardUI", () => {
         expect(screen.getByLabelText("Tracked change 2")).toHaveTextContent(
             "2",
         );
+        expect(screen.getByLabelText("Tracked change 2")).toHaveClass(
+            "self-start",
+        );
+        expect(screen.getByLabelText("Tracked change 2")).not.toHaveClass(
+            "self-center",
+        );
         expect(screen.getByText("new text")).toHaveClass("text-green-700");
         expect(screen.getByText("old text")).toHaveClass(
             "text-red-600",
