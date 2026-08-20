@@ -31,6 +31,11 @@ const MODEL_API_KEY_FIELDS = [
         label: "Vercel AI Gateway API Key",
         placeholder: "vck_...",
     },
+    {
+        provider: "opencode-go",
+        label: "OpenCode Go API Key",
+        placeholder: "sk-...",
+    },
 ] as const;
 
 export default function ByokPage() {

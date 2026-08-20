@@ -4,11 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
     getUserApiKeyStatus,
-    getUserRouterModels,
+    getAllUserRouterModels,
     replaceUserRouterModels,
 } = vi.hoisted(() => ({
     getUserApiKeyStatus: vi.fn(),
-    getUserRouterModels: vi.fn(),
+    getAllUserRouterModels: vi.fn(),
     replaceUserRouterModels: vi.fn(),
 }));
 
@@ -62,7 +62,9 @@ vi.mock("../../lib/userApiKeys", () => ({
     saveUserApiKey: vi.fn(),
 }));
 vi.mock("../../lib/routerModels", () => ({
-    getUserRouterModels: (...args: unknown[]) => getUserRouterModels(...args),
+    ROUTER_SLUGS: ["openrouter", "vercel", "opencode-go"],
+    getAllUserRouterModels: (...args: unknown[]) =>
+        getAllUserRouterModels(...args),
     replaceUserRouterModels: (...args: unknown[]) =>
         replaceUserRouterModels(...args),
 }));
@@ -115,6 +117,7 @@ const API_KEY_STATUS = {
     openai: false,
     openrouter: true,
     vercel: true,
+    "opencode-go": true,
     courtlistener: false,
     sources: {
         claude: null,
@@ -122,6 +125,7 @@ const API_KEY_STATUS = {
         openai: null,
         openrouter: "user",
         vercel: "user",
+        "opencode-go": "user",
         courtlistener: null,
     },
 };
@@ -129,7 +133,11 @@ const API_KEY_STATUS = {
 beforeEach(() => {
     vi.clearAllMocks();
     getUserApiKeyStatus.mockResolvedValue(API_KEY_STATUS);
-    getUserRouterModels.mockResolvedValue([]);
+    getAllUserRouterModels.mockResolvedValue({
+        openrouter: [],
+        vercel: [],
+        "opencode-go": [],
+    });
     replaceUserRouterModels.mockResolvedValue(undefined);
 });
 
@@ -209,6 +217,35 @@ describe("PATCH /user/profile router model selections", () => {
         expect(response.status).toBe(400);
         expect(replaceUserRouterModels).not.toHaveBeenCalled();
     });
+
+    it("accepts OpenCode Go's single-segment catalog ids", async () => {
+        // OpenCode Go publishes bare model names, so the vendor/model shape
+        // the other two routers are validated against would reject its whole
+        // catalog.
+        const response = await request(app)
+            .patch("/user/profile")
+            .send({ openCodeGoModels: ["glm-5", "opencode-go/kimi-k3"] });
+
+        expect(response.status).toBe(200);
+        expect(replaceUserRouterModels).toHaveBeenCalledWith(
+            "user-1",
+            "opencode-go",
+            ["glm-5", "kimi-k3"],
+            expect.anything(),
+        );
+    });
+
+    it("still rejects an OpenCode Go id containing whitespace", async () => {
+        const response = await request(app)
+            .patch("/user/profile")
+            .send({ openCodeGoModels: ["not a model"] });
+
+        expect(response.status).toBe(400);
+        expect(response.body.detail).toBe(
+            "openCodeGoModels contains an invalid or duplicate model ID",
+        );
+        expect(replaceUserRouterModels).not.toHaveBeenCalled();
+    });
 });
 
 describe("normalizeRouterModels", () => {
@@ -228,5 +265,12 @@ describe("normalizeRouterModels", () => {
                 "openrouter",
             ),
         ).toEqual(["deepseek/deepseek-v3"]);
+    });
+
+    it("accepts bare model names for OpenCode Go only", () => {
+        expect(normalizeRouterModels(["glm-5"], "opencode-go")).toEqual([
+            "glm-5",
+        ]);
+        expect(normalizeRouterModels(["glm-5"], "openrouter")).toEqual([]);
     });
 });

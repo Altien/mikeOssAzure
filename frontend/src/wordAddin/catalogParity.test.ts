@@ -11,6 +11,7 @@ import {
     LEGACY_MODEL_IDS,
     canonicalModelId,
     modelDisplayName,
+    openCodeGoModelOptions,
     openRouterModelOptions,
     vercelModelOptions,
 } from "../app/components/assistant/ModelToggle";
@@ -22,6 +23,7 @@ import {
     isAllowedModelId as addinIsAllowedModelId,
     isModelAvailable as addinIsModelAvailable,
     modelDisplayName as addinModelDisplayName,
+    openCodeGoModelOptions as addinOpenCodeGoModelOptions,
     openRouterModelOptions as addinOpenRouterModelOptions,
     vercelModelOptions as addinVercelModelOptions,
 } from "../../../word-addin/src/taskpane/lib/modelCatalog";
@@ -60,6 +62,7 @@ describe("word add-in catalog parity", () => {
             ...Object.values(LEGACY_MODEL_IDS),
             ...MODELS.map((model) => model.id),
             "openrouter/openai/gpt-5.4",
+            "opencode-go/glm-5",
             "ollama/llama3:8b",
             "not-a-model",
         ]) {
@@ -78,8 +81,10 @@ describe("word add-in catalog parity", () => {
             "openrouter/openai/gpt-5.4",
             "openrouter/openrouter/auto",
             "vercel/openai/gpt-5.4",
+            "opencode-go/glm-5",
             "ollama/llama3:8b",
             "openrouter",
+            "opencode-go",
             "",
             "gpt-5.4-turbo-imaginary",
         ];
@@ -98,6 +103,8 @@ describe("word add-in catalog parity", () => {
             "openrouter/openrouter/auto",
             "vercel/openai/gpt-5.4",
             "vercel/vercel/v0-1.5-md",
+            "opencode-go/glm-5",
+            "opencode-go/qwen3.8-max",
             "ollama/llama3:8b",
         ];
         for (const id of sharedIds) {
@@ -122,6 +129,15 @@ describe("word add-in catalog parity", () => {
             addinVercelModelOptions(stored).map((option) => option.id),
         ).toEqual(vercelModelOptions(stored).map((option) => option.id));
         expect(
+            addinOpenCodeGoModelOptions(["glm-5", "opencode-go/kimi-k3"]).map(
+                (option) => option.id,
+            ),
+        ).toEqual(
+            openCodeGoModelOptions(["glm-5", "opencode-go/kimi-k3"]).map(
+                (option) => option.id,
+            ),
+        );
+        expect(
             addinOpenRouterModelOptions(["openrouter/auto"])[0]?.id,
         ).toBe("openrouter/openrouter/auto");
     });
@@ -133,11 +149,13 @@ describe("word add-in catalog parity", () => {
             "openai",
             "openrouter",
             "vercel",
+            "opencode-go",
         ] as const;
         const sharedIds = [
             ...MODELS.map((model) => model.id),
             "openrouter/openai/gpt-5.4",
             "vercel/openai/gpt-5.4",
+            "opencode-go/glm-5",
         ];
         for (const configured of providers) {
             const addinStatus = {
@@ -146,6 +164,7 @@ describe("word add-in catalog parity", () => {
                 openai: false,
                 openrouter: false,
                 vercel: false,
+                "opencode-go": false,
                 courtlistener: false,
                 [configured]: true,
             } as unknown as ApiKeyStatus;

@@ -4,6 +4,7 @@ import { getOllamaModels, type ApiKeyStatus } from "../../api/mikeApi";
 import {
   isModelAvailable,
   modelDisplayName,
+  openCodeGoModelOptions,
   openRouterModelOptions,
   vercelModelOptions,
   STATIC_MODELS,
@@ -17,6 +18,7 @@ export function ModelToggle({
   keyStatusLoading = false,
   openRouterModels,
   vercelModels,
+  openCodeGoModels,
   compact = false,
 }: {
   value: string;
@@ -27,6 +29,7 @@ export function ModelToggle({
   keyStatusLoading?: boolean;
   openRouterModels: string[];
   vercelModels: string[];
+  openCodeGoModels: string[];
   compact?: boolean;
 }): React.ReactElement {
   const [ollamaModels, setOllamaModels] = useState<ModelOption[]>([]);
@@ -46,6 +49,7 @@ export function ModelToggle({
   const models = useMemo(() => {
     const openRouterOptions = openRouterModelOptions(openRouterModels);
     const vercelOptions = vercelModelOptions(vercelModels);
+    const openCodeGoOptions = openCodeGoModelOptions(openCodeGoModels);
     const localOptions = ollamaModels.map((model) => ({
       ...model,
       label: modelDisplayName(model.id),
@@ -54,12 +58,19 @@ export function ModelToggle({
       ...STATIC_MODELS,
       ...openRouterOptions,
       ...vercelOptions,
+      ...openCodeGoOptions,
       ...localOptions,
     ].filter(
       (model) =>
         model.group === "Local" || isModelAvailable(model.id, keyStatus),
     );
-  }, [keyStatus, ollamaModels, openRouterModels, vercelModels]);
+  }, [
+    keyStatus,
+    ollamaModels,
+    openRouterModels,
+    vercelModels,
+    openCodeGoModels,
+  ]);
   const selected = models.find((model) => model.id === value);
 
   return (

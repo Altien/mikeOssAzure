@@ -13,6 +13,7 @@ const NO_KEYS: ApiKeyStatus = {
     openai: false,
     openrouter: false,
     vercel: false,
+    "opencode-go": false,
     courtlistener: false,
 } as ApiKeyStatus;
 
@@ -24,6 +25,7 @@ describe("isModelAvailable fail-open", () => {
         expect(isModelAvailable("claude-fable-5", null)).toBe(true);
         expect(isModelAvailable("openrouter/openai/gpt-5.4", null)).toBe(true);
         expect(isModelAvailable("vercel/openai/gpt-5.4", null)).toBe(true);
+        expect(isModelAvailable("opencode-go/glm-5", null)).toBe(true);
     });
 
     it("still gates on a LOADED status", () => {
@@ -31,10 +33,17 @@ describe("isModelAvailable fail-open", () => {
         expect(isModelAvailable("openrouter/openai/gpt-5.4", NO_KEYS)).toBe(
             false,
         );
+        expect(isModelAvailable("opencode-go/glm-5", NO_KEYS)).toBe(false);
         expect(
             isModelAvailable("gemini-3-flash-preview", {
                 ...NO_KEYS,
                 gemini: true,
+            }),
+        ).toBe(true);
+        expect(
+            isModelAvailable("opencode-go/glm-5", {
+                ...NO_KEYS,
+                "opencode-go": true,
             }),
         ).toBe(true);
     });

@@ -1,14 +1,24 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getOpenRouterModels, updateOpenRouterModels } = vi.hoisted(() => ({
+const {
+    getOpenRouterModels,
+    getOpenCodeGoModels,
+    updateOpenRouterModels,
+    updateOpenCodeGoModels,
+    openCodeGoConfigured,
+} = vi.hoisted(() => ({
     getOpenRouterModels: vi.fn(),
+    getOpenCodeGoModels: vi.fn(),
     updateOpenRouterModels: vi.fn(),
+    updateOpenCodeGoModels: vi.fn(),
+    openCodeGoConfigured: { value: false },
 }));
 
 vi.mock("@/app/lib/mikeApi", () => ({
     getOpenRouterModels,
     getVercelModels: vi.fn().mockResolvedValue([]),
+    getOpenCodeGoModels,
 }));
 
 vi.mock("@/app/contexts/UserProfileContext", () => ({
@@ -17,12 +27,18 @@ vi.mock("@/app/contexts/UserProfileContext", () => ({
             apiKeys: {
                 openrouter: { configured: true, source: "user" },
                 vercel: { configured: false, source: null },
+                "opencode-go": {
+                    configured: openCodeGoConfigured.value,
+                    source: openCodeGoConfigured.value ? "user" : null,
+                },
             },
             openRouterModels: ["anthropic/claude-sonnet-4.5"],
             vercelModels: [],
+            openCodeGoModels: [],
         },
         updateOpenRouterModels,
         updateVercelModels: vi.fn(),
+        updateOpenCodeGoModels,
     }),
 }));
 
@@ -34,6 +50,10 @@ import {
 describe("RouterSettingsSection", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        openCodeGoConfigured.value = false;
+        getOpenCodeGoModels.mockResolvedValue([
+            { id: "glm-5", label: "GLM-5" },
+        ]);
         getOpenRouterModels.mockResolvedValue([
             {
                 id: "openai/gpt-5.4",
@@ -279,5 +299,42 @@ describe("normalizeTypedModelId", () => {
         expect(
             normalizeTypedModelId(`${at200}m`, "openrouter"),
         ).toBeNull();
+    });
+});
+
+describe("RouterSettingsSection with OpenCode Go configured", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        openCodeGoConfigured.value = true;
+        getOpenRouterModels.mockResolvedValue([]);
+        getOpenCodeGoModels.mockResolvedValue([
+            { id: "glm-5", label: "GLM-5" },
+        ]);
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        openCodeGoConfigured.value = false;
+    });
+
+    it("saves a typed bare model name, which the other routers reject", async () => {
+        updateOpenCodeGoModels.mockResolvedValue(true);
+        render(<RouterSettingsSection />);
+        const input = screen.getByPlaceholderText("e.g. glm-5");
+
+        await waitFor(() => expect(getOpenCodeGoModels).toHaveBeenCalled());
+        fireEvent.change(input, { target: { value: "opencode-go/kimi-k3" } });
+        fireEvent.keyDown(input, { key: "Enter" });
+
+        await waitFor(() =>
+            expect(updateOpenCodeGoModels).toHaveBeenCalledWith(["kimi-k3"]),
+        );
+        expect(updateOpenRouterModels).not.toHaveBeenCalled();
+    });
+
+    it("validates typed ids per router", () => {
+        expect(normalizeTypedModelId("glm-5", "opencode-go")).toBe("glm-5");
+        expect(normalizeTypedModelId("glm-5", "openrouter")).toBeNull();
+        expect(normalizeTypedModelId("not a model", "opencode-go")).toBeNull();
     });
 });

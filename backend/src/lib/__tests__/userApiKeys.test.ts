@@ -17,6 +17,7 @@ describe("normalizeApiKeyProvider", () => {
     it("returns the supported router providers", () => {
         expect(normalizeApiKeyProvider("openrouter")).toBe("openrouter");
         expect(normalizeApiKeyProvider("vercel")).toBe("vercel");
+        expect(normalizeApiKeyProvider("opencode-go")).toBe("opencode-go");
     });
 
     it("returns null for unknown provider strings", () => {
@@ -36,6 +37,7 @@ describe("hasEnvApiKey", () => {
         "OPENROUTER_API_KEY",
         "AI_GATEWAY_API_KEY",
         "VERCEL_AI_GATEWAY_API_KEY",
+        "OPENCODE_API_KEY",
     ];
 
     // Clear before AND after each test so keys exported in the developer's
@@ -76,6 +78,11 @@ describe("hasEnvApiKey", () => {
     it("accepts VERCEL_AI_GATEWAY_API_KEY as a compatibility alias", () => {
         process.env.VERCEL_AI_GATEWAY_API_KEY = "vercel-key-test";
         expect(hasEnvApiKey("vercel")).toBe(true);
+    });
+
+    it("returns true for OpenCode Go when OPENCODE_API_KEY is set", () => {
+        process.env.OPENCODE_API_KEY = "opencode-key-test";
+        expect(hasEnvApiKey("opencode-go")).toBe(true);
     });
 
     it("returns false when no env key is set for the provider", () => {

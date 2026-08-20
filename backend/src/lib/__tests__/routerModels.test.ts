@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
     getUserRouterModels,
+    isRouterModelSelected,
     replaceUserRouterModels,
     resolveRequestedModel,
+    routerForModelId,
 } from "../routerModels";
 
 function queryResult(data: unknown[], error: unknown = null) {
@@ -177,5 +179,60 @@ describe("resolveRequestedModel outside-selection behaviour", () => {
         ).resolves.toBe("gemini-3-flash-preview");
         expect(warn).toHaveBeenCalled();
         warn.mockRestore();
+    });
+});
+
+describe("router slugs", () => {
+    it("maps each router prefix to its slug", () => {
+        expect(routerForModelId("openrouter/openai/gpt-5.4")).toBe(
+            "openrouter",
+        );
+        expect(routerForModelId("vercel/openai/gpt-5.4")).toBe("vercel");
+        expect(routerForModelId("opencode-go/glm-5")).toBe("opencode-go");
+        expect(routerForModelId("gemini-3-flash-preview")).toBeNull();
+    });
+
+    it("gates each router against its own saved selection", () => {
+        const selections = {
+            openrouter: ["openai/gpt-5.4"],
+            vercel: [],
+            "opencode-go": ["glm-5"],
+        };
+
+        expect(
+            isRouterModelSelected("opencode-go/glm-5", selections),
+        ).toBe(true);
+        expect(
+            isRouterModelSelected("opencode-go/kimi-k3", selections),
+        ).toBe(false);
+        // A selection is per-router: the same catalog id saved for one router
+        // must not unlock another.
+        expect(isRouterModelSelected("vercel/openai/gpt-5.4", selections)).toBe(
+            false,
+        );
+        expect(isRouterModelSelected("gemini-3-flash-preview", selections)).toBe(
+            true,
+        );
+    });
+
+    it("names OpenCode Go in the outside-selection error", async () => {
+        const query: Record<string, unknown> = {};
+        for (const method of ["select", "eq", "order"]) {
+            query[method] = vi.fn(() => query);
+        }
+        query.then = (resolve: (value: unknown) => unknown) =>
+            Promise.resolve({ data: [], error: null }).then(resolve);
+
+        await expect(
+            resolveRequestedModel(
+                "opencode-go/glm-5",
+                "gemini-3-flash-preview",
+                "user-1",
+                { from: vi.fn(() => query) } as never,
+                "throw",
+            ),
+        ).rejects.toThrow(
+            "Model opencode-go/glm-5 is not in your saved OpenCode Go models",
+        );
     });
 });

@@ -18,10 +18,12 @@ import {
     MODELS,
     SETTINGS_MODELS,
     canonicalModelId,
+    openCodeGoModelOptions,
     openRouterModelOptions,
     vercelModelOptions,
     type ModelOption,
 } from "@/app/components/assistant/ModelToggle";
+import { MODEL_TOGGLE_GROUPS } from "@/shared/ui/ModelToggleUI";
 import { isModelAvailable } from "@/app/lib/modelAvailability";
 import { FieldLabel } from "@/app/components/ui/form-field";
 import { SETTINGS_CONTROL_CLASS } from "@/app/components/settings/SettingsTextInput";
@@ -48,6 +50,9 @@ export default function ModelPreferencesPage() {
     const selectedOpenRouterOptions =
         openRouterModelOptions(openRouterSelection);
     const selectedVercelOptions = vercelModelOptions(vercelSelection);
+    const selectedOpenCodeGoOptions = openCodeGoModelOptions(
+        profile?.openCodeGoModels ?? [],
+    );
 
     useEffect(() => {
         return () => {
@@ -105,6 +110,7 @@ export default function ModelPreferencesPage() {
                                 ...SETTINGS_MODELS,
                                 ...selectedOpenRouterOptions,
                                 ...selectedVercelOptions,
+                                ...selectedOpenCodeGoOptions,
                                 ...ollamaModels,
                             ]}
                             apiKeys={profile?.apiKeys}
@@ -133,6 +139,7 @@ export default function ModelPreferencesPage() {
                                 ...MODELS,
                                 ...selectedOpenRouterOptions,
                                 ...selectedVercelOptions,
+                                ...selectedOpenCodeGoOptions,
                                 ...ollamaModels,
                             ]}
                             apiKeys={profile?.apiKeys}
@@ -170,15 +177,7 @@ function ModelPreferenceDropdown({
         return apiKeys ? isModelAvailable(model.id, apiKeys) : false;
     });
     const selected = availableOptions.find((model) => model.id === value);
-    const groups: ModelOption["group"][] = [
-        "Anthropic",
-        "Google",
-        "OpenAI",
-        "OpenRouter",
-        "Vercel AI Gateway",
-        "Local",
-    ];
-    const availableGroups = groups.flatMap((group) => {
+    const availableGroups = MODEL_TOGGLE_GROUPS.flatMap((group) => {
         const items = availableOptions.filter((model) => model.group === group);
         return items.length ? [{ group, items }] : [];
     });

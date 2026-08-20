@@ -8,6 +8,7 @@ export type Provider =
     | "openai"
     | "openrouter"
     | "vercel"
+    | "opencode-go"
     | "ollama";
 
 export type OpenAIToolSchema = {
@@ -48,6 +49,7 @@ export type UserApiKeys = {
     openai?: string | null;
     openrouter?: string | null;
     vercel?: string | null;
+    "opencode-go"?: string | null;
     courtlistener?: string | null;
 };
 

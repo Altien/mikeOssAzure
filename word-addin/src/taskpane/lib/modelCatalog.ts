@@ -14,7 +14,11 @@ export type ModelGroup =
   | "OpenAI"
   | "OpenRouter"
   | "Vercel AI Gateway"
+  | "OpenCode Go"
   | "Local";
+
+/** Kept in sync with frontend ModelToggle.tsx ROUTER_SLUGS. */
+export const ROUTER_SLUGS = ["openrouter", "vercel", "opencode-go"] as const;
 
 export interface ModelOption {
   id: string;
@@ -72,7 +76,7 @@ const MODEL_NAME_ACRONYMS: Record<string, string> = {
 
 export function modelDisplayName(modelId: string): string {
   const normalized = modelId
-    .replace(/^(?:openrouter|vercel|ollama)\//, "")
+    .replace(/^(?:openrouter|vercel|opencode-go|ollama)\//, "")
     .split("/")
     .at(-1)!
     .replace(/(\d)-(\d)/g, "$1.$2");
@@ -119,12 +123,19 @@ export function vercelModelOptions(models: string[]): ModelOption[] {
   }));
 }
 
+export function openCodeGoModelOptions(models: string[]): ModelOption[] {
+  return models.map((model) => ({
+    id: `opencode-go/${model}`,
+    label: modelDisplayName(model),
+    group: "OpenCode Go",
+  }));
+}
+
 export function isAllowedModelId(id: string): boolean {
   return (
     ALLOWED_MODEL_IDS.has(id) ||
     id.startsWith("ollama/") ||
-    id.startsWith("openrouter/") ||
-    id.startsWith("vercel/")
+    ROUTER_SLUGS.some((slug) => id.startsWith(`${slug}/`))
   );
 }
 
@@ -140,6 +151,7 @@ export function isModelAvailable(
   if (!status) return true;
   if (modelId.startsWith("openrouter/")) return !!status.openrouter;
   if (modelId.startsWith("vercel/")) return !!status.vercel;
+  if (modelId.startsWith("opencode-go/")) return !!status["opencode-go"];
   const model = STATIC_MODELS.find((item) => item.id === modelId);
   if (!model || model.group === "Local") return false;
   if (model.group === "Anthropic") return !!status.claude;
@@ -154,6 +166,9 @@ export function missingModelProvider(modelId: string): string {
   }
   if (modelId.startsWith("vercel/") || group === "Vercel AI Gateway") {
     return "Vercel AI Gateway";
+  }
+  if (modelId.startsWith("opencode-go/") || group === "OpenCode Go") {
+    return "OpenCode Go";
   }
   return group === "Anthropic"
     ? "Anthropic"

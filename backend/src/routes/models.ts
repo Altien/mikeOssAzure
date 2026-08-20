@@ -221,3 +221,64 @@ modelsRouter.get("/vercel", requireAuth, async (_req, res) => {
         });
     }
 });
+
+// OpenCode Go's catalog, served from the same OpenAI-compatible gateway the
+// chat adapter posts to. Unlike OpenRouter and Vercel it publishes no
+// capability metadata to filter on — every listed model is a coding model the
+// plan covers — so the whole catalog is returned, minus malformed rows.
+modelsRouter.get("/opencode-go", requireAuth, async (_req, res) => {
+    const userId = res.locals.userId as string;
+    try {
+        const apiKeys = await getUserApiKeys(userId, createServerSupabase());
+        const key = apiKeys["opencode-go"]?.trim();
+        if (!key) {
+            return void res.status(422).json({
+                code: "missing_api_key",
+                detail: "An OpenCode Go API key is required to list models.",
+            });
+        }
+
+        // Read per request, like the routes above, so a proxy override or a
+        // test double is picked up without a restart.
+        const baseUrl = (
+            process.env.OPENCODE_GO_BASE_URL?.trim() ||
+            "https://opencode.ai/zen/go/v1"
+        ).replace(/\/+$/, "");
+        const response = await fetch(`${baseUrl}/models`, {
+            headers: { Authorization: `Bearer ${key}` },
+        });
+        if (!response.ok) {
+            const detail = await response.text().catch(() => "");
+            return void res.status(502).json({
+                detail: `OpenCode Go model catalog request failed (${response.status})${detail ? `: ${detail}` : ""}`,
+            });
+        }
+
+        const payload = (await response.json()) as {
+            data?: Array<{ id?: unknown; name?: unknown }>;
+        };
+        const byId = new Map<string, { id: string; label: string }>();
+        for (const model of payload.data ?? []) {
+            if (typeof model?.id !== "string" || !model.id.trim()) continue;
+            const id = model.id.trim();
+            // The id is stored verbatim in user_router_models and prefixed
+            // with the router slug to build the app-level model id, so an id
+            // containing whitespace could never round-trip.
+            if (/\s/.test(id) || id.length > 200) continue;
+            const name =
+                typeof model.name === "string" ? model.name.trim() : "";
+            byId.set(id, { id, label: name || id });
+        }
+        const models = [...byId.values()].sort((left, right) =>
+            left.label.localeCompare(right.label),
+        );
+        res.json({ models });
+    } catch (error) {
+        res.status(500).json({
+            detail:
+                error instanceof Error
+                    ? error.message
+                    : "Failed to list OpenCode Go models.",
+        });
+    }
+});

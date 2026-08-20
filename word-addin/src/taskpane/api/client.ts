@@ -180,6 +180,7 @@ interface UserProfile {
   legalResearchUs: boolean;
   openRouterModels: string[];
   vercelModels: string[];
+  openCodeGoModels: string[];
   apiKeyStatus: ApiKeyStatus;
 }
 
@@ -193,6 +194,7 @@ export interface ApiKeyStatus {
   openai: boolean;
   openrouter: boolean;
   vercel: boolean;
+  "opencode-go": boolean;
   courtlistener: boolean;
 }
 
