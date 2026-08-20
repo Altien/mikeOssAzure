@@ -501,11 +501,16 @@ create table if not exists public.quick_actions (
   enabled boolean not null default true,
   sort_order integer not null default 0,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  surface text not null default 'app',
+  constraint quick_actions_surface_check check (surface in ('app', 'word'))
 );
 
 create index if not exists quick_actions_user_order_idx
   on public.quick_actions(user_id, sort_order, created_at);
+
+create index if not exists quick_actions_user_surface_order_idx
+  on public.quick_actions(user_id, surface, sort_order, created_at);
 
 create index if not exists quick_actions_workflow_idx
   on public.quick_actions(workflow_id);
@@ -654,23 +659,50 @@ begin
     );
 
     if item->>'type' = 'assistant' then
-    insert into public.quick_actions (
-      user_id,
-      workflow_id,
-      name,
-      prompt,
-      document_upload,
-      enabled,
-      sort_order
-    ) values (
-      p_user_id::uuid,
-      workflow_uuid,
-      coalesce(nullif(trim(item->>'quick_action_name'), ''), item->>'title'),
-      coalesce(item->>'quick_action_prompt', ''),
-      coalesce((item->>'document_upload')::boolean, false),
-      true,
-      coalesce((item->>'sort_order')::integer, installed_count)
-    );
+      insert into public.quick_actions (
+        user_id,
+        workflow_id,
+        name,
+        prompt,
+        document_upload,
+        enabled,
+        sort_order,
+        surface
+      ) values (
+        p_user_id::uuid,
+        workflow_uuid,
+        coalesce(nullif(trim(item->>'quick_action_name'), ''), item->>'title'),
+        coalesce(item->>'quick_action_prompt', ''),
+        coalesce((item->>'document_upload')::boolean, false),
+        true,
+        coalesce((item->>'sort_order')::integer, installed_count),
+        'app'
+      );
+
+      if coalesce((item->>'word_quick_action')::boolean, false) then
+        insert into public.quick_actions (
+          user_id,
+          workflow_id,
+          name,
+          prompt,
+          document_upload,
+          enabled,
+          sort_order,
+          surface
+        ) values (
+          p_user_id::uuid,
+          workflow_uuid,
+          coalesce(nullif(trim(item->>'quick_action_name'), ''), item->>'title'),
+          coalesce(
+            item->>'word_quick_action_prompt',
+            'Execute this workflow on this Word document.'
+          ),
+          false,
+          true,
+          coalesce((item->>'sort_order')::integer, installed_count),
+          'word'
+        );
+      end if;
     end if;
 
     installed_count := installed_count + 1;
@@ -928,9 +960,46 @@ create table if not exists public.word_chat_messages (
 create index if not exists idx_word_chat_messages_chat_created
   on public.word_chat_messages(chat_id, created_at);
 
+create table if not exists public.word_document_edits (
+  id uuid primary key default gen_random_uuid(),
+  word_chat_message_id uuid not null
+    references public.word_chat_messages(id) on delete cascade,
+  block_index integer not null check (block_index >= 0),
+  original_text text not null check (length(original_text) > 0),
+  replacement_text text not null default '',
+  formats text[] not null default '{}',
+  occurrence text check (occurrence is null or occurrence = 'all'),
+  reason text,
+  apply_mode text not null
+    check (apply_mode in ('direct', 'approval')),
+  apply_status text not null default 'proposed'
+    check (apply_status in ('proposed', 'applied', 'unmanaged', 'failed')),
+  resolution_status text
+    check (resolution_status is null or resolution_status in ('accepted', 'rejected')),
+  matched_occurrences integer check (matched_occurrences is null or matched_occurrences >= 0),
+  applied_occurrences integer check (applied_occurrences is null or applied_occurrences >= 0),
+  error_code text,
+  error_message text,
+  applied_at timestamptz,
+  resolved_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (word_chat_message_id, block_index),
+  constraint word_document_edits_resolution_requires_application
+    check (resolution_status is null or apply_status = 'applied')
+);
+
+create index if not exists word_document_edits_message_idx
+  on public.word_document_edits(word_chat_message_id, block_index);
+
+create index if not exists word_document_edits_unresolved_idx
+  on public.word_document_edits(word_chat_message_id)
+  where apply_status = 'applied' and resolution_status is null;
+
 alter table public.word_documents enable row level security;
 alter table public.word_chats enable row level security;
 alter table public.word_chat_messages enable row level security;
+alter table public.word_document_edits enable row level security;
 
 do $$
 begin
@@ -2234,6 +2303,7 @@ revoke all on public.chat_messages from anon, authenticated;
 revoke all on public.word_documents from anon, authenticated;
 revoke all on public.word_chats from anon, authenticated;
 revoke all on public.word_chat_messages from anon, authenticated;
+revoke all on public.word_document_edits from anon, authenticated;
 revoke all on public.tabular_reviews from anon, authenticated;
 revoke all on public.tabular_cells from anon, authenticated;
 revoke all on public.tabular_review_rows from anon, authenticated;

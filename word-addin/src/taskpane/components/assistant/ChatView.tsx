@@ -32,6 +32,7 @@ interface ChatViewProps
         Pick<
             WordTrackedEditsController,
             | "editStateByKey"
+            | "applyEdit"
             | "viewEdit"
             | "resolveOneEdit"
             | "resolveMessageEdits"
@@ -138,6 +139,7 @@ export function ChatView({
     cancel,
     dismissRequestError,
     editStateByKey,
+    applyEdit,
     viewEdit,
     resolveOneEdit,
     resolveMessageEdits,
@@ -217,6 +219,12 @@ export function ChatView({
     const hasMessages = messages.length > 0;
 
     // Stable handlers so memoized message rows do not re-render per chunk.
+    const handleApplyEdit = useCallback(
+        (key: string) => {
+            applyEdit(key);
+        },
+        [applyEdit],
+    );
     const handleViewEdit = useCallback(
         (key: string) => {
             void viewEdit(key);
@@ -687,9 +695,6 @@ export function ChatView({
                         onSelect={(action) => {
                             onSelectedWorkflowChange(action.workflow);
                             chatInputRef.current?.setDraft(action.prompt);
-                            if (action.document_upload) {
-                                chatInputRef.current?.requestDocuments();
-                            }
                         }}
                     />
                 </div>
@@ -737,6 +742,7 @@ export function ChatView({
                                         : undefined
                                 }
                                 editStateByKey={editStateByKey}
+                                onApplyEdit={handleApplyEdit}
                                 onViewEdit={handleViewEdit}
                                 onResolveEdit={handleResolveEdit}
                                 onResolveAll={handleResolveAll}

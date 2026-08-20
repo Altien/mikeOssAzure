@@ -1925,8 +1925,10 @@ export async function deleteWorkflowShare(
     });
 }
 
-export async function listQuickActions(): Promise<QuickAction[]> {
-    return apiRequest<QuickAction[]>("/quick-actions");
+export async function listQuickActions(
+    surface: QuickAction["surface"] = "app",
+): Promise<QuickAction[]> {
+    return apiRequest<QuickAction[]>(`/quick-actions?surface=${surface}`);
 }
 
 export async function createQuickAction(payload: {
@@ -1934,6 +1936,7 @@ export async function createQuickAction(payload: {
     name: string;
     prompt: string;
     document_upload: boolean;
+    surface: QuickAction["surface"];
     enabled?: boolean;
     sort_order?: number;
 }): Promise<QuickAction> {
@@ -1953,6 +1956,7 @@ export async function updateQuickAction(
             | "name"
             | "prompt"
             | "document_upload"
+            | "surface"
             | "enabled"
             | "sort_order"
         >

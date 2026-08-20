@@ -1,5 +1,5 @@
 /**
- * E2E coverage for <occurrence>all</occurrence>: one edit block replaces
+ * E2E coverage for `occurrence: "all"`: one edit object replaces
  * every occurrence of its original text. The client applies one occurrence
  * per pass (last revision-free match first — office-js#2800 makes forward
  * batched replacement unsafe on Word for the web) and aggregates all passes
@@ -8,14 +8,22 @@
 import { test, expect } from "./support/fixtures";
 import type { Addin } from "./support/fixtures";
 import type { Page } from "@playwright/test";
+import { replacementEdit, wordEdits } from "./support/editProtocol";
 
 const TOKEN = "test-jwt-token";
 const CHAT_ID = "chat-replace-all";
 const ASSISTANT_MESSAGE_ID = "assistant-replace-all";
+const PERSISTED_EDIT_ID = "44444444-4444-4444-8444-444444444444";
 const DOC_TEXT =
   "Acme Corp leads the market.\nWe trust Acme Corp.\nAcme Corp wins again.";
-const REPLACE_ALL_BLOCK =
-  "<original>Acme Corp</original>\n<replacement>Acme Ltd</replacement>\n<occurrence>all</occurrence>\n<reason>Rename the company everywhere.</reason>";
+const REPLACE_ALL_BLOCK = wordEdits(
+  replacementEdit(
+    "Acme Corp",
+    "Acme Ltd",
+    "Rename the company everywhere.",
+    "all",
+  ),
+);
 const WRITE = { text: "Acme Ltd", location: "After", original: "Acme Corp" };
 
 const CHAT = {
@@ -41,6 +49,12 @@ async function chooseApplyMode(
   );
 }
 
+async function applyReviewProposal(page: Page): Promise<void> {
+  const apply = page.getByRole("button", { name: "Apply", exact: true });
+  await expect(apply).toHaveCount(1);
+  await apply.click();
+}
+
 async function mockPersistedChat(addin: Addin): Promise<void> {
   await addin.mockChatStream([REPLACE_ALL_BLOCK], {
     chatId: CHAT_ID,
@@ -61,7 +75,24 @@ async function mockPersistedChat(addin: Addin): Promise<void> {
         id: ASSISTANT_MESSAGE_ID,
         chat_id: CHAT_ID,
         role: "assistant",
-        content: [{ type: "content", text: REPLACE_ALL_BLOCK }],
+        content: [{ type: "word_edit_ref", edit_id: PERSISTED_EDIT_ID }],
+        edits: [
+          {
+            id: PERSISTED_EDIT_ID,
+            word_chat_message_id: ASSISTANT_MESSAGE_ID,
+            block_index: 0,
+            original_text: "Acme Corp",
+            replacement_text: "Acme Ltd",
+            formats: [],
+            occurrence: "all",
+            reason: "Rename the company everywhere.",
+            apply_mode: "approval",
+            apply_status: "applied",
+            resolution_status: null,
+            matched_occurrences: 3,
+            applied_occurrences: 3,
+          },
+        ],
         created_at: "2026-08-19T00:00:01Z",
       },
     ],
@@ -80,6 +111,7 @@ test("review mode: one card applies and accepts every occurrence", async ({
     .getByPlaceholder("How can I help?")
     .fill("Replace all Acme Corp with Acme Ltd");
   await page.getByRole("button", { name: "Send" }).click();
+  await applyReviewProposal(page);
 
   // Three occurrences change, but they stay ONE reviewable card.
   const accept = page.getByRole("button", { name: "Accept", exact: true });
@@ -109,6 +141,7 @@ test("review mode: rejecting the card rejects every occurrence", async ({
     .getByPlaceholder("How can I help?")
     .fill("Replace all Acme Corp with Acme Ltd");
   await page.getByRole("button", { name: "Send" }).click();
+  await applyReviewProposal(page);
 
   const reject = page.getByRole("button", { name: "Reject", exact: true });
   await expect(reject).toHaveCount(1);
@@ -119,7 +152,7 @@ test("review mode: rejecting the card rejects every occurrence", async ({
   expect(calls.acceptedChanges).toEqual([]);
 });
 
-test("direct mode: every occurrence is applied and finalized without review", async ({
+test("edit mode: every occurrence is applied immediately as tracked changes", async ({
   addin,
   page,
 }) => {
@@ -133,14 +166,11 @@ test("direct mode: every occurrence is applied and finalized without review", as
     .fill("Replace all Acme Corp with Acme Ltd");
   await page.getByRole("button", { name: "Send" }).click();
 
-  await expect(
-    page.getByText("Applied to the document in 3 places."),
-  ).toBeVisible();
+  const accept = page.getByRole("button", { name: "Accept", exact: true });
+  await expect(accept).toHaveCount(1);
   const calls = await addin.wordCalls();
-  expect(calls.acceptedChanges).toEqual([WRITE, WRITE, WRITE]);
-  await expect(
-    page.getByRole("button", { name: "Accept", exact: true }),
-  ).toHaveCount(0);
+  expect(calls.trackedChanges).toEqual([WRITE, WRITE, WRITE]);
+  expect(calls.acceptedChanges).toEqual([]);
 });
 
 test("a replace-all card survives a task-pane reload and still resolves all occurrences", async ({
@@ -155,6 +185,7 @@ test("a replace-all card survives a task-pane reload and still resolves all occu
     .getByPlaceholder("How can I help?")
     .fill("Rename Acme Corp everywhere");
   await page.getByRole("button", { name: "Send" }).click();
+  await applyReviewProposal(page);
   await expect(
     page.getByRole("button", { name: "Accept", exact: true }),
   ).toHaveCount(1);

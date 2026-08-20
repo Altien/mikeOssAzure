@@ -1,12 +1,26 @@
-import type { Message as SavedMessage, WordAssistantEvent } from "../types";
+import type {
+  Message as SavedMessage,
+  WordAssistantEvent,
+  WordDocumentEdit,
+} from "../types";
+import type { RedlineEdit } from "./redline";
 
 export type WorkflowAttachment = { id: string; title: string };
 export type EditDecision = "accept" | "reject";
+export type EditBusyAction =
+  | "view"
+  | "apply"
+  | "accept"
+  | "reject"
+  | "accept-and-apply";
 
 export type EditCardStatus =
   | "receiving"
+  | "validating"
   | "applying"
+  | "applying-approved"
   | "restoring"
+  | "ready"
   | "pending"
   | "view-only"
   | "applied"
@@ -21,16 +35,6 @@ export type EditCardStatus =
   | "error"
   | "historical";
 
-export type DocEditStatus =
-  | "applying"
-  | "pending"
-  | "applied"
-  | "accepted"
-  | "rejected"
-  | "skipped"
-  | "unmanaged"
-  | "error";
-
 export interface EditRuntimeState {
   status: EditCardStatus;
   matches?: number;
@@ -42,6 +46,8 @@ export interface EditRuntimeState {
   /** Navigation failures do not change the tracked edit's lifecycle. */
   viewError?: string;
   busy?: boolean;
+  /** Identifies the control whose in-flight operation should show progress. */
+  busyAction?: EditBusyAction;
 }
 
 interface RuntimeMessageBase {
@@ -61,6 +67,8 @@ export interface WordAssistantMessage extends RuntimeMessageBase {
   role: "assistant";
   /** Canonical assistant content and activity, in arrival order. */
   events: WordAssistantEvent[];
+  /** Canonical edit rows hydrated by cloud or device-only storage. */
+  edits?: WordDocumentEdit[];
   /** Quotes behind the answer's `[n]` markers, from the backend pipeline. */
   citations?: SavedMessage["citations"];
 }
@@ -85,7 +93,6 @@ export interface WordEditStreamController {
   processLiveRedlines: (
     messageId: string,
     content: string,
-    streamComplete: boolean,
     persistent: boolean,
   ) => void;
   markIncompleteRedlines: (messageId: string, content: string) => void;
@@ -100,6 +107,8 @@ export interface WordTrackedEditsController {
    * are not recreated by every edit-state transition during a stream.
    */
   streamController: WordEditStreamController;
+  /** Apply a validated Review-mode proposal as a tracked Word change. */
+  applyEdit: (key: string) => void;
   viewEdit: (key: string) => Promise<void>;
   resolveOneEdit: (key: string, decision: EditDecision) => Promise<void>;
   resolveMessageEdits: (
@@ -112,6 +121,28 @@ export interface WordTrackedEditsController {
    */
   acceptAndApplyEdit: (key: string) => Promise<void>;
 }
+
+export type PersistWordDocumentEdit = (
+  messageId: string,
+  blockIndex: number,
+  edit: RedlineEdit,
+  applyMode: "direct" | "approval",
+) => Promise<WordDocumentEdit>;
+
+export interface PersistedWordEditPatch {
+  apply_status?: "proposed" | "applied" | "unmanaged" | "failed";
+  resolution_status?: "accepted" | "rejected";
+  matched_occurrences?: number;
+  applied_occurrences?: number;
+  error_code?: string | null;
+  error_message?: string | null;
+}
+
+export type UpdatePersistedWordDocumentEdit = (
+  messageId: string,
+  blockIndex: number,
+  patch: PersistedWordEditPatch,
+) => Promise<void>;
 
 export interface WordAssistantChatController {
   messages: WordChatMessage[];

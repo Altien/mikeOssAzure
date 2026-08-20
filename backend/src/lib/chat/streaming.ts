@@ -264,7 +264,12 @@ export async function runLLMStream(params: {
     if (partial.length <= streamedCitationCount) return;
     streamedCitationCount = partial.length;
     const citations = partial.map((c) =>
-      createCitation(c, docIndex, courtlistenerTurnState.casesByClusterId),
+      createCitation(
+        c,
+        docIndex,
+        courtlistenerTurnState.casesByClusterId,
+        docStore,
+      ),
     );
     emitCitationStreamSnapshot("partial", citations);
   };
@@ -578,7 +583,12 @@ export async function runLLMStream(params: {
     citations = buildCitations(fullText);
   } else {
     const rawCitations = parsedCitations.map((c) =>
-      createCitation(c, docIndex, courtlistenerTurnState.casesByClusterId),
+      createCitation(
+        c,
+        docIndex,
+        courtlistenerTurnState.casesByClusterId,
+        docStore,
+      ),
     );
     // Server-side quote verification. Fetch each document's extracted source
     // text at most once per turn (memoized by doc_id), reading only bytes

@@ -4,15 +4,21 @@
 // message_start -> content_block_start -> content_block_delta* ->
 // content_block_stop -> message_delta -> message_stop.
 //
-// The response exercises the add-in's tagged Word-edit contract
-// (<original>/<replacement>/<reason>) when the Word-chat system prompt asks for
-// exact source text. Other prompts receive a short document summary.
+// The response exercises the add-in's JSON Word-edit contract when the
+// Word-chat system prompt asks for exact source text. Other prompts receive a
+// short document summary.
 import http from "node:http";
 
 const PORT = 4141;
 
 function editBlock(original, replacement, reason) {
-  return `<original>${original}</original>\n<replacement>${replacement}</replacement>\n<reason>${reason}</reason>`;
+  return {
+    type: "edit_data",
+    kind: "edit",
+    deleted_text: original,
+    inserted_text: replacement,
+    reason,
+  };
 }
 
 function pickResponse(body) {
@@ -31,7 +37,7 @@ function pickResponse(body) {
   const promptText = `${systemText}\n${text}`;
 
   if (promptText.includes("character-for-character")) {
-    return [
+    return `<EDITS>${JSON.stringify([
       editBlock(
         "The Suplier shall provide",
         "The Supplier shall provide",
@@ -42,8 +48,7 @@ function pickResponse(body) {
         "within thirty (30) days of receipt",
         'Spelling — "reciept" should be "receipt".',
       ),
-      "Both fixes preserve the clause numbering and meaning.",
-    ].join("\n");
+    ])}</EDITS>\nBoth fixes preserve the clause numbering and meaning.`;
   }
   return "This is a services agreement between Acme Consulting Ltd and a consultant. It covers the services to be provided (clause 1), payment terms of thirty days (clause 2), termination on sixty days' notice (clause 3), the standard of work required (clause 4), and confidentiality between the parties (clause 5).";
 }

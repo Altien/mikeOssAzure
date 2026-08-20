@@ -36,6 +36,18 @@ function readCurrentDocumentUrl(): string {
   }
 }
 
+export function readCurrentDocumentName(): string {
+  try {
+    const rawUrl = Office.context.document.url;
+    if (typeof rawUrl !== "string" || !rawUrl.trim()) return "Word document";
+    const withoutQuery = rawUrl.trim().split(/[?#]/, 1)[0] ?? "";
+    const segment = withoutQuery.split(/[\\/]/).filter(Boolean).at(-1);
+    return segment ? decodeURIComponent(segment) : "Word document";
+  } catch {
+    return "Word document";
+  }
+}
+
 /**
  * The identity UUID lives in Office document settings, which are embedded in
  * the .docx — so "Save As"/file-copy carries it into the copy, silently

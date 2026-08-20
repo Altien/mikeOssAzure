@@ -12,7 +12,10 @@ import {
   replaceQuickAction,
   useQuickActions,
 } from "../../lib/quickActionStore";
-import { quickActionDisplayName } from "../../lib/quickActions";
+import {
+  isWordQuickActionWorkflow,
+  quickActionDisplayName,
+} from "../../lib/quickActions";
 import { Modal } from "../primitives/Modal";
 import {
   ModalFieldLabel,
@@ -32,7 +35,9 @@ export function DocumentActions({
   onCreateClose,
 }: DocumentActionsProps): React.ReactElement {
   const [search, setSearch] = useState("");
-  const [selectedAction, setSelectedAction] = useState<QuickAction | null>(null);
+  const [selectedAction, setSelectedAction] = useState<QuickAction | null>(
+    null,
+  );
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [workflowsError, setWorkflowsError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -42,7 +47,6 @@ export function DocumentActions({
   const [workflowId, setWorkflowId] = useState("");
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [documentUpload, setDocumentUpload] = useState(false);
   const actions = useQuickActions();
 
   useEffect(() => {
@@ -71,13 +75,15 @@ export function DocumentActions({
     setWorkflowId("");
     setName("");
     setPrompt("");
-    setDocumentUpload(false);
     setCreateError(null);
   }, [createOpen]);
 
   const availableWorkflows = useMemo(() => {
     const used = new Set(actions.map((action) => action.workflow_id));
-    return workflows.filter((workflow) => !used.has(workflow.id));
+    return workflows.filter(
+      (workflow) =>
+        !used.has(workflow.id) && isWordQuickActionWorkflow(workflow),
+    );
   }, [actions, workflows]);
   const filteredActions = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -94,9 +100,9 @@ export function DocumentActions({
     if (!original) return false;
     return (
       selectedAction.workflow_id !== original.workflow_id ||
-      quickActionDisplayName(selectedAction) !== quickActionDisplayName(original) ||
+      quickActionDisplayName(selectedAction) !==
+        quickActionDisplayName(original) ||
       selectedAction.prompt !== original.prompt ||
-      selectedAction.document_upload !== original.document_upload ||
       selectedAction.enabled !== original.enabled
     );
   }, [actions, selectedAction]);
@@ -115,7 +121,6 @@ export function DocumentActions({
         workflow_id: action.workflow_id,
         name: action.name.trim(),
         prompt: action.prompt,
-        document_upload: action.document_upload,
         enabled: action.enabled,
       });
       replaceQuickAction(updated);
@@ -140,7 +145,8 @@ export function DocumentActions({
         workflow_id: workflowId,
         name: name.trim(),
         prompt,
-        document_upload: documentUpload,
+        document_upload: false,
+        surface: "word",
         enabled: true,
         sort_order: actions.length,
       });
@@ -244,7 +250,6 @@ export function DocumentActions({
               })),
             ]}
             prompt={selectedAction.prompt}
-            documentUpload={selectedAction.document_upload}
             enabled={selectedAction.enabled}
             onNameChange={(value) =>
               setSelectedAction({ ...selectedAction, name: value })
@@ -263,12 +268,6 @@ export function DocumentActions({
             }}
             onPromptChange={(value) =>
               setSelectedAction({ ...selectedAction, prompt: value })
-            }
-            onDocumentUploadChange={(value) =>
-              setSelectedAction({
-                ...selectedAction,
-                document_upload: value,
-              })
             }
             onEnabledChange={(value) =>
               setSelectedAction({ ...selectedAction, enabled: value })
@@ -299,7 +298,6 @@ export function DocumentActions({
             label: workflow.metadata.title,
           }))}
           prompt={prompt}
-          documentUpload={documentUpload}
           onNameChange={setName}
           onWorkflowChange={(value) => {
             setWorkflowId(value);
@@ -311,7 +309,6 @@ export function DocumentActions({
             }
           }}
           onPromptChange={setPrompt}
-          onDocumentUploadChange={setDocumentUpload}
           error={createError ?? workflowsError}
         />
       </Modal>
@@ -324,12 +321,10 @@ function QuickActionForm({
   workflowId,
   workflowOptions,
   prompt,
-  documentUpload,
   enabled,
   onNameChange,
   onWorkflowChange,
   onPromptChange,
-  onDocumentUploadChange,
   onEnabledChange,
   error,
 }: {
@@ -337,12 +332,10 @@ function QuickActionForm({
   workflowId: string;
   workflowOptions: { value: string; label: string }[];
   prompt: string;
-  documentUpload: boolean;
   enabled?: boolean;
   onNameChange: (value: string) => void;
   onWorkflowChange: (value: string) => void;
   onPromptChange: (value: string) => void;
-  onDocumentUploadChange: (value: boolean) => void;
   onEnabledChange?: (value: boolean) => void;
   error: string | null;
 }) {
@@ -381,12 +374,6 @@ function QuickActionForm({
           placeholder="Prompt placed in the Assistant composer"
         />
       </div>
-      <ToggleRow
-        label="Request document upload"
-        caption="Ask for source documents before launching this workflow."
-        checked={documentUpload}
-        onChange={onDocumentUploadChange}
-      />
       {enabled !== undefined && onEnabledChange && (
         <ToggleRow
           label="Active"

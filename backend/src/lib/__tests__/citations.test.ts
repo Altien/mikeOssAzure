@@ -7,7 +7,7 @@ import {
     CITATIONS_OPEN_TAG,
     CITATIONS_CLOSE_TAG,
 } from "../chat/citations";
-import type { DocIndex } from "../chat/types";
+import type { DocIndex, DocStore } from "../chat/types";
 
 function citationsBlock(json: string) {
     return `Answer text.\n${CITATIONS_OPEN_TAG}\n${json}\n${CITATIONS_CLOSE_TAG}`;
@@ -357,6 +357,28 @@ describe("createCitation", () => {
             filename: "doc-9",
             document_id: undefined,
             version_id: null,
+        });
+    });
+
+    it("uses request-scoped document metadata for inline citations", () => {
+        const [parsed] = parseCitations(
+            citationsBlock('[{"ref": 1, "doc_id": "active-word-document", "quote": "q"}]'),
+        );
+        const docStore: DocStore = new Map([
+            [
+                "active-word-document",
+                {
+                    storage_path: "inline:word-document:test",
+                    file_type: "text/markdown",
+                    filename: "Contract.docx",
+                    inline_text: "q",
+                },
+            ],
+        ]);
+
+        expect(createCitation(parsed, docIndex, undefined, docStore)).toMatchObject({
+            filename: "Contract.docx",
+            document: { title: "Contract.docx" },
         });
     });
 

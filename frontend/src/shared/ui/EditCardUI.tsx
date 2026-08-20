@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { PillButtonUI, type PillButtonUITone } from "./PillButtonUI";
 
 export interface EditCardUIAction {
-    label: string;
+    label: ReactNode;
     onClick?: () => void;
     disabled?: boolean;
     title?: string;
@@ -32,6 +32,7 @@ export interface EditCardUIProps {
     className?: string;
     actionOrder?: "resolve-first" | "view-first";
     viewAction?: EditCardUIAction;
+    applyAction?: EditCardUIAction;
     acceptAction?: EditCardUIAction;
     rejectAction?: EditCardUIAction;
 }
@@ -76,6 +77,7 @@ export function EditCardUI({
     className = "",
     actionOrder = "resolve-first",
     viewAction,
+    applyAction,
     acceptAction,
     rejectAction,
 }: EditCardUIProps) {
@@ -84,11 +86,14 @@ export function EditCardUI({
     const hasReplacement =
         replacementText !== undefined && replacementText !== "";
     const hasOriginal = originalText !== undefined && originalText !== "";
-    const hasResolveActions = !!acceptAction || !!rejectAction;
+    const hasResolveActions = !!applyAction || !!acceptAction || !!rejectAction;
     const hasActions = !!viewAction || hasResolveActions;
 
     const resolveActions = hasResolveActions ? (
         <div className="flex gap-2">
+            {applyAction && (
+                <ActionButton action={applyAction} tone="blue" />
+            )}
             {acceptAction && (
                 <ActionButton action={acceptAction} tone="blue" />
             )}
@@ -110,7 +115,7 @@ export function EditCardUI({
                         <span
                             aria-label={`Tracked change ${changeNumber}`}
                             title={`Tracked change ${changeNumber}`}
-                            className="inline-flex h-4 w-4 shrink-0 self-center items-center justify-center rounded-full bg-gray-200 text-[9px] font-medium leading-none text-gray-600"
+                            className="mt-0.5 inline-flex h-4 w-4 shrink-0 self-start items-center justify-center rounded-full bg-gray-200 text-[9px] font-medium leading-none text-gray-600"
                         >
                             {changeNumber}
                         </span>

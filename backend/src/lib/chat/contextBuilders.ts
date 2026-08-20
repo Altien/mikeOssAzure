@@ -259,11 +259,15 @@ export function buildMessages(
   docIndex?: DocIndex,
   includeResearchTools = true,
   nonce?: string,
+  systemPromptMode: "append" | "replace" = "append",
 ) {
   const formatted: unknown[] = [];
-  let systemContent = buildSystemPrompt(includeResearchTools);
+  let systemContent =
+    systemPromptMode === "replace"
+      ? (systemPromptExtra?.trim() ?? "")
+      : buildSystemPrompt(includeResearchTools);
 
-  if (systemPromptExtra) {
+  if (systemPromptMode === "append" && systemPromptExtra) {
     systemContent += `\n\n${systemPromptExtra.trim()}`;
   }
 
@@ -321,10 +325,10 @@ export function buildMessages(
 export function extractCitations(
   fullText: string,
   docIndex: DocIndex,
-  _events?: ({ type: string } & Record<string, unknown>[]) | unknown[],
+  docStore?: DocStore,
 ): unknown[] {
   return parseCitations(fullText).map((c) =>
-    createCitation(c, docIndex),
+    createCitation(c, docIndex, undefined, docStore),
   );
 }
 

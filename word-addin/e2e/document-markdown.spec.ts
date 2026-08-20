@@ -12,6 +12,7 @@
  * with the markdown renderer + stripped-marker fallback.
  */
 import { test, expect } from "./support/fixtures";
+import { replacementEdit, wordEdits } from "./support/editProtocol";
 
 const TOKEN = "test-jwt-token";
 
@@ -66,7 +67,9 @@ test("an edit quoting the renderer's heading marker still applies as a tracked c
 }) => {
   await addin.mockChatStream([
     "One change.\n\n",
-    "<original># Definitions</original>\n<replacement>Defined Terms</replacement>\n<reason>Clearer heading.</reason>",
+    wordEdits(
+      replacementEdit("# Definitions", "Defined Terms", "Clearer heading."),
+    ),
   ]);
   await addin.gotoTaskpane({
     documentText: "Definitions\nTerms have the meanings below.",
@@ -75,6 +78,7 @@ test("an edit quoting the renderer's heading marker still applies as a tracked c
 
   await page.getByPlaceholder("How can I help?").fill("Rename the heading");
   await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
 
   // "# Definitions" exists nowhere in the document — the leading "# " is
   // the context renderer's heading marker. The verbatim search misses; the

@@ -77,7 +77,7 @@ export function ReasoningBlock({
     isStreaming: boolean;
     showConnector?: boolean;
 }) {
-    const [isContentOpen, setIsContentOpen] = useState(false);
+    const [isContentOpen, setIsContentOpen] = useState(isStreaming);
     const [isExpanded, setIsExpanded] = useState(false);
     const [userToggledContent, setUserToggledContent] = useState(false);
     const [isOverflowing, setIsOverflowing] = useState(false);
@@ -103,9 +103,10 @@ export function ReasoningBlock({
         setHasMeasured(true);
         if (!userToggledContent) setIsContentOpen(isStreaming);
         if (!nextOverflowing) setIsExpanded(false);
-    }, [isStreaming, text, userToggledContent]);
+    }, [isContentOpen, isStreaming, text, userToggledContent]);
 
-    const showContent = isContentOpen || isStreaming || !hasMeasured;
+    const showContent =
+        isContentOpen || (!userToggledContent && !hasMeasured);
     const isCollapsed = isContentOpen && isOverflowing && !isExpanded;
 
     return (
@@ -115,8 +116,9 @@ export function ReasoningBlock({
             dotColor="gray"
         >
             <button
+                type="button"
+                aria-expanded={showContent}
                 onClick={() => {
-                    if (isStreaming) return;
                     setUserToggledContent(true);
                     setIsContentOpen((v) => !v);
                 }}
@@ -127,12 +129,11 @@ export function ReasoningBlock({
                         ? THINKING_PHRASES[thinkingIndex]
                         : "Thought process"}
                 </span>
-                {!isStreaming && (
-                    <ChevronDown
-                        size={10}
-                        className={`relative top-px ml-1 transition-transform duration-200 ${isContentOpen ? "" : "-rotate-90"}`}
-                    />
-                )}
+                <ChevronDown
+                    size={10}
+                    aria-hidden="true"
+                    className={`relative top-px ml-1 transition-transform duration-200 ${isContentOpen ? "" : "-rotate-90"}`}
+                />
             </button>
             {showContent && (
                 <div className="mt-2">

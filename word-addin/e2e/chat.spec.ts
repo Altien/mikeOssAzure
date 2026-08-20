@@ -8,6 +8,7 @@
  */
 import { test, expect } from "./support/fixtures";
 import type { Page } from "@playwright/test";
+import { replacementEdit, wordEdits } from "./support/editProtocol";
 
 const TOKEN = "test-jwt-token";
 
@@ -21,6 +22,11 @@ async function openActivityStrip(page: Page): Promise<void> {
     .getByRole("button", { name: /^(Working|Completed in \d+ steps?)/ })
     .first()
     .click();
+}
+
+async function chooseEditMode(page: Page): Promise<void> {
+  await page.getByTestId("edit-apply-toggle").click();
+  await page.getByRole("menuitem", { name: /Edit/ }).click();
 }
 
 async function waitForStableSample<T>(read: () => Promise<T>): Promise<T> {
@@ -63,7 +69,7 @@ test("shows frontend-style quick actions before any message is sent", async ({
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Compare documents" }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Extract key terms" }),
   ).toBeVisible();
@@ -93,9 +99,7 @@ test("uses a floating icon header with no logo, tabs, or visible sign-out button
   await expect(page.getByRole("button", { name: "Sign out" })).toHaveCount(0);
 
   const header = page.getByTestId("floating-header");
-  await expect(header.getByRole("button", { name: "New chat" })).toHaveCount(
-    0,
-  );
+  await expect(header.getByRole("button", { name: "New chat" })).toHaveCount(0);
   const chatInput = page.getByTestId("chat-input");
   const [headerBox, inputBox, headerPadding] = await Promise.all([
     header.boundingBox(),
@@ -304,7 +308,7 @@ test("history button loads and opens a previous chat", async ({
         id: "message-2",
         role: "assistant",
         content: [
-          { type: "doc_read", filename: "Active Word document" },
+          { type: "doc_read", filename: "Demo Contract.docx" },
           { type: "content", text: "The lease has three risks." },
         ],
       },
@@ -327,7 +331,7 @@ test("history button loads and opens a previous chat", async ({
   await expect(page.getByText("The lease has three risks.")).toBeVisible();
   await page.getByRole("button", { name: "Completed in 1 step" }).click();
   await expect(page.getByText("Read", { exact: true })).toBeVisible();
-  await expect(page.getByText("Active Word document")).toBeVisible();
+  await expect(page.getByText("Demo Contract.docx")).toBeVisible();
 });
 
 test("shows a scroll-to-bottom control while the transcript is scrolled up", async ({
@@ -466,7 +470,7 @@ test("history preserves assistant event order and stored errors", async ({
           },
           {
             type: "doc_read",
-            filename: "Active Word document",
+            filename: "Demo Contract.docx",
             document_id: "active-document",
           },
           { type: "content", text: "The document has three risks." },
@@ -618,6 +622,23 @@ test("a reasoning delta replaces Thinking with a live reasoning trace", async ({
       exact: true,
     }),
   ).toBeVisible();
+  const liveReasoningToggle = assistant.getByRole("button", {
+    name: "Thinking...",
+  });
+  await expect(liveReasoningToggle).toHaveAttribute("aria-expanded", "true");
+  await liveReasoningToggle.click();
+  await expect(
+    assistant.getByText("I should inspect the agreement first.", {
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(liveReasoningToggle).toHaveAttribute("aria-expanded", "false");
+  await liveReasoningToggle.click();
+  await expect(
+    assistant.getByText("I should inspect the agreement first.", {
+      exact: true,
+    }),
+  ).toBeVisible();
 
   await page.evaluate(() => {
     (
@@ -670,6 +691,7 @@ test("sends a document snapshot without claiming the model read it", async ({
 
   const body = request.postDataJSON();
   expect(body.document_context).toBe(docText);
+  expect(body.document_name).toBe("Demo Contract.docx");
   expect(body.storage).toBe("cloud");
   expect(body.document_id).toMatch(
     /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
@@ -784,9 +806,9 @@ test("keeps the existing identity when either document URL is unknown", async ({
   const thirdRequest = page.waitForRequest("**/word-chat");
   await page.getByRole("button", { name: "Send" }).click();
   expect((await thirdRequest).postDataJSON().document_id).toBe(firstId);
-  expect((await addin.wordDocument()).settings["mike.word.documentUrl.v1"]).toBe(
-    "c:/users/e2e/renamed contract.docx",
-  );
+  expect(
+    (await addin.wordDocument()).settings["mike.word.documentUrl.v1"],
+  ).toBe("c:/users/e2e/renamed contract.docx");
 });
 
 test("shows Reading and Read only when the model triggers the read tool", async ({
@@ -820,12 +842,12 @@ test("shows Reading and Read only when the model triggers the read tool", async 
           controller.enqueue(
             frame({
               type: "doc_read_start",
-              filename: "Active Word document",
+              filename: "Demo Contract.docx",
             }),
           );
           testWindow.__FINISH_DOCUMENT_READ__ = () => {
             controller.enqueue(
-              frame({ type: "doc_read", filename: "Active Word document" }),
+              frame({ type: "doc_read", filename: "Demo Contract.docx" }),
             );
             controller.enqueue(
               frame({
@@ -851,7 +873,7 @@ test("shows Reading and Read only when the model triggers the read tool", async 
   await page.getByRole("button", { name: "Send" }).click();
 
   await expect(page.getByText("Reading", { exact: true })).toBeVisible();
-  await expect(page.getByText("Active Word document...")).toBeVisible();
+  await expect(page.getByText("Demo Contract.docx...")).toBeVisible();
   await page.evaluate(() => {
     (
       window as typeof window & { __FINISH_DOCUMENT_READ__?: () => void }
@@ -862,7 +884,7 @@ test("shows Reading and Read only when the model triggers the read tool", async 
   ).toBeVisible();
   await page.getByRole("button", { name: "Completed in 1 step" }).click();
   await expect(page.getByText("Read", { exact: true })).toBeVisible();
-  await expect(page.getByText("Active Word document")).toBeVisible();
+  await expect(page.getByText("Demo Contract.docx")).toBeVisible();
 });
 
 test("removes an unfinished Reading event when the stream is stopped", async ({
@@ -892,7 +914,7 @@ test("removes an unfinished Reading event when the stream is stopped", async ({
             encoder.encode(
               `data: ${JSON.stringify({
                 type: "doc_read_start",
-                filename: "Active Word document",
+                filename: "Demo Contract.docx",
               })}\n\n`,
             ),
           );
@@ -1145,10 +1167,7 @@ test("opens a left-aligned source menu and selects web files from the document m
   await expect(modal.locator('img[src*="/icons/pdf."]')).toBeVisible();
   const uploadedRow = modal.getByRole("button", { name: /agreement\.pdf/ });
   const documentsScroll = modal.locator(".overflow-y-auto").last();
-  await expect(documentsScroll).toHaveCSS(
-    "padding-left",
-    "8px",
-  );
+  await expect(documentsScroll).toHaveCSS("padding-left", "8px");
   await expect(documentsScroll).toHaveCSS("margin-left", "-8px");
   const [documentSearchBox, uploadedRowBox] = await Promise.all([
     modal.getByPlaceholder("Search...").locator("..").boundingBox(),
@@ -1156,9 +1175,9 @@ test("opens a left-aligned source menu and selects web files from the document m
   ]);
   expect(documentSearchBox).not.toBeNull();
   expect(uploadedRowBox).not.toBeNull();
-  expect(Math.abs(uploadedRowBox!.x - documentSearchBox!.x)).toBeLessThanOrEqual(
-    1,
-  );
+  expect(
+    Math.abs(uploadedRowBox!.x - documentSearchBox!.x),
+  ).toBeLessThanOrEqual(1);
   expect(
     Math.abs(uploadedRowBox!.width - documentSearchBox!.width),
   ).toBeLessThanOrEqual(1);
@@ -1505,8 +1524,12 @@ test("composer controls fit a narrow Word task pane", async ({
   expect(Math.abs(plusBounds!.x - placeholderBounds!.x)).toBeLessThanOrEqual(3);
   // The whole action row shares one line: mode pill after the documents
   // button, icon-only model button flush inside the pane.
-  expect(Math.abs(applyModeBounds!.y - addDocumentBounds!.y)).toBeLessThanOrEqual(2);
-  expect(Math.abs(modelBounds!.y - addDocumentBounds!.y)).toBeLessThanOrEqual(2);
+  expect(
+    Math.abs(applyModeBounds!.y - addDocumentBounds!.y),
+  ).toBeLessThanOrEqual(2);
+  expect(Math.abs(modelBounds!.y - addDocumentBounds!.y)).toBeLessThanOrEqual(
+    2,
+  );
   expect(modelBounds!.x + modelBounds!.width).toBeLessThanOrEqual(360);
 
   await page.getByRole("button", { name: "Add documents" }).click();
@@ -1593,27 +1616,32 @@ test("streams sealed edit cards into Word and resolves their exact revisions", a
   await addin.mockChatStream(
     [
       "Two issues found.\n\n",
-      "ORIGINAL: The Suplier\nREPLACEMENT: The Supplier\nREASON: Typo.\n\n",
-      "ORIGINAL: shall deliver goods\nREPLACEMENT: shall deliver the goods\nREASON: Missing article.",
+      wordEdits(
+        replacementEdit("The Suplier", "The Supplier", "Typo."),
+        replacementEdit(
+          "shall deliver goods",
+          "shall deliver the goods",
+          "Missing article.",
+        ),
+      ),
     ],
-    { docReads: ["Active Word document"] },
+    { docReads: ["Demo Contract.docx"] },
   );
   await addin.gotoTaskpane({
     documentText: "The Suplier shall deliver goods to the Buyer.",
   });
   await addin.expectAuthedShell();
+  await chooseEditMode(page);
 
   await page.getByPlaceholder("How can I help?").fill("Propose edits");
   await page.getByRole("button", { name: "Send" }).click();
 
-  // Sealed blocks apply as tracked changes without a separate Apply click.
+  // Edit mode applies sealed blocks without a separate Apply click.
   await expect
     .poll(async () => (await addin.wordCalls()).trackedChanges.length)
     .toBe(2);
   await expect(page.getByText("Two issues found.")).toBeVisible();
-  await expect(page.locator("body")).not.toContainText("ORIGINAL:");
-  await expect(page.locator("body")).not.toContainText("REPLACEMENT:");
-  await expect(page.locator("body")).not.toContainText("REASON:");
+  await expect(page.locator("body")).not.toContainText("<EDITS>");
   await expect(page.getByText("The Supplier", { exact: true })).toBeVisible();
   await expect(
     page.getByText("shall deliver the goods", { exact: true }),
@@ -1633,12 +1661,15 @@ test("streams sealed edit cards into Word and resolves their exact revisions", a
     page.getByRole("button", { name: "View", exact: true }),
   ).toHaveCount(2);
 
-  // Reading the document and editing it are both steps of the activity strip.
+  // Only pre-response work belongs in the activity strip; tracked edits are
+  // represented by the edit cards below the streamed response.
   await expect(
-    page.getByRole("button", { name: /Completed in 2 steps/ }),
+    page.getByRole("button", { name: /Completed in 1 step/ }),
   ).toBeVisible();
   await openActivityStrip(page);
-  await expect(page.getByText("Tracked change ready for review")).toBeVisible();
+  await expect(page.getByText("Tracked change ready for review")).toHaveCount(
+    0,
+  );
   await expect(page.getByText("Read", { exact: true })).toBeVisible();
 
   let calls = await addin.wordCalls();
@@ -1682,7 +1713,7 @@ test("streams sealed edit cards into Word and resolves their exact revisions", a
   ]);
 });
 
-test("shows a provisional edit card but waits for a sealed boundary before mutating Word", async ({
+test("hides a provisional edit card until it can be reviewed and applied", async ({
   addin,
   page,
 }) => {
@@ -1715,15 +1746,16 @@ test("shows a provisional edit card but waits for a sealed boundary before mutat
       const body = new ReadableStream<Uint8Array>({
         start(controller) {
           controller.enqueue(
-            event("<original>The Suplier</original><replacement>The Supp"),
+            event(
+              '<EDITS>[{"type":"edit_data","kind":"edit",' +
+                '"deleted_text":"The Suplier","inserted_text":"The Supp',
+            ),
           );
           let continued = false;
           streamWindow.__CONTINUE_REDLINE_STREAM__ = () => {
             if (continued) return;
             continued = true;
-            controller.enqueue(
-              event("lier</replacement><reason>Typo.</reason>\n\n"),
-            );
+            controller.enqueue(event('lier","reason":"Typo."}]</EDITS>\n\n'));
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
             controller.close();
           };
@@ -1747,15 +1779,32 @@ test("shows a provisional edit card but waits for a sealed boundary before mutat
   await page.getByPlaceholder("How can I help?").fill("Fix the typo");
   await page.getByRole("button", { name: "Send" }).click();
 
-  await expect(page.getByText("Receiving change…")).toBeVisible();
-  await expect(page.getByText("The Supp", { exact: true })).toBeVisible();
-  await expect(page.locator("body")).not.toContainText("<original>");
-  await expect(page.locator("body")).not.toContainText("<replacement>");
+  await expect(page.getByText("Receiving change…")).toHaveCount(0);
+  await expect(page.getByText("The Supp", { exact: true })).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText("<EDITS>");
   expect((await addin.wordCalls()).trackedChanges).toEqual([]);
   await expect(
     page.getByRole("button", { name: "Accept", exact: true }),
   ).toHaveCount(0);
 
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          typeof (
+            window as typeof window & {
+              __CONTINUE_REDLINE_STREAM__?: () => void;
+            }
+          ).__CONTINUE_REDLINE_STREAM__,
+      ),
+    )
+    .toBe("function");
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
   await page.evaluate(() => {
     (
       window as typeof window & {
@@ -1764,6 +1813,11 @@ test("shows a provisional edit card but waits for a sealed boundary before mutat
     ).__CONTINUE_REDLINE_STREAM__?.();
   });
 
+  await expect(
+    page.getByRole("button", { name: "Apply", exact: true }),
+  ).toBeVisible();
+  expect((await addin.wordCalls()).trackedChanges).toEqual([]);
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
   await expect
     .poll(async () => (await addin.wordCalls()).trackedChanges)
     .toEqual([
@@ -1772,16 +1826,17 @@ test("shows a provisional edit card but waits for a sealed boundary before mutat
   await expect(
     page.getByRole("button", { name: "Accept", exact: true }),
   ).toBeVisible();
-  await openActivityStrip(page);
-  await expect(page.getByText("Tracked change ready for review")).toBeVisible();
+  await expect(page.getByText("Tracked change ready for review")).toHaveCount(
+    0,
+  );
 });
 
-test("View scrolls Word to the passage an edit changed", async ({
+test("View scrolls Word to a proposed change before it is applied", async ({
   addin,
   page,
 }) => {
   await addin.mockChatStream([
-    "ORIGINAL: The Suplier\nREPLACEMENT: The Supplier\nREASON: Typo.",
+    wordEdits(replacementEdit("The Suplier", "The Supplier", "Typo.")),
   ]);
   await addin.gotoTaskpane({
     documentText: "The Suplier shall deliver the goods.",
@@ -1799,14 +1854,15 @@ test("View scrolls Word to the passage an edit changed", async ({
   await expect
     .poll(async () => (await addin.wordCalls()).revealedChanges)
     .toEqual([
-      { text: "The Supplier", location: "After", original: "The Suplier" },
+      { text: "The Suplier", location: "Select", original: "The Suplier" },
     ]);
-  // Viewing is navigation only: the change stays pending.
+  // Viewing is navigation only: the proposal remains unapplied.
   await expect(view).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Accept", exact: true }),
+    page.getByRole("button", { name: "Apply", exact: true }),
   ).toBeVisible();
   const calls = await addin.wordCalls();
+  expect(calls.trackedChanges).toEqual([]);
   expect(calls.acceptedChanges).toEqual([]);
   expect(calls.rejectedChanges).toEqual([]);
 });
@@ -1816,13 +1872,14 @@ test("View falls back to a second anchor when Word invalidates the first", async
   page,
 }) => {
   await addin.mockChatStream([
-    "ORIGINAL: The Suplier\nREPLACEMENT: The Supplier\nREASON: Typo.",
+    wordEdits(replacementEdit("The Suplier", "The Supplier", "Typo.")),
   ]);
   await addin.gotoTaskpane({
     documentText: "The Suplier shall deliver the goods.",
     staleInsertedRangeOriginals: ["The Suplier"],
   });
   await addin.expectAuthedShell();
+  await chooseEditMode(page);
 
   await page.getByPlaceholder("How can I help?").fill("Fix the typo");
   await page.getByRole("button", { name: "Send" }).click();
@@ -1841,7 +1898,7 @@ test("a change Word cannot scroll to reports plain language, not a Word error co
   page,
 }) => {
   await addin.mockChatStream([
-    "ORIGINAL: The Suplier\nREPLACEMENT: The Supplier\nREASON: Typo.",
+    wordEdits(replacementEdit("The Suplier", "The Supplier", "Typo.")),
   ]);
   await addin.gotoTaskpane({
     documentText: "The Suplier shall deliver the goods.",
@@ -1854,21 +1911,18 @@ test("a change Word cannot scroll to reports plain language, not a Word error co
 
   await page.getByRole("button", { name: "View", exact: true }).click();
   await expect(
-    page.getByText(
-      "Word couldn’t scroll to this change. Find it in Word’s Review tab.",
-    ),
+    page.getByText("Word couldn’t scroll to this proposed change."),
   ).toBeVisible();
   await expect(page.locator("body")).not.toContainText("GeneralException");
 
-  // A failed jump is navigation trouble, not a lifecycle change: the edit is
-  // still pending and the activity strip still reports it as such.
+  // A failed jump is navigation trouble, not a lifecycle change: the proposal
+  // is still ready to apply.
   await expect(
-    page.getByRole("button", { name: "Accept", exact: true }),
+    page.getByRole("button", { name: "Apply", exact: true }),
   ).toBeEnabled();
-  await openActivityStrip(page);
-  const strip = page.getByText("Tracked change ready for review");
-  await expect(strip).toBeVisible();
-  await expect(strip.locator("xpath=..")).toContainText("1 ready for review");
+  await expect(page.getByText("Tracked change ready for review")).toHaveCount(
+    0,
+  );
 });
 
 test("stopping a stream leaves sealed edits reviewable and marks its tail incomplete", async ({
@@ -1901,11 +1955,11 @@ test("stopping a stream leaves sealed edits reviewable and marks its tail incomp
         start(controller) {
           controller.enqueue(
             event(
-              "<original>The Suplier</original>" +
-                "<replacement>The Supplier</replacement>" +
-                "<reason>Typo.</reason>" +
-                "<original>goods</original>" +
-                "<replacement>the",
+              '<EDITS>[{"type":"edit_data","kind":"edit",' +
+                '"deleted_text":"The Suplier","inserted_text":' +
+                '"The Supplier","reason":"Typo."},{"type":"edit_data",' +
+                '"kind":"edit","deleted_text":"goods",' +
+                '"inserted_text":"the',
             ),
           );
           init?.signal?.addEventListener(
@@ -1932,18 +1986,22 @@ test("stopping a stream leaves sealed edits reviewable and marks its tail incomp
   await page.getByPlaceholder("How can I help?").fill("Fix the document");
   await page.getByRole("button", { name: "Send" }).click();
 
-  await expect
-    .poll(async () => (await addin.wordCalls()).trackedChanges.length)
-    .toBe(1);
-  await expect(page.getByText("Receiving change…")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Accept all" })).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Apply", exact: true }),
+  ).toBeEnabled();
+  expect((await addin.wordCalls()).trackedChanges).toEqual([]);
+  await expect(page.getByText("Receiving change…")).toHaveCount(0);
+  await expect(page.getByText("the", { exact: true })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Stop" }).click();
   await expect(
     page.getByText("Incomplete change — not applied."),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Accept all" })).toBeEnabled();
-  await page.getByRole("button", { name: "Accept all" }).click();
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Accept", exact: true }),
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "Accept", exact: true }).click();
   await expect(page.getByText("Accepted.", { exact: true })).toBeVisible();
 });
 
@@ -1952,13 +2010,20 @@ test("Accept all resolves every pending tracked-change handle", async ({
   page,
 }) => {
   await addin.mockChatStream([
-    "ORIGINAL: The Suplier\nREPLACEMENT: The Supplier\nREASON: Typo.\n\n",
-    "ORIGINAL: shall deliver goods\nREPLACEMENT: shall deliver the goods\nREASON: Missing article.",
+    wordEdits(
+      replacementEdit("The Suplier", "The Supplier", "Typo."),
+      replacementEdit(
+        "shall deliver goods",
+        "shall deliver the goods",
+        "Missing article.",
+      ),
+    ),
   ]);
   await addin.gotoTaskpane({
     documentText: "The Suplier shall deliver goods to the Buyer.",
   });
   await addin.expectAuthedShell();
+  await chooseEditMode(page);
 
   await page.getByPlaceholder("How can I help?").fill("Fix both issues");
   await page.getByRole("button", { name: "Send" }).click();
@@ -1993,7 +2058,7 @@ test("skips an edit whose target already contains an unrelated tracked revision"
   page,
 }) => {
   await addin.mockChatStream([
-    "ORIGINAL: The Suplier\nREPLACEMENT: The Supplier\nREASON: Typo.",
+    wordEdits(replacementEdit("The Suplier", "The Supplier", "Typo.")),
   ]);
   await addin.gotoTaskpane({
     documentText: "The Suplier shall deliver the goods.",
@@ -2009,8 +2074,6 @@ test("skips an edit whose target already contains an unrelated tracked revision"
       "Skipped — the target text already has tracked changes. Accept & apply resolves them, then applies this change.",
     ),
   ).toBeVisible();
-  await openActivityStrip(page);
-  await expect(page.getByText("Skipped tracked change")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Accept", exact: true }),
   ).toHaveCount(0);
@@ -2026,12 +2089,61 @@ test("skips an edit whose target already contains an unrelated tracked revision"
   expect(calls.rejectedChanges).toEqual([]);
 });
 
+test("explains when an edit's source text is missing from the document", async ({
+  addin,
+  page,
+}) => {
+  await addin.mockChatStream([
+    wordEdits(replacementEdit("The Suplier", "The Supplier", "Typo.")),
+  ]);
+  await addin.gotoTaskpane({
+    documentText: "The Buyer shall deliver the goods.",
+  });
+  await addin.expectAuthedShell();
+
+  await page.getByPlaceholder("How can I help?").fill("Fix the typo");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(
+    page.getByText(
+      "Skipped — the source text could not be found in the document.",
+    ),
+  ).toBeVisible();
+  expect((await addin.wordCalls()).trackedChanges).toEqual([]);
+});
+
+test("explains when an edit's source passage cannot be safely searched", async ({
+  addin,
+  page,
+}) => {
+  const oversizedSource = "x".repeat(256);
+  await addin.mockChatStream([
+    wordEdits(
+      replacementEdit(
+        oversizedSource,
+        "Short passage",
+        "Condense the passage.",
+      ),
+    ),
+  ]);
+  await addin.gotoTaskpane({ documentText: oversizedSource });
+  await addin.expectAuthedShell();
+
+  await page.getByPlaceholder("How can I help?").fill("Condense the passage");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(
+    page.getByText("Incomplete change — not applied."),
+  ).toBeVisible();
+  expect((await addin.wordCalls()).trackedChanges).toEqual([]);
+});
+
 test("keeps an edit reviewable through its passage when Word withholds revision proxies", async ({
   addin,
   page,
 }) => {
   await addin.mockChatStream([
-    "ORIGINAL: The Suplier\nREPLACEMENT: The Supplier\nREASON: Typo.",
+    wordEdits(replacementEdit("The Suplier", "The Supplier", "Typo.")),
   ]);
   await addin.gotoTaskpane({
     documentText: "The Suplier will deliver the goods.",
@@ -2041,6 +2153,8 @@ test("keeps an edit reviewable through its passage when Word withholds revision 
 
   await page.getByPlaceholder("How can I help?").fill("Fix the typo");
   await page.getByRole("button", { name: "Send" }).click();
+
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
 
   // Word exposed no revision proxies, but the edited passage is still tracked,
   // so the card stays actionable instead of deferring to Word's Review tab.
@@ -2087,7 +2201,7 @@ test("edits sharing replacement text resolve independently by location", async (
   // errored with "The revisions in this passage changed…" before location
   // narrowing through the retained anchors.
   await addin.mockChatStream([
-    "<original>teh Buyer</original>\n<replacement>the Buyer</replacement>\n<reason>Fix the typo.</reason>",
+    wordEdits(replacementEdit("teh Buyer", "the Buyer", "Fix the typo.")),
   ]);
   await addin.gotoTaskpane({
     documentText:
@@ -2098,15 +2212,17 @@ test("edits sharing replacement text resolve independently by location", async (
 
   await page.getByPlaceholder("How can I help?").fill("Fix the first typo");
   await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Accept", exact: true }),
   ).toBeVisible();
 
   await addin.mockChatStream([
-    "<original>hte Buyer</original>\n<replacement>the Buyer</replacement>\n<reason>Fix the typo.</reason>",
+    wordEdits(replacementEdit("hte Buyer", "the Buyer", "Fix the typo.")),
   ]);
   await page.getByPlaceholder("How can I help?").fill("Fix the second typo");
   await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Accept", exact: true }),
   ).toHaveCount(2);
@@ -2118,9 +2234,9 @@ test("edits sharing replacement text resolve independently by location", async (
     .first()
     .click();
   await expect(page.getByText("Accepted.", { exact: true })).toBeVisible();
-  await expect(
-    page.getByText(/revisions in this passage changed/),
-  ).toHaveCount(0);
+  await expect(page.getByText(/revisions in this passage changed/)).toHaveCount(
+    0,
+  );
 
   await page.getByRole("button", { name: "Accept", exact: true }).click();
   await expect(page.getByText("Accepted.", { exact: true })).toHaveCount(2);
@@ -2138,7 +2254,9 @@ test("does not broaden one edit across repeated exact passages", async ({
   page,
 }) => {
   await addin.mockChatStream([
-    "ORIGINAL: the Supplier\nREPLACEMENT: Supplier Ltd.\nREASON: Clarify the entity.",
+    wordEdits(
+      replacementEdit("the Supplier", "Supplier Ltd.", "Clarify the entity."),
+    ),
   ]);
   await addin.gotoTaskpane({
     documentText:
@@ -2167,7 +2285,13 @@ test("an applied card names the paragraph the change landed in", async ({
   page,
 }) => {
   await addin.mockChatStream([
-    "<original>notify the Supplier</original>\n<replacement>notify Supplier Ltd.</replacement>\n<reason>Clarify the entity.</reason>",
+    wordEdits(
+      replacementEdit(
+        "notify the Supplier",
+        "notify Supplier Ltd.",
+        "Clarify the entity.",
+      ),
+    ),
   ]);
   await addin.gotoTaskpane({
     documentText:
@@ -2181,6 +2305,7 @@ test("an applied card names the paragraph the change landed in", async ({
 
   await page.getByPlaceholder("How can I help?").fill("Clarify the supplier");
   await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
 
   // The surrounding paragraph is shown so a wrong-location match is
   // catchable before Accept.

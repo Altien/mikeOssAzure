@@ -1,8 +1,9 @@
 import React from "react";
+import { LoaderCircle } from "lucide-react";
 import { EditCardUI } from "@mike/edit-card-ui";
 import type { RedlineEdit } from "../../lib/redline";
 import { EDIT_CARD_SURFACE } from "./message/messageStyles";
-import type { EditCardStatus } from "../../lib/wordChatTypes";
+import type { EditBusyAction, EditCardStatus } from "../../lib/wordChatTypes";
 
 interface EditCardProps {
   /** Fields can arrive independently while a streamed edit is being parsed. */
@@ -17,6 +18,7 @@ interface EditCardProps {
   locationHint?: string;
   /** Scrolls Word to the revision this card applied. */
   onView?: () => void;
+  onApply?: () => void;
   onAccept?: () => void;
   onReject?: () => void;
   /**
@@ -28,13 +30,25 @@ interface EditCardProps {
   error?: string;
   /** Disables both resolution actions while a Word operation is in flight. */
   disabled?: boolean;
+  /** The action currently mutating or navigating the Word document. */
+  busyAction?: EditBusyAction;
+}
+
+function BusyLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <>
+      <LoaderCircle aria-hidden="true" className="h-3 w-3 animate-spin" />
+      <span>{children}</span>
+    </>
+  );
 }
 
 const STATUS_COPY: Record<
-  Exclude<EditCardStatus, "pending">,
+  Exclude<EditCardStatus, "pending" | "ready" | "applying-approved">,
   { copy: string; className: string }
 > = {
   receiving: { copy: "Receiving change…", className: "text-gray-400" },
+  validating: { copy: "Checking the document…", className: "text-gray-400" },
   applying: { copy: "Applying to the document…", className: "text-gray-500" },
   restoring: { copy: "Checking the document…", className: "text-gray-400" },
   "view-only": {
@@ -45,7 +59,7 @@ const STATUS_COPY: Record<
   accepted: { copy: "Accepted.", className: "text-green-700" },
   rejected: { copy: "Rejected.", className: "text-gray-500" },
   skipped: {
-    copy: "Skipped — source text was not found.",
+    copy: "Skipped — this change could not be applied.",
     className: "text-gray-500",
   },
   ambiguous: {
@@ -86,11 +100,13 @@ export function EditCard({
   appliedMatches,
   locationHint,
   onView,
+  onApply,
   onAccept,
   onReject,
   onAcceptAndApply,
   error,
   disabled = false,
+  busyAction,
 }: EditCardProps): React.ReactElement {
   const formats = edit.format ?? [];
   const isFormatCard = formats.length > 0;
@@ -114,7 +130,10 @@ export function EditCard({
     .join(", ");
   const hasEditText =
     edit.replacement !== undefined || edit.original !== undefined;
-  const statusCopy = status === "pending" ? undefined : STATUS_COPY[status];
+  const statusCopy =
+    status === "pending" || status === "ready" || status === "applying-approved"
+      ? undefined
+      : STATUS_COPY[status];
   // The generic ambiguous copy upgrades to an actionable one when Word
   // reported how many places the passage matched.
   const ambiguousCopy =
@@ -127,18 +146,21 @@ export function EditCard({
     status === "applied" && appliedMatches !== undefined && appliedMatches > 1
       ? `Applied to the document in ${appliedMatches} places.`
       : undefined;
-  // Every other status already says something precise; only these two learn
-  // more from Word's own message — and a pending change can carry one too
-  // (a view that could not scroll, say).
+  // Most statuses already say something precise. These states may carry a
+  // more useful message from Word or the edit-application pipeline.
   const message =
     status === "pending" ||
+    status === "ready" ||
     status === "view-only" ||
+    status === "skipped" ||
     status === "error" ||
     status === "historical"
       ? (error ?? statusCopy?.copy)
       : (ambiguousCopy ?? multiApplyCopy ?? statusCopy?.copy);
   const messageClass =
-    status === "pending" ? "text-amber-700" : (statusCopy?.className ?? "");
+    status === "pending" || status === "ready"
+      ? "text-amber-700"
+      : (statusCopy?.className ?? "");
 
   return (
     <EditCardUI
@@ -170,31 +192,62 @@ export function EditCard({
       statusMessageClassName={messageClass}
       className={`${EDIT_CARD_SURFACE} p-3`}
       ariaBusy={
+        disabled ||
         status === "receiving" ||
+        status === "validating" ||
         status === "applying" ||
+        status === "applying-approved" ||
         status === "restoring"
       }
       viewAction={
-        status === "pending" || status === "view-only"
+        status === "ready" ||
+        status === "pending" ||
+        status === "view-only" ||
+        status === "conflicted"
           ? {
               label: "View",
               onClick: onView,
               disabled: disabled || !onView,
             }
-          : status === "conflicted" && onAcceptAndApply
+          : undefined
+      }
+      applyAction={
+        status === "conflicted" && onAcceptAndApply
+          ? {
+              // Supersede the occupying revisions on an explicit click:
+              // accept them, then apply this edit as a clean redline.
+              label:
+                busyAction === "accept-and-apply" ? (
+                  <BusyLabel>Accepting & applying...</BusyLabel>
+                ) : (
+                  "Accept & apply"
+                ),
+              onClick: onAcceptAndApply,
+              disabled,
+            }
+          : status === "ready" || status === "applying-approved"
             ? {
-                // Supersede the occupying revisions on an explicit click:
-                // accept them, then apply this edit as a clean redline.
-                label: "Accept & apply",
-                onClick: onAcceptAndApply,
-                disabled,
+                label:
+                  status === "applying-approved" ? (
+                    <BusyLabel>Applying...</BusyLabel>
+                  ) : (
+                    "Apply"
+                  ),
+                onClick: status === "ready" ? onApply : undefined,
+                disabled:
+                  status === "applying-approved" || disabled || !onApply,
               }
             : undefined
       }
       acceptAction={
         status === "pending"
           ? {
-              label: "Accept",
+              label:
+                busyAction === "accept" ? (
+                  <BusyLabel>Accepting...</BusyLabel>
+                ) : (
+                  "Accept"
+                ),
               onClick: onAccept,
               disabled: disabled || !onAccept,
             }
@@ -203,7 +256,12 @@ export function EditCard({
       rejectAction={
         status === "pending"
           ? {
-              label: "Reject",
+              label:
+                busyAction === "reject" ? (
+                  <BusyLabel>Rejecting...</BusyLabel>
+                ) : (
+                  "Reject"
+                ),
               onClick: onReject,
               disabled: disabled || !onReject,
             }

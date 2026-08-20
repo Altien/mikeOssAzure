@@ -102,8 +102,9 @@ export function InitialView({
         </span>
       </div>
       <div className="mt-3 flex flex-wrap justify-center gap-2 text-xs">
-        {quickActions.filter((action) => action.enabled).map(
-          (action) => (
+        {quickActions
+          .filter((action) => action.enabled)
+          .map((action) => (
             <button
               key={action.id}
               type="button"
@@ -112,8 +113,7 @@ export function InitialView({
             >
               {quickActionDisplayName(action)}
             </button>
-          ),
-        )}
+          ))}
       </div>
     </div>
   );

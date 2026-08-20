@@ -27,6 +27,13 @@ describe("EditCardUI", () => {
         expect(screen.getByLabelText("Tracked change 2")).toHaveTextContent(
             "2",
         );
+        expect(screen.getByLabelText("Tracked change 2")).toHaveClass(
+            "self-start",
+            "mt-0.5",
+        );
+        expect(screen.getByLabelText("Tracked change 2")).not.toHaveClass(
+            "self-center",
+        );
         expect(screen.getByText("new text")).toHaveClass("text-green-700");
         expect(screen.getByText("old text")).toHaveClass(
             "text-red-600",
@@ -77,5 +84,27 @@ describe("EditCardUI", () => {
 
         await user.click(screen.getByRole("button", { name: "View" }));
         expect(onView).not.toHaveBeenCalled();
+    });
+
+    it("places a proposal's Apply action before View", async () => {
+        const user = userEvent.setup();
+        const onApply = vi.fn();
+        const onView = vi.fn();
+
+        render(
+            <EditCardUI
+                status="ready"
+                applyAction={{ label: "Apply", onClick: onApply }}
+                viewAction={{ label: "View", onClick: onView }}
+            />,
+        );
+
+        expect(
+            screen.getAllByRole("button").map((button) => button.textContent),
+        ).toEqual(["Apply", "View"]);
+        await user.click(screen.getByRole("button", { name: "Apply" }));
+        await user.click(screen.getByRole("button", { name: "View" }));
+        expect(onApply).toHaveBeenCalledOnce();
+        expect(onView).toHaveBeenCalledOnce();
     });
 });

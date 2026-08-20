@@ -333,6 +333,7 @@ describe("POST /chat — streaming endpoint", () => {
             .send({
                 messages: [{ role: "user", content: "Visible prompt" }],
                 document_id: "6f783e59-35c4-4ddc-896a-94aa4d05a767",
+                document_name: "Contract.docx",
                 storage: "cloud",
                 document_context: "GOVERNED BY DELAWARE LAW",
             });
@@ -379,17 +380,17 @@ describe("POST /chat — streaming endpoint", () => {
                 }
             >;
         };
-        expect(systemPromptExtra).toContain("WORD ADD-IN MODE");
+        expect(systemPromptExtra).toContain("running inside Microsoft Word");
         expect(systemPromptExtra).toContain(
-            "<original>exact text copied from the active Word document</original>",
+            '\"deleted_text\":\"exact text copied from the active Word document\"',
         );
         expect(systemPromptExtra).not.toContain("GOVERNED BY DELAWARE LAW");
         expect(docAvailability).toContainEqual({
             doc_id: "active-word-document",
-            filename: "Active Word document",
+            filename: "Contract.docx",
         });
         expect(streamArgs.docStore.get("active-word-document")).toMatchObject({
-            filename: "Active Word document",
+            filename: "Contract.docx",
             inline_text: "GOVERNED BY DELAWARE LAW",
         });
         expect(
@@ -406,6 +407,14 @@ describe("POST /chat — streaming endpoint", () => {
 
     it.each([
         [{ messages: VALID_BODY.messages }, "document_id must be a UUID"],
+        [
+            {
+                ...VALID_BODY,
+                document_id: "6f783e59-35c4-4ddc-896a-94aa4d05a767",
+                document_name: "   ",
+            },
+            "document_name must be a non-empty string",
+        ],
         [
             {
                 ...VALID_BODY,
@@ -860,6 +869,7 @@ describe("POST /chat — streaming endpoint", () => {
             .send({
                 ...VALID_BODY,
                 document_id: "6f783e59-35c4-4ddc-896a-94aa4d05a767",
+                document_name: "Contract.docx",
                 document_context: "GOVERNED BY DELAWARE LAW",
             });
 
@@ -870,12 +880,12 @@ describe("POST /chat — streaming endpoint", () => {
             filename: string;
         }[];
         const systemPromptExtra = call[2] as string;
-        expect(systemPromptExtra).toContain("WORD ADD-IN MODE");
+        expect(systemPromptExtra).toContain("running inside Microsoft Word");
         expect(systemPromptExtra).toContain("read_document");
         expect(systemPromptExtra).not.toContain("GOVERNED BY DELAWARE LAW");
         expect(docAvailability).toContainEqual({
             doc_id: "active-word-document",
-            filename: "Active Word document",
+            filename: "Contract.docx",
         });
 
         const streamArgs = runLLMStream.mock.calls[0]?.[0] as {
@@ -909,6 +919,7 @@ describe("POST /chat — streaming endpoint", () => {
         const buildMessagesCall = vi.mocked(chatLib.buildMessages).mock
             .calls[0];
         expect(buildMessagesCall[4]).toBe(false);
+        expect(buildMessagesCall[6]).toBe("replace");
         expect(runLLMStream).toHaveBeenCalledWith(
             expect.objectContaining({ includeResearchTools: false }),
         );

@@ -7,7 +7,7 @@ test.beforeEach(async ({ addin }) => {
   addin.seedToken(TOKEN);
 });
 
-test("keeps the summary hidden until the streamed edit has been applied", async ({
+test("keeps edit activity out of the pre-response wrapper", async ({
   addin,
   page,
 }) => {
@@ -48,9 +48,10 @@ test("keeps the summary hidden until the streamed edit has been applied", async 
             event({
               type: "content_delta",
               text:
-                "<original>The Suplier</original>" +
-                "<replacement>The Supplier</replacement>" +
-                "<reason>Correct the supplier typo.</reason>\n\n" +
+                '<EDITS>[{"type":"edit_data","kind":"edit",' +
+                '"deleted_text":"The Suplier","inserted_text":' +
+                '"The Supplier","reason":"Correct the supplier typo."}]' +
+                "</EDITS>\n\n" +
                 "I corrected the supplier name.",
             }),
           );
@@ -83,18 +84,16 @@ test("keeps the summary hidden until the streamed edit has been applied", async 
   await page.getByRole("button", { name: "Send" }).click();
 
   await expect(page.getByText("The Supplier", { exact: true })).toBeVisible();
-  const activity = page
-    .getByRole("button", { name: /^(Working|Completed in \d+ steps?)/ })
-    .first();
-  await expect(activity).toBeVisible();
-  await activity.click();
   await expect(
-    page.getByText(
-      /^(Applying tracked change…|Tracked change ready for review)$/,
-    ),
-  ).toBeVisible();
+    page.getByRole("button", { name: /^(Working|Completed in \d+ steps?)/ }),
+  ).toHaveCount(0);
+  await expect(page.getByText("Applying tracked change…")).toHaveCount(0);
+  await expect(page.getByText("Tracked change ready for review")).toHaveCount(
+    0,
+  );
   await expect(page.getByText(SUMMARY, { exact: true })).toHaveCount(0);
 
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
   await expect
     .poll(async () => (await addin.wordCalls()).trackedChanges)
     .toEqual([

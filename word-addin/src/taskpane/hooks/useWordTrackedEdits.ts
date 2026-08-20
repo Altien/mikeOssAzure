@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   releaseTrackedEdits,
+  revealProposedEdit,
   resolveTrackedEdit,
   resolveTrackedEdits,
   restoreTrackedEdits,
   revealPersistedTrackedEdit,
   revealTrackedEdit,
+  validateTrackedEdit,
   useWordDoc,
 } from "./useWordDoc";
 import type { TrackedEditHandle } from "./useWordDoc";
-import type { Message as SavedMessage } from "../types";
+import type { Message as SavedMessage, WordDocumentEdit } from "../types";
 import { projectRedlineStream } from "../lib/redline";
 import type { RedlineEdit, StreamingRedlineEdit } from "../lib/redline";
 
@@ -30,27 +32,78 @@ function toRedlineEdit(edit: StreamingRedlineEdit): RedlineEdit | null {
   };
 }
 
+function storedEditToRedlineEdit(edit: WordDocumentEdit): RedlineEdit {
+  return {
+    original: edit.originalText,
+    replacement: edit.replacementText,
+    ...(edit.formats.length > 0
+      ? { format: edit.formats as RedlineEdit["format"] }
+      : {}),
+    ...(edit.occurrence ? { occurrence: edit.occurrence } : {}),
+    ...(edit.reason ? { reason: edit.reason } : {}),
+  };
+}
+
 type TrackedEditApplyOutcome = Awaited<
   ReturnType<ReturnType<typeof useWordDoc>["applyTrackedEdits"]>
 >["edits"][number];
+
+function editFailureState(result: {
+  status: string;
+  reason?: string;
+  error?: string;
+}): Pick<EditRuntimeState, "status" | "error"> {
+  if (result.status === "error") {
+    return { status: "error", error: result.error };
+  }
+  if (result.reason === "ambiguous") {
+    return { status: "ambiguous", error: result.error };
+  }
+  if (result.status === "not-found") {
+    return {
+      status: "skipped",
+      error: "Skipped — the source text could not be found in the document.",
+    };
+  }
+  if (result.reason === "unsearchable") {
+    return {
+      status: "unsearchable",
+      error: "Skipped — this passage cannot be safely located in the document.",
+    };
+  }
+  if (result.reason === "pre-existing-revisions") {
+    return {
+      status: "conflicted",
+      error: result.error,
+    };
+  }
+  return { status: "skipped", error: result.error };
+}
 import type {
   EditDecision,
   EditRuntimeState,
+  PersistWordDocumentEdit,
+  PersistedWordEditPatch,
+  UpdatePersistedWordDocumentEdit,
   WordEditStreamController,
   WordTrackedEditsController,
 } from "../lib/wordChatTypes";
 import type { WordEditApplyMode } from "../lib/wordChatSettings";
-import { getEditKey } from "../lib/wordTrackedEditKeys";
+import { getEditKey, parseEditKey } from "../lib/wordTrackedEditKeys";
 import { listWordEditAnchorIds } from "../lib/wordEditAnchors";
 
 export function useWordTrackedEdits({
   sessionKey,
   initialMessages,
   applyMode = "approval",
+  onPersistEdit,
+  onUpdatePersistedEdit,
 }: {
   sessionKey: number;
   initialMessages: SavedMessage[];
   applyMode?: WordEditApplyMode;
+  onPersistEdit?: PersistWordDocumentEdit;
+  onUpdatePersistedEdit?: UpdatePersistedWordDocumentEdit;
 }): WordTrackedEditsController {
   const [editStateByKey, setEditStateByKey] = useState<
     Record<string, EditRuntimeState>
@@ -62,10 +115,21 @@ export function useWordTrackedEdits({
   // One card can own several Word handles: a replace-all edit retains one
   // per applied occurrence, resolved together.
   const editHandlesRef = useRef(new Map<string, TrackedEditHandle[]>());
+  // Review-mode proposals remain non-mutating until the user clicks Apply.
+  const readyEditsRef = useRef(
+    new Map<string, { edit: RedlineEdit; persistent: boolean }>(),
+  );
   // Card key → the stable edit ID whose document bookmark backs "View" after
   // a reload (a replace-all card's first restored pass, else the key itself).
   const persistentViewEditKeysRef = useRef(new Map<string, string>());
   const resolvingEditKeysRef = useRef(new Set<string>());
+  const persistEditRef = useRef(onPersistEdit);
+  persistEditRef.current = onPersistEdit;
+  const updatePersistedEditRef = useRef(onUpdatePersistedEdit);
+  updatePersistedEditRef.current = onUpdatePersistedEdit;
+  const persistedEditIdsRef = useRef(new Map<string, string>());
+  const editPersistenceJobsRef = useRef(new Map<string, Promise<void>>());
+  const persistenceQueueRef = useRef<Promise<void>>(Promise.resolve());
   // Read at apply time so a mid-stream toggle governs only edits that have
   // not been scheduled yet; already-applied cards keep their lifecycle.
   const applyModeRef = useRef(applyMode);
@@ -77,8 +141,6 @@ export function useWordTrackedEdits({
     new Map<
       string,
       {
-        messageId: string;
-        editIndex: number;
         edit: RedlineEdit;
         persistent: boolean;
       }
@@ -102,6 +164,62 @@ export function useWordTrackedEdits({
     [],
   );
 
+  const updatePersistedEdit = useCallback(
+    (key: string, patch: PersistedWordEditPatch): Promise<void> => {
+      const parsed = parseEditKey(key);
+      if (!parsed || !updatePersistedEditRef.current) {
+        return Promise.resolve();
+      }
+      const update = updatePersistedEditRef.current;
+      const next = persistenceQueueRef.current
+        .catch(() => undefined)
+        .then(() => update(parsed.messageId, parsed.blockIndex, patch));
+      persistenceQueueRef.current = next.catch((error: unknown) => {
+        console.warn("[word-addin] failed to persist Word edit state", error);
+      });
+      return persistenceQueueRef.current;
+    },
+    [],
+  );
+
+  const ensurePersistedEdit = useCallback(
+    (
+      key: string,
+      edit: RedlineEdit,
+      mode: WordEditApplyMode,
+    ): Promise<void> => {
+      if (persistedEditIdsRef.current.has(key)) return Promise.resolve();
+      const existing = editPersistenceJobsRef.current.get(key);
+      if (existing) return existing;
+      const parsed = parseEditKey(key);
+      const persist = persistEditRef.current;
+      if (!parsed || !persist) return Promise.resolve();
+      const job = persist(parsed.messageId, parsed.blockIndex, edit, mode)
+        .then((stored) => {
+          persistedEditIdsRef.current.set(key, stored.id);
+        })
+        .finally(() => {
+          editPersistenceJobsRef.current.delete(key);
+        });
+      editPersistenceJobsRef.current.set(key, job);
+      return job;
+    },
+    [],
+  );
+
+  const recordTerminalDecision = useCallback(
+    async (key: string, status: "accepted" | "rejected"): Promise<void> => {
+      await updatePersistedEdit(key, { resolution_status: status });
+      setEditRuntimeState(key, {
+        status,
+        busy: false,
+        busyAction: undefined,
+        error: undefined,
+      });
+    },
+    [setEditRuntimeState, updatePersistedEdit],
+  );
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -109,7 +227,10 @@ export function useWordTrackedEdits({
       sessionGenerationRef.current += 1;
       const handles = [...editHandlesRef.current.values()].flat();
       editHandlesRef.current.clear();
+      readyEditsRef.current.clear();
       editApplyJobsRef.current.clear();
+      editPersistenceJobsRef.current.clear();
+      persistedEditIdsRef.current.clear();
       persistentViewEditKeysRef.current.clear();
       resolvingEditKeysRef.current.clear();
       conflictedRetryRef.current.clear();
@@ -122,9 +243,12 @@ export function useWordTrackedEdits({
     const generation = sessionGenerationRef.current;
     const staleHandles = [...editHandlesRef.current.values()].flat();
     editHandlesRef.current.clear();
+    readyEditsRef.current.clear();
     if (staleHandles.length > 0) void releaseTrackedEdits(staleHandles);
     scheduledEditKeysRef.current.clear();
     editApplyJobsRef.current.clear();
+    editPersistenceJobsRef.current.clear();
+    persistedEditIdsRef.current.clear();
     persistentViewEditKeysRef.current.clear();
     resolvingEditKeysRef.current.clear();
     conflictedRetryRef.current.clear();
@@ -135,50 +259,143 @@ export function useWordTrackedEdits({
       stableEditId: string;
       edit: RedlineEdit;
     }[] = [];
+    const proposedDescriptors: { cardKey: string; edit: RedlineEdit }[] = [];
+    const durableStates: Record<string, EditRuntimeState> = {};
     for (const message of initialMessages) {
       if (message.role !== "assistant" || !message.id) continue;
-      const projection = projectRedlineStream(message.content, true);
-      for (const edit of projection.edits) {
-        if (!edit.sealed) continue;
-        const sealedEdit = toRedlineEdit(edit);
-        if (!sealedEdit) continue;
-        const cardKey = getEditKey(message.id, edit.blockIndex);
-        if (sealedEdit.occurrence === "all") {
-          // A replace-all edit persisted one bookmark per applied pass under
-          // `${cardKey}#${pass}`; the anchor registry says how many. When
-          // the registry is unavailable, probe the first few deterministic
-          // ids — a missing bookmark is a cheap not-found in the batch.
-          let passIds: string[] = [];
-          try {
-            passIds = listWordEditAnchorIds(`${cardKey}#`);
-          } catch {
-            passIds = [];
+      if (message.edits && message.edits.length > 0) {
+        for (const storedEdit of message.edits) {
+          const cardKey = getEditKey(message.id, storedEdit.blockIndex);
+          persistedEditIdsRef.current.set(cardKey, storedEdit.id);
+          if (storedEdit.resolutionStatus) {
+            durableStates[cardKey] = {
+              status: storedEdit.resolutionStatus,
+              busy: false,
+            };
+            continue;
           }
-          if (passIds.length === 0) {
-            passIds = Array.from({ length: 8 }, (_, i) => `${cardKey}#${i}`);
+          const edit = storedEditToRedlineEdit(storedEdit);
+          if (
+            storedEdit.applyStatus === "failed" ||
+            storedEdit.applyStatus === "unmanaged"
+          ) {
+            durableStates[cardKey] = {
+              status:
+                storedEdit.applyStatus === "unmanaged"
+                  ? "unmanaged"
+                  : storedEdit.errorCode === "ambiguous"
+                    ? "ambiguous"
+                    : storedEdit.errorCode === "unsearchable"
+                      ? "unsearchable"
+                      : storedEdit.errorCode === "pre-existing-revisions"
+                        ? "conflicted"
+                        : storedEdit.errorCode === "not-found"
+                          ? "skipped"
+                          : "error",
+              busy: false,
+              error: storedEdit.errorMessage,
+              matches: storedEdit.matchedOccurrences,
+              appliedMatches: storedEdit.appliedOccurrences,
+            };
+            if (storedEdit.errorCode === "pre-existing-revisions") {
+              conflictedRetryRef.current.set(cardKey, {
+                edit,
+                persistent: true,
+              });
+            }
+            continue;
           }
-          passIds.sort(
-            (a, b) =>
-              Number(a.split("#").pop() ?? 0) -
-              Number(b.split("#").pop() ?? 0),
-          );
-          for (const stableEditId of passIds) {
-            descriptors.push({ cardKey, stableEditId, edit: sealedEdit });
+          if (storedEdit.applyStatus === "proposed") {
+            proposedDescriptors.push({ cardKey, edit });
+            continue;
           }
-          continue;
+          if (edit.occurrence === "all") {
+            let passIds: string[] = [];
+            try {
+              passIds = listWordEditAnchorIds(`${cardKey}#`);
+            } catch {
+              passIds = [];
+            }
+            if (passIds.length === 0) {
+              passIds = Array.from(
+                { length: 8 },
+                (_, index) => `${cardKey}#${index}`,
+              );
+            }
+            for (const stableEditId of passIds) {
+              descriptors.push({ cardKey, stableEditId, edit });
+            }
+          } else {
+            descriptors.push({ cardKey, stableEditId: cardKey, edit });
+          }
         }
-        descriptors.push({ cardKey, stableEditId: cardKey, edit: sealedEdit });
+        continue;
       }
     }
-    if (descriptors.length === 0) return;
-
-    setEditStateByKey((current) => {
-      const next = { ...current };
+    setEditStateByKey(() => {
+      const next = { ...durableStates };
       for (const { cardKey } of descriptors) {
         next[cardKey] = { status: "restoring", busy: true };
       }
+      for (const { cardKey } of proposedDescriptors) {
+        next[cardKey] = { status: "validating", busy: true };
+      }
       return next;
     });
+
+    if (proposedDescriptors.length > 0) {
+      void Promise.all(
+        proposedDescriptors.map(async ({ cardKey, edit }) => ({
+          cardKey,
+          edit,
+          result: await validateTrackedEdit(edit),
+        })),
+      )
+        .then((results) => {
+          if (
+            !mountedRef.current ||
+            generation !== sessionGenerationRef.current
+          ) {
+            return;
+          }
+          for (const { cardKey, edit, result } of results) {
+            if (result.status === "ready") {
+              readyEditsRef.current.set(cardKey, { edit, persistent: true });
+              setEditRuntimeState(cardKey, {
+                status: "ready",
+                matches: result.matches,
+                busy: false,
+                error: undefined,
+              });
+            } else {
+              setEditRuntimeState(cardKey, {
+                ...editFailureState(result),
+                matches: result.matches,
+                busy: false,
+              });
+            }
+          }
+        })
+        .catch((error: unknown) => {
+          if (
+            !mountedRef.current ||
+            generation !== sessionGenerationRef.current
+          ) {
+            return;
+          }
+          for (const { cardKey } of proposedDescriptors) {
+            setEditRuntimeState(cardKey, {
+              status: "error",
+              busy: false,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Word couldn't check whether this change can be applied.",
+            });
+          }
+        });
+    }
+    if (descriptors.length === 0) return;
 
     // One batched restore: every bookmark lookup shares a single Word.run
     // behind the global mutation queue, instead of ~4 serialized syncs per
@@ -259,22 +476,22 @@ export function useWordTrackedEdits({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionKey]);
 
-  const applyStreamedEdit = useCallback(
+  const beginApplyingEdit = useCallback(
     (
-      messageId: string,
-      editIndex: number,
+      key: string,
       edit: RedlineEdit,
       persistent: boolean,
+      keepCardVisible = false,
+      mode: WordEditApplyMode = applyModeRef.current,
     ): void => {
-      const key = getEditKey(messageId, editIndex);
-      if (scheduledEditKeysRef.current.has(key)) return;
-      scheduledEditKeysRef.current.add(key);
+      readyEditsRef.current.delete(key);
       conflictedRetryRef.current.delete(key);
-      setEditRuntimeState(key, { status: "applying", busy: true });
+      setEditRuntimeState(key, {
+        status: keepCardVisible ? "applying-approved" : "applying",
+        busy: true,
+        busyAction: "apply",
+      });
       const generation = sessionGenerationRef.current;
-      // Bind the mode per edit at scheduling time: a toggle flipped while
-      // this apply is in flight must not split one edit's lifecycle.
-      const directApply = applyModeRef.current === "direct";
 
       const replaceAll = edit.occurrence === "all";
       // Runaway guard only: a real replace-all finishes when a pass reports
@@ -282,6 +499,7 @@ export function useWordTrackedEdits({
       const MAX_REPLACE_ALL_PASSES = 50;
 
       const job = (async (): Promise<void> => {
+        await ensurePersistedEdit(key, edit, mode);
         const abandoned = (): boolean =>
           generation !== sessionGenerationRef.current || !mountedRef.current;
 
@@ -344,56 +562,6 @@ export function useWordTrackedEdits({
             : undefined;
 
         if (appliedCount > 0) {
-          if (directApply) {
-            // Direct mode: the tracked changes were only the write
-            // mechanism. Accept them immediately so the document shows final
-            // text with no review step.
-            const resolutions = await resolveTrackedEdits(handles, "accept");
-            if (abandoned()) return;
-            const decisionOf = (
-              resolution: (typeof resolutions)[number],
-            ): "accept" | "reject" | null =>
-              resolution.status === "accepted"
-                ? "accept"
-                : resolution.status === "already-resolved" &&
-                    resolution.resolvedAs
-                  ? resolution.resolvedAs
-                  : null;
-            const decisions = resolutions.map(decisionOf);
-            if (decisions.every((decision) => decision === "accept")) {
-              setEditRuntimeState(key, {
-                status: "applied",
-                matches: matchesFound,
-                appliedMatches: appliedCount,
-                locationHint,
-                busy: false,
-                error: partialError ?? first.error ?? warning,
-              });
-              return;
-            }
-            if (decisions.every((decision) => decision === "reject")) {
-              setEditRuntimeState(key, {
-                status: "rejected",
-                busy: false,
-                error: undefined,
-              });
-              return;
-            }
-            // A write landed but its auto-accept did not stick; the
-            // revision handles are gone, so hand review back to Word.
-            setEditRuntimeState(key, {
-              status: "unmanaged",
-              matches: matchesFound,
-              appliedMatches: appliedCount,
-              locationHint,
-              busy: false,
-              error:
-                resolutions.find((resolution) => resolution.error)?.error ??
-                "Applied in Word, but the change couldn’t be finalized. Review it from Word’s Review tab.",
-            });
-            return;
-          }
-
           editHandlesRef.current.set(key, handles);
           if (first.persistentAnchor) {
             persistentViewEditKeysRef.current.set(
@@ -409,6 +577,13 @@ export function useWordTrackedEdits({
             busy: false,
             error: partialError ?? first.error ?? warning,
           });
+          void updatePersistedEdit(key, {
+            apply_status: "applied",
+            matched_occurrences: matchesFound,
+            applied_occurrences: appliedCount,
+            error_code: partialError ? "partial-application" : null,
+            error_message: partialError ?? first.error ?? warning ?? null,
+          });
           return;
         }
 
@@ -420,12 +595,17 @@ export function useWordTrackedEdits({
             busy: false,
             error: first.error ?? warning,
           });
+          void updatePersistedEdit(key, {
+            apply_status: "unmanaged",
+            matched_occurrences: matchesFound,
+            applied_occurrences: 0,
+            error_code: first.reason ?? "unmanaged",
+            error_message: first.error ?? warning ?? null,
+          });
           return;
         }
         if (first.reason === "pre-existing-revisions") {
           conflictedRetryRef.current.set(key, {
-            messageId,
-            editIndex,
             edit,
             persistent,
           });
@@ -445,7 +625,116 @@ export function useWordTrackedEdits({
           busy: false,
           error: first.error,
         });
+        void updatePersistedEdit(key, {
+          apply_status: "failed",
+          matched_occurrences: matchesFound,
+          applied_occurrences: 0,
+          error_code: first.reason ?? first.status,
+          error_message: first.error ?? null,
+        });
       })().catch((error: unknown) => {
+        if (
+          generation !== sessionGenerationRef.current ||
+          !mountedRef.current
+        ) {
+          return;
+        }
+        setEditRuntimeState(key, {
+          status: "error",
+          busy: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Word couldn't apply this change.",
+        });
+        void updatePersistedEdit(key, {
+          apply_status: "failed",
+          error_code: "word-error",
+          error_message:
+            error instanceof Error
+              ? error.message
+              : "Word couldn't apply this change.",
+        });
+      });
+      editApplyJobsRef.current.set(key, job);
+      void job.finally(() => {
+        if (editApplyJobsRef.current.get(key) === job) {
+          editApplyJobsRef.current.delete(key);
+        }
+      });
+    },
+    [
+      applyTrackedEdits,
+      ensurePersistedEdit,
+      setEditRuntimeState,
+      updatePersistedEdit,
+    ],
+  );
+
+  const scheduleDirectEdit = useCallback(
+    (
+      messageId: string,
+      editIndex: number,
+      edit: RedlineEdit,
+      persistent: boolean,
+    ): void => {
+      const key = getEditKey(messageId, editIndex);
+      if (scheduledEditKeysRef.current.has(key)) return;
+      scheduledEditKeysRef.current.add(key);
+      beginApplyingEdit(key, edit, persistent, false, "direct");
+    },
+    [beginApplyingEdit],
+  );
+
+  const scheduleReviewEdit = useCallback(
+    (
+      messageId: string,
+      editIndex: number,
+      edit: RedlineEdit,
+      persistent: boolean,
+    ): void => {
+      const key = getEditKey(messageId, editIndex);
+      if (scheduledEditKeysRef.current.has(key)) return;
+      scheduledEditKeysRef.current.add(key);
+      setEditRuntimeState(key, { status: "validating", busy: true });
+      const generation = sessionGenerationRef.current;
+      const job = ensurePersistedEdit(key, edit, "approval")
+        .then(() => validateTrackedEdit(edit))
+        .then((result) => {
+          if (
+            generation !== sessionGenerationRef.current ||
+            !mountedRef.current
+          ) {
+            return;
+          }
+          if (result.status === "ready") {
+            readyEditsRef.current.set(key, { edit, persistent });
+            setEditRuntimeState(key, {
+              status: "ready",
+              matches: result.matches,
+              busy: false,
+              error: undefined,
+              viewError: undefined,
+            });
+            return;
+          }
+          if (result.reason === "pre-existing-revisions") {
+            conflictedRetryRef.current.set(key, { edit, persistent });
+          }
+          setEditRuntimeState(key, {
+            ...editFailureState(result),
+            matches: result.matches,
+            busy: false,
+          });
+          void updatePersistedEdit(key, {
+            apply_status: "failed",
+            matched_occurrences: result.matches,
+            applied_occurrences: 0,
+            error_code: result.reason ?? result.status,
+            error_message: result.error ?? null,
+          });
+        })
+        .catch((error: unknown) => {
           if (
             generation !== sessionGenerationRef.current ||
             !mountedRef.current
@@ -458,7 +747,15 @@ export function useWordTrackedEdits({
             error:
               error instanceof Error
                 ? error.message
-                : "Word couldn't apply this change.",
+                : "Word couldn't check whether this change can be applied.",
+          });
+          void updatePersistedEdit(key, {
+            apply_status: "failed",
+            error_code: "validation-error",
+            error_message:
+              error instanceof Error
+                ? error.message
+                : "Word couldn't check whether this change can be applied.",
           });
         });
       editApplyJobsRef.current.set(key, job);
@@ -468,7 +765,22 @@ export function useWordTrackedEdits({
         }
       });
     },
-    [applyTrackedEdits, setEditRuntimeState],
+    [ensurePersistedEdit, setEditRuntimeState, updatePersistedEdit],
+  );
+
+  const applyReadyEdit = useCallback(
+    (key: string): void => {
+      const ready = readyEditsRef.current.get(key);
+      if (
+        !ready ||
+        editApplyJobsRef.current.has(key) ||
+        resolvingEditKeysRef.current.has(key)
+      ) {
+        return;
+      }
+      beginApplyingEdit(key, ready.edit, ready.persistent, true);
+    },
+    [beginApplyingEdit],
   );
 
   const waitForMessageEdits = useCallback(
@@ -483,13 +795,8 @@ export function useWordTrackedEdits({
   );
 
   const processLiveRedlines = useCallback(
-    (
-      messageId: string,
-      content: string,
-      streamComplete: boolean,
-      persistent: boolean,
-    ): void => {
-      const projection = projectRedlineStream(content, streamComplete);
+    (messageId: string, content: string, persistent: boolean): void => {
+      const projection = projectRedlineStream(content);
       setEditStateByKey((current) => {
         let changed = false;
         const next = { ...current };
@@ -507,15 +814,29 @@ export function useWordTrackedEdits({
         if (!edit.sealed) return;
         const sealedEdit = toRedlineEdit(edit);
         if (!sealedEdit) return;
-        applyStreamedEdit(messageId, edit.blockIndex, sealedEdit, persistent);
+        if (applyModeRef.current === "direct") {
+          scheduleDirectEdit(
+            messageId,
+            edit.blockIndex,
+            sealedEdit,
+            persistent,
+          );
+        } else {
+          scheduleReviewEdit(
+            messageId,
+            edit.blockIndex,
+            sealedEdit,
+            persistent,
+          );
+        }
       });
     },
-    [applyStreamedEdit],
+    [scheduleDirectEdit, scheduleReviewEdit],
   );
 
   const markIncompleteRedlines = useCallback(
     (messageId: string, content: string): void => {
-      const projection = projectRedlineStream(content, false);
+      const projection = projectRedlineStream(content);
       projection.edits.forEach((edit) => {
         const key = getEditKey(messageId, edit.blockIndex);
         if (!edit.sealed && !scheduledEditKeysRef.current.has(key)) {
@@ -545,8 +866,9 @@ export function useWordTrackedEdits({
       const generation = sessionGenerationRef.current;
       resolvingEditKeysRef.current.add(key);
       setEditRuntimeState(key, {
-        status: "applying",
+        status: "conflicted",
         busy: true,
+        busyAction: "accept-and-apply",
         error: undefined,
       });
       try {
@@ -561,27 +883,89 @@ export function useWordTrackedEdits({
           setEditRuntimeState(key, {
             status: "conflicted",
             busy: false,
+            busyAction: undefined,
             error: outcome.error,
           });
           return;
         }
         conflictedRetryRef.current.delete(key);
-        scheduledEditKeysRef.current.delete(key);
-        applyStreamedEdit(
-          retry.messageId,
-          retry.editIndex,
-          retry.edit,
-          retry.persistent,
-        );
+        beginApplyingEdit(key, retry.edit, retry.persistent, true);
       } finally {
         resolvingEditKeysRef.current.delete(key);
       }
     },
-    [acceptPendingRevisionsForEdit, applyStreamedEdit, setEditRuntimeState],
+    [acceptPendingRevisionsForEdit, beginApplyingEdit, setEditRuntimeState],
   );
 
   const viewEdit = useCallback(
     async (key: string): Promise<void> => {
+      const ready = readyEditsRef.current.get(key);
+      const conflicted = conflictedRetryRef.current.get(key);
+      const proposal = ready ?? conflicted;
+      if (proposal) {
+        if (resolvingEditKeysRef.current.has(key)) return;
+        resolvingEditKeysRef.current.add(key);
+        const generation = sessionGenerationRef.current;
+        setEditRuntimeState(key, {
+          busy: true,
+          busyAction: "view",
+          error: undefined,
+          viewError: undefined,
+        });
+        try {
+          const result = await revealProposedEdit(proposal.edit);
+          if (
+            !mountedRef.current ||
+            generation !== sessionGenerationRef.current
+          ) {
+            return;
+          }
+          if (result.status === "not-found") {
+            readyEditsRef.current.delete(key);
+            conflictedRetryRef.current.delete(key);
+            setEditRuntimeState(key, {
+              status: "skipped",
+              busy: false,
+              busyAction: undefined,
+              error:
+                "Skipped — the source text could not be found in the document.",
+            });
+            void updatePersistedEdit(key, {
+              apply_status: "failed",
+              matched_occurrences: 0,
+              applied_occurrences: 0,
+              error_code: "not-found",
+              error_message:
+                "The source text could not be found in the document.",
+            });
+            return;
+          }
+          if (result.status === "ambiguous") {
+            readyEditsRef.current.delete(key);
+            conflictedRetryRef.current.delete(key);
+            setEditRuntimeState(key, {
+              status: "ambiguous",
+              busy: false,
+              busyAction: undefined,
+              error: undefined,
+            });
+            return;
+          }
+          setEditRuntimeState(key, {
+            status: conflicted ? "conflicted" : "ready",
+            busy: false,
+            busyAction: undefined,
+            viewError:
+              result.status === "revealed"
+                ? undefined
+                : (result.error ??
+                  "Word couldn’t scroll to this proposed change."),
+          });
+        } finally {
+          resolvingEditKeysRef.current.delete(key);
+        }
+        return;
+      }
       const handles = editHandlesRef.current.get(key) ?? [];
       const firstHandle = handles[0];
       const persistentViewId = persistentViewEditKeysRef.current.get(key);
@@ -615,7 +999,7 @@ export function useWordTrackedEdits({
               "Word couldn’t scroll to this change. Find it in Word’s Review tab."),
       });
     },
-    [setEditRuntimeState],
+    [setEditRuntimeState, updatePersistedEdit],
   );
 
   const resolveOneEdit = useCallback(
@@ -628,6 +1012,7 @@ export function useWordTrackedEdits({
       resolvingEditKeysRef.current.add(key);
       setEditRuntimeState(key, {
         busy: true,
+        busyAction: decision,
         error: undefined,
         viewError: undefined,
       });
@@ -645,22 +1030,17 @@ export function useWordTrackedEdits({
           if (result.status === "accepted" || result.status === "rejected") {
             editHandlesRef.current.delete(key);
             persistentViewEditKeysRef.current.delete(key);
-            setEditRuntimeState(key, {
-              status: result.status,
-              busy: false,
-              error: undefined,
-            });
+            await recordTerminalDecision(key, result.status);
           } else if (
             result.status === "already-resolved" &&
             result.resolvedAs
           ) {
             editHandlesRef.current.delete(key);
             persistentViewEditKeysRef.current.delete(key);
-            setEditRuntimeState(key, {
-              status: result.resolvedAs === "accept" ? "accepted" : "rejected",
-              busy: false,
-              error: undefined,
-            });
+            await recordTerminalDecision(
+              key,
+              result.resolvedAs === "accept" ? "accepted" : "rejected",
+            );
           } else {
             if (result.status === "error" && result.handle !== handle) {
               editHandlesRef.current.set(key, [result.handle]);
@@ -706,17 +1086,9 @@ export function useWordTrackedEdits({
                 : null;
         const decisions = results.map(decisionOf);
         if (decisions.every((entry) => entry === "accept")) {
-          setEditRuntimeState(key, {
-            status: "accepted",
-            busy: false,
-            error: undefined,
-          });
+          await recordTerminalDecision(key, "accepted");
         } else if (decisions.every((entry) => entry === "reject")) {
-          setEditRuntimeState(key, {
-            status: "rejected",
-            busy: false,
-            error: undefined,
-          });
+          await recordTerminalDecision(key, "rejected");
         } else {
           setEditRuntimeState(key, {
             status: "error",
@@ -745,7 +1117,7 @@ export function useWordTrackedEdits({
         resolvingEditKeysRef.current.delete(key);
       }
     },
-    [setEditRuntimeState],
+    [recordTerminalDecision, setEditRuntimeState],
   );
 
   const resolveMessageEdits = useCallback(
@@ -767,6 +1139,7 @@ export function useWordTrackedEdits({
         resolvingEditKeysRef.current.add(entry.key);
         setEditRuntimeState(entry.key, {
           busy: true,
+          busyAction: decision,
           error: undefined,
           viewError: undefined,
         });
@@ -806,18 +1179,10 @@ export function useWordTrackedEdits({
           const decisions = cardResults.map(decisionOf);
           if (decisions.every((item) => item === "accept")) {
             persistentViewEditKeysRef.current.delete(entry.key);
-            setEditRuntimeState(entry.key, {
-              status: "accepted",
-              busy: false,
-              error: undefined,
-            });
+            await recordTerminalDecision(entry.key, "accepted");
           } else if (decisions.every((item) => item === "reject")) {
             persistentViewEditKeysRef.current.delete(entry.key);
-            setEditRuntimeState(entry.key, {
-              status: "rejected",
-              busy: false,
-              error: undefined,
-            });
+            await recordTerminalDecision(entry.key, "rejected");
           } else {
             setEditRuntimeState(entry.key, {
               status: "error",
@@ -851,7 +1216,7 @@ export function useWordTrackedEdits({
         }
       }
     },
-    [setEditRuntimeState],
+    [recordTerminalDecision, setEditRuntimeState],
   );
 
   // handleChat lists the stream controller among its deps. Handing it an
@@ -871,6 +1236,7 @@ export function useWordTrackedEdits({
   return {
     editStateByKey,
     streamController,
+    applyEdit: applyReadyEdit,
     viewEdit,
     resolveOneEdit,
     resolveMessageEdits,

@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
 import {
   assistantContent,
-  assistantDocumentReads,
   assistantError,
   appendAssistantReasoning,
   completeAssistantEvents,
@@ -19,13 +18,15 @@ test.describe("Word assistant message events", () => {
       {
         id: "assistant-1",
         role: "assistant",
-        content: "Summary",
-        docReads: [
+        content: "",
+        events: [
           {
+            type: "doc_read",
             filename: "Agreement.docx",
             documentId: "document-1",
             status: "read",
           },
+          { type: "content", text: "Summary" },
         ],
       },
       "fallback",
@@ -34,12 +35,14 @@ test.describe("Word assistant message events", () => {
       throw new Error("Expected an assistant message.");
     }
 
-    expect(assistantDocumentReads(message)).toEqual([
+    expect(message.events).toEqual([
       {
+        type: "doc_read",
         filename: "Agreement.docx",
         documentId: "document-1",
         status: "read",
       },
+      { type: "content", text: "Summary" },
     ]);
     expect(assistantContent(message)).toBe("Summary");
   });
@@ -192,7 +195,7 @@ test.describe("Word assistant message events", () => {
     }
     expect(message.events[1]).toEqual(storedEvents[1]);
     expect(assistantContent(message)).toBe(
-      "I’ll inspect the document.The agreement has three risks.",
+      "I’ll inspect the document.\n\nThe agreement has three risks.",
     );
     expect(assistantError(message)).toBe("A stored follow-up failed.");
   });

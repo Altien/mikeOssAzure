@@ -5,10 +5,12 @@ import type {
   WordContentEvent,
   WordDocumentReadEvent,
   WordErrorEvent,
+  WordEditReferenceEvent,
   WordReasoningEvent,
   WordThinkingEvent,
 } from "../types";
 import type { WordAssistantMessage, WordChatMessage } from "./wordChatTypes";
+import { projectRedlineStream } from "./redline";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -66,10 +68,14 @@ export function isWordDocumentReadEvent(
   );
 }
 
-export function isWordErrorEvent(
-  event: WordAssistantEvent,
-): event is WordErrorEvent {
+function isWordErrorEvent(event: WordAssistantEvent): event is WordErrorEvent {
   return event.type === "error" && typeof event.message === "string";
+}
+
+export function isWordEditReferenceEvent(
+  event: WordAssistantEvent,
+): event is WordEditReferenceEvent {
+  return event.type === "word_edit_ref" && typeof event.editId === "string";
 }
 
 /**
@@ -133,6 +139,22 @@ export function normalizeStoredAssistantEvents(
     if (item.type === "error" && typeof item.message === "string") {
       return [{ ...event, type: "error", message: item.message }];
     }
+    if (
+      item.type === "word_edit_ref" &&
+      ((typeof item.editId === "string" && item.editId) ||
+        (typeof item.edit_id === "string" && item.edit_id))
+    ) {
+      return [
+        {
+          ...event,
+          type: "word_edit_ref",
+          editId:
+            typeof item.editId === "string"
+              ? item.editId
+              : (item.edit_id as string),
+        },
+      ];
+    }
     if (item.type === "thinking") {
       return [
         {
@@ -166,32 +188,6 @@ export function messageFromStorage(
   }
 
   const events = normalizeStoredAssistantEvents(message.events ?? []);
-  for (const read of message.docReads ?? []) {
-    const identity = documentReadIdentity(read);
-    if (
-      events.some(
-        (event) =>
-          isWordDocumentReadEvent(event) &&
-          documentReadIdentity(event) === identity,
-      )
-    ) {
-      continue;
-    }
-    events.push({
-      type: "doc_read",
-      filename: read.filename,
-      ...(read.documentId ? { documentId: read.documentId } : {}),
-      status: "read",
-    });
-  }
-  if (
-    message.content &&
-    !events.some(
-      (event) => isWordContentEvent(event) || isWordErrorEvent(event),
-    )
-  ) {
-    events.push({ type: "content", text: message.content });
-  }
 
   return {
     id,
@@ -199,6 +195,9 @@ export function messageFromStorage(
     files: message.files,
     workflow: message.workflow,
     events,
+    ...(message.edits && message.edits.length > 0
+      ? { edits: message.edits }
+      : {}),
     ...(message.citations && message.citations.length > 0
       ? { citations: message.citations }
       : {}),
@@ -210,12 +209,90 @@ export function assistantContent(message: WordAssistantMessage): string {
   return assistantContentFromEvents(message.events);
 }
 
+/** Rehydrate normalized edit references only for the model's private history. */
+export function assistantContentForModel(
+  message: WordAssistantMessage,
+): string {
+  const editById = new Map(
+    (message.edits ?? []).map((edit) => [edit.id, edit]),
+  );
+  const chunks: string[] = [];
+  let pendingEdits: Record<string, unknown>[] = [];
+  const flushEdits = (): void => {
+    if (pendingEdits.length === 0) return;
+    chunks.push(`<EDITS>\n${JSON.stringify(pendingEdits)}\n</EDITS>`);
+    pendingEdits = [];
+  };
+  for (const event of message.events) {
+    if (isWordContentEvent(event)) {
+      flushEdits();
+      chunks.push(event.text);
+      continue;
+    }
+    if (isWordEditReferenceEvent(event)) {
+      const edit = editById.get(event.editId);
+      if (edit) {
+        pendingEdits.push({
+          type: "edit_data",
+          kind: "edit",
+          deleted_text: edit.originalText,
+          ...(edit.formats.length > 0
+            ? { formats: edit.formats }
+            : { inserted_text: edit.replacementText }),
+          ...(edit.occurrence === "all" ? { occurrence: "all" } : {}),
+          reason: edit.reason ?? "",
+        });
+      }
+      continue;
+    }
+    flushEdits();
+  }
+  flushEdits();
+  return chunks.join("\n\n");
+}
+
 export function assistantContentFromEvents(
   events: WordAssistantEvent[],
 ): string {
   return events
     .flatMap((event) => (isWordContentEvent(event) ? [event.text] : []))
-    .join("");
+    .join("\n\n");
+}
+
+/**
+ * Device-only chats do not pass through the backend finalizer. Normalize their
+ * completed JSON edit blocks into prose plus deterministic edit references
+ * before writing the assistant message to IndexedDB.
+ */
+export function normalizeLocalWordEditEvents(
+  events: WordAssistantEvent[],
+  messageId: string,
+): WordAssistantEvent[] {
+  const normalized: WordAssistantEvent[] = [];
+  let blockOffset = 0;
+  for (const event of events) {
+    if (!isWordContentEvent(event)) {
+      normalized.push(event);
+      continue;
+    }
+    const projection = projectRedlineStream(event.text);
+    if (projection.edits.length === 0) {
+      normalized.push(event);
+      continue;
+    }
+    for (const segment of projection.segments) {
+      if (segment.kind === "prose") {
+        normalized.push({ ...event, type: "content", text: segment.text });
+      } else if (segment.edit.sealed) {
+        normalized.push({
+          type: "word_edit_ref",
+          editId: `${messageId}:edit-${blockOffset + segment.edit.blockIndex}`,
+        });
+      }
+    }
+    blockOffset += projection.blockCount;
+  }
+  return normalized;
 }
 
 export function assistantError(
@@ -226,28 +303,6 @@ export function assistantError(
     if (event && isWordErrorEvent(event)) return event.message;
   }
   return undefined;
-}
-
-export function assistantDocumentReads(
-  message: WordAssistantMessage,
-): DocumentReadActivity[] {
-  return documentReadsFromAssistantEvents(message.events);
-}
-
-export function documentReadsFromAssistantEvents(
-  events: WordAssistantEvent[],
-): DocumentReadActivity[] {
-  return events.flatMap((event) =>
-    isWordDocumentReadEvent(event)
-      ? [
-          {
-            filename: event.filename,
-            ...(event.documentId ? { documentId: event.documentId } : {}),
-            status: event.status,
-          },
-        ]
-      : [],
-  );
 }
 
 /** Append a delta to the current content segment, or start one after activity. */
@@ -312,26 +367,11 @@ export function finishAssistantReasoning(
   ];
 }
 
-export function documentReadIdentity(read: {
+function documentReadIdentity(read: {
   filename: string;
   documentId?: string;
 }): string {
   return read.documentId ?? `filename:${read.filename}`;
-}
-
-export function upsertDocumentReadActivity(
-  current: DocumentReadActivity[] | undefined,
-  next: DocumentReadActivity,
-): DocumentReadActivity[] {
-  const reads = current ?? [];
-  const identity = documentReadIdentity(next);
-  const index = reads.findIndex(
-    (read) => documentReadIdentity(read) === identity,
-  );
-  if (index < 0) return [...reads, next];
-  const previous = reads[index];
-  if (previous?.status === "read" && next.status === "reading") return reads;
-  return reads.map((read, readIndex) => (readIndex === index ? next : read));
 }
 
 export function upsertDocumentReadEvent(

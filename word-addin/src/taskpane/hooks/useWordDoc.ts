@@ -40,11 +40,7 @@ export type TrackedEditHandle = string & {
 };
 
 type TrackedEditApplyStatus =
-  | "applied"
-  | "applied-unmanaged"
-  | "skipped"
-  | "not-found"
-  | "error";
+  "applied" | "applied-unmanaged" | "skipped" | "not-found" | "error";
 
 type TrackedEditApplyReason =
   | "unsearchable"
@@ -97,11 +93,7 @@ interface TrackedEditResolutionResult {
 }
 
 type TrackedEditRevealStatus =
-  | "revealed"
-  | "already-resolved"
-  | "released"
-  | "not-found"
-  | "error";
+  "revealed" | "already-resolved" | "released" | "not-found" | "error";
 
 interface TrackedEditRevealResult {
   handle: TrackedEditHandle;
@@ -111,11 +103,7 @@ interface TrackedEditRevealResult {
 }
 
 type TrackedEditRestoreStatus =
-  | "restored"
-  | "view-only"
-  | "not-found"
-  | "resolved"
-  | "error";
+  "restored" | "view-only" | "not-found" | "resolved" | "error";
 
 interface TrackedEditRestoreResult {
   stableEditId: string;
@@ -131,10 +119,7 @@ export interface TrackedEditRestoreDescriptor {
 }
 
 type PersistedTrackedEditRevealStatus =
-  | "revealed"
-  | "not-found"
-  | "resolved"
-  | "error";
+  "revealed" | "not-found" | "resolved" | "error";
 
 interface PersistedTrackedEditRevealResult {
   stableEditId: string;
@@ -143,11 +128,7 @@ interface PersistedTrackedEditRevealResult {
 }
 
 type TrackedEditReleaseStatus =
-  | "released"
-  | "already-released"
-  | "already-resolved"
-  | "not-found"
-  | "error";
+  "released" | "already-released" | "already-resolved" | "not-found" | "error";
 
 interface TrackedEditReleaseResult {
   handle: TrackedEditHandle;
@@ -160,6 +141,16 @@ interface TrackedEditReleaseResult {
 // strings (~255-char limit), so longer or multi-paragraph originals cannot be
 // located and must be skipped rather than half-applied.
 const MAX_SEARCH_CHARS = 255;
+
+function isSearchableOriginal(original: string): boolean {
+  return (
+    !!original &&
+    !original.includes("\n") &&
+    !original.includes("\r") &&
+    !original.includes("^") &&
+    original.length <= MAX_SEARCH_CHARS
+  );
+}
 
 interface PendingTrackedEdit {
   /** Used to revalidate any dynamically recovered revisions before resolving. */
@@ -219,8 +210,7 @@ function rememberTerminalState(
   terminalTrackedEdits.set(handle, state);
   if (terminalTrackedEdits.size <= MAX_TERMINAL_HANDLE_HISTORY) return;
   const oldest = terminalTrackedEdits.keys().next().value as
-    | TrackedEditHandle
-    | undefined;
+    TrackedEditHandle | undefined;
   if (oldest) terminalTrackedEdits.delete(oldest);
 }
 
@@ -316,15 +306,13 @@ function normalizeBreaks(value: string): string {
 
 /**
  * A whole-paragraph deletion's Deleted revision reports the paragraph mark
- * after the quoted text, which <original> can never contain (Word's search
+ * after the quoted text, which `deleted_text` can never contain (Word's search
  * rejects paragraph breaks), so strict equality alone would disown the
  * revision. Trailing breaks beyond the quoted text are still this edit's.
  */
 function deletedTextMatchesOriginal(text: string, original: string): boolean {
   const normalized = normalizeBreaks(text);
-  return (
-    normalized === original || normalized.replace(/\n+$/, "") === original
-  );
+  return normalized === original || normalized.replace(/\n+$/, "") === original;
 }
 
 /** True when the edit changes only character formatting, never text. */
@@ -946,8 +934,7 @@ function documentRevisionPickIsAmbiguous(
   ).length;
   const deleted = views.filter(
     (view) =>
-      view.type === "Delete" &&
-      deletedTextMatchesOriginal(view.text, original),
+      view.type === "Delete" && deletedTextMatchesOriginal(view.text, original),
   ).length;
   const formatted = views.filter(
     (view) =>
@@ -1177,7 +1164,8 @@ async function resolveTrackedEditNow(
           throw (
             anchorFailure ??
             error ??
-            (childBatchFailure ?? new NoRemainingRevisionsError())
+            childBatchFailure ??
+            new NoRemainingRevisionsError()
           );
         }
         console.debug(
@@ -1878,6 +1866,172 @@ export function revealPersistedTrackedEdit(
 
 export type DocumentTextRevealStatus = "selected" | "not-found" | "error";
 
+export type TrackedEditValidationStatus =
+  "ready" | "not-found" | "skipped" | "error";
+
+export interface TrackedEditValidationResult {
+  status: TrackedEditValidationStatus;
+  matches: number;
+  reason?:
+    "unsearchable" | "ambiguous" | "pre-existing-revisions" | "word-error";
+  error?: string;
+}
+
+/**
+ * Check whether one proposed edit can be located safely without changing the
+ * document. Review mode uses this before exposing its Apply action; the real
+ * apply repeats the same checks because the document may change meanwhile.
+ */
+export function validateTrackedEdit(
+  edit: RedlineEdit,
+): Promise<TrackedEditValidationResult> {
+  return serializeWordMutation(async () => {
+    const original = edit.original;
+    if (!isSearchableOriginal(original)) {
+      return {
+        status: "skipped",
+        matches: 0,
+        reason: "unsearchable",
+      };
+    }
+
+    try {
+      return await Word.run(async (context) => {
+        const replaceAll = edit.occurrence === "all";
+        const wholeWordSafe =
+          replaceAll &&
+          /^[A-Za-z0-9_]/.test(original) &&
+          /[A-Za-z0-9_]$/.test(original);
+        const searchOptions = {
+          matchCase: true,
+          ...(wholeWordSafe ? { matchWholeWord: true } : {}),
+        };
+        let matches = context.document.body.search(original, searchOptions);
+        matches.load("items");
+        await context.sync();
+
+        if (matches.items.length === 0) {
+          const stripped = stripStructuralMarkers(original);
+          if (stripped) {
+            const retry = context.document.body.search(stripped, searchOptions);
+            retry.load("items");
+            await context.sync();
+            if (retry.items.length > 0) matches = retry;
+          }
+        }
+
+        if (matches.items.length === 0) {
+          return { status: "not-found", matches: 0 } as const;
+        }
+        if (matches.items.length > 1 && !replaceAll) {
+          return {
+            status: "skipped",
+            matches: matches.items.length,
+            reason: "ambiguous",
+          } as const;
+        }
+
+        const existingCollections = matches.items.map((match) => {
+          const collection = match.getTrackedChanges();
+          collection.load("items");
+          return collection;
+        });
+        await context.sync();
+        const revisionFreeMatches = matches.items.filter(
+          (_match, index) => existingCollections[index]?.items.length === 0,
+        );
+        if (
+          replaceAll
+            ? revisionFreeMatches.length === 0
+            : revisionFreeMatches.length !== matches.items.length
+        ) {
+          return {
+            status: "skipped",
+            matches: matches.items.length,
+            reason: "pre-existing-revisions",
+          } as const;
+        }
+
+        return {
+          status: "ready",
+          matches: matches.items.length,
+        } as const;
+      });
+    } catch (error) {
+      return {
+        status: "error",
+        matches: 0,
+        reason: "word-error",
+        error: describeWordFailure(
+          error,
+          "Word couldn’t check whether this change can be applied.",
+        ),
+      };
+    }
+  });
+}
+
+export type ProposedEditRevealStatus =
+  "revealed" | "not-found" | "ambiguous" | "error";
+
+export interface ProposedEditRevealResult {
+  status: ProposedEditRevealStatus;
+  error?: string;
+}
+
+/** Select the exact, unique source passage for a proposal not yet applied. */
+export function revealProposedEdit(
+  edit: RedlineEdit,
+): Promise<ProposedEditRevealResult> {
+  return serializeWordMutation(async () => {
+    const original = edit.original;
+    if (!isSearchableOriginal(original)) return { status: "not-found" };
+
+    try {
+      return await Word.run(async (context) => {
+        const replaceAll = edit.occurrence === "all";
+        const wholeWordSafe =
+          replaceAll &&
+          /^[A-Za-z0-9_]/.test(original) &&
+          /[A-Za-z0-9_]$/.test(original);
+        const searchOptions = {
+          matchCase: true,
+          ...(wholeWordSafe ? { matchWholeWord: true } : {}),
+        };
+        let matches = context.document.body.search(original, searchOptions);
+        matches.load("items");
+        await context.sync();
+        if (matches.items.length === 0) {
+          const stripped = stripStructuralMarkers(original);
+          if (stripped) {
+            const retry = context.document.body.search(stripped, searchOptions);
+            retry.load("items");
+            await context.sync();
+            if (retry.items.length > 0) matches = retry;
+          }
+        }
+        if (matches.items.length === 0) return { status: "not-found" } as const;
+        if (matches.items.length > 1 && !replaceAll) {
+          return { status: "ambiguous" } as const;
+        }
+        const match = replaceAll ? matches.items.at(-1) : matches.items[0];
+        if (!match) return { status: "not-found" } as const;
+        match.select();
+        await context.sync();
+        return { status: "revealed" } as const;
+      });
+    } catch (error) {
+      return {
+        status: "error",
+        error: describeWordFailure(
+          error,
+          "Word couldn’t scroll to this proposed change.",
+        ),
+      };
+    }
+  });
+}
+
 /**
  * Scroll Word to a cited passage: search the body for the exact quote and
  * select the first occurrence (selection is Word's scroll-and-highlight).
@@ -2188,13 +2342,7 @@ export function useWordDoc() {
               let candidateChanges: Word.TrackedChange[] = [];
               let candidateRanges: Word.Range[] = [];
 
-              if (
-                !original ||
-                original.includes("\n") ||
-                original.includes("\r") ||
-                original.includes("^") ||
-                original.length > MAX_SEARCH_CHARS
-              ) {
+              if (!isSearchableOriginal(original)) {
                 result.status = "skipped";
                 result.reason = "unsearchable";
                 report.edits.push(result);
@@ -2392,9 +2540,7 @@ export function useWordDoc() {
                           heading3: Word.BuiltInStyleName.heading3,
                         } as const;
                         const style =
-                          styleByFormat[
-                            format as keyof typeof styleByFormat
-                          ];
+                          styleByFormat[format as keyof typeof styleByFormat];
                         if (style) {
                           match.paragraphs.getFirst().styleBuiltIn = style;
                         }
@@ -2473,8 +2619,7 @@ export function useWordDoc() {
                 // paragraph.)
                 let paragraphRange: Word.Range | null = null;
                 try {
-                  const paragraphSource =
-                    insertedRanges[0] ?? targetItems[0];
+                  const paragraphSource = insertedRanges[0] ?? targetItems[0];
                   paragraphRange =
                     deleteWholeParagraph && targetParagraph
                       ? targetParagraph.getRange("Whole")
@@ -2653,9 +2798,7 @@ export function useWordDoc() {
                   entry: {
                     expectedEdit: edit,
                     changes: exactRevisions ? managedChanges : [],
-                    parentCollections: exactRevisions
-                      ? managedCollections
-                      : [],
+                    parentCollections: exactRevisions ? managedCollections : [],
                     ranges: candidateRanges,
                     ...(bookmarkName && edit.stableEditId
                       ? {

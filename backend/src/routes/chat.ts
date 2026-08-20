@@ -709,8 +709,8 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                 const partial = buildCancelledAssistantMessage({
                     fullText: err.fullText,
                     events: err.events,
-                    buildCitations: (fullText, events) =>
-                        extractCitations(fullText, docIndex, events),
+                    buildCitations: (fullText) =>
+                        extractCitations(fullText, docIndex),
                 });
                 const saveError = askInputsResponse
                     ? null
@@ -744,11 +744,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         const errorFullText =
             err instanceof AssistantStreamError ? err.fullText : "";
         try {
-            const citations = extractCitations(
-                errorFullText,
-                docIndex,
-                errorEvents,
-            );
+            const citations = extractCitations(errorFullText, docIndex);
             const saveError = askInputsResponse
                 ? null
                 : await updateReservedAssistantMessage(

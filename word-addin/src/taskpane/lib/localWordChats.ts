@@ -1,10 +1,12 @@
-import type { Chat, Message } from "../types";
+import type { Chat, Message, WordDocumentEdit } from "../types";
+import type { PersistedWordEditPatch } from "./wordChatTypes";
 import { notifyWordChatHistoryChanged } from "./wordChatHistoryEvents";
 
 const DATABASE_NAME = "mike-word-addin";
-const DATABASE_VERSION = 2;
+const DATABASE_VERSION = 4;
 const CHAT_STORE = "word-chats";
 const MESSAGE_STORE = "word-chat-messages";
+const EDIT_STORE = "word-document-edits";
 
 interface LocalChatRow extends Chat {
   document_id: string;
@@ -18,6 +20,11 @@ interface LocalMessageRow extends Message {
   created_at: string;
   /** Append order within the chat; optional for databases created before this field. */
   sequence?: number;
+}
+
+interface LocalEditRow extends WordDocumentEdit {
+  document_id: string;
+  owner_id: string;
 }
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
@@ -65,6 +72,20 @@ function openDatabase(): Promise<IDBDatabase> {
         });
         messages.createIndex("chat_id", "chat_id", { unique: false });
       }
+      if (!database.objectStoreNames.contains(EDIT_STORE)) {
+        const edits = database.createObjectStore(EDIT_STORE, { keyPath: "id" });
+        edits.createIndex("message_id", "messageId", { unique: false });
+        edits.createIndex("owner_document", ["owner_id", "document_id"], {
+          unique: false,
+        });
+      } else {
+        const edits = request.transaction?.objectStore(EDIT_STORE);
+        if (edits && !edits.indexNames.contains("owner_document")) {
+          edits.createIndex("owner_document", ["owner_id", "document_id"], {
+            unique: false,
+          });
+        }
+      }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () =>
@@ -72,6 +93,114 @@ function openDatabase(): Promise<IDBDatabase> {
         request.error ?? new Error("Could not open local Word chat storage."),
       );
   });
+}
+
+export async function createLocalWordDocumentEdit(args: {
+  documentId: string;
+  ownerId: string;
+  messageId: string;
+  blockIndex: number;
+  originalText: string;
+  replacementText: string;
+  formats: string[];
+  occurrence?: "all";
+  reason?: string;
+  applyMode: "direct" | "approval";
+}): Promise<WordDocumentEdit> {
+  const database = await openDatabase();
+  try {
+    const transaction = database.transaction(EDIT_STORE, "readwrite");
+    const edits = transaction.objectStore(EDIT_STORE);
+    const id = `${args.messageId}:edit-${args.blockIndex}`;
+    const existing = (await requestResult(edits.get(id))) as
+      LocalEditRow | undefined;
+    if (existing) {
+      if (
+        existing.document_id !== args.documentId ||
+        existing.owner_id !== args.ownerId
+      ) {
+        transaction.abort();
+        throw new Error("Local Word edit is not available for this document.");
+      }
+      await transactionDone(transaction);
+      return existing;
+    }
+    const row: LocalEditRow = {
+      id,
+      messageId: args.messageId,
+      blockIndex: args.blockIndex,
+      originalText: args.originalText,
+      replacementText: args.replacementText,
+      formats: args.formats,
+      ...(args.occurrence ? { occurrence: args.occurrence } : {}),
+      ...(args.reason ? { reason: args.reason } : {}),
+      applyMode: args.applyMode,
+      applyStatus: "proposed",
+      document_id: args.documentId,
+      owner_id: args.ownerId,
+    };
+    edits.put(row);
+    await transactionDone(transaction);
+    return row;
+  } finally {
+    database.close();
+  }
+}
+
+export async function updateLocalWordDocumentEdit(args: {
+  documentId: string;
+  ownerId: string;
+  messageId: string;
+  blockIndex: number;
+  patch: PersistedWordEditPatch;
+}): Promise<void> {
+  const database = await openDatabase();
+  try {
+    const transaction = database.transaction(EDIT_STORE, "readwrite");
+    const edits = transaction.objectStore(EDIT_STORE);
+    const id = `${args.messageId}:edit-${args.blockIndex}`;
+    const existing = (await requestResult(edits.get(id))) as
+      LocalEditRow | undefined;
+    if (
+      !existing ||
+      existing.document_id !== args.documentId ||
+      existing.owner_id !== args.ownerId
+    ) {
+      transaction.abort();
+      throw new Error("Local Word edit is not available for this document.");
+    }
+    edits.put({
+      ...existing,
+      ...(args.patch.apply_status
+        ? { applyStatus: args.patch.apply_status }
+        : {}),
+      ...(args.patch.resolution_status
+        ? {
+            resolutionStatus: args.patch.resolution_status,
+            applyStatus: "applied" as const,
+          }
+        : {}),
+      ...(args.patch.matched_occurrences !== undefined
+        ? { matchedOccurrences: args.patch.matched_occurrences }
+        : {}),
+      ...(args.patch.applied_occurrences !== undefined
+        ? { appliedOccurrences: args.patch.applied_occurrences }
+        : {}),
+      ...(args.patch.error_code === null
+        ? { errorCode: undefined }
+        : args.patch.error_code !== undefined
+          ? { errorCode: args.patch.error_code }
+          : {}),
+      ...(args.patch.error_message === null
+        ? { errorMessage: undefined }
+        : args.patch.error_message !== undefined
+          ? { errorMessage: args.patch.error_message }
+          : {}),
+    } satisfies LocalEditRow);
+    await transactionDone(transaction);
+  } finally {
+    database.close();
+  }
 }
 
 export async function saveLocalWordMessage(args: {
@@ -95,11 +224,9 @@ export async function saveLocalWordMessage(args: {
     const messages = transaction.objectStore(MESSAGE_STORE);
     const now = new Date().toISOString();
     const existing = (await requestResult(chats.get(args.chatId))) as
-      | LocalChatRow
-      | undefined;
+      LocalChatRow | undefined;
     const existingMessage = (await requestResult(messages.get(messageId))) as
-      | LocalMessageRow
-      | undefined;
+      LocalMessageRow | undefined;
     if (existingMessage && existingMessage.chat_id !== args.chatId) {
       transaction.abort();
       throw new Error("Local message ID is already used by another chat.");
@@ -167,7 +294,7 @@ export async function getLocalWordChat(
   const database = await openDatabase();
   try {
     const transaction = database.transaction(
-      [CHAT_STORE, MESSAGE_STORE],
+      [CHAT_STORE, MESSAGE_STORE, EDIT_STORE],
       "readonly",
     );
     const chat = (await requestResult(
@@ -182,6 +309,12 @@ export async function getLocalWordChat(
         .index("chat_id")
         .getAll(IDBKeyRange.only(chatId)),
     )) as LocalMessageRow[];
+    const editRows = (await requestResult(
+      transaction
+        .objectStore(EDIT_STORE)
+        .index("owner_document")
+        .getAll(IDBKeyRange.only([ownerId, documentId])),
+    )) as LocalEditRow[];
     await transactionDone(transaction);
     return {
       chat,
@@ -202,7 +335,28 @@ export async function getLocalWordChat(
             created_at: _createdAt,
             sequence: _sequence,
             ...message
-          }) => message,
+          }) => ({
+            ...message,
+            ...(message.role === "assistant"
+              ? {
+                  edits: editRows
+                    .filter(
+                      (edit) =>
+                        edit.messageId === message.id &&
+                        edit.document_id === documentId &&
+                        edit.owner_id === ownerId,
+                    )
+                    .sort((left, right) => left.blockIndex - right.blockIndex)
+                    .map(
+                      ({
+                        document_id: _documentId,
+                        owner_id: _ownerId,
+                        ...edit
+                      }) => edit,
+                    ),
+                }
+              : {}),
+          }),
         ),
     };
   } finally {
@@ -215,12 +369,14 @@ export async function clearLocalWordChats(ownerId: string): Promise<void> {
   const database = await openDatabase();
   try {
     const transaction = database.transaction(
-      [CHAT_STORE, MESSAGE_STORE],
+      [CHAT_STORE, MESSAGE_STORE, EDIT_STORE],
       "readwrite",
     );
     const chats = transaction.objectStore(CHAT_STORE);
     const messages = transaction.objectStore(MESSAGE_STORE);
+    const edits = transaction.objectStore(EDIT_STORE);
     const allChats = (await requestResult(chats.getAll())) as LocalChatRow[];
+    const allEdits = (await requestResult(edits.getAll())) as LocalEditRow[];
 
     for (const chat of allChats) {
       if (chat.owner_id !== ownerId) continue;
@@ -228,6 +384,14 @@ export async function clearLocalWordChats(ownerId: string): Promise<void> {
         messages.index("chat_id").getAllKeys(IDBKeyRange.only(chat.id)),
       )) as IDBValidKey[];
       for (const messageId of chatMessages) messages.delete(messageId);
+      for (const edit of allEdits) {
+        if (
+          edit.owner_id === ownerId &&
+          chatMessages.some((messageId) => String(messageId) === edit.messageId)
+        ) {
+          edits.delete(edit.id);
+        }
+      }
       chats.delete(chat.id);
     }
 

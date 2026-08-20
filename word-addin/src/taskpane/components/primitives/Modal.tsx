@@ -1,7 +1,10 @@
 import React, { type ReactNode } from "react";
 import { ModalUI } from "@mike/modal-ui";
 import { cn } from "../../../shared/lib/utils";
-import { PillButtonUI as PillButton } from "@mike/pill-button-ui";
+import {
+  PillButtonUI as PillButton,
+  type PillButtonUITone,
+} from "@mike/pill-button-ui";
 
 interface ModalProps {
   open: boolean;
@@ -14,6 +17,7 @@ interface ModalProps {
     onClick: () => void;
     disabled?: boolean;
     icon?: ReactNode;
+    tone?: PillButtonUITone;
   };
   secondaryAction?: {
     label: string;
@@ -58,7 +62,7 @@ export function Modal({
       primaryAction={
         primaryAction ? (
           <PillButton
-            tone="black"
+            tone={primaryAction.tone ?? "black"}
             size="normal"
             onClick={primaryAction.onClick}
             disabled={primaryAction.disabled}
