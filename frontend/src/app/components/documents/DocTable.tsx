@@ -59,6 +59,8 @@ import {
 import { DocumentSidePanel } from "@/app/components/shared/DocumentSidePanel";
 import { TableLoadMoreRow } from "@/app/components/shared/TableLoadMoreRow";
 import { LibrarySkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
+import { EmptyState } from "@/app/components/ui/empty-state";
+import { PillButton } from "@/app/components/ui/pill-button";
 import {
     APP_SURFACE_ACTIVE_CLASS,
     APP_SURFACE_GROUP_HOVER_CLASS,
@@ -69,6 +71,7 @@ import {
     TableFilters,
     TableHeaderCell,
     TableHeaderRow,
+    TableEmptyState,
     TableScrollArea,
     TableStickyCell,
     type TableFilterOption,
@@ -136,7 +139,7 @@ interface DocTableProps {
     loading: boolean;
     search: string;
     operations: DocTableOperations;
-    emptyDropLabel?: string;
+    emptyStateTitle: string;
     renderAddDocumentsModal?: (
         open: boolean,
         onClose: () => void,
@@ -293,7 +296,7 @@ export function DocTable({
     loading,
     search,
     operations,
-    emptyDropLabel = "Drop PDF, Word, Excel, or PowerPoint files here",
+    emptyStateTitle,
     renderAddDocumentsModal,
     onAddDocumentsActionChange,
     onCreateFolderActionChange,
@@ -2684,10 +2687,27 @@ export function DocTable({
                                 ) : (
                                     <div
                                         onClick={openAddDocuments}
-                                        className="flex-1 flex cursor-pointer flex-col items-center justify-center py-24 text-center"
+                                        className="flex flex-1 cursor-pointer"
                                     >
-                                        <LibrarySkeuoIcon className="mb-3 h-8 w-8" />
-                                        <p className="text-sm text-gray-400">{emptyDropLabel}</p>
+                                        <TableEmptyState>
+                                            <EmptyState
+                                                icon={<LibrarySkeuoIcon />}
+                                                title={emptyStateTitle}
+                                                description="Upload documents or drop them here"
+                                                action={
+                                                    <PillButton
+                                                        tone="black"
+                                                        size="sm"
+                                                        onClick={(event) => {
+                                                            event.stopPropagation();
+                                                            openAddDocuments();
+                                                        }}
+                                                    >
+                                                        Upload
+                                                    </PillButton>
+                                                }
+                                            />
+                                        </TableEmptyState>
                                     </div>
                                 )
                             ) : (

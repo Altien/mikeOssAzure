@@ -322,6 +322,7 @@ export function ProjectDocumentsView({ projectId, folderId = null }: Props) {
                 loading={projectLoading}
                 search={search}
                 operations={operations}
+                emptyStateTitle="Documents"
                 onAddDocumentsActionChange={
                     workspace.setAddDocumentsHeaderAction
                 }
