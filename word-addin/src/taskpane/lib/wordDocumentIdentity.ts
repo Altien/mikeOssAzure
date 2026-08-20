@@ -36,7 +36,7 @@ function readCurrentDocumentUrl(): string {
   }
 }
 
-function readCurrentDocumentName(): string {
+export function readCurrentDocumentName(): string {
   try {
     const rawUrl = Office.context.document.url;
     if (typeof rawUrl !== "string" || !rawUrl.trim()) return "Word document";
@@ -95,12 +95,10 @@ async function getOrCreateWordDocumentId(): Promise<string> {
 
 export function useWordDocumentIdentity(): {
   documentId: string | null;
-  documentName: string;
   loading: boolean;
   error: string | null;
 } {
   const [documentId, setDocumentId] = useState<string | null>(null);
-  const [documentName] = useState(readCurrentDocumentName);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -127,5 +125,5 @@ export function useWordDocumentIdentity(): {
     };
   }, []);
 
-  return { documentId, documentName, loading, error };
+  return { documentId, loading, error };
 }

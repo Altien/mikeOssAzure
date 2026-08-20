@@ -43,7 +43,6 @@ interface ChatViewProps
     onSelectedWorkflowChange: (workflow: WorkflowAttachment | null) => void;
     editApplyMode: WordEditApplyMode;
     onEditApplyModeChange: (mode: WordEditApplyMode) => void;
-    activeDocumentName: string;
 }
 
 /**
@@ -149,7 +148,6 @@ export function ChatView({
     onSelectedWorkflowChange,
     editApplyMode,
     onEditApplyModeChange,
-    activeDocumentName,
 }: ChatViewProps): React.ReactElement {
     const messagesContainerRef = useRef<HTMLDivElement>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -750,7 +748,6 @@ export function ChatView({
                                 onResolveAll={handleResolveAll}
                                 onAcceptAndApplyEdit={handleAcceptAndApplyEdit}
                                 onLocateCitation={handleLocateCitation}
-                                activeDocumentName={activeDocumentName}
                             />
                         );
                     })}

@@ -1,12 +1,15 @@
-import React, { useCallback, useRef } from "react";
+import React, { useCallback } from "react";
 import { useWordAssistantChat } from "../../hooks/useWordAssistantChat";
 import { useWordTrackedEdits } from "../../hooks/useWordTrackedEdits";
-import type {
-  Message as SavedMessage,
-  WordEditDecisionStatus,
-} from "../../types";
-import { updateCloudWordEditDecisions } from "../../api/mikeApi";
-import { updateLocalWordEditDecisions } from "../../lib/localWordChats";
+import type { Message as SavedMessage } from "../../types";
+import {
+  createCloudWordDocumentEdit,
+  updateCloudWordDocumentEdit,
+} from "../../api/mikeApi";
+import {
+  createLocalWordDocumentEdit,
+  updateLocalWordDocumentEdit,
+} from "../../lib/localWordChats";
 import type {
   WordChatStorageMode,
   WordEditApplyMode,
@@ -23,7 +26,6 @@ interface ChatPanelProps {
   onChatIdChange: (chatId: string) => void;
   onChatStarted: () => void;
   wordDocumentId: string;
-  activeDocumentName: string;
   wordChatStorage: WordChatStorageMode;
   wordChatOwnerId: string;
   editApplyMode: WordEditApplyMode;
@@ -44,56 +46,67 @@ export function ChatPanel({
   onChatIdChange,
   onChatStarted,
   wordDocumentId,
-  activeDocumentName,
   wordChatStorage,
   wordChatOwnerId,
   editApplyMode,
   onEditApplyModeChange,
 }: ChatPanelProps): React.ReactElement {
-  const pendingEditDecisionsRef = useRef(
-    new Map<string, Record<string, WordEditDecisionStatus>>(),
-  );
-  const persistEditDecisions = useCallback(
+  const persistWordEdit = useCallback(
     async (
       messageId: string,
-      decisions: Record<string, WordEditDecisionStatus>,
-    ): Promise<void> => {
-      const merged = {
-        ...(pendingEditDecisionsRef.current.get(messageId) ?? {}),
-        ...decisions,
-      };
-      pendingEditDecisionsRef.current.set(messageId, merged);
+      blockIndex: number,
+      edit: import("../../lib/redline").RedlineEdit,
+      applyMode: WordEditApplyMode,
+    ) => {
       if (wordChatStorage === "cloud") {
-        await updateCloudWordEditDecisions(
-          wordDocumentId,
+        return createCloudWordDocumentEdit({
+          documentId: wordDocumentId,
           messageId,
-          decisions,
-        );
-        return;
+          blockIndex,
+          originalText: edit.original,
+          replacementText: edit.replacement,
+          formats: edit.format ?? [],
+          occurrence: edit.occurrence,
+          reason: edit.reason,
+          applyMode,
+        });
       }
-      await updateLocalWordEditDecisions({
+      return createLocalWordDocumentEdit({
         documentId: wordDocumentId,
         ownerId: wordChatOwnerId,
         messageId,
-        decisions,
+        blockIndex,
+        originalText: edit.original,
+        replacementText: edit.replacement,
+        formats: edit.format ?? [],
+        occurrence: edit.occurrence,
+        reason: edit.reason,
+        applyMode,
       });
     },
     [wordChatOwnerId, wordChatStorage, wordDocumentId],
   );
-  const getEditDecisionsForMessage = useCallback(
-    (messageId: string) => pendingEditDecisionsRef.current.get(messageId),
-    [],
-  );
-  const flushLocalEditDecisions = useCallback(
-    async (messageId: string): Promise<void> => {
-      if (wordChatStorage !== "local") return;
-      const decisions = pendingEditDecisionsRef.current.get(messageId);
-      if (!decisions) return;
-      await updateLocalWordEditDecisions({
+  const updateWordEdit = useCallback(
+    async (
+      messageId: string,
+      blockIndex: number,
+      patch: import("../../lib/wordChatTypes").PersistedWordEditPatch,
+    ): Promise<void> => {
+      if (wordChatStorage === "cloud") {
+        await updateCloudWordDocumentEdit({
+          documentId: wordDocumentId,
+          messageId,
+          blockIndex,
+          patch,
+        });
+        return;
+      }
+      await updateLocalWordDocumentEdit({
         documentId: wordDocumentId,
         ownerId: wordChatOwnerId,
         messageId,
-        decisions,
+        blockIndex,
+        patch,
       });
     },
     [wordChatOwnerId, wordChatStorage, wordDocumentId],
@@ -102,7 +115,8 @@ export function ChatPanel({
     sessionKey,
     initialMessages,
     applyMode: editApplyMode,
-    onPersistEditDecisions: persistEditDecisions,
+    onPersistEdit: persistWordEdit,
+    onUpdatePersistedEdit: updateWordEdit,
   });
   const chat = useWordAssistantChat({
     sessionKey,
@@ -113,8 +127,7 @@ export function ChatPanel({
     wordDocumentId,
     wordChatStorage,
     wordChatOwnerId,
-    getEditDecisionsForMessage,
-    onAssistantMessageSaved: flushLocalEditDecisions,
+    editApplyMode,
     // Only the identity-stable streaming callbacks; passing the whole
     // controller would tie handleChat's identity to every edit-state change.
     editController: trackedEdits.streamController,
@@ -129,7 +142,6 @@ export function ChatPanel({
       onSelectedWorkflowChange={onSelectedWorkflowChange}
       editApplyMode={editApplyMode}
       onEditApplyModeChange={onEditApplyModeChange}
-      activeDocumentName={activeDocumentName}
     />
   );
 }

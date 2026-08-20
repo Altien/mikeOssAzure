@@ -28,7 +28,9 @@ export async function streamAssistant(
     model: string;
     chatId?: string;
     wordDocumentId: string;
+    documentName: string;
     wordChatStorage: "cloud" | "local";
+    editApplyMode?: "direct" | "approval";
     signal?: AbortSignal;
     onMetadata?: (metadata: {
       chatId?: string;
@@ -54,7 +56,9 @@ export async function streamAssistant(
     chat_id: params.chatId,
     document_context: params.documentContext,
     document_id: params.wordDocumentId,
+    document_name: params.documentName,
     storage: params.wordChatStorage,
+    edit_apply_mode: params.editApplyMode ?? "approval",
     signal: params.signal,
   });
   if (!res.ok) {

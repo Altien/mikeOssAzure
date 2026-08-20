@@ -82,6 +82,31 @@ export type WordDocumentReadEvent = {
 
 export type WordErrorEvent = { type: "error"; message: string; key?: string };
 
+/** Exact placement of a normalized edit card within assistant event history. */
+export type WordEditReferenceEvent = {
+  type: "word_edit_ref";
+  editId: string;
+  key?: string;
+};
+
+export interface WordDocumentEdit {
+  id: string;
+  messageId: string;
+  blockIndex: number;
+  originalText: string;
+  replacementText: string;
+  formats: string[];
+  occurrence?: "all";
+  reason?: string;
+  applyMode: "direct" | "approval";
+  applyStatus: "proposed" | "applied" | "unmanaged" | "failed";
+  resolutionStatus?: WordEditResolutionStatus;
+  matchedOccurrences?: number;
+  appliedOccurrences?: number;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
 /**
  * A backend-persisted assistant activity the Word surface does not render yet.
  *
@@ -102,6 +127,7 @@ export type WordAssistantEvent =
   | WordContentEvent
   | WordDocumentReadEvent
   | WordErrorEvent
+  | WordEditReferenceEvent
   | WordAssistantStoredEvent;
 
 /**
@@ -110,12 +136,14 @@ export type WordAssistantEvent =
  * the fields the pane needs are typed; rows pass through storage unchanged.
  */
 export interface WordCitation {
+  ref?: number | null;
   marker?: string | null;
   quote?: string | null;
   text?: string | null;
+  quotes?: { quote?: string | null; text?: string | null }[] | null;
 }
 
-export type WordEditDecisionStatus = "accepted" | "rejected";
+export type WordEditResolutionStatus = "accepted" | "rejected";
 
 export interface Message {
   id?: string;
@@ -123,20 +151,12 @@ export interface Message {
   content: string;
   files?: { filename: string; document_id?: string }[];
   workflow?: { id: string; title: string };
-  /**
-   * Assistant turns only. Persisted messages contain completed (`read`) rows;
-   * the live panel may temporarily use `reading` while the tool is running.
-   */
-  docReads?: DocumentReadActivity[];
-  /**
-   * Preserves frontend-style event chronology for new Word chats. `content`
-   * and `docReads` remain as the backward-compatible storage projection.
-   */
+  /** Assistant turns preserve their content and activity in event order. */
   events?: WordAssistantEvent[];
+  /** Canonical normalized edits for this assistant message. */
+  edits?: WordDocumentEdit[];
   /** Assistant turns only: quotes behind the answer's `[n]` markers. */
   citations?: WordCitation[];
-  /** Terminal edit-card outcomes keyed by the streamed edit block index. */
-  editDecisions?: Record<string, WordEditDecisionStatus>;
 }
 
 export interface Workflow {

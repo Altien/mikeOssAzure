@@ -306,7 +306,7 @@ function normalizeBreaks(value: string): string {
 
 /**
  * A whole-paragraph deletion's Deleted revision reports the paragraph mark
- * after the quoted text, which <original> can never contain (Word's search
+ * after the quoted text, which `deleted_text` can never contain (Word's search
  * rejects paragraph breaks), so strict equality alone would disown the
  * revision. Trailing breaks beyond the quoted text are still this edit's.
  */

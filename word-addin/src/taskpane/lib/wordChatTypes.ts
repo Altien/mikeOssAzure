@@ -1,11 +1,18 @@
 import type {
   Message as SavedMessage,
   WordAssistantEvent,
-  WordEditDecisionStatus,
+  WordDocumentEdit,
 } from "../types";
+import type { RedlineEdit } from "./redline";
 
 export type WorkflowAttachment = { id: string; title: string };
 export type EditDecision = "accept" | "reject";
+export type EditBusyAction =
+  | "view"
+  | "apply"
+  | "accept"
+  | "reject"
+  | "accept-and-apply";
 
 export type EditCardStatus =
   | "receiving"
@@ -39,6 +46,8 @@ export interface EditRuntimeState {
   /** Navigation failures do not change the tracked edit's lifecycle. */
   viewError?: string;
   busy?: boolean;
+  /** Identifies the control whose in-flight operation should show progress. */
+  busyAction?: EditBusyAction;
 }
 
 interface RuntimeMessageBase {
@@ -58,6 +67,8 @@ export interface WordAssistantMessage extends RuntimeMessageBase {
   role: "assistant";
   /** Canonical assistant content and activity, in arrival order. */
   events: WordAssistantEvent[];
+  /** Canonical edit rows hydrated by cloud or device-only storage. */
+  edits?: WordDocumentEdit[];
   /** Quotes behind the answer's `[n]` markers, from the backend pipeline. */
   citations?: SavedMessage["citations"];
 }
@@ -82,7 +93,6 @@ export interface WordEditStreamController {
   processLiveRedlines: (
     messageId: string,
     content: string,
-    streamComplete: boolean,
     persistent: boolean,
   ) => void;
   markIncompleteRedlines: (messageId: string, content: string) => void;
@@ -112,9 +122,26 @@ export interface WordTrackedEditsController {
   acceptAndApplyEdit: (key: string) => Promise<void>;
 }
 
-export type PersistWordEditDecisions = (
+export type PersistWordDocumentEdit = (
   messageId: string,
-  decisions: Record<string, WordEditDecisionStatus>,
+  blockIndex: number,
+  edit: RedlineEdit,
+  applyMode: "direct" | "approval",
+) => Promise<WordDocumentEdit>;
+
+export interface PersistedWordEditPatch {
+  apply_status?: "proposed" | "applied" | "unmanaged" | "failed";
+  resolution_status?: "accepted" | "rejected";
+  matched_occurrences?: number;
+  applied_occurrences?: number;
+  error_code?: string | null;
+  error_message?: string | null;
+}
+
+export type UpdatePersistedWordDocumentEdit = (
+  messageId: string,
+  blockIndex: number,
+  patch: PersistedWordEditPatch,
 ) => Promise<void>;
 
 export interface WordAssistantChatController {

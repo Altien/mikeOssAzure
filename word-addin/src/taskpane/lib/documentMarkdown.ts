@@ -7,7 +7,7 @@
 //
 // This renderer adds structure WITHOUT changing the text itself, because two
 // downstream contracts depend on the model quoting document text verbatim:
-// edit blocks (<original> is located with Word's search API) and citations
+// edit blocks (deleted_text is located with Word's search API) and citations
 // (clicked quotes are located the same way). Every rule here is therefore
 // additive-only:
 //   - heading paragraphs gain a leading "# " marker (never inline emphasis —
