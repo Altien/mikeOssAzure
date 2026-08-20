@@ -115,7 +115,7 @@ export function EditCardUI({
                         <span
                             aria-label={`Tracked change ${changeNumber}`}
                             title={`Tracked change ${changeNumber}`}
-                            className="inline-flex h-4 w-4 shrink-0 self-start items-center justify-center rounded-full bg-gray-200 text-[9px] font-medium leading-none text-gray-600"
+                            className="mt-0.5 inline-flex h-4 w-4 shrink-0 self-start items-center justify-center rounded-full bg-gray-200 text-[9px] font-medium leading-none text-gray-600"
                         >
                             {changeNumber}
                         </span>

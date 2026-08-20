@@ -29,6 +29,7 @@ describe("EditCardUI", () => {
         );
         expect(screen.getByLabelText("Tracked change 2")).toHaveClass(
             "self-start",
+            "mt-0.5",
         );
         expect(screen.getByLabelText("Tracked change 2")).not.toHaveClass(
             "self-center",
