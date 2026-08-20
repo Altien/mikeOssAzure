@@ -2063,6 +2063,86 @@ export function useWordDoc() {
    * tab. Edits whose text can no longer be found (the user edited the
    * document, or the model mis-copied) are reported, never guessed at.
    */
+  /**
+   * Accept the pending tracked changes occupying an edit's target passage,
+   * so a follow-up applyTrackedEdits call finds the range revision-free.
+   *
+   * This powers the conflicted card's "Accept & apply": Mike never layers a
+   * tracked replacement over pending revisions (accepting the card would
+   * silently resolve changes it never showed), so superseding them is an
+   * explicit two-step the user clicks into — accept what's there, then
+   * apply. Between the two Word.run calls the document can shift; that is
+   * safe because applyTrackedEdits re-validates everything and simply
+   * reports conflicted again if new revisions appeared.
+   */
+  const acceptPendingRevisionsForEdit = useCallback(
+    (
+      edit: PersistedRedlineEdit,
+    ): Promise<{ accepted: number } | { error: string }> =>
+      serializeWordMutation(() =>
+        Word.run(async (context) => {
+          const original = edit.original;
+          if (
+            !original ||
+            original.includes("\n") ||
+            original.includes("\r") ||
+            original.includes("^") ||
+            original.length > MAX_SEARCH_CHARS
+          ) {
+            return { error: "This passage cannot be searched in Word." };
+          }
+          const replaceAll = edit.occurrence === "all";
+          // Same candidate order as the apply path: verbatim first, then
+          // with the markdown context renderer's structural markers stripped.
+          let matches = context.document.body.search(original, {
+            matchCase: true,
+          });
+          matches.load("items");
+          await context.sync();
+          if (matches.items.length === 0) {
+            const stripped = stripStructuralMarkers(original);
+            if (stripped) {
+              const retry = context.document.body.search(stripped, {
+                matchCase: true,
+              });
+              retry.load("items");
+              await context.sync();
+              if (retry.items.length > 0) matches = retry;
+            }
+          }
+          if (matches.items.length === 0) {
+            return { error: "The passage is no longer in the document." };
+          }
+          if (!replaceAll && matches.items.length > 1) {
+            return {
+              error: `Found ${matches.items.length} exact matches; nothing was accepted.`,
+            };
+          }
+          const collections = matches.items.map((match) => {
+            const collection = match.getTrackedChanges();
+            collection.load("items");
+            return collection;
+          });
+          await context.sync();
+          let accepted = 0;
+          for (const collection of collections) {
+            for (const change of collection.items) {
+              change.accept();
+              accepted += 1;
+            }
+          }
+          await context.sync();
+          return { accepted };
+        }),
+      ).catch((error: unknown) => ({
+        error: describeWordFailure(
+          error,
+          "Word couldn’t accept the pending changes.",
+        ),
+      })),
+    [],
+  );
+
   const applyTrackedEdits = useCallback(
     (edits: PersistedRedlineEdit[]): Promise<RedlineApplyReport> =>
       serializeWordMutation(() =>
@@ -2653,5 +2733,6 @@ export function useWordDoc() {
   return {
     readDocumentMarkdown,
     applyTrackedEdits,
+    acceptPendingRevisionsForEdit,
   };
 }

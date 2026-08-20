@@ -35,6 +35,7 @@ interface ChatViewProps
             | "viewEdit"
             | "resolveOneEdit"
             | "resolveMessageEdits"
+            | "acceptAndApplyEdit"
         > {
     sessionKey: number;
     selectedWorkflow: WorkflowAttachment | null;
@@ -140,6 +141,7 @@ export function ChatView({
     viewEdit,
     resolveOneEdit,
     resolveMessageEdits,
+    acceptAndApplyEdit,
     selectedWorkflow,
     onSelectedWorkflowChange,
     editApplyMode,
@@ -232,6 +234,12 @@ export function ChatView({
             void resolveMessageEdits(keys, decision);
         },
         [resolveMessageEdits],
+    );
+    const handleAcceptAndApplyEdit = useCallback(
+        (key: string) => {
+            void acceptAndApplyEdit(key);
+        },
+        [acceptAndApplyEdit],
     );
     // Citation chips: scroll Word to the cited passage and select it. Kept
     // identity-stable so memoized message rows never re-render per chunk.
@@ -732,6 +740,7 @@ export function ChatView({
                                 onViewEdit={handleViewEdit}
                                 onResolveEdit={handleResolveEdit}
                                 onResolveAll={handleResolveAll}
+                                onAcceptAndApplyEdit={handleAcceptAndApplyEdit}
                                 onLocateCitation={handleLocateCitation}
                             />
                         );

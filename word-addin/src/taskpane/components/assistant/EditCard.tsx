@@ -19,6 +19,11 @@ interface EditCardProps {
   onView?: () => void;
   onAccept?: () => void;
   onReject?: () => void;
+  /**
+   * Conflicted card only: accept the pending tracked changes occupying the
+   * target passage, then apply this edit as a fresh redline.
+   */
+  onAcceptAndApply?: () => void;
   /** What Word reported, shown in place of the generic status copy. */
   error?: string;
   /** Disables both resolution actions while a Word operation is in flight. */
@@ -52,7 +57,7 @@ const STATUS_COPY: Record<
     className: "text-gray-500",
   },
   conflicted: {
-    copy: "Skipped — the target text already has tracked changes. Resolve those in Word first.",
+    copy: "Skipped — the target text already has tracked changes. Accept & apply resolves them, then applies this change.",
     className: "text-gray-500",
   },
   incomplete: {
@@ -83,6 +88,7 @@ export function EditCard({
   onView,
   onAccept,
   onReject,
+  onAcceptAndApply,
   error,
   disabled = false,
 }: EditCardProps): React.ReactElement {
@@ -175,7 +181,15 @@ export function EditCard({
               onClick: onView,
               disabled: disabled || !onView,
             }
-          : undefined
+          : status === "conflicted" && onAcceptAndApply
+            ? {
+                // Supersede the occupying revisions on an explicit click:
+                // accept them, then apply this edit as a clean redline.
+                label: "Accept & apply",
+                onClick: onAcceptAndApply,
+                disabled,
+              }
+            : undefined
       }
       acceptAction={
         status === "pending"
