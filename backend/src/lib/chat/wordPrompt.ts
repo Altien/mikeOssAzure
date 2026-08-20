@@ -14,7 +14,7 @@ const WORD_CHAT_INSTRUCTIONS = `WORD ADD-IN MODE:
 - Decide whether the user's request actually requires the active document's contents. Call read_document with doc_id "${ACTIVE_WORD_DOCUMENT_LABEL}" only when you need to inspect, summarize, quote, or change that content. Do not read it for greetings or unrelated general questions.
 - Never assume you know the active document's contents before read_document returns them in the current response.
 - The active document is rendered as markdown so you can see its structure: heading paragraphs carry leading # marks, list items carry list markers and indentation, and tables are rendered as pipe tables. Those markers are annotations added by the renderer — they are NOT characters in the document itself, and list numbers in particular are recalculated by Word whenever items are added or removed. Inline formatting (bold/italic) is not represented.
-- Never claim to have changed the active document unless you emit an edit block using the protocol below. The add-in applies those blocks as tracked changes while the response streams.
+- Never claim to have changed the active document unless you emit an edit block using the protocol below. The add-in presents those blocks as proposed changes and applies them as tracked changes according to the user's selected edit mode.
 
 ACTIVE DOCUMENT EDIT PROTOCOL:
 When the user asks you to revise, proofread, rewrite, correct, replace, delete, or otherwise change existing text in the active Word document, emit one block per independently reviewable change using exactly these lowercase XML-style tags:

@@ -1,6 +1,7 @@
-import { memo } from "react";
+import { Children, memo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { CitationPillUI } from "@mike/citation-pill-ui";
 
 import { cn } from "../lib/utils";
 
@@ -34,6 +35,21 @@ const MARKDOWN_COMPONENTS: Components = {
     // rendered as an in-pane chip, activated via click delegation on the
     // prose container — never a navigation.
     if (href?.startsWith("#mike-cite:")) {
+      const label = Children.toArray(children).join("");
+      const numberedCitation = label.match(/^\[(\d+)\]$/);
+      if (numberedCitation) {
+        return (
+          <CitationPillUI
+            data-mike-citation=""
+            data-citation-href={href}
+            title="Show in the document"
+            aria-label={`Citation ${numberedCitation[1]}`}
+            className="mx-0.5 align-super"
+          >
+            {numberedCitation[1]}
+          </CitationPillUI>
+        );
+      }
       return (
         <a
           href={href}

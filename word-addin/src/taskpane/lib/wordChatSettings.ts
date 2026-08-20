@@ -5,10 +5,9 @@ export type WordChatStorageMode = "cloud" | "local";
 /**
  * How model-proposed edits reach the document.
  *
- * - `approval`: every edit lands as a pending tracked change that the user
- *   accepts or rejects from its card (or Word's Review tab).
- * - `direct`: edits are written and immediately accepted, so the document
- *   text changes without a review step; cards stay informational.
+ * - `approval`: validate and preview each edit before the user applies it.
+ * - `direct`: apply each streamed edit immediately as a pending tracked
+ *   change. Applied edits remain available for acceptance or rejection.
  */
 export type WordEditApplyMode = "approval" | "direct";
 

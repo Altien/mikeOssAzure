@@ -14,7 +14,6 @@ import { EditCard } from "./EditCard";
 import { PreResponseWrapper } from "./PreResponseWrapper";
 import { EditCardsSection } from "./message/EditCardsSection";
 import {
-  DocEditBlock,
   DocReadBlock,
   EventBlock,
   ReasoningBlock,
@@ -34,7 +33,6 @@ import {
   projectCitationMarkdown,
 } from "../../lib/citations";
 import type {
-  DocEditStatus,
   EditCardStatus,
   EditDecision,
   EditRuntimeState,
@@ -46,6 +44,7 @@ interface AssistantMessageProps {
   isStreaming: boolean;
   minHeight?: React.CSSProperties["minHeight"];
   editStateByKey: Readonly<Record<string, EditRuntimeState>>;
+  onApplyEdit: (key: string) => void;
   onViewEdit: (key: string) => void;
   onResolveEdit: (key: string, decision: EditDecision) => void;
   onResolveAll: (keys: string[], decision: EditDecision) => void;
@@ -53,6 +52,7 @@ interface AssistantMessageProps {
   onAcceptAndApplyEdit: (key: string) => void;
   /** Scrolls Word to a cited document passage and selects it. */
   onLocateCitation: (text: string) => void;
+  activeDocumentName: string;
 }
 
 type EventGroup =
@@ -101,19 +101,23 @@ function AssistantMessageImpl({
   isStreaming,
   minHeight,
   editStateByKey,
+  onApplyEdit,
   onViewEdit,
   onResolveEdit,
   onResolveAll,
   onAcceptAndApplyEdit,
   onLocateCitation,
+  activeDocumentName,
 }: AssistantMessageProps): React.ReactElement {
   // Citation chips render as reserved-fragment links; one delegated handler
   // on each prose block routes their clicks to Word instead of navigation.
   const handleCitationClick = React.useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       const target = event.target as HTMLElement;
-      const anchor = target.closest?.("a[data-mike-citation]");
-      const href = anchor?.getAttribute("href");
+      const citationControl = target.closest?.("[data-mike-citation]");
+      const href =
+        citationControl?.getAttribute("data-citation-href") ??
+        citationControl?.getAttribute("href");
       if (!href) return;
       const quote = decodeCitationHref(href);
       if (quote === null) return;
@@ -146,44 +150,23 @@ function AssistantMessageImpl({
   });
   const hasUnfinishedEdit = editRows.some(
     ({ status }) =>
-      status === "receiving" || status === "applying" || status === "restoring",
+      status === "receiving" ||
+      status === "validating" ||
+      status === "applying" ||
+      status === "applying-approved" ||
+      status === "restoring",
   );
-  const pendingEditCount = editRows.filter(
+  const visibleEditRows = editRows.filter(
+    ({ status }) =>
+      status !== "receiving" &&
+      status !== "validating" &&
+      status !== "applying" &&
+      status !== "restoring",
+  );
+  const pendingEditCount = visibleEditRows.filter(
     ({ status }) => status === "pending",
   ).length;
   const anyEditBusy = editRows.some(({ runtime }) => runtime?.busy);
-  const editEventStatus: DocEditStatus | null =
-    editRows.length === 0
-      ? null
-      : hasUnfinishedEdit
-        ? "applying"
-        : editRows.some(({ status }) => status === "error")
-          ? "error"
-          : pendingEditCount > 0
-            ? "pending"
-            : editRows.some(({ status }) => status === "applied")
-              ? "applied"
-              : editRows.some(({ status }) => status === "accepted")
-                ? "accepted"
-                : editRows.some(({ status }) => status === "rejected")
-                  ? "rejected"
-                  : editRows.some(({ status }) => status === "unmanaged")
-                    ? "unmanaged"
-                    : "skipped";
-  const firstEditError = editRows.find(({ runtime }) => runtime?.error)?.runtime
-    ?.error;
-  const editEvent =
-    message.live && editEventStatus
-      ? {
-          status: editEventStatus,
-          detail:
-            editEventStatus === "applying"
-              ? "in the document"
-              : editEventStatus === "pending"
-                ? (firstEditError ?? `${pendingEditCount} ready for review`)
-                : firstEditError,
-        }
-      : null;
   const summaryReady =
     edits.length === 0 || (!isStreaming && !hasUnfinishedEdit);
 
@@ -223,7 +206,7 @@ function AssistantMessageImpl({
   const fallbackEditContentIndex =
     editSourceEventIndex >= 0 ? editSourceEventIndex : lastContentEventIndex;
   const editInsertionGroupIndex =
-    editEvent === null
+    edits.length === 0
       ? -1
       : (() => {
           const contentGroupIndex = groups.findIndex(
@@ -233,27 +216,10 @@ function AssistantMessageImpl({
           );
           return contentGroupIndex >= 0 ? contentGroupIndex : groups.length;
         })();
-  const attachedEditGroupIndex =
-    editInsertionGroupIndex > 0 &&
-    groups[editInsertionGroupIndex - 1]?.kind === "pre"
-      ? editInsertionGroupIndex - 1
-      : -1;
-
   const hasContentAfter = (groupIndex: number): boolean =>
     groups
       .slice(groupIndex + 1)
       .some((group) => group.kind === "content" && group.event.text.length > 0);
-
-  const standaloneEditActivity =
-    editEvent && attachedEditGroupIndex < 0 ? (
-      <PreResponseWrapper
-        stepCount={1}
-        shouldMinimize={!!content || !!error}
-        isStreaming={hasUnfinishedEdit}
-      >
-        <DocEditBlock status={editEvent.status} detail={editEvent.detail} />
-      </PreResponseWrapper>
-    ) : null;
 
   return (
     <div
@@ -264,8 +230,6 @@ function AssistantMessageImpl({
       <ResponseStatus status={responseStatus} />
       <div className="mt-2 flex flex-col gap-3">
         {groups.map((group, groupIndex) => {
-          const insertStandaloneEdit =
-            groupIndex === editInsertionGroupIndex && standaloneEditActivity;
           if (group.kind === "content") {
             const prose =
               contentProjectionByIndex.get(group.index)?.visibleProse ?? "";
@@ -276,7 +240,6 @@ function AssistantMessageImpl({
               !summaryReady;
             return (
               <React.Fragment key={`content-${group.event.key ?? group.index}`}>
-                {insertStandaloneEdit}
                 {prose && !holdForEdit && (
                   <div
                     className="font-serif text-base leading-7 text-gray-900"
@@ -291,29 +254,23 @@ function AssistantMessageImpl({
             );
           }
 
-          const includesEdit =
-            groupIndex === attachedEditGroupIndex && !!editEvent;
-          const groupIsStreaming =
-            group.events.some(
-              (event) =>
-                isWordThinkingEvent(event) ||
-                (isWordReasoningEvent(event) && !!event.isStreaming) ||
-                (isWordDocumentReadEvent(event) && event.status === "reading"),
-            ) ||
-            (includesEdit && hasUnfinishedEdit);
+          const groupIsStreaming = group.events.some(
+            (event) =>
+              isWordThinkingEvent(event) ||
+              (isWordReasoningEvent(event) && !!event.isStreaming) ||
+              (isWordDocumentReadEvent(event) && event.status === "reading"),
+          );
           return (
             <React.Fragment
               key={`pre-${group.events[0]?.key ?? group.indices[0] ?? groupIndex}`}
             >
-              {insertStandaloneEdit}
               <PreResponseWrapper
-                stepCount={group.events.length + (includesEdit ? 1 : 0)}
+                stepCount={group.events.length}
                 shouldMinimize={hasContentAfter(groupIndex) || !!error}
                 isStreaming={groupIsStreaming}
               >
                 {group.events.map((event, eventIndex) => {
-                  const showConnector =
-                    eventIndex < group.events.length - 1 || includesEdit;
+                  const showConnector = eventIndex < group.events.length - 1;
                   if (isWordReasoningEvent(event)) {
                     return (
                       <ReasoningBlock
@@ -340,7 +297,11 @@ function AssistantMessageImpl({
                     return (
                       <DocReadBlock
                         key={event.key ?? group.indices[eventIndex]}
-                        filename={event.filename}
+                        filename={
+                          event.filename === "Active Word document"
+                            ? activeDocumentName
+                            : event.filename
+                        }
                         isStreaming={event.status === "reading"}
                         showConnector={showConnector}
                       />
@@ -348,17 +309,10 @@ function AssistantMessageImpl({
                   }
                   return null;
                 })}
-                {includesEdit && editEvent && (
-                  <DocEditBlock
-                    status={editEvent.status}
-                    detail={editEvent.detail}
-                  />
-                )}
               </PreResponseWrapper>
             </React.Fragment>
           );
         })}
-        {editInsertionGroupIndex === groups.length && standaloneEditActivity}
         {error && (
           <p
             role="alert"
@@ -367,9 +321,9 @@ function AssistantMessageImpl({
             {error}
           </p>
         )}
-        {edits.length > 0 && (
+        {visibleEditRows.length > 0 && (
           <EditCardsSection
-            summary={`${edits.length} tracked ${edits.length === 1 ? "change" : "changes"}`}
+            summary={`${visibleEditRows.length} tracked ${visibleEditRows.length === 1 ? "change" : "changes"}`}
             actions={
               pendingEditCount > 0 ? (
                 <>
@@ -401,39 +355,46 @@ function AssistantMessageImpl({
               ) : undefined
             }
           >
-            {editRows.map(({ edit, editIndex, key, runtime, status }) => (
-              <EditCard
-                key={key}
-                edit={edit}
-                changeNumber={editIndex + 1}
-                status={status}
-                matches={runtime?.matches}
-                appliedMatches={runtime?.appliedMatches}
-                locationHint={runtime?.locationHint}
-                error={runtime?.viewError ?? runtime?.error}
-                disabled={anyEditBusy}
-                onView={
-                  status === "pending" || status === "view-only"
-                    ? () => onViewEdit(key)
-                    : undefined
-                }
-                onAccept={
-                  status === "pending"
-                    ? () => onResolveEdit(key, "accept")
-                    : undefined
-                }
-                onReject={
-                  status === "pending"
-                    ? () => onResolveEdit(key, "reject")
-                    : undefined
-                }
-                onAcceptAndApply={
-                  status === "conflicted"
-                    ? () => onAcceptAndApplyEdit(key)
-                    : undefined
-                }
-              />
-            ))}
+            {visibleEditRows.map(
+              ({ edit, editIndex, key, runtime, status }) => (
+                <EditCard
+                  key={key}
+                  edit={edit}
+                  changeNumber={editIndex + 1}
+                  status={status}
+                  matches={runtime?.matches}
+                  appliedMatches={runtime?.appliedMatches}
+                  locationHint={runtime?.locationHint}
+                  error={runtime?.viewError ?? runtime?.error}
+                  disabled={!!runtime?.busy}
+                  onView={
+                    status === "ready" ||
+                    status === "pending" ||
+                    status === "view-only"
+                      ? () => onViewEdit(key)
+                      : undefined
+                  }
+                  onApply={
+                    status === "ready" ? () => onApplyEdit(key) : undefined
+                  }
+                  onAccept={
+                    status === "pending"
+                      ? () => onResolveEdit(key, "accept")
+                      : undefined
+                  }
+                  onReject={
+                    status === "pending"
+                      ? () => onResolveEdit(key, "reject")
+                      : undefined
+                  }
+                  onAcceptAndApply={
+                    status === "conflicted"
+                      ? () => onAcceptAndApplyEdit(key)
+                      : undefined
+                  }
+                />
+              ),
+            )}
           </EditCardsSection>
         )}
       </div>

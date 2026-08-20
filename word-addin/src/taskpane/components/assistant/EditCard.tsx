@@ -1,4 +1,5 @@
 import React from "react";
+import { LoaderCircle } from "lucide-react";
 import { EditCardUI } from "@mike/edit-card-ui";
 import type { RedlineEdit } from "../../lib/redline";
 import { EDIT_CARD_SURFACE } from "./message/messageStyles";
@@ -17,6 +18,7 @@ interface EditCardProps {
   locationHint?: string;
   /** Scrolls Word to the revision this card applied. */
   onView?: () => void;
+  onApply?: () => void;
   onAccept?: () => void;
   onReject?: () => void;
   /**
@@ -31,10 +33,11 @@ interface EditCardProps {
 }
 
 const STATUS_COPY: Record<
-  Exclude<EditCardStatus, "pending">,
+  Exclude<EditCardStatus, "pending" | "ready" | "applying-approved">,
   { copy: string; className: string }
 > = {
   receiving: { copy: "Receiving change…", className: "text-gray-400" },
+  validating: { copy: "Checking the document…", className: "text-gray-400" },
   applying: { copy: "Applying to the document…", className: "text-gray-500" },
   restoring: { copy: "Checking the document…", className: "text-gray-400" },
   "view-only": {
@@ -45,7 +48,7 @@ const STATUS_COPY: Record<
   accepted: { copy: "Accepted.", className: "text-green-700" },
   rejected: { copy: "Rejected.", className: "text-gray-500" },
   skipped: {
-    copy: "Skipped — source text was not found.",
+    copy: "Skipped — this change could not be applied.",
     className: "text-gray-500",
   },
   ambiguous: {
@@ -86,6 +89,7 @@ export function EditCard({
   appliedMatches,
   locationHint,
   onView,
+  onApply,
   onAccept,
   onReject,
   onAcceptAndApply,
@@ -114,7 +118,10 @@ export function EditCard({
     .join(", ");
   const hasEditText =
     edit.replacement !== undefined || edit.original !== undefined;
-  const statusCopy = status === "pending" ? undefined : STATUS_COPY[status];
+  const statusCopy =
+    status === "pending" || status === "ready" || status === "applying-approved"
+      ? undefined
+      : STATUS_COPY[status];
   // The generic ambiguous copy upgrades to an actionable one when Word
   // reported how many places the passage matched.
   const ambiguousCopy =
@@ -127,18 +134,21 @@ export function EditCard({
     status === "applied" && appliedMatches !== undefined && appliedMatches > 1
       ? `Applied to the document in ${appliedMatches} places.`
       : undefined;
-  // Every other status already says something precise; only these two learn
-  // more from Word's own message — and a pending change can carry one too
-  // (a view that could not scroll, say).
+  // Most statuses already say something precise. These states may carry a
+  // more useful message from Word or the edit-application pipeline.
   const message =
     status === "pending" ||
+    status === "ready" ||
     status === "view-only" ||
+    status === "skipped" ||
     status === "error" ||
     status === "historical"
       ? (error ?? statusCopy?.copy)
       : (ambiguousCopy ?? multiApplyCopy ?? statusCopy?.copy);
   const messageClass =
-    status === "pending" ? "text-amber-700" : (statusCopy?.className ?? "");
+    status === "pending" || status === "ready"
+      ? "text-amber-700"
+      : (statusCopy?.className ?? "");
 
   return (
     <EditCardUI
@@ -171,11 +181,13 @@ export function EditCard({
       className={`${EDIT_CARD_SURFACE} p-3`}
       ariaBusy={
         status === "receiving" ||
+        status === "validating" ||
         status === "applying" ||
+        status === "applying-approved" ||
         status === "restoring"
       }
       viewAction={
-        status === "pending" || status === "view-only"
+        status === "ready" || status === "pending" || status === "view-only"
           ? {
               label: "View",
               onClick: onView,
@@ -190,6 +202,26 @@ export function EditCard({
                 disabled,
               }
             : undefined
+      }
+      applyAction={
+        status === "ready" || status === "applying-approved"
+          ? {
+              label:
+                status === "applying-approved" ? (
+                  <>
+                    <LoaderCircle
+                      aria-hidden="true"
+                      className="h-3 w-3 animate-spin"
+                    />
+                    <span>Applying...</span>
+                  </>
+                ) : (
+                  "Apply"
+                ),
+              onClick: status === "ready" ? onApply : undefined,
+              disabled: status === "applying-approved" || disabled || !onApply,
+            }
+          : undefined
       }
       acceptAction={
         status === "pending"

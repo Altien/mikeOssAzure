@@ -18,6 +18,7 @@ const action: QuickAction = {
     name: "Proofread agreement",
     prompt: "Review this agreement",
     document_upload: true,
+    surface: "app",
     enabled: true,
     sort_order: 0,
     created_at: "2026-08-14T00:00:00.000Z",

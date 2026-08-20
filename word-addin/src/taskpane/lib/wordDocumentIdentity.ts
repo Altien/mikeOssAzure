@@ -36,6 +36,18 @@ function readCurrentDocumentUrl(): string {
   }
 }
 
+function readCurrentDocumentName(): string {
+  try {
+    const rawUrl = Office.context.document.url;
+    if (typeof rawUrl !== "string" || !rawUrl.trim()) return "Word document";
+    const withoutQuery = rawUrl.trim().split(/[?#]/, 1)[0] ?? "";
+    const segment = withoutQuery.split(/[\\/]/).filter(Boolean).at(-1);
+    return segment ? decodeURIComponent(segment) : "Word document";
+  } catch {
+    return "Word document";
+  }
+}
+
 /**
  * The identity UUID lives in Office document settings, which are embedded in
  * the .docx — so "Save As"/file-copy carries it into the copy, silently
@@ -83,10 +95,12 @@ async function getOrCreateWordDocumentId(): Promise<string> {
 
 export function useWordDocumentIdentity(): {
   documentId: string | null;
+  documentName: string;
   loading: boolean;
   error: string | null;
 } {
   const [documentId, setDocumentId] = useState<string | null>(null);
+  const [documentName] = useState(readCurrentDocumentName);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -113,5 +127,5 @@ export function useWordDocumentIdentity(): {
     };
   }, []);
 
-  return { documentId, loading, error };
+  return { documentId, documentName, loading, error };
 }

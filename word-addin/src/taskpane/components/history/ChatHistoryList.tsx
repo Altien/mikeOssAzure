@@ -17,6 +17,7 @@ interface ChatHistoryListProps {
   search?: string;
   onSelect: (chatId: string, messages: Message[]) => void;
   className?: string;
+  titleClassName?: string;
   documentId: string;
   storageMode: WordChatStorageMode;
   ownerId: string;
@@ -57,6 +58,7 @@ export function ChatHistoryList({
   search = "",
   onSelect,
   className,
+  titleClassName,
   documentId,
   ownerId,
   storageMode,
@@ -76,6 +78,7 @@ export function ChatHistoryList({
       search={search}
       onSelect={onSelect}
       className={className}
+      titleClassName={titleClassName}
       documentId={documentId}
       ownerId={ownerId}
       storageMode={storageMode}
@@ -89,6 +92,7 @@ export function ChatHistoryListView({
   search = "",
   onSelect,
   className,
+  titleClassName,
   dateStyle = "calendar",
   documentId,
   ownerId,
@@ -205,7 +209,12 @@ export function ChatHistoryListView({
               disabled={loadingChatId !== null}
               className="flex w-full min-w-0 items-center gap-3 rounded-md px-3 py-2.5 text-left text-xs text-gray-700 transition-all hover:bg-gray-100 disabled:opacity-50"
             >
-              <span className="min-w-0 flex-1 truncate font-medium">
+              <span
+                className={cn(
+                  "min-w-0 flex-1 truncate font-medium",
+                  titleClassName,
+                )}
+              >
                 {chat.title?.trim() || "Untitled chat"}
               </span>
               <span className="shrink-0 text-[10px] text-gray-400">

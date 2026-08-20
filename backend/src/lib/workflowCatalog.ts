@@ -17,6 +17,8 @@ export const DEFAULT_WORKFLOW_IDS = [
 const DEFAULT_WORKFLOW_ID_SET = new Set<string>(DEFAULT_WORKFLOW_IDS);
 const DEFAULT_QUICK_ACTION_PROMPT =
   "Execute this workflow on the selected documents.";
+const DEFAULT_WORD_QUICK_ACTION_PROMPT =
+  "Execute this workflow on this Word document.";
 
 const QUICK_ACTION_DEFAULTS: Partial<
   Record<
@@ -68,6 +70,12 @@ export function defaultWorkflowPayloads() {
       quick_action_name: action ? workflow.metadata.title : null,
       quick_action_prompt: action?.prompt ?? null,
       document_upload: action?.documentUpload ?? false,
+      word_quick_action:
+        !!action && id !== "builtin-compare-documents",
+      word_quick_action_prompt:
+        action && id !== "builtin-compare-documents"
+          ? DEFAULT_WORD_QUICK_ACTION_PROMPT
+          : null,
       sort_order: action?.sortOrder ?? null,
     };
   });

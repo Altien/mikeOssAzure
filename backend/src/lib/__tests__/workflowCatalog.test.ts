@@ -44,6 +44,23 @@ describe("workflow catalog", () => {
       ),
     ).toBe(true);
     expect(assistantDefaults.every((item) => item.document_upload)).toBe(true);
+    expect(
+      assistantDefaults
+        .filter((item) => item.default_key !== "compare-documents")
+        .every((item) => item.word_quick_action),
+    ).toBe(true);
+    expect(
+      assistantDefaults
+        .filter((item) => item.word_quick_action)
+        .every((item) =>
+          item.word_quick_action_prompt?.includes("this Word document"),
+        ),
+    ).toBe(true);
+    expect(
+      assistantDefaults.find(
+        (item) => item.default_key === "compare-documents",
+      )?.word_quick_action,
+    ).toBe(false);
     expect(defaults).toContainEqual(
       expect.objectContaining({
         default_key: "commercial-agreement-tabular-review",

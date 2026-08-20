@@ -2245,7 +2245,7 @@ describe("thin endpoint wrappers", () => {
         {
             name: "listQuickActions",
             call: () => listQuickActions(),
-            url: "/quick-actions",
+            url: "/quick-actions?surface=app",
         },
         {
             name: "createQuickAction",
@@ -2255,6 +2255,7 @@ describe("thin endpoint wrappers", () => {
                     name: "Review agreement",
                     prompt: "Review this",
                     document_upload: true,
+                    surface: "app",
                     enabled: true,
                     sort_order: 4,
                 }),
@@ -2265,6 +2266,7 @@ describe("thin endpoint wrappers", () => {
                 name: "Review agreement",
                 prompt: "Review this",
                 document_upload: true,
+                surface: "app",
                 enabled: true,
                 sort_order: 4,
             },

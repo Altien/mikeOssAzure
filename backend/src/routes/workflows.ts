@@ -248,23 +248,28 @@ async function markDefaultWorkflows<T extends { id: string }>(
   db: Db,
   userId: string,
   workflows: T[],
-): Promise<Array<T & { is_default: boolean }>> {
+): Promise<Array<T & { is_default: boolean; default_key: string | null }>> {
   if (workflows.length === 0) return [];
   const { data, error } = await db
     .from("default_workflow_installations")
-    .select("workflow_id")
+    .select("workflow_id, default_key")
     .eq("user_id", userId)
     .in(
       "workflow_id",
       workflows.map((workflow) => workflow.id),
     );
   if (error) throw error;
-  const defaultIds = new Set(
-    (data ?? []).map((row) => row.workflow_id).filter(Boolean),
+  const defaultKeyByWorkflowId = new Map(
+    (data ?? []).flatMap((row) =>
+      row.workflow_id && row.default_key
+        ? [[row.workflow_id, row.default_key] as const]
+        : [],
+    ),
   );
   return workflows.map((workflow) => ({
     ...workflow,
-    is_default: defaultIds.has(workflow.id),
+    is_default: defaultKeyByWorkflowId.has(workflow.id),
+    default_key: defaultKeyByWorkflowId.get(workflow.id) ?? null,
   }));
 }
 

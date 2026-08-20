@@ -1,12 +1,10 @@
 import React, { useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import {
-  DocEditBlockUI,
   DocFindBlockUI,
   DocReadBlockUI,
 } from "@mike/document-event-blocks-ui";
 import { Markdown } from "../../../../shared/chat/Markdown";
-import type { DocEditStatus } from "../../../lib/wordChatTypes";
 
 const THINKING_PHRASES = [
   "Thinking...",
@@ -67,7 +65,7 @@ export function ReasoningBlock({
   isStreaming: boolean;
   showConnector?: boolean;
 }): React.ReactElement {
-  const [isContentOpen, setIsContentOpen] = useState(false);
+  const [isContentOpen, setIsContentOpen] = useState(isStreaming);
   const [isExpanded, setIsExpanded] = useState(false);
   const [userToggledContent, setUserToggledContent] = useState(false);
   const [isOverflowing, setIsOverflowing] = useState(false);
@@ -94,9 +92,9 @@ export function ReasoningBlock({
     setHasMeasured(true);
     if (!userToggledContent) setIsContentOpen(isStreaming);
     if (!nextOverflowing) setIsExpanded(false);
-  }, [isStreaming, text, userToggledContent]);
+  }, [isContentOpen, isStreaming, text, userToggledContent]);
 
-  const showContent = isContentOpen || isStreaming || !hasMeasured;
+  const showContent = isContentOpen || (!userToggledContent && !hasMeasured);
   const isCollapsed = isContentOpen && isOverflowing && !isExpanded;
 
   return (
@@ -107,8 +105,8 @@ export function ReasoningBlock({
     >
       <button
         type="button"
+        aria-expanded={showContent}
         onClick={() => {
-          if (isStreaming) return;
           setUserToggledContent(true);
           setIsContentOpen((open) => !open);
         }}
@@ -117,12 +115,11 @@ export function ReasoningBlock({
         <span className="font-medium">
           {isStreaming ? THINKING_PHRASES[thinkingIndex] : "Thought process"}
         </span>
-        {!isStreaming && (
-          <ChevronDown
-            size={10}
-            className={`relative top-px ml-1 transition-transform duration-200 ${isContentOpen ? "" : "-rotate-90"}`}
-          />
-        )}
+        <ChevronDown
+          size={10}
+          aria-hidden="true"
+          className={`relative top-px ml-1 transition-transform duration-200 ${isContentOpen ? "" : "-rotate-90"}`}
+        />
       </button>
       {showContent && (
         <div className="mt-2">
@@ -210,60 +207,6 @@ export function DocFindBlock({
       isStreaming={isStreaming}
       showConnector={showConnector}
       onClick={onClick}
-    />
-  );
-}
-
-interface DocEditBlockProps {
-  status: DocEditStatus;
-  changeNumber?: number;
-  detail?: ReactNode;
-  showConnector?: boolean;
-}
-
-export function DocEditBlock({
-  status,
-  changeNumber,
-  detail,
-  showConnector,
-}: DocEditBlockProps): React.ReactElement {
-  const subject =
-    changeNumber === undefined ? "tracked change" : `change ${changeNumber}`;
-  const label =
-    status === "applying"
-      ? `Applying ${subject}…`
-      : status === "pending"
-        ? changeNumber === undefined
-          ? "Tracked change ready for review"
-          : `Change ${changeNumber} ready for review`
-        : status === "applied"
-          ? changeNumber === undefined
-            ? "Applied change to the document"
-            : `Applied change ${changeNumber} to the document`
-          : status === "accepted"
-            ? `Accepted ${subject}`
-            : status === "rejected"
-              ? `Rejected ${subject}`
-              : status === "skipped"
-                ? `Skipped ${subject}`
-                : status === "unmanaged"
-                  ? `Edited ${subject} in Word`
-                  : `Couldn’t apply ${subject}`;
-  const dotColor =
-    status === "error"
-      ? "red"
-      : status === "pending" || status === "applied" || status === "accepted"
-        ? "green"
-        : "gray";
-
-  return (
-    <DocEditBlockUI
-      label={label}
-      detail={detail}
-      showConnector={showConnector}
-      isStreaming={status === "applying"}
-      dotColor={dotColor}
-      labelTone={status === "error" ? "error" : "default"}
     />
   );
 }

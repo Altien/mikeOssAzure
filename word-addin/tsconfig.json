@@ -47,6 +47,15 @@
       ],
       "@mike/pill-button-ui": [
         "../frontend/src/shared/ui/PillButtonUI.tsx"
+      ],
+      "@mike/dropdown-ui": [
+        "../frontend/src/shared/ui/DropdownUI.tsx"
+      ],
+      "@mike/citation-pill-ui": [
+        "../frontend/src/shared/ui/CitationPillUI.tsx"
+      ],
+      "@mike/model-toggle-ui": [
+        "../frontend/src/shared/ui/ModelToggleUI.tsx"
       ]
     },
     "jsx": "react-jsx",

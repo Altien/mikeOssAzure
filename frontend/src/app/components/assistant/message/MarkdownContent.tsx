@@ -9,7 +9,8 @@ import type {
     Citation,
     PanelDocument,
 } from "../../shared/types";
-import { RESPONSE_GLASS_ANNOTATION, withoutMarkdownNode } from "./messageStyles";
+import { CitationPillUI } from "@/shared/ui/CitationPillUI";
+import { withoutMarkdownNode } from "./messageStyles";
 import { citationTooltip } from "./CitationSources";
 import {
     citationVerificationAriaLabel,
@@ -168,7 +169,10 @@ export function MarkdownContent({
                         />
                     ),
                     em: (props) => (
-                        <em className="italic" {...withoutMarkdownNode(props)} />
+                        <em
+                            className="italic"
+                            {...withoutMarkdownNode(props)}
+                        />
                     ),
                     code: (props) => {
                         const { children, ...codeProps } =
@@ -181,21 +185,19 @@ export function MarkdownContent({
                             if (annotation) {
                                 const tooltipText = citationTooltip(annotation);
                                 return (
-                                    <button
+                                    <CitationPillUI
                                         onClick={() =>
                                             onCitationClick?.(annotation)
                                         }
                                         data-citation-ref={annotation.ref}
-                                        className={`${RESPONSE_GLASS_ANNOTATION} ${citationVerificationPillClassName(annotation)} mx-0.5 align-super`}
-                                        aria-label={
-                                            citationVerificationAriaLabel(
-                                                annotation,
-                                            )
-                                        }
+                                        className={`${citationVerificationPillClassName(annotation)} mx-0.5 align-super`}
+                                        aria-label={citationVerificationAriaLabel(
+                                            annotation,
+                                        )}
                                         title={tooltipText}
                                     >
                                         {annotation.ref}
-                                    </button>
+                                    </CitationPillUI>
                                 );
                             }
                         }
@@ -229,9 +231,10 @@ export function MarkdownContent({
                                                 ...citation,
                                                 document:
                                                     citation.cluster_id !== null
-                                                        ? caseDocuments.get(
+                                                        ? (caseDocuments.get(
                                                               citation.cluster_id,
-                                                          ) ?? citation.document
+                                                          ) ??
+                                                          citation.document)
                                                         : citation.document,
                                             })
                                         }

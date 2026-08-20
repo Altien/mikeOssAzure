@@ -6,7 +6,7 @@ import {
   DropdownContent,
   DropdownItem,
   DropdownTrigger,
-} from "../primitives/Dropdown";
+} from "@mike/dropdown-ui";
 import desktopIcon from "@icons/desktop.svg";
 import earthIcon from "@icons/earth.svg";
 

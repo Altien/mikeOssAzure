@@ -90,6 +90,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
     const [vercelModels, setVercelModels] = useState<string[]>([]);
     const [modelError, setModelError] = useState<string | null>(null);
     const localFileInputRef = useRef<HTMLInputElement>(null);
+    const composerRef = useRef<HTMLDivElement>(null);
+    const [compactControls, setCompactControls] = useState(false);
     const mountedRef = useRef(true);
     const uploadGenerationRef = useRef(0);
 
@@ -108,6 +110,16 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         mountedRef.current = false;
         uploadGenerationRef.current += 1;
       };
+    }, []);
+
+    useEffect(() => {
+      const composer = composerRef.current;
+      if (!composer || typeof ResizeObserver === "undefined") return;
+      const update = (): void => setCompactControls(composer.offsetWidth < 430);
+      update();
+      const observer = new ResizeObserver(update);
+      observer.observe(composer);
+      return () => observer.disconnect();
     }, []);
 
     useEffect(() => {
@@ -275,92 +287,95 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
               </button>
             </div>
           )}
-          <ChatInputShell
-            value={input}
-            onValueChange={setInput}
-            onSubmit={submit}
-            isLoading={isResponseLoading}
-            onCancel={onCancel}
-            disabled={false}
-            placeholder="How can I help?"
-            attachments={
-              selectedWorkflow || attachedDocuments.length > 0 ? (
-                <>
-                  {selectedWorkflow && (
-                    <div className="inline-flex items-center gap-1 rounded-full border border-white/20 bg-blue-600 py-0.5 pl-2.5 pr-1 text-xs text-white shadow backdrop-blur-sm">
-                      <Library className="h-2.5 w-2.5 shrink-0" />
-                      <span className="max-w-[140px] truncate">
-                        {selectedWorkflow.title}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => onSelectedWorkflowChange(null)}
-                        aria-label={`Remove workflow ${selectedWorkflow.title}`}
-                        className="ml-0.5 rounded-full p-0.5 text-white/60 transition-colors hover:bg-white/20 hover:text-white"
+          <div ref={composerRef}>
+            <ChatInputShell
+              value={input}
+              onValueChange={setInput}
+              onSubmit={submit}
+              isLoading={isResponseLoading}
+              onCancel={onCancel}
+              disabled={false}
+              placeholder="How can I help?"
+              attachments={
+                selectedWorkflow || attachedDocuments.length > 0 ? (
+                  <>
+                    {selectedWorkflow && (
+                      <div className="inline-flex items-center gap-1 rounded-full border border-white/20 bg-blue-600 py-0.5 pl-2.5 pr-1 text-xs text-white shadow backdrop-blur-sm">
+                        <Library className="h-2.5 w-2.5 shrink-0" />
+                        <span className="max-w-[140px] truncate">
+                          {selectedWorkflow.title}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => onSelectedWorkflowChange(null)}
+                          aria-label={`Remove workflow ${selectedWorkflow.title}`}
+                          className="ml-0.5 rounded-full p-0.5 text-white/60 transition-colors hover:bg-white/20 hover:text-white"
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </div>
+                    )}
+                    {attachedDocuments.map((document) => (
+                      <div
+                        key={document.id}
+                        className="inline-flex items-center gap-1 rounded-[10px] border border-white/70 bg-white py-0.5 pl-2 pr-1 text-xs text-gray-800 shadow-sm backdrop-blur-xl"
                       >
-                        <X className="h-2.5 w-2.5" />
-                      </button>
-                    </div>
-                  )}
-                  {attachedDocuments.map((document) => (
-                    <div
-                      key={document.id}
-                      className="inline-flex items-center gap-1 rounded-[10px] border border-white/70 bg-white py-0.5 pl-2 pr-1 text-xs text-gray-800 shadow-sm backdrop-blur-xl"
-                    >
-                      <FileTypeIcon
-                        fileType={document.file_type ?? document.filename}
-                        className="h-2.5 w-2.5"
-                      />
-                      <span className="max-w-[140px] truncate">
-                        {document.filename}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setAttachedDocuments((current) =>
-                            current.filter((item) => item.id !== document.id),
-                          )
-                        }
-                        aria-label={`Remove document ${document.filename}`}
-                        className="ml-0.5 rounded-full p-0.5 text-gray-400 transition-colors hover:bg-gray-900/5 hover:text-gray-700"
-                      >
-                        <X className="h-2.5 w-2.5" />
-                      </button>
-                    </div>
-                  ))}
-                </>
-              ) : undefined
-            }
-            leftSlot={
-              <div className="flex min-w-0 items-center gap-1">
-                <DocumentSourceMenu
-                  disabled={isResponseLoading}
-                  uploading={uploadingLocalFiles}
-                  attachedCount={attachedDocuments.length}
-                  onLocalFiles={() => localFileInputRef.current?.click()}
-                  onWebFiles={() => setDocumentsModalOpen(true)}
-                  onWorkflows={() => setWorkflowModalOpen(true)}
+                        <FileTypeIcon
+                          fileType={document.file_type ?? document.filename}
+                          className="h-2.5 w-2.5"
+                        />
+                        <span className="max-w-[140px] truncate">
+                          {document.filename}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setAttachedDocuments((current) =>
+                              current.filter((item) => item.id !== document.id),
+                            )
+                          }
+                          aria-label={`Remove document ${document.filename}`}
+                          className="ml-0.5 rounded-full p-0.5 text-gray-400 transition-colors hover:bg-gray-900/5 hover:text-gray-700"
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </>
+                ) : undefined
+              }
+              leftSlot={
+                <div className="flex min-w-0 items-center gap-1">
+                  <DocumentSourceMenu
+                    disabled={isResponseLoading}
+                    uploading={uploadingLocalFiles}
+                    attachedCount={attachedDocuments.length}
+                    onLocalFiles={() => localFileInputRef.current?.click()}
+                    onWebFiles={() => setDocumentsModalOpen(true)}
+                    onWorkflows={() => setWorkflowModalOpen(true)}
+                  />
+                  <EditApplyModeMenu
+                    mode={editApplyMode}
+                    onModeChange={onEditApplyModeChange}
+                  />
+                </div>
+              }
+              rightSlot={
+                <ModelToggle
+                  value={model}
+                  onChange={(next) => {
+                    setModelError(null);
+                    setModel(next);
+                  }}
+                  keyStatus={keyStatus}
+                  keyStatusLoading={keyStatusLoading}
+                  openRouterModels={openRouterModels}
+                  vercelModels={vercelModels}
+                  compact={compactControls}
                 />
-                <EditApplyModeMenu
-                  mode={editApplyMode}
-                  onModeChange={onEditApplyModeChange}
-                />
-              </div>
-            }
-            rightSlot={
-              <ModelToggle
-                value={model}
-                onChange={(next) => {
-                  setModelError(null);
-                  setModel(next);
-                }}
-                keyStatus={keyStatus}
-                keyStatusLoading={keyStatusLoading}
-                openRouterModels={openRouterModels}
-                vercelModels={vercelModels}
-              />
-            }
-          />
+              }
+            />
+          </div>
         </div>
         <AddDocumentsModal
           open={documentsModalOpen}

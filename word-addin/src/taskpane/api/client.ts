@@ -385,7 +385,9 @@ type WorkflowType = Workflow["metadata"]["type"];
 export async function listQuickActions(): Promise<
     import("../types").QuickAction[]
 > {
-    return apiRequest<import("../types").QuickAction[]>("/quick-actions");
+    return apiRequest<import("../types").QuickAction[]>(
+        "/quick-actions?surface=word",
+    );
 }
 
 export async function updateQuickAction(
@@ -395,6 +397,7 @@ export async function updateQuickAction(
         name?: string;
         prompt?: string;
         document_upload?: boolean;
+        surface?: import("../types").QuickAction["surface"];
         enabled?: boolean;
         sort_order?: number;
     },
@@ -414,6 +417,7 @@ export async function createQuickAction(payload: {
     name: string;
     prompt: string;
     document_upload: boolean;
+    surface: import("../types").QuickAction["surface"];
     enabled?: boolean;
     sort_order?: number;
 }): Promise<import("../types").QuickAction> {

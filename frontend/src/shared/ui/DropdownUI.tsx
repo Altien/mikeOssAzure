@@ -1,8 +1,16 @@
-import React from "react";
+"use client";
+
+import * as React from "react";
 import * as DropdownPrimitive from "@radix-ui/react-dropdown-menu";
-import { cn } from "../../../shared/lib/utils";
+import { clsx } from "clsx";
+import { twMerge } from "tailwind-merge";
+
+function mergeClasses(...classes: Array<string | false | null | undefined>) {
+    return twMerge(clsx(classes));
+}
 
 export const Dropdown = DropdownPrimitive.Root;
+export const DropdownPortal = DropdownPrimitive.Portal;
 export const DropdownTrigger = DropdownPrimitive.Trigger;
 
 export const DropdownContent = React.forwardRef<
@@ -13,8 +21,8 @@ export const DropdownContent = React.forwardRef<
         <DropdownPrimitive.Portal>
             <DropdownPrimitive.Content
                 ref={ref}
-                className={cn(
-          "z-[250] flex flex-col gap-1 rounded-xl border border-white/70 bg-gray-50/95 p-1.5 text-xs text-gray-700 shadow-[0_14px_40px_rgba(15,23,42,0.12),inset_0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-3xl",
+                className={mergeClasses(
+                    "z-[250] flex flex-col gap-1 rounded-xl border border-white/70 bg-gray-50/95 p-1.5 text-xs text-gray-700 shadow-[0_14px_40px_rgba(15,23,42,0.12),inset_0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-3xl",
                     className,
                 )}
                 {...props}
@@ -35,7 +43,7 @@ export const DropdownItem = React.forwardRef<
         <DropdownPrimitive.Item
             ref={ref}
             data-selected={selected ? "true" : undefined}
-            className={cn(
+            className={mergeClasses(
                 "flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-2 outline-none transition-colors hover:bg-gray-100 focus:bg-gray-100 data-[highlighted]:bg-gray-100 data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&>*]:pointer-events-none",
                 selected &&
                     "bg-gray-200 text-gray-900 hover:bg-gray-200 focus:bg-gray-200 data-[highlighted]:bg-gray-200",
@@ -44,9 +52,8 @@ export const DropdownItem = React.forwardRef<
             onPointerMove={(event) => {
                 onPointerMove?.(event);
                 // Radix focuses an item on every mouse movement, which causes
-                // highlight-state render churn and cursor flicker in Word's
-                // embedded webview. CSS hover already covers mouse users;
-                // keyboard focus and navigation remain handled by Radix.
+                // highlight churn in Word's embedded webview. CSS hover still
+                // covers pointer users; Radix retains keyboard navigation.
                 if (event.pointerType === "mouse") event.preventDefault();
             }}
             {...itemProps}
@@ -62,7 +69,7 @@ export function DropdownLabel({
 >): React.ReactElement {
     return (
         <DropdownPrimitive.Label
-            className={cn(
+            className={mergeClasses(
                 "px-2.5 py-1 text-[10px] uppercase tracking-wider text-gray-400",
                 className,
             )}
@@ -79,7 +86,7 @@ export function DropdownSeparator({
 >): React.ReactElement {
     return (
         <DropdownPrimitive.Separator
-            className={cn("mx-1 my-1 h-px bg-gray-200/70", className)}
+            className={mergeClasses("mx-1 my-1 h-px bg-gray-200/70", className)}
             {...props}
         />
     );
