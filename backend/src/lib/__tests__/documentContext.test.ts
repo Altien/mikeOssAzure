@@ -332,6 +332,10 @@ describe("active Word document context", () => {
         expect(prompt).toContain("precise and targeted as possible");
         expect(prompt).toContain("one edit block (and therefore one edit card)");
         expect(prompt).toContain("keep unrelated or distant changes separate");
+        expect(prompt).toContain("put its ENTIRE text in <original>");
+        expect(prompt).toContain(
+            "Word renumbers the remaining items automatically",
+        );
         expect(prompt).not.toContain("CONTRACT BODY TEXT");
     });
 
