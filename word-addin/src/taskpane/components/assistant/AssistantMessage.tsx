@@ -404,6 +404,9 @@ function AssistantMessageImpl({
                 edit={edit}
                 changeNumber={editIndex + 1}
                 status={status}
+                matches={runtime?.matches}
+                appliedMatches={runtime?.appliedMatches}
+                locationHint={runtime?.locationHint}
                 error={runtime?.viewError ?? runtime?.error}
                 disabled={anyEditBusy}
                 onView={
