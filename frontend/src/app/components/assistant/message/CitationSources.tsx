@@ -3,7 +3,8 @@ import { Loader2 } from "lucide-react";
 import { FileTypeIcon } from "../../shared/FileTypeIcon";
 import { displayCitationQuote, formatCitationPage } from "../../shared/types";
 import type { Citation } from "../../shared/types";
-import { RESPONSE_GLASS_ANNOTATION, RESPONSE_GLASS_SURFACE } from "./messageStyles";
+import { CitationPillUI } from "@/shared/ui/CitationPillUI";
+import { RESPONSE_GLASS_SURFACE } from "./messageStyles";
 import {
     citationVerificationAriaLabel,
     citationVerificationDescription,
@@ -42,11 +43,7 @@ export function citationTooltip(annotation: Citation): string {
     return verification ? `${source} — ${verification}` : source;
 }
 
-function CitationSourceIcon({
-    annotation,
-}: {
-    annotation: Citation;
-}) {
+function CitationSourceIcon({ annotation }: { annotation: Citation }) {
     if (annotation.kind === "case") {
         return (
             <Image
@@ -64,9 +61,7 @@ function CitationSourceIcon({
     );
 }
 
-function buildCitationSourceRows(
-    citations: Citation[],
-): CitationSourceRow[] {
+function buildCitationSourceRows(citations: Citation[]): CitationSourceRow[] {
     const rows = new Map<string, CitationSourceRow>();
     citations.forEach((annotation, index) => {
         const key = citationSourceKey(annotation);
@@ -192,28 +187,25 @@ export function CitationsBlock({
                                 <div className="flex shrink-0 flex-wrap justify-end gap-1">
                                     {row.entries.map(
                                         ({ annotation, index }) => (
-                                            <button
+                                            <CitationPillUI
                                                 key={`${row.key}:${index}`}
-                                                type="button"
                                                 onClick={() =>
                                                     onCitationClick?.(
                                                         annotation,
                                                     )
                                                 }
-                                                className={
-                                                    `${RESPONSE_GLASS_ANNOTATION} ${citationVerificationPillClassName(annotation)}`
-                                                }
-                                                aria-label={
-                                                    citationVerificationAriaLabel(
-                                                        annotation,
-                                                    )
-                                                }
+                                                className={citationVerificationPillClassName(
+                                                    annotation,
+                                                )}
+                                                aria-label={citationVerificationAriaLabel(
+                                                    annotation,
+                                                )}
                                                 title={citationTooltip(
                                                     annotation,
                                                 )}
                                             >
                                                 {annotation.ref}
-                                            </button>
+                                            </CitationPillUI>
                                         ),
                                     )}
                                 </div>

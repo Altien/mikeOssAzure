@@ -5,8 +5,11 @@ export type EditDecision = "accept" | "reject";
 
 export type EditCardStatus =
   | "receiving"
+  | "validating"
   | "applying"
+  | "applying-approved"
   | "restoring"
+  | "ready"
   | "pending"
   | "view-only"
   | "applied"
@@ -20,16 +23,6 @@ export type EditCardStatus =
   | "unmanaged"
   | "error"
   | "historical";
-
-export type DocEditStatus =
-  | "applying"
-  | "pending"
-  | "applied"
-  | "accepted"
-  | "rejected"
-  | "skipped"
-  | "unmanaged"
-  | "error";
 
 export interface EditRuntimeState {
   status: EditCardStatus;
@@ -100,6 +93,8 @@ export interface WordTrackedEditsController {
    * are not recreated by every edit-state transition during a stream.
    */
   streamController: WordEditStreamController;
+  /** Apply a validated Review-mode proposal as a tracked Word change. */
+  applyEdit: (key: string) => void;
   viewEdit: (key: string) => Promise<void>;
   resolveOneEdit: (key: string, decision: EditDecision) => Promise<void>;
   resolveMessageEdits: (

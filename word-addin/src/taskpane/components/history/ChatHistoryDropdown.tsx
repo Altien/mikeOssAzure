@@ -6,7 +6,7 @@ import {
   Dropdown,
   DropdownContent,
   DropdownTrigger,
-} from "../primitives/Dropdown";
+} from "@mike/dropdown-ui";
 import { ChatHistoryListView } from "./ChatHistoryList";
 import { usePaginatedChats } from "../../hooks/usePaginatedChats";
 import type { WordChatStorageMode } from "../../lib/wordChatSettings";
@@ -70,6 +70,7 @@ export function ChatHistoryDropdown({
             onSelect(chatId, messages);
           }}
           className="mt-1 flex-1"
+          titleClassName="font-normal"
           documentId={documentId}
           ownerId={ownerId}
           storageMode={storageMode}

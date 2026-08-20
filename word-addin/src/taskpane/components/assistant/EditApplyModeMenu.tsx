@@ -5,9 +5,8 @@ import {
   Dropdown,
   DropdownContent,
   DropdownItem,
-  DropdownLabel,
   DropdownTrigger,
-} from "../primitives/Dropdown";
+} from "@mike/dropdown-ui";
 
 interface ApplyModeOption {
   mode: WordEditApplyMode;
@@ -19,14 +18,13 @@ interface ApplyModeOption {
 const REVIEW_OPTION: ApplyModeOption = {
   mode: "approval",
   label: "Review",
-  description:
-    "Review and propose tracked changes which are applied after approval",
+  description: "Review proposed changes before applying them to the document",
   Icon: Eye,
 };
 const DIRECT_OPTION: ApplyModeOption = {
   mode: "direct",
   label: "Edit",
-  description: "Directly edit the document in tracked changes",
+  description: "Apply streamed edits immediately as tracked changes",
   Icon: Pen,
 };
 const OPTIONS = [REVIEW_OPTION, DIRECT_OPTION];
@@ -54,7 +52,7 @@ export function EditApplyModeMenu({
           aria-label="Choose how edits are applied"
           title="Choose how edits are applied"
           data-testid="edit-apply-toggle"
-          className={`ml-1 flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2 text-sm text-gray-400 transition-colors hover:text-gray-700 ${
+          className={`flex h-8 shrink-0 items-center gap-1 rounded-full px-1.5 text-sm text-gray-400 transition-colors hover:text-gray-700 ${
             open ? "text-gray-700" : ""
           }`}
         >
@@ -62,29 +60,32 @@ export function EditApplyModeMenu({
           <span>{active.label}</span>
         </button>
       </DropdownTrigger>
-      <DropdownContent side="top" align="start" sideOffset={8} className="w-72">
-        <DropdownLabel className="normal-case text-xs tracking-normal">
-          How should edits be applied?
-        </DropdownLabel>
+      <DropdownContent
+        side="top"
+        align="start"
+        sideOffset={8}
+        collisionPadding={12}
+        className="w-72 max-w-[calc(100vw-24px)]"
+      >
         {OPTIONS.map((option) => (
           <DropdownItem
             key={option.mode}
             onSelect={() => onModeChange(option.mode)}
             selected={option.mode === mode}
-            className="items-start py-2"
+            className="flex-col items-stretch gap-0.5 py-2"
           >
-            <option.Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-500" />
-            <span className="flex flex-1 flex-col gap-0.5">
-              <span className="text-sm font-medium text-gray-800">
+            <span className="flex items-center gap-2">
+              <option.Icon className="h-3.5 w-3.5 shrink-0 text-gray-500" />
+              <span className="flex-1 text-xs font-medium text-gray-800">
                 {option.label}
               </span>
-              <span className="text-xs text-gray-500">
-                {option.description}
-              </span>
+              {option.mode === mode && (
+                <Check className="h-3.5 w-3.5 shrink-0 text-gray-600" />
+              )}
             </span>
-            {option.mode === mode && (
-              <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-600" />
-            )}
+            <span className="pl-[22px] text-xs text-gray-500">
+              {option.description}
+            </span>
           </DropdownItem>
         ))}
       </DropdownContent>

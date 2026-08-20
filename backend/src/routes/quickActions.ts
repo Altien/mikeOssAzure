@@ -18,11 +18,18 @@ type QuickActionRow = {
   name: string;
   prompt: string;
   document_upload: boolean;
+  surface: QuickActionSurface;
   enabled: boolean;
   sort_order: number;
   created_at: string;
   updated_at: string;
 };
+
+type QuickActionSurface = "app" | "word";
+
+function isQuickActionSurface(value: unknown): value is QuickActionSurface {
+  return value === "app" || value === "word";
+}
 
 function asyncRoute(
   handler: (req: Request, res: Response) => Promise<unknown>,
@@ -96,7 +103,10 @@ async function withWorkflowDetails(
       )
       .map((workflow) => [
         workflow.id,
-        { id: workflow.id, title: workflow.title },
+        {
+          id: workflow.id,
+          title: workflow.title,
+        },
       ]),
   );
   return rows
@@ -107,7 +117,9 @@ async function withWorkflowDetails(
     .filter(
       (
         row,
-      ): row is QuickActionRow & { workflow: { id: string; title: string } } =>
+      ): row is QuickActionRow & {
+        workflow: { id: string; title: string };
+      } =>
         !!row,
     );
 }
@@ -127,15 +139,22 @@ function isValidSortOrder(value: unknown): value is number {
 quickActionsRouter.get(
   "/",
   requireAuth,
-  asyncRoute(async (_req, res) => {
+  asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
+    const surface = req.query.surface ?? "app";
+    if (!isQuickActionSurface(surface)) {
+      return void res.status(400).json({
+        detail: "surface must be either 'app' or 'word'",
+      });
+    }
     const db = createServerSupabase();
     await ensureDefaultWorkflows(userId, db);
     const { data, error } = await db
       .from("quick_actions")
       .select("*")
       .eq("user_id", userId)
+      .eq("surface", surface)
       .order("sort_order", { ascending: true })
       .order("created_at", { ascending: true });
     if (error) return void res.status(500).json({ detail: error.message });
@@ -163,6 +182,12 @@ quickActionsRouter.post(
     if (!workflowId) {
       return void res.status(400).json({ detail: "workflow_id is required" });
     }
+    const surface = req.body?.surface ?? "app";
+    if (!isQuickActionSurface(surface)) {
+      return void res.status(400).json({
+        detail: "surface must be either 'app' or 'word'",
+      });
+    }
     if (
       req.body?.sort_order !== undefined &&
       Number.isInteger(req.body.sort_order) &&
@@ -188,6 +213,7 @@ quickActionsRouter.post(
             : workflow.title,
         prompt: typeof req.body?.prompt === "string" ? req.body.prompt : "",
         document_upload: req.body?.document_upload === true,
+        surface,
         enabled: req.body?.enabled !== false,
         sort_order: isValidSortOrder(req.body?.sort_order)
           ? req.body.sort_order
@@ -224,6 +250,14 @@ quickActionsRouter.patch(
     if (typeof req.body?.prompt === "string") updates.prompt = req.body.prompt;
     if (typeof req.body?.document_upload === "boolean") {
       updates.document_upload = req.body.document_upload;
+    }
+    if (req.body?.surface !== undefined) {
+      if (!isQuickActionSurface(req.body.surface)) {
+        return void res.status(400).json({
+          detail: "surface must be either 'app' or 'word'",
+        });
+      }
+      updates.surface = req.body.surface;
     }
     if (typeof req.body?.enabled === "boolean")
       updates.enabled = req.body.enabled;

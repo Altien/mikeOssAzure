@@ -75,6 +75,7 @@ test("an edit quoting the renderer's heading marker still applies as a tracked c
 
   await page.getByPlaceholder("How can I help?").fill("Rename the heading");
   await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
 
   // "# Definitions" exists nowhere in the document — the leading "# " is
   // the context renderer's heading marker. The verbatim search misses; the

@@ -100,10 +100,13 @@ test("the backend's native [n] markers become chips resolved through the citatio
   await page.getByPlaceholder("How can I help?").fill("Notice period?");
   await page.getByRole("button", { name: "Send" }).click();
 
-  const chipOne = page.getByRole("link", { name: "[1]", exact: true });
+  const chipOne = page.getByRole("button", {
+    name: "Citation 1",
+    exact: true,
+  });
   await expect(chipOne).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "[2]", exact: true }),
+    page.getByRole("button", { name: "Citation 2", exact: true }),
   ).toBeVisible();
 
   await chipOne.click();

@@ -32,6 +32,7 @@ interface ChatViewProps
         Pick<
             WordTrackedEditsController,
             | "editStateByKey"
+            | "applyEdit"
             | "viewEdit"
             | "resolveOneEdit"
             | "resolveMessageEdits"
@@ -42,6 +43,7 @@ interface ChatViewProps
     onSelectedWorkflowChange: (workflow: WorkflowAttachment | null) => void;
     editApplyMode: WordEditApplyMode;
     onEditApplyModeChange: (mode: WordEditApplyMode) => void;
+    activeDocumentName: string;
 }
 
 /**
@@ -138,6 +140,7 @@ export function ChatView({
     cancel,
     dismissRequestError,
     editStateByKey,
+    applyEdit,
     viewEdit,
     resolveOneEdit,
     resolveMessageEdits,
@@ -146,6 +149,7 @@ export function ChatView({
     onSelectedWorkflowChange,
     editApplyMode,
     onEditApplyModeChange,
+    activeDocumentName,
 }: ChatViewProps): React.ReactElement {
     const messagesContainerRef = useRef<HTMLDivElement>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -217,6 +221,12 @@ export function ChatView({
     const hasMessages = messages.length > 0;
 
     // Stable handlers so memoized message rows do not re-render per chunk.
+    const handleApplyEdit = useCallback(
+        (key: string) => {
+            applyEdit(key);
+        },
+        [applyEdit],
+    );
     const handleViewEdit = useCallback(
         (key: string) => {
             void viewEdit(key);
@@ -687,9 +697,6 @@ export function ChatView({
                         onSelect={(action) => {
                             onSelectedWorkflowChange(action.workflow);
                             chatInputRef.current?.setDraft(action.prompt);
-                            if (action.document_upload) {
-                                chatInputRef.current?.requestDocuments();
-                            }
                         }}
                     />
                 </div>
@@ -737,11 +744,13 @@ export function ChatView({
                                         : undefined
                                 }
                                 editStateByKey={editStateByKey}
+                                onApplyEdit={handleApplyEdit}
                                 onViewEdit={handleViewEdit}
                                 onResolveEdit={handleResolveEdit}
                                 onResolveAll={handleResolveAll}
                                 onAcceptAndApplyEdit={handleAcceptAndApplyEdit}
                                 onLocateCitation={handleLocateCitation}
+                                activeDocumentName={activeDocumentName}
                             />
                         );
                     })}

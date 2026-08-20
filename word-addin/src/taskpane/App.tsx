@@ -233,6 +233,7 @@ export default function App(): React.ReactElement {
             onChatIdChange={handleChatIdChange}
             onChatStarted={markChatStarted}
             wordDocumentId={wordDocumentId}
+            activeDocumentName={wordDocument.documentName}
             editApplyMode={editApply.mode}
             onEditApplyModeChange={editApply.setMode}
             wordChatStorage={wordChatStorage.mode}

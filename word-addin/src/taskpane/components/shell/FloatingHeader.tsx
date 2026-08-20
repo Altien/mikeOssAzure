@@ -23,7 +23,7 @@ import {
   DropdownItem,
   DropdownSeparator,
   DropdownTrigger,
-} from "../primitives/Dropdown";
+} from "@mike/dropdown-ui";
 import type { WordChatStorageMode } from "../../lib/wordChatSettings";
 
 export type AddinSection =

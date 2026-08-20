@@ -37,7 +37,7 @@ test("matches the workflows page layout and lists the initial-view actions", asy
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Compare documents" }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Extract key terms" }),
   ).toBeVisible();
@@ -115,9 +115,10 @@ test("creates a named quick action from the top bar", async ({
     workflow_id: workflow.id,
     name: "Clause check",
     prompt: "Focus on liability clauses.",
-    document_upload: true,
+    document_upload: false,
+    surface: "word",
     enabled: true,
-    sort_order: 4,
+    sort_order: 3,
     workflow: { id: workflow.id, title: workflow.metadata.title },
   };
   await addin.mockApiJson("GET", "**/workflows**", [workflow]);
@@ -137,8 +138,6 @@ test("creates a named quick action from the top bar", async ({
   await expect(modal.getByLabel("Name")).toHaveValue("Review clauses");
   await modal.getByLabel("Name").fill("Clause check");
   await modal.getByLabel("Prompt").fill("Focus on liability clauses.");
-  await modal.getByRole("switch", { name: "Request document upload" }).click();
-
   const requestPromise = page.waitForRequest(
     (request) =>
       request.method() === "POST" &&
@@ -149,9 +148,10 @@ test("creates a named quick action from the top bar", async ({
     workflow_id: workflow.id,
     name: "Clause check",
     prompt: "Focus on liability clauses.",
-    document_upload: true,
+    document_upload: false,
+    surface: "word",
     enabled: true,
-    sort_order: 4,
+    sort_order: 3,
   });
   await expect(modal).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Clause check" })).toBeVisible();
@@ -180,6 +180,6 @@ test("inactive actions disappear from the Assistant initial view", async ({
     page.getByRole("button", { name: "Proofread agreement" }),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Compare documents" }),
+    page.getByRole("button", { name: "Extract key terms" }),
   ).toBeVisible();
 });

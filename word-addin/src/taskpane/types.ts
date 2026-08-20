@@ -146,6 +146,8 @@ export interface Workflow {
   };
   skill_md: string | null;
   is_system: boolean;
+  is_default?: boolean;
+  default_key?: string | null;
   allow_edit?: boolean;
 }
 
@@ -155,6 +157,7 @@ export interface QuickAction {
   name?: string | null;
   prompt: string;
   document_upload: boolean;
+  surface: "app" | "word";
   enabled: boolean;
   sort_order: number;
   workflow: { id: string; title: string };

@@ -6,7 +6,7 @@ import {
   DropdownContent,
   DropdownItem,
   DropdownTrigger,
-} from "./Dropdown";
+} from "@mike/dropdown-ui";
 
 export function ModalFieldLabel({
   className,

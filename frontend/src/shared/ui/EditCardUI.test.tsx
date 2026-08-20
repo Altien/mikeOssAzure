@@ -78,4 +78,26 @@ describe("EditCardUI", () => {
         await user.click(screen.getByRole("button", { name: "View" }));
         expect(onView).not.toHaveBeenCalled();
     });
+
+    it("places a proposal's Apply action before View", async () => {
+        const user = userEvent.setup();
+        const onApply = vi.fn();
+        const onView = vi.fn();
+
+        render(
+            <EditCardUI
+                status="ready"
+                applyAction={{ label: "Apply", onClick: onApply }}
+                viewAction={{ label: "View", onClick: onView }}
+            />,
+        );
+
+        expect(
+            screen.getAllByRole("button").map((button) => button.textContent),
+        ).toEqual(["Apply", "View"]);
+        await user.click(screen.getByRole("button", { name: "Apply" }));
+        await user.click(screen.getByRole("button", { name: "View" }));
+        expect(onApply).toHaveBeenCalledOnce();
+        expect(onView).toHaveBeenCalledOnce();
+    });
 });

@@ -164,6 +164,7 @@ export function InitialView({ onSubmit }: InitialViewProps) {
             name: input.name,
             prompt: input.prompt,
             document_upload: input.documentUpload,
+            surface: "app",
             enabled: true,
             sort_order: quickActions.length,
         });

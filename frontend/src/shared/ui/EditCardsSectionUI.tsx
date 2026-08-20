@@ -1,6 +1,7 @@
 "use client";
 
 import { Children, useState, type ReactNode } from "react";
+import { ChevronDown } from "lucide-react";
 
 export interface EditCardsSectionUIProps {
     summary: string;
@@ -41,20 +42,12 @@ export function EditCardsSectionUI({
                     onClick={() => setIsOpen((value) => !value)}
                     aria-label={isOpen ? "Collapse edits" : "Expand edits"}
                     aria-expanded={isOpen}
-                    className="shrink-0 rounded p-1 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800"
+                    className="shrink-0 text-gray-500 transition-colors hover:text-gray-700"
                 >
-                    <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
+                    <ChevronDown
                         aria-hidden="true"
-                        className={`h-4 w-4 transition-transform duration-200 ${isOpen ? "" : "-rotate-90"}`}
-                    >
-                        <path d="m6 9 6 6 6-6" />
-                    </svg>
+                        className={`relative top-px h-3 w-3 transition-transform duration-200 ${isOpen ? "" : "-rotate-90"}`}
+                    />
                 </button>
             </div>
 

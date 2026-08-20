@@ -67,6 +67,7 @@ async function applyPersistedEdit(
   await expect(
     page.getByRole("button", { name: "View", exact: true }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
   await expect
     .poll(async () => (await addin.wordDocument()).bookmarks.length)
     .toBe(1);

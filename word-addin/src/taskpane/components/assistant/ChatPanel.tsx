@@ -18,6 +18,7 @@ interface ChatPanelProps {
   onChatIdChange: (chatId: string) => void;
   onChatStarted: () => void;
   wordDocumentId: string;
+  activeDocumentName: string;
   wordChatStorage: WordChatStorageMode;
   wordChatOwnerId: string;
   editApplyMode: WordEditApplyMode;
@@ -38,6 +39,7 @@ export function ChatPanel({
   onChatIdChange,
   onChatStarted,
   wordDocumentId,
+  activeDocumentName,
   wordChatStorage,
   wordChatOwnerId,
   editApplyMode,
@@ -71,6 +73,7 @@ export function ChatPanel({
       onSelectedWorkflowChange={onSelectedWorkflowChange}
       editApplyMode={editApplyMode}
       onEditApplyModeChange={onEditApplyModeChange}
+      activeDocumentName={activeDocumentName}
     />
   );
 }

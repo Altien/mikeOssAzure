@@ -1,9 +1,9 @@
 /**
  * E2E coverage for the edit apply-mode control: a dropdown pill in the
- * composer showing the active mode (Review by default). Review keeps the
- * approval flow — streamed edits land as pending tracked changes resolved
- * from their cards — while Edit applies each streamed edit and accepts it
- * immediately, so the document shows final text with no review step.
+ * composer showing the active mode (Review by default). Review validates each
+ * streamed proposal before the user applies it; Edit applies each proposal
+ * immediately as a pending tracked change. Both modes leave applied revisions
+ * available for explicit acceptance or rejection.
  */
 import { test, expect } from "./support/fixtures";
 
@@ -41,7 +41,7 @@ test("shows the Review mode pill in the composer, selected by default", async ({
   await expect(review).toHaveAttribute("data-selected", "true");
   await expect(direct).not.toHaveAttribute("data-selected", "true");
   await expect(direct).toContainText(
-    "Directly edit the document in tracked changes",
+    "Apply streamed edits immediately as tracked changes",
   );
   await page.keyboard.press("Escape");
 
@@ -62,7 +62,7 @@ async function chooseApplyMode(
   );
 }
 
-test("direct mode applies streamed edits to the document and accepts them immediately", async ({
+test("Edit mode applies streamed edits immediately as pending tracked changes", async ({
   addin,
   page,
 }) => {
@@ -77,42 +77,28 @@ test("direct mode applies streamed edits to the document and accepts them immedi
   await page.getByPlaceholder("How can I help?").fill("Fix the contract");
   await page.getByRole("button", { name: "Send" }).click();
 
-  // Both edits are written as tracked changes and then accepted without any
-  // user interaction.
+  // Both edits are written immediately, but remain pending for the user.
   await expect
-    .poll(async () => (await addin.wordCalls()).acceptedChanges)
-    .toEqual([
-      { text: "The Supplier", location: "After", original: "The Suplier" },
-      {
-        text: "shall deliver the goods",
-        location: "After",
-        original: "shall deliver goods",
-      },
-    ]);
-  await expect(page.getByText("Applied to the document.")).toHaveCount(2);
-
-  // No review controls: the cards are informational in direct mode.
+    .poll(async () => (await addin.wordCalls()).trackedChanges.length)
+    .toBe(2);
+  expect((await addin.wordCalls()).acceptedChanges).toEqual([]);
   await expect(
     page.getByRole("button", { name: "Accept", exact: true }),
-  ).toHaveCount(0);
+  ).toHaveCount(2);
   await expect(
     page.getByRole("button", { name: "Reject", exact: true }),
-  ).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Accept all" })).toHaveCount(
-    0,
-  );
+  ).toHaveCount(2);
 
-  // Accepting released the revisions, so nothing pending stays anchored in
-  // the document.
+  // The document retains both pending revision groups.
   const documentSnapshot = await addin.wordDocument();
   expect(
     documentSnapshot.bookmarks.filter(
       (bookmark) => bookmark.pendingRevisionCount > 0,
     ),
-  ).toEqual([]);
+  ).toHaveLength(2);
 });
 
-test("review mode still routes streamed edits through pending cards", async ({
+test("Review mode waits for Apply before writing a tracked change", async ({
   addin,
   page,
 }) => {
@@ -123,18 +109,40 @@ test("review mode still routes streamed edits through pending cards", async ({
   await page.getByPlaceholder("How can I help?").fill("Fix the contract");
   await page.getByRole("button", { name: "Send" }).click();
 
-  await expect
-    .poll(async () => (await addin.wordCalls()).trackedChanges.length)
-    .toBe(2);
   await expect(
-    page.getByRole("button", { name: "Accept", exact: true }),
+    page.getByRole("button", { name: "Apply", exact: true }),
+  ).toHaveCount(2);
+  expect((await addin.wordCalls()).trackedChanges).toEqual([]);
+  await expect(
+    page.getByRole("button", { name: "View", exact: true }),
   ).toHaveCount(2);
   expect((await addin.wordCalls()).acceptedChanges).toEqual([]);
 
+  await page.getByRole("button", { name: "View", exact: true }).first().click();
+  await expect
+    .poll(async () => (await addin.wordCalls()).revealedChanges)
+    .toEqual([
+      { text: "The Suplier", location: "Select", original: "The Suplier" },
+    ]);
+
   await page
-    .getByRole("button", { name: "Accept", exact: true })
+    .getByRole("button", { name: "Apply", exact: true })
     .first()
     .click();
+  await expect
+    .poll(async () => (await addin.wordCalls()).trackedChanges.length)
+    .toBe(1);
+  await expect(
+    page.getByRole("button", { name: "Accept", exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    page.getByRole("button", { name: "Reject", exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    page.getByRole("button", { name: "Apply", exact: true }),
+  ).toHaveCount(1);
+
+  await page.getByRole("button", { name: "Accept", exact: true }).click();
   await expect(page.getByText("Accepted.", { exact: true })).toBeVisible();
   expect((await addin.wordCalls()).acceptedChanges).toEqual([
     { text: "The Supplier", location: "After", original: "The Suplier" },
@@ -155,7 +163,7 @@ test("the chosen apply mode survives a task-pane reload", async ({
   await expect(page.getByTestId("edit-apply-toggle")).toHaveText(/Edit/);
 });
 
-test("a mid-stream toggle only affects edits that have not been applied yet", async ({
+test("changing mode does not auto-apply proposals already prepared for review", async ({
   addin,
   page,
 }) => {
@@ -165,17 +173,15 @@ test("a mid-stream toggle only affects edits that have not been applied yet", as
 
   await page.getByPlaceholder("How can I help?").fill("Fix the contract");
   await page.getByRole("button", { name: "Send" }).click();
-  // The mock stream arrives as one response body, so both edits apply under
-  // whichever mode was active at send time — this guards state bleed rather
-  // than true interleaving.
-  await expect
-    .poll(async () => (await addin.wordCalls()).trackedChanges.length)
-    .toBe(2);
+  await expect(
+    page.getByRole("button", { name: "Apply", exact: true }),
+  ).toHaveCount(2);
   await chooseApplyMode(page, "Edit");
 
-  // Already-applied edits keep their pending review cards.
+  // Already-prepared cards keep their approval-before-application lifecycle.
   await expect(
-    page.getByRole("button", { name: "Accept", exact: true }),
+    page.getByRole("button", { name: "Apply", exact: true }),
   ).toHaveCount(2);
+  expect((await addin.wordCalls()).trackedChanges).toEqual([]);
   expect((await addin.wordCalls()).acceptedChanges).toEqual([]);
 });

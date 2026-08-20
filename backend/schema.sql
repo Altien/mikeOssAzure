@@ -501,11 +501,16 @@ create table if not exists public.quick_actions (
   enabled boolean not null default true,
   sort_order integer not null default 0,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  surface text not null default 'app',
+  constraint quick_actions_surface_check check (surface in ('app', 'word'))
 );
 
 create index if not exists quick_actions_user_order_idx
   on public.quick_actions(user_id, sort_order, created_at);
+
+create index if not exists quick_actions_user_surface_order_idx
+  on public.quick_actions(user_id, surface, sort_order, created_at);
 
 create index if not exists quick_actions_workflow_idx
   on public.quick_actions(workflow_id);
@@ -654,23 +659,50 @@ begin
     );
 
     if item->>'type' = 'assistant' then
-    insert into public.quick_actions (
-      user_id,
-      workflow_id,
-      name,
-      prompt,
-      document_upload,
-      enabled,
-      sort_order
-    ) values (
-      p_user_id::uuid,
-      workflow_uuid,
-      coalesce(nullif(trim(item->>'quick_action_name'), ''), item->>'title'),
-      coalesce(item->>'quick_action_prompt', ''),
-      coalesce((item->>'document_upload')::boolean, false),
-      true,
-      coalesce((item->>'sort_order')::integer, installed_count)
-    );
+      insert into public.quick_actions (
+        user_id,
+        workflow_id,
+        name,
+        prompt,
+        document_upload,
+        enabled,
+        sort_order,
+        surface
+      ) values (
+        p_user_id::uuid,
+        workflow_uuid,
+        coalesce(nullif(trim(item->>'quick_action_name'), ''), item->>'title'),
+        coalesce(item->>'quick_action_prompt', ''),
+        coalesce((item->>'document_upload')::boolean, false),
+        true,
+        coalesce((item->>'sort_order')::integer, installed_count),
+        'app'
+      );
+
+      if coalesce((item->>'word_quick_action')::boolean, false) then
+        insert into public.quick_actions (
+          user_id,
+          workflow_id,
+          name,
+          prompt,
+          document_upload,
+          enabled,
+          sort_order,
+          surface
+        ) values (
+          p_user_id::uuid,
+          workflow_uuid,
+          coalesce(nullif(trim(item->>'quick_action_name'), ''), item->>'title'),
+          coalesce(
+            item->>'word_quick_action_prompt',
+            'Execute this workflow on this Word document.'
+          ),
+          false,
+          true,
+          coalesce((item->>'sort_order')::integer, installed_count),
+          'word'
+        );
+      end if;
     end if;
 
     installed_count := installed_count + 1;

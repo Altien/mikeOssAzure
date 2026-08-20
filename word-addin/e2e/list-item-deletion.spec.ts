@@ -37,10 +37,7 @@ test.beforeEach(async ({ addin }) => {
 });
 
 /** Send a follow-up message and return the document_context it carried. */
-async function nextDocumentContext(
-  addin: Addin,
-  page: Page,
-): Promise<string> {
+async function nextDocumentContext(addin: Addin, page: Page): Promise<string> {
   await addin.mockChatStream(["ok"]);
   await page.getByPlaceholder("How can I help?").fill("Thanks");
   const requestPromise = page.waitForRequest("**/word-chat");
@@ -60,6 +57,12 @@ async function chooseApplyMode(
   );
 }
 
+async function applyReviewProposal(page: Page): Promise<void> {
+  const apply = page.getByRole("button", { name: "Apply", exact: true });
+  await expect(apply).toHaveCount(1);
+  await apply.click();
+}
+
 test("review mode: accepting a full-item deletion removes the paragraph and renumbers", async ({
   addin,
   page,
@@ -70,6 +73,7 @@ test("review mode: accepting a full-item deletion removes the paragraph and renu
 
   await page.getByPlaceholder("How can I help?").fill("Remove point 2");
   await page.getByRole("button", { name: "Send" }).click();
+  await applyReviewProposal(page);
 
   // The whole paragraph is deleted, not just the matched text run.
   await expect
@@ -90,7 +94,7 @@ test("review mode: accepting a full-item deletion removes the paragraph and renu
   expect(context).not.toContain("3.");
 });
 
-test("direct mode: the item is removed and renumbered with no review step", async ({
+test("edit mode: the item is applied immediately as a tracked change", async ({
   addin,
   page,
 }) => {
@@ -103,13 +107,14 @@ test("direct mode: the item is removed and renumbered with no review step", asyn
   await page.getByRole("button", { name: "Send" }).click();
 
   await expect
-    .poll(async () => (await addin.wordCalls()).acceptedChanges)
+    .poll(async () => (await addin.wordCalls()).trackedChanges)
     .toEqual([
       { text: "", location: "DeleteParagraph", original: "Bar goes second." },
     ]);
-  await expect(
-    page.getByRole("button", { name: "Accept", exact: true }),
-  ).toHaveCount(0);
+  const accept = page.getByRole("button", { name: "Accept", exact: true });
+  await expect(accept).toHaveCount(1);
+  expect((await addin.wordCalls()).acceptedChanges).toEqual([]);
+  await accept.click();
 
   const context = await nextDocumentContext(addin, page);
   expect(context).toContain("1. Foo goes first.");
@@ -127,6 +132,7 @@ test("rejecting the deletion restores the item with its original number", async 
 
   await page.getByPlaceholder("How can I help?").fill("Remove point 2");
   await page.getByRole("button", { name: "Send" }).click();
+  await applyReviewProposal(page);
 
   const reject = page.getByRole("button", { name: "Reject", exact: true });
   await expect(reject).toHaveCount(1);
@@ -151,13 +157,18 @@ test("a partial deletion inside an item never escalates to the paragraph", async
     documentText: "Foo goes first.\nBar goes second and wanders on.",
     documentBlocks: [
       { text: "Foo goes first.", listString: "1.", listLevel: 0 },
-      { text: "Bar goes second and wanders on.", listString: "2.", listLevel: 0 },
+      {
+        text: "Bar goes second and wanders on.",
+        listString: "2.",
+        listLevel: 0,
+      },
     ],
   });
   await addin.expectAuthedShell();
 
   await page.getByPlaceholder("How can I help?").fill("Trim point 2");
   await page.getByRole("button", { name: "Send" }).click();
+  await applyReviewProposal(page);
 
   // The safety property: only a whole-paragraph quote may remove a
   // paragraph. A deletion of part of the item stays a text-range delete.
@@ -184,6 +195,7 @@ test("an original quoting the renderer's list marker still deletes the paragraph
 
   await page.getByPlaceholder("How can I help?").fill("Remove point 2");
   await page.getByRole("button", { name: "Send" }).click();
+  await applyReviewProposal(page);
 
   // "2. " is a renderer annotation. The stripped-marker retry adopts the
   // bare text FIRST, so the whole-paragraph equality check still fires.
@@ -245,6 +257,7 @@ test("a whole plain paragraph deletes too, leaving no empty line", async ({
 
   await page.getByPlaceholder("How can I help?").fill("Remove the aside");
   await page.getByRole("button", { name: "Send" }).click();
+  await applyReviewProposal(page);
 
   await expect
     .poll(async () => (await addin.wordCalls()).trackedChanges)

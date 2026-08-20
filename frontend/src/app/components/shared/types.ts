@@ -792,6 +792,7 @@ export interface Workflow {
     columns_config: ColumnConfig[] | null;
     is_system: boolean;
     is_default?: boolean;
+    default_key?: string | null;
     created_at: string;
     shared_by_name?: string | null;
     allow_edit?: boolean;
@@ -806,6 +807,7 @@ export interface QuickAction {
     name: string;
     prompt: string;
     document_upload: boolean;
+    surface: "app" | "word";
     enabled: boolean;
     sort_order: number;
     created_at: string;

@@ -85,7 +85,7 @@ export function SettingsPage({
               </p>
             </div>
             <PillButton
-              tone="white"
+              tone="danger"
               onClick={() => setClearConfirmOpen(true)}
               className="shrink-0"
             >
@@ -102,6 +102,7 @@ export function SettingsPage({
         title="Delete device-only chats?"
         primaryAction={{
           label: clearing ? "Deleting…" : "Delete chats",
+          tone: "danger",
           disabled: clearing,
           onClick: () => {
             setClearing(true);

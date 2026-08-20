@@ -59,7 +59,7 @@ test("cloud is default and local mode persists document chats in IndexedDB", asy
   await expect(page.getByText("A locally stored answer.")).toBeVisible();
   await page.getByRole("button", { name: "Completed in 1 step" }).click();
   await expect(page.getByText("Read", { exact: true })).toBeVisible();
-  await expect(page.getByText("Active Word document")).toBeVisible();
+  await expect(page.getByText("Demo Contract.docx")).toBeVisible();
   const [userBox, assistantBox] = await Promise.all([
     page.getByTestId("user-message-content").boundingBox(),
     page.getByText("A locally stored answer.").boundingBox(),
@@ -153,6 +153,7 @@ test("stopping a local edit stream preserves the assistant turn for reload", asy
     .getByPlaceholder("How can I help?")
     .fill("Correct the supplier typo");
   await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
   await expect
     .poll(async () => (await addin.wordDocument()).bookmarks.length)
     .toBe(1);
@@ -253,7 +254,7 @@ test("a clean SSE cancellation finalizes and persists a partial local turn", asy
     .getByPlaceholder("How can I help?")
     .fill("Finish this change locally");
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.getByText("Receiving change…")).toBeVisible();
+  await expect(page.getByText("Receiving change…")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Stop" }).click();
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();

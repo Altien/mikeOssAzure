@@ -27,6 +27,7 @@ test("streams a format block into Word as a formatted tracked change and resolve
 
   await page.getByPlaceholder("How can I help?").fill("Bold the heading");
   await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
 
   // The formatting write happened under TrackAll and no text was replaced.
   await expect
@@ -71,6 +72,7 @@ test("rejecting a format edit leaves the passage's styling decision to Word", as
 
   await page.getByPlaceholder("How can I help?").fill("Style the heading");
   await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
 
   // Both font properties were written; the mock coalesces them into one
   // Formatted revision, mirroring Word's per-run coalescing.
@@ -89,7 +91,7 @@ test("rejecting a format edit leaves the passage's styling decision to Word", as
   expect((await addin.wordCalls()).acceptedChanges).toEqual([]);
 });
 
-test("direct mode applies a format edit as final formatting with no pending revision", async ({
+test("Edit mode applies a format edit immediately and leaves it pending", async ({
   addin,
   page,
 }) => {
@@ -105,7 +107,7 @@ test("direct mode applies a format edit as final formatting with no pending revi
   await page.getByRole("button", { name: "Send" }).click();
 
   await expect
-    .poll(async () => (await addin.wordCalls()).acceptedChanges)
+    .poll(async () => (await addin.wordCalls()).trackedChanges)
     .toEqual([
       {
         text: "GOVERNING LAW.",
@@ -113,10 +115,10 @@ test("direct mode applies a format edit as final formatting with no pending revi
         original: "GOVERNING LAW.",
       },
     ]);
-  await expect(page.getByText("Applied to the document.")).toBeVisible();
+  expect((await addin.wordCalls()).acceptedChanges).toEqual([]);
   await expect(
     page.getByRole("button", { name: "Accept", exact: true }),
-  ).toHaveCount(0);
+  ).toBeVisible();
 });
 
 test("a heading format applies the paragraph style as a reviewable tracked change", async ({
@@ -131,6 +133,7 @@ test("a heading format applies the paragraph style as a reviewable tracked chang
 
   await page.getByPlaceholder("How can I help?").fill("Make it a heading");
   await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
 
   // The style write is recorded against the paragraph, tracked like any
   // other formatting revision — and "heading 1" normalizes to heading1.
