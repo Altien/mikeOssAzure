@@ -66,8 +66,29 @@ configured globally, its matching field is read-only.
 ## Authentication email
 
 Supabase Auth sends signup, email-change, and password-recovery messages.
-Configure production SMTP in the Supabase dashboard if those flows are enabled.
-Mike does not require a Resend API key.
+Configure production SMTP in the Supabase dashboard; Mike does not require a
+Resend API key for these messages.
+
+In **Authentication > URL Configuration**, set the Site URL to the deployed
+frontend origin and add that origin's `/auth/callback` URL to the redirect
+allow list. For example:
+
+```text
+https://your-mike.example/auth/callback
+```
+
+Enable email confirmation for production signups. Keep secure email change
+enabled so Supabase requires confirmation from both the current and proposed
+addresses. Set the minimum password length to 10; this applies when passwords
+are created or changed and does not invalidate existing shorter passwords. The
+same callback handles signup confirmation, confirmed email
+changes, and password-recovery links before sending the user to the appropriate
+Mike page.
+
+Review the Supabase email templates after changing the public Site URL, and
+test every link against the deployed frontend before inviting users. Existing
+deployments must also apply the latest migration so confirmed email changes are
+mirrored into `user_profiles`.
 
 ## Install and run
 

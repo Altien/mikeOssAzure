@@ -66,7 +66,10 @@ docker compose up -d --force-recreate auth
 ```
 
 Open [Mailpit](http://localhost:8025) to read the confirmation message. Mailpit
-also captures local email-change messages, and no email leaves your machine.
+also captures local email-change and password-reset messages, and no email
+leaves your machine. These links pass through `/auth/callback` and return to the
+relevant app screen. Local signup autoconfirm remains enabled by default; turn
+it off only when you specifically want to test the confirmation flow.
 
 ## Local models with Ollama
 

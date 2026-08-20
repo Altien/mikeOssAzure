@@ -16,7 +16,22 @@ docker compose up -d --force-recreate auth
 ## Production authentication email does not arrive
 
 Authentication email is sent by Supabase Auth. Check its email-provider
-settings and configure production SMTP in the Supabase dashboard.
+settings, delivery logs, and rate limits, and configure production SMTP in the
+Supabase dashboard. Mike intentionally shows the same password-reset response
+for registered and unregistered addresses, so that screen cannot confirm
+whether an account exists.
+
+## A confirmation or password-reset link is rejected
+
+Confirm that the deployed frontend's exact `/auth/callback` URL is present in
+the Supabase Auth redirect allow list and that the Site URL uses the correct
+scheme and hostname. Request a new message after correcting either value;
+authentication links expire and may only be usable once.
+
+For a secure email change, Supabase sends messages to both the current and new
+addresses. The change remains pending until both messages are confirmed. If an
+email change succeeds in Auth but the profile still shows the old address,
+verify that the latest database migration has been applied.
 
 ## Port 54322 is already allocated
 

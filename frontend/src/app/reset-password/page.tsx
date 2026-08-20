@@ -1,0 +1,238 @@
+"use client";
+
+import { Suspense, useEffect, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { Loader2 } from "lucide-react";
+import { Input } from "@/app/components/ui/input";
+import { PillButton } from "@/app/components/ui/pill-button";
+import { SiteLogo } from "@/app/components/site-logo";
+import {
+    authGlassCardClassName,
+    authInputClassName,
+} from "@/app/components/auth/authStyles";
+import {
+    MIN_PASSWORD_LENGTH,
+    minimumPasswordMessage,
+} from "@/app/components/auth/passwordPolicy";
+import { supabase } from "@/app/lib/supabase";
+
+function ResetPasswordContent() {
+    const searchParams = useSearchParams();
+    const [ready, setReady] = useState(false);
+    const [password, setPassword] = useState("");
+    const [confirmPassword, setConfirmPassword] = useState("");
+    const [loading, setLoading] = useState(false);
+    const [success, setSuccess] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const preview =
+        process.env.NODE_ENV !== "production"
+            ? searchParams.get("preview")
+            : null;
+    const isVerifyingPreview = preview === "reset-verifying";
+    const isUnavailablePreview = preview === "reset-unavailable";
+    const displayedReady = isUnavailablePreview || ready;
+    const displayedError = isUnavailablePreview
+        ? "This password-reset link is invalid or has expired."
+        : error;
+    const resetUnavailable =
+        displayedReady && !!displayedError && !password && !confirmPassword;
+    const verticallyCentered = !displayedReady || success || resetUnavailable;
+
+    useEffect(() => {
+        if (isVerifyingPreview || isUnavailablePreview) return;
+
+        let cancelled = false;
+        void supabase.auth
+            .getSession()
+            .then(({ data, error: sessionError }) => {
+                if (cancelled) return;
+                if (sessionError || !data.session) {
+                    setError(
+                        "This password-reset link is invalid or has expired.",
+                    );
+                }
+                setReady(true);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [isUnavailablePreview, isVerifyingPreview]);
+
+    async function handleSubmit(event: React.FormEvent) {
+        event.preventDefault();
+        setError(null);
+        if (password.length < MIN_PASSWORD_LENGTH) {
+            setError(`${minimumPasswordMessage}.`);
+            return;
+        }
+        if (password !== confirmPassword) {
+            setError("Passwords do not match.");
+            return;
+        }
+
+        setLoading(true);
+        try {
+            const { error: updateError } = await supabase.auth.updateUser({
+                password,
+            });
+            if (updateError) throw updateError;
+            await supabase.auth.signOut({ scope: "global" });
+            setSuccess(true);
+        } catch (updateError) {
+            setError(
+                updateError instanceof Error
+                    ? updateError.message
+                    : "Unable to update your password.",
+            );
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    return (
+        <div
+            className={`relative flex min-h-dvh justify-center bg-gray-50/80 px-6 ${
+                verticallyCentered
+                    ? "items-center py-10"
+                    : "items-start pb-10 pt-32 md:pt-40"
+            }`}
+        >
+            <div className="absolute top-4 md:top-8 left-1/2 -translate-x-1/2">
+                <SiteLogo size="lg" asLink />
+            </div>
+            <div className="w-full max-w-md">
+                <div className={authGlassCardClassName}>
+                    {!displayedReady ? (
+                        <div>
+                            <Loader2 className="h-6 w-6 animate-spin text-gray-500" />
+                            <h1 className="mt-4 font-serif text-2xl font-medium text-gray-950">
+                                Verifying your reset link...
+                            </h1>
+                            <p className="mt-2 text-sm text-gray-500">
+                                This should only take a moment.
+                            </p>
+                        </div>
+                    ) : success ? (
+                        <div>
+                            <h1 className="text-2xl font-medium font-serif text-gray-950">
+                                Password updated
+                            </h1>
+                            <p className="mt-3 text-sm leading-relaxed text-gray-600">
+                                Your password has been changed. Log in again
+                                with your new password.
+                            </p>
+                            <PillButton
+                                asChild
+                                tone="black"
+                                size="normal"
+                                className="mt-6"
+                            >
+                                <Link href="/login">Log in</Link>
+                            </PillButton>
+                        </div>
+                    ) : resetUnavailable ? (
+                        <div>
+                            <h1 className="text-2xl font-medium font-serif text-gray-950">
+                                Reset link unavailable
+                            </h1>
+                            <p className="mt-3 text-sm leading-relaxed text-gray-600">
+                                {displayedError}
+                            </p>
+                            <PillButton
+                                asChild
+                                tone="black"
+                                size="normal"
+                                className="mt-6"
+                            >
+                                <Link href="/forgot-password">
+                                    Request another link
+                                </Link>
+                            </PillButton>
+                        </div>
+                    ) : (
+                        <>
+                            <h1 className="text-2xl font-medium font-serif text-gray-950">
+                                Choose a new password
+                            </h1>
+                            <p className="mt-2 text-sm text-gray-500">
+                                Use at least {MIN_PASSWORD_LENGTH} characters.
+                            </p>
+                            <form
+                                onSubmit={handleSubmit}
+                                className="mt-6 space-y-4"
+                            >
+                                <div>
+                                    <label
+                                        htmlFor="password"
+                                        className="mb-2 block text-sm font-medium text-gray-700"
+                                    >
+                                        New password
+                                    </label>
+                                    <Input
+                                        id="password"
+                                        type="password"
+                                        autoComplete="new-password"
+                                        value={password}
+                                        onChange={(event) =>
+                                            setPassword(event.target.value)
+                                        }
+                                        required
+                                        className={`w-full ${authInputClassName}`}
+                                    />
+                                </div>
+                                <div>
+                                    <label
+                                        htmlFor="confirmPassword"
+                                        className="mb-2 block text-sm font-medium text-gray-700"
+                                    >
+                                        Confirm new password
+                                    </label>
+                                    <Input
+                                        id="confirmPassword"
+                                        type="password"
+                                        autoComplete="new-password"
+                                        value={confirmPassword}
+                                        onChange={(event) =>
+                                            setConfirmPassword(
+                                                event.target.value,
+                                            )
+                                        }
+                                        required
+                                        className={`w-full ${authInputClassName}`}
+                                    />
+                                </div>
+                                {error && (
+                                    <div className="rounded bg-red-50 p-3 text-sm text-red-600">
+                                        {error}
+                                    </div>
+                                )}
+                                <PillButton
+                                    type="submit"
+                                    tone="black"
+                                    size="normal"
+                                    disabled={
+                                        loading || !password || !confirmPassword
+                                    }
+                                    className="w-full"
+                                >
+                                    {loading
+                                        ? "Updating password..."
+                                        : "Update password"}
+                                </PillButton>
+                            </form>
+                        </>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+export default function ResetPasswordPage() {
+    return (
+        <Suspense fallback={null}>
+            <ResetPasswordContent />
+        </Suspense>
+    );
+}

@@ -44,20 +44,25 @@ export function WarningPopup({
         <div className="pointer-events-none fixed left-1/2 top-5 z-[220] w-[min(92vw,520px)] -translate-x-1/2 px-4">
             <div
                 className={cn(
-                    "pointer-events-auto flex items-start gap-2 rounded-2xl border border-white/70 bg-red-50/75 px-3 py-2 text-xs shadow-[0_4px_12px_rgba(15,23,42,0.11),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-6px_12px_rgba(255,255,255,0.2)] backdrop-blur-2xl",
+                    "pointer-events-auto flex items-start gap-2 rounded-2xl border border-white/70 bg-white px-3 py-3 text-xs shadow-[0_4px_12px_rgba(15,23,42,0.11),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-6px_12px_rgba(255,255,255,0.2)] backdrop-blur-2xl",
                     className,
                 )}
             >
                 <div className="min-w-0 flex-1 self-center text-red-600">
                     {title && (
-                        <div className="flex items-center gap-1.5 font-medium mb-1">
+                        <div className="mb-1 flex items-center gap-1.5 text-sm font-medium">
                             {warningIcon}
                             {title}
                         </div>
                     )}
                     {message && (
                         <div
-                            className={cn(!title && "flex items-start gap-1.5")}
+                            className={cn(
+                                "text-black",
+                                title
+                                    ? "pl-[18px]"
+                                    : "flex items-start gap-1.5",
+                            )}
                         >
                             {!title && warningIcon}
                             <span className="min-w-0">{message}</span>
@@ -81,7 +86,7 @@ export function WarningPopup({
                 <button
                     type="button"
                     onClick={onClose}
-                    className="shrink-0 text-red-700 transition-colors hover:text-red-500"
+                    className="shrink-0 text-black transition-colors hover:text-gray-600"
                     aria-label="Dismiss warning"
                 >
                     <X className="h-3.5 w-3.5" />
