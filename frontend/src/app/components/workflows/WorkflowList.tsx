@@ -22,6 +22,7 @@ import { TableToolbar } from "../shared/TableToolbar";
 import { RowActionMenuItems, RowActions } from "../shared/RowActions";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import { SubfolderSvgIcon } from "@/app/components/shared/FolderSvgIcon";
+import { EmptyState } from "@/app/components/ui/empty-state";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 import { LiquidDropdownSurface } from "@/app/components/ui/liquid-dropdown";
@@ -858,31 +859,31 @@ function WorkflowTable({
         </TableBody>
       ) : workflows.length === 0 ? (
         <TableEmptyState>
-          <WorkflowSkeuoIcon className="mb-4 h-8 w-8" />
-          <p className="font-serif text-2xl font-medium text-gray-900">
-            Workflows
-          </p>
-          <p className="mt-1 text-left text-xs text-gray-400">
-            {error || "Create a reusable workflow or import one from Add-ons."}
-          </p>
-          <PillButton
-            tone="black"
-            size="sm"
-            onClick={onCreate}
-            className="mt-4 px-3"
-          >
-            <Plus className="h-3.5 w-3.5" /> Create
-          </PillButton>
+          <EmptyState
+            icon={<WorkflowSkeuoIcon />}
+            title="Workflows"
+            description={
+              error || "Create a reusable workflow or import one from Add-ons."
+            }
+            action={
+              <PillButton
+                tone="black"
+                size="sm"
+                onClick={onCreate}
+                className="px-3"
+              >
+                <Plus className="h-3.5 w-3.5" /> Create
+              </PillButton>
+            }
+          />
         </TableEmptyState>
       ) : displayedWorkflows.length === 0 ? (
         <TableEmptyState>
-          <WorkflowSkeuoIcon className="mb-4 h-8 w-8" />
-          <p className="font-serif text-2xl font-medium text-gray-900">
-            No matching workflows
-          </p>
-          <p className="mt-1 text-left text-xs text-gray-400">
-            Adjust the table filters to see more workflows.
-          </p>
+          <EmptyState
+            icon={<WorkflowSkeuoIcon />}
+            title="No matching workflows"
+            description="Adjust the table filters to see more workflows."
+          />
         </TableEmptyState>
       ) : (
         <>
@@ -1157,14 +1158,14 @@ function AddonTable({
         </TableBody>
       ) : isEmpty ? (
         <TableEmptyState>
-          <WorkflowSkeuoIcon className="mb-4 h-8 w-8" />
-          <p className="font-serif text-2xl font-medium text-gray-900">
-            Add-ons
-          </p>
-          <p className="mt-1 text-xs text-gray-400">
-            {error ||
-              (activePackKey ? "This pack is empty." : "No add-ons found.")}
-          </p>
+          <EmptyState
+            icon={<WorkflowSkeuoIcon />}
+            title="Add-ons"
+            description={
+              error ||
+              (activePackKey ? "This pack is empty." : "No add-ons found.")
+            }
+          />
         </TableEmptyState>
       ) : (
         <TableBody>

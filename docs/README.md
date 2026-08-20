@@ -21,6 +21,11 @@
 - [Tamper-evident exports](tamper-evident-exports.md) — document hashes and
   optional signed manifests
 
+## Frontend
+
+- [Design system](design-system.md) — color/typography/spacing tokens, the shared
+  `components/ui` primitives, and the accessibility baseline
+
 ## Testing and CI
 
 - [End-to-end tests in CI](e2e-ci.md)

@@ -12,8 +12,10 @@ import { APP_SURFACE_HOVER_CLASS } from "@/app/components/ui/liquid-surface";
 const LIQUID_DROPDOWN_CLASS =
     "rounded-2xl border border-white/70 bg-app-surface shadow-[0_8px_24px_rgba(15,23,42,0.12),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-10px_24px_rgba(255,255,255,0.18)] backdrop-blur-2xl";
 
+// The highlighted item has to be distinguishable from a merely hovered one:
+// `app-surface-hover` is a ~1% luminance step, so focus also gets a ring.
 const LIQUID_DROPDOWN_ITEM_CLASS =
-    `cursor-pointer text-xs text-gray-600 transition-colors ${APP_SURFACE_HOVER_CLASS} focus:bg-app-surface-hover focus:text-gray-800`;
+    `cursor-pointer text-xs text-gray-600 transition-colors ${APP_SURFACE_HOVER_CLASS} focus:bg-app-surface-active focus:text-gray-900 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/40`;
 
 export function LiquidDropdownContent({
     className,

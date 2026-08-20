@@ -311,7 +311,10 @@ test("file upload type validation — .txt file is rejected", async ({ page }) =
 
     const fileChooserPromise = page.waitForEvent("filechooser");
     /* The Upload button label is "Upload" (not "Uploading…") when idle */
-    await page.getByRole("button", { name: "Upload" }).first().click();
+    await page
+        .getByRole("dialog", { name: "Add Documents" })
+        .getByRole("button", { name: "Upload" })
+        .click();
     const fileChooser = await fileChooserPromise;
 
     /*

@@ -21,6 +21,7 @@ import {
     SkeletonLine,
     TableScrollArea,
 } from "../shared/TablePrimitive";
+import { EmptyState } from "@/app/components/ui/empty-state";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { TabularReviewSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import { TRFirstColumnCell } from "./TRFirstColumnCell";
@@ -253,35 +254,34 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                     {dragOverFiles && (
                         <div className="absolute inset-0 z-[90] border-2 border-blue-400 bg-blue-50/40 pointer-events-none" />
                     )}
-                    <div className="flex flex-1 flex-col items-start justify-center w-full max-w-xs mx-auto">
-                        <TabularReviewSkeuoIcon className="mb-4 h-8 w-8" />
-                        <p className="text-2xl font-medium font-serif text-gray-900">
-                            Tabular Review
-                        </p>
-                        <p className="mt-1 text-xs text-gray-400 text-left">
-                            Add columns and documents to get started.
-                        </p>
-                        <div className="mt-4 flex items-center gap-2">
-                            <PillButton
-                                tone="black"
-                                size="sm"
-                                onClick={onAddColumn}
-                                className="px-3"
-                            >
-                                <Plus className="h-3.5 w-3.5" />
-                                Add Columns
-                            </PillButton>
-                            <PillButton
-                                tone="white"
-                                size="sm"
-                                onClick={onAddDocuments}
-                                className="px-3"
-                            >
-                                <Upload className="h-3.5 w-3.5" />
-                                Add Documents
-                            </PillButton>
-                        </div>
-                    </div>
+                    <EmptyState
+                        className="mx-auto w-full max-w-xs flex-1 justify-center"
+                        icon={<TabularReviewSkeuoIcon />}
+                        title="Tabular Review"
+                        description="Add columns and documents to get started."
+                        action={
+                            <div className="flex items-center gap-2">
+                                <PillButton
+                                    tone="black"
+                                    size="sm"
+                                    onClick={onAddColumn}
+                                    className="px-3"
+                                >
+                                    <Plus className="h-3.5 w-3.5" />
+                                    Add Columns
+                                </PillButton>
+                                <PillButton
+                                    tone="white"
+                                    size="sm"
+                                    onClick={onAddDocuments}
+                                    className="px-3"
+                                >
+                                    <Upload className="h-3.5 w-3.5" />
+                                    Add Documents
+                                </PillButton>
+                            </div>
+                        }
+                    />
                 </div>
             </TableScrollArea>
         );
