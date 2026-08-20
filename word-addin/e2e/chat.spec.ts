@@ -2005,7 +2005,9 @@ test("skips an edit whose target already contains an unrelated tracked revision"
   await page.getByRole("button", { name: "Send" }).click();
 
   await expect(
-    page.getByText("Skipped — source text was not found."),
+    page.getByText(
+      "Skipped — the target text already has tracked changes. Resolve those in Word first.",
+    ),
   ).toBeVisible();
   await openActivityStrip(page);
   await expect(page.getByText("Skipped tracked change")).toBeVisible();
@@ -2074,6 +2076,63 @@ test("keeps an edit reviewable through its passage when Word withholds revision 
   expect(calls.rejectedChanges).toEqual([]);
 });
 
+test("edits sharing replacement text resolve independently by location", async ({
+  addin,
+  page,
+}) => {
+  // Two different typos, one identical correction: both pending revisions
+  // carry the same Added text, and the host (like Word on the web) withholds
+  // revision proxies, so resolution goes through the document-level
+  // collection. Text alone cannot tell the two Added halves apart — this
+  // errored with "The revisions in this passage changed…" before location
+  // narrowing through the retained anchors.
+  await addin.mockChatStream([
+    "<original>teh Buyer</original>\n<replacement>the Buyer</replacement>\n<reason>Fix the typo.</reason>",
+  ]);
+  await addin.gotoTaskpane({
+    documentText:
+      "First teh Buyer pays the deposit.\nThen hte Buyer signs the lease.",
+    unmanagedTrackedChangeOriginals: ["teh Buyer", "hte Buyer"],
+  });
+  await addin.expectAuthedShell();
+
+  await page.getByPlaceholder("How can I help?").fill("Fix the first typo");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(
+    page.getByRole("button", { name: "Accept", exact: true }),
+  ).toBeVisible();
+
+  await addin.mockChatStream([
+    "<original>hte Buyer</original>\n<replacement>the Buyer</replacement>\n<reason>Fix the typo.</reason>",
+  ]);
+  await page.getByPlaceholder("How can I help?").fill("Fix the second typo");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(
+    page.getByRole("button", { name: "Accept", exact: true }),
+  ).toHaveCount(2);
+
+  // Accept the FIRST edit while the second's identical Added text is still
+  // pending — the collision the location narrowing exists for.
+  await page
+    .getByRole("button", { name: "Accept", exact: true })
+    .first()
+    .click();
+  await expect(page.getByText("Accepted.", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(/revisions in this passage changed/),
+  ).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Accept", exact: true }).click();
+  await expect(page.getByText("Accepted.", { exact: true })).toHaveCount(2);
+
+  const calls = await addin.wordCalls();
+  expect(calls.acceptedChanges).toEqual([
+    { text: "the Buyer", location: "After", original: "teh Buyer" },
+    { text: "the Buyer", location: "After", original: "hte Buyer" },
+  ]);
+  expect(calls.rejectedChanges).toEqual([]);
+});
+
 test("does not broaden one edit across repeated exact passages", async ({
   addin,
   page,
@@ -2091,7 +2150,9 @@ test("does not broaden one edit across repeated exact passages", async ({
   await page.getByRole("button", { name: "Send" }).click();
 
   await expect(
-    page.getByText("Skipped — source text appears more than once."),
+    page.getByText(
+      "Skipped — this text appears 2 times in the document. Tell Mike which one to change.",
+    ),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Accept", exact: true }),
@@ -2099,6 +2160,36 @@ test("does not broaden one edit across repeated exact passages", async ({
   const calls = await addin.wordCalls();
   expect(calls.searches).toBeGreaterThan(0);
   expect(calls.trackedChanges).toEqual([]);
+});
+
+test("an applied card names the paragraph the change landed in", async ({
+  addin,
+  page,
+}) => {
+  await addin.mockChatStream([
+    "<original>notify the Supplier</original>\n<replacement>notify Supplier Ltd.</replacement>\n<reason>Clarify the entity.</reason>",
+  ]);
+  await addin.gotoTaskpane({
+    documentText:
+      "Introduction\nThe Buyer will notify the Supplier before Friday.",
+    documentBlocks: [
+      { text: "Introduction", styleBuiltIn: "Heading1" },
+      { text: "The Buyer will notify the Supplier before Friday." },
+    ],
+  });
+  await addin.expectAuthedShell();
+
+  await page.getByPlaceholder("How can I help?").fill("Clarify the supplier");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  // The surrounding paragraph is shown so a wrong-location match is
+  // catchable before Accept.
+  await expect(
+    page.getByText("In: “The Buyer will notify the Supplier before Friday.”"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Accept", exact: true }),
+  ).toBeVisible();
 });
 
 test("plain prose answers offer no document mutation controls", async ({

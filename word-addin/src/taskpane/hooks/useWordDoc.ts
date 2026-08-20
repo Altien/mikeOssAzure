@@ -68,6 +68,13 @@ interface TrackedEditApplyResult {
   handle?: TrackedEditHandle;
   /** A hidden Word bookmark was inserted for reload-safe navigation. */
   persistentAnchor?: boolean;
+  /** Snippet of the paragraph the edit landed in, for wrong-place review. */
+  locationHint?: string;
+  /**
+   * Replace-all only: revision-free occurrences still awaiting their own
+   * apply call after this one. The caller keeps calling while positive.
+   */
+  remainingTargets?: number;
   reason?: TrackedEditApplyReason;
   error?: string;
 }
@@ -307,9 +314,51 @@ function normalizeBreaks(value: string): string {
   return value.replace(/[\r\n\v]+/g, "\n");
 }
 
+/**
+ * A whole-paragraph deletion's Deleted revision reports the paragraph mark
+ * after the quoted text, which <original> can never contain (Word's search
+ * rejects paragraph breaks), so strict equality alone would disown the
+ * revision. Trailing breaks beyond the quoted text are still this edit's.
+ */
+function deletedTextMatchesOriginal(text: string, original: string): boolean {
+  const normalized = normalizeBreaks(text);
+  return (
+    normalized === original || normalized.replace(/\n+$/, "") === original
+  );
+}
+
 /** True when the edit changes only character formatting, never text. */
 function isFormatEdit(edit: RedlineEdit): boolean {
   return !!edit.format && edit.format.length > 0;
+}
+
+const LOCATION_HINT_RADIUS = 60;
+
+/**
+ * Compact "where did this land" snippet: the matched paragraph's text,
+ * windowed around the located passage. Null when the paragraph adds no
+ * context beyond the passage itself — a hint that restates the original
+ * would only clutter the card.
+ */
+function buildLocationHint(
+  paragraphText: string,
+  original: string,
+): string | null {
+  const text = paragraphText.trim();
+  if (!text || text === original.trim()) return null;
+  const index = text.indexOf(original);
+  if (index < 0) {
+    const clipped = text.slice(0, LOCATION_HINT_RADIUS * 2).trimEnd();
+    return clipped.length < text.length ? `${clipped}…` : clipped;
+  }
+  const start = Math.max(0, index - LOCATION_HINT_RADIUS);
+  const end = Math.min(
+    text.length,
+    index + original.length + LOCATION_HINT_RADIUS,
+  );
+  const prefix = start > 0 ? "…" : "";
+  const suffix = end < text.length ? "…" : "";
+  return `${prefix}${text.slice(start, end).trim()}${suffix}`;
 }
 
 function trackedChangesMatchEdit(
@@ -345,7 +394,7 @@ function trackedChangesMatchEdit(
     onlyExpectedTypes &&
     normalizeBreaks(addedText) ===
       normalizeBreaks(toWordText(edit.replacement)) &&
-    normalizeBreaks(deletedText) === normalizeBreaks(edit.original)
+    deletedTextMatchesOriginal(deletedText, normalizeBreaks(edit.original))
   );
 }
 
@@ -433,7 +482,7 @@ function matchesForSides(
     deleted: changes.filter(
       (change) =>
         String(change.type).toLowerCase() === "deleted" &&
-        normalizeBreaks(change.text) === original,
+        deletedTextMatchesOriginal(change.text, original),
     ),
     formatted: changes.filter(
       (change) =>
@@ -562,6 +611,69 @@ async function resolveEditSidesThroughAnchor(
   });
 }
 
+/** WordApi 1.3 adds Range.compareLocationWith, the read-only relation probe. */
+function supportsRangeComparison(): boolean {
+  try {
+    return (
+      Office.context?.requirements?.isSetSupported?.("WordApi", "1.3") ?? false
+    );
+  } catch {
+    return false;
+  }
+}
+
+// Relations that place a candidate revision's range within (or on the
+// boundary of) an anchor on the edited passage. The `contains` variants
+// matter because hosts disagree on exact containment for the same content
+// (office-js#2527), and `contains` excludes the shared boundary characters,
+// so `equal`-adjacent variants must all be accepted as a set.
+const ANCHOR_CONTAINMENT_RELATIONS = new Set([
+  "equal",
+  "inside",
+  "insidestart",
+  "insideend",
+  "contains",
+  "containsstart",
+  "containsend",
+]);
+// Split authoring writes the insertion immediately after the deleted
+// original, so relative to a tight anchor spanning only the inserted text
+// the Deleted revision sits adjacent rather than inside.
+const ANCHOR_ADJACENT_RELATIONS = new Set(["adjacentbefore", "adjacentafter"]);
+
+function relationMatchesAnchor(
+  relation: unknown,
+  allowAdjacent: boolean,
+): boolean {
+  const value = String(relation ?? "").toLowerCase();
+  return (
+    ANCHOR_CONTAINMENT_RELATIONS.has(value) ||
+    (allowAdjacent && ANCHOR_ADJACENT_RELATIONS.has(value))
+  );
+}
+
+/**
+ * Filter candidate revisions to the ones whose range relates to the anchor.
+ * compareLocationWith is read-only, unlike expandTo/intersectWith which
+ * pollute the undo stack on Word for the web (office-js#5715). One sync
+ * covers every queued comparison.
+ */
+async function narrowChangesByAnchor(
+  context: Word.RequestContext,
+  candidates: readonly Word.TrackedChange[],
+  anchor: Word.Range,
+  allowAdjacent: boolean,
+): Promise<Word.TrackedChange[]> {
+  if (candidates.length === 0) return [];
+  const relations = candidates.map((change) =>
+    change.getRange("Whole").compareLocationWith(anchor),
+  );
+  await context.sync();
+  return candidates.filter((_, index) =>
+    relationMatchesAnchor(relations[index]?.value, allowAdjacent),
+  );
+}
+
 /**
  * Last-resort resolution against the whole document's pending revisions, in
  * one atomic batch. Word for the web reports revisions unreliably through
@@ -569,42 +681,91 @@ async function resolveEditSidesThroughAnchor(
  * replacement, or nothing at all — while the body-level collection stays
  * accurate. Scope safety comes from the exactly-one-per-side guard: if the
  * document holds more than one pending revision with this edit's text on
- * either side, nothing is touched.
+ * either side, nothing is touched — unless one of the edit's own retained
+ * anchors can narrow the candidates by LOCATION to exactly one per side.
+ * "Exactly one inside my own passage" is strictly stronger than the old
+ * document-wide rule, and it is what lets two pending Mike edits that share
+ * replacement text (the same correction in two places) resolve
+ * independently. Each anchor gets its own batch: a stale proxy fails its
+ * whole Word.run, and the next anchor must still get its chance.
  */
 async function resolveEditThroughBody(
   decision: TrackedEditDecision,
   edit: RedlineEdit,
+  anchors: readonly Word.Range[] = [],
 ): Promise<"resolved" | "changed" | "empty"> {
-  return Word.run(async (context) => {
+  const direct = await resolveEditThroughBodyOnce(decision, edit, null);
+  if (direct !== "ambiguous") return direct;
+  if (!supportsRangeComparison()) return "changed";
+  for (const anchor of anchors) {
+    try {
+      const outcome = await resolveEditThroughBodyOnce(decision, edit, anchor);
+      if (outcome !== "ambiguous") return outcome;
+    } catch (error) {
+      // Stale anchor; the next one still gets its chance.
+      console.debug("[tracked-edit/resolve] anchor narrowing failed", error);
+    }
+  }
+  return "changed";
+}
+
+async function resolveEditThroughBodyOnce(
+  decision: TrackedEditDecision,
+  edit: RedlineEdit,
+  anchor: Word.Range | null,
+): Promise<"resolved" | "changed" | "empty" | "ambiguous"> {
+  const batch = async (
+    context: Word.RequestContext,
+  ): Promise<"resolved" | "changed" | "empty" | "ambiguous"> => {
     const collection = context.document.body.getTrackedChanges();
     collection.load("items");
     await context.sync();
     if (collection.items.length === 0) return "empty" as const;
     for (const change of collection.items) change.load(["type", "text"]);
     await context.sync();
-    const matches = matchesForSides(collection.items, edit);
+    const raw = matchesForSides(collection.items, edit);
     const sides = editRevisionSides(edit);
-    if (sides.added && matches.added.length !== 1) return "changed" as const;
-    if (sides.deleted && matches.deleted.length !== 1) {
+
+    // A required side with no text match anywhere is a definitive miss; no
+    // amount of location narrowing can conjure the revision back.
+    if (sides.added && raw.added.length === 0) return "changed" as const;
+    if (sides.deleted && raw.deleted.length === 0) return "changed" as const;
+    if (sides.formatted && raw.formatted.length === 0) {
       return "changed" as const;
     }
-    if (sides.formatted && matches.formatted.length === 0) {
-      return "changed" as const;
-    }
-    // Style revisions can carry empty text, which cannot disambiguate two
-    // pending paragraph-format revisions at document scope — the body-wide
-    // fallback therefore demands a unique match for style edits.
-    if (
-      sides.formatted &&
-      (edit.format ?? []).some(isParagraphStyleFormat) &&
-      matches.formatted.length !== 1
-    ) {
-      return "changed" as const;
-    }
+
+    const narrowSide = async (
+      candidates: Word.TrackedChange[],
+      allowAdjacent: boolean,
+    ): Promise<Word.TrackedChange[]> =>
+      candidates.length <= 1 || !anchor
+        ? candidates
+        : narrowChangesByAnchor(context, candidates, anchor, allowAdjacent);
+
+    const added = sides.added ? await narrowSide(raw.added, false) : [];
+    const deleted = sides.deleted ? await narrowSide(raw.deleted, true) : [];
+    // Non-style formatted revisions keep their historical semantics: every
+    // text-matching Formatted revision belongs to this edit, so narrowing
+    // could only wrongly drop pieces of it. Style revisions can carry empty
+    // text, which cannot disambiguate two pending paragraph-format revisions
+    // by content — location narrowing is exactly what they need.
+    const styleScoped =
+      sides.formatted && (edit.format ?? []).some(isParagraphStyleFormat);
+    const formatted = styleScoped
+      ? await narrowSide(raw.formatted, false)
+      : raw.formatted;
+
+    const sidesSatisfied =
+      (!sides.added || added.length === 1) &&
+      (!sides.deleted || deleted.length === 1) &&
+      (!sides.formatted ||
+        (styleScoped ? formatted.length === 1 : formatted.length >= 1));
+    if (!sidesSatisfied) return "ambiguous" as const;
+
     const targets = [
-      ...(sides.added ? matches.added : []),
-      ...(sides.deleted ? matches.deleted : []),
-      ...(sides.formatted ? matches.formatted : []),
+      ...(sides.added ? added : []),
+      ...(sides.deleted ? deleted : []),
+      ...(sides.formatted ? formatted : []),
     ];
     if (targets.length === 0) return "changed" as const;
     for (const change of targets) {
@@ -613,7 +774,8 @@ async function resolveEditThroughBody(
     }
     await context.sync();
     return "resolved" as const;
-  });
+  };
+  return anchor ? Word.run([anchor], batch) : Word.run(batch);
 }
 
 /**
@@ -675,7 +837,9 @@ function pickEditDocumentRevisions(
     (view) => view.type === "Insert" && view.text === wordReplacement,
   );
   const allDeletes = views.filter((view) => view.type === "Delete");
-  const deletedExact = allDeletes.filter((view) => view.text === original);
+  const deletedExact = allDeletes.filter((view) =>
+    deletedTextMatchesOriginal(view.text, original),
+  );
   const soleDelete = allDeletes.length === 1 ? allDeletes[0] : undefined;
   const deleted =
     deletedExact.length > 0
@@ -764,11 +928,82 @@ async function loadDocumentRevisionViews(
   }));
 }
 
+/**
+ * True when a failed revision pick could still be rescued by location
+ * narrowing: some required side matched MORE than one candidate by text, so
+ * the miss is ambiguity, not absence.
+ */
+function documentRevisionPickIsAmbiguous(
+  views: readonly DocumentRevisionView[],
+  edit: RedlineEdit,
+): boolean {
+  const wordReplacement = normalizeBreaks(toWordText(edit.replacement));
+  const original = normalizeBreaks(edit.original);
+  const sides = editRevisionSides(edit);
+  const styleScoped = (edit.format ?? []).some(isParagraphStyleFormat);
+  const added = views.filter(
+    (view) => view.type === "Insert" && view.text === wordReplacement,
+  ).length;
+  const deleted = views.filter(
+    (view) =>
+      view.type === "Delete" &&
+      deletedTextMatchesOriginal(view.text, original),
+  ).length;
+  const formatted = views.filter(
+    (view) =>
+      FORMAT_REVISION_TYPES.has(view.type) &&
+      (styleScoped
+        ? view.text.length === 0 || view.text.includes(original)
+        : view.text === original),
+  ).length;
+  return (
+    (sides.added && added > 1) ||
+    (sides.deleted && deleted > 1) ||
+    (sides.formatted && styleScoped && formatted > 1)
+  );
+}
+
+/**
+ * Mirrors resolveEditThroughBody()'s anchor-narrowing contract on the
+ * desktop Word.Revision surface: exact-match first, then one retry per
+ * retained anchor when text alone is ambiguous.
+ */
 async function resolveEditThroughDocumentRevisions(
   decision: TrackedEditDecision,
   edit: RedlineEdit,
+  anchors: readonly Word.Range[] = [],
 ): Promise<"resolved" | "changed" | "empty"> {
-  return Word.run(async (context) => {
+  const direct = await resolveEditThroughDocumentRevisionsOnce(
+    decision,
+    edit,
+    null,
+  );
+  if (direct !== "ambiguous") return direct;
+  if (!supportsRangeComparison()) return "changed";
+  for (const anchor of anchors) {
+    try {
+      const outcome = await resolveEditThroughDocumentRevisionsOnce(
+        decision,
+        edit,
+        anchor,
+      );
+      if (outcome !== "ambiguous") return outcome;
+    } catch (error) {
+      // Stale anchor; the next one still gets its chance.
+      console.debug("[tracked-edit/resolve] anchor narrowing failed", error);
+    }
+  }
+  return "changed";
+}
+
+async function resolveEditThroughDocumentRevisionsOnce(
+  decision: TrackedEditDecision,
+  edit: RedlineEdit,
+  anchor: Word.Range | null,
+): Promise<"resolved" | "changed" | "empty" | "ambiguous"> {
+  const batch = async (
+    context: Word.RequestContext,
+  ): Promise<"resolved" | "changed" | "empty" | "ambiguous"> => {
     const views = await loadDocumentRevisionViews(context);
     if (views.length === 0) return "empty" as const;
     console.debug(
@@ -776,19 +1011,40 @@ async function resolveEditThroughDocumentRevisions(
         views.map(({ type, text }) => ({ type, textLength: text.length })),
       )}`,
     );
+    let candidates: DocumentRevisionView[] = [...views];
+    if (anchor) {
+      const relations = views.map((view) =>
+        view.revision.range.compareLocationWith(anchor),
+      );
+      await context.sync();
+      candidates = views.filter((view, index) =>
+        relationMatchesAnchor(
+          relations[index]?.value,
+          // Deleted halves sit adjacent to a tight inserted-text anchor.
+          view.type === "Delete",
+        ),
+      );
+    }
     const targets = await pickEditDocumentRevisionsInContext(
       context,
-      views,
+      candidates,
       edit,
     );
-    if (!targets) return "changed" as const;
+    if (!targets) {
+      // Ambiguity is judged against the FULL inventory: a different anchor
+      // may narrow it successfully even when this one could not.
+      return documentRevisionPickIsAmbiguous(views, edit)
+        ? ("ambiguous" as const)
+        : ("changed" as const);
+    }
     for (const view of targets) {
       if (decision === "accept") view.revision.accept();
       else view.revision.reject();
     }
     await context.sync();
     return "resolved" as const;
-  });
+  };
+  return anchor ? Word.run([anchor], batch) : Word.run(batch);
 }
 
 /** Resolve one retained logical edit without touching any other revisions. */
@@ -910,8 +1166,13 @@ async function resolveTrackedEditNow(
             ? await resolveEditThroughDocumentRevisions(
                 decision,
                 entry.expectedEdit,
+                entry.ranges,
               )
-            : await resolveEditThroughBody(decision, entry.expectedEdit);
+            : await resolveEditThroughBody(
+                decision,
+                entry.expectedEdit,
+                entry.ranges,
+              );
         } catch (error) {
           throw (
             anchorFailure ??
@@ -1792,7 +2053,10 @@ export function useWordDoc() {
    * Apply model-proposed edits to existing document text as tracked changes.
    *
    * Each edit's `original` is located with Word's search API (case-sensitive)
-   * and applied only when it identifies one exact range. The replacement runs
+   * and applied only when it identifies one exact range — unless the edit
+   * carries `occurrence: "all"`, which applies ONE occurrence per call (last
+   * revision-free match first) and reports `remainingTargets` so the caller
+   * can keep calling until every occurrence is applied. The replacement runs
    * while `changeTrackingMode` is TrackAll, so
    * the result is a genuine redline — deletion struck through, insertion
    * marked — that the user can accept or reject per change in Word's Review
@@ -1858,7 +2122,21 @@ export function useWordDoc() {
               }
 
               try {
-                let matches = doc.body.search(original, { matchCase: true });
+                // Replace-all guards against substring over-reach ("Bank"
+                // inside "Banking") with matchWholeWord where it can be
+                // trusted — the option is unreliable on Word for the web for
+                // accented text and @/#-prefixed terms (office-js#985,
+                // #3360, #5223), so only ASCII-word-bounded originals opt in.
+                const replaceAll = edit.occurrence === "all";
+                const wholeWordSafe =
+                  replaceAll &&
+                  /^[A-Za-z0-9_]/.test(original) &&
+                  /[A-Za-z0-9_]$/.test(original);
+                const searchOptions = {
+                  matchCase: true,
+                  ...(wholeWordSafe ? { matchWholeWord: true } : {}),
+                };
+                let matches = doc.body.search(original, searchOptions);
                 matches.load("items");
                 await context.sync();
 
@@ -1873,9 +2151,7 @@ export function useWordDoc() {
                 if (matches.items.length === 0) {
                   const stripped = stripStructuralMarkers(original);
                   if (stripped) {
-                    const retry = doc.body.search(stripped, {
-                      matchCase: true,
-                    });
+                    const retry = doc.body.search(stripped, searchOptions);
                     retry.load("items");
                     await context.sync();
                     if (retry.items.length > 0) {
@@ -1895,10 +2171,12 @@ export function useWordDoc() {
                   continue;
                 }
 
-                // A model block describes one concrete source passage. Applying
-                // it to every identical clause would silently broaden the edit,
-                // so require an unambiguous exact location.
-                if (matches.items.length > 1) {
+                // A model block describes one concrete source passage unless
+                // it explicitly carries <occurrence>all</occurrence>.
+                // Applying it to every identical clause without that consent
+                // would silently broaden the edit, so require an unambiguous
+                // exact location.
+                if (matches.items.length > 1 && !replaceAll) {
                   result.status = "skipped";
                   result.reason = "ambiguous";
                   result.error = `Found ${matches.items.length} exact matches; no edit was applied.`;
@@ -1907,8 +2185,10 @@ export function useWordDoc() {
                 }
 
                 // Never mix Mike's lifecycle with revisions that were already
-                // present in the exact target. Skipping the whole logical edit
-                // also avoids partially applying a repeated occurrence.
+                // present in the exact target. A single-occurrence edit skips
+                // wholesale; a replace-all only drops the occupied
+                // occurrences — its own earlier passes come back through this
+                // filter, which is what retires them.
                 const existingCollections = matches.items.map((match) => {
                   const collection = match.getTrackedChanges();
                   collection.load("items");
@@ -1916,15 +2196,91 @@ export function useWordDoc() {
                 });
                 await context.sync();
 
+                const revisionFreeItems = matches.items.filter(
+                  (_match, matchIndex) =>
+                    existingCollections[matchIndex]?.items.length === 0,
+                );
                 if (
-                  existingCollections.some(
-                    (collection) => collection.items.length > 0,
-                  )
+                  replaceAll
+                    ? revisionFreeItems.length === 0
+                    : revisionFreeItems.length !== matches.items.length
                 ) {
                   result.status = "skipped";
                   result.reason = "pre-existing-revisions";
                   report.edits.push(result);
                   continue;
+                }
+
+                // One occurrence per call, LAST revision-free match first:
+                // Word for the web mis-tracks later matches once an earlier
+                // one changes length inside the same batch (office-js#2800),
+                // so replace-all works backwards through the document across
+                // calls, and the caller keeps calling while remainingTargets
+                // is positive.
+                const target = replaceAll
+                  ? revisionFreeItems[revisionFreeItems.length - 1]
+                  : matches.items[0];
+                if (!target) {
+                  result.status = "not-found";
+                  report.edits.push(result);
+                  continue;
+                }
+                const targetItems = [target];
+                if (replaceAll) {
+                  result.remainingTargets = revisionFreeItems.length - 1;
+                }
+
+                // The target's paragraph is loaded for every edit: the
+                // whole-paragraph deletion escalation below needs its text
+                // and table nesting, and every applied card carries a
+                // paragraph snippet so a wrong-location match is catchable
+                // before Accept. `original` is already the adopted
+                // marker-free text here, so the stripped-marker retry above
+                // cannot desynchronize the comparison.
+                const pureDeletion =
+                  !isFormatEdit(edit) &&
+                  toWordText(edit.replacement).length === 0;
+                let targetParagraph: Word.Paragraph | null = null;
+                try {
+                  targetParagraph = target.paragraphs.getFirst() ?? null;
+                  targetParagraph?.load("text,tableNestingLevel");
+                } catch {
+                  targetParagraph = null;
+                }
+                await context.sync();
+
+                if (targetParagraph) {
+                  const hint = buildLocationHint(
+                    normalizeBreaks(targetParagraph.text ?? "").replace(
+                      /\n+$/,
+                      "",
+                    ),
+                    original,
+                  );
+                  if (hint) result.locationHint = hint;
+                }
+
+                // "Remove point 2" must remove the paragraph, not just empty
+                // it: deleting only the text range keeps the paragraph mark
+                // and its list membership, so Word keeps numbering the empty
+                // item. When a delete-only edit quotes the paragraph's ENTIRE
+                // text, escalate to deleting the whole paragraph (mark
+                // included) — Word then renumbers the surviving items itself.
+                // The byte-equality gate means the escalation can never
+                // remove text the model did not quote. Table cells stay
+                // text-only: removing a cell's lone paragraph is a structural
+                // table change.
+                let deleteWholeParagraph = false;
+                if (pureDeletion && targetParagraph) {
+                  const paragraphText = normalizeBreaks(
+                    targetParagraph.text ?? "",
+                  )
+                    .replace(/\n+$/, "")
+                    .trim();
+                  deleteWholeParagraph =
+                    targetParagraph.tableNestingLevel === 0 &&
+                    paragraphText.length > 0 &&
+                    paragraphText === original.trim();
                 }
 
                 // Because every target range was revision-free immediately
@@ -1935,7 +2291,7 @@ export function useWordDoc() {
                   ? ""
                   : toWordText(edit.replacement);
                 const insertedRanges: Word.Range[] = [];
-                const generatedCollections = matches.items.map((match) => {
+                const generatedCollections = targetItems.map((match) => {
                   if (formatOnly) {
                     // Restyling under TrackAll produces a "Formatted"
                     // revision over the same text; the search range stays
@@ -1983,7 +2339,20 @@ export function useWordDoc() {
                       );
                       if (inserted) insertedRanges.push(inserted);
                     }
-                    match.delete();
+                    if (deleteWholeParagraph && targetParagraph) {
+                      // RangeLocation.whole includes the paragraph mark —
+                      // the character whose removal makes Word renumber.
+                      // Hosts refuse some paragraph-mark deletions (e.g. the
+                      // document's final paragraph); fall back to emptying
+                      // the text rather than losing the edit.
+                      try {
+                        targetParagraph.getRange("Whole").delete();
+                      } catch {
+                        match.delete();
+                      }
+                    } else {
+                      match.delete();
+                    }
                   }
                   const collection = match.getTrackedChanges();
                   collection.load("items");
@@ -1992,7 +2361,7 @@ export function useWordDoc() {
                 await context.sync();
                 mutationApplied = true;
 
-                result.appliedMatches = matches.items.length;
+                result.appliedMatches = targetItems.length;
 
                 const generatedChanges = generatedCollections.flatMap(
                   (collection) => collection.items,
@@ -2025,10 +2394,15 @@ export function useWordDoc() {
                 let paragraphRange: Word.Range | null = null;
                 try {
                   const paragraphSource =
-                    insertedRanges[0] ?? matches.items[0];
-                  paragraphRange = paragraphSource
-                    ? paragraphSource.paragraphs.getFirst().getRange("Whole")
-                    : null;
+                    insertedRanges[0] ?? targetItems[0];
+                  paragraphRange =
+                    deleteWholeParagraph && targetParagraph
+                      ? targetParagraph.getRange("Whole")
+                      : paragraphSource
+                        ? paragraphSource.paragraphs
+                            .getFirst()
+                            .getRange("Whole")
+                        : null;
                 } catch {
                   paragraphRange = null;
                 }
@@ -2061,7 +2435,7 @@ export function useWordDoc() {
                     ...(paragraphRange ? [paragraphRange] : []),
                     ...(insertedRanges.length > 0
                       ? insertedRanges
-                      : matches.items),
+                      : targetItems),
                   ];
                   const rereadCollections = rereadTargets.map((range) => {
                     const collection = range.getTrackedChanges();
@@ -2133,12 +2507,23 @@ export function useWordDoc() {
                       })
                       .map(({ range }) => range)
                   : [];
-                candidateRanges = [
-                  ...revisionRanges,
-                  ...insertedRanges,
-                  ...matches.items,
-                  ...(paragraphRange ? [paragraphRange] : []),
-                ];
+                // For a whole-paragraph deletion the paragraph range is the
+                // only anchor that provably spans the paragraph mark (the
+                // search range covers just the text), so it outranks the
+                // tight ranges there.
+                candidateRanges = deleteWholeParagraph
+                  ? [
+                      ...revisionRanges,
+                      ...(paragraphRange ? [paragraphRange] : []),
+                      ...insertedRanges,
+                      ...targetItems,
+                    ]
+                  : [
+                      ...revisionRanges,
+                      ...insertedRanges,
+                      ...targetItems,
+                      ...(paragraphRange ? [paragraphRange] : []),
+                    ];
                 for (const range of candidateRanges) range.track();
                 await context.sync();
 
@@ -2152,7 +2537,7 @@ export function useWordDoc() {
                       ? revisionRanges
                       : paragraphRange
                         ? [paragraphRange]
-                        : [...insertedRanges, ...matches.items];
+                        : [...insertedRanges, ...targetItems];
                   const [firstPersistentRange, ...remainingPersistentRanges] =
                     persistentRanges;
                   if (firstPersistentRange) {

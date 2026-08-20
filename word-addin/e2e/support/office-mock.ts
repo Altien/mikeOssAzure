@@ -90,6 +90,8 @@ interface StoredRevisionGroup {
   entry: WordCall;
   revisionIds: string[];
   resolution: "accepted" | "rejected" | null;
+  /** Set on whole-paragraph deletions: accepting removes this seed block. */
+  paragraphIndex?: number;
 }
 
 interface StoredBookmark {
@@ -105,6 +107,21 @@ interface StoredDocumentState {
   groups: Record<string, StoredRevisionGroup>;
   bookmarks: Record<string, StoredBookmark>;
   settings: Record<string, unknown>;
+  /**
+   * Seed indexes of documentBlocks removed by accepted whole-paragraph
+   * deletions. Like revisions, this is document state that survives a
+   * task-pane reload.
+   */
+  deletedParagraphIndexes?: number[];
+  /**
+   * Revision-group ids written at each search position, keyed
+   * `${query}#${matchIndex}`. Real Word ties revisions to positions in the
+   * document; without this, a re-search after an apply would mint fresh
+   * ranges that have "forgotten" the revisions sitting at their position —
+   * and a replace-all's later passes could never see which occurrences its
+   * earlier passes already covered.
+   */
+  searchAnchors?: Record<string, string[]>;
 }
 
 /**
@@ -127,6 +144,8 @@ export function installOfficeMock(seed: OfficeSeed): void {
     groups: {},
     bookmarks: {},
     settings: {},
+    deletedParagraphIndexes: [],
+    searchAnchors: {},
   });
 
   let documentState: StoredDocumentState;
@@ -143,6 +162,44 @@ export function installOfficeMock(seed: OfficeSeed): void {
     sessionStorage.setItem(documentStateKey, JSON.stringify(documentState));
   };
   if (!sessionStorage.getItem(documentStateKey)) persistDocumentState();
+
+  const markParagraphDeleted = (paragraphIndex: number): void => {
+    const deleted = documentState.deletedParagraphIndexes ?? [];
+    if (!deleted.includes(paragraphIndex)) deleted.push(paragraphIndex);
+    documentState.deletedParagraphIndexes = deleted;
+  };
+
+  /**
+   * The seeded blocks minus accepted whole-paragraph deletions, with numeric
+   * list labels recomputed over the survivors — the way Word renumbers a
+   * list once a member paragraph is gone. Bullet and alpha labels pass
+   * through unchanged. Each entry keeps its seed index so a deletion can be
+   * tagged back to the block it removes.
+   */
+  const liveBlocks = (): { block: SeedDocumentBlock; index: number }[] => {
+    if (!seed.documentBlocks) return [];
+    const deleted = new Set(documentState.deletedParagraphIndexes ?? []);
+    const survivors = seed.documentBlocks
+      .map((block, index) => ({ block, index }))
+      .filter(({ index }) => !deleted.has(index));
+    const countersByLevel = new Map<number, number>();
+    return survivors.map(({ block, index }) => {
+      if (block.tableValues || block.listString === undefined) {
+        // A non-list block ends the list; Word starts the next one at 1.
+        countersByLevel.clear();
+        return { block, index };
+      }
+      const numeric = /^(\d+)([.)])$/.exec(block.listString);
+      if (!numeric) return { block, index };
+      const level = block.listLevel ?? 0;
+      const next = (countersByLevel.get(level) ?? 0) + 1;
+      countersByLevel.set(level, next);
+      for (const deeper of Array.from(countersByLevel.keys())) {
+        if (deeper > level) countersByLevel.delete(deeper);
+      }
+      return { block: { ...block, listString: `${next}${numeric[2]}` }, index };
+    });
+  };
 
   w.__OFFICE_SEED__ = {
     documentText: seed.documentText ?? "",
@@ -244,7 +301,15 @@ export function installOfficeMock(seed: OfficeSeed): void {
       callback?.(info);
       return Promise.resolve(info);
     },
-    context: { document: officeDocument },
+    context: {
+      document: officeDocument,
+      // WordApi (incl. 1.3's Range.compareLocationWith) is mocked below; the
+      // WordApiDesktop sets stay unsupported so the app keeps exercising the
+      // getTrackedChanges code paths, like Word on the web.
+      requirements: {
+        isSetSupported: (set: string, _version?: string) => set === "WordApi",
+      },
+    },
     AsyncResultStatus,
   };
 
@@ -308,7 +373,12 @@ export function installOfficeMock(seed: OfficeSeed): void {
       );
       for (const groupId of groupIds) {
         const group = documentState.groups[groupId as string];
-        if (group) group.resolution = decision;
+        if (group) {
+          group.resolution = decision;
+          if (decision === "accepted" && group.paragraphIndex !== undefined) {
+            markParagraphDeleted(group.paragraphIndex);
+          }
+        }
       }
       persistDocumentState();
       return true;
@@ -386,6 +456,11 @@ export function installOfficeMock(seed: OfficeSeed): void {
           group.resolution = firstSibling.resolution;
           if (group.resolution === "accepted") {
             wordCalls.acceptedChanges.push({ ...group.entry });
+            // Accepting a whole-paragraph deletion removes the paragraph
+            // from the document; rejecting restores it untouched.
+            if (group.paragraphIndex !== undefined) {
+              markParagraphDeleted(group.paragraphIndex);
+            }
           } else {
             wordCalls.rejectedChanges.push({ ...group.entry });
           }
@@ -409,11 +484,18 @@ export function installOfficeMock(seed: OfficeSeed): void {
       label: string;
       entry: () => WordCall;
       revisionIds: () => string[];
+      /**
+       * Identity for compareLocationWith. Positions are real even when the
+       * host under-reports revisions (unmanagedTrackedChangeOriginals), so
+       * this defaults to revisionIds but can be supplied independently.
+       */
+      locationIds?: () => string[];
       transientChanges?: () => any[];
       cannotSelect?: boolean;
       stale?: boolean;
       isNullObject?: boolean;
     }): any => {
+      const locationIds = args.locationIds ?? args.revisionIds;
       const range: any = {
         context,
         isNullObject: !!args.isNullObject,
@@ -464,6 +546,19 @@ export function installOfficeMock(seed: OfficeSeed): void {
         paragraphs: {
           getFirst: () => ({ getRange: (_location?: string) => range }),
         },
+        // Read-only relation probe (WordApi 1.3). The mock's notion of
+        // position is revision-group identity: ranges minted during one
+        // apply share that apply's generated revision ids — visible through
+        // getTrackedChanges or not — so a revision's own range is "Inside"
+        // an anchor from the same logical edit and "Unrelated" to every
+        // other one.
+        compareLocationWith: (other: any) => {
+          const mine = new Set(locationIds());
+          const theirs: string[] = other?.__locationIds?.() ?? [];
+          const related = theirs.some((id: string) => mine.has(id));
+          return { value: related ? "Inside" : "Unrelated" };
+        },
+        __locationIds: locationIds,
         insertBookmark: (name: string) => {
           if (args.isNullObject) throw new Error("ItemNotFound");
           const entry = args.entry();
@@ -544,6 +639,7 @@ export function installOfficeMock(seed: OfficeSeed): void {
       entry: WordCall,
       original: string,
       replacement: string,
+      paragraphIndex?: number,
     ): string[] => {
       documentState.groupSequence++;
       const groupId = `revision-group-${documentState.groupSequence}`;
@@ -574,6 +670,7 @@ export function installOfficeMock(seed: OfficeSeed): void {
         entry: { ...entry },
         revisionIds: revisions.map((revision) => revision.id),
         resolution: null,
+        ...(paragraphIndex !== undefined ? { paragraphIndex } : {}),
       };
       persistDocumentState();
       return revisions.map((revision) => revision.id);
@@ -637,8 +734,39 @@ export function installOfficeMock(seed: OfficeSeed): void {
           cursor = foundAt + needle.length;
         }
 
-        const items = Array.from({ length: matchCount }, () => {
+        // When the seed describes blocks, tie each match to the surviving
+        // block containing the query so paragraph-level reads and deletions
+        // have a real target. Matches beyond the block list (or with no
+        // block seed at all) keep the flat-text behavior.
+        const blockMatches = seed.documentBlocks
+          ? liveBlocks().filter(
+              ({ block }) =>
+                !block.tableValues &&
+                (block.text ?? "").includes(String(query)),
+            )
+          : [];
+
+        const items = Array.from({ length: matchCount }, (_, itemIndex) => {
+          const matchedBlock = blockMatches[itemIndex] ?? null;
           let generatedRevisionIds: string[] = [];
+          // Ties the revisions written through this match to its POSITION,
+          // so a later search of the same query sees them again (real Word
+          // anchors revisions in the document; a fresh RangeCollection does
+          // not forget them).
+          const positionKey = `${String(query)}#${itemIndex}`;
+          const rememberPositionRevisions = (): void => {
+            if (generatedRevisionIds.length === 0) return;
+            documentState.searchAnchors = documentState.searchAnchors ?? {};
+            documentState.searchAnchors[positionKey] = generatedRevisionIds;
+            persistDocumentState();
+          };
+          const positionRevisionIds = (): string[] =>
+            Array.from(
+              new Set([
+                ...(documentState.searchAnchors?.[positionKey] ?? []),
+                ...generatedRevisionIds,
+              ]),
+            );
           let lastWrite: WordCall | null = null;
           const existingChanges = (
             seed.existingTrackedChangeOriginals ?? []
@@ -667,9 +795,13 @@ export function installOfficeMock(seed: OfficeSeed): void {
                   location: label,
                   original: query,
                 },
-              revisionIds: () => (revisionsVisible ? generatedRevisionIds : []),
+              revisionIds: () =>
+                revisionsVisible ? positionRevisionIds() : [],
+              // Location identity ignores revisionsVisible: a host that hides
+              // revisions from a range still knows where the range IS.
+              locationIds: () => positionRevisionIds(),
               transientChanges: () =>
-                generatedRevisionIds.length > 0 ? [] : existingChanges,
+                positionRevisionIds().length > 0 ? [] : existingChanges,
               stale,
               cannotSelect: (seed.unselectableOriginals ?? []).includes(query),
             });
@@ -685,6 +817,7 @@ export function installOfficeMock(seed: OfficeSeed): void {
                 query,
                 newText,
               );
+              rememberPositionRevisions();
             } else {
               generatedRevisionIds = [];
             }
@@ -708,6 +841,7 @@ export function installOfficeMock(seed: OfficeSeed): void {
                 query,
                 "",
               );
+              rememberPositionRevisions();
             }
           };
           // Formatting the found passage: each font-property write is
@@ -721,6 +855,7 @@ export function installOfficeMock(seed: OfficeSeed): void {
               generatedRevisionIds.length === 0
             ) {
               generatedRevisionIds = createFormattedRevisionGroup(entry, query);
+              rememberPositionRevisions();
             }
           };
           range.font = {
@@ -734,13 +869,46 @@ export function installOfficeMock(seed: OfficeSeed): void {
               recordFormatWrite("underline");
             },
           };
-          // Paragraph styles are paragraph-scoped; the mock's paragraph is
-          // the range itself, so a style write records like a font write.
+          // The containing paragraph. When the match resolved to a seeded
+          // block it reports that block's text (with the trailing paragraph
+          // mark real Word appends) so the app's whole-paragraph deletion
+          // check has something true to compare against; getRange("Whole")
+          // then yields a range whose delete() removes the paragraph itself
+          // — a Deleted revision carrying the paragraph mark, tagged with
+          // the block it deletes on accept. Paragraph styles record like
+          // font writes, as before.
           range.paragraphs = {
             getFirst: () => ({
-              getRange: (_location?: string) => range,
+              load: (_p?: any) => undefined,
+              get text() {
+                return matchedBlock ? `${matchedBlock.block.text ?? ""}\r` : "";
+              },
+              isListItem: matchedBlock?.block.listString !== undefined,
+              tableNestingLevel: 0,
               set styleBuiltIn(value: unknown) {
                 recordFormatWrite(`style:${String(value)}`);
+              },
+              getRange: (location?: string) => {
+                const paragraphRange = makeSearchRange("Select");
+                if (location === "Whole" && matchedBlock) {
+                  paragraphRange.delete = () => {
+                    if (
+                      doc.changeTrackingMode === ChangeTrackingMode.trackAll &&
+                      generatedRevisionIds.length === 0
+                    ) {
+                      const entry = recordWrite("", "DeleteParagraph", query);
+                      lastWrite = entry;
+                      generatedRevisionIds = createStoredRevisionGroup(
+                        entry,
+                        `${matchedBlock.block.text ?? ""}\r`,
+                        "",
+                        matchedBlock.index,
+                      );
+                      rememberPositionRevisions();
+                    }
+                  };
+                }
+                return paragraphRange;
               },
             }),
           };
@@ -754,52 +922,58 @@ export function installOfficeMock(seed: OfficeSeed): void {
     // the pane's structured read throws on the missing collections and
     // falls back to flat body.text, like a host without these APIs.
     if (seed.documentBlocks) {
-      const blocks = seed.documentBlocks;
+      // Getters, not eager arrays: a whole-paragraph deletion accepted in
+      // one Word.run must be gone (and the list renumbered) when the next
+      // structured read walks the body.
       (body as any).paragraphs = {
         load: (_properties?: any) => undefined,
-        items: blocks.flatMap((block) => {
-          if (block.tableValues) {
-            // One stand-in cell paragraph per table: the pane's body walker
-            // only needs the 0→N tableNestingLevel transition to splice the
-            // table (from body.tables) in at this position.
+        get items() {
+          return liveBlocks().flatMap(({ block }) => {
+            if (block.tableValues) {
+              // One stand-in cell paragraph per table: the pane's body walker
+              // only needs the 0→N tableNestingLevel transition to splice the
+              // table (from body.tables) in at this position.
+              return [
+                {
+                  text: "",
+                  styleBuiltIn: "Normal",
+                  isListItem: false,
+                  tableNestingLevel: 1,
+                  listItemOrNullObject: {
+                    isNullObject: true,
+                    load: (_p?: any) => undefined,
+                  },
+                },
+              ];
+            }
             return [
               {
-                text: "",
-                styleBuiltIn: "Normal",
-                isListItem: false,
-                tableNestingLevel: 1,
+                text: block.text ?? "",
+                styleBuiltIn: block.styleBuiltIn ?? "Normal",
+                isListItem: block.listString !== undefined,
+                tableNestingLevel: 0,
                 listItemOrNullObject: {
-                  isNullObject: true,
+                  isNullObject: block.listString === undefined,
+                  listString: block.listString,
+                  level: block.listLevel ?? 0,
                   load: (_p?: any) => undefined,
                 },
               },
             ];
-          }
-          return [
-            {
-              text: block.text ?? "",
-              styleBuiltIn: block.styleBuiltIn ?? "Normal",
-              isListItem: block.listString !== undefined,
-              tableNestingLevel: 0,
-              listItemOrNullObject: {
-                isNullObject: block.listString === undefined,
-                listString: block.listString,
-                level: block.listLevel ?? 0,
-                load: (_p?: any) => undefined,
-              },
-            },
-          ];
-        }),
+          });
+        },
       };
       (body as any).tables = {
         load: (_properties?: any) => undefined,
-        items: blocks
-          .filter((block) => block.tableValues)
-          .map((block) => ({
-            nestingLevel: 1,
-            values: block.tableValues,
-            load: (_p?: any) => undefined,
-          })),
+        get items() {
+          return liveBlocks()
+            .filter(({ block }) => block.tableValues)
+            .map(({ block }) => ({
+              nestingLevel: 1,
+              values: block.tableValues,
+              load: (_p?: any) => undefined,
+            }));
+        },
       };
     }
 

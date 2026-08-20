@@ -25,9 +25,14 @@ function toRedlineEdit(edit: StreamingRedlineEdit): RedlineEdit | null {
     original: edit.original,
     replacement: edit.replacement ?? "",
     ...(isFormatEdit ? { format: edit.format } : {}),
+    ...(edit.occurrence ? { occurrence: edit.occurrence } : {}),
     ...(edit.reason ? { reason: edit.reason } : {}),
   };
 }
+
+type TrackedEditApplyOutcome = Awaited<
+  ReturnType<ReturnType<typeof useWordDoc>["applyTrackedEdits"]>
+>["edits"][number];
 import type {
   EditDecision,
   EditRuntimeState,
@@ -36,6 +41,7 @@ import type {
 } from "../lib/wordChatTypes";
 import type { WordEditApplyMode } from "../lib/wordChatSettings";
 import { getEditKey } from "../lib/wordTrackedEditKeys";
+import { listWordEditAnchorIds } from "../lib/wordEditAnchors";
 
 export function useWordTrackedEdits({
   sessionKey,
@@ -53,8 +59,12 @@ export function useWordTrackedEdits({
   const sessionGenerationRef = useRef(0);
   const scheduledEditKeysRef = useRef(new Set<string>());
   const editApplyJobsRef = useRef(new Map<string, Promise<void>>());
-  const editHandlesRef = useRef(new Map<string, TrackedEditHandle>());
-  const persistentViewEditKeysRef = useRef(new Set<string>());
+  // One card can own several Word handles: a replace-all edit retains one
+  // per applied occurrence, resolved together.
+  const editHandlesRef = useRef(new Map<string, TrackedEditHandle[]>());
+  // Card key → the stable edit ID whose document bookmark backs "View" after
+  // a reload (a replace-all card's first restored pass, else the key itself).
+  const persistentViewEditKeysRef = useRef(new Map<string, string>());
   const resolvingEditKeysRef = useRef(new Set<string>());
   // Read at apply time so a mid-stream toggle governs only edits that have
   // not been scheduled yet; already-applied cards keep their lifecycle.
@@ -84,7 +94,7 @@ export function useWordTrackedEdits({
     return () => {
       mountedRef.current = false;
       sessionGenerationRef.current += 1;
-      const handles = [...editHandlesRef.current.values()];
+      const handles = [...editHandlesRef.current.values()].flat();
       editHandlesRef.current.clear();
       editApplyJobsRef.current.clear();
       persistentViewEditKeysRef.current.clear();
@@ -96,7 +106,7 @@ export function useWordTrackedEdits({
   useEffect(() => {
     sessionGenerationRef.current += 1;
     const generation = sessionGenerationRef.current;
-    const staleHandles = [...editHandlesRef.current.values()];
+    const staleHandles = [...editHandlesRef.current.values()].flat();
     editHandlesRef.current.clear();
     if (staleHandles.length > 0) void releaseTrackedEdits(staleHandles);
     scheduledEditKeysRef.current.clear();
@@ -105,7 +115,11 @@ export function useWordTrackedEdits({
     resolvingEditKeysRef.current.clear();
     setEditStateByKey({});
 
-    const descriptors: { key: string; edit: RedlineEdit }[] = [];
+    const descriptors: {
+      cardKey: string;
+      stableEditId: string;
+      edit: RedlineEdit;
+    }[] = [];
     for (const message of initialMessages) {
       if (message.role !== "assistant" || !message.id) continue;
       const projection = projectRedlineStream(message.content, true);
@@ -113,18 +127,40 @@ export function useWordTrackedEdits({
         if (!edit.sealed) continue;
         const sealedEdit = toRedlineEdit(edit);
         if (!sealedEdit) continue;
-        descriptors.push({
-          key: getEditKey(message.id, edit.blockIndex),
-          edit: sealedEdit,
-        });
+        const cardKey = getEditKey(message.id, edit.blockIndex);
+        if (sealedEdit.occurrence === "all") {
+          // A replace-all edit persisted one bookmark per applied pass under
+          // `${cardKey}#${pass}`; the anchor registry says how many. When
+          // the registry is unavailable, probe the first few deterministic
+          // ids — a missing bookmark is a cheap not-found in the batch.
+          let passIds: string[] = [];
+          try {
+            passIds = listWordEditAnchorIds(`${cardKey}#`);
+          } catch {
+            passIds = [];
+          }
+          if (passIds.length === 0) {
+            passIds = Array.from({ length: 8 }, (_, i) => `${cardKey}#${i}`);
+          }
+          passIds.sort(
+            (a, b) =>
+              Number(a.split("#").pop() ?? 0) -
+              Number(b.split("#").pop() ?? 0),
+          );
+          for (const stableEditId of passIds) {
+            descriptors.push({ cardKey, stableEditId, edit: sealedEdit });
+          }
+          continue;
+        }
+        descriptors.push({ cardKey, stableEditId: cardKey, edit: sealedEdit });
       }
     }
     if (descriptors.length === 0) return;
 
     setEditStateByKey((current) => {
       const next = { ...current };
-      for (const { key } of descriptors) {
-        next[key] = { status: "restoring", busy: true };
+      for (const { cardKey } of descriptors) {
+        next[cardKey] = { status: "restoring", busy: true };
       }
       return next;
     });
@@ -134,7 +170,7 @@ export function useWordTrackedEdits({
     // stored edit. The batch keeps per-edit failure isolation internally.
     void (async () => {
       const results = await restoreTrackedEdits(
-        descriptors.map(({ key, edit }) => ({ stableEditId: key, edit })),
+        descriptors.map(({ stableEditId, edit }) => ({ stableEditId, edit })),
       );
       if (!mountedRef.current || generation !== sessionGenerationRef.current) {
         const staleHandles = results.flatMap((result) =>
@@ -144,31 +180,63 @@ export function useWordTrackedEdits({
         return;
       }
 
-      for (const result of results) {
-        const key = result.stableEditId;
+      // Aggregate per card: a replace-all card owns several pass results,
+      // and any restored pass keeps the whole card actionable.
+      interface CardRestoreBucket {
+        handles: TrackedEditHandle[];
+        viewId?: string;
+        anyViewOnly: boolean;
+        firstError?: string;
+      }
+      const byCard = new Map<string, CardRestoreBucket>();
+      results.forEach((result, resultIndex) => {
+        const descriptor = descriptors[resultIndex];
+        if (!descriptor) return;
+        const bucket = byCard.get(descriptor.cardKey) ?? {
+          handles: [],
+          anyViewOnly: false,
+        };
         if (result.status === "restored" && result.handle) {
-          editHandlesRef.current.set(key, result.handle);
-          persistentViewEditKeysRef.current.add(key);
-          setEditRuntimeState(key, {
+          bucket.handles.push(result.handle);
+          bucket.viewId ??= descriptor.stableEditId;
+        } else if (result.status === "view-only") {
+          bucket.anyViewOnly = true;
+          bucket.viewId ??= descriptor.stableEditId;
+        }
+        if (result.error) bucket.firstError ??= result.error;
+        byCard.set(descriptor.cardKey, bucket);
+      });
+
+      for (const [cardKey, bucket] of byCard) {
+        if (bucket.handles.length > 0) {
+          editHandlesRef.current.set(cardKey, bucket.handles);
+          persistentViewEditKeysRef.current.set(
+            cardKey,
+            bucket.viewId ?? cardKey,
+          );
+          setEditRuntimeState(cardKey, {
             status: "pending",
             busy: false,
             error: undefined,
           });
           continue;
         }
-        if (result.status === "view-only") {
-          persistentViewEditKeysRef.current.add(key);
-          setEditRuntimeState(key, {
+        if (bucket.anyViewOnly) {
+          persistentViewEditKeysRef.current.set(
+            cardKey,
+            bucket.viewId ?? cardKey,
+          );
+          setEditRuntimeState(cardKey, {
             status: "view-only",
             busy: false,
             error: undefined,
           });
           continue;
         }
-        setEditRuntimeState(key, {
+        setEditRuntimeState(cardKey, {
           status: "historical",
           busy: false,
-          error: result.error,
+          error: bucket.firstError,
         });
       }
     })();
@@ -192,112 +260,168 @@ export function useWordTrackedEdits({
       // this apply is in flight must not split one edit's lifecycle.
       const directApply = applyModeRef.current === "direct";
 
-      const job = applyTrackedEdits([
-        {
-          ...edit,
-          ...(persistent ? { stableEditId: key } : {}),
-        },
-      ])
-        .then(async (report) => {
+      const replaceAll = edit.occurrence === "all";
+      // Runaway guard only: a real replace-all finishes when a pass reports
+      // zero remaining revision-free occurrences.
+      const MAX_REPLACE_ALL_PASSES = 50;
+
+      const job = (async (): Promise<void> => {
+        const abandoned = (): boolean =>
+          generation !== sessionGenerationRef.current || !mountedRef.current;
+
+        // A replace-all edit applies one occurrence per call (last match
+        // first — see applyTrackedEdits) and every pass retains its own
+        // handle; a single edit runs exactly one pass.
+        const handles: TrackedEditHandle[] = [];
+        let first: TrackedEditApplyOutcome | null = null;
+        let last: TrackedEditApplyOutcome | null = null;
+        let warning: string | undefined;
+        let pass = 0;
+        for (;;) {
+          const report = await applyTrackedEdits([
+            {
+              ...edit,
+              ...(persistent
+                ? { stableEditId: replaceAll ? `${key}#${pass}` : key }
+                : {}),
+            },
+          ]);
           const result = report.edits[0];
           if (!result) {
             throw new Error("Word did not return an edit result.");
           }
-          if (
-            generation !== sessionGenerationRef.current ||
-            !mountedRef.current
-          ) {
-            if (result.handle) {
-              await releaseTrackedEdits([result.handle]);
-            }
+          warning = report.warning ?? warning;
+          if (result.handle) handles.push(result.handle);
+          first ??= result;
+          last = result;
+          if (abandoned()) {
+            if (handles.length > 0) await releaseTrackedEdits(handles);
             return;
           }
+          pass += 1;
+          if (
+            !replaceAll ||
+            result.status !== "applied" ||
+            (result.remainingTargets ?? 0) === 0 ||
+            pass >= MAX_REPLACE_ALL_PASSES
+          ) {
+            break;
+          }
+        }
+        if (!first || !last) {
+          throw new Error("Word did not return an edit result.");
+        }
 
-          if (result.status === "applied" && result.handle) {
-            if (directApply) {
-              // Direct mode: the tracked change was only the write mechanism.
-              // Accept it immediately so the document shows final text with
-              // no review step.
-              const resolution = await resolveTrackedEdit(
-                result.handle,
-                "accept",
-              );
-              if (
-                generation !== sessionGenerationRef.current ||
-                !mountedRef.current
-              ) {
-                return;
-              }
-              if (
-                resolution.status === "accepted" ||
-                (resolution.status === "already-resolved" &&
-                  resolution.resolvedAs === "accept")
-              ) {
-                setEditRuntimeState(key, {
-                  status: "applied",
-                  matches: result.matches,
-                  busy: false,
-                  error: result.error ?? report.warning,
-                });
-                return;
-              }
-              if (
-                resolution.status === "already-resolved" &&
-                resolution.resolvedAs === "reject"
-              ) {
-                setEditRuntimeState(key, {
-                  status: "rejected",
-                  busy: false,
-                  error: undefined,
-                });
-                return;
-              }
-              // The write landed but the auto-accept did not stick; the
-              // revision handle is gone, so hand review back to Word.
+        const appliedCount = handles.length;
+        const matchesFound = first.matches;
+        // A replace-all card cannot summarize several paragraphs in one
+        // snippet; only a uniquely-located edit keeps its hint.
+        const locationHint =
+          matchesFound === 1 ? first.locationHint : undefined;
+        const remainingAfterLast =
+          last.status === "applied" ? (last.remainingTargets ?? 0) : 0;
+        const partialError =
+          replaceAll &&
+          appliedCount > 0 &&
+          (last.status !== "applied" || remainingAfterLast > 0)
+            ? `Applied ${appliedCount} of ${matchesFound} occurrences; the rest couldn’t be applied.`
+            : undefined;
+
+        if (appliedCount > 0) {
+          if (directApply) {
+            // Direct mode: the tracked changes were only the write
+            // mechanism. Accept them immediately so the document shows final
+            // text with no review step.
+            const resolutions = await resolveTrackedEdits(handles, "accept");
+            if (abandoned()) return;
+            const decisionOf = (
+              resolution: (typeof resolutions)[number],
+            ): "accept" | "reject" | null =>
+              resolution.status === "accepted"
+                ? "accept"
+                : resolution.status === "already-resolved" &&
+                    resolution.resolvedAs
+                  ? resolution.resolvedAs
+                  : null;
+            const decisions = resolutions.map(decisionOf);
+            if (decisions.every((decision) => decision === "accept")) {
               setEditRuntimeState(key, {
-                status: "unmanaged",
-                matches: result.matches,
+                status: "applied",
+                matches: matchesFound,
+                appliedMatches: appliedCount,
+                locationHint,
                 busy: false,
-                error:
-                  resolution.error ??
-                  "Applied in Word, but the change couldn’t be finalized. Review it from Word’s Review tab.",
+                error: partialError ?? first.error ?? warning,
               });
               return;
             }
-            editHandlesRef.current.set(key, result.handle);
-            if (result.persistentAnchor) {
-              persistentViewEditKeysRef.current.add(key);
+            if (decisions.every((decision) => decision === "reject")) {
+              setEditRuntimeState(key, {
+                status: "rejected",
+                busy: false,
+                error: undefined,
+              });
+              return;
             }
-            setEditRuntimeState(key, {
-              status: "pending",
-              matches: result.matches,
-              busy: false,
-              error: result.error ?? report.warning,
-            });
-            return;
-          }
-          if (result.status === "applied-unmanaged") {
+            // A write landed but its auto-accept did not stick; the
+            // revision handles are gone, so hand review back to Word.
             setEditRuntimeState(key, {
               status: "unmanaged",
-              matches: result.matches,
+              matches: matchesFound,
+              appliedMatches: appliedCount,
+              locationHint,
               busy: false,
-              error: result.error ?? report.warning,
+              error:
+                resolutions.find((resolution) => resolution.error)?.error ??
+                "Applied in Word, but the change couldn’t be finalized. Review it from Word’s Review tab.",
             });
             return;
           }
+
+          editHandlesRef.current.set(key, handles);
+          if (first.persistentAnchor) {
+            persistentViewEditKeysRef.current.set(
+              key,
+              persistent && replaceAll ? `${key}#0` : key,
+            );
+          }
           setEditRuntimeState(key, {
-            status:
-              result.status === "error"
-                ? "error"
-                : result.reason === "ambiguous"
-                  ? "ambiguous"
-                  : "skipped",
-            matches: result.matches,
+            status: "pending",
+            matches: matchesFound,
+            appliedMatches: appliedCount,
+            locationHint,
             busy: false,
-            error: result.error,
+            error: partialError ?? first.error ?? warning,
           });
-        })
-        .catch((error: unknown) => {
+          return;
+        }
+
+        if (first.status === "applied-unmanaged") {
+          setEditRuntimeState(key, {
+            status: "unmanaged",
+            matches: matchesFound,
+            locationHint,
+            busy: false,
+            error: first.error ?? warning,
+          });
+          return;
+        }
+        setEditRuntimeState(key, {
+          status:
+            first.status === "error"
+              ? "error"
+              : first.reason === "ambiguous"
+                ? "ambiguous"
+                : first.reason === "unsearchable"
+                  ? "unsearchable"
+                  : first.reason === "pre-existing-revisions"
+                    ? "conflicted"
+                    : "skipped",
+          matches: matchesFound,
+          busy: false,
+          error: first.error,
+        });
+      })().catch((error: unknown) => {
           if (
             generation !== sessionGenerationRef.current ||
             !mountedRef.current
@@ -384,21 +508,22 @@ export function useWordTrackedEdits({
 
   const viewEdit = useCallback(
     async (key: string): Promise<void> => {
-      const handle = editHandlesRef.current.get(key);
-      const hasPersistentView = persistentViewEditKeysRef.current.has(key);
-      if (!handle && !hasPersistentView) return;
+      const handles = editHandlesRef.current.get(key) ?? [];
+      const firstHandle = handles[0];
+      const persistentViewId = persistentViewEditKeysRef.current.get(key);
+      if (!firstHandle && !persistentViewId) return;
       const generation = sessionGenerationRef.current;
-      const result = hasPersistentView
-        ? await revealPersistedTrackedEdit(key)
-        : await revealTrackedEdit(handle as TrackedEditHandle);
+      const result = persistentViewId
+        ? await revealPersistedTrackedEdit(persistentViewId)
+        : await revealTrackedEdit(firstHandle as TrackedEditHandle);
       if (!mountedRef.current || generation !== sessionGenerationRef.current) {
         return;
       }
       if (result.status === "not-found" || result.status === "resolved") {
         persistentViewEditKeysRef.current.delete(key);
-        if (handle) {
+        if (handles.length > 0) {
           editHandlesRef.current.delete(key);
-          void releaseTrackedEdits([handle]);
+          void releaseTrackedEdits(handles);
         }
         setEditRuntimeState(key, {
           status: "historical",
@@ -421,8 +546,10 @@ export function useWordTrackedEdits({
 
   const resolveOneEdit = useCallback(
     async (key: string, decision: EditDecision): Promise<void> => {
-      const handle = editHandlesRef.current.get(key);
-      if (!handle || resolvingEditKeysRef.current.has(key)) return;
+      const handles = editHandlesRef.current.get(key) ?? [];
+      if (handles.length === 0 || resolvingEditKeysRef.current.has(key)) {
+        return;
+      }
       const generation = sessionGenerationRef.current;
       resolvingEditKeysRef.current.add(key);
       setEditRuntimeState(key, {
@@ -432,46 +559,98 @@ export function useWordTrackedEdits({
       });
 
       try {
-        const result = await resolveTrackedEdit(handle, decision);
+        if (handles.length === 1) {
+          const handle = handles[0] as TrackedEditHandle;
+          const result = await resolveTrackedEdit(handle, decision);
+          if (
+            !mountedRef.current ||
+            generation !== sessionGenerationRef.current
+          ) {
+            return;
+          }
+          if (result.status === "accepted" || result.status === "rejected") {
+            editHandlesRef.current.delete(key);
+            persistentViewEditKeysRef.current.delete(key);
+            setEditRuntimeState(key, {
+              status: result.status,
+              busy: false,
+              error: undefined,
+            });
+          } else if (
+            result.status === "already-resolved" &&
+            result.resolvedAs
+          ) {
+            editHandlesRef.current.delete(key);
+            persistentViewEditKeysRef.current.delete(key);
+            setEditRuntimeState(key, {
+              status: result.resolvedAs === "accept" ? "accepted" : "rejected",
+              busy: false,
+              error: undefined,
+            });
+          } else {
+            if (result.status === "error" && result.handle !== handle) {
+              editHandlesRef.current.set(key, [result.handle]);
+              setEditRuntimeState(key, {
+                status: "pending",
+                busy: false,
+                error: result.error,
+              });
+            } else {
+              editHandlesRef.current.delete(key);
+              setEditRuntimeState(key, {
+                status: "error",
+                busy: false,
+                error:
+                  result.error ?? "The tracked change is no longer available.",
+              });
+            }
+          }
+          return;
+        }
+
+        // Replace-all card: every retained occurrence resolves together as
+        // one decision. Anything short of a uniform terminal outcome hands
+        // review back to Word rather than pretending a partial decision.
+        const results = await resolveTrackedEdits(handles, decision);
         if (
           !mountedRef.current ||
           generation !== sessionGenerationRef.current
         ) {
           return;
         }
-        if (result.status === "accepted" || result.status === "rejected") {
-          editHandlesRef.current.delete(key);
-          persistentViewEditKeysRef.current.delete(key);
+        editHandlesRef.current.delete(key);
+        persistentViewEditKeysRef.current.delete(key);
+        const decisionOf = (
+          result: (typeof results)[number],
+        ): "accept" | "reject" | null =>
+          result.status === "accepted"
+            ? "accept"
+            : result.status === "rejected"
+              ? "reject"
+              : result.status === "already-resolved" && result.resolvedAs
+                ? result.resolvedAs
+                : null;
+        const decisions = results.map(decisionOf);
+        if (decisions.every((entry) => entry === "accept")) {
           setEditRuntimeState(key, {
-            status: result.status,
+            status: "accepted",
             busy: false,
             error: undefined,
           });
-        } else if (result.status === "already-resolved" && result.resolvedAs) {
-          editHandlesRef.current.delete(key);
-          persistentViewEditKeysRef.current.delete(key);
+        } else if (decisions.every((entry) => entry === "reject")) {
           setEditRuntimeState(key, {
-            status: result.resolvedAs === "accept" ? "accepted" : "rejected",
+            status: "rejected",
             busy: false,
             error: undefined,
           });
         } else {
-          if (result.status === "error" && result.handle !== handle) {
-            editHandlesRef.current.set(key, result.handle);
-            setEditRuntimeState(key, {
-              status: "pending",
-              busy: false,
-              error: result.error,
-            });
-          } else {
-            editHandlesRef.current.delete(key);
-            setEditRuntimeState(key, {
-              status: "error",
-              busy: false,
-              error:
-                result.error ?? "The tracked change is no longer available.",
-            });
-          }
+          setEditRuntimeState(key, {
+            status: "error",
+            busy: false,
+            error:
+              results.find((result) => result.error)?.error ??
+              "Some of this edit’s tracked changes are no longer available. Review them from Word’s Review tab.",
+          });
         }
       } catch (error) {
         if (
@@ -501,11 +680,12 @@ export function useWordTrackedEdits({
       const entries = editKeys
         .map((key) => ({
           key,
-          handle: editHandlesRef.current.get(key),
+          handles: editHandlesRef.current.get(key) ?? [],
         }))
         .filter(
-          (entry): entry is { key: string; handle: TrackedEditHandle } =>
-            !!entry.handle && !resolvingEditKeysRef.current.has(entry.key),
+          (entry) =>
+            entry.handles.length > 0 &&
+            !resolvingEditKeysRef.current.has(entry.key),
         );
       if (entries.length === 0) return;
 
@@ -519,8 +699,13 @@ export function useWordTrackedEdits({
       }
 
       try {
+        // One flat resolution pass; results group back per card so a
+        // replace-all card's occurrences share one verdict.
+        const flat = entries.flatMap((entry) =>
+          entry.handles.map((handle) => ({ key: entry.key, handle })),
+        );
         const results = await resolveTrackedEdits(
-          entries.map((entry) => entry.handle),
+          flat.map((item) => item.handle),
           decision,
         );
         if (
@@ -529,38 +714,46 @@ export function useWordTrackedEdits({
         ) {
           return;
         }
-        results.forEach((result, index) => {
-          const entry = entries[index];
-          if (!entry) return;
-          if (result.status === "accepted" || result.status === "rejected") {
-            editHandlesRef.current.delete(entry.key);
+        const decisionOf = (
+          result: (typeof results)[number],
+        ): "accept" | "reject" | null =>
+          result.status === "accepted"
+            ? "accept"
+            : result.status === "rejected"
+              ? "reject"
+              : result.status === "already-resolved" && result.resolvedAs
+                ? result.resolvedAs
+                : null;
+        for (const entry of entries) {
+          const cardResults = results.filter(
+            (_result, index) => flat[index]?.key === entry.key,
+          );
+          editHandlesRef.current.delete(entry.key);
+          const decisions = cardResults.map(decisionOf);
+          if (decisions.every((item) => item === "accept")) {
             persistentViewEditKeysRef.current.delete(entry.key);
             setEditRuntimeState(entry.key, {
-              status: result.status,
+              status: "accepted",
               busy: false,
               error: undefined,
             });
-          } else if (
-            result.status === "already-resolved" &&
-            result.resolvedAs
-          ) {
-            editHandlesRef.current.delete(entry.key);
+          } else if (decisions.every((item) => item === "reject")) {
             persistentViewEditKeysRef.current.delete(entry.key);
             setEditRuntimeState(entry.key, {
-              status: result.resolvedAs === "accept" ? "accepted" : "rejected",
+              status: "rejected",
               busy: false,
               error: undefined,
             });
           } else {
-            editHandlesRef.current.delete(entry.key);
             setEditRuntimeState(entry.key, {
               status: "error",
               busy: false,
               error:
-                result.error ?? "The tracked change is no longer available.",
+                cardResults.find((result) => result.error)?.error ??
+                "The tracked change is no longer available.",
             });
           }
-        });
+        }
       } catch (error) {
         if (
           !mountedRef.current ||
