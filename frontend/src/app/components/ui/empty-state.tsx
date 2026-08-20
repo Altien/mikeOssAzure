@@ -36,7 +36,7 @@ export function EmptyState({
                 <span
                     data-slot="empty-state-icon"
                     aria-hidden="true"
-                    className="mb-4 inline-flex [&>svg]:h-8 [&>svg]:w-8"
+                    className="mb-4 inline-flex [&>*]:h-8 [&>*]:w-8"
                 >
                     {icon}
                 </span>

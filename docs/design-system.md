@@ -1,9 +1,10 @@
 # Design system
 
-Mike's UI is shadcn/ui (`new-york` style, see `frontend/components.json`) on
-Tailwind v4 with CSS-variable tokens, plus Lucide icons. This page documents what
-already exists so contributors can reuse it instead of re-deriving it. It is a
-description of the current system, not a proposal for a new one.
+Mike uses Tailwind v4 with shadcn-derived `new-york` primitives for selected
+controls, alongside its own liquid-glass component system. Lucide supplies the
+icon set. This page documents what already exists so contributors can reuse it
+instead of re-deriving it. It is a description of the current system, not a
+proposal for a new one.
 
 Everything below lives in `frontend/src/app/globals.css` unless stated otherwise.
 

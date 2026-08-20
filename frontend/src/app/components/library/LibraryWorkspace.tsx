@@ -932,6 +932,7 @@ export function LibraryCollectionPage({
                     loading={loading}
                     search={search}
                     operations={operations}
+                    emptyStateTitle={title}
                     onAddDocumentsActionChange={handleAddDocumentsActionChange}
           onCreateFolderActionChange={handleCreateFolderActionChange}
                     onFolderViewBackActionChange={handleFolderBackActionChange}
@@ -956,11 +957,6 @@ export function LibraryCollectionPage({
           autoLoadOnScroll
                     enableHeaderFilters
                     defaultSort={{ key: "updated", direction: "desc" }}
-                    emptyDropLabel={
-                        kind === "templates"
-                            ? "Drop template files here"
-                            : "Drop PDF, Word, Excel, or PowerPoint files here"
-                    }
                 />
             </div>
         </div>

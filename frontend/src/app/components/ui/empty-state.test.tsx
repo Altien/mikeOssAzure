@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import { createElement } from "react";
 import { describe, expect, it } from "vitest";
 import { EmptyState } from "./empty-state";
 
@@ -58,6 +59,22 @@ describe("EmptyState", () => {
         expect(
             container.querySelector('[data-slot="empty-state-icon"]'),
         ).toHaveClass("mb-4");
+    });
+
+    it("sizes image icons as well as SVG icons", () => {
+        const { container } = render(
+            <EmptyState
+                icon={createElement("img", {
+                    src: "/icons/features/library.svg",
+                    alt: "",
+                })}
+                title="Files"
+            />,
+        );
+
+        const icon = container.querySelector('[data-slot="empty-state-icon"]');
+        expect(icon?.className).toContain("[&>*]:h-8");
+        expect(icon?.className).toContain("[&>*]:w-8");
     });
 
     it("merges a caller className onto the root", () => {
