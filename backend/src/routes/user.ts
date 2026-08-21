@@ -1,3 +1,4 @@
+import { isOpenCodeGoChatCompletionsModel } from "../lib/llm/models";
 import crypto from "crypto";
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
@@ -272,6 +273,8 @@ export function normalizeRouterModels(
             !model ||
             model.length > 200 ||
             !catalogIdRe.test(model) ||
+            (provider === "opencode-go" &&
+                !isOpenCodeGoChatCompletionsModel(model)) ||
             seen.has(model)
         ) {
             continue;

@@ -398,4 +398,20 @@ describe("OpenCode Go LLM adapter", () => {
             "OpenCode Go API key is not configured. Set OPENCODE_API_KEY",
         );
     });
+
+    it("rejects models that require another protocol before sending a request", async () => {
+        const fetchMock = vi.fn();
+        vi.stubGlobal("fetch", fetchMock);
+
+        await expect(
+            completeOpenCodeGoText({
+                model: "opencode-go/qwen3.8-max",
+                user: "Title this",
+                apiKeys: { "opencode-go": "oc-user-key" },
+            }),
+        ).rejects.toThrow(
+            "OpenCode Go model qwen3.8-max is not compatible with Mike's Chat Completions adapter",
+        );
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
 });
