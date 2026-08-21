@@ -61,6 +61,7 @@ export {
   listQuickActions,
   listWorkflowReferenceFiles,
   listWorkflows,
+  postWordChatToolResult,
   readSSE,
   replaceWorkflowReferenceFile,
   streamWordChat,
