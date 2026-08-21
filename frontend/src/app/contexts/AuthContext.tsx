@@ -13,7 +13,12 @@ import {
   getBrowserAccessToken,
 } from "@/app/lib/auth-token";
 
-interface User { id: string; email: string; pendingEmail?: string | null; }
+interface User {
+  id: string; email: string; pendingEmail?: string | null;
+  createdWithGoogle?: boolean;
+  // Identity metadata cannot prove whether a password is set.
+  hasPassword?: boolean | null;
+}
 interface AuthContextType {
   user: User | null; isAuthenticated: boolean; authLoading: boolean;
   signInLocal: (email: string) => Promise<void>;
@@ -22,12 +27,24 @@ interface AuthContextType {
   // supabase mode can do that; in entra/local modes the identity provider
   // owns the address, so updateEmail rejects with an explanatory error.
   updateEmail: (email: string) => Promise<User>;
+  setPassword: (password: string) => Promise<void>;
 }
 // Exported for the test harness (src/test/render.tsx) to inject auth state.
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 function toSupabaseUser(user: SupabaseUser): User {
-  return { id: user.id, email: user.email || "", pendingEmail: user.new_email ?? null };
+  return {
+    id: user.id, email: user.email || "", pendingEmail: user.new_email ?? null,
+    ...authMethodState(user),
+  };
+}
+
+export function authMethodState(user: Pick<SupabaseUser, "app_metadata" | "identities">) {
+  return {
+    createdWithGoogle: user.app_metadata?.provider === "google",
+    // Linked identity metadata does not prove a password operation.
+    hasPassword: null as boolean | null,
+  };
 }
 
 function decodeJwtUser(token: string): User {
@@ -192,7 +209,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return nextUser;
   };
 
-  return <AuthContext.Provider value={{ user, isAuthenticated: !!user, authLoading: authLoading || configLoading, signInLocal, signOut, getAccessToken, updateEmail }}>{children}</AuthContext.Provider>;
+  const setPassword = async (password: string): Promise<void> => {
+    if (config.authProvider !== "supabase") throw new Error("Password changes are available only with Supabase sign-in.");
+    const { data, error } = await getSupabaseClient().auth.updateUser({ password });
+    if (error) throw error;
+    if (!data.user) throw new Error("Unable to verify the password change.");
+    setUser({ ...toSupabaseUser(data.user), hasPassword: true });
+  };
+
+  return <AuthContext.Provider value={{ user, isAuthenticated: !!user, authLoading: authLoading || configLoading, signInLocal, signOut, getAccessToken, updateEmail, setPassword }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

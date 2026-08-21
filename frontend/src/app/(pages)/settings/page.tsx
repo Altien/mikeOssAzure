@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { LogOut, Trash2 } from "lucide-react";
 import { PillButton } from "@/app/components/ui/pill-button";
+import { Modal } from "@/app/components/modals/Modal";
 import { FieldLabel } from "@/app/components/ui/form-field";
 import { SettingsTextInput } from "@/app/components/settings/SettingsTextInput";
 import { useAuth } from "@/app/contexts/AuthContext";
@@ -38,14 +39,18 @@ export default function SettingsPage() {
     const [displayName, setDisplayName] = useState("");
     const [isSavingName, setIsSavingName] = useState(false);
     const [saved, setSaved] = useState(false);
+    const [nameError, setNameError] = useState<string | null>(null);
     const [organisation, setOrganisation] = useState("");
     const [isSavingOrg, setIsSavingOrg] = useState(false);
     const [orgSaved, setOrgSaved] = useState(false);
+    const [orgError, setOrgError] = useState<string | null>(null);
     const [email, setEmail] = useState("");
     const [isSavingEmail, setIsSavingEmail] = useState(false);
     const [emailSaved, setEmailSaved] = useState(false);
     const [emailStatus, setEmailStatus] = useState<string | null>(null);
     const [emailWarning, setEmailWarning] = useState<EmailWarning | null>(null);
+    const requiresPasswordForEmailChange =
+        emailEditable && user?.createdWithGoogle === true && user.hasPassword !== true;
     const [deleteConfirm, setDeleteConfirm] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
 
@@ -55,13 +60,9 @@ export default function SettingsPage() {
     };
 
     useEffect(() => {
-        if (profile?.displayName) {
-            setDisplayName(profile.displayName);
-        }
-        if (profile?.organisation) {
-            setOrganisation(profile.organisation);
-        }
-    }, [profile]);
+        setDisplayName(profile?.displayName ?? "");
+        setOrganisation(profile?.organisation ?? "");
+    }, [profile?.displayName, profile?.organisation]);
 
     useEffect(() => {
         if (user?.email) {
@@ -101,6 +102,10 @@ export default function SettingsPage() {
     };
 
     const handleSaveEmail = async () => {
+        if (requiresPasswordForEmailChange) {
+            setEmailWarning({ title: "Set or update your password", message: "Open Security settings to set or update a password before changing your email." });
+            return;
+        }
         const nextEmail = email.trim();
         if (!nextEmail || nextEmail === user?.email) return;
 
@@ -152,28 +157,38 @@ export default function SettingsPage() {
     };
 
     const handleSaveDisplayName = async () => {
+        const nextName = displayName.trim();
+        if (nextName === (profile?.displayName ?? "")) return;
+        if (!nextName) {
+            setNameError("Name is required.");
+            return;
+        }
         setIsSavingName(true);
-        const success = await updateDisplayName(displayName.trim());
+        setNameError(null);
+        const success = await updateDisplayName(nextName);
         setIsSavingName(false);
 
         if (success) {
             setSaved(true);
             setTimeout(() => setSaved(false), 2000);
         } else {
-            alert("Failed to update display name. Please try again.");
+            setNameError("Unable to save your name.");
         }
     };
 
     const handleSaveOrganisation = async () => {
+        const nextOrganisation = organisation.trim();
+        if (nextOrganisation === (profile?.organisation ?? "")) return;
         setIsSavingOrg(true);
-        const success = await updateOrganisation(organisation.trim());
+        setOrgError(null);
+        const success = await updateOrganisation(nextOrganisation);
         setIsSavingOrg(false);
 
         if (success) {
             setOrgSaved(true);
             setTimeout(() => setOrgSaved(false), 2000);
         } else {
-            alert("Failed to update organisation. Please try again.");
+            setOrgError("Unable to save your organisation.");
         }
     };
 
@@ -189,70 +204,67 @@ export default function SettingsPage() {
                 <SettingsSection>
                     <div className="space-y-8 p-4">
                         <div>
-                            <FieldLabel className="text-sm text-gray-600">
-                                Display Name
-                            </FieldLabel>
+                            <div className="flex items-start justify-between gap-3">
+                                <FieldLabel>Display Name</FieldLabel>
+                                <span
+                                    className={`text-xs ${nameError ? "text-red-600" : "text-gray-400"}`}
+                                    aria-live="polite"
+                                >
+                                    {isSavingName
+                                        ? "Saving..."
+                                        : nameError
+                                          ? nameError
+                                          : saved
+                                            ? "Saved"
+                                            : ""}
+                                </span>
+                            </div>
                             <div className="space-y-2">
                                 <SettingsTextInput
                                     type="text"
                                     value={displayName}
-                                    onChange={(e) =>
-                                        setDisplayName(e.target.value)
+                                    onChange={(e) => {
+                                        setDisplayName(e.target.value);
+                                        setNameError(null);
+                                        setSaved(false);
+                                    }}
+                                    onBlur={() =>
+                                        void handleSaveDisplayName()
                                     }
                                     placeholder="Enter your name"
                                 />
-                                <div className="flex justify-end">
-                                    <button
-                                        type="button"
-                                        onClick={handleSaveDisplayName}
-                                        disabled={
-                                            isSavingName ||
-                                            !displayName.trim() ||
-                                            saved
-                                        }
-                                        className="text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
-                                    >
-                                        {isSavingName
-                                            ? "Saving..."
-                                            : saved
-                                              ? "Saved"
-                                              : "Save"}
-                                    </button>
-                                </div>
                             </div>
                         </div>
                         <div>
-                            <FieldLabel className="text-sm text-gray-600">
-                                Organisation
-                            </FieldLabel>
+                            <div className="flex items-start justify-between gap-3">
+                                <FieldLabel>Organisation</FieldLabel>
+                                <span
+                                    className={`text-xs ${orgError ? "text-red-600" : "text-gray-400"}`}
+                                    aria-live="polite"
+                                >
+                                    {isSavingOrg
+                                        ? "Saving..."
+                                        : orgError
+                                          ? orgError
+                                          : orgSaved
+                                            ? "Saved"
+                                            : ""}
+                                </span>
+                            </div>
                             <div className="space-y-2">
                                 <SettingsTextInput
                                     type="text"
                                     value={organisation}
-                                    onChange={(e) =>
-                                        setOrganisation(e.target.value)
+                                    onChange={(e) => {
+                                        setOrganisation(e.target.value);
+                                        setOrgError(null);
+                                        setOrgSaved(false);
+                                    }}
+                                    onBlur={() =>
+                                        void handleSaveOrganisation()
                                     }
                                     placeholder="Enter your organisation"
                                 />
-                                <div className="flex justify-end">
-                                    <button
-                                        type="button"
-                                        onClick={handleSaveOrganisation}
-                                        disabled={
-                                            isSavingOrg ||
-                                            organisation.trim() ===
-                                                (profile?.organisation ?? "") ||
-                                            orgSaved
-                                        }
-                                        className="text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
-                                    >
-                                        {isSavingOrg
-                                            ? "Saving..."
-                                            : orgSaved
-                                              ? "Saved"
-                                              : "Save"}
-                                    </button>
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -287,6 +299,7 @@ export default function SettingsPage() {
                         <SettingsTextInput
                             type="email"
                             value={email}
+                            disabled={requiresPasswordForEmailChange}
                             onChange={(event) => {
                                 setEmail(event.target.value);
                                 setEmailStatus(null);
@@ -315,14 +328,18 @@ export default function SettingsPage() {
                                 onClick={handleSaveEmail}
                                 disabled={
                                     isSavingEmail ||
-                                    !email.trim() ||
-                                    email.trim() === user.email ||
-                                    email.trim() === user.pendingEmail ||
-                                    emailSaved
+                                    (!requiresPasswordForEmailChange &&
+                                        (!email.trim() ||
+                                            email.trim() === user.email ||
+                                            email.trim() ===
+                                                user.pendingEmail ||
+                                            emailSaved))
                                 }
                                 className="text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
                             >
-                                {isSavingEmail
+                                {requiresPasswordForEmailChange
+                                    ? "Update"
+                                    : isSavingEmail
                                     ? "Saving..."
                                     : emailSaved
                                       ? "Saved"

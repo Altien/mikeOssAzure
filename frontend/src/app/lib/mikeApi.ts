@@ -442,10 +442,34 @@ export async function exportTabularReviewsData(): Promise<{
     return apiBlobRequest("/user/tabular-reviews/export");
 }
 
+export type PracticeSetting =
+    | "private_practice"
+    | "in_house"
+    | "not_practising";
+
+export type ProfessionalTitle =
+    | "Partner"
+    | "Senior Associate"
+    | "Associate"
+    | "Law Clerk"
+    | "Counsel"
+    | "General Counsel"
+    | "Legal Counsel"
+    | "Other";
+
+export interface PersonalisationDetails {
+    jurisdiction?: string | null;
+    practiceSetting?: PracticeSetting | null;
+    professionalTitle?: ProfessionalTitle | null;
+    practiceAreas?: string[];
+}
+
 export interface UserProfile {
     displayName: string | null;
     organisation: string | null;
     jurisdiction: string | null;
+    practiceSetting: PracticeSetting | null;
+    professionalTitle: ProfessionalTitle | null;
     practiceAreas: string[];
     onboardingComplete: boolean;
     messageCreditsUsed: number;
@@ -559,6 +583,10 @@ export async function lookupUserByEmail(
 export async function updateUserProfile(payload: {
     displayName?: string | null;
     organisation?: string | null;
+    jurisdiction?: string | null;
+    practiceSetting?: PracticeSetting | null;
+    professionalTitle?: ProfessionalTitle | null;
+    practiceAreas?: string[];
     titleModel?: string;
     tabularModel?: string;
     legalResearchUs?: boolean;
@@ -574,10 +602,9 @@ export async function updateUserProfile(payload: {
     });
 }
 
-export async function completeUserOnboarding(payload: {
-    jurisdiction: string;
-    practiceAreas: string[];
-}): Promise<UserProfile> {
+export async function completeUserOnboarding(
+    payload: PersonalisationDetails = {},
+): Promise<UserProfile> {
     return apiRequest<UserProfile>("/user/onboarding", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

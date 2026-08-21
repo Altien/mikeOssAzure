@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Input } from "@/app/components/ui/input";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { SiteLogo } from "@/app/components/site-logo";
+import { FieldLabel } from "@/app/components/ui/form-field";
 import {
     authGlassCardClassName,
     authInputClassName,
@@ -83,12 +84,9 @@ function ForgotPasswordContent() {
                                 className="mt-6 space-y-4"
                             >
                                 <div>
-                                    <label
-                                        htmlFor="email"
-                                        className="mb-2 block text-sm font-medium text-gray-700"
-                                    >
+                                    <FieldLabel htmlFor="email">
                                         Email
-                                    </label>
+                                    </FieldLabel>
                                     <Input
                                         id="email"
                                         type="email"

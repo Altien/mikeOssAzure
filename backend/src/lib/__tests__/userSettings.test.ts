@@ -50,6 +50,32 @@ beforeEach(() => {
 });
 
 describe("getUserModelSettings router-model allowlist", () => {
+    it("loads the professional profile used to personalise prompts", async () => {
+        const settings = await getUserModelSettings(
+            "user-1",
+            profileDb({
+                title_model: "claude-haiku-4-5",
+                tabular_model: "claude-sonnet-5",
+                legal_research_us: true,
+                display_name: "Ada",
+                organisation: "Acme LLP",
+                jurisdiction: "Singapore",
+                practice_setting: "private_practice",
+                professional_title: "Partner",
+                practice_areas: ["Litigation"],
+            }),
+        );
+
+        expect(settings.personalisation).toEqual({
+            displayName: "Ada",
+            organisation: "Acme LLP",
+            jurisdiction: "Singapore",
+            practiceSetting: "private_practice",
+            professionalTitle: "Partner",
+            practiceAreas: ["Litigation"],
+        });
+    });
+
     it("keeps a stored router preference that is in the saved selection", async () => {
         const settings = await getUserModelSettings(
             "user-1",

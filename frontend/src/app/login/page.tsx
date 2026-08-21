@@ -17,6 +17,7 @@ import {
 import { knownErrorCodeMessage } from "@/app/lib/userFacingError";
 import { AuthDivider } from "@/app/components/auth/AuthDivider";
 import { GoogleAuthButton } from "@/app/components/auth/GoogleAuthButton";
+import { FieldLabel } from "@/app/components/ui/form-field";
 
 const LOGIN_ERROR_MESSAGES = {
     invalid_credentials: "The email or password is incorrect.",
@@ -116,12 +117,9 @@ export default function LoginPage() {
                         <PillButton tone="black" onClick={handleMicrosoftLogin}>Sign in with Microsoft</PillButton>
                     </div> : <form onSubmit={handleLogin} className="space-y-4">
                         <div>
-                            <label
-                                htmlFor="email"
-                                className="block text-sm font-medium text-gray-700 mb-2"
-                            >
+                            <FieldLabel htmlFor="email">
                                 Email
-                            </label>
+                            </FieldLabel>
                             <Input
                                 id="email"
                                 type="email"

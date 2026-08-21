@@ -5,6 +5,7 @@ import { recordChatTurn } from "../lib/audit";
 import {
     buildProjectDocContext,
     buildMessages,
+    buildUserPersonalisationPrompt,
     buildWorkflowStore,
     enrichWithPriorEvents,
     appendAskInputsResponseToLastAssistantMessage,
@@ -427,7 +428,15 @@ without pretending to have the skill's instructions or resources.`;
         api_keys: apiKeys,
         fast_model: fastModel,
         legal_research_us: legalResearchUs,
+        personalisation,
     } = await getUserModelSettings(userId, db);
+    const personalisationPrompt = buildUserPersonalisationPrompt(
+        personalisation,
+        nonce,
+    );
+    if (personalisationPrompt) {
+        systemPromptExtra += `\n\n${personalisationPrompt}`;
+    }
     const apiMessages = buildMessages(
         messagesForLLM,
         docAvailability,

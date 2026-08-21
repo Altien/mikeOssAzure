@@ -57,6 +57,7 @@ export function renderWithProviders(ui: ReactElement, opts: Opts = {}) {
             email,
             pendingEmail: null,
         }),
+        setPassword: async () => {},
     };
 
     function Wrapper({ children }: { children: ReactNode }) {

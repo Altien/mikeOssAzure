@@ -9,6 +9,7 @@ import {
   buildCancelledAssistantMessage,
   buildDocContext,
   buildMessages,
+  buildUserPersonalisationPrompt,
   buildWordChatSystemPrompt,
   buildWorkflowStore,
   enrichWithPriorEvents,
@@ -779,16 +780,23 @@ wordChatRouter.post("/", requireAuth, wordHandler(async (req, res) => {
     nonce,
     "word_chat_messages",
   );
-  const { api_keys: configuredApiKeys, fast_model: fastModel } = await getUserModelSettings(
+  const { api_keys: configuredApiKeys, fast_model: fastModel, personalisation } = await getUserModelSettings(
     userId,
     db,
   );
   const apiKeys = { ...configuredApiKeys };
   delete apiKeys.courtlistener;
+  const personalisationPrompt = buildUserPersonalisationPrompt(
+    personalisation,
+    nonce,
+  );
+  const wordSystemPrompt = [buildWordChatSystemPrompt(), personalisationPrompt]
+    .filter(Boolean)
+    .join("\n\n");
   const apiMessages = buildMessages(
     enrichedMessages,
     docAvailability,
-    buildWordChatSystemPrompt(),
+    wordSystemPrompt,
     docIndex,
     false,
     nonce,

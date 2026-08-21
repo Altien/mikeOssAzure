@@ -171,7 +171,7 @@ userRouter.get("/lookup", requireAuth, async (req, res) => {
 const MONTHLY_CREDIT_LIMIT = 999999;
 
 const PROFILE_SELECT =
-  "display_name, organisation, jurisdiction, practice_areas, onboarding_version, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us, quick_actions_visible";
+  "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us, quick_actions_visible";
 const PROFILE_SELECT_NO_QUICK_ACTIONS =
   "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us";
 const PROFILE_SELECT_BEFORE_ONBOARDING =
@@ -181,6 +181,8 @@ type UserProfileRow = {
   display_name: string | null;
   organisation: string | null;
   jurisdiction?: string | null;
+  practice_setting?: string | null;
+  professional_title?: string | null;
   practice_areas?: string[] | null;
   onboarding_version?: number | null;
   message_credits_used: number | null;
@@ -305,6 +307,8 @@ function serializeProfile(
     displayName: row.display_name,
     organisation: row.organisation,
     jurisdiction: row.jurisdiction ?? null,
+    practiceSetting: row.practice_setting ?? null,
+    professionalTitle: row.professional_title ?? null,
     practiceAreas: Array.isArray(row.practice_areas) ? row.practice_areas : [],
     onboardingComplete: row.onboarding_version === undefined || row.onboarding_version !== null,
     messageCreditsUsed: credits.used,
@@ -385,12 +389,33 @@ async function loadProfile(
 type ProfileUpdate = {
   display_name?: string | null;
   organisation?: string | null;
+  jurisdiction?: string | null;
+  practice_setting?: string | null;
+  professional_title?: string | null;
+  practice_areas?: string[];
   fast_model?: string | null;
   tabular_model?: string;
   legal_research_us?: boolean;
   quick_actions_visible?: boolean;
   updated_at: string;
 };
+
+const PRACTICE_SETTINGS = new Set(["private_practice", "in_house", "not_practising"]);
+const PROFESSIONAL_TITLES = new Set([
+  "Partner", "Senior Associate", "Associate", "Law Clerk", "Counsel",
+  "General Counsel", "Legal Counsel", "Other",
+]);
+function normalizeProfessionalTitle(value: unknown): string | null | undefined {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value !== "string") return undefined;
+  const title = value.trim();
+  return PROFESSIONAL_TITLES.has(title) ? title : undefined;
+}
+function normalizePracticeAreas(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.some(item => typeof item !== "string")) return null;
+  const areas = Array.from(new Set((value as string[]).map(item => item.trim()).filter(Boolean)));
+  return areas.length <= 20 && areas.every(item => item.length <= 100) ? areas : null;
+}
 
 // Upstream's validateProfilePayload; `titleModel` writes dev's `fast_model`
 // and accepts "" (= no preference, stored as null).
@@ -405,6 +430,10 @@ function validateProfilePayload(
   const allowedFields = new Set([
     "displayName",
     "organisation",
+    "jurisdiction",
+    "practiceSetting",
+    "professionalTitle",
+    "practiceAreas",
     "titleModel",
     "tabularModel",
     "legalResearchUs",
@@ -430,6 +459,29 @@ function validateProfilePayload(
       return { ok: false, detail: "organisation must be a string or null" };
     }
     update.organisation = raw.organisation?.trim() || null;
+  }
+
+  if ("jurisdiction" in raw) {
+    if (raw.jurisdiction === null || raw.jurisdiction === "") update.jurisdiction = null;
+    else if (typeof raw.jurisdiction === "string" && raw.jurisdiction.trim().length > 0 && raw.jurisdiction.trim().length <= 100)
+      update.jurisdiction = raw.jurisdiction.trim();
+    else return { ok: false, detail: "Select a valid jurisdiction" };
+  }
+  if ("practiceSetting" in raw) {
+    if (raw.practiceSetting === null || raw.practiceSetting === "") update.practice_setting = null;
+    else if (typeof raw.practiceSetting === "string" && PRACTICE_SETTINGS.has(raw.practiceSetting.trim()))
+      update.practice_setting = raw.practiceSetting.trim();
+    else return { ok: false, detail: "Select a valid professional setting" };
+  }
+  if ("professionalTitle" in raw) {
+    const title = normalizeProfessionalTitle(raw.professionalTitle);
+    if (title === undefined) return { ok: false, detail: "Select a valid title" };
+    update.professional_title = title;
+  }
+  if ("practiceAreas" in raw) {
+    const areas = normalizePracticeAreas(raw.practiceAreas);
+    if (!areas) return { ok: false, detail: "Select no more than 20 valid practice areas" };
+    update.practice_areas = areas;
   }
 
   if ("tabularModel" in raw) {
@@ -766,17 +818,29 @@ function readBooleanBodyField(
 userRouter.post("/onboarding", requireAuth, async (req, res) => {
   const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
     ? req.body as Record<string, unknown> : null;
-  if (!body || Object.keys(body).some(key => key !== "jurisdiction" && key !== "practiceAreas")) {
+  if (!body || Object.keys(body).some(key => !["jurisdiction", "practiceSetting", "professionalTitle", "practiceAreas"].includes(key))) {
     return void res.status(400).json({ detail: "Invalid onboarding fields" });
   }
-  const jurisdiction = typeof body.jurisdiction === "string" ? body.jurisdiction.trim() : "";
-  if (!jurisdiction || jurisdiction.length > 100 || !Array.isArray(body.practiceAreas) ||
-      body.practiceAreas.some(item => typeof item !== "string")) {
-    return void res.status(400).json({ detail: "Select a valid jurisdiction and practice areas" });
+  const update: ProfileUpdate = { updated_at: new Date().toISOString() };
+  if ("jurisdiction" in body) {
+    const jurisdiction = typeof body.jurisdiction === "string" ? body.jurisdiction.trim() : "";
+    if (!jurisdiction || jurisdiction.length > 100) return void res.status(400).json({ detail: "Select a valid jurisdiction" });
+    update.jurisdiction = jurisdiction;
   }
-  const practiceAreas = Array.from(new Set((body.practiceAreas as string[]).map(item => item.trim()).filter(Boolean)));
-  if (!practiceAreas.length || practiceAreas.length > 20 || practiceAreas.some(item => item.length > 100)) {
-    return void res.status(400).json({ detail: "Select between 1 and 20 valid practice areas" });
+  if ("practiceSetting" in body) {
+    const setting = typeof body.practiceSetting === "string" ? body.practiceSetting.trim() : "";
+    if (!PRACTICE_SETTINGS.has(setting)) return void res.status(400).json({ detail: "Select a valid professional setting" });
+    update.practice_setting = setting;
+  }
+  if ("professionalTitle" in body) {
+    const title = normalizeProfessionalTitle(body.professionalTitle);
+    if (title === undefined) return void res.status(400).json({ detail: "Select a valid title" });
+    update.professional_title = title;
+  }
+  if ("practiceAreas" in body) {
+    const areas = normalizePracticeAreas(body.practiceAreas);
+    if (!areas) return void res.status(400).json({ detail: "Select no more than 20 valid practice areas" });
+    update.practice_areas = areas;
   }
   const userId = res.locals.userId as string;
   const db = createServerSupabase();
@@ -787,7 +851,7 @@ userRouter.post("/onboarding", requireAuth, async (req, res) => {
     return void res.status(400).json({ detail: "Add your name before completing onboarding" });
   }
   const { error: updateError } = await db.from("user_profiles")
-    .update({ jurisdiction, practice_areas: practiceAreas, onboarding_version: 1, updated_at: new Date().toISOString() })
+    .update({ ...update, onboarding_version: 1 })
     .eq("user_id", userId);
   if (updateError) return void sendInternalError(res, updateError);
   const { data, error } = await loadProfile(db, userId);

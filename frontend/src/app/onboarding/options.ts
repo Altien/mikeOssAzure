@@ -1,3 +1,8 @@
+import type {
+    PracticeSetting,
+    ProfessionalTitle,
+} from "@/app/lib/mikeApi";
+
 export const COUNTRY_OPTIONS = [
     "Afghanistan",
     "Albania",
@@ -198,6 +203,8 @@ export const COUNTRY_OPTIONS = [
     "Zimbabwe",
 ] as const;
 
+export const OTHER_JURISDICTION_OPTION = "Other" as const;
+
 export const PRACTICE_AREA_OPTIONS = [
     "Arbitration",
     "Banking and Finance",
@@ -226,3 +233,24 @@ export const PRACTICE_AREA_OPTIONS = [
     "Technology and Telecommunications",
     "Other",
 ] as const;
+
+export const PRACTICE_SETTING_OPTIONS = [
+    { value: "private_practice", label: "Private practice" },
+    { value: "in_house", label: "In-house" },
+    { value: "not_practising", label: "Not a practising attorney" },
+] as const satisfies readonly { value: PracticeSetting; label: string }[];
+
+export type { PracticeSetting } from "@/app/lib/mikeApi";
+
+export const PROFESSIONAL_TITLE_OPTIONS = [
+    "Partner",
+    "Senior Associate",
+    "Associate",
+    "Law Clerk",
+    "Counsel",
+    "General Counsel",
+    "Legal Counsel",
+    "Other",
+] as const satisfies readonly ProfessionalTitle[];
+
+export type { ProfessionalTitle } from "@/app/lib/mikeApi";

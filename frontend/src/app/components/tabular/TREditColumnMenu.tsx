@@ -18,6 +18,7 @@ import {
 } from "@/app/components/ui/liquid-dropdown";
 import { GlassIconButton } from "@/app/components/ui/glass-icon-button";
 import { PillButton } from "@/app/components/ui/pill-button";
+import { FieldLabel } from "@/app/components/ui/form-field";
 
 // Liquid-glass field styling shared by the menu's inputs/controls, matching the
 // modal's glass treatment (translucent white over the light-gray panel).
@@ -256,25 +257,27 @@ export function TREditColumnMenu({
                             <X className="h-3.5 w-3.5" />
                         </GlassIconButton>
                     </div>
-                    <label className="text-xs font-medium text-gray-800">
+                    <FieldLabel htmlFor={`${menuId}-name`}>
                         Label
-                    </label>
+                    </FieldLabel>
                     <input
+                        id={`${menuId}-name`}
                         type="text"
                         value={name}
                         onChange={(e) => setName(e.target.value)}
-                        className={`mt-1 w-full rounded-lg px-2 py-1 text-xs font-normal text-gray-800 transition-colors focus:bg-white/70 focus:outline-none ${GLASS_FIELD}`}
+                        className={`w-full rounded-lg px-2 py-1 text-xs font-normal text-gray-800 transition-colors focus:bg-white/70 focus:outline-none ${GLASS_FIELD}`}
                     />
 
                     {/* Format */}
                     <div className="mt-3">
-                        <label className="text-xs font-medium text-gray-800">
+                        <FieldLabel htmlFor={`${menuId}-format`}>
                             Format
-                        </label>
+                        </FieldLabel>
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                                 <button
-                                    className={`mt-1 flex w-full items-center justify-between rounded-lg px-2 py-1 text-xs text-gray-700 transition-colors hover:bg-white/75 focus:outline-none ${GLASS_FIELD}`}
+                                    id={`${menuId}-format`}
+                                    className={`flex w-full items-center justify-between rounded-lg px-2 py-1 text-xs text-gray-700 transition-colors hover:bg-white/75 focus:outline-none ${GLASS_FIELD}`}
                                 >
                                     <span className="flex items-center gap-1.5">
                                         {(() => {
@@ -364,10 +367,10 @@ export function TREditColumnMenu({
 
                     {/* Prompt */}
                     <div className="mt-3">
-                        <div className="flex items-center justify-between">
-                            <label className="text-xs font-medium text-gray-800">
+                        <div className="flex items-start justify-between">
+                            <FieldLabel htmlFor={`${menuId}-prompt`}>
                                 Prompt
-                            </label>
+                            </FieldLabel>
                             <button
                                 type="button"
                                 onClick={handleAutoGenerate}
@@ -383,10 +386,11 @@ export function TREditColumnMenu({
                             </button>
                         </div>
                         <textarea
+                            id={`${menuId}-prompt`}
                             rows={6}
                             value={prompt}
                             onChange={(e) => setPrompt(e.target.value)}
-                            className={`mt-2 w-full resize-none rounded-lg px-3 py-2 text-xs font-normal leading-relaxed text-gray-800 placeholder-gray-300 transition-colors focus:bg-white/70 focus:outline-none ${GLASS_FIELD}`}
+                            className={`w-full resize-none rounded-lg px-3 py-2 text-xs font-normal leading-relaxed text-gray-800 placeholder-gray-300 transition-colors focus:bg-white/70 focus:outline-none ${GLASS_FIELD}`}
                         />
                     </div>
 

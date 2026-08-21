@@ -24,6 +24,8 @@ vi.mock("@/app/contexts/UserProfileContext", () => ({
     useUserProfile: () => ({
         profile: {
             jurisdiction: null,
+            practiceSetting: null,
+            professionalTitle: null,
             practiceAreas: [],
         },
         loading: false,
@@ -47,9 +49,27 @@ describe("OnboardingPracticePage", () => {
         const user = userEvent.setup();
         render(<OnboardingPracticePage />);
 
-        await user.selectOptions(
-            screen.getByLabelText("Jurisdiction of practice"),
-            "Singapore",
+        await user.click(
+            screen.getByRole("button", {
+                name: "Jurisdiction of practice",
+            }),
+        );
+        await user.click(
+            screen.getByRole("menuitemradio", { name: "Other" }),
+        );
+        await user.type(
+            screen.getByRole("textbox", { name: "Other jurisdiction" }),
+            "England and Wales",
+        );
+        await user.click(screen.getByRole("button", { name: "Title" }));
+        await user.click(
+            screen.getByRole("menuitemradio", { name: "Senior Associate" }),
+        );
+        await user.click(
+            screen.getByRole("button", { name: "Professional setting" }),
+        );
+        await user.click(
+            screen.getByRole("menuitemradio", { name: "Private practice" }),
         );
         await user.click(
             screen.getByRole("button", { name: "Select practice areas" }),
@@ -66,10 +86,15 @@ describe("OnboardingPracticePage", () => {
         await user.click(screen.getByRole("button", { name: "Finish" }));
 
         await waitFor(() =>
-            expect(completeOnboarding).toHaveBeenCalledWith("Singapore", [
-                "Litigation",
-                "Data Protection and Privacy",
-            ]),
+            expect(completeOnboarding).toHaveBeenCalledWith({
+                jurisdiction: "England and Wales",
+                practiceSetting: "private_practice",
+                professionalTitle: "Senior Associate",
+                practiceAreas: [
+                    "Litigation",
+                    "Data Protection and Privacy",
+                ],
+            }),
         );
         expect(replace).toHaveBeenCalledWith("/assistant");
     });
@@ -78,9 +103,21 @@ describe("OnboardingPracticePage", () => {
         const user = userEvent.setup();
         render(<OnboardingPracticePage />);
 
-        await user.selectOptions(
-            screen.getByLabelText("Jurisdiction of practice"),
-            "Australia",
+        await user.click(
+            screen.getByRole("button", {
+                name: "Jurisdiction of practice",
+            }),
+        );
+        await user.click(
+            screen.getByRole("menuitemradio", { name: "Australia" }),
+        );
+        await user.click(
+            screen.getByRole("button", { name: "Professional setting" }),
+        );
+        await user.click(
+            screen.getByRole("menuitemradio", {
+                name: "Not a practising attorney",
+            }),
         );
         await user.click(
             screen.getByRole("button", { name: "Select practice areas" }),
@@ -95,5 +132,17 @@ describe("OnboardingPracticePage", () => {
             "Enter your other practice area",
         );
         expect(completeOnboarding).not.toHaveBeenCalled();
+    });
+
+    it("allows personalisation to be skipped", async () => {
+        const user = userEvent.setup();
+        render(<OnboardingPracticePage />);
+
+        await user.click(screen.getByRole("button", { name: "Skip" }));
+
+        await waitFor(() =>
+            expect(completeOnboarding).toHaveBeenCalledWith({}),
+        );
+        expect(replace).toHaveBeenCalledWith("/assistant");
     });
 });

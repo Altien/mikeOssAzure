@@ -159,11 +159,10 @@ function NewMcpForm({
 }) {
     return (
         <div className="grid gap-3 pt-1">
-            <label className="grid gap-2 sm:grid-cols-[96px_minmax(0,1fr)] sm:items-center">
-                <FieldLabel as="span" className="mb-0 text-gray-500">
-                    Label
-                </FieldLabel>
+            <div className="grid gap-2 sm:grid-cols-[96px_minmax(0,1fr)] sm:items-center">
+                <FieldLabel htmlFor="new-mcp-label">Label</FieldLabel>
                 <SettingsTextInput
+                    id="new-mcp-label"
                     value={draft.name}
                     onChange={(event) =>
                         onDraftChange({ ...draft, name: event.target.value })
@@ -172,12 +171,11 @@ function NewMcpForm({
                     className="h-8"
                     disabled={disabled}
                 />
-            </label>
-            <label className="grid gap-2 sm:grid-cols-[96px_minmax(0,1fr)] sm:items-center">
-                <FieldLabel as="span" className="mb-0 text-gray-500">
-                    URL endpoint
-                </FieldLabel>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-[96px_minmax(0,1fr)] sm:items-center">
+                <FieldLabel htmlFor="new-mcp-url">URL endpoint</FieldLabel>
                 <SettingsTextInput
+                    id="new-mcp-url"
                     value={draft.serverUrl}
                     onChange={(event) =>
                         onDraftChange({
@@ -189,17 +187,13 @@ function NewMcpForm({
                     className="h-8"
                     disabled={disabled}
                 />
-            </label>
+            </div>
             <div className="grid gap-2 sm:grid-cols-[96px_minmax(0,1fr)] sm:items-start">
-                <FieldLabel
-                    as="span"
-                    className="mb-0 pt-2 text-gray-500"
-                >
-                    Bearer token
-                </FieldLabel>
+                <FieldLabel htmlFor="new-mcp-token">Bearer token</FieldLabel>
                 <div className="min-w-0">
                     <div className="relative">
                         <SettingsTextInput
+                            id="new-mcp-token"
                             value={draft.bearerToken}
                             onChange={(event) =>
                                 onDraftChange({
@@ -252,15 +246,13 @@ function NewMcpForm({
                     />
                 </button>
                 {showAdvanced && (
-                    <label className="grid gap-2 sm:grid-cols-[96px_minmax(0,1fr)] sm:items-start">
-                        <FieldLabel
-                            as="span"
-                            className="mb-0 text-gray-500"
-                        >
+                    <div className="grid gap-2 sm:grid-cols-[96px_minmax(0,1fr)] sm:items-start">
+                        <FieldLabel htmlFor="new-mcp-headers">
                             Custom headers
                         </FieldLabel>
                         <div className="min-w-0">
                             <textarea
+                                id="new-mcp-headers"
                                 value={draft.customHeaders}
                                 onChange={(event) =>
                                     onDraftChange({
@@ -278,7 +270,7 @@ function NewMcpForm({
                                 Secrets are stored encrypted.
                             </p>
                         </div>
-                    </label>
+                    </div>
                 )}
             </div>
         </div>

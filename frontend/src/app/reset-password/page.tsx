@@ -8,6 +8,7 @@ import { Loader2 } from "lucide-react";
 import { Input } from "@/app/components/ui/input";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { SiteLogo } from "@/app/components/site-logo";
+import { FieldLabel } from "@/app/components/ui/form-field";
 import {
     authGlassCardClassName,
     authInputClassName,
@@ -160,12 +161,9 @@ function ResetPasswordContent() {
                                 className="mt-6 space-y-4"
                             >
                                 <div>
-                                    <label
-                                        htmlFor="password"
-                                        className="mb-2 block text-sm font-medium text-gray-700"
-                                    >
+                                    <FieldLabel htmlFor="password">
                                         New password
-                                    </label>
+                                    </FieldLabel>
                                     <Input
                                         id="password"
                                         type="password"
@@ -179,12 +177,9 @@ function ResetPasswordContent() {
                                     />
                                 </div>
                                 <div>
-                                    <label
-                                        htmlFor="confirmPassword"
-                                        className="mb-2 block text-sm font-medium text-gray-700"
-                                    >
+                                    <FieldLabel htmlFor="confirmPassword">
                                         Confirm new password
-                                    </label>
+                                    </FieldLabel>
                                     <Input
                                         id="confirmPassword"
                                         type="password"

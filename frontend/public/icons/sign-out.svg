@@ -1,44 +1,49 @@
 <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="slabFace" x1="8" y1="7" x2="42" y2="58" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#687789"/>
-      <stop offset="0.58" stop-color="#3E4D60"/>
-      <stop offset="1" stop-color="#1F2B3B"/>
+    <linearGradient id="door" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FAFBFC" stop-opacity="0.97"/>
+      <stop offset="0.45" stop-color="#E9ECF0" stop-opacity="0.95"/>
+      <stop offset="0.82" stop-color="#CBD1D9" stop-opacity="0.96"/>
+      <stop offset="1" stop-color="#DDE2E8" stop-opacity="0.96"/>
     </linearGradient>
-    <linearGradient id="slabRim" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.95"/>
-      <stop offset="0.48" stop-color="#FFFFFF" stop-opacity="0.24"/>
-      <stop offset="1" stop-color="#233044" stop-opacity="0.62"/>
+    <linearGradient id="arrow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7AB8FF" stop-opacity="0.96"/>
+      <stop offset="0.45" stop-color="#4F92F7" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#2563EB" stop-opacity="0.97"/>
     </linearGradient>
-    <linearGradient id="arrowFace" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#DCE8F2" stop-opacity="0.82"/>
-      <stop offset="0.48" stop-color="#B9CAD9" stop-opacity="0.76"/>
-      <stop offset="1" stop-color="#8EA1B4" stop-opacity="0.86"/>
+    <linearGradient id="doorRim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.9"/>
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0.15"/>
+      <stop offset="1" stop-color="#374151" stop-opacity="0.4"/>
     </linearGradient>
     <linearGradient id="arrowRim" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.72"/>
-      <stop offset="0.42" stop-color="#FFFFFF" stop-opacity="0.08"/>
-      <stop offset="1" stop-color="#0F172A" stop-opacity="0.74"/>
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.75"/>
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#172554" stop-opacity="0.45"/>
     </linearGradient>
-    <clipPath id="slabClip">
-      <rect x="6" y="5" width="39" height="54" rx="8"/>
+    <radialGradient id="sheen">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.6" stop-color="#FFFFFF" stop-opacity="0.7"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="clipDoor"><rect x="6" y="5" width="39" height="54" rx="8"/></clipPath>
+    <clipPath id="clipArrow">
+      <path d="M24 26.5H43.5V20.5L58 32L43.5 43.5V37.5H24Z"/>
     </clipPath>
   </defs>
 
-  <!-- A clean, translucent glass slab. -->
-  <rect x="6" y="5" width="39" height="54" rx="8"
-        fill="url(#slabFace)" stroke="url(#slabRim)" stroke-width="1.8"/>
-  <rect x="9" y="8" width="33" height="48" rx="5.5"
-        fill="none" stroke="#FFFFFF" stroke-opacity="0.38" stroke-width="1"/>
+  <rect x="6" y="5" width="39" height="54" rx="8" fill="url(#door)" stroke="url(#doorRim)" stroke-width="1.5"/>
 
-  <!-- Reflections keep the slab legible as glass at small sizes. -->
-  <g clip-path="url(#slabClip)">
-    <path d="M10 11V50" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" opacity="0.28"/>
-    <path d="M40 13V51" stroke="#5E7187" stroke-width="1.2" stroke-linecap="round" opacity="0.2"/>
+  <g clip-path="url(#clipDoor)">
+    <ellipse cx="25.5" cy="10" rx="17" ry="5" fill="url(#sheen)" opacity="0.3"/>
+    <ellipse cx="11.5" cy="32" rx="4" ry="15" fill="url(#sheen)" opacity="0.18"/>
   </g>
 
-  <!-- The sign-out arrow travels directly from the center of the slab. -->
   <path d="M24 26.5H43.5V20.5L58 32L43.5 43.5V37.5H24Z"
-        fill="url(#arrowFace)" stroke="url(#arrowRim)" stroke-width="1.35" stroke-linejoin="round"/>
-  <path d="M27.5 28.5H44.8L51.7 32L44.8 29.9H27.5Z" fill="#FFFFFF" opacity="0.16"/>
+        fill="url(#arrow)" stroke="url(#arrowRim)" stroke-width="1.25" stroke-linejoin="round"/>
+
+  <g clip-path="url(#clipArrow)">
+    <ellipse cx="36" cy="26.8" rx="15" ry="2.8" fill="url(#sheen)" opacity="0.15"/>
+    <ellipse cx="27" cy="32" rx="3" ry="5" fill="url(#sheen)" opacity="0.09"/>
+  </g>
 </svg>
