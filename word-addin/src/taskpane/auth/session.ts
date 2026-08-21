@@ -377,7 +377,11 @@ export async function signInWithGoogle(): Promise<void> {
   const dialogUrl = new URL("/oauth-dialog.html", expectedOrigin);
   dialogUrl.searchParams.set("requestId", requestId);
 
-  _loading = true;
+  // Deliberately NOT `_loading = true`: that flag swaps the whole task pane
+  // for the bootstrap spinner (App.tsx renders it before the login page),
+  // which would unmount LoginPage and leave the user staring at a bare
+  // "Loading…" for the lifetime of the OAuth dialog with no way back. The
+  // login page stays mounted and shows its own "Continuing…" button state.
   _error = null;
   broadcast();
 
@@ -388,7 +392,6 @@ export async function signInWithGoogle(): Promise<void> {
       if (settled) return;
       settled = true;
       if (generation === _sessionGeneration) {
-        _loading = false;
         _error = message;
         broadcast();
       }
@@ -446,7 +449,6 @@ export async function signInWithGoogle(): Promise<void> {
                 generation
               ).then((saved) => {
                 if (saved && generation === _sessionGeneration) {
-                  _loading = false;
                   _error = null;
                   broadcast();
                 }
