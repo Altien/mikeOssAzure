@@ -22,6 +22,8 @@ import { checkSchemaVersion } from "./lib/schemaCheck";
 import { initServerSessionKeys } from "./lib/serverSession";
 import { anyWorkerEnabled, startWorkers, stopWorkers } from "./workers";
 import { runStaleWorkSweep } from "./lib/maintenance/staleWork";
+import { startDbJobRunner, stopDbJobRunner } from "./lib/dbq/runner";
+import { DB_JOB_HANDLERS } from "./lib/dbq/handlers";
 
 const PORT = process.env.PORT ?? 3001;
 
@@ -55,6 +57,7 @@ async function start(): Promise<void> {
   const server = buildApp().listen(PORT, () => {
     console.log(`Mike backend running on port ${PORT}`);
     if (anyWorkerEnabled()) startWorkers();
+    startDbJobRunner(DB_JOB_HANDLERS);
     // After listen, and never awaited: a schema report must not delay or
     // prevent serving traffic. Migrations stay a deliberate manual step.
     void checkSchemaVersion().catch(() => {});
@@ -82,6 +85,7 @@ async function start(): Promise<void> {
         server.close((error) => error ? reject(error) : resolve()),
       );
       await stopWorkers();
+      await stopDbJobRunner();
       clearTimeout(forced);
       console.log(`Graceful shutdown complete (${signal})`);
       process.exit(0);

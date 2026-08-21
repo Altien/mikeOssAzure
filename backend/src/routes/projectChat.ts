@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
-import { recordChatTurn } from "../lib/audit";
+import { enqueueChatTurnAudit } from "../lib/audit";
 import {
     buildProjectDocContext,
     buildMessages,
@@ -620,7 +620,7 @@ without pretending to have the skill's instructions or resources.`;
             }
         }
 
-        void recordChatTurn(
+        void enqueueChatTurnAudit(
             db,
             {
                 userId,
