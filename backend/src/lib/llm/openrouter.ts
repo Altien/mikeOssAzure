@@ -55,7 +55,7 @@ function routerModelId(provider: RouterProvider, model: string): string {
     if (provider === "opencode-go") {
         if (!isOpenCodeGoChatCompletionsModel(model)) {
             throw new Error(
-                `OpenCode Go model ${openCodeGoModelId(model)} is not compatible with Mike's Chat Completions adapter. Select a model listed in Settings → BYOK → Routers.`,
+                `OpenCode Go model ${openCodeGoModelId(model)} is not compatible with Mike's Chat Completions adapter. Select a model listed in Settings → Bring Your Own Keys → Routers.`,
             );
         }
         return openCodeGoModelId(model);

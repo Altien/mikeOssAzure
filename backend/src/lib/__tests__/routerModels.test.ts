@@ -162,7 +162,7 @@ describe("resolveRequestedModel outside-selection behaviour", () => {
                 "throw",
             ),
         ).rejects.toThrow(
-            "Model vercel/pricy/frontier is not in your saved Vercel AI Gateway models — add it in Settings → BYOK → Routers.",
+            "Model vercel/pricy/frontier is not in your saved Vercel AI Gateway models — add it in Settings → Bring Your Own Keys → Routers.",
         );
     });
 

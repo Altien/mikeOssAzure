@@ -138,6 +138,10 @@ export function RouterSettingsSection() {
             <h2 className="text-2xl font-medium font-serif text-gray-900">
                 Routers
             </h2>
+            <p className="text-sm text-gray-500">
+                Choose models from each router&apos;s catalog or enter a model
+                ID. Saved models appear in model selectors.
+            </p>
             <SettingsSection>
                 {openRouterConfigured && (
                     <RouterModelsSetting
@@ -305,16 +309,12 @@ function RouterModelsSetting({
 
     return (
         <div className="px-4 py-5">
-            <div className="flex items-center gap-2">
+            <div className="mb-2 flex items-center gap-2">
                 <FieldLabel className="text-sm">{label} models</FieldLabel>
                 {saving && (
                     <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
                 )}
             </div>
-            <p className="mb-2 text-xs text-gray-400">
-                Choose from {label}&apos;s catalog or type a model ID. Saved
-                models appear in model selectors.
-            </p>
             <div
                 ref={typeaheadRef}
                 className="relative"
