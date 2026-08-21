@@ -1,14 +1,15 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { PillButtonUI, type PillButtonUITone } from "./PillButtonUI";
+import { Loader2 } from "lucide-react";
+import { PillButtonUI } from "./PillButtonUI";
 
-export interface EditCardUIAction {
-    label: ReactNode;
-    onClick?: () => void;
-    disabled?: boolean;
-    title?: string;
-}
+export type EditCardUIBusyAction =
+    | "view"
+    | "apply"
+    | "accept"
+    | "reject"
+    | "accept-and-apply";
 
 export interface EditCardUIProps {
     originalText?: string;
@@ -30,32 +31,21 @@ export interface EditCardUIProps {
     statusMessageClassName?: string;
     ariaBusy?: boolean;
     className?: string;
-    actionOrder?: "resolve-first" | "view-first";
-    viewAction?: EditCardUIAction;
-    applyAction?: EditCardUIAction;
-    acceptAction?: EditCardUIAction;
-    rejectAction?: EditCardUIAction;
+    actionsDisabled?: boolean;
+    busyAction?: EditCardUIBusyAction;
+    onView?: () => void;
+    onApply?: () => void;
+    onAccept?: () => void;
+    onReject?: () => void;
+    onAcceptAndApply?: () => void;
 }
 
-function ActionButton({
-    action,
-    tone,
-    className = "",
-}: {
-    action: EditCardUIAction;
-    tone: PillButtonUITone;
-    className?: string;
-}) {
+function BusyLabel({ children }: { children: ReactNode }) {
     return (
-        <PillButtonUI
-            tone={tone}
-            onClick={action.onClick}
-            disabled={action.disabled}
-            title={action.title}
-            className={className}
-        >
-            {action.label}
-        </PillButtonUI>
+        <>
+            <Loader2 aria-hidden="true" className="h-3 w-3 animate-spin" />
+            <span>{children}</span>
+        </>
     );
 }
 
@@ -75,39 +65,36 @@ export function EditCardUI({
     statusMessageClassName = "",
     ariaBusy = false,
     className = "",
-    actionOrder = "resolve-first",
-    viewAction,
-    applyAction,
-    acceptAction,
-    rejectAction,
+    actionsDisabled = false,
+    busyAction,
+    onView,
+    onApply,
+    onAccept,
+    onReject,
+    onAcceptAndApply,
 }: EditCardUIProps) {
     const hasEditText =
         replacementText !== undefined || originalText !== undefined;
     const hasReplacement =
         replacementText !== undefined && replacementText !== "";
     const hasOriginal = originalText !== undefined && originalText !== "";
-    const hasResolveActions = !!applyAction || !!acceptAction || !!rejectAction;
-    const hasActions = !!viewAction || hasResolveActions;
-
-    const resolveActions = hasResolveActions ? (
-        <div className="flex gap-2">
-            {applyAction && (
-                <ActionButton action={applyAction} tone="blue" />
-            )}
-            {acceptAction && (
-                <ActionButton action={acceptAction} tone="blue" />
-            )}
-            {rejectAction && (
-                <ActionButton action={rejectAction} tone="white" />
-            )}
-        </div>
-    ) : null;
+    const resolved = status === "accepted" || status === "rejected";
+    const controlsDisabled = actionsDisabled || busyAction !== undefined;
+    const showApply = !!onApply || busyAction === "apply";
+    const showAcceptAndApply =
+        !!onAcceptAndApply || busyAction === "accept-and-apply";
+    const hasActions =
+        !!onView ||
+        showApply ||
+        showAcceptAndApply ||
+        !!onAccept ||
+        !!onReject;
 
     return (
         <div
             className={className}
             data-edit-status={status}
-            aria-busy={ariaBusy || undefined}
+            aria-busy={ariaBusy || busyAction !== undefined || undefined}
         >
             {(changeNumber !== undefined || reason) && (
                 <div className="mb-2 flex items-start gap-2">
@@ -159,32 +146,86 @@ export function EditCardUI({
                 </p>
             )}
 
-            {hasActions && actionOrder === "view-first" && (
-                <div
-                    className="mt-3 flex items-center justify-between gap-2"
-                    role="group"
-                    aria-label="Edit actions"
-                >
-                    {viewAction && (
-                        <ActionButton action={viewAction} tone="white" />
-                    )}
-                    {resolveActions}
-                </div>
-            )}
-
-            {hasActions && actionOrder === "resolve-first" && (
+            {hasActions && (
                 <div
                     className="mt-2 flex gap-2"
                     role="group"
                     aria-label="Edit actions"
                 >
-                    {resolveActions}
-                    {viewAction && (
-                        <ActionButton
-                            action={viewAction}
+                    {showAcceptAndApply && (
+                        <PillButtonUI
+                            tone="blue"
+                            onClick={onAcceptAndApply}
+                            disabled={
+                                controlsDisabled || !onAcceptAndApply
+                            }
+                        >
+                            {busyAction === "accept-and-apply" ? (
+                                <BusyLabel>
+                                    Accepting &amp; applying...
+                                </BusyLabel>
+                            ) : (
+                                "Accept & apply"
+                            )}
+                        </PillButtonUI>
+                    )}
+                    {showApply && (
+                        <PillButtonUI
+                            tone="blue"
+                            onClick={onApply}
+                            disabled={controlsDisabled || !onApply}
+                        >
+                            {busyAction === "apply" ? (
+                                <BusyLabel>Applying...</BusyLabel>
+                            ) : (
+                                "Apply"
+                            )}
+                        </PillButtonUI>
+                    )}
+                    {onAccept && (
+                        <PillButtonUI
+                            tone="blue"
+                            onClick={onAccept}
+                            disabled={controlsDisabled || resolved}
+                        >
+                            {busyAction === "accept" ? (
+                                <BusyLabel>Accepting...</BusyLabel>
+                            ) : status === "accepted" ? (
+                                "Accepted"
+                            ) : (
+                                "Accept"
+                            )}
+                        </PillButtonUI>
+                    )}
+                    {onReject && (
+                        <PillButtonUI
+                            tone="white"
+                            onClick={onReject}
+                            disabled={controlsDisabled || resolved}
+                        >
+                            {busyAction === "reject" ? (
+                                <BusyLabel>Rejecting...</BusyLabel>
+                            ) : status === "rejected" ? (
+                                "Rejected"
+                            ) : (
+                                "Reject"
+                            )}
+                        </PillButtonUI>
+                    )}
+                    {onView && (
+                        <PillButtonUI
                             tone="black"
+                            onClick={onView}
+                            disabled={controlsDisabled || resolved}
+                            title={
+                                resolved
+                                    ? "This change has been resolved and is no longer in the document."
+                                    : undefined
+                            }
                             className="ml-auto"
-                        />
+                        >
+                            View
+                        </PillButtonUI>
                     )}
                 </div>
             )}

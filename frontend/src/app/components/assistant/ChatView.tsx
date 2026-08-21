@@ -91,6 +91,9 @@ export function ChatView({
     );
     const { setSidebarOpen } = useSidebar();
     const panelCloseTimerRef = useRef<number | null>(null);
+    const activeTab = tabs.find((tab) => tab.id === activeTabId);
+    const activeCitation =
+        activeTab?.kind === "citation" ? activeTab.citation : null;
 
     useEffect(() => {
         // eslint-disable-next-line react-hooks/set-state-in-effect -- reset per-chat UI state when switching chats
@@ -711,6 +714,9 @@ export function ChatView({
                                                 citations={msg.citations}
                                                 citationStatus={
                                                     msg.citationStatus
+                                                }
+                                                activeCitation={
+                                                    activeCitation
                                                 }
                                                 onCitationClick={(citation) =>
                                                     void openCitation(citation)
