@@ -65,7 +65,21 @@ export async function getUserModelSettings(
         getStoredUserApiKeys(userId, client),
         getAllUserRouterModels(userId, client),
     ]);
-    const data = profileResult.data;
+    let data = profileResult.data;
+
+    // A database that predates the 20260821 onboarding migration rejects the
+    // select above outright (unknown column), which would silently fall every
+    // caller back to default models and re-enable US legal research for users
+    // who turned it off. Retry with the pre-migration column set so saved
+    // settings keep working; personalisation simply stays empty.
+    if (profileResult.error?.code === "42703") {
+        const legacy = await client
+            .from("user_profiles")
+            .select("title_model, tabular_model, legal_research_us")
+            .eq("user_id", userId)
+            .single();
+        data = legacy.data as typeof data;
+    }
 
     // A stored preference can name a router model the user has since removed
     // from (or never had in) their saved selection — e.g. a hand-crafted

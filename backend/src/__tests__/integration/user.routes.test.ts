@@ -48,8 +48,11 @@ const {
 // ---------------------------------------------------------------------------
 type QueryResult = { data: unknown; error: unknown };
 
+// A table entry may be a queue of results: each query consumes the next one,
+// and the last repeats. Lets tests drive the selectProfile fallback cascade
+// (first select fails with 42703, the retry succeeds).
 let supabaseState: {
-    tables: Record<string, QueryResult>;
+    tables: Record<string, QueryResult | QueryResult[]>;
     adminGetUserById: QueryResult;
     adminDeleteUser: { error: unknown };
 };
@@ -67,7 +70,13 @@ function resetSupabaseState() {
 resetSupabaseState();
 
 function resultForTable(table: string): QueryResult {
-    return supabaseState.tables[table] ?? { data: null, error: null };
+    const entry = supabaseState.tables[table];
+    if (Array.isArray(entry)) {
+        return entry.length > 1
+            ? (entry.shift() as QueryResult)
+            : (entry[0] ?? { data: null, error: null });
+    }
+    return entry ?? { data: null, error: null };
 }
 
 function makeQuery(table: string) {
@@ -304,6 +313,52 @@ describe("user.routes", () => {
             expect(requireMfaIfEnrolled).not.toHaveBeenCalled();
         });
 
+        it("keeps saved preferences on a database without the onboarding migration", async () => {
+            // Replicated live (PR #365 review): with the 20260821 columns
+            // dropped, the profile select failed on "jurisdiction", skipped
+            // every fallback tier, and silently reset legal_research_us and
+            // quick_actions_visible to defaults. The retry tier must preserve
+            // the user's saved values and report legacy-exempt onboarding.
+            const preMigrationRow = {
+                display_name: "Ada",
+                organisation: "Acme",
+                message_credits_used: 3,
+                credits_reset_date: "2999-01-01T00:00:00.000Z",
+                tier: "Pro",
+                title_model: null,
+                tabular_model: "gemini-3-flash-preview",
+                mfa_on_login: false,
+                legal_research_us: false,
+                quick_actions_visible: false,
+            };
+            supabaseState.tables.user_profiles = [
+                {
+                    data: null,
+                    error: {
+                        code: "42703",
+                        message:
+                            "column user_profiles.jurisdiction does not exist",
+                    },
+                },
+                { data: preMigrationRow, error: null },
+            ];
+
+            const res = await request(app)
+                .get("/user/profile")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body).toMatchObject({
+                legalResearchUs: false,
+                quickActionsVisible: false,
+                onboardingComplete: true,
+                onboardingVersion: 0,
+                passwordSet: false,
+                jurisdiction: null,
+                practiceAreas: [],
+            });
+        });
+
         it("returns 500 with detail when the profile load errors", async () => {
             supabaseState.tables.user_profiles = {
                 data: null,
@@ -519,6 +574,29 @@ describe("user.routes", () => {
 
             expect(res.status).toBe(200);
         });
+
+        // display_name and organisation are injected into every chat's
+        // system prompt, so their size must be bounded like the other
+        // personalisation fields (200 matches handle_new_user's cap).
+        it.each(["displayName", "organisation"])(
+            "rejects a %s longer than 200 characters",
+            async (field) => {
+                supabaseState.tables.user_profiles = {
+                    data: profileRow(),
+                    error: null,
+                };
+
+                const res = await request(app)
+                    .patch("/user/profile")
+                    .set(...AUTH)
+                    .send({ [field]: "x".repeat(201) });
+
+                expect(res.status).toBe(400);
+                expect(res.body.detail).toBe(
+                    `${field} must be 200 characters or fewer`,
+                );
+            },
+        );
     });
 
     describe("POST /user/onboarding", () => {
