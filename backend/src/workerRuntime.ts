@@ -15,11 +15,10 @@
 
 import { anyWorkerEnabled, startWorkers, stopWorkers } from "./workers";
 import { startDbJobRunner, stopDbJobRunner } from "./lib/dbq/runner";
-import { DB_JOB_HANDLERS } from "./lib/dbq/handlers";
-
-// Refresh MCP OAuth tokens expiring within this window; moves next to the
-// mcp.token_refresh handler once that job lands.
-const MCP_TOKEN_REFRESH_WINDOW_MS = 15 * 60 * 1000;
+import {
+    DB_JOB_HANDLERS,
+    MCP_TOKEN_REFRESH_WINDOW_MS,
+} from "./lib/dbq/handlers";
 import { enqueueDbJob } from "./lib/dbq/enqueue";
 import { runStaleWorkSweep } from "./lib/maintenance/staleWork";
 import { createServerSupabase } from "./lib/supabase";
