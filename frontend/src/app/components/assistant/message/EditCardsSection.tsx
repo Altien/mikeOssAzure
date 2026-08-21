@@ -139,10 +139,17 @@ function BulkEditActions({
                 onClick={() => handleAll("accept")}
                 disabled={!!busy}
             >
-                {busy === "accept" && (
-                    <Loader2 className="h-3 w-3 animate-spin" />
+                {busy === "accept" ? (
+                    <>
+                        <Loader2
+                            aria-hidden="true"
+                            className="h-3 w-3 animate-spin"
+                        />
+                        Accepting all...
+                    </>
+                ) : (
+                    "Accept all"
                 )}
-                Accept all
             </PillButton>
             <PillButton
                 tone="white"
@@ -150,10 +157,17 @@ function BulkEditActions({
                 onClick={() => handleAll("reject")}
                 disabled={!!busy}
             >
-                {busy === "reject" && (
-                    <Loader2 className="h-3 w-3 animate-spin" />
+                {busy === "reject" ? (
+                    <>
+                        <Loader2
+                            aria-hidden="true"
+                            className="h-3 w-3 animate-spin"
+                        />
+                        Rejecting all...
+                    </>
+                ) : (
+                    "Reject all"
                 )}
-                Reject all
             </PillButton>
             {progress && (
                 <span className="text-xs font-sans text-gray-500">

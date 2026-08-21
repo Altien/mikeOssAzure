@@ -1,13 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-    completeOpenRouterText,
-    completeVercelText,
-    streamOpenRouter,
-} from "../llm/openrouter";
-import {
-    completeOpenCodeGoText,
-    streamOpenCodeGo,
-} from "../llm/openCodeGo";
+import { completeWithProvider, streamWithProvider } from "../llm/providers";
 
 function streamResponse(chunks: unknown[]): Response {
     const body = `${chunks
@@ -17,6 +9,16 @@ function streamResponse(chunks: unknown[]): Response {
         status: 200,
         headers: { "Content-Type": "text/event-stream" },
     });
+}
+
+function functionTool(
+    name: string,
+    parameters: Record<string, unknown> = { type: "object" },
+) {
+    return {
+        type: "function" as const,
+        function: { name, description: `${name} test tool`, parameters },
+    };
 }
 
 function messagesStreamResponse(model: string, text: string): Response {
@@ -53,7 +55,10 @@ function messagesStreamResponse(model: string, text: string): Response {
         { type: "message_stop" },
     ];
     const body = events
-        .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+        .map(
+            (event) =>
+                `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
+        )
         .join("");
     return new Response(body, {
         status: 200,
@@ -103,7 +108,10 @@ function messagesToolStreamResponse(model: string): Response {
         { type: "message_stop" },
     ];
     const body = events
-        .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+        .map(
+            (event) =>
+                `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
+        )
         .join("");
     return new Response(body, {
         status: 200,
@@ -121,7 +129,14 @@ describe("OpenRouter LLM adapter", () => {
         const fetchMock = vi.fn().mockResolvedValue(
             new Response(
                 JSON.stringify({
-                    choices: [{ message: { content: "A short title" } }],
+                    choices: [
+                        {
+                            message: {
+                                role: "assistant",
+                                content: "A short title",
+                            },
+                        },
+                    ],
                 }),
                 {
                     status: 200,
@@ -131,7 +146,7 @@ describe("OpenRouter LLM adapter", () => {
         );
         vi.stubGlobal("fetch", fetchMock);
 
-        const result = await completeOpenRouterText({
+        const result = await completeWithProvider({
             model: "openrouter/openai/gpt-5.4",
             user: "Title this",
             apiKeys: { openrouter: "or-user-key" },
@@ -140,12 +155,11 @@ describe("OpenRouter LLM adapter", () => {
         expect(result).toBe("A short title");
         const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
         expect(url).toBe("https://openrouter.ai/api/v1/chat/completions");
-        expect(init.headers).toMatchObject({
-            Authorization: "Bearer or-user-key",
-        });
+        expect(new Headers(init.headers).get("authorization")).toBe(
+            "Bearer or-user-key",
+        );
         expect(JSON.parse(String(init.body))).toMatchObject({
             model: "openai/gpt-5.4",
-            stream: false,
         });
     });
 
@@ -163,6 +177,7 @@ describe("OpenRouter LLM adapter", () => {
                                         {
                                             index: 0,
                                             id: "call-1",
+                                            type: "function",
                                             function: {
                                                 name: "lookup",
                                                 arguments:
@@ -188,7 +203,7 @@ describe("OpenRouter LLM adapter", () => {
             .fn()
             .mockResolvedValue([{ tool_use_id: "call-1", content: "result" }]);
 
-        const result = await streamOpenRouter({
+        const result = await streamWithProvider({
             model: "openrouter/anthropic/claude-sonnet-4.5",
             systemPrompt: "Help",
             messages: [{ role: "user", content: "Review" }],
@@ -231,7 +246,11 @@ describe("OpenRouter LLM adapter", () => {
         expect(secondBody.messages).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({ role: "assistant" }),
-                { role: "tool", tool_call_id: "call-1", content: "result" },
+                expect.objectContaining({
+                    role: "tool",
+                    tool_call_id: "call-1",
+                    content: "result",
+                }),
             ]),
         );
     });
@@ -252,6 +271,7 @@ describe("OpenRouter LLM adapter", () => {
                                         {
                                             index: 0,
                                             id: "call-1",
+                                            type: "function",
                                             function: {
                                                 name: "delete_document",
                                                 arguments: '{"term":"contr',
@@ -268,10 +288,11 @@ describe("OpenRouter LLM adapter", () => {
         const runTools = vi.fn();
 
         await expect(
-            streamOpenRouter({
+            streamWithProvider({
                 model: "openrouter/anthropic/claude-sonnet-4.5",
                 systemPrompt: "Help",
                 messages: [{ role: "user", content: "Review" }],
+                tools: [functionTool("delete_document")],
                 apiKeys: { openrouter: "or-user-key" },
                 runTools,
             }),
@@ -292,6 +313,7 @@ describe("OpenRouter LLM adapter", () => {
                             {
                                 index: 0,
                                 id: "call-1",
+                                type: "function",
                                 function: { name: "delete_document" },
                             },
                         ],
@@ -311,10 +333,11 @@ describe("OpenRouter LLM adapter", () => {
         const runTools = vi.fn();
 
         await expect(
-            streamOpenRouter({
+            streamWithProvider({
                 model: "openrouter/anthropic/claude-sonnet-4.5",
                 systemPrompt: "Help",
                 messages: [{ role: "user", content: "Review" }],
+                tools: [functionTool("delete_document")],
                 apiKeys: { openrouter: "or-user-key" },
                 runTools,
             }),
@@ -337,6 +360,7 @@ describe("OpenRouter LLM adapter", () => {
                                         {
                                             index: 0,
                                             id: "call-1",
+                                            type: "function",
                                             function: { name: "list_docs" },
                                         },
                                     ],
@@ -355,10 +379,11 @@ describe("OpenRouter LLM adapter", () => {
             .fn()
             .mockResolvedValue([{ tool_use_id: "call-1", content: "[]" }]);
 
-        const result = await streamOpenRouter({
+        const result = await streamWithProvider({
             model: "openrouter/anthropic/claude-sonnet-4.5",
             systemPrompt: "Help",
             messages: [{ role: "user", content: "List them" }],
+            tools: [functionTool("list_docs")],
             apiKeys: { openrouter: "or-user-key" },
             runTools,
         });
@@ -390,7 +415,7 @@ describe("OpenRouter LLM adapter", () => {
         );
         const onContentDelta = vi.fn();
 
-        const result = await streamOpenRouter({
+        const result = await streamWithProvider({
             model: "openrouter/anthropic/claude-sonnet-4.5",
             systemPrompt: "Help",
             messages: [{ role: "user", content: "Say hello" }],
@@ -413,7 +438,18 @@ describe("Vercel AI Gateway LLM adapter", () => {
         const fetchMock = vi.fn().mockResolvedValue(
             new Response(
                 JSON.stringify({
-                    choices: [{ message: { content: "A Vercel title" } }],
+                    content: [{ type: "text", text: "A Vercel title" }],
+                    finishReason: "stop",
+                    usage: {
+                        inputTokens: {
+                            total: 2,
+                            noCache: 2,
+                            cacheRead: 0,
+                            cacheWrite: 0,
+                        },
+                        outputTokens: { total: 3, text: 3, reasoning: 0 },
+                    },
+                    warnings: [],
                 }),
                 {
                     status: 200,
@@ -423,7 +459,7 @@ describe("Vercel AI Gateway LLM adapter", () => {
         );
         vi.stubGlobal("fetch", fetchMock);
 
-        const result = await completeVercelText({
+        const result = await completeWithProvider({
             model: "vercel/openai/gpt-5.4",
             user: "Title this",
             apiKeys: { vercel: "vercel-user-key" },
@@ -431,15 +467,12 @@ describe("Vercel AI Gateway LLM adapter", () => {
 
         expect(result).toBe("A Vercel title");
         const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-        expect(url).toBe("https://ai-gateway.vercel.sh/v1/chat/completions");
-        expect(init.headers).toMatchObject({
-            Authorization: "Bearer vercel-user-key",
-        });
-        expect(init.headers).not.toHaveProperty("X-Title");
-        expect(JSON.parse(String(init.body))).toMatchObject({
-            model: "openai/gpt-5.4",
-            stream: false,
-        });
+        expect(url).toBe("https://ai-gateway.vercel.sh/v4/ai/language-model");
+        const headers = new Headers(init.headers);
+        expect(headers.get("authorization")).toBe("Bearer vercel-user-key");
+        expect(headers.get("ai-language-model-id")).toBe("openai/gpt-5.4");
+        expect(headers.get("ai-language-model-streaming")).toBe("false");
+        expect(headers.get("x-title")).toBeNull();
     });
 });
 
@@ -463,7 +496,7 @@ describe("OpenCode Go LLM adapter", () => {
         );
         vi.stubGlobal("fetch", fetchMock);
 
-        const result = await completeOpenCodeGoText({
+        const result = await completeWithProvider({
             model: "opencode-go/glm-5",
             user: "Title this",
             apiKeys: { "opencode-go": "oc-user-key" },
@@ -472,20 +505,17 @@ describe("OpenCode Go LLM adapter", () => {
         expect(result).toBe("An OpenCode title");
         const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
         expect(url).toBe("https://opencode.ai/zen/go/v1/chat/completions");
-        expect(init.headers).toMatchObject({
-            Authorization: "Bearer oc-user-key",
-        });
+        expect(new Headers(init.headers).get("authorization")).toBe(
+            "Bearer oc-user-key",
+        );
         // OpenRouter-only attribution headers must not leak to other routers.
         expect(init.headers).not.toHaveProperty("X-Title");
-        expect(JSON.parse(String(init.body))).toMatchObject({
-            model: "glm-5",
-            stream: false,
-        });
+        expect(JSON.parse(String(init.body))).toMatchObject({ model: "glm-5" });
     });
 
     it("names OpenCode Go when no key is configured", async () => {
         await expect(
-            completeOpenCodeGoText({
+            completeWithProvider({
                 model: "opencode-go/glm-5",
                 user: "Title this",
             }),
@@ -515,7 +545,7 @@ describe("OpenCode Go LLM adapter", () => {
         );
         vi.stubGlobal("fetch", fetchMock);
 
-        const result = await completeOpenCodeGoText({
+        const result = await completeWithProvider({
             model: "opencode-go/qwen3.8-max",
             user: "Title this",
             apiKeys: { "opencode-go": "oc-user-key" },
@@ -528,7 +558,12 @@ describe("OpenCode Go LLM adapter", () => {
         expect(JSON.parse(String(init.body))).toMatchObject({
             model: "qwen3.8-max",
             max_tokens: 512,
-            messages: [{ role: "user", content: "Title this" }],
+            messages: [
+                {
+                    role: "user",
+                    content: [{ type: "text", text: "Title this" }],
+                },
+            ],
         });
     });
 
@@ -539,7 +574,7 @@ describe("OpenCode Go LLM adapter", () => {
         vi.stubGlobal("fetch", fetchMock);
         const deltas: string[] = [];
 
-        const result = await streamOpenCodeGo({
+        const result = await streamWithProvider({
             model: "opencode-go/minimax-m3",
             systemPrompt: "Be concise",
             messages: [{ role: "user", content: "Hello" }],
@@ -555,7 +590,7 @@ describe("OpenCode Go LLM adapter", () => {
         const body = JSON.parse(String(init.body));
         expect(body).toMatchObject({
             model: "minimax-m3",
-            system: "Be concise",
+            system: [{ type: "text", text: "Be concise" }],
             stream: true,
         });
         expect(body).not.toHaveProperty("thinking");
@@ -570,11 +605,13 @@ describe("OpenCode Go LLM adapter", () => {
                 messagesStreamResponse("qwen3.8-max", "Found it"),
             );
         vi.stubGlobal("fetch", fetchMock);
-        const runTools = vi.fn().mockResolvedValue([
-            { tool_use_id: "tool_1", content: "Contract result" },
-        ]);
+        const runTools = vi
+            .fn()
+            .mockResolvedValue([
+                { tool_use_id: "tool_1", content: "Contract result" },
+            ]);
 
-        const result = await streamOpenCodeGo({
+        const result = await streamWithProvider({
             model: "opencode-go/qwen3.8-max",
             systemPrompt: "Use tools",
             messages: [{ role: "user", content: "Find the contract" }],
@@ -609,7 +646,10 @@ describe("OpenCode Go LLM adapter", () => {
             String((fetchMock.mock.calls[1]?.[1] as RequestInit).body),
         );
         expect(secondBody.messages).toEqual([
-            { role: "user", content: "Find the contract" },
+            {
+                role: "user",
+                content: [{ type: "text", text: "Find the contract" }],
+            },
             {
                 role: "assistant",
                 content: [
@@ -639,7 +679,7 @@ describe("OpenCode Go LLM adapter", () => {
         vi.stubGlobal("fetch", fetchMock);
 
         await expect(
-            completeOpenCodeGoText({
+            completeWithProvider({
                 model: "opencode-go/gpt-5.6-luna",
                 user: "Title this",
                 apiKeys: { "opencode-go": "oc-user-key" },

@@ -47,7 +47,7 @@ describe("citation verification presentation", () => {
     expect(citationVerificationAriaLabel(citation)).toBe(
       "Citation 1. Could not verify quote",
     );
-    expect(citationVerificationPillClassName(citation)).toContain("!border-0");
+    expect(citationVerificationPillClassName(citation)).not.toContain("border");
     expect(citationVerificationPillClassName(citation)).toContain(
       "!bg-red-100/85",
     );

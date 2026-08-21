@@ -30,11 +30,11 @@ describe("CitationsBlock verification states", () => {
       screen.getByRole("button", {
         name: "Citation 1. Could not verify quote",
       }),
-    ).toHaveClass("!border-0", "!bg-red-100/85");
+    ).toHaveClass("!bg-red-100/85");
     const verifiedButton = screen.getByRole("button", {
       name: "Citation 2",
     });
-    expect(verifiedButton).toHaveClass("border-gray-200/60", "bg-gray-200/80");
+    expect(verifiedButton).toHaveClass("bg-gray-200/80");
     expect(verifiedButton).not.toHaveClass("!bg-red-100/85");
   });
 
@@ -58,5 +58,27 @@ describe("CitationsBlock verification states", () => {
 
     const button = screen.getByRole("button", { name: "Citation 4" });
     expect(button).not.toHaveClass("!bg-red-100/85");
+  });
+
+  it("adds the selected quote background only to the active citation", () => {
+    const inactive = documentCitation(1);
+    const active = documentCitation(2);
+
+    render(
+      <CitationsBlock
+        citations={[inactive, active]}
+        activeCitation={active}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Citation 2" })).toHaveClass(
+      "bg-blue-200/70",
+    );
+    expect(
+      screen.getByRole("button", { name: "Citation 2" }),
+    ).toHaveAttribute("aria-current", "true");
+    expect(
+      screen.getByRole("button", { name: "Citation 1" }),
+    ).not.toHaveClass("bg-blue-200/70");
   });
 });

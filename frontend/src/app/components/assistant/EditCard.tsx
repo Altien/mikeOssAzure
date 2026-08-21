@@ -194,14 +194,16 @@ export function EditCard({
     onResolved,
     onError,
 }: Props) {
-    const [busy, setBusy] = useState(false);
+    const [busyAction, setBusyAction] = useState<
+        "accept" | "reject" | null
+    >(null);
+    const busy = busyAction !== null;
     const [localStatus, setLocalStatus] = useState<
         "pending" | "accepted" | "rejected"
     >(annotation.status);
     // External override (from a bulk resolve) takes precedence over the
     // card's own click-driven state.
     const status = resolvedStatus ?? localStatus;
-    const setStatus = setLocalStatus;
 
     useEffect(() => {
         if (busy) return;
@@ -209,14 +211,10 @@ export function EditCard({
     }, [annotation.edit_id, annotation.status, busy]);
 
     const resolved = status !== "pending";
-    // True while an accept/reject request for any edit on this card's
-    // document is in flight — triggered here, in DocPanel, or in the
-    // bulk bar. Disables the buttons so the user can't race resolutions.
-    const inFlight = busy || !!isReloading;
 
     const handle = async (verb: "accept" | "reject") => {
         if (busy || resolved) return;
-        setBusy(true);
+        setBusyAction(verb);
         onResolveStart?.({
             editId: annotation.edit_id,
             documentId: annotation.document_id,
@@ -236,7 +234,7 @@ export function EditCard({
             );
             const nextStatus =
                 data.status ?? (verb === "accept" ? "accepted" : "rejected");
-            setStatus(nextStatus);
+            setLocalStatus(nextStatus);
             onResolved?.({
                 editId: annotation.edit_id,
                 documentId: annotation.document_id,
@@ -261,7 +259,7 @@ export function EditCard({
                         : "Couldn't save reject — reverted.",
             });
         } finally {
-            setBusy(false);
+            setBusyAction(null);
         }
     };
 
@@ -272,28 +270,14 @@ export function EditCard({
             reason={annotation.reason}
             changeNumber={changeNumber}
             status={status}
+            ariaBusy={!!isReloading}
             className={`${RESPONSE_GLASS_SURFACE} p-2`}
-            acceptAction={{
-                label: status === "accepted" ? "Accepted" : "Accept",
-                onClick: () => handle("accept"),
-                disabled: inFlight || resolved,
-            }}
-            rejectAction={{
-                label: status === "rejected" ? "Rejected" : "Reject",
-                onClick: () => handle("reject"),
-                disabled: inFlight || resolved,
-            }}
-            viewAction={
-                onViewClick
-                    ? {
-                          label: "View",
-                          onClick: () => onViewClick(annotation),
-                          disabled: resolved,
-                          title: resolved
-                              ? "This change has been resolved and is no longer in the document."
-                              : undefined,
-                      }
-                    : undefined
+            actionsDisabled={!!isReloading}
+            busyAction={busyAction ?? undefined}
+            onAccept={() => handle("accept")}
+            onReject={() => handle("reject")}
+            onView={
+                onViewClick ? () => onViewClick(annotation) : undefined
             }
         />
     );
