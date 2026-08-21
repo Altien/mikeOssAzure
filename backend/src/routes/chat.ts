@@ -2,7 +2,7 @@ import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
-import { recordChatTurn } from "../lib/audit";
+import { enqueueChatTurnAudit } from "../lib/audit";
 import {
     buildDocContext,
     buildMessages,
@@ -860,7 +860,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                 );
             }
         }
-        void recordChatTurn(
+        void enqueueChatTurnAudit(
             db,
             {
                 userId,
@@ -876,7 +876,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     } catch (err) {
         if (isAbortError(err)) {
             devLog("[chat/stream] client aborted stream", { chatId });
-            void recordChatTurn(
+            void enqueueChatTurnAudit(
                 db,
                 {
                     userId,

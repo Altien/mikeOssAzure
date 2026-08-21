@@ -3,6 +3,8 @@ import { manifestPublicKey } from "./lib/manifestSigning";
 import { runStaleWorkSweep } from "./lib/maintenance/staleWork";
 import { validateRuntimeConfiguration } from "./lib/runtimeConfig";
 import { anyWorkerEnabled, startWorkers, stopWorkers } from "./workers";
+import { startDbJobRunner, stopDbJobRunner } from "./lib/dbq/runner";
+import { DB_JOB_HANDLERS } from "./lib/dbq/handlers";
 
 const PORT = process.env.PORT ?? 3001;
 
@@ -28,6 +30,11 @@ const server = app.listen(PORT, () => {
   if (anyWorkerEnabled()) {
     startWorkers();
   }
+  // The DB queue (audit fan-out, account deletion, storage cleanup, export
+  // builds) runs by default in every deployment — it needs only Postgres,
+  // which every deployment already has. DB_JOBS_ENABLED=false is the
+  // operational escape hatch.
+  startDbJobRunner(DB_JOB_HANDLERS);
 });
 
 // Stale-work reaper: a crash between "status = processing/generating" and the
@@ -70,6 +77,7 @@ async function shutdown(signal: string) {
       server.close((err) => (err ? reject(err) : resolve())),
     );
     await stopWorkers();
+    await stopDbJobRunner();
     console.log("Shutdown complete");
     process.exit(0);
   } catch (err) {
