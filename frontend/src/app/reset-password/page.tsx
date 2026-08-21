@@ -16,6 +16,7 @@ import {
     minimumPasswordMessage,
 } from "@/app/components/auth/passwordPolicy";
 import { supabase } from "@/app/lib/supabase";
+import { FieldLabel } from "@/app/components/ui/form-field";
 
 function ResetPasswordContent() {
     const searchParams = useSearchParams();
@@ -163,12 +164,9 @@ function ResetPasswordContent() {
                                 className="mt-6 space-y-4"
                             >
                                 <div>
-                                    <label
-                                        htmlFor="password"
-                                        className="mb-2 block text-sm font-medium text-gray-700"
-                                    >
+                                    <FieldLabel htmlFor="password">
                                         New password
-                                    </label>
+                                    </FieldLabel>
                                     <Input
                                         id="password"
                                         type="password"
@@ -182,12 +180,9 @@ function ResetPasswordContent() {
                                     />
                                 </div>
                                 <div>
-                                    <label
-                                        htmlFor="confirmPassword"
-                                        className="mb-2 block text-sm font-medium text-gray-700"
-                                    >
+                                    <FieldLabel htmlFor="confirmPassword">
                                         Confirm new password
-                                    </label>
+                                    </FieldLabel>
                                     <Input
                                         id="confirmPassword"
                                         type="password"

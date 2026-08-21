@@ -10,6 +10,7 @@ import { FullScreenLoader } from "@/app/components/shared/FullScreenLoader";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { updateUserProfile } from "@/app/lib/mikeApi";
+import { FieldLabel } from "@/app/components/ui/form-field";
 
 export default function OnboardingProfilePage() {
     const router = useRouter();
@@ -83,12 +84,9 @@ function ProfileDetailsForm({
         >
             <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
-                    <label
-                        htmlFor="name"
-                        className="mb-2 block text-sm font-medium text-gray-700"
-                    >
+                    <FieldLabel htmlFor="name">
                         Name
-                    </label>
+                    </FieldLabel>
                     <Input
                         id="name"
                         value={name}
@@ -101,15 +99,9 @@ function ProfileDetailsForm({
                 </div>
 
                 <div>
-                    <label
-                        htmlFor="organisation"
-                        className="mb-2 block text-sm font-medium text-gray-700"
-                    >
-                        Organisation{" "}
-                        <span className="font-normal text-gray-400">
-                            (optional)
-                        </span>
-                    </label>
+                    <FieldLabel htmlFor="organisation">
+                        Organisation
+                    </FieldLabel>
                     <Input
                         id="organisation"
                         value={organisation}

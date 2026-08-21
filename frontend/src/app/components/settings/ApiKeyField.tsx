@@ -101,7 +101,7 @@ export function ApiKeyField({
     return (
         <>
             <div className="px-4 py-5">
-                <FieldLabel className="text-sm">{label}</FieldLabel>
+                <FieldLabel>{label}</FieldLabel>
                 {description && (
                     <p className="mb-3 text-sm text-gray-500">
                         {description}

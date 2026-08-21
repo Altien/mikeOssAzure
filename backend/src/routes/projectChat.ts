@@ -5,6 +5,7 @@ import { recordChatTurn } from "../lib/audit";
 import {
     buildProjectDocContext,
     buildMessages,
+    buildUserPersonalisationPrompt,
     buildWorkflowStore,
     enrichWithPriorEvents,
     appendAskInputsResponseToLastAssistantMessage,
@@ -224,7 +225,15 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         api_keys: apiKeys,
         legal_research_us: legalResearchUs,
         title_model: titleModel,
+        personalisation,
     } = await getUserModelSettings(userId, db);
+    const personalisationPrompt = buildUserPersonalisationPrompt(
+        personalisation,
+        nonce,
+    );
+    if (personalisationPrompt) {
+        systemPromptExtra += `\n\n${personalisationPrompt}`;
+    }
     const apiMessages = buildMessages(
         messagesForLLM,
         docAvailability,

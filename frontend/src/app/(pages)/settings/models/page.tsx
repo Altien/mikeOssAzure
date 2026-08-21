@@ -94,9 +94,7 @@ export default function ModelPreferencesPage() {
                 </h2>
                 <SettingsSection>
                     <div className="px-4 py-5">
-                        <FieldLabel className="text-sm">
-                            Title generation model
-                        </FieldLabel>
+                        <FieldLabel>Title generation model</FieldLabel>
                         <p className="text-xs text-gray-400 mb-2">
                             Used for naming chats and other lightweight titles.
                         </p>
@@ -122,9 +120,7 @@ export default function ModelPreferencesPage() {
                         />
                     </div>
                     <div className="px-4 py-5">
-                        <FieldLabel className="text-sm">
-                            Tabular review model
-                        </FieldLabel>
+                        <FieldLabel>Tabular review model</FieldLabel>
                         <p className="text-xs text-gray-400 mb-2">
                             We recommend using a smaller model for tabular
                             reviews to reduce token costs.

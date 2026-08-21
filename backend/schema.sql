@@ -17,6 +17,25 @@ create table if not exists public.user_profiles (
   display_name text,
   organisation text,
   jurisdiction text,
+  practice_setting text
+    check (
+      practice_setting is null
+      or practice_setting in ('private_practice', 'in_house', 'not_practising')
+    ),
+  professional_title text
+    check (
+      professional_title is null
+      or professional_title in (
+        'Partner',
+        'Senior Associate',
+        'Associate',
+        'Law Clerk',
+        'Counsel',
+        'General Counsel',
+        'Legal Counsel',
+        'Other'
+      )
+    ),
   practice_areas text[] not null default '{}'::text[],
   onboarding_completed_at timestamptz,
   tier text not null default 'Free',

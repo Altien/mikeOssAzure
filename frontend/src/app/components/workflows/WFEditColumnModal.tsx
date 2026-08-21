@@ -262,10 +262,7 @@ export function WFEditColumnModal({ column, onClose, onSave, onDelete }: Props) 
 
                         {/* Prompt */}
                         <div className="mt-4 flex items-center justify-between">
-                            <FieldLabel
-                                htmlFor="workflow-column-prompt"
-                                className="mb-0"
-                            >
+                            <FieldLabel htmlFor="workflow-column-prompt">
                                 Prompt
                             </FieldLabel>
                             <button

@@ -188,6 +188,8 @@ function profileRow(overrides: Record<string, unknown> = {}) {
         display_name: "Ada",
         organisation: "Acme",
         jurisdiction: "Singapore",
+        practice_setting: "private_practice",
+        professional_title: "Partner",
         practice_areas: ["Corporate and M&A"],
         onboarding_completed_at: "2026-08-21T00:00:00.000Z",
         message_credits_used: 3,
@@ -263,6 +265,8 @@ describe("user.routes", () => {
                 displayName: "Ada",
                 organisation: "Acme",
                 jurisdiction: "Singapore",
+                practiceSetting: "private_practice",
+                professionalTitle: "Partner",
                 practiceAreas: ["Corporate and M&A"],
                 onboardingComplete: true,
                 messageCreditsUsed: 3,
@@ -493,6 +497,25 @@ describe("user.routes", () => {
                 "quickActionsVisible must be a boolean",
             );
         });
+
+        it("allows personalisation fields to be cleared", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow(),
+                error: null,
+            };
+
+            const res = await request(app)
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({
+                    jurisdiction: null,
+                    practiceSetting: null,
+                    professionalTitle: null,
+                    practiceAreas: [],
+                });
+
+            expect(res.status).toBe(200);
+        });
     });
 
     describe("POST /user/onboarding", () => {
@@ -507,6 +530,8 @@ describe("user.routes", () => {
                 .set(...AUTH)
                 .send({
                     jurisdiction: " Singapore ",
+                    practiceSetting: "private_practice",
+                    professionalTitle: "Senior Associate",
                     practiceAreas: [" Corporate and M&A ", "Litigation"],
                 });
 
@@ -514,20 +539,50 @@ describe("user.routes", () => {
             expect(res.body).toMatchObject({
                 displayName: "Ada",
                 jurisdiction: "Singapore",
+                practiceSetting: "private_practice",
+                professionalTitle: "Partner",
                 practiceAreas: ["Corporate and M&A"],
                 onboardingComplete: false,
             });
         });
 
-        it("requires a jurisdiction and at least one practice area", async () => {
+        it("allows users to skip all personalisation fields", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow({ onboarding_completed_at: null }),
+                error: null,
+            };
+
             const res = await request(app)
                 .post("/user/onboarding")
                 .set(...AUTH)
-                .send({ jurisdiction: "", practiceAreas: [] });
+                .send({ practiceAreas: [] });
+
+            expect(res.status).toBe(200);
+        });
+
+        it("rejects an invalid jurisdiction when one is supplied", async () => {
+            const res = await request(app)
+                .post("/user/onboarding")
+                .set(...AUTH)
+                .send({ jurisdiction: "" });
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toBe("Select a valid jurisdiction of practice");
+        });
+
+        it("requires a valid professional setting", async () => {
+            const res = await request(app)
+                .post("/user/onboarding")
+                .set(...AUTH)
+                .send({
+                    jurisdiction: "Singapore",
+                    practiceSetting: "law_firm",
+                    practiceAreas: ["Litigation"],
+                });
 
             expect(res.status).toBe(400);
             expect(res.body.detail).toBe(
-                "Select a valid jurisdiction of practice",
+                "Select a valid professional setting",
             );
         });
 
@@ -542,6 +597,7 @@ describe("user.routes", () => {
                 .set(...AUTH)
                 .send({
                     jurisdiction: "Singapore",
+                    practiceSetting: "in_house",
                     practiceAreas: ["Litigation"],
                 });
 

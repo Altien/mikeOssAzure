@@ -12,6 +12,9 @@ import { useAuth } from "@/app/contexts/AuthContext";
 import {
     type ApiKeyState,
     type ApiKeyProvider,
+    type PersonalisationDetails,
+    type PracticeSetting,
+    type ProfessionalTitle,
     type UserProfile as ApiUserProfile,
     completeUserOnboarding,
     getUserProfile,
@@ -25,6 +28,8 @@ interface UserProfile {
     displayName: string | null;
     organisation: string | null;
     jurisdiction: string | null;
+    practiceSetting: PracticeSetting | null;
+    professionalTitle: ProfessionalTitle | null;
     practiceAreas: string[];
     onboardingComplete: boolean;
     messageCreditsUsed: number;
@@ -58,8 +63,10 @@ interface UserProfileContextType {
     updateDisplayName: (name: string) => Promise<boolean>;
     updateOrganisation: (organisation: string) => Promise<boolean>;
     completeOnboarding: (
-        jurisdiction: string,
-        practiceAreas: string[],
+        details?: PersonalisationDetails,
+    ) => Promise<boolean>;
+    updatePersonalisation: (
+        details: PersonalisationDetails,
     ) => Promise<boolean>;
     updateModelPreference: (
         field: "titleModel" | "tabularModel",
@@ -120,6 +127,8 @@ function toProfile(data: ApiUserProfile): UserProfile {
     return {
         ...profile,
         jurisdiction: profile.jurisdiction ?? null,
+        practiceSetting: profile.practiceSetting ?? null,
+        professionalTitle: profile.professionalTitle ?? null,
         practiceAreas: Array.isArray(profile.practiceAreas)
             ? profile.practiceAreas
             : [],
@@ -173,6 +182,8 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 displayName: null,
                 organisation: null,
                 jurisdiction: null,
+                practiceSetting: null,
+                professionalTitle: null,
                 practiceAreas: [],
                 onboardingComplete: true,
                 messageCreditsUsed: 0,
@@ -241,16 +252,24 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     );
 
     const completeOnboarding = useCallback(
-        async (
-            jurisdiction: string,
-            practiceAreas: string[],
-        ): Promise<boolean> => {
+        async (details: PersonalisationDetails = {}): Promise<boolean> => {
             if (!user) return false;
             try {
-                const updated = await completeUserOnboarding({
-                    jurisdiction,
-                    practiceAreas,
-                });
+                const updated = await completeUserOnboarding(details);
+                setProfile(toProfile(updated));
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [user],
+    );
+
+    const updatePersonalisation = useCallback(
+        async (details: PersonalisationDetails): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                const updated = await updateUserProfile(details);
                 setProfile(toProfile(updated));
                 return true;
             } catch {
@@ -442,6 +461,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 updateDisplayName,
                 updateOrganisation,
                 completeOnboarding,
+                updatePersonalisation,
                 updateModelPreference,
                 updateMfaOnLogin,
                 updateLegalResearchUs,

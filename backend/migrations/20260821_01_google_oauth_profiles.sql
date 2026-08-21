@@ -4,8 +4,39 @@
 
 alter table public.user_profiles
   add column if not exists jurisdiction text,
+  add column if not exists practice_setting text,
+  add column if not exists professional_title text,
   add column if not exists practice_areas text[] not null default '{}'::text[],
   add column if not exists onboarding_completed_at timestamptz;
+
+alter table public.user_profiles
+  drop constraint if exists user_profiles_practice_setting_check;
+
+alter table public.user_profiles
+  add constraint user_profiles_practice_setting_check
+  check (
+    practice_setting is null
+    or practice_setting in ('private_practice', 'in_house', 'not_practising')
+  );
+
+alter table public.user_profiles
+  drop constraint if exists user_profiles_professional_title_check;
+
+alter table public.user_profiles
+  add constraint user_profiles_professional_title_check
+  check (
+    professional_title is null
+    or professional_title in (
+      'Partner',
+      'Senior Associate',
+      'Associate',
+      'Law Clerk',
+      'Counsel',
+      'General Counsel',
+      'Legal Counsel',
+      'Other'
+    )
+  );
 
 update public.user_profiles
 set onboarding_completed_at = now()

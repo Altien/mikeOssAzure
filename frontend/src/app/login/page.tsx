@@ -15,6 +15,7 @@ import {
 } from "@/app/components/auth/authStyles";
 import { AuthDivider } from "@/app/components/auth/AuthDivider";
 import { GoogleAuthButton } from "@/app/components/auth/GoogleAuthButton";
+import { FieldLabel } from "@/app/components/ui/form-field";
 
 export default function LoginPage() {
     const router = useRouter();
@@ -68,12 +69,9 @@ export default function LoginPage() {
                     </h2>
                     <form onSubmit={handleLogin} className="space-y-4">
                         <div>
-                            <label
-                                htmlFor="email"
-                                className="block text-sm font-medium text-gray-700 mb-2"
-                            >
+                            <FieldLabel htmlFor="email">
                                 Email
-                            </label>
+                            </FieldLabel>
                             <Input
                                 id="email"
                                 type="email"
@@ -85,13 +83,10 @@ export default function LoginPage() {
                         </div>
 
                         <div>
-                            <div className="mb-2 flex items-center justify-between gap-3">
-                                <label
-                                    htmlFor="password"
-                                    className="block text-sm font-medium text-gray-700"
-                                >
+                            <div className="flex items-start justify-between gap-3">
+                                <FieldLabel htmlFor="password">
                                     Password
-                                </label>
+                                </FieldLabel>
                                 <Link
                                     href="/forgot-password"
                                     className="text-xs font-medium text-gray-500 transition-colors hover:text-gray-950"

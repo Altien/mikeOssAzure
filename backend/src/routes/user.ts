@@ -59,6 +59,8 @@ type UserProfileRow = {
     display_name: string | null;
     organisation: string | null;
     jurisdiction?: string | null;
+    practice_setting?: string | null;
+    professional_title?: string | null;
     practice_areas?: string[] | null;
     onboarding_completed_at?: string | null;
     message_credits_used: number;
@@ -177,7 +179,7 @@ function mcpOAuthPopupCsp(nonce: string) {
 }
 
 const PROFILE_SELECT =
-    "display_name, organisation, jurisdiction, practice_areas, onboarding_completed_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, quick_actions_visible";
+    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_completed_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, quick_actions_visible";
 const PROFILE_SELECT_NO_QUICK_ACTIONS =
     "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us";
 const PROFILE_SELECT_NO_LEGAL =
@@ -400,6 +402,8 @@ function serializeProfile(
         displayName: row.display_name,
         organisation: row.organisation,
         jurisdiction: row.jurisdiction ?? null,
+        practiceSetting: row.practice_setting ?? null,
+        professionalTitle: row.professional_title ?? null,
         practiceAreas: Array.isArray(row.practice_areas)
             ? row.practice_areas
             : [],
@@ -427,12 +431,65 @@ function serializeProfile(
     };
 }
 
+const PRACTICE_SETTINGS = new Set([
+    "private_practice",
+    "in_house",
+    "not_practising",
+]);
+
+const PROFESSIONAL_TITLES = new Set([
+    "Partner",
+    "Senior Associate",
+    "Associate",
+    "Law Clerk",
+    "Counsel",
+    "General Counsel",
+    "Legal Counsel",
+    "Other",
+]);
+
+function isPracticeSetting(value: string): boolean {
+    return PRACTICE_SETTINGS.has(value);
+}
+
+function normalizeProfessionalTitle(
+    value: unknown,
+): string | null | undefined {
+    if (value === null || value === undefined || value === "") return null;
+    if (typeof value !== "string") return undefined;
+    const title = value.trim();
+    return PROFESSIONAL_TITLES.has(title) ? title : undefined;
+}
+
+function normalizePracticeAreas(value: unknown): string[] | null {
+    if (!Array.isArray(value)) return null;
+    const practiceAreas = Array.from(
+        new Set(
+            value
+                .filter((item): item is string => typeof item === "string")
+                .map((item) => item.trim())
+                .filter(Boolean),
+        ),
+    );
+    if (
+        practiceAreas.length > 20 ||
+        practiceAreas.some((item) => item.length > 100)
+    ) {
+        return null;
+    }
+    return practiceAreas;
+}
+
 function validateProfilePayload(body: unknown):
     | {
           ok: true;
           update: {
               display_name?: string | null;
               organisation?: string | null;
+              jurisdiction?: string | null;
+              practice_setting?: string | null;
+              professional_title?: string | null;
+              practice_areas?: string[];
               title_model?: string;
               tabular_model?: string;
               legal_research_us?: boolean;
@@ -450,6 +507,10 @@ function validateProfilePayload(body: unknown):
     const allowedFields = new Set([
         "displayName",
         "organisation",
+        "jurisdiction",
+        "practiceSetting",
+        "professionalTitle",
+        "practiceAreas",
         "titleModel",
         "tabularModel",
         "legalResearchUs",
@@ -469,6 +530,10 @@ function validateProfilePayload(body: unknown):
     const update: {
         display_name?: string | null;
         organisation?: string | null;
+        jurisdiction?: string | null;
+        practice_setting?: string | null;
+        professional_title?: string | null;
+        practice_areas?: string[];
         title_model?: string;
         tabular_model?: string;
         legal_research_us?: boolean;
@@ -495,6 +560,60 @@ function validateProfilePayload(body: unknown):
             };
         }
         update.organisation = raw.organisation?.trim() || null;
+    }
+
+    if ("jurisdiction" in raw) {
+        if (raw.jurisdiction === null || raw.jurisdiction === "") {
+            update.jurisdiction = null;
+        } else {
+            const jurisdiction =
+                typeof raw.jurisdiction === "string"
+                    ? raw.jurisdiction.trim()
+                    : "";
+            if (!jurisdiction || jurisdiction.length > 100) {
+                return { ok: false, detail: "Select a valid jurisdiction" };
+            }
+            update.jurisdiction = jurisdiction;
+        }
+    }
+
+    if ("practiceSetting" in raw) {
+        if (raw.practiceSetting === null || raw.practiceSetting === "") {
+            update.practice_setting = null;
+        } else {
+            const practiceSetting =
+                typeof raw.practiceSetting === "string"
+                    ? raw.practiceSetting.trim()
+                    : "";
+            if (!isPracticeSetting(practiceSetting)) {
+                return {
+                    ok: false,
+                    detail: "Select a valid professional setting",
+                };
+            }
+            update.practice_setting = practiceSetting;
+        }
+    }
+
+    if ("professionalTitle" in raw) {
+        const professionalTitle = normalizeProfessionalTitle(
+            raw.professionalTitle,
+        );
+        if (professionalTitle === undefined) {
+            return { ok: false, detail: "Select a valid title" };
+        }
+        update.professional_title = professionalTitle;
+    }
+
+    if ("practiceAreas" in raw) {
+        const practiceAreas = normalizePracticeAreas(raw.practiceAreas);
+        if (!practiceAreas) {
+            return {
+                ok: false,
+                detail: "Select no more than 20 valid practice areas",
+            };
+        }
+        update.practice_areas = practiceAreas;
     }
 
     if ("tabularModel" in raw) {
@@ -770,7 +889,11 @@ userRouter.post("/onboarding", requireAuth, async (req, res) => {
     }
 
     const invalidField = Object.keys(body).find(
-        (key) => key !== "jurisdiction" && key !== "practiceAreas",
+        (key) =>
+            key !== "jurisdiction" &&
+            key !== "practiceSetting" &&
+            key !== "professionalTitle" &&
+            key !== "practiceAreas",
     );
     if (invalidField) {
         return void res.status(400).json({
@@ -778,35 +901,59 @@ userRouter.post("/onboarding", requireAuth, async (req, res) => {
         });
     }
 
-    const jurisdiction =
-        typeof body.jurisdiction === "string" ? body.jurisdiction.trim() : "";
-    if (!jurisdiction || jurisdiction.length > 100) {
-        return void res.status(400).json({
-            detail: "Select a valid jurisdiction of practice",
-        });
+    const personalisationUpdate: {
+        jurisdiction?: string;
+        practice_setting?: string;
+        professional_title?: string | null;
+        practice_areas?: string[];
+    } = {};
+
+    if ("jurisdiction" in body) {
+        const jurisdiction =
+            typeof body.jurisdiction === "string"
+                ? body.jurisdiction.trim()
+                : "";
+        if (!jurisdiction || jurisdiction.length > 100) {
+            return void res.status(400).json({
+                detail: "Select a valid jurisdiction of practice",
+            });
+        }
+        personalisationUpdate.jurisdiction = jurisdiction;
     }
 
-    if (!Array.isArray(body.practiceAreas)) {
-        return void res.status(400).json({
-            detail: "Select at least one practice area",
-        });
+    if ("practiceSetting" in body) {
+        const practiceSetting =
+            typeof body.practiceSetting === "string"
+                ? body.practiceSetting.trim()
+                : "";
+        if (!isPracticeSetting(practiceSetting)) {
+            return void res.status(400).json({
+                detail: "Select a valid professional setting",
+            });
+        }
+        personalisationUpdate.practice_setting = practiceSetting;
     }
-    const practiceAreas = Array.from(
-        new Set(
-            body.practiceAreas
-                .filter((item): item is string => typeof item === "string")
-                .map((item) => item.trim())
-                .filter(Boolean),
-        ),
-    );
-    if (
-        practiceAreas.length === 0 ||
-        practiceAreas.length > 20 ||
-        practiceAreas.some((item) => item.length > 100)
-    ) {
-        return void res.status(400).json({
-            detail: "Select between 1 and 20 valid practice areas",
-        });
+
+    if ("professionalTitle" in body) {
+        const professionalTitle = normalizeProfessionalTitle(
+            body.professionalTitle,
+        );
+        if (professionalTitle === undefined) {
+            return void res
+                .status(400)
+                .json({ detail: "Select a valid title" });
+        }
+        personalisationUpdate.professional_title = professionalTitle;
+    }
+
+    if ("practiceAreas" in body) {
+        const practiceAreas = normalizePracticeAreas(body.practiceAreas);
+        if (!practiceAreas) {
+            return void res.status(400).json({
+                detail: "Select no more than 20 valid practice areas",
+            });
+        }
+        personalisationUpdate.practice_areas = practiceAreas;
     }
 
     const userId = res.locals.userId as string;
@@ -837,8 +984,7 @@ userRouter.post("/onboarding", requireAuth, async (req, res) => {
     const { error: updateError } = await db
         .from("user_profiles")
         .update({
-            jurisdiction,
-            practice_areas: practiceAreas,
+            ...personalisationUpdate,
             onboarding_completed_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
         })

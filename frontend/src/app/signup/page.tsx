@@ -20,6 +20,7 @@ import {
 } from "@/app/components/auth/passwordPolicy";
 import { AuthDivider } from "@/app/components/auth/AuthDivider";
 import { GoogleAuthButton } from "@/app/components/auth/GoogleAuthButton";
+import { FieldLabel } from "@/app/components/ui/form-field";
 
 function SignupContent() {
     const router = useRouter();
@@ -144,12 +145,9 @@ function SignupContent() {
 
                     <form onSubmit={handleSignup} className="space-y-4">
                         <div>
-                            <label
-                                htmlFor="email"
-                                className="block text-sm font-medium text-gray-700 mb-2"
-                            >
+                            <FieldLabel htmlFor="email">
                                 Email
-                            </label>
+                            </FieldLabel>
                             <Input
                                 id="email"
                                 type="email"
@@ -161,12 +159,9 @@ function SignupContent() {
                         </div>
 
                         <div>
-                            <label
-                                htmlFor="password"
-                                className="block text-sm font-medium text-gray-700 mb-2"
-                            >
+                            <FieldLabel htmlFor="password">
                                 Password
-                            </label>
+                            </FieldLabel>
                             <Input
                                 id="password"
                                 type="password"
@@ -179,12 +174,9 @@ function SignupContent() {
                         </div>
 
                         <div>
-                            <label
-                                htmlFor="confirmPassword"
-                                className="block text-sm font-medium text-gray-700 mb-2"
-                            >
+                            <FieldLabel htmlFor="confirmPassword">
                                 Confirm Password
-                            </label>
+                            </FieldLabel>
                             <Input
                                 id="confirmPassword"
                                 type="password"
