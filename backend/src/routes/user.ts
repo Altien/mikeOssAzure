@@ -460,14 +460,18 @@ function validateProfilePayload(
     if (raw.displayName !== null && typeof raw.displayName !== "string") {
       return { ok: false, detail: "displayName must be a string or null" };
     }
-    update.display_name = raw.displayName?.trim() || null;
+    const displayName = raw.displayName?.trim() || null;
+    if (displayName && displayName.length > 200) return { ok: false, detail: "displayName must be 200 characters or fewer" };
+    update.display_name = displayName;
   }
 
   if ("organisation" in raw) {
     if (raw.organisation !== null && typeof raw.organisation !== "string") {
       return { ok: false, detail: "organisation must be a string or null" };
     }
-    update.organisation = raw.organisation?.trim() || null;
+    const organisation = raw.organisation?.trim() || null;
+    if (organisation && organisation.length > 200) return { ok: false, detail: "organisation must be 200 characters or fewer" };
+    update.organisation = organisation;
   }
 
   if ("jurisdiction" in raw) {
