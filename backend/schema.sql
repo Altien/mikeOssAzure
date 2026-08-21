@@ -16,6 +16,9 @@ create table if not exists public.user_profiles (
   email text,
   display_name text,
   organisation text,
+  jurisdiction text,
+  practice_areas text[] not null default '{}'::text[],
+  onboarding_completed_at timestamptz,
   tier text not null default 'Free',
   message_credits_used integer not null default 0,
   credits_reset_date timestamptz not null default (now() + interval '30 days'),
@@ -55,7 +58,12 @@ begin
   values (
     new.id,
     lower(new.email),
-    nullif(left(btrim(coalesce(new.raw_user_meta_data ->> 'display_name', '')), 200), ''),
+    nullif(left(btrim(coalesce(
+      new.raw_user_meta_data ->> 'display_name',
+      new.raw_user_meta_data ->> 'full_name',
+      new.raw_user_meta_data ->> 'name',
+      ''
+    )), 200), ''),
     nullif(left(btrim(coalesce(new.raw_user_meta_data ->> 'organisation', '')), 200), '')
   )
   on conflict (user_id) do update

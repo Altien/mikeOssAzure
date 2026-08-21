@@ -8,7 +8,6 @@ import { PillButton } from "@/app/components/ui/pill-button";
 import Link from "next/link";
 import { SiteLogo } from "@/app/components/site-logo";
 import { useAuth } from "@/app/contexts/AuthContext";
-import { updateUserProfile } from "@/app/lib/mikeApi";
 import { browserAuthCallbackUrl } from "@/app/lib/authRedirects";
 import { cn } from "@/app/lib/utils";
 import {
@@ -19,6 +18,8 @@ import {
     MIN_PASSWORD_LENGTH,
     minimumPasswordMessage,
 } from "@/app/components/auth/passwordPolicy";
+import { AuthDivider } from "@/app/components/auth/AuthDivider";
+import { GoogleAuthButton } from "@/app/components/auth/GoogleAuthButton";
 
 function SignupContent() {
     const router = useRouter();
@@ -27,8 +28,6 @@ function SignupContent() {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
-    const [name, setName] = useState("");
-    const [organisation, setOrganisation] = useState("");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState(false);
@@ -39,7 +38,7 @@ function SignupContent() {
     useEffect(() => {
         if (isAccountCreatedPreview) return;
         if (!authLoading && isAuthenticated && !success) {
-            router.replace("/assistant");
+            router.replace("/onboarding/profile");
         }
     }, [
         authLoading,
@@ -53,12 +52,6 @@ function SignupContent() {
         e.preventDefault();
         setLoading(true);
         setError(null);
-
-        if (!name.trim()) {
-            setError("Name is required");
-            setLoading(false);
-            return;
-        }
 
         // Validate passwords match
         if (password !== confirmPassword) {
@@ -76,42 +69,23 @@ function SignupContent() {
 
         try {
             const trimmedEmail = email.trim();
-            const trimmedName = name.trim();
-            const trimmedOrg = organisation.trim();
             const emailRedirectTo = browserAuthCallbackUrl(
-                "/assistant?confirmed=1",
+                "/onboarding/profile",
             );
             const { data, error } = await supabase.auth.signUp({
                 email: trimmedEmail,
                 password,
                 options: {
                     ...(emailRedirectTo ? { emailRedirectTo } : {}),
-                    data: {
-                        display_name: trimmedName || null,
-                        organisation: trimmedOrg || null,
-                    },
                 },
             });
 
             if (error) throw error;
 
             if (data.session) {
-                if (trimmedName || trimmedOrg) {
-                    try {
-                        await updateUserProfile({
-                            ...(trimmedName && { displayName: trimmedName }),
-                            ...(trimmedOrg && { organisation: trimmedOrg }),
-                        });
-                    } catch (profileError) {
-                        console.error(
-                            "[signup] failed to persist profile fields",
-                            profileError,
-                        );
-                    }
-                }
                 setSuccess(true);
                 setTimeout(() => {
-                    router.push("/assistant");
+                    router.push("/onboarding/profile");
                 }, 2000);
             } else {
                 router.push("/signup/check-email");
@@ -140,7 +114,7 @@ function SignupContent() {
                             Account created!
                         </h1>
                         <p className="mt-3 text-sm leading-relaxed text-gray-600">
-                            Redirecting you to the home page...
+                            Redirecting you to finish setting up your account...
                         </p>
                         <PillButton
                             asChild
@@ -148,7 +122,7 @@ function SignupContent() {
                             size="normal"
                             className="mt-6"
                         >
-                            <Link href="/assistant">Continue</Link>
+                            <Link href="/onboarding/profile">Continue</Link>
                         </PillButton>
                     </div>
                 </div>
@@ -158,57 +132,17 @@ function SignupContent() {
 
     // Default Signup Form View
     return (
-        <div className="min-h-dvh bg-gray-50/80 flex items-start justify-center px-6 pt-32 md:pt-40 pb-10 relative">
+        <div className="relative flex min-h-dvh items-center justify-center bg-gray-50/80 px-6 py-24">
             <div className="absolute top-4 md:top-8 left-1/2 -translate-x-1/2">
                 <SiteLogo size="lg" asLink />
             </div>
             <div className="w-full max-w-md">
-                <div className={cn(authGlassCardClassName, "mb-4 pb-5")}>
+                <div className={cn(authGlassCardClassName, "mb-4")}>
                     <h2 className="mb-6 text-left text-2xl font-medium font-serif text-gray-950">
                         Sign Up
                     </h2>
 
                     <form onSubmit={handleSignup} className="space-y-4">
-                        <div>
-                            <label
-                                htmlFor="name"
-                                className="block text-sm font-medium text-gray-700 mb-2"
-                            >
-                                Name
-                            </label>
-                            <Input
-                                id="name"
-                                type="text"
-                                value={name}
-                                onChange={(e) => setName(e.target.value)}
-                                maxLength={200}
-                                required
-                                className={`w-full ${authInputClassName}`}
-                            />
-                        </div>
-
-                        <div>
-                            <label
-                                htmlFor="organisation"
-                                className="block text-sm font-medium text-gray-700 mb-2"
-                            >
-                                Organisation{" "}
-                                <span className="text-gray-400 font-normal">
-                                    (optional)
-                                </span>
-                            </label>
-                            <Input
-                                id="organisation"
-                                type="text"
-                                value={organisation}
-                                onChange={(e) =>
-                                    setOrganisation(e.target.value)
-                                }
-                                maxLength={200}
-                                className={`w-full ${authInputClassName}`}
-                            />
-                        </div>
-
                         <div>
                             <label
                                 htmlFor="email"
@@ -238,7 +172,7 @@ function SignupContent() {
                                 type="password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
-                                placeholder={`Create a password (min. ${MIN_PASSWORD_LENGTH} characters)`}
+                                placeholder={`Min. ${MIN_PASSWORD_LENGTH} Characters`}
                                 required
                                 className={`w-full ${authInputClassName}`}
                             />
@@ -299,17 +233,23 @@ function SignupContent() {
                             >
                                 {loading ? "Creating account..." : "Sign up"}
                             </PillButton>
-                        </div>
-                        <div className="text-center text-sm text-gray-500">
-                            Have an account?{" "}
-                            <Link
-                                href="/login"
-                                className="font-medium transition-colors hover:text-gray-950"
-                            >
-                                Log in
-                            </Link>
+                            <AuthDivider />
+                            <GoogleAuthButton
+                                onError={setError}
+                                disabled={loading}
+                                onLoadingChange={setLoading}
+                            />
                         </div>
                     </form>
+                </div>
+                <div className="text-center text-sm text-gray-500">
+                    Have an account?{" "}
+                    <Link
+                        href="/login"
+                        className="font-medium transition-colors hover:text-gray-950"
+                    >
+                        Log in
+                    </Link>
                 </div>
             </div>
         </div>

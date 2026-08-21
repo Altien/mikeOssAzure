@@ -13,6 +13,7 @@ import {
     type ApiKeyState,
     type ApiKeyProvider,
     type UserProfile as ApiUserProfile,
+    completeUserOnboarding,
     getUserProfile,
     isMfaRequiredError,
     saveApiKey,
@@ -23,6 +24,9 @@ import {
 interface UserProfile {
     displayName: string | null;
     organisation: string | null;
+    jurisdiction: string | null;
+    practiceAreas: string[];
+    onboardingComplete: boolean;
     messageCreditsUsed: number;
     creditsResetDate: string;
     creditsRemaining: number;
@@ -53,6 +57,10 @@ interface UserProfileContextType {
     apiKeysDegraded: boolean;
     updateDisplayName: (name: string) => Promise<boolean>;
     updateOrganisation: (organisation: string) => Promise<boolean>;
+    completeOnboarding: (
+        jurisdiction: string,
+        practiceAreas: string[],
+    ) => Promise<boolean>;
     updateModelPreference: (
         field: "titleModel" | "tabularModel",
         value: string,
@@ -111,6 +119,11 @@ function toProfile(data: ApiUserProfile): UserProfile {
 
     return {
         ...profile,
+        jurisdiction: profile.jurisdiction ?? null,
+        practiceAreas: Array.isArray(profile.practiceAreas)
+            ? profile.practiceAreas
+            : [],
+        onboardingComplete: profile.onboardingComplete !== false,
         mfaOnLogin: profile.mfaOnLogin === true,
         openRouterModels: Array.isArray(profile.openRouterModels)
             ? profile.openRouterModels
@@ -159,6 +172,9 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             setProfile({
                 displayName: null,
                 organisation: null,
+                jurisdiction: null,
+                practiceAreas: [],
+                onboardingComplete: true,
                 messageCreditsUsed: 0,
                 creditsResetDate: futureResetDate.toISOString(),
                 creditsRemaining: 999999, // temporarily unlimited
@@ -218,6 +234,26 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 return true;
             } catch (error) {
                 if (isMfaRequiredError(error)) throw error;
+                return false;
+            }
+        },
+        [user],
+    );
+
+    const completeOnboarding = useCallback(
+        async (
+            jurisdiction: string,
+            practiceAreas: string[],
+        ): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                const updated = await completeUserOnboarding({
+                    jurisdiction,
+                    practiceAreas,
+                });
+                setProfile(toProfile(updated));
+                return true;
+            } catch {
                 return false;
             }
         },
@@ -405,6 +441,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 apiKeysDegraded,
                 updateDisplayName,
                 updateOrganisation,
+                completeOnboarding,
                 updateModelPreference,
                 updateMfaOnLogin,
                 updateLegalResearchUs,

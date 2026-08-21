@@ -368,6 +368,9 @@ export async function exportTabularReviewsData(): Promise<{
 export interface UserProfile {
     displayName: string | null;
     organisation: string | null;
+    jurisdiction: string | null;
+    practiceAreas: string[];
+    onboardingComplete: boolean;
     messageCreditsUsed: number;
     creditsResetDate: string;
     creditsRemaining: number;
@@ -489,6 +492,17 @@ export async function updateUserProfile(payload: {
 }): Promise<UserProfile> {
     return apiRequest<UserProfile>("/user/profile", {
         method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+}
+
+export async function completeUserOnboarding(payload: {
+    jurisdiction: string;
+    practiceAreas: string[];
+}): Promise<UserProfile> {
+    return apiRequest<UserProfile>("/user/onboarding", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
     });

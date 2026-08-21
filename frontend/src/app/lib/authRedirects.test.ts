@@ -12,6 +12,7 @@ describe("safeAuthNext", () => {
             "/settings?emailChange=processed",
         );
         expect(safeAuthNext("/reset-password")).toBe("/reset-password");
+        expect(safeAuthNext("/onboarding/profile")).toBe("/onboarding/profile");
     });
 
     it.each([
@@ -54,9 +55,9 @@ describe("authErrorDescription", () => {
         expect(
             authErrorDescription("?error_description=Expired+link", ""),
         ).toBe("Expired link");
-        expect(
-            authErrorDescription("", "#error=access_denied"),
-        ).toBe("access_denied");
+        expect(authErrorDescription("", "#error=access_denied")).toBe(
+            "access_denied",
+        );
         expect(authErrorDescription("?error=query_error", "")).toBe(
             "query_error",
         );

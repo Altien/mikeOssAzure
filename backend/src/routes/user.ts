@@ -58,6 +58,9 @@ const MONTHLY_CREDIT_LIMIT = 999999;
 type UserProfileRow = {
     display_name: string | null;
     organisation: string | null;
+    jurisdiction?: string | null;
+    practice_areas?: string[] | null;
+    onboarding_completed_at?: string | null;
     message_credits_used: number;
     credits_reset_date: string;
     tier: string;
@@ -174,7 +177,7 @@ function mcpOAuthPopupCsp(nonce: string) {
 }
 
 const PROFILE_SELECT =
-    "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, quick_actions_visible";
+    "display_name, organisation, jurisdiction, practice_areas, onboarding_completed_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, quick_actions_visible";
 const PROFILE_SELECT_NO_QUICK_ACTIONS =
     "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us";
 const PROFILE_SELECT_NO_LEGAL =
@@ -396,6 +399,15 @@ function serializeProfile(
     return {
         displayName: row.display_name,
         organisation: row.organisation,
+        jurisdiction: row.jurisdiction ?? null,
+        practiceAreas: Array.isArray(row.practice_areas)
+            ? row.practice_areas
+            : [],
+        // Databases that have not yet applied the onboarding migration must
+        // not lock existing users out of the app.
+        onboardingComplete:
+            row.onboarding_completed_at === undefined ||
+            !!row.onboarding_completed_at,
         messageCreditsUsed: creditsUsed,
         creditsResetDate: row.credits_reset_date,
         creditsRemaining: Math.max(MONTHLY_CREDIT_LIMIT - creditsUsed, 0),
@@ -739,6 +751,100 @@ userRouter.patch("/profile", requireAuth, async (req, res) => {
                 detail: errorMessage(routerModelsError),
             });
         }
+    }
+
+    const apiKeyStatus = await getUserApiKeyStatus(userId, db);
+    const { data, error } = await loadProfile(db, userId, { apiKeyStatus });
+    if (error) return void res.status(500).json({ detail: error.message });
+    res.json({ ...data, apiKeyStatus });
+});
+
+// POST /user/onboarding
+userRouter.post("/onboarding", requireAuth, async (req, res) => {
+    const body =
+        req.body && typeof req.body === "object" && !Array.isArray(req.body)
+            ? (req.body as Record<string, unknown>)
+            : null;
+    if (!body) {
+        return void res.status(400).json({ detail: "Expected a JSON object" });
+    }
+
+    const invalidField = Object.keys(body).find(
+        (key) => key !== "jurisdiction" && key !== "practiceAreas",
+    );
+    if (invalidField) {
+        return void res.status(400).json({
+            detail: `Unsupported onboarding field: ${invalidField}`,
+        });
+    }
+
+    const jurisdiction =
+        typeof body.jurisdiction === "string" ? body.jurisdiction.trim() : "";
+    if (!jurisdiction || jurisdiction.length > 100) {
+        return void res.status(400).json({
+            detail: "Select a valid jurisdiction of practice",
+        });
+    }
+
+    if (!Array.isArray(body.practiceAreas)) {
+        return void res.status(400).json({
+            detail: "Select at least one practice area",
+        });
+    }
+    const practiceAreas = Array.from(
+        new Set(
+            body.practiceAreas
+                .filter((item): item is string => typeof item === "string")
+                .map((item) => item.trim())
+                .filter(Boolean),
+        ),
+    );
+    if (
+        practiceAreas.length === 0 ||
+        practiceAreas.length > 20 ||
+        practiceAreas.some((item) => item.length > 100)
+    ) {
+        return void res.status(400).json({
+            detail: "Select between 1 and 20 valid practice areas",
+        });
+    }
+
+    const userId = res.locals.userId as string;
+    const db = createServerSupabase();
+    const ensureError = await ensureProfileRow(db, userId);
+    if (ensureError) {
+        return void res.status(500).json({ detail: ensureError.message });
+    }
+
+    const { data: profile, error: profileError } = await db
+        .from("user_profiles")
+        .select("display_name")
+        .eq("user_id", userId)
+        .single();
+    if (profileError) {
+        return void res.status(500).json({ detail: profileError.message });
+    }
+    if (
+        !profile ||
+        typeof profile.display_name !== "string" ||
+        !profile.display_name.trim()
+    ) {
+        return void res.status(400).json({
+            detail: "Add your name before completing onboarding",
+        });
+    }
+
+    const { error: updateError } = await db
+        .from("user_profiles")
+        .update({
+            jurisdiction,
+            practice_areas: practiceAreas,
+            onboarding_completed_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+        })
+        .eq("user_id", userId);
+    if (updateError) {
+        return void res.status(500).json({ detail: updateError.message });
     }
 
     const apiKeyStatus = await getUserApiKeyStatus(userId, db);

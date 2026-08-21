@@ -13,6 +13,8 @@ import {
     authGlassCardClassName,
     authInputClassName,
 } from "@/app/components/auth/authStyles";
+import { AuthDivider } from "@/app/components/auth/AuthDivider";
+import { GoogleAuthButton } from "@/app/components/auth/GoogleAuthButton";
 
 export default function LoginPage() {
     const router = useRouter();
@@ -24,7 +26,7 @@ export default function LoginPage() {
 
     useEffect(() => {
         if (!authLoading && isAuthenticated) {
-            router.replace("/assistant");
+            router.replace("/onboarding/profile");
         }
     }, [authLoading, isAuthenticated, router]);
 
@@ -41,7 +43,7 @@ export default function LoginPage() {
 
             if (error) throw error;
 
-            router.push("/assistant");
+            router.push("/onboarding/profile");
         } catch (error: unknown) {
             setError(
                 error instanceof Error
@@ -60,9 +62,7 @@ export default function LoginPage() {
             </div>
             <div className="w-full max-w-md">
                 {/* Login Form */}
-                <div
-                    className={cn(authGlassCardClassName, "mb-4 pb-5")}
-                >
+                <div className={cn(authGlassCardClassName, "mb-4")}>
                     <h2 className="mb-6 text-left text-2xl font-medium font-serif text-gray-950">
                         Log In
                     </h2>
@@ -104,7 +104,6 @@ export default function LoginPage() {
                                 type="password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
-                                placeholder="Enter your password"
                                 required
                                 className={`w-full ${authInputClassName}`}
                             />
@@ -127,16 +126,22 @@ export default function LoginPage() {
                                 {loading ? "Logging in..." : "Log in"}
                             </PillButton>
                         </div>
-                        <div className="text-center text-sm text-gray-500">
-                            Don&apos;t have an account?{" "}
-                            <Link
-                                href="/signup"
-                                className="font-medium transition-colors hover:text-gray-950"
-                            >
-                                Sign up
-                            </Link>
-                        </div>
+                        <AuthDivider />
+                        <GoogleAuthButton
+                            onError={setError}
+                            disabled={loading}
+                            onLoadingChange={setLoading}
+                        />
                     </form>
+                </div>
+                <div className="text-center text-sm text-gray-500">
+                    Don&apos;t have an account?{" "}
+                    <Link
+                        href="/signup"
+                        className="font-medium transition-colors hover:text-gray-950"
+                    >
+                        Sign up
+                    </Link>
                 </div>
             </div>
         </div>

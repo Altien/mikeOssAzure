@@ -187,6 +187,9 @@ function profileRow(overrides: Record<string, unknown> = {}) {
     return {
         display_name: "Ada",
         organisation: "Acme",
+        jurisdiction: "Singapore",
+        practice_areas: ["Corporate and M&A"],
+        onboarding_completed_at: "2026-08-21T00:00:00.000Z",
         message_credits_used: 3,
         credits_reset_date: "2999-01-01T00:00:00.000Z",
         tier: "Pro",
@@ -259,6 +262,9 @@ describe("user.routes", () => {
             expect(res.body).toMatchObject({
                 displayName: "Ada",
                 organisation: "Acme",
+                jurisdiction: "Singapore",
+                practiceAreas: ["Corporate and M&A"],
+                onboardingComplete: true,
                 messageCreditsUsed: 3,
                 tier: "Pro",
                 legalResearchUs: true,
@@ -485,6 +491,63 @@ describe("user.routes", () => {
             expect(res.status).toBe(400);
             expect(res.body.detail).toBe(
                 "quickActionsVisible must be a boolean",
+            );
+        });
+    });
+
+    describe("POST /user/onboarding", () => {
+        it("accepts a jurisdiction and normalized practice areas", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow({ onboarding_completed_at: null }),
+                error: null,
+            };
+
+            const res = await request(app)
+                .post("/user/onboarding")
+                .set(...AUTH)
+                .send({
+                    jurisdiction: " Singapore ",
+                    practiceAreas: [" Corporate and M&A ", "Litigation"],
+                });
+
+            expect(res.status).toBe(200);
+            expect(res.body).toMatchObject({
+                displayName: "Ada",
+                jurisdiction: "Singapore",
+                practiceAreas: ["Corporate and M&A"],
+                onboardingComplete: false,
+            });
+        });
+
+        it("requires a jurisdiction and at least one practice area", async () => {
+            const res = await request(app)
+                .post("/user/onboarding")
+                .set(...AUTH)
+                .send({ jurisdiction: "", practiceAreas: [] });
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toBe(
+                "Select a valid jurisdiction of practice",
+            );
+        });
+
+        it("requires profile details before completion", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow({ display_name: null }),
+                error: null,
+            };
+
+            const res = await request(app)
+                .post("/user/onboarding")
+                .set(...AUTH)
+                .send({
+                    jurisdiction: "Singapore",
+                    practiceAreas: ["Litigation"],
+                });
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toBe(
+                "Add your name before completing onboarding",
             );
         });
     });

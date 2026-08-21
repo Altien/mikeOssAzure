@@ -295,6 +295,51 @@ export function installOfficeMock(seed: OfficeSeed): void {
     settings,
   };
 
+  const dialogHandlers = new Map<string, (event: any) => void>();
+  const oauthDialog = {
+    url: "",
+    options: null as Record<string, unknown> | null,
+    closed: false,
+    sendMessage(message: string, origin = window.location.origin): void {
+      dialogHandlers.get("DialogMessageReceived")?.({ message, origin });
+    },
+    sendEvent(error: number): void {
+      dialogHandlers.get("DialogEventReceived")?.({ error });
+    },
+  };
+  w.__OAUTH_DIALOG__ = oauthDialog;
+
+  const dialog = {
+    addEventHandler: (eventType: string, handler: (event: any) => void) => {
+      dialogHandlers.set(eventType, handler);
+    },
+    close: () => {
+      oauthDialog.closed = true;
+    },
+  };
+
+  const officeUi = {
+    displayDialogAsync: (
+      url: string,
+      options: Record<string, unknown>,
+      callback: (result: any) => void
+    ) => {
+      oauthDialog.url = url;
+      oauthDialog.options = clone(options);
+      oauthDialog.closed = false;
+      dialogHandlers.clear();
+      callback({
+        status: AsyncResultStatus.Succeeded,
+        value: dialog,
+      });
+    },
+  };
+
+  const EventType = {
+    DialogMessageReceived: "DialogMessageReceived",
+    DialogEventReceived: "DialogEventReceived",
+  };
+
   w.Office = {
     onReady: (callback?: any) => {
       const info = { host: "Word", platform: "PC" };
@@ -303,6 +348,7 @@ export function installOfficeMock(seed: OfficeSeed): void {
     },
     context: {
       document: officeDocument,
+      ui: officeUi,
       // WordApi (incl. 1.3's Range.compareLocationWith) is mocked below; the
       // WordApiDesktop sets stay unsupported so the app keeps exercising the
       // getTrackedChanges code paths, like Word on the web.
@@ -311,6 +357,7 @@ export function installOfficeMock(seed: OfficeSeed): void {
       },
     },
     AsyncResultStatus,
+    EventType,
   };
 
   const InsertLocation = {
