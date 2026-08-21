@@ -650,6 +650,7 @@ function createParser() {
         attributeNamePrefix: "@_",
         preserveOrder: true,
         trimValues: false,
+        parseTagValue: false,
         parseAttributeValue: false,
         processEntities: true,
     });
