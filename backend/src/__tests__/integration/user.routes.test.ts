@@ -53,6 +53,7 @@ type QueryResult = { data: unknown; error: unknown };
 // (first select fails with 42703, the retry succeeds).
 let supabaseState: {
     tables: Record<string, QueryResult | QueryResult[]>;
+    updates: Record<string, unknown[]>;
     adminGetUserById: QueryResult;
     adminDeleteUser: { error: unknown };
 };
@@ -60,6 +61,7 @@ let supabaseState: {
 function resetSupabaseState() {
     supabaseState = {
         tables: {},
+        updates: {},
         adminGetUserById: {
             data: { user: { id: "u1", factors: [] } },
             error: null,
@@ -104,6 +106,12 @@ function makeQuery(table: string) {
         "contains",
     ];
     for (const m of chain) q[m] = vi.fn(() => q);
+    // Record update payloads so tests can assert what a route WROTE (the
+    // per-table result stub only models what queries return).
+    q.update = vi.fn((payload: unknown) => {
+        (supabaseState.updates[table] ??= []).push(payload);
+        return q;
+    });
     q.single = vi.fn(() => Promise.resolve(resultForTable(table)));
     q.maybeSingle = vi.fn(() => Promise.resolve(resultForTable(table)));
     q.then = (
@@ -359,6 +367,39 @@ describe("user.routes", () => {
             });
         });
 
+        it("keeps live onboarding columns when only migration 02 is missing", async () => {
+            // password_set_at (20260821_02) missing must NOT drop the
+            // migration-01 columns that DO exist — otherwise a new user on
+            // such a database would report onboardingComplete: true and
+            // skip onboarding entirely.
+            const migration01Row = profileRow({ onboarding_version: null });
+            delete (migration01Row as Record<string, unknown>).password_set_at;
+            supabaseState.tables.user_profiles = [
+                {
+                    data: null,
+                    error: {
+                        code: "42703",
+                        message:
+                            "column user_profiles.password_set_at does not exist",
+                    },
+                },
+                { data: migration01Row, error: null },
+            ];
+
+            const res = await request(app)
+                .get("/user/profile")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body).toMatchObject({
+                jurisdiction: "Singapore",
+                practiceAreas: ["Corporate and M&A"],
+                onboardingComplete: false,
+                onboardingVersion: null,
+                passwordSet: false,
+            });
+        });
+
         it("returns 500 with detail when the profile load errors", async () => {
             supabaseState.tables.user_profiles = {
                 data: null,
@@ -577,10 +618,15 @@ describe("user.routes", () => {
 
         // display_name and organisation are injected into every chat's
         // system prompt, so their size must be bounded like the other
-        // personalisation fields (200 matches handle_new_user's cap).
-        it.each(["displayName", "organisation"])(
-            "rejects a %s longer than 200 characters",
-            async (field) => {
+        // personalisation fields. Truncation (not rejection) mirrors
+        // handle_new_user's left(..., 200) and keeps any over-long value
+        // written before the cap editable rather than stuck.
+        it.each([
+            ["displayName", "display_name"],
+            ["organisation", "organisation"],
+        ] as const)(
+            "truncates %s to 200 characters",
+            async (field, column) => {
                 supabaseState.tables.user_profiles = {
                     data: profileRow(),
                     error: null,
@@ -589,12 +635,13 @@ describe("user.routes", () => {
                 const res = await request(app)
                     .patch("/user/profile")
                     .set(...AUTH)
-                    .send({ [field]: "x".repeat(201) });
+                    .send({ [field]: "x".repeat(250) });
 
-                expect(res.status).toBe(400);
-                expect(res.body.detail).toBe(
-                    `${field} must be 200 characters or fewer`,
-                );
+                expect(res.status).toBe(200);
+                const written = supabaseState.updates.user_profiles?.at(-1) as
+                    | Record<string, unknown>
+                    | undefined;
+                expect(written?.[column]).toBe("x".repeat(200));
             },
         );
     });

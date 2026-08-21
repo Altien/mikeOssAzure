@@ -78,7 +78,10 @@ export async function getUserModelSettings(
             .select("title_model, tabular_model, legal_research_us")
             .eq("user_id", userId)
             .single();
-        data = legacy.data as typeof data;
+        // A second failure (a database even older than the pre-migration
+        // shape) keeps data null and falls through to the defaults below —
+        // the pre-retry behavior, now explicit instead of accidental.
+        data = legacy.error ? null : (legacy.data as typeof data);
     }
 
     // A stored preference can name a router model the user has since removed
