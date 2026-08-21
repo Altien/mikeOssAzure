@@ -1,5 +1,4 @@
 import React from "react";
-import { LoaderCircle } from "lucide-react";
 import { EditCardUI } from "@mike/edit-card-ui";
 import type { RedlineEdit } from "../../lib/redline";
 import { EDIT_CARD_SURFACE } from "./message/messageStyles";
@@ -32,15 +31,6 @@ interface EditCardProps {
   disabled?: boolean;
   /** The action currently mutating or navigating the Word document. */
   busyAction?: EditBusyAction;
-}
-
-function BusyLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <>
-      <LoaderCircle aria-hidden="true" className="h-3 w-3 animate-spin" />
-      <span>{children}</span>
-    </>
-  );
 }
 
 const STATUS_COPY: Record<
@@ -199,74 +189,15 @@ export function EditCard({
         status === "applying-approved" ||
         status === "restoring"
       }
-      viewAction={
-        status === "ready" ||
-        status === "pending" ||
-        status === "view-only" ||
-        status === "conflicted"
-          ? {
-              label: "View",
-              onClick: onView,
-              disabled: disabled || !onView,
-            }
-          : undefined
-      }
-      applyAction={
-        status === "conflicted" && onAcceptAndApply
-          ? {
-              // Supersede the occupying revisions on an explicit click:
-              // accept them, then apply this edit as a clean redline.
-              label:
-                busyAction === "accept-and-apply" ? (
-                  <BusyLabel>Accepting & applying...</BusyLabel>
-                ) : (
-                  "Accept & apply"
-                ),
-              onClick: onAcceptAndApply,
-              disabled,
-            }
-          : status === "ready" || status === "applying-approved"
-            ? {
-                label:
-                  status === "applying-approved" ? (
-                    <BusyLabel>Applying...</BusyLabel>
-                  ) : (
-                    "Apply"
-                  ),
-                onClick: status === "ready" ? onApply : undefined,
-                disabled:
-                  status === "applying-approved" || disabled || !onApply,
-              }
-            : undefined
-      }
-      acceptAction={
-        status === "pending"
-          ? {
-              label:
-                busyAction === "accept" ? (
-                  <BusyLabel>Accepting...</BusyLabel>
-                ) : (
-                  "Accept"
-                ),
-              onClick: onAccept,
-              disabled: disabled || !onAccept,
-            }
-          : undefined
-      }
-      rejectAction={
-        status === "pending"
-          ? {
-              label:
-                busyAction === "reject" ? (
-                  <BusyLabel>Rejecting...</BusyLabel>
-                ) : (
-                  "Reject"
-                ),
-              onClick: onReject,
-              disabled: disabled || !onReject,
-            }
-          : undefined
-      }
+      actionsDisabled={disabled}
+      busyAction={busyAction}
+      onView={onView}
+      onApply={onApply}
+      onAccept={onAccept}
+      onReject={onReject}
+      // Supersede occupying revisions on an explicit click, then apply this
+      // edit as a clean redline.
+      onAcceptAndApply={onAcceptAndApply}
     />
   );
 }

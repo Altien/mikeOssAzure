@@ -23,6 +23,7 @@ export function MarkdownContent({
     inlineCitationTargets,
     caseCitations,
     caseDocuments,
+    activeCitation,
     onCitationClick,
     onCaseClick,
     divRef,
@@ -34,6 +35,7 @@ export function MarkdownContent({
         Extract<AssistantEvent, { type: "case_citation" }>
     >;
     caseDocuments: Map<number, PanelDocument>;
+    activeCitation?: Citation | null;
     onCitationClick?: (c: Citation) => void;
     onCaseClick?: (
         c: Extract<AssistantEvent, { type: "case_citation" }>,
@@ -186,6 +188,7 @@ export function MarkdownContent({
                                 const tooltipText = citationTooltip(annotation);
                                 return (
                                     <CitationPillUI
+                                        active={activeCitation === annotation}
                                         onClick={() =>
                                             onCitationClick?.(annotation)
                                         }

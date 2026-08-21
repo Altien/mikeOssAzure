@@ -1,16 +1,4 @@
-import { streamClaude, completeClaudeText } from "./claude";
-import { streamGemini, completeGeminiText } from "./gemini";
-import { streamOpenAI, completeOpenAIText } from "./openai";
-import { streamKimi, completeKimiText } from "./kimi";
-import { streamAzureOpenAI, completeAzureOpenAIText } from "./azureOpenai";
-import {
-    streamOpenRouter,
-    completeOpenRouterText,
-    streamVercel,
-    completeVercelText,
-} from "./openrouter";
-import { streamOpenCodeGo, completeOpenCodeGoText } from "./openCodeGo";
-import { providerForModel } from "./models";
+import { completeWithProvider, streamWithProvider } from "./providers";
 import type { StreamChatParams, StreamChatResult, UserApiKeys } from "./types";
 
 export * from "./types";
@@ -19,15 +7,7 @@ export * from "./models";
 export async function streamChatWithTools(
     params: StreamChatParams,
 ): Promise<StreamChatResult> {
-    const provider = providerForModel(params.model);
-    if (provider === "claude") return streamClaude(params);
-    if (provider === "gemini") return streamGemini(params);
-    if (provider === "openai") return streamOpenAI(params);
-    if (provider === "openrouter") return streamOpenRouter(params);
-    if (provider === "vercel") return streamVercel(params);
-    if (provider === "opencode-go") return streamOpenCodeGo(params);
-    if (provider === "kimi") return streamKimi(params);
-    return streamAzureOpenAI(params);
+    return streamWithProvider(params);
 }
 
 export async function completeText(params: {
@@ -36,19 +16,7 @@ export async function completeText(params: {
     user: string;
     maxTokens?: number;
     apiKeys?: UserApiKeys;
-    /**
-     * Only the OpenAI-compatible providers accept this today; the others
-     * ignore it rather than risk an unknown-parameter rejection.
-     */
     reasoningEffort?: "none" | "low" | "high" | "max";
 }): Promise<string> {
-    const provider = providerForModel(params.model);
-    if (provider === "claude") return completeClaudeText(params);
-    if (provider === "gemini") return completeGeminiText(params);
-    if (provider === "openai") return completeOpenAIText(params);
-    if (provider === "openrouter") return completeOpenRouterText(params);
-    if (provider === "vercel") return completeVercelText(params);
-    if (provider === "opencode-go") return completeOpenCodeGoText(params);
-    if (provider === "kimi") return completeKimiText(params);
-    return completeAzureOpenAIText(params);
+    return completeWithProvider(params);
 }

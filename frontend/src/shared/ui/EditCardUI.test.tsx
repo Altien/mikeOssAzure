@@ -18,9 +18,9 @@ describe("EditCardUI", () => {
                 changeNumber={2}
                 status="pending"
                 className="test-surface"
-                viewAction={{ label: "View", onClick: onView }}
-                acceptAction={{ label: "Accept", onClick: onAccept }}
-                rejectAction={{ label: "Reject", onClick: onReject }}
+                onView={onView}
+                onAccept={onAccept}
+                onReject={onReject}
             />,
         );
 
@@ -66,12 +66,8 @@ describe("EditCardUI", () => {
                 statusMessage="Tracked change found — review it in Word."
                 statusMessageClassName="text-gray-500"
                 ariaBusy
-                actionOrder="view-first"
-                viewAction={{
-                    label: "View",
-                    onClick: onView,
-                    disabled: true,
-                }}
+                actionsDisabled
+                onView={onView}
             />,
         );
 
@@ -94,8 +90,8 @@ describe("EditCardUI", () => {
         render(
             <EditCardUI
                 status="ready"
-                applyAction={{ label: "Apply", onClick: onApply }}
-                viewAction={{ label: "View", onClick: onView }}
+                onApply={onApply}
+                onView={onView}
             />,
         );
 
@@ -106,5 +102,16 @@ describe("EditCardUI", () => {
         await user.click(screen.getByRole("button", { name: "View" }));
         expect(onApply).toHaveBeenCalledOnce();
         expect(onView).toHaveBeenCalledOnce();
+    });
+
+    it("owns the busy Apply label and disabled state", () => {
+        const { container } = render(
+            <EditCardUI status="applying-approved" busyAction="apply" />,
+        );
+
+        expect(
+            screen.getByRole("button", { name: "Applying..." }),
+        ).toBeDisabled();
+        expect(container.firstChild).toHaveAttribute("aria-busy", "true");
     });
 });
