@@ -93,7 +93,11 @@ export async function generateDocx(
   sections: unknown[],
   userId: string,
   db: ReturnType<typeof createServerSupabase>,
-  options?: { landscape?: boolean; projectId?: string | null },
+  options?: {
+    landscape?: boolean;
+    numberSections?: boolean;
+    projectId?: string | null;
+  },
 ) {
   try {
     const {
@@ -149,6 +153,9 @@ export async function generateDocx(
       HeadingLevel.HEADING_3,
       HeadingLevel.HEADING_4,
     ];
+    // `=== true` is intentional: missing, null, or malformed values must
+    // produce an unnumbered document.
+    const numberSections = options?.numberSections === true;
     const LEGAL_NUMBERING_REF = "legal-clause-numbering";
     const legalNumbering = (level: number) => ({
       reference: LEGAL_NUMBERING_REF,
@@ -330,17 +337,23 @@ export async function generateDocx(
         children.push(new Paragraph({ children: [new PageBreak()] }));
       }
       if (section.heading) {
-        const stripped = stripManualNumbering(section.heading);
+        const stripped = numberSections
+          ? stripManualNumbering(section.heading)
+          : { text: section.heading.trim(), levelFromPrefix: null };
         const isUnnumbered = isUnnumberedHeading(stripped.text, sectionIndex);
         const skipHeading = isTitleLikeFirstHeading(
           stripped.text,
           sectionIndex,
         );
-        const idx = Math.min(
-          stripped.levelFromPrefix ?? (section.level ?? 1) - 1,
-          3,
+        const requestedLevel = Number.isInteger(section.level)
+          ? Number(section.level)
+          : 1;
+        const idx = Math.max(
+          0,
+          Math.min(stripped.levelFromPrefix ?? requestedLevel - 1, 3),
         );
-        currentClauseLevel = isUnnumbered || skipHeading ? null : idx;
+        currentClauseLevel =
+          !numberSections || isUnnumbered || skipHeading ? null : idx;
         const headingText =
           idx === 0 && !isUnnumbered
             ? stripped.text.toUpperCase()
@@ -349,7 +362,10 @@ export async function generateDocx(
           children.push(
             new Paragraph({
               heading: headingLevels[idx],
-              numbering: isUnnumbered ? undefined : legalNumbering(idx),
+              numbering:
+                numberSections && !isUnnumbered
+                  ? legalNumbering(idx)
+                  : undefined,
               spacing: { after: 160 },
               children: [
                 new TextRun({
@@ -430,7 +446,6 @@ export async function generateDocx(
         children.push(new Paragraph({ text: "" }));
       }
       if (section.content) {
-        let numberedBodyParagraphs = 0;
         const contentIsSignatureBlock =
           section.heading &&
           normalizeHeadingText(section.heading).includes("signature")
@@ -443,30 +458,33 @@ export async function generateDocx(
           const rawText = bulletMatch ? bulletMatch[1].trim() : trimmed;
           const manualList = parseManualListMarker(rawText);
           const numeric = stripManualNumbering(rawText);
-          const text = bulletMatch
-            ? rawText
-            : manualList.levelOffset !== null
-              ? manualList.text
-              : numeric.text;
           const inferredLevel =
             currentClauseLevel === null || contentIsSignatureBlock
               ? undefined
               : bulletMatch
-                ? currentClauseLevel + 2
+                ? undefined
                 : manualList.levelOffset !== null
                   ? currentClauseLevel + manualList.levelOffset
                   : numeric.levelFromPrefix !== null
                     ? numeric.levelFromPrefix
-                    : numberedBodyParagraphs === 0
-                      ? currentClauseLevel + 1
-                      : currentClauseLevel + 2;
-          if (currentClauseLevel !== null) numberedBodyParagraphs++;
+                    : undefined;
+          // Strip typed list markers only when Word numbering will replace
+          // them. This preserves intentional text such as "1. Final notice"
+          // in an otherwise unnumbered letter or signature block.
+          const text = bulletMatch
+            ? rawText
+            : inferredLevel === undefined
+              ? rawText
+              : manualList.levelOffset !== null
+                ? manualList.text
+                : numeric.text;
           children.push(
             new Paragraph({
               numbering:
                 inferredLevel === undefined
                   ? undefined
                   : legalNumbering(inferredLevel),
+              bullet: bulletMatch ? { level: 0 } : undefined,
               spacing: { after: 120 },
               children: [
                 new TextRun({
@@ -486,14 +504,16 @@ export async function generateDocx(
       : {};
 
     const doc = new Document({
-      numbering: {
-        config: [
-          {
-            reference: LEGAL_NUMBERING_REF,
-            levels: legalNumberingLevels,
-          },
-        ],
-      },
+      numbering: numberSections
+        ? {
+            config: [
+              {
+                reference: LEGAL_NUMBERING_REF,
+                levels: legalNumberingLevels,
+              },
+            ],
+          }
+        : undefined,
       sections: [{ properties: pageSetup, children }],
     });
     const buf = await Packer.toBuffer(doc);

@@ -1862,6 +1862,9 @@ export async function runToolCalls(
     } else if (tc.function.name === "generate_docx") {
       const title = args.title as string;
       const landscape = !!args.landscape;
+      // `=== true` is intentional: missing, null, or malformed values must
+      // not enable numbering.
+      const numberSections = args.numberSections === true;
       devLog(
         `[generate_docx] title="${title}" landscape=${landscape} args.landscape=${args.landscape}`,
       );
@@ -1874,7 +1877,7 @@ export async function runToolCalls(
         args.sections as unknown[],
         userId,
         db,
-        { landscape, projectId: projectId ?? null },
+        { landscape, numberSections, projectId: projectId ?? null },
       );
       registerGeneratedDocument(
         tc,
