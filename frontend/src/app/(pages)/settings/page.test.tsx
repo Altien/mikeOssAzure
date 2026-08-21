@@ -77,11 +77,25 @@ describe("SettingsPage Google email changes", () => {
 
     it("keeps in-progress organisation text when the name autosave lands", async () => {
         const user = userEvent.setup();
-        state.updateDisplayName.mockImplementation(async (name: string) => {
-            // Mirror the real context: a successful save refreshes the profile.
-            state.profile = { ...state.profile, displayName: name };
-            return true;
-        });
+        // The save must still be IN FLIGHT while the user types in the
+        // sibling field — an immediately-resolved mock closes the race
+        // window inside user.click()'s microtask flush and the test then
+        // passes even against the unfixed combined hydration effect.
+        let resolveNameSave!: () => void;
+        state.updateDisplayName.mockImplementation(
+            (name: string) =>
+                new Promise<boolean>((resolve) => {
+                    resolveNameSave = () => {
+                        // Mirror the real context: a successful save
+                        // refreshes the whole profile object.
+                        state.profile = {
+                            ...state.profile,
+                            displayName: name,
+                        };
+                        resolve(true);
+                    };
+                }),
+        );
         render(<SettingsPage />);
 
         const name = screen.getByPlaceholderText("Enter your name");
@@ -93,8 +107,10 @@ describe("SettingsPage Google email changes", () => {
         await user.click(organisation); // blurs the name field -> autosave
         await user.type(organisation, " & Partners");
 
+        expect(state.updateDisplayName).toHaveBeenCalledWith("Alexandra");
+        resolveNameSave(); // profile refresh lands mid-typing
         await waitFor(() =>
-            expect(state.updateDisplayName).toHaveBeenCalledWith("Alexandra"),
+            expect(screen.getByText("Saved")).toBeInTheDocument(),
         );
         expect(organisation).toHaveValue("Example LLP & Partners");
         expect(name).toHaveValue("Alexandra");
