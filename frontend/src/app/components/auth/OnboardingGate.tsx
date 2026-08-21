@@ -18,20 +18,11 @@ export function OnboardingGate({ children }: { children: ReactNode }) {
         pathname === "/signup/check-email" ||
         pathname === "/auth/callback";
     const needsOnboarding = profile?.onboardingComplete === false;
-    const needsProfileDetails = !profile?.displayName?.trim();
 
     useEffect(() => {
         if (!user || loading || !profile) return;
 
         if (needsOnboarding && !isOnboardingRoute && !isAuthTransitionRoute) {
-            router.replace("/onboarding/profile");
-            return;
-        }
-        if (
-            needsOnboarding &&
-            pathname === "/onboarding/practice" &&
-            needsProfileDetails
-        ) {
             router.replace("/onboarding/profile");
             return;
         }
@@ -43,8 +34,6 @@ export function OnboardingGate({ children }: { children: ReactNode }) {
         isAuthTransitionRoute,
         loading,
         needsOnboarding,
-        needsProfileDetails,
-        pathname,
         profile,
         router,
         user,
@@ -53,13 +42,6 @@ export function OnboardingGate({ children }: { children: ReactNode }) {
     if (!user) return <>{children}</>;
     if (loading || !profile) return <FullScreenLoader />;
     if (needsOnboarding && !isOnboardingRoute && !isAuthTransitionRoute) {
-        return <FullScreenLoader />;
-    }
-    if (
-        needsOnboarding &&
-        pathname === "/onboarding/practice" &&
-        needsProfileDetails
-    ) {
         return <FullScreenLoader />;
     }
     if (!needsOnboarding && isOnboardingRoute) return <FullScreenLoader />;

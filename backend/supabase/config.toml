@@ -339,8 +339,8 @@ skip_nonce_check = false
 # If enabled, it will allow the user to successfully authenticate when the provider does not return an email address.
 email_optional = false
 
-# Google OAuth is opt-in locally so a normal `supabase start` does not require
-# credentials. Set enabled = true after adding both variables to backend/.env.
+# Google OAuth is enabled by default. Add both variables to backend/.env, or
+# set enabled = false to opt out when Google sign-in is not needed locally.
 # Google's local authorized redirect URI is:
 # http://127.0.0.1:54321/auth/v1/callback
 [auth.external.google]

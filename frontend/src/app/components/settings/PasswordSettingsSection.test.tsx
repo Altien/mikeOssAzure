@@ -9,14 +9,22 @@ const state = vi.hoisted(() => ({
         email: "alex@example.com",
         pendingEmail: null,
         createdWithGoogle: true,
-        hasPassword: false,
     },
+    passwordSet: false,
     setPassword: vi.fn(),
+    syncPasswordSet: vi.fn(),
     resetPasswordForEmail: vi.fn(),
 }));
 
 vi.mock("@/app/contexts/AuthContext", () => ({
     useAuth: () => ({ user: state.user, setPassword: state.setPassword }),
+}));
+
+vi.mock("@/app/contexts/UserProfileContext", () => ({
+    useUserProfile: () => ({
+        profile: { passwordSet: state.passwordSet },
+        syncPasswordSet: state.syncPasswordSet,
+    }),
 }));
 
 vi.mock("@/app/lib/supabase", () => ({
@@ -28,9 +36,14 @@ vi.mock("@/app/lib/supabase", () => ({
 describe("PasswordSettingsSection", () => {
     beforeEach(() => {
         state.user.createdWithGoogle = true;
-        state.user.hasPassword = false;
+        state.passwordSet = false;
         state.setPassword.mockReset();
         state.setPassword.mockResolvedValue(undefined);
+        state.syncPasswordSet.mockReset();
+        state.syncPasswordSet.mockImplementation(async () => {
+            state.passwordSet = true;
+            return true;
+        });
         state.resetPasswordForEmail.mockReset();
         state.resetPasswordForEmail.mockResolvedValue({ error: null });
     });
@@ -67,7 +80,7 @@ describe("PasswordSettingsSection", () => {
     });
 
     it("keeps the reset-email flow for accounts that already have a password", async () => {
-        state.user.hasPassword = true;
+        state.passwordSet = true;
         const user = userEvent.setup();
         render(<PasswordSettingsSection />);
 

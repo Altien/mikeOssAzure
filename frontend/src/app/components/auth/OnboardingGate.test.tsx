@@ -63,6 +63,22 @@ describe("OnboardingGate", () => {
         expect(state.replace).not.toHaveBeenCalled();
     });
 
+    it("allows users without a display name to continue to practice onboarding", () => {
+        state.pathname = "/onboarding/practice";
+        state.profile = {
+            displayName: null,
+            onboardingComplete: false,
+        };
+        render(
+            <OnboardingGate>
+                <div>Practice step</div>
+            </OnboardingGate>,
+        );
+
+        expect(screen.getByText("Practice step")).toBeInTheDocument();
+        expect(state.replace).not.toHaveBeenCalled();
+    });
+
     it("redirects completed users away from onboarding", async () => {
         state.pathname = "/onboarding/practice";
         state.profile = {

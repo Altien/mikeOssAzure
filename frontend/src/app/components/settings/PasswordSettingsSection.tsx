@@ -10,6 +10,7 @@ import { Modal } from "@/app/components/modals/Modal";
 import { Input } from "@/app/components/ui/input";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { useAuth } from "@/app/contexts/AuthContext";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { browserAuthCallbackUrl } from "@/app/lib/authRedirects";
 import { supabase } from "@/app/lib/supabase";
 import { SettingsSection } from "@/app/(pages)/settings/SettingsSection";
@@ -17,6 +18,7 @@ import { FieldLabel } from "@/app/components/ui/form-field";
 
 export function PasswordSettingsSection() {
     const { user, setPassword } = useAuth();
+    const { profile, syncPasswordSet } = useUserProfile();
     const [setPasswordOpen, setSetPasswordOpen] = useState(false);
     const [password, setPasswordValue] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
@@ -28,7 +30,7 @@ export function PasswordSettingsSection() {
     const [passwordResetSending, setPasswordResetSending] = useState(false);
 
     const needsInitialPassword =
-        user?.createdWithGoogle === true && user.hasPassword === false;
+        user?.createdWithGoogle === true && profile?.passwordSet !== true;
 
     async function addPassword() {
         setPasswordSetError(null);
@@ -44,6 +46,12 @@ export function PasswordSettingsSection() {
         setPasswordSaving(true);
         try {
             await setPassword(password);
+            const synced = await syncPasswordSet();
+            if (!synced) {
+                throw new Error(
+                    "Your password was set, but its account status could not be refreshed. Reload the page and try again.",
+                );
+            }
             setPasswordValue("");
             setConfirmPassword("");
             setSetPasswordOpen(false);

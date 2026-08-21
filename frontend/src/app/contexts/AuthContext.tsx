@@ -16,7 +16,6 @@ interface User {
     email: string;
     pendingEmail?: string | null;
     createdWithGoogle: boolean;
-    hasPassword: boolean;
 }
 
 interface AuthContextType {
@@ -31,29 +30,14 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function authMethodState(
-    user: Pick<SupabaseUser, "app_metadata" | "identities">,
+    user: Pick<SupabaseUser, "app_metadata">,
 ) {
     const primaryProvider =
         typeof user.app_metadata?.provider === "string"
             ? user.app_metadata.provider
             : null;
-    const metadataProviders = Array.isArray(user.app_metadata?.providers)
-        ? user.app_metadata.providers.filter(
-              (provider): provider is string => typeof provider === "string",
-          )
-        : [];
-    const identityProviders = Array.isArray(user.identities)
-        ? user.identities.map((identity) => identity.provider)
-        : [];
-    const providers = new Set([
-        ...(primaryProvider ? [primaryProvider] : []),
-        ...metadataProviders,
-        ...identityProviders,
-    ]);
-
     return {
         createdWithGoogle: primaryProvider === "google",
-        hasPassword: providers.has("email"),
     };
 }
 
@@ -127,7 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (error) throw error;
         if (!data.user) throw new Error("Unable to set password");
 
-        setUser({ ...toUser(data.user), hasPassword: true });
+        setUser(toUser(data.user));
     };
 
     return (

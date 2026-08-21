@@ -82,10 +82,10 @@ For Docker Compose, register this Google authorized redirect URI:
 http://localhost:54321/auth/v1/callback
 ```
 
-Set these values in the root `.env`, then recreate Auth:
+Google OAuth is enabled by default. Set the client values in the root `.env`,
+or set `GOTRUE_EXTERNAL_GOOGLE_ENABLED=false` to opt out. Then recreate Auth:
 
 ```env
-GOTRUE_EXTERNAL_GOOGLE_ENABLED=true
 GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID=<client-id>
 GOTRUE_EXTERNAL_GOOGLE_SECRET=<client-secret>
 ```
@@ -95,10 +95,12 @@ docker compose up -d --force-recreate auth
 ```
 
 For the Supabase CLI stack, register
-`http://127.0.0.1:54321/auth/v1/callback`, set the two
-`SUPABASE_AUTH_EXTERNAL_GOOGLE_*` values in `backend/.env`, change
-`[auth.external.google].enabled` to `true` in
-`backend/supabase/config.toml`, then restart the stack:
+`http://127.0.0.1:54321/auth/v1/callback`, then set
+`SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID` and
+`SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_SECRET` in `backend/.env`. Google OAuth
+is enabled by default; set `[auth.external.google].enabled` to `false` in
+`backend/supabase/config.toml` to opt out locally. Restart the stack after a
+configuration change:
 
 ```bash
 cd backend

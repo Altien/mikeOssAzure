@@ -191,7 +191,8 @@ function profileRow(overrides: Record<string, unknown> = {}) {
         practice_setting: "private_practice",
         professional_title: "Partner",
         practice_areas: ["Corporate and M&A"],
-        onboarding_completed_at: "2026-08-21T00:00:00.000Z",
+        onboarding_version: 1,
+        password_set_at: null,
         message_credits_used: 3,
         credits_reset_date: "2999-01-01T00:00:00.000Z",
         tier: "Pro",
@@ -269,6 +270,8 @@ describe("user.routes", () => {
                 professionalTitle: "Partner",
                 practiceAreas: ["Corporate and M&A"],
                 onboardingComplete: true,
+                onboardingVersion: 1,
+                passwordSet: false,
                 messageCreditsUsed: 3,
                 tier: "Pro",
                 legalResearchUs: true,
@@ -521,7 +524,7 @@ describe("user.routes", () => {
     describe("POST /user/onboarding", () => {
         it("accepts a jurisdiction and normalized practice areas", async () => {
             supabaseState.tables.user_profiles = {
-                data: profileRow({ onboarding_completed_at: null }),
+                data: profileRow({ onboarding_version: null }),
                 error: null,
             };
 
@@ -543,12 +546,30 @@ describe("user.routes", () => {
                 professionalTitle: "Partner",
                 practiceAreas: ["Corporate and M&A"],
                 onboardingComplete: false,
+                onboardingVersion: null,
+            });
+        });
+
+        it("treats onboarding version 0 as legacy-exempt", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow({ onboarding_version: 0 }),
+                error: null,
+            };
+
+            const res = await request(app)
+                .get("/user/profile")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body).toMatchObject({
+                onboardingVersion: 0,
+                onboardingComplete: true,
             });
         });
 
         it("allows users to skip all personalisation fields", async () => {
             supabaseState.tables.user_profiles = {
-                data: profileRow({ onboarding_completed_at: null }),
+                data: profileRow({ onboarding_version: null }),
                 error: null,
             };
 
@@ -586,7 +607,7 @@ describe("user.routes", () => {
             );
         });
 
-        it("requires profile details before completion", async () => {
+        it("allows onboarding completion without a display name", async () => {
             supabaseState.tables.user_profiles = {
                 data: profileRow({ display_name: null }),
                 error: null,
@@ -601,10 +622,49 @@ describe("user.routes", () => {
                     practiceAreas: ["Litigation"],
                 });
 
-            expect(res.status).toBe(400);
-            expect(res.body.detail).toBe(
-                "Add your name before completing onboarding",
+            expect(res.status).toBe(200);
+        });
+    });
+
+    describe("POST /user/security/password-set", () => {
+        it("records and returns verified password capability", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow({
+                    password_set_at: "2026-08-21T12:00:00.000Z",
+                }),
+                error: null,
+            };
+            supabaseRpc.mockResolvedValue({
+                data: "2026-08-21T12:00:00.000Z",
+                error: null,
+            });
+
+            const res = await request(app)
+                .post("/user/security/password-set")
+                .set(...AUTH)
+                .send({});
+
+            expect(res.status).toBe(200);
+            expect(res.body.passwordSet).toBe(true);
+            expect(supabaseRpc).toHaveBeenCalledWith(
+                "sync_user_password_set",
+                { p_user_id: "u1" },
             );
+        });
+
+        it("rejects the marker when Supabase has no password", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow(),
+                error: null,
+            };
+            supabaseRpc.mockResolvedValue({ data: null, error: null });
+
+            const res = await request(app)
+                .post("/user/security/password-set")
+                .set(...AUTH)
+                .send({});
+
+            expect(res.status).toBe(409);
         });
     });
 

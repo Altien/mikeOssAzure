@@ -51,7 +51,7 @@ export default function SettingsPage() {
     const [isDeleting, setIsDeleting] = useState(false);
     const [accountDeleteMfaOpen, setAccountDeleteMfaOpen] = useState(false);
     const requiresPasswordForEmailChange =
-        user?.createdWithGoogle === true && user.hasPassword === false;
+        user?.createdWithGoogle === true && profile?.passwordSet !== true;
 
     useEffect(() => {
         setDisplayName(profile?.displayName ?? "");
@@ -172,10 +172,6 @@ export default function SettingsPage() {
     const handleSaveDisplayName = async () => {
         const nextName = displayName.trim();
         if (nextName === (profile?.displayName ?? "")) return;
-        if (!nextName) {
-            setNameError("Name is required.");
-            return;
-        }
         setIsSavingName(true);
         setNameError(null);
         const success = await updateDisplayName(nextName);

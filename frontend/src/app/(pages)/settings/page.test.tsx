@@ -8,12 +8,12 @@ const state = vi.hoisted(() => ({
     updateEmail: vi.fn(),
     updateDisplayName: vi.fn(),
     updateOrganisation: vi.fn(),
+    passwordSet: false,
     user: {
         id: "user-1",
         email: "alex@example.com",
         pendingEmail: null,
         createdWithGoogle: true,
-        hasPassword: false,
     },
 }));
 
@@ -34,6 +34,7 @@ vi.mock("@/app/contexts/UserProfileContext", () => ({
         profile: {
             displayName: "Alex",
             organisation: "Example LLP",
+            passwordSet: state.passwordSet,
             tier: "Free",
         },
         updateDisplayName: state.updateDisplayName,
@@ -64,7 +65,7 @@ describe("SettingsPage Google email changes", () => {
             email: "alex@example.com",
             pendingEmail: "new@example.com",
         });
-        state.user.hasPassword = false;
+        state.passwordSet = false;
     });
 
     it("directs Google-created accounts without a password to Security", async () => {
@@ -90,7 +91,7 @@ describe("SettingsPage Google email changes", () => {
     });
 
     it("allows the email change after a password has been added", async () => {
-        state.user.hasPassword = true;
+        state.passwordSet = true;
         const user = userEvent.setup();
         render(<SettingsPage />);
 
@@ -132,5 +133,19 @@ describe("SettingsPage Google email changes", () => {
         await waitFor(() =>
             expect(state.updateOrganisation).toHaveBeenCalledWith("New LLP"),
         );
+    });
+
+    it("allows an existing display name to be cleared", async () => {
+        const user = userEvent.setup();
+        render(<SettingsPage />);
+
+        const name = screen.getByPlaceholderText("Enter your name");
+        await user.clear(name);
+        await user.tab();
+
+        await waitFor(() =>
+            expect(state.updateDisplayName).toHaveBeenCalledWith(""),
+        );
+        expect(screen.queryByText("Name is required.")).not.toBeInTheDocument();
     });
 });

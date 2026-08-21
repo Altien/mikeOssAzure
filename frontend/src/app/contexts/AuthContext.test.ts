@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { authMethodState } from "./AuthContext";
 
 describe("authMethodState", () => {
-    it("identifies a Google-created account without a password", () => {
+    it("identifies a Google-created account", () => {
         expect(
             authMethodState({
                 app_metadata: {
@@ -11,11 +11,11 @@ describe("authMethodState", () => {
                     providers: ["google"],
                 },
                 identities: [{ provider: "google" }],
-            } as Pick<SupabaseUser, "app_metadata" | "identities">),
-        ).toEqual({ createdWithGoogle: true, hasPassword: false });
+            } as Pick<SupabaseUser, "app_metadata">),
+        ).toEqual({ createdWithGoogle: true });
     });
 
-    it("detects email/password after it is added to a Google account", () => {
+    it("does not infer password state from provider metadata", () => {
         expect(
             authMethodState({
                 app_metadata: {
@@ -26,7 +26,7 @@ describe("authMethodState", () => {
                     { provider: "google" },
                     { provider: "email" },
                 ],
-            } as Pick<SupabaseUser, "app_metadata" | "identities">),
-        ).toEqual({ createdWithGoogle: true, hasPassword: true });
+            } as Pick<SupabaseUser, "app_metadata">),
+        ).toEqual({ createdWithGoogle: true });
     });
 });

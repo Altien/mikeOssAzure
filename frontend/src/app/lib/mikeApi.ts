@@ -394,7 +394,9 @@ export interface UserProfile {
     practiceSetting: PracticeSetting | null;
     professionalTitle: ProfessionalTitle | null;
     practiceAreas: string[];
+    onboardingVersion: number | null;
     onboardingComplete: boolean;
+    passwordSet: boolean;
     messageCreditsUsed: number;
     creditsResetDate: string;
     creditsRemaining: number;
@@ -532,6 +534,12 @@ export async function completeUserOnboarding(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+    });
+}
+
+export async function syncUserPasswordSet(): Promise<UserProfile> {
+    return apiRequest<UserProfile>("/user/security/password-set", {
+        method: "POST",
     });
 }
 

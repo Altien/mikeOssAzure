@@ -62,7 +62,8 @@ type UserProfileRow = {
     practice_setting?: string | null;
     professional_title?: string | null;
     practice_areas?: string[] | null;
-    onboarding_completed_at?: string | null;
+    onboarding_version?: number | null;
+    password_set_at?: string | null;
     message_credits_used: number;
     credits_reset_date: string;
     tier: string;
@@ -179,7 +180,7 @@ function mcpOAuthPopupCsp(nonce: string) {
 }
 
 const PROFILE_SELECT =
-    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_completed_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, quick_actions_visible";
+    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, quick_actions_visible";
 const PROFILE_SELECT_NO_QUICK_ACTIONS =
     "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us";
 const PROFILE_SELECT_NO_LEGAL =
@@ -408,10 +409,16 @@ function serializeProfile(
             ? row.practice_areas
             : [],
         // Databases that have not yet applied the onboarding migration must
-        // not lock existing users out of the app.
+        // not lock existing users out of the app. NULL means a new user still
+        // needs onboarding; 0 identifies a legacy-exempt user; 1 is complete.
+        onboardingVersion:
+            row.onboarding_version === undefined
+                ? 0
+                : row.onboarding_version,
         onboardingComplete:
-            row.onboarding_completed_at === undefined ||
-            !!row.onboarding_completed_at,
+            row.onboarding_version === undefined ||
+            row.onboarding_version !== null,
+        passwordSet: !!row.password_set_at,
         messageCreditsUsed: creditsUsed,
         creditsResetDate: row.credits_reset_date,
         creditsRemaining: Math.max(MONTHLY_CREDIT_LIMIT - creditsUsed, 0),
@@ -480,6 +487,90 @@ function normalizePracticeAreas(value: unknown): string[] | null {
     return practiceAreas;
 }
 
+type PersonalisationUpdate = {
+    jurisdiction?: string | null;
+    practice_setting?: string | null;
+    professional_title?: string | null;
+    practice_areas?: string[];
+};
+
+function parsePersonalisationPayload(
+    raw: Record<string, unknown>,
+    { allowClearing }: { allowClearing: boolean },
+):
+    | { ok: true; update: PersonalisationUpdate }
+    | { ok: false; detail: string } {
+    const update: PersonalisationUpdate = {};
+
+    if ("jurisdiction" in raw) {
+        if (
+            allowClearing &&
+            (raw.jurisdiction === null || raw.jurisdiction === "")
+        ) {
+            update.jurisdiction = null;
+        } else {
+            const jurisdiction =
+                typeof raw.jurisdiction === "string"
+                    ? raw.jurisdiction.trim()
+                    : "";
+            if (!jurisdiction || jurisdiction.length > 100) {
+                return {
+                    ok: false,
+                    detail: "Select a valid jurisdiction of practice",
+                };
+            }
+            update.jurisdiction = jurisdiction;
+        }
+    }
+
+    if ("practiceSetting" in raw) {
+        if (
+            allowClearing &&
+            (raw.practiceSetting === null || raw.practiceSetting === "")
+        ) {
+            update.practice_setting = null;
+        } else {
+            const practiceSetting =
+                typeof raw.practiceSetting === "string"
+                    ? raw.practiceSetting.trim()
+                    : "";
+            if (!isPracticeSetting(practiceSetting)) {
+                return {
+                    ok: false,
+                    detail: "Select a valid professional setting",
+                };
+            }
+            update.practice_setting = practiceSetting;
+        }
+    }
+
+    if ("professionalTitle" in raw) {
+        const professionalTitle = normalizeProfessionalTitle(
+            raw.professionalTitle,
+        );
+        if (
+            professionalTitle === undefined ||
+            (!allowClearing && professionalTitle === null)
+        ) {
+            return { ok: false, detail: "Select a valid title" };
+        }
+        update.professional_title = professionalTitle;
+    }
+
+    if ("practiceAreas" in raw) {
+        const practiceAreas = normalizePracticeAreas(raw.practiceAreas);
+        if (!practiceAreas) {
+            return {
+                ok: false,
+                detail: "Select no more than 20 valid practice areas",
+            };
+        }
+        update.practice_areas = practiceAreas;
+    }
+
+    return { ok: true, update };
+}
+
 function validateProfilePayload(body: unknown):
     | {
           ok: true;
@@ -542,6 +633,12 @@ function validateProfilePayload(body: unknown):
     } = { updated_at: new Date().toISOString() };
     const routerModels: Partial<Record<RouterSlug, string[]>> = {};
 
+    const personalisation = parsePersonalisationPayload(raw, {
+        allowClearing: true,
+    });
+    if (!personalisation.ok) return personalisation;
+    Object.assign(update, personalisation.update);
+
     if ("displayName" in raw) {
         if (raw.displayName !== null && typeof raw.displayName !== "string") {
             return {
@@ -560,60 +657,6 @@ function validateProfilePayload(body: unknown):
             };
         }
         update.organisation = raw.organisation?.trim() || null;
-    }
-
-    if ("jurisdiction" in raw) {
-        if (raw.jurisdiction === null || raw.jurisdiction === "") {
-            update.jurisdiction = null;
-        } else {
-            const jurisdiction =
-                typeof raw.jurisdiction === "string"
-                    ? raw.jurisdiction.trim()
-                    : "";
-            if (!jurisdiction || jurisdiction.length > 100) {
-                return { ok: false, detail: "Select a valid jurisdiction" };
-            }
-            update.jurisdiction = jurisdiction;
-        }
-    }
-
-    if ("practiceSetting" in raw) {
-        if (raw.practiceSetting === null || raw.practiceSetting === "") {
-            update.practice_setting = null;
-        } else {
-            const practiceSetting =
-                typeof raw.practiceSetting === "string"
-                    ? raw.practiceSetting.trim()
-                    : "";
-            if (!isPracticeSetting(practiceSetting)) {
-                return {
-                    ok: false,
-                    detail: "Select a valid professional setting",
-                };
-            }
-            update.practice_setting = practiceSetting;
-        }
-    }
-
-    if ("professionalTitle" in raw) {
-        const professionalTitle = normalizeProfessionalTitle(
-            raw.professionalTitle,
-        );
-        if (professionalTitle === undefined) {
-            return { ok: false, detail: "Select a valid title" };
-        }
-        update.professional_title = professionalTitle;
-    }
-
-    if ("practiceAreas" in raw) {
-        const practiceAreas = normalizePracticeAreas(raw.practiceAreas);
-        if (!practiceAreas) {
-            return {
-                ok: false,
-                detail: "Select no more than 20 valid practice areas",
-            };
-        }
-        update.practice_areas = practiceAreas;
     }
 
     if ("tabularModel" in raw) {
@@ -901,60 +944,13 @@ userRouter.post("/onboarding", requireAuth, async (req, res) => {
         });
     }
 
-    const personalisationUpdate: {
-        jurisdiction?: string;
-        practice_setting?: string;
-        professional_title?: string | null;
-        practice_areas?: string[];
-    } = {};
-
-    if ("jurisdiction" in body) {
-        const jurisdiction =
-            typeof body.jurisdiction === "string"
-                ? body.jurisdiction.trim()
-                : "";
-        if (!jurisdiction || jurisdiction.length > 100) {
-            return void res.status(400).json({
-                detail: "Select a valid jurisdiction of practice",
-            });
-        }
-        personalisationUpdate.jurisdiction = jurisdiction;
+    const personalisation = parsePersonalisationPayload(body, {
+        allowClearing: false,
+    });
+    if (!personalisation.ok) {
+        return void res.status(400).json({ detail: personalisation.detail });
     }
-
-    if ("practiceSetting" in body) {
-        const practiceSetting =
-            typeof body.practiceSetting === "string"
-                ? body.practiceSetting.trim()
-                : "";
-        if (!isPracticeSetting(practiceSetting)) {
-            return void res.status(400).json({
-                detail: "Select a valid professional setting",
-            });
-        }
-        personalisationUpdate.practice_setting = practiceSetting;
-    }
-
-    if ("professionalTitle" in body) {
-        const professionalTitle = normalizeProfessionalTitle(
-            body.professionalTitle,
-        );
-        if (professionalTitle === undefined) {
-            return void res
-                .status(400)
-                .json({ detail: "Select a valid title" });
-        }
-        personalisationUpdate.professional_title = professionalTitle;
-    }
-
-    if ("practiceAreas" in body) {
-        const practiceAreas = normalizePracticeAreas(body.practiceAreas);
-        if (!practiceAreas) {
-            return void res.status(400).json({
-                detail: "Select no more than 20 valid practice areas",
-            });
-        }
-        personalisationUpdate.practice_areas = practiceAreas;
-    }
+    const personalisationUpdate = personalisation.update;
 
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
@@ -963,34 +959,45 @@ userRouter.post("/onboarding", requireAuth, async (req, res) => {
         return void res.status(500).json({ detail: ensureError.message });
     }
 
-    const { data: profile, error: profileError } = await db
-        .from("user_profiles")
-        .select("display_name")
-        .eq("user_id", userId)
-        .single();
-    if (profileError) {
-        return void res.status(500).json({ detail: profileError.message });
-    }
-    if (
-        !profile ||
-        typeof profile.display_name !== "string" ||
-        !profile.display_name.trim()
-    ) {
-        return void res.status(400).json({
-            detail: "Add your name before completing onboarding",
-        });
-    }
-
     const { error: updateError } = await db
         .from("user_profiles")
         .update({
             ...personalisationUpdate,
-            onboarding_completed_at: new Date().toISOString(),
+            onboarding_version: 1,
             updated_at: new Date().toISOString(),
         })
         .eq("user_id", userId);
     if (updateError) {
         return void res.status(500).json({ detail: updateError.message });
+    }
+
+    const apiKeyStatus = await getUserApiKeyStatus(userId, db);
+    const { data, error } = await loadProfile(db, userId, { apiKeyStatus });
+    if (error) return void res.status(500).json({ detail: error.message });
+    res.json({ ...data, apiKeyStatus });
+});
+
+// POST /user/security/password-set
+// Record password capability only after verifying Supabase's auth.users row.
+userRouter.post("/security/password-set", requireAuth, async (_req, res) => {
+    const userId = res.locals.userId as string;
+    const db = createServerSupabase();
+    const ensureError = await ensureProfileRow(db, userId);
+    if (ensureError) {
+        return void res.status(500).json({ detail: ensureError.message });
+    }
+
+    const { data: passwordSetAt, error: syncError } = await db.rpc(
+        "sync_user_password_set",
+        { p_user_id: userId },
+    );
+    if (syncError) {
+        return void res.status(500).json({ detail: syncError.message });
+    }
+    if (!passwordSetAt) {
+        return void res.status(409).json({
+            detail: "Supabase has not recorded a password for this account",
+        });
     }
 
     const apiKeyStatus = await getUserApiKeyStatus(userId, db);

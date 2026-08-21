@@ -47,17 +47,12 @@ describe("OnboardingProfilePage", () => {
         updateUserProfile.mockResolvedValue({});
     });
 
-    it("requires a name and saves profile details before continuing", async () => {
+    it("allows an empty name and saves profile details before continuing", async () => {
         const user = userEvent.setup();
         render(<OnboardingProfilePage />);
 
         const name = screen.getByRole("textbox", { name: "Name" });
         await user.clear(name);
-        await user.type(name, "   ");
-        await user.click(screen.getByRole("button", { name: "Continue" }));
-        expect(screen.getByRole("alert")).toHaveTextContent("Name is required");
-
-        await user.type(name, "Alex Chen");
         await user.type(
             screen.getByRole("textbox", { name: /Organisation/ }),
             "Example LLP",
@@ -66,7 +61,7 @@ describe("OnboardingProfilePage", () => {
 
         await waitFor(() =>
             expect(updateUserProfile).toHaveBeenCalledWith({
-                displayName: "Alex Chen",
+                displayName: null,
                 organisation: "Example LLP",
             }),
         );

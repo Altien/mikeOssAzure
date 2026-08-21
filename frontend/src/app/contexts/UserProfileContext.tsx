@@ -20,6 +20,7 @@ import {
     getUserProfile,
     isMfaRequiredError,
     saveApiKey,
+    syncUserPasswordSet,
     updateUserMfaOnLogin,
     updateUserProfile,
 } from "@/app/lib/mikeApi";
@@ -31,7 +32,9 @@ interface UserProfile {
     practiceSetting: PracticeSetting | null;
     professionalTitle: ProfessionalTitle | null;
     practiceAreas: string[];
+    onboardingVersion: number | null;
     onboardingComplete: boolean;
+    passwordSet: boolean;
     messageCreditsUsed: number;
     creditsResetDate: string;
     creditsRemaining: number;
@@ -68,6 +71,7 @@ interface UserProfileContextType {
     updatePersonalisation: (
         details: PersonalisationDetails,
     ) => Promise<boolean>;
+    syncPasswordSet: () => Promise<boolean>;
     updateModelPreference: (
         field: "titleModel" | "tabularModel",
         value: string,
@@ -132,7 +136,9 @@ function toProfile(data: ApiUserProfile): UserProfile {
         practiceAreas: Array.isArray(profile.practiceAreas)
             ? profile.practiceAreas
             : [],
+        onboardingVersion: profile.onboardingVersion ?? null,
         onboardingComplete: profile.onboardingComplete !== false,
+        passwordSet: profile.passwordSet === true,
         mfaOnLogin: profile.mfaOnLogin === true,
         openRouterModels: Array.isArray(profile.openRouterModels)
             ? profile.openRouterModels
@@ -185,7 +191,9 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 practiceSetting: null,
                 professionalTitle: null,
                 practiceAreas: [],
+                onboardingVersion: 0,
                 onboardingComplete: true,
+                passwordSet: false,
                 messageCreditsUsed: 0,
                 creditsResetDate: futureResetDate.toISOString(),
                 creditsRemaining: 999999, // temporarily unlimited
@@ -278,6 +286,17 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         },
         [user],
     );
+
+    const syncPasswordSet = useCallback(async (): Promise<boolean> => {
+        if (!user) return false;
+        try {
+            const updated = await syncUserPasswordSet();
+            setProfile(toProfile(updated));
+            return true;
+        } catch {
+            return false;
+        }
+    }, [user]);
 
     const updateModelPreference = useCallback(
         async (
@@ -462,6 +481,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 updateOrganisation,
                 completeOnboarding,
                 updatePersonalisation,
+                syncPasswordSet,
                 updateModelPreference,
                 updateMfaOnLogin,
                 updateLegalResearchUs,
