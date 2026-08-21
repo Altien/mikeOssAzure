@@ -11,6 +11,7 @@ import { getConfig } from "../lib/config";
 import { resolveModel } from "../lib/llm/models";
 import { REASONING_LEVELS } from "../lib/llm";
 import { normalizeOptionalModelPreference, normalizeReasoningLevel } from "../lib/modelSelection";
+import { enqueueDbJob } from "../lib/dbq/enqueue";
 import {
   completeUserMcpConnectorOAuth,
   createUserMcpConnector,
@@ -1335,72 +1336,38 @@ userRouter.patch(
 );
 
 // DELETE /user/account
-//
-// In supabase/local modes the app owns the identity, so self-service
-// account closure is meaningful and cascades through every user-owned
-// table.  In entra mode the identity is owned by Microsoft on the
-// customer's tenant — wiping the app data while group membership still
-// grants access just lets the user log back in immediately as a fresh
-// account, which is misleading rather than useful.  Account closure /
-// data erasure for entra tenants is handled out of band via a
-// tenant-admin support ticket (to be implemented).  The frontend hides
-// the button in entra mode; this guard catches anyone hitting the
-// endpoint directly.
+// DELETE /user/account. Entra identity is tenant-owned; self-service
+// closure remains unavailable until the application erasure admission guard
+// can prevent an already-issued Entra credential from recreating rows.
 userRouter.delete("/account", requireAuth, async (_req, res) => {
   const provider = process.env.AUTH_PROVIDER ?? "supabase";
   if (provider === "entra") {
-    return void res.status(403).json({
-      detail:
-        "Self-service account deletion is not available on Entra tenants. " +
-        "Contact your tenant administrator to request account closure and " +
-        "data erasure.",
-    });
+    return void res.status(403).json({ detail: "Contact your tenant administrator to request account closure and data erasure." });
   }
-
+  if (process.env.DB_JOBS_ENABLED === "false") {
+    return void res.status(503).json({ detail: "Account erasure is temporarily unavailable." });
+  }
   const userId = res.locals.userId as string;
   const userEmail = (res.locals.userEmail as string | undefined)?.toLowerCase();
   const db = createServerSupabase();
   try {
-    // Upstream divergence (sync-log: 3a10943): dev's previous inline
-    // deleteFrom() cascade moved into lib/userDataCleanup's
-    // deleteUserAccountData, which also removes the user's storage objects
-    // (document/version files + the user's storage prefix) — adopted from
-    // upstream.
-    await deleteUserAccountData(db, userId, userEmail);
-
-    // deleteUserAccountData stops short of identity-adjacent tables.
-    // Upstream relies on Supabase's auth.users ON DELETE CASCADE to clean
-    // these up; dev owns the rows, so remove them explicitly.
-    for (const table of ["user_api_keys", "user_profiles"] as const) {
-      const { error } = await db.from(table).delete().eq("user_id", userId);
-      if (error) {
-        return void res.status(500).json({
-          detail: `Failed to delete user data from ${table}: ${error.message}`,
-        });
-      }
-    }
-
-    // Upstream calls db.auth.admin.deleteUser(userId) unconditionally. On
-    // dev that API only exists in supabase mode (local mode is stateless
-    // JWT with no identity table; entra never reaches this point — see the
-    // guard above).
-    if (provider === "supabase") {
-      const { error } = await db.auth.admin.deleteUser(userId);
-      if (error) return void res.status(500).json({ detail: error.message });
-    }
-
-    res.status(204).send();
-  } catch (err) {
-    const detail = errorMessage(err);
-    console.error("[user/account] delete failed", { userId, error: detail });
-    res.status(500).json({ detail });
+    // Durable job first. The worker removes the provider identity only after
+    // the application cascade; a failed enqueue must leave this retryable.
+    await enqueueDbJob(db, {
+      kind: "account.delete",
+      payload: { userId, userEmail: userEmail ?? null, provider },
+      dedupeKey: "account.delete:" + userId,
+      maxAttempts: 20,
+    });
+    res.status(202).json({ status: "scheduled" });
+  } catch (error) {
+    console.error("[user/account] erasure enqueue failed", { userId, error: errorMessage(error) });
+    sendInternalError(res, error);
   }
 });
 
-// Upstream divergence (sync-log: 3a10943): upstream guards the data
-// deletion/export routes below with requireMfaIfEnrolled (Supabase Auth
-// MFA). Dev did not adopt app-level Supabase MFA — Entra enforces MFA at
-// the IdP (Conditional Access) — so these routes use requireAuth only.
+// Upstream divergence (sync-log: 3a10943): Entra handles MFA through
+// Conditional Access; Dev does not call Supabase MFA primitives here.
 
 // DELETE /user/chats
 userRouter.delete("/chats", requireAuth, async (_req, res) => {

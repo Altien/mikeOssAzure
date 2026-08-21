@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
-import { deleteFile } from "../lib/storage";
+import { enqueueStorageCleanup } from "../lib/dbq/enqueue";
 import {
   attachActiveVersionPaths,
   attachLatestVersionNumbers,
@@ -148,22 +148,7 @@ async function deleteLibraryDocumentsAndVersionFiles(
       : deleteQuery.eq("library_kind", kind);
   const { error } = await deleteQuery.in("id", eligibleIds);
   if (error) return { error, deletedIds: [] };
-
-  // Blob cleanup only starts after the database no longer references the
-  // files. It remains best-effort because retrying orphan cleanup is safer
-  // than failing after the authoritative document rows are already gone.
-  const cleanupResults = await Promise.allSettled(
-    [...paths].map((path) => deleteFile(path)),
-  );
-  const failedCleanupCount = cleanupResults.filter(
-    (result) => result.status === "rejected",
-  ).length;
-  if (failedCleanupCount > 0) {
-    console.error("library.folder_blob_cleanup_failed", {
-      failedCount: failedCleanupCount,
-      totalCount: cleanupResults.length,
-    });
-  }
+  await enqueueStorageCleanup(db, [...paths]);
   return { error: null, deletedIds: eligibleIds };
 }
 
