@@ -256,15 +256,22 @@ describe("GET /models/opencode-go", () => {
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it("returns the catalog sorted by label, deduplicated, with the key server-side", async () => {
+    it("returns only Chat Completions models, sorted and deduplicated, with the key server-side", async () => {
         const fetchMock = vi.fn().mockResolvedValue(
             new Response(
                 JSON.stringify({
                     data: [
+                        // OpenCode documents these models on protocols Mike's
+                        // router adapter does not implement yet.
                         { id: "qwen3.8-max", name: "Qwen3.8 Max" },
-                        { id: "glm-5", name: "GLM-5" },
+                        { id: "gpt-5.6-luna", name: "GPT-5.6 Luna" },
+                        { id: "minimax-m3", name: "MiniMax M3" },
+                        { id: "glm-5.3", name: "GLM-5.3" },
                         { id: "qwen3.8-max", name: "Qwen3.8 Max (updated)" },
                         { id: "kimi-k3" },
+                        // The upstream response has no protocol metadata, so
+                        // unknown future models must fail closed too.
+                        { id: "future-model", name: "Future Model" },
                         { id: "bad id" },
                         { id: "   " },
                         null,
@@ -282,9 +289,8 @@ describe("GET /models/opencode-go", () => {
 
         expect(response.status).toBe(200);
         expect(response.body.models).toEqual([
-            { id: "glm-5", label: "GLM-5" },
+            { id: "glm-5.3", label: "GLM-5.3" },
             { id: "kimi-k3", label: "kimi-k3" },
-            { id: "qwen3.8-max", label: "Qwen3.8 Max (updated)" },
         ]);
         expect(fetchMock).toHaveBeenCalledWith(
             "https://opencode.ai/zen/go/v1/models",

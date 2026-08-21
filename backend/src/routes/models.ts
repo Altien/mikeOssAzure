@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { authHeaders } from "../lib/llm/ollama";
+import { isOpenCodeGoChatCompletionsModel } from "../lib/llm/models";
 import { createServerSupabase } from "../lib/supabase";
 import { getUserApiKeys } from "../lib/userApiKeys";
 
@@ -224,8 +225,9 @@ modelsRouter.get("/vercel", requireAuth, async (_req, res) => {
 
 // OpenCode Go's catalog, served from the same OpenAI-compatible gateway the
 // chat adapter posts to. Unlike OpenRouter and Vercel it publishes no
-// capability metadata to filter on — every listed model is a coding model the
-// plan covers — so the whole catalog is returned, minus malformed rows.
+// protocol metadata to filter on. Mike currently supports only the gateway's
+// Chat Completions models, so fail closed against the compatibility list in
+// lib/llm/models instead of offering Responses or Anthropic Messages models.
 modelsRouter.get("/opencode-go", requireAuth, async (_req, res) => {
     const userId = res.locals.userId as string;
     try {
@@ -261,6 +263,7 @@ modelsRouter.get("/opencode-go", requireAuth, async (_req, res) => {
         for (const model of payload.data ?? []) {
             if (typeof model?.id !== "string" || !model.id.trim()) continue;
             const id = model.id.trim();
+            if (!isOpenCodeGoChatCompletionsModel(id)) continue;
             // The id is stored verbatim in user_router_models and prefixed
             // with the router slug to build the app-level model id, so an id
             // containing whitespace could never round-trip.

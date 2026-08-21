@@ -246,6 +246,18 @@ describe("PATCH /user/profile router model selections", () => {
         );
         expect(replaceUserRouterModels).not.toHaveBeenCalled();
     });
+
+    it("rejects OpenCode Go models that require an unsupported protocol", async () => {
+        const response = await request(app)
+            .patch("/user/profile")
+            .send({ openCodeGoModels: ["qwen3.8-max"] });
+
+        expect(response.status).toBe(400);
+        expect(response.body.detail).toBe(
+            "openCodeGoModels contains an invalid or duplicate model ID",
+        );
+        expect(replaceUserRouterModels).not.toHaveBeenCalled();
+    });
 });
 
 describe("normalizeRouterModels", () => {
@@ -272,5 +284,14 @@ describe("normalizeRouterModels", () => {
             "glm-5",
         ]);
         expect(normalizeRouterModels(["glm-5"], "openrouter")).toEqual([]);
+    });
+
+    it("filters OpenCode Go models that need another wire protocol", () => {
+        expect(
+            normalizeRouterModels(
+                ["glm-5.3", "qwen3.8-max", "gpt-5.6-luna"],
+                "opencode-go",
+            ),
+        ).toEqual(["glm-5.3"]);
     });
 });

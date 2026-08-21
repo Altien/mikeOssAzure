@@ -17,6 +17,7 @@ import {
     openRouterModelId,
     vercelModelId,
     openCodeGoModelId,
+    isOpenCodeGoChatCompletionsModel,
 } from "../llm/models";
 
 // ---------------------------------------------------------------------------
@@ -182,6 +183,18 @@ describe("openCodeGoModelId", () => {
     it("removes only the internal provider namespace", () => {
         expect(openCodeGoModelId("opencode-go/glm-5")).toBe("glm-5");
         expect(openCodeGoModelId("glm-5")).toBe("glm-5");
+    });
+});
+
+describe("isOpenCodeGoChatCompletionsModel", () => {
+    it("accepts only models supported by the shared router adapter", () => {
+        expect(isOpenCodeGoChatCompletionsModel("opencode-go/glm-5.3")).toBe(
+            true,
+        );
+        expect(isOpenCodeGoChatCompletionsModel("kimi-k3")).toBe(true);
+        expect(isOpenCodeGoChatCompletionsModel("qwen3.8-max")).toBe(false);
+        expect(isOpenCodeGoChatCompletionsModel("gpt-5.6-luna")).toBe(false);
+        expect(isOpenCodeGoChatCompletionsModel("future-model")).toBe(false);
     });
 });
 

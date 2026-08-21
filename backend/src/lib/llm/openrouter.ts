@@ -6,6 +6,7 @@ import type {
     StreamChatResult,
 } from "./types";
 import {
+    isOpenCodeGoChatCompletionsModel,
     openCodeGoModelId,
     openRouterModelId,
     vercelModelId,
@@ -49,7 +50,14 @@ function routerLabel(provider: RouterProvider): string {
 /** The upstream's own id for an app-level router model id. */
 function routerModelId(provider: RouterProvider, model: string): string {
     if (provider === "vercel") return vercelModelId(model);
-    if (provider === "opencode-go") return openCodeGoModelId(model);
+    if (provider === "opencode-go") {
+        if (!isOpenCodeGoChatCompletionsModel(model)) {
+            throw new Error(
+                `OpenCode Go model ${openCodeGoModelId(model)} is not compatible with Mike's Chat Completions adapter. Select a model listed in Settings → BYOK → Routers.`,
+            );
+        }
+        return openCodeGoModelId(model);
+    }
     return openRouterModelId(model);
 }
 

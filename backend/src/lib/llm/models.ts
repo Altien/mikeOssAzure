@@ -55,6 +55,28 @@ export const DEFAULT_MAIN_MODEL = "gemini-3-flash-preview";
 export const DEFAULT_TITLE_MODEL = "gemini-3.5-flash-lite";
 export const DEFAULT_TABULAR_MODEL = "gemini-3-flash-preview";
 
+// OpenCode Go publishes one catalog across three incompatible wire protocols:
+// OpenAI Responses, Anthropic Messages, and OpenAI Chat Completions. Mike's
+// shared router adapter currently implements Chat Completions only, and the
+// live /models payload does not identify a model's protocol. Keep this list
+// fail-closed and in sync with https://opencode.ai/docs/go/#endpoints so a new
+// catalog entry is not offered until Mike can actually speak its protocol.
+export const OPENCODE_GO_CHAT_COMPLETIONS_MODEL_IDS: ReadonlySet<string> =
+    new Set([
+        "glm-5",
+        "glm-5.1",
+        "glm-5.2",
+        "glm-5.3",
+        "kimi-k2.6",
+        "kimi-k2.7-code",
+        "kimi-k3",
+        "deepseek-v4-pro",
+        "deepseek-v4-flash",
+        "mimo-v2.5",
+        "mimo-v2.5-pro",
+        "hy3",
+    ]);
+
 const ALL_MODELS = new Set<string>([
     ...CLAUDE_MAIN_MODELS,
     ...GEMINI_MAIN_MODELS,
@@ -118,4 +140,10 @@ export function vercelModelId(model: string): string {
 
 export function openCodeGoModelId(model: string): string {
     return model.replace(/^opencode-go\//, "");
+}
+
+export function isOpenCodeGoChatCompletionsModel(model: string): boolean {
+    return OPENCODE_GO_CHAT_COMPLETIONS_MODEL_IDS.has(
+        openCodeGoModelId(model),
+    );
 }
