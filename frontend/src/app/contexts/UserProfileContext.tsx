@@ -19,6 +19,7 @@ import {
     updateUserMfaOnLogin,
     updateUserProfile,
 } from "@/app/lib/mikeApi";
+import { applyDarkMode } from "@/app/lib/theme";
 
 interface UserProfile {
     displayName: string | null;
@@ -35,6 +36,7 @@ interface UserProfile {
     openRouterModels: string[];
     vercelModels: string[];
     openCodeGoModels: string[];
+    darkMode: boolean;
     apiKeys: ApiKeyState;
 }
 
@@ -63,6 +65,7 @@ interface UserProfileContextType {
     updateOpenRouterModels: (models: string[]) => Promise<boolean>;
     updateVercelModels: (models: string[]) => Promise<boolean>;
     updateOpenCodeGoModels: (models: string[]) => Promise<boolean>;
+    updateDarkMode: (enabled: boolean) => Promise<void>;
     updateApiKey: (
         provider: ApiKeyProvider,
         value: string | null,
@@ -171,6 +174,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 openRouterModels: [],
                 vercelModels: [],
                 openCodeGoModels: [],
+                darkMode: false,
                 apiKeys: emptyApiKeys(),
             });
         } finally {
@@ -187,6 +191,10 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             setLoading(false);
         }
     }, [isAuthenticated, userId, loadProfile]);
+
+    useEffect(() => {
+        applyDarkMode(profile?.darkMode === true);
+    }, [profile?.darkMode]);
 
     const updateDisplayName = useCallback(
         async (displayName: string): Promise<boolean> => {
@@ -346,6 +354,27 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         [user],
     );
 
+    const updateDarkMode = useCallback(
+        async (enabled: boolean): Promise<void> => {
+            if (!user) throw new Error("Sign in to update Dark Mode.");
+            const previous = profile?.darkMode === true;
+            applyDarkMode(enabled);
+            try {
+                const updated = await updateUserProfile({ darkMode: enabled });
+                const normalized = toProfile(updated);
+                setProfile((prev) =>
+                    prev
+                        ? { ...prev, ...normalized, darkMode: enabled }
+                        : null,
+                );
+            } catch (error) {
+                applyDarkMode(previous);
+                throw error;
+            }
+        },
+        [user, profile?.darkMode],
+    );
+
     const updateApiKey = useCallback(
         async (
             provider: ApiKeyProvider,
@@ -412,6 +441,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 updateOpenRouterModels,
                 updateVercelModels,
                 updateOpenCodeGoModels,
+                updateDarkMode,
                 updateApiKey,
                 reloadProfile,
                 incrementMessageCredits,

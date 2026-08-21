@@ -66,6 +66,7 @@ type UserProfileRow = {
     mfa_on_login: boolean | null;
     legal_research_us: boolean | null;
     quick_actions_visible: boolean | null;
+    dark_mode: boolean | null;
 };
 
 function errorMessage(error: unknown): string {
@@ -174,6 +175,11 @@ function mcpOAuthPopupCsp(nonce: string) {
 }
 
 const PROFILE_SELECT =
+    "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, quick_actions_visible, dark_mode";
+// Deploy-before-migrate tolerance is per column: a database that already has
+// quick_actions_visible but not yet dark_mode must keep the former rather than
+// fall all the way back to the shared base select.
+const PROFILE_SELECT_NO_DARK_MODE =
     "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, quick_actions_visible";
 const PROFILE_SELECT_NO_QUICK_ACTIONS =
     "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us";
@@ -212,6 +218,27 @@ async function selectProfile(
             : await fullQuery.maybeSingle();
     if (!full.error) return full;
 
+    // Older databases may lack dark_mode; retry without it, keeping
+    // quick_actions_visible, and default the theme to light.
+    if (isMissingProfileColumn(full.error, "dark_mode")) {
+        const noDarkQuery = db
+            .from("user_profiles")
+            .select(PROFILE_SELECT_NO_DARK_MODE)
+            .eq("user_id", userId);
+        const noDark =
+            mode === "single"
+                ? await noDarkQuery.single()
+                : await noDarkQuery.maybeSingle();
+        if (!noDark.error) {
+            if (noDark.data && typeof noDark.data === "object") {
+                Object.assign(noDark.data as Record<string, unknown>, {
+                    dark_mode: false,
+                });
+            }
+            return noDark;
+        }
+    }
+
     if (isMissingProfileColumn(full.error, "quick_actions_visible")) {
         const previousQuery = db
             .from("user_profiles")
@@ -225,6 +252,7 @@ async function selectProfile(
             if (previous.data && typeof previous.data === "object") {
                 Object.assign(previous.data, {
                     quick_actions_visible: true,
+                    dark_mode: false,
                 });
             }
             return previous;
@@ -238,6 +266,9 @@ async function selectProfile(
             Object.assign(row, { legal_research_us: true });
         }
         Object.assign(row, { quick_actions_visible: true });
+        if (!("dark_mode" in row)) {
+            Object.assign(row, { dark_mode: false });
+        }
     }
     return legacy;
 }
@@ -405,6 +436,7 @@ function serializeProfile(
         mfaOnLogin: row.mfa_on_login === true,
         legalResearchUs: row.legal_research_us !== false,
         quickActionsVisible: row.quick_actions_visible !== false,
+        darkMode: row.dark_mode === true,
         ...Object.fromEntries(
             ROUTER_SLUGS.map((slug) => [
                 ROUTER_PROFILE_FIELDS[slug],
@@ -442,6 +474,7 @@ function validateProfilePayload(body: unknown):
         "tabularModel",
         "legalResearchUs",
         "quickActionsVisible",
+        "darkMode",
         ...ROUTER_SLUGS.map((slug) => ROUTER_PROFILE_FIELDS[slug]),
     ]);
     const invalidField = Object.keys(raw).find(
@@ -461,6 +494,7 @@ function validateProfilePayload(body: unknown):
         tabular_model?: string;
         legal_research_us?: boolean;
         quick_actions_visible?: boolean;
+        dark_mode?: boolean;
         updated_at: string;
     } = { updated_at: new Date().toISOString() };
     const routerModels: Partial<Record<RouterSlug, string[]>> = {};
@@ -554,6 +588,16 @@ function validateProfilePayload(body: unknown):
             };
         }
         update.quick_actions_visible = raw.quickActionsVisible;
+    }
+
+    if ("darkMode" in raw) {
+        if (typeof raw.darkMode !== "boolean") {
+            return {
+                ok: false,
+                detail: "darkMode must be a boolean",
+            };
+        }
+        update.dark_mode = raw.darkMode;
     }
 
     return { ok: true, update, routerModels };

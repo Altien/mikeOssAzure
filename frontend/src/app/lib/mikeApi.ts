@@ -377,6 +377,7 @@ export interface UserProfile {
     mfaOnLogin: boolean;
     legalResearchUs: boolean;
     quickActionsVisible: boolean;
+    darkMode: boolean;
     openRouterModels: string[];
     vercelModels: string[];
     openCodeGoModels: string[];
@@ -483,6 +484,7 @@ export async function updateUserProfile(payload: {
     tabularModel?: string;
     legalResearchUs?: boolean;
     quickActionsVisible?: boolean;
+    darkMode?: boolean;
     openRouterModels?: string[];
     vercelModels?: string[];
     openCodeGoModels?: string[];
