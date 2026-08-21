@@ -87,6 +87,17 @@ export async function runExtractionJob(
     // row's cells must keep their stamp so the lease stays held.
     let settled = false;
     try {
+        // 0. Canceled by clear-cells while a previous attempt was active: the
+        //    marker is persisted into the job's data, and each retry re-fetches
+        //    that data — so this attempt must not re-claim the cleared cells.
+        //    It is `settled`, not a retry: the row's cells are the caller's now
+        //    (clear-cells blanked them), so this job drops its generation stamp
+        //    and lets the lease be released instead of holding it to a timeout.
+        if (data.canceled) {
+            settled = true;
+            return;
+        }
+
         // 1. Columns configured on the review. A single-cell job (regenerate)
         //    narrows to its one column; the cell was already flipped off "done"
         //    by the enqueuing route, so the shared core will re-extract it.
@@ -255,9 +266,10 @@ export function isPermanentFailure(job: Job<ExtractionJobData>): boolean {
  * terminal state instead of a spinner that never resolves. Extracted so it is
  * unit-testable without a live queue.
  *
- * Cells claimed by a *different* generation are left alone: this job's run was
- * superseded, and the run that owns them now is responsible for their outcome.
- * Clearing the stamps here is also what lets the lease be released.
+ * Cells this job no longer owns are left alone: a *different* stamp means the
+ * run that superseded us owns their outcome, and NO stamp means the claim was
+ * revoked (clear-cells blanked the row) — the user's reset must win over a late
+ * "error". Clearing the stamps here is also what lets the lease be released.
  */
 export async function markExtractionFailed(
     data: ExtractionJobData,
@@ -276,19 +288,25 @@ export async function markExtractionFailed(
         // Single-cell jobs only ever own their one column's terminal state.
         if (columnIndex != null && cell.column_index !== columnIndex) continue;
         if (cell.status === "done" && cell.content) continue;
-        if (
-            generationId &&
-            cell.generation_id != null &&
-            cell.generation_id !== generationId
-        )
-            continue;
+        // Only flip cells this job still OWNS — i.e. that still carry its
+        // generation stamp. A different stamp means a newer run superseded us
+        // and owns the outcome; NO stamp means the claim was revoked, which is
+        // what clear-cells does when it blanks a row (content null, status
+        // "pending", generation_id null) while this job was retrying. That
+        // reset must win: flipping the cell to "error" here would be a lost
+        // update, silently undoing the user's action. The cost is the flagged
+        // tradeoff — a job that dies before ever claiming its cells leaves
+        // them "pending" rather than "error", a blank re-runnable state rather
+        // than a red one.
+        if (generationId && cell.generation_id !== generationId) continue;
         await finalizeCell(db, {
             reviewId,
             rowId,
             columnIndex: cell.column_index as number,
             status: "error",
-            // Guard with the stamp the cell actually carries: an unstamped cell
-            // belongs to no run, so guarding on `generationId` would match
+            // Guard with the stamp the cell actually carries: for a leased job
+            // that is `generationId` (checked just above); for an unleased one
+            // the cell belongs to no run, so guarding at all would match
             // nothing and leave it spinning.
             generationId: (cell.generation_id as string | null) ?? undefined,
         });

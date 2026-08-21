@@ -45,7 +45,10 @@ import {
     streamTabularGenerateAsync,
     streamTabularRunView,
 } from "../lib/tabular/tabular.generateStream";
-import { enqueueExtraction } from "../lib/queue/extractionQueue";
+import {
+    enqueueExtraction,
+    removeQueuedExtractionJobs,
+} from "../lib/queue/extractionQueue";
 import {
     fetchSourceDocuments,
     loadReviewRows,
@@ -1013,7 +1016,7 @@ tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
     const { data: review, error: reviewError } = await db
         .from("tabular_reviews")
         .select(
-            "id, user_id, project_id, updated_at, active_generation_id, generation_lease_expires_at",
+            "id, user_id, project_id, columns_config, updated_at, active_generation_id, generation_lease_expires_at",
         )
         .eq("id", reviewId)
         .single();
@@ -1063,6 +1066,19 @@ tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
     }
 
     try {
+        // Cancel orphaned queued work before clearing. The database RPC below
+        // holds the generation fence and remains authoritative if delivery
+        // cancellation is unavailable.
+        if (process.env.ASYNC_TABULAR_EXTRACTION === "true") {
+            try {
+                const columnIndexes = (
+                    (review.columns_config as { index: number }[] | null) ?? []
+                ).map((column) => column.index);
+                await removeQueuedExtractionJobs(reviewId, row_ids, columnIndexes);
+            } catch (error) {
+                console.error("[tabular/clear-cells] queue cancellation failed", safeErrorLog(error));
+            }
+        }
         const { data: cleared, error } = await db.rpc(
             "clear_tabular_review_cells",
             {
