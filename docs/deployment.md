@@ -28,6 +28,16 @@ User credential settings are read-only. Model and router selections remain user 
 
 LibreOffice must be available for DOC/DOCX conversion. See [Troubleshooting](troubleshooting.md), [Safe local testing](safe-local-testing.md), and the [security policy](../SECURITY.md).
 
+## Durable background work
+
+Azure runs `QUEUE_DRIVER=postgres` against the private PostgREST service. The
+API uses `WORKERS_MODE=none`; a separate no-ingress worker Container App runs
+`node dist/worker.js` with at least one replica, the same managed identity,
+Key Vault and storage access, and the same backend image. The migration job
+must apply numbered `0074_db_jobs.sql` before either app starts. Redis/BullMQ
+remains optional for other deployments. The worker checks required secrets and
+queue schema before reporting readiness; a failed initialization exits.
+
 
 ### Optional Supabase authentication recovery
 

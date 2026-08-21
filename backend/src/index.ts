@@ -1,18 +1,8 @@
-// Order matters here.
-//   1. dotenv/config: loads .env into process.env so the next line can
-//      read APPLICATIONINSIGHTS_CONNECTION_STRING from a local .env in
-//      dev. (In Azure the env var comes from Container App secretRef,
-//      no .env file involved.)
-//   2. telemetry: applicationinsights' auto-instrumentation patches
-//      require()/import at module-load time, so anything network-y
-//      (http, express, pg, ...) MUST be imported AFTER this for those
-//      calls to be captured. dotenv is a one-shot file reader with no
-//      network/DB side effects, so it's safe before telemetry.
-//   3. app construction lives in ./app (buildApp) so tests can mount the
-//      Express app via supertest without binding a port or pulling in
-//      telemetry/process-guard side effects.
+// Telemetry must initialize before network clients are imported.
 import "dotenv/config";
 import "./telemetry";
+import { Worker as ThreadWorker } from "node:worker_threads";
+import path from "node:path";
 import { installProcessGuards } from "./lib/processGuards";
 installProcessGuards();
 import { buildApp } from "./app";
@@ -20,72 +10,90 @@ import { initDownloadSigningSecret } from "./lib/downloadTokens";
 import { initManifestSigningKey, manifestPublicKey } from "./lib/manifestSigning";
 import { checkSchemaVersion } from "./lib/schemaCheck";
 import { initServerSessionKeys } from "./lib/serverSession";
-import { anyWorkerEnabled, startWorkers, stopWorkers } from "./workers";
-import { runStaleWorkSweep } from "./lib/maintenance/staleWork";
-import { startDbJobRunner, stopDbJobRunner } from "./lib/dbq/runner";
-import { DB_JOB_HANDLERS } from "./lib/dbq/handlers";
+import { startAllWorkers, stopAllWorkers } from "./workerRuntime";
 
 const PORT = process.env.PORT ?? 3001;
+const workersMode = process.env.WORKERS_MODE === "inline" || process.env.WORKERS_MODE === "none"
+  ? process.env.WORKERS_MODE : "thread";
+let shuttingDown = false;
 
-// Warm the download-token signing secret from Key Vault before accepting
-// traffic — Azure deploys don't secretRef it into the env (040 Entry 19),
-// and the sync signing path needs it in process.env. resolveSecret never
-// rejects; .finally() is belt-and-braces so a bug there can't stop listen.
-// Same for the (optional) export-manifest signing key.
-async function start(): Promise<void> {
-  // Required auth material and the session schema must exist before ingress
-  // can reach this revision. Optional export warmups remain best effort.
-  await initServerSessionKeys();
-  await Promise.all([
-    initDownloadSigningSecret(),
-    initManifestSigningKey().catch(() => {}),
-  ]);
-  // Surface a malformed MANIFEST_SIGNING_KEY at boot rather than when
-  // someone's first export fails. Unset is valid (manifests export unsigned);
-  // malformed is a misconfiguration, so stop rather than serve a deployment
-  // whose exports will fail later.
+async function startThread(): Promise<ThreadWorker> {
+  const isTs = __filename.endsWith(".ts");
+  const entry = path.join(__dirname, isTs ? "workerThread.ts" : "workerThread.js");
+  const thread = new ThreadWorker(entry, { execArgv: isTs ? ["--require", "tsx/cjs"] : [] });
   try {
-    const signingKey = manifestPublicKey();
-    if (signingKey) {
-      console.log(`Export manifests signed with key ${signingKey.key_id}`);
-    }
-  } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("Worker thread startup timed out")), 30_000);
+      const onMessage = (message: unknown) => {
+        if (message === "ready") {
+          clearTimeout(timeout);
+          thread.off("error", onError);
+          thread.off("exit", onExit);
+          thread.off("message", onMessage);
+          resolve();
+        } else if (message && typeof message === "object" && "error" in message) {
+          clearTimeout(timeout);
+          reject(new Error(String(message.error)));
+        }
+      };
+      const onError = (error: Error) => { clearTimeout(timeout); reject(error); };
+      const onExit = (code: number) => { clearTimeout(timeout); reject(new Error(`Worker thread exited during startup (${code})`)); };
+      thread.on("message", onMessage);
+      thread.once("error", onError);
+      thread.once("exit", onExit);
+    });
+  } catch (error) {
+    await thread.terminate();
+    throw error;
   }
+  thread.on("error", (error) => {
+    if (!shuttingDown) {
+      console.error("Worker thread failed", error);
+      process.exit(1);
+    }
+  });
+  thread.on("exit", (code) => {
+    if (!shuttingDown) {
+      console.error(`Worker thread exited unexpectedly (${code})`);
+      process.exit(1);
+    }
+  });
+  return thread;
+}
+
+async function start(): Promise<void> {
+  await initServerSessionKeys();
+  await initDownloadSigningSecret();
+  await initManifestSigningKey();
+  const signingKey = manifestPublicKey();
+  if (signingKey) console.log(`Export manifests signed with key ${signingKey.key_id}`);
+
+  let thread: ThreadWorker | null = null;
+  if (workersMode === "thread") thread = await startThread();
+  if (workersMode === "inline") await startAllWorkers();
 
   const server = buildApp().listen(PORT, () => {
-    console.log(`Mike backend running on port ${PORT}`);
-    if (anyWorkerEnabled()) startWorkers();
-    startDbJobRunner(DB_JOB_HANDLERS);
-    // After listen, and never awaited: a schema report must not delay or
-    // prevent serving traffic. Migrations stay a deliberate manual step.
+    console.log(`Mike backend running on port ${PORT} (workers: ${workersMode})`);
     void checkSchemaVersion().catch(() => {});
   });
 
-  const sweepInterval = Number(process.env.STALE_SWEEP_INTERVAL_MS) || 600_000;
-  const runSweep = () => void runStaleWorkSweep().catch((error) =>
-    console.error("[stale-sweep] failed", error),
-  );
-  const initialSweep = setTimeout(runSweep, 30_000);
-  initialSweep.unref();
-  const sweepTimer = setInterval(runSweep, sweepInterval);
-  sweepTimer.unref();
-
-  let shuttingDown = false;
   async function shutdown(signal: string): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
-    clearTimeout(initialSweep);
-    clearInterval(sweepTimer);
     const forced = setTimeout(() => process.exit(1), 15_000);
     forced.unref();
     try {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => error ? reject(error) : resolve()),
       );
-      await stopWorkers();
-      await stopDbJobRunner();
+      if (workersMode === "inline") await stopAllWorkers();
+      if (thread) {
+        const active = thread;
+        const exit = new Promise<void>((resolve) => active.once("exit", () => resolve()));
+        active.postMessage("shutdown");
+        await Promise.race([exit, new Promise<void>((resolve) => setTimeout(resolve, 10_000))]);
+        if (active.threadId !== -1) await active.terminate();
+      }
       clearTimeout(forced);
       console.log(`Graceful shutdown complete (${signal})`);
       process.exit(0);
