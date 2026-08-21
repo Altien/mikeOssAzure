@@ -283,6 +283,77 @@ describe("runExtractionJob", () => {
         ).toBe(true);
     });
 
+    it("returns early on a canceled job without touching the DB (clear-cells won)", async () => {
+        const publish = vi.fn(async () => {});
+        const db = makeDb({
+            tabular_reviews: { select: { data: { columns_config: COLUMNS } } },
+            tabular_cells: { select: { data: [] } },
+        });
+
+        // clear-cells marked the job canceled while a prior attempt was
+        // active; this retry re-fetched the data and must be a no-op.
+        await runExtractionJob(
+            { ...DATA, canceled: true },
+            { db: db as never, publish },
+        );
+
+        expect(db.calls).toHaveLength(0);
+        expect(queryTabularAllColumns).not.toHaveBeenCalled();
+        expect(publish).not.toHaveBeenCalled();
+    });
+
+    it("a canceled leased job drops its stamp and releases the lease", async () => {
+        const publish = vi.fn(async () => {});
+        const db = makeDb({
+            tabular_reviews: { select: { data: { columns_config: COLUMNS } } },
+            // No cell still carries gen-1 once the stamp is dropped.
+            tabular_cells: { select: { data: [] } },
+        });
+
+        await runExtractionJob(
+            { ...DATA, generationId: "gen-1", canceled: true },
+            { db: db as never, publish },
+        );
+
+        // Cancellation is a settled outcome, not a retry: the row's cells
+        // belong to clear-cells now, so the job un-stamps what it owned...
+        const stampClears = db.calls.filter(
+            (c) => c.op === "update" && c.payload?.generation_id === null,
+        );
+        expect(stampClears).toHaveLength(1);
+        expect(stampClears[0].filters).toMatchObject({
+            review_id: "rev-1",
+            row_id: "row-1",
+            generation_id: "gen-1",
+        });
+        // ...and releases the lease, instead of holding it to its timeout.
+        expect(db.rpcs.map((r) => r.name)).toContain(
+            "finish_tabular_review_generation",
+        );
+        // Nothing was extracted or announced.
+        expect(queryTabularAllColumns).not.toHaveBeenCalled();
+        expect(publish).not.toHaveBeenCalled();
+    });
+
+    it("a canceled single-cell job un-stamps only its own column", async () => {
+        const publish = vi.fn(async () => {});
+        const db = makeDb({
+            tabular_reviews: { select: { data: { columns_config: COLUMNS } } },
+            tabular_cells: { select: { data: [] } },
+        });
+
+        await runExtractionJob(
+            { ...DATA, generationId: "gen-1", columnIndex: 1, canceled: true },
+            { db: db as never, publish },
+        );
+
+        const stampClears = db.calls.filter(
+            (c) => c.op === "update" && c.payload?.generation_id === null,
+        );
+        expect(stampClears).toHaveLength(1);
+        expect(stampClears[0].filters.column_index).toBe(1);
+    });
+
     it("returns early when the review has no columns", async () => {
         const publish = vi.fn(async () => {});
         const db = makeDb({
@@ -420,6 +491,85 @@ describe("markExtractionFailed", () => {
             column_index: 1,
             generation_id: "gen-1",
         });
+        expect(publish).toHaveBeenCalledTimes(1);
+    });
+
+    it("leaves cells clear-cells revoked (unstamped, pending) alone", async () => {
+        const publish = vi.fn(async () => {});
+        const db = makeDb({
+            tabular_cells: {
+                select: {
+                    data: [
+                        // The user ran clear-cells while the job was retrying:
+                        // content blanked, status back to "pending", stamp
+                        // dropped. That reset must win — flipping this to
+                        // "error" would silently undo the user's action.
+                        {
+                            id: "c0",
+                            column_index: 0,
+                            status: "pending",
+                            content: null,
+                            generation_id: null,
+                        },
+                        // Still claimed by this job: flips to error as before.
+                        {
+                            id: "c1",
+                            column_index: 1,
+                            status: "generating",
+                            content: null,
+                            generation_id: "gen-1",
+                        },
+                    ],
+                },
+            },
+        });
+
+        await markExtractionFailed(
+            { ...DATA, generationId: "gen-1" },
+            { db: db as never, publish },
+        );
+
+        const errorUpdates = db.calls.filter(
+            (c) => c.op === "update" && c.payload?.status === "error",
+        );
+        expect(errorUpdates).toHaveLength(1);
+        expect(errorUpdates[0].filters).toMatchObject({
+            column_index: 1,
+            generation_id: "gen-1",
+        });
+        expect(publish).toHaveBeenCalledTimes(1);
+        expect(
+            (publish.mock.calls[0][1] as { column_index: number }).column_index,
+        ).toBe(1);
+    });
+
+    it("still finalizes an unstamped cell when the job carries no generation", async () => {
+        const publish = vi.fn(async () => {});
+        const db = makeDb({
+            tabular_cells: {
+                select: {
+                    data: [
+                        {
+                            id: "c0",
+                            column_index: 0,
+                            status: "generating",
+                            content: null,
+                            generation_id: null,
+                        },
+                    ],
+                },
+            },
+        });
+
+        // No lease in play, so there is no stamp to reason about: the cell
+        // belongs to no run and must not be left spinning forever.
+        await markExtractionFailed(DATA, { db: db as never, publish });
+
+        const errorUpdates = db.calls.filter(
+            (c) => c.op === "update" && c.payload?.status === "error",
+        );
+        expect(errorUpdates).toHaveLength(1);
+        expect(errorUpdates[0].filters.generation_id).toBeUndefined();
         expect(publish).toHaveBeenCalledTimes(1);
     });
 });

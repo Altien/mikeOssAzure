@@ -43,7 +43,10 @@ import {
     streamTabularGenerateAsync,
     streamTabularRunView,
 } from "../lib/tabular/tabular.generateStream";
-import { enqueueExtraction } from "../lib/queue/extractionQueue";
+import {
+    enqueueExtraction,
+    removeQueuedExtractionJobs,
+} from "../lib/queue/extractionQueue";
 import {
     fetchSourceDocuments,
     loadReviewRows,
@@ -952,7 +955,7 @@ tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
     const { data: review, error: reviewError } = await db
         .from("tabular_reviews")
         .select(
-            "id, user_id, project_id, updated_at, active_generation_id, generation_lease_expires_at",
+            "id, user_id, project_id, columns_config, updated_at, active_generation_id, generation_lease_expires_at",
         )
         .eq("id", reviewId)
         .single();
@@ -1001,6 +1004,35 @@ tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
     }
 
     try {
+        // Async mode: reap leftover queued extraction for these rows BEFORE
+        // blanking the cells. Holding the lease means no generation is live
+        // (begin_ returned "started", not "running") — but a lease that LAPSED
+        // can leave orphans behind: jobs still waiting in Redis that would
+        // start seconds from now and re-fill the freshly cleared row, and
+        // zombie jobs still running past their expired lease. Waiting/delayed
+        // jobs are removed outright; a running one gets a persisted `canceled`
+        // marker its next attempt no-ops on (and its terminal writes are
+        // already dropped by the generation_id guards, since we clear the
+        // stamp below). Best-effort — clearing must succeed even if Redis is
+        // unreachable. Flag-gated so synchronous deployments never dial Redis.
+        if (process.env.ASYNC_TABULAR_EXTRACTION === "true") {
+            try {
+                const columnIndexes = (
+                    (review.columns_config as { index: number }[] | null) ?? []
+                ).map((c) => c.index);
+                await removeQueuedExtractionJobs(
+                    reviewId,
+                    row_ids,
+                    columnIndexes,
+                );
+            } catch (err) {
+                console.error(
+                    "[tabular/clear-cells] queue cancellation failed",
+                    err,
+                );
+            }
+        }
+
         const { error } = await db
             .from("tabular_cells")
             .update({

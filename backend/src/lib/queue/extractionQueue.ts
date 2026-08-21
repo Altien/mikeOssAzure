@@ -35,6 +35,15 @@ export interface ExtractionJobData {
      * suffix so they never dedupe against a full-row job for the same row.
      */
     columnIndex?: number;
+    /**
+     * Set by clear-cells on a job it could not remove (already active).
+     * Persisted via job.updateData(), so the worker's NEXT attempt — which
+     * re-fetches job data from Redis — sees it and returns without re-claiming
+     * the cleared cells. (An in-flight attempt is unaffected: clear-cells drops
+     * the cells' generation stamp, so that attempt's terminal writes — guarded
+     * by `.eq("generation_id", generationId)` — match no rows.)
+     */
+    canceled?: boolean;
 }
 
 let queue: Queue<ExtractionJobData> | null = null;
@@ -78,6 +87,71 @@ export function enqueueExtraction(data: ExtractionJobData) {
         removeOnComplete: true,
         removeOnFail: true,
     });
+}
+
+/**
+ * Best-effort cancellation of extraction work for a set of rows — the queue
+ * half of clear-cells. Deterministic jobIds make this a direct lookup: for
+ * each row we address the full-row job and every possible single-cell
+ * (regenerate) job.
+ *
+ * clear-cells only calls this once it HOLDS the review's generation lease, so
+ * no healthy run is in play. What it reaps is the wreckage of a LAPSED one: a
+ * generation whose worker died or stalled past its lease can leave orphan jobs
+ * behind in Redis, and those would otherwise re-fill the row moments after the
+ * user blanked it.
+ *
+ * - waiting/delayed jobs are REMOVED — they never (re)start, so the cleared
+ *   cells stay cleared.
+ * - an active (zombie) job cannot be stopped mid-run, and Job#discard() is only
+ *   an in-memory flag on the worker's OWN instance — useless from this process.
+ *   Instead the job's data is marked `canceled: true` via updateData(), which
+ *   IS persisted: the next attempt re-fetches job data from Redis, sees the
+ *   marker in runExtractionJob, and returns without re-claiming the cleared
+ *   cells — dropping its generation stamp so the stale lease is released.
+ *   The in-flight attempt's terminal writes are already dead: clear-cells
+ *   nulls the cells' generation_id, and those writes are guarded on it.
+ *
+ * Every failure is swallowed per job: cancellation is an optimization on top
+ * of the generation guards, never a correctness dependency.
+ */
+export async function removeQueuedExtractionJobs(
+    reviewId: string,
+    rowIds: string[],
+    columnIndexes: number[],
+): Promise<{ removed: number; canceled: number }> {
+    const queue = getExtractionQueue();
+    let removed = 0;
+    let canceled = 0;
+    for (const rowId of rowIds) {
+        const jobIds = [
+            extractionJobId(reviewId, rowId),
+            ...columnIndexes.map((c) => extractionJobId(reviewId, rowId, c)),
+        ];
+        for (const jobId of jobIds) {
+            try {
+                const job = await queue.getJob(jobId);
+                if (!job) continue;
+                if ((await job.getState()) === "active") {
+                    await job.updateData({ ...job.data, canceled: true });
+                    canceled++;
+                } else {
+                    try {
+                        await job.remove();
+                        removed++;
+                    } catch {
+                        // Raced the worker: the job went active between the
+                        // state check and remove(). Fall back to the marker.
+                        await job.updateData({ ...job.data, canceled: true });
+                        canceled++;
+                    }
+                }
+            } catch {
+                // Job finished/vanished mid-race — the write guards cover it.
+            }
+        }
+    }
+    return { removed, canceled };
 }
 
 export async function closeExtractionQueue(): Promise<void> {
