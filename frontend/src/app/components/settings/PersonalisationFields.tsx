@@ -129,6 +129,22 @@ export function usePersonalisationFields(
 
     const changed = (field: PersonalisationField) => onFieldChange?.(field);
 
+    const jurisdictionIncomplete =
+        jurisdictionChoice === OTHER_JURISDICTION_OPTION &&
+        !otherJurisdiction.trim();
+    const practiceAreasIncomplete = otherSelected && !otherArea.trim();
+    const invalidGroups = useMemo<PersonalisationFieldGroup[]>(
+        () => [
+            ...(jurisdictionIncomplete
+                ? (["jurisdiction"] as const)
+                : []),
+            ...(practiceAreasIncomplete
+                ? (["practiceAreas"] as const)
+                : []),
+        ],
+        [jurisdictionIncomplete, practiceAreasIncomplete],
+    );
+
     return {
         jurisdictionChoice,
         otherJurisdiction,
@@ -139,13 +155,12 @@ export function usePersonalisationFields(
         otherArea,
         practiceAreas,
         details,
-        validationError:
-            jurisdictionChoice === OTHER_JURISDICTION_OPTION &&
-            !otherJurisdiction.trim()
-                ? "Enter your jurisdiction of practice"
-                : otherSelected && !otherArea.trim()
-                  ? "Enter your other practice area"
-                  : null,
+        invalidGroups,
+        validationError: jurisdictionIncomplete
+            ? "Enter your jurisdiction of practice"
+            : practiceAreasIncomplete
+              ? "Enter your other practice area"
+              : null,
         setJurisdictionChoice(value: string) {
             setJurisdictionChoiceState(value);
             changed("jurisdiction");

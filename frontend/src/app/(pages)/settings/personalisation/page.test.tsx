@@ -67,4 +67,46 @@ describe("PersonalisationPage", () => {
         );
         expect(screen.queryByText("(optional)")).not.toBeInTheDocument();
     });
+
+    it("still saves unrelated fields while an Other box is empty, and says why", async () => {
+        const user = userEvent.setup();
+        render(<PersonalisationPage />);
+
+        await user.click(
+            screen.getByRole("button", { name: "Practice areas" }),
+        );
+        await user.click(screen.getByRole("menuitemcheckbox", { name: "Other" }));
+        await user.keyboard("{Escape}");
+        expect(
+            screen.getByText("Enter your other practice area"),
+        ).toBeInTheDocument();
+
+        await user.click(screen.getByRole("button", { name: "Title" }));
+        await user.click(screen.getByRole("menuitemradio", { name: "Partner" }));
+        await waitFor(() =>
+            expect(updatePersonalisation).toHaveBeenCalledWith({
+                jurisdiction: "Singapore",
+                practiceSetting: "private_practice",
+                professionalTitle: "Partner",
+                // The half-finished Other box falls back to the stored areas.
+                practiceAreas: ["Litigation"],
+            }),
+        );
+    });
+
+    it("flushes a save that is still inside its debounce window on unmount", async () => {
+        const user = userEvent.setup();
+        const { unmount } = render(<PersonalisationPage />);
+
+        await user.click(screen.getByRole("button", { name: "Title" }));
+        await user.click(screen.getByRole("menuitemradio", { name: "Partner" }));
+        expect(updatePersonalisation).not.toHaveBeenCalled();
+
+        unmount();
+        await waitFor(() =>
+            expect(updatePersonalisation).toHaveBeenCalledWith(
+                expect.objectContaining({ professionalTitle: "Partner" }),
+            ),
+        );
+    });
 });

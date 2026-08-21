@@ -6,9 +6,20 @@ import {
     PersonalisationFields,
     personalisationInitialValues,
     type PersonalisationField,
+    type PersonalisationFieldGroup,
     usePersonalisationFields,
 } from "@/app/components/settings/PersonalisationFields";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import type { PersonalisationDetails } from "@/app/lib/mikeApi";
+
+const FIELD_GROUP: Record<PersonalisationField, PersonalisationFieldGroup> = {
+    professionalTitle: "professionalTitle",
+    practiceSetting: "practiceSetting",
+    jurisdiction: "jurisdiction",
+    otherJurisdiction: "jurisdiction",
+    practiceAreas: "practiceAreas",
+    otherPracticeArea: "practiceAreas",
+};
 
 function fieldStatus(
     field: PersonalisationField,
@@ -59,21 +70,39 @@ function PersonalisationForm({
     const latestSnapshotRef = useRef(initialSnapshot);
     const saveChainRef = useRef<Promise<void>>(Promise.resolve());
     const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const flushRef = useRef<(() => void) | null>(null);
 
     useEffect(() => {
-        const snapshot = JSON.stringify(form.details);
+        // A half-finished "Other …" box (ticked but empty) must not block
+        // saves of unrelated fields, and must never overwrite the stored
+        // value for its own group with a transient empty state — so those
+        // groups fall back to their last persisted values here.
+        const persisted = JSON.parse(
+            persistedSnapshotRef.current,
+        ) as PersonalisationDetails;
+        const details: PersonalisationDetails = {
+            ...form.details,
+            ...(form.invalidGroups.includes("jurisdiction")
+                ? { jurisdiction: persisted.jurisdiction }
+                : {}),
+            ...(form.invalidGroups.includes("practiceAreas")
+                ? { practiceAreas: persisted.practiceAreas }
+                : {}),
+        };
+        const snapshot = JSON.stringify(details);
         latestSnapshotRef.current = snapshot;
+        flushRef.current = null;
         if (
             !pendingField ||
-            form.validationError ||
+            form.invalidGroups.includes(FIELD_GROUP[pendingField]) ||
             snapshot === persistedSnapshotRef.current
         ) {
             return;
         }
 
         const field = pendingField;
-        const details = form.details;
-        const timeout = setTimeout(() => {
+        const fire = () => {
+            flushRef.current = null;
             saveChainRef.current = saveChainRef.current.then(async () => {
                 setSavingField(field);
                 setSavedField(null);
@@ -96,12 +125,14 @@ function PersonalisationForm({
                     );
                 }, 2000);
             });
-        }, 400);
+        };
+        const timeout = setTimeout(fire, 400);
+        flushRef.current = fire;
 
         return () => clearTimeout(timeout);
     }, [
         form.details,
-        form.validationError,
+        form.invalidGroups,
         pendingField,
         retryVersion,
         updatePersonalisation,
@@ -110,6 +141,9 @@ function PersonalisationForm({
     useEffect(
         () => () => {
             if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+            // A save still inside its debounce window when the user leaves
+            // the page fires immediately instead of being dropped.
+            flushRef.current?.();
         },
         [],
     );
@@ -134,6 +168,17 @@ function PersonalisationForm({
                                 fieldStatus(field, savingField, savedField)
                             }
                         />
+
+                        {form.validationError && !error && (
+                            <div
+                                className="mt-8 flex items-center justify-end text-xs"
+                                aria-live="polite"
+                            >
+                                <span className="text-red-600" role="alert">
+                                    {form.validationError}
+                                </span>
+                            </div>
+                        )}
 
                         {error && (
                             <div
