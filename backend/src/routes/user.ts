@@ -179,6 +179,17 @@ const PROFILE_SELECT_NO_QUICK_ACTIONS =
   "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us";
 const PROFILE_SELECT_BEFORE_ONBOARDING =
   "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us, quick_actions_visible";
+const ONBOARDING_PROFILE_COLUMNS = [
+  "jurisdiction", "practice_setting", "professional_title", "practice_areas", "onboarding_version",
+] as const;
+
+function isMissingProfileColumn(error: unknown, column: string): boolean {
+  if (!error || typeof error !== "object") return false;
+  const issue = error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
+  if (issue.code !== "42703" && issue.code !== "PGRST204") return false;
+  const detail = [issue.message, issue.details, issue.hint].filter(value => typeof value === "string").join(" ");
+  return new RegExp(`(?:^|[^a-zA-Z0-9_])${column}(?:$|[^a-zA-Z0-9_])`).test(detail);
+}
 
 type UserProfileRow = {
   display_name: string | null;
@@ -343,18 +354,24 @@ async function loadProfile(
   const [profileResult, apiKeyStatus] = await Promise.all([
     (async () => {
       const current = await db.from("user_profiles").select(PROFILE_SELECT).eq("user_id", userId).single();
-      if (!current.error || current.error.code !== "42703") return current;
-      const noPassword = await db.from("user_profiles").select(PROFILE_SELECT_NO_PASSWORD).eq("user_id", userId).single();
-      if (!noPassword.error) return noPassword;
-      if (noPassword.error.code !== "42703") return noPassword;
-      const preOnboarding = await db.from("user_profiles").select(PROFILE_SELECT_BEFORE_ONBOARDING).eq("user_id", userId).single();
-      if (!preOnboarding.error) return preOnboarding;
-      if (preOnboarding.error.code !== "42703") return preOnboarding;
-      const previous = await db.from("user_profiles").select(PROFILE_SELECT_NO_QUICK_ACTIONS).eq("user_id", userId).single();
-      if (previous.data) {
-        return { ...previous, data: { ...previous.data, quick_actions_visible: true } };
+      if (!current.error) return current;
+      let cascadeError = current.error;
+      if (isMissingProfileColumn(cascadeError, "password_set_at")) {
+        const noPassword = await db.from("user_profiles").select(PROFILE_SELECT_NO_PASSWORD).eq("user_id", userId).single();
+        if (!noPassword.error) return noPassword;
+        cascadeError = noPassword.error;
       }
-      return previous;
+      if (ONBOARDING_PROFILE_COLUMNS.some(column => isMissingProfileColumn(cascadeError, column))) {
+        const preOnboarding = await db.from("user_profiles").select(PROFILE_SELECT_BEFORE_ONBOARDING).eq("user_id", userId).single();
+        if (!preOnboarding.error) return preOnboarding;
+        cascadeError = preOnboarding.error;
+      }
+      if (isMissingProfileColumn(cascadeError, "quick_actions_visible")) {
+        const previous = await db.from("user_profiles").select(PROFILE_SELECT_NO_QUICK_ACTIONS).eq("user_id", userId).single();
+        if (previous.data) return { ...previous, data: { ...previous.data, quick_actions_visible: true } };
+        return previous;
+      }
+      return { data: null, error: cascadeError };
     })(),
     buildProfileApiKeyStatus(userId, db),
   ]);
@@ -460,18 +477,14 @@ function validateProfilePayload(
     if (raw.displayName !== null && typeof raw.displayName !== "string") {
       return { ok: false, detail: "displayName must be a string or null" };
     }
-    const displayName = raw.displayName?.trim() || null;
-    if (displayName && displayName.length > 200) return { ok: false, detail: "displayName must be 200 characters or fewer" };
-    update.display_name = displayName;
+    update.display_name = raw.displayName?.trim().slice(0, 200) || null;
   }
 
   if ("organisation" in raw) {
     if (raw.organisation !== null && typeof raw.organisation !== "string") {
       return { ok: false, detail: "organisation must be a string or null" };
     }
-    const organisation = raw.organisation?.trim() || null;
-    if (organisation && organisation.length > 200) return { ok: false, detail: "organisation must be 200 characters or fewer" };
-    update.organisation = organisation;
+    update.organisation = raw.organisation?.trim().slice(0, 200) || null;
   }
 
   if ("jurisdiction" in raw) {

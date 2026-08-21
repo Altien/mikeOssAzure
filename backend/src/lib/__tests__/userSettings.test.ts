@@ -122,3 +122,77 @@ describe("getUserModelSettings router-model allowlist", () => {
         expect(settings.tabular_model).toBe("claude-sonnet-5");
     });
 });
+
+// A database without the 20260821 onboarding migration rejects the widened
+// select outright (42703). The retry with the pre-migration column set must
+// preserve the user's saved models and legal-research choice — silently
+// resetting them was the severe half of the un-migrated-DB bug.
+function retryingProfileDb(
+    first: { data: unknown; error: unknown },
+    second: { data: unknown; error: unknown },
+) {
+    const results = [first, second];
+    const chain: Record<string, unknown> = {};
+    for (const method of ["from", "select", "eq"]) {
+        chain[method] = vi.fn(() => chain);
+    }
+    chain.single = vi.fn(async () => results.shift() ?? second);
+    return chain as never;
+}
+
+describe("getUserModelSettings on an un-migrated database", () => {
+    it("retries without the onboarding columns and keeps saved settings", async () => {
+        const settings = await getUserModelSettings(
+            "user-1",
+            retryingProfileDb(
+                {
+                    data: null,
+                    error: {
+                        code: "42703",
+                        message:
+                            "column user_profiles.jurisdiction does not exist",
+                    },
+                },
+                {
+                    data: {
+                        title_model: "claude-haiku-4-5",
+                        tabular_model: "claude-sonnet-5",
+                        legal_research_us: false,
+                    },
+                    error: null,
+                },
+            ),
+        );
+
+        expect(settings.title_model).toBe("claude-haiku-4-5");
+        expect(settings.tabular_model).toBe("claude-sonnet-5");
+        expect(settings.legal_research_us).toBe(false);
+        expect(settings.personalisation).toMatchObject({
+            displayName: null,
+            practiceAreas: [],
+        });
+    });
+
+    it("falls back to defaults when the retry also fails", async () => {
+        const settings = await getUserModelSettings(
+            "user-1",
+            retryingProfileDb(
+                {
+                    data: null,
+                    error: {
+                        code: "42703",
+                        message:
+                            "column user_profiles.jurisdiction does not exist",
+                    },
+                },
+                {
+                    data: null,
+                    error: { code: "42703", message: "even older database" },
+                },
+            ),
+        );
+
+        expect(settings.legal_research_us).toBe(true);
+        expect(settings.title_model).toBeTruthy();
+    });
+});

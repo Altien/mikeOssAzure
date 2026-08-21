@@ -67,6 +67,9 @@ export async function getUserModelSettings(
         getAllUserRouterModels(userId, client),
     ]);
     let data = profileResult.data;
+    if (profileResult.error && profileResult.error.code !== "42703") {
+        throw new Error(`Failed to read user model settings: ${profileResult.error.message}`);
+    }
 
     // A database that predates the 20260821 onboarding migration rejects the
     // select above outright (unknown column), which would silently fall every
@@ -79,7 +82,13 @@ export async function getUserModelSettings(
             .select("fast_model, tabular_model, legal_research_us")
             .eq("user_id", userId)
             .single();
-        data = legacy.data as typeof data;
+        // A second failure (a database even older than the pre-migration
+        // shape) keeps data null and falls through to the defaults below —
+        // the pre-retry behavior, now explicit instead of accidental.
+        if (legacy.error && legacy.error.code !== "42703") {
+            throw new Error(`Failed to read legacy user model settings: ${legacy.error.message}`);
+        }
+        data = legacy.error ? null : (legacy.data as typeof data);
     }
 
     // A stored preference can name a router model the user has since removed
