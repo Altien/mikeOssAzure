@@ -77,7 +77,7 @@ export async function resolveRequestedModel(
     }
     if (onOutsideSelection === "throw") {
         throw new Error(
-            `Model ${resolved} is not in your saved ${ROUTER_LABELS[router]} models — add it in Settings → BYOK → Routers.`,
+            `Model ${resolved} is not in your saved ${ROUTER_LABELS[router]} models — add it in Settings → Bring Your Own Keys → Routers.`,
         );
     }
     console.warn(

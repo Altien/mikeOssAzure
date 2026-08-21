@@ -10,7 +10,7 @@ const DISMISS_KEY = "apiKeyBannerDismissed";
 const WEB_APP_URL: string =
   process.env.REACT_APP_WEB_APP_URL || "https://app.mikeoss.com";
 
-const API_KEYS_PAGE_URL = `${WEB_APP_URL.replace(/\/+$/, "")}/settings/api-keys`;
+const API_KEYS_PAGE_URL = `${WEB_APP_URL.replace(/\/+$/, "")}/settings/byok`;
 
 /**
  * Open the web app's API-keys page in the system browser. Office's
