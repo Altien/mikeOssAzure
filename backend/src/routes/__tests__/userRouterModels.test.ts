@@ -250,7 +250,7 @@ describe("PATCH /user/profile router model selections", () => {
     it("rejects OpenCode Go models that require an unsupported protocol", async () => {
         const response = await request(app)
             .patch("/user/profile")
-            .send({ openCodeGoModels: ["qwen3.8-max"] });
+            .send({ openCodeGoModels: ["gpt-5.6-luna"] });
 
         expect(response.status).toBe(400);
         expect(response.body.detail).toBe(
@@ -286,12 +286,17 @@ describe("normalizeRouterModels", () => {
         expect(normalizeRouterModels(["glm-5"], "openrouter")).toEqual([]);
     });
 
-    it("filters OpenCode Go models that need another wire protocol", () => {
+    it("keeps Chat Completions and Messages models but filters unsupported protocols", () => {
         expect(
             normalizeRouterModels(
-                ["glm-5.3", "qwen3.8-max", "gpt-5.6-luna"],
+                [
+                    "glm-5.3",
+                    "qwen3.8-max",
+                    "minimax-m3",
+                    "gpt-5.6-luna",
+                ],
                 "opencode-go",
             ),
-        ).toEqual(["glm-5.3"]);
+        ).toEqual(["glm-5.3", "qwen3.8-max", "minimax-m3"]);
     });
 });

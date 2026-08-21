@@ -1,15 +1,110 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-    completeOpenCodeGoText,
     completeOpenRouterText,
     completeVercelText,
     streamOpenRouter,
 } from "../llm/openrouter";
+import {
+    completeOpenCodeGoText,
+    streamOpenCodeGo,
+} from "../llm/openCodeGo";
 
 function streamResponse(chunks: unknown[]): Response {
     const body = `${chunks
         .map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`)
         .join("")}data: [DONE]\n\n`;
+    return new Response(body, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+    });
+}
+
+function messagesStreamResponse(model: string, text: string): Response {
+    const events = [
+        {
+            type: "message_start",
+            message: {
+                id: "msg_1",
+                type: "message",
+                role: "assistant",
+                model,
+                content: [],
+                stop_reason: null,
+                stop_sequence: null,
+                usage: { input_tokens: 3, output_tokens: 0 },
+            },
+        },
+        {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "text", text: "", citations: null },
+        },
+        {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text },
+        },
+        { type: "content_block_stop", index: 0 },
+        {
+            type: "message_delta",
+            delta: { stop_reason: "end_turn", stop_sequence: null },
+            usage: { output_tokens: 4 },
+        },
+        { type: "message_stop" },
+    ];
+    const body = events
+        .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+        .join("");
+    return new Response(body, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+    });
+}
+
+function messagesToolStreamResponse(model: string): Response {
+    const events = [
+        {
+            type: "message_start",
+            message: {
+                id: "msg_tool",
+                type: "message",
+                role: "assistant",
+                model,
+                content: [],
+                stop_reason: null,
+                stop_sequence: null,
+                usage: { input_tokens: 3, output_tokens: 0 },
+            },
+        },
+        {
+            type: "content_block_start",
+            index: 0,
+            content_block: {
+                type: "tool_use",
+                id: "tool_1",
+                name: "lookup",
+                input: {},
+            },
+        },
+        {
+            type: "content_block_delta",
+            index: 0,
+            delta: {
+                type: "input_json_delta",
+                partial_json: '{"query":"contract"}',
+            },
+        },
+        { type: "content_block_stop", index: 0 },
+        {
+            type: "message_delta",
+            delta: { stop_reason: "tool_use", stop_sequence: null },
+            usage: { output_tokens: 4 },
+        },
+        { type: "message_stop" },
+    ];
+    const body = events
+        .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+        .join("");
     return new Response(body, {
         status: 200,
         headers: { "Content-Type": "text/event-stream" },
@@ -399,18 +494,158 @@ describe("OpenCode Go LLM adapter", () => {
         );
     });
 
-    it("rejects models that require another protocol before sending a request", async () => {
+    it("uses the Messages endpoint for Qwen and MiniMax models", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(
+            new Response(
+                JSON.stringify({
+                    id: "msg_1",
+                    type: "message",
+                    role: "assistant",
+                    model: "qwen3.8-max",
+                    content: [{ type: "text", text: "A Qwen title" }],
+                    stop_reason: "end_turn",
+                    stop_sequence: null,
+                    usage: { input_tokens: 3, output_tokens: 4 },
+                }),
+                {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                },
+            ),
+        );
+        vi.stubGlobal("fetch", fetchMock);
+
+        const result = await completeOpenCodeGoText({
+            model: "opencode-go/qwen3.8-max",
+            user: "Title this",
+            apiKeys: { "opencode-go": "oc-user-key" },
+        });
+
+        expect(result).toBe("A Qwen title");
+        const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+        expect(url).toBe("https://opencode.ai/zen/go/v1/messages");
+        expect(new Headers(init.headers).get("x-api-key")).toBe("oc-user-key");
+        expect(JSON.parse(String(init.body))).toMatchObject({
+            model: "qwen3.8-max",
+            max_tokens: 512,
+            messages: [{ role: "user", content: "Title this" }],
+        });
+    });
+
+    it("streams Messages models through the Anthropic-compatible adapter", async () => {
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValue(messagesStreamResponse("minimax-m3", "Hello"));
+        vi.stubGlobal("fetch", fetchMock);
+        const deltas: string[] = [];
+
+        const result = await streamOpenCodeGo({
+            model: "opencode-go/minimax-m3",
+            systemPrompt: "Be concise",
+            messages: [{ role: "user", content: "Hello" }],
+            apiKeys: { "opencode-go": "oc-user-key" },
+            enableThinking: true,
+            callbacks: { onContentDelta: (delta) => deltas.push(delta) },
+        });
+
+        expect(result.fullText).toBe("Hello");
+        expect(deltas).toEqual(["Hello"]);
+        const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+        expect(url).toBe("https://opencode.ai/zen/go/v1/messages");
+        const body = JSON.parse(String(init.body));
+        expect(body).toMatchObject({
+            model: "minimax-m3",
+            system: "Be concise",
+            stream: true,
+        });
+        expect(body).not.toHaveProperty("thinking");
+        expect(body).not.toHaveProperty("output_config");
+    });
+
+    it("preserves the Messages tool-use loop for Qwen and MiniMax", async () => {
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValueOnce(messagesToolStreamResponse("qwen3.8-max"))
+            .mockResolvedValueOnce(
+                messagesStreamResponse("qwen3.8-max", "Found it"),
+            );
+        vi.stubGlobal("fetch", fetchMock);
+        const runTools = vi.fn().mockResolvedValue([
+            { tool_use_id: "tool_1", content: "Contract result" },
+        ]);
+
+        const result = await streamOpenCodeGo({
+            model: "opencode-go/qwen3.8-max",
+            systemPrompt: "Use tools",
+            messages: [{ role: "user", content: "Find the contract" }],
+            tools: [
+                {
+                    type: "function",
+                    function: {
+                        name: "lookup",
+                        description: "Look up a document",
+                        parameters: {
+                            type: "object",
+                            properties: { query: { type: "string" } },
+                            required: ["query"],
+                        },
+                    },
+                },
+            ],
+            runTools,
+            apiKeys: { "opencode-go": "oc-user-key" },
+        });
+
+        expect(result.fullText).toBe("Found it");
+        expect(runTools).toHaveBeenCalledWith([
+            {
+                id: "tool_1",
+                name: "lookup",
+                input: { query: "contract" },
+            },
+        ]);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        const secondBody = JSON.parse(
+            String((fetchMock.mock.calls[1]?.[1] as RequestInit).body),
+        );
+        expect(secondBody.messages).toEqual([
+            { role: "user", content: "Find the contract" },
+            {
+                role: "assistant",
+                content: [
+                    {
+                        type: "tool_use",
+                        id: "tool_1",
+                        name: "lookup",
+                        input: { query: "contract" },
+                    },
+                ],
+            },
+            {
+                role: "user",
+                content: [
+                    {
+                        type: "tool_result",
+                        tool_use_id: "tool_1",
+                        content: "Contract result",
+                    },
+                ],
+            },
+        ]);
+    });
+
+    it("rejects models that require an unsupported protocol before sending a request", async () => {
         const fetchMock = vi.fn();
         vi.stubGlobal("fetch", fetchMock);
 
         await expect(
             completeOpenCodeGoText({
-                model: "opencode-go/qwen3.8-max",
+                model: "opencode-go/gpt-5.6-luna",
                 user: "Title this",
                 apiKeys: { "opencode-go": "oc-user-key" },
             }),
         ).rejects.toThrow(
-            "OpenCode Go model qwen3.8-max is not compatible with Mike's Chat Completions adapter",
+            "OpenCode Go model gpt-5.6-luna requires a protocol Mike does not support yet",
         );
         expect(fetchMock).not.toHaveBeenCalled();
     });

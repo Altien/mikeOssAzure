@@ -495,5 +495,3 @@ export async function completeOpenRouterText(params: {
 
 export const streamVercel = streamOpenRouter;
 export const completeVercelText = completeOpenRouterText;
-export const streamOpenCodeGo = streamOpenRouter;
-export const completeOpenCodeGoText = completeOpenRouterText;

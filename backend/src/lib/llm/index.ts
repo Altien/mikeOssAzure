@@ -7,9 +7,8 @@ import {
     completeOpenRouterText,
     streamVercel,
     completeVercelText,
-    streamOpenCodeGo,
-    completeOpenCodeGoText,
 } from "./openrouter";
+import { streamOpenCodeGo, completeOpenCodeGoText } from "./openCodeGo";
 import { providerForModel } from "./models";
 import type { StreamChatParams, StreamChatResult, UserApiKeys } from "./types";
 

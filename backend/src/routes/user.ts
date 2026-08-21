@@ -7,7 +7,7 @@ import {
     DEFAULT_TABULAR_MODEL,
     DEFAULT_TITLE_MODEL,
     CLAUDE_LOW_MODELS,
-    isOpenCodeGoChatCompletionsModel,
+    isSupportedOpenCodeGoModel,
     OPENAI_LOW_MODELS,
     resolveModel,
 } from "../lib/llm";
@@ -356,7 +356,7 @@ export function normalizeRouterModels(
             model.length > 200 ||
             !catalogIdRe.test(model) ||
             (provider === "opencode-go" &&
-                !isOpenCodeGoChatCompletionsModel(model)) ||
+                !isSupportedOpenCodeGoModel(model)) ||
             seen.has(model)
         ) {
             continue;

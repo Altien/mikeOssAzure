@@ -56,10 +56,9 @@ export const DEFAULT_TITLE_MODEL = "gemini-3.5-flash-lite";
 export const DEFAULT_TABULAR_MODEL = "gemini-3-flash-preview";
 
 // OpenCode Go publishes one catalog across three incompatible wire protocols:
-// OpenAI Responses, Anthropic Messages, and OpenAI Chat Completions. Mike's
-// shared router adapter currently implements Chat Completions only, and the
-// live /models payload does not identify a model's protocol. Keep this list
-// fail-closed and in sync with https://opencode.ai/docs/go/#endpoints so a new
+// OpenAI Responses, Anthropic Messages, and OpenAI Chat Completions. The live
+// /models payload does not identify a model's protocol, so keep these lists
+// fail-closed and in sync with https://opencode.ai/docs/go/#endpoints. A new
 // catalog entry is not offered until Mike can actually speak its protocol.
 export const OPENCODE_GO_CHAT_COMPLETIONS_MODEL_IDS: ReadonlySet<string> =
     new Set([
@@ -76,6 +75,16 @@ export const OPENCODE_GO_CHAT_COMPLETIONS_MODEL_IDS: ReadonlySet<string> =
         "mimo-v2.5-pro",
         "hy3",
     ]);
+
+export const OPENCODE_GO_MESSAGES_MODEL_IDS: ReadonlySet<string> = new Set([
+    "minimax-m3",
+    "minimax-m2.7",
+    "minimax-m2.5",
+    "qwen3.8-max",
+    "qwen3.7-max",
+    "qwen3.7-plus",
+    "qwen3.6-plus",
+]);
 
 const ALL_MODELS = new Set<string>([
     ...CLAUDE_MAIN_MODELS,
@@ -145,5 +154,16 @@ export function openCodeGoModelId(model: string): string {
 export function isOpenCodeGoChatCompletionsModel(model: string): boolean {
     return OPENCODE_GO_CHAT_COMPLETIONS_MODEL_IDS.has(
         openCodeGoModelId(model),
+    );
+}
+
+export function isOpenCodeGoMessagesModel(model: string): boolean {
+    return OPENCODE_GO_MESSAGES_MODEL_IDS.has(openCodeGoModelId(model));
+}
+
+export function isSupportedOpenCodeGoModel(model: string): boolean {
+    return (
+        isOpenCodeGoChatCompletionsModel(model) ||
+        isOpenCodeGoMessagesModel(model)
     );
 }
