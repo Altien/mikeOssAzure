@@ -18,6 +18,8 @@ import {
     vercelModelId,
     openCodeGoModelId,
     isOpenCodeGoChatCompletionsModel,
+    isOpenCodeGoMessagesModel,
+    isSupportedOpenCodeGoModel,
 } from "../llm/models";
 
 // ---------------------------------------------------------------------------
@@ -186,15 +188,21 @@ describe("openCodeGoModelId", () => {
     });
 });
 
-describe("isOpenCodeGoChatCompletionsModel", () => {
-    it("accepts only models supported by the shared router adapter", () => {
+describe("OpenCode Go protocol classification", () => {
+    it("classifies supported models and rejects unknown protocols", () => {
         expect(isOpenCodeGoChatCompletionsModel("opencode-go/glm-5.3")).toBe(
             true,
         );
         expect(isOpenCodeGoChatCompletionsModel("kimi-k3")).toBe(true);
         expect(isOpenCodeGoChatCompletionsModel("qwen3.8-max")).toBe(false);
-        expect(isOpenCodeGoChatCompletionsModel("gpt-5.6-luna")).toBe(false);
-        expect(isOpenCodeGoChatCompletionsModel("future-model")).toBe(false);
+        expect(isOpenCodeGoMessagesModel("opencode-go/qwen3.8-max")).toBe(
+            true,
+        );
+        expect(isOpenCodeGoMessagesModel("minimax-m3")).toBe(true);
+        expect(isSupportedOpenCodeGoModel("glm-5.3")).toBe(true);
+        expect(isSupportedOpenCodeGoModel("qwen3.8-max")).toBe(true);
+        expect(isSupportedOpenCodeGoModel("gpt-5.6-luna")).toBe(false);
+        expect(isSupportedOpenCodeGoModel("future-model")).toBe(false);
     });
 });
 

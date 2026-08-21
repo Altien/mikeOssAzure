@@ -256,13 +256,13 @@ describe("GET /models/opencode-go", () => {
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it("returns only Chat Completions models, sorted and deduplicated, with the key server-side", async () => {
+    it("returns supported Chat Completions and Messages models with the key server-side", async () => {
         const fetchMock = vi.fn().mockResolvedValue(
             new Response(
                 JSON.stringify({
                     data: [
-                        // OpenCode documents these models on protocols Mike's
-                        // router adapter does not implement yet.
+                        // Qwen and MiniMax use Anthropic Messages; GPT uses the
+                        // unsupported Responses protocol.
                         { id: "qwen3.8-max", name: "Qwen3.8 Max" },
                         { id: "gpt-5.6-luna", name: "GPT-5.6 Luna" },
                         { id: "minimax-m3", name: "MiniMax M3" },
@@ -291,6 +291,8 @@ describe("GET /models/opencode-go", () => {
         expect(response.body.models).toEqual([
             { id: "glm-5.3", label: "GLM-5.3" },
             { id: "kimi-k3", label: "kimi-k3" },
+            { id: "minimax-m3", label: "MiniMax M3" },
+            { id: "qwen3.8-max", label: "Qwen3.8 Max (updated)" },
         ]);
         expect(fetchMock).toHaveBeenCalledWith(
             "https://opencode.ai/zen/go/v1/models",
