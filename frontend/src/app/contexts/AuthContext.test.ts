@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { authMethodState } from "./AuthContext";
 
 describe("authMethodState", () => {
-    it("identifies a Google-created account without a password", () => {
+    it("identifies a Google-created account", () => {
         expect(
             authMethodState({
                 app_metadata: {
@@ -15,7 +15,7 @@ describe("authMethodState", () => {
         ).toEqual({ createdWithGoogle: true, hasPassword: null });
     });
 
-    it("detects email/password after it is added to a Google account", () => {
+    it("does not infer password state from provider metadata", () => {
         expect(
             authMethodState({
                 app_metadata: {

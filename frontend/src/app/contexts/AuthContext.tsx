@@ -4,6 +4,7 @@ import { browserAuthCallbackUrl } from "@/app/lib/authRedirects";
 import React, { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { getSupabaseClient } from "@/app/lib/supabase";
+import { syncUserPasswordSet } from "@/app/lib/mikeApi";
 import { useConfig, useConfigLoading } from "@/app/contexts/ConfigContext";
 import {
   ENTRA_TOKEN_KEY,
@@ -211,10 +212,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const setPassword = async (password: string): Promise<void> => {
     if (config.authProvider !== "supabase") throw new Error("Password changes are available only with Supabase sign-in.");
-    const { data, error } = await getSupabaseClient().auth.updateUser({ password });
-    if (error) throw error;
-    if (!data.user) throw new Error("Unable to verify the password change.");
-    setUser({ ...toSupabaseUser(data.user), hasPassword: true });
+    await syncUserPasswordSet(password);
+    setUser((current) => current ? { ...current, hasPassword: true } : null);
   };
 
   return <AuthContext.Provider value={{ user, isAuthenticated: !!user, authLoading: authLoading || configLoading, signInLocal, signOut, getAccessToken, updateEmail, setPassword }}>{children}</AuthContext.Provider>;

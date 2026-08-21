@@ -50,7 +50,7 @@ export default function SettingsPage() {
     const [emailStatus, setEmailStatus] = useState<string | null>(null);
     const [emailWarning, setEmailWarning] = useState<EmailWarning | null>(null);
     const requiresPasswordForEmailChange =
-        emailEditable && user?.createdWithGoogle === true && user.hasPassword !== true;
+        emailEditable && user?.createdWithGoogle === true && profile?.passwordSet !== true;
     const [deleteConfirm, setDeleteConfirm] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
 
@@ -159,10 +159,6 @@ export default function SettingsPage() {
     const handleSaveDisplayName = async () => {
         const nextName = displayName.trim();
         if (nextName === (profile?.displayName ?? "")) return;
-        if (!nextName) {
-            setNameError("Name is required.");
-            return;
-        }
         setIsSavingName(true);
         setNameError(null);
         const success = await updateDisplayName(nextName);

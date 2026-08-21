@@ -51,16 +51,12 @@ function ProfileDetailsForm({
     const handleSubmit = async (event: React.FormEvent) => {
         event.preventDefault();
         const displayName = name.trim();
-        if (!displayName) {
-            setError("Name is required");
-            return;
-        }
 
         setSubmitting(true);
         setError(null);
         try {
             await updateUserProfile({
-                displayName,
+                displayName: displayName || null,
                 organisation: organisation.trim() || null,
             });
             await reloadProfile();
@@ -93,7 +89,6 @@ function ProfileDetailsForm({
                         onChange={(event) => setName(event.target.value)}
                         maxLength={200}
                         autoComplete="name"
-                        required
                         className={`w-full ${authInputClassName}`}
                     />
                 </div>

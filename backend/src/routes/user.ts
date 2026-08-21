@@ -1,5 +1,6 @@
 import { isSupportedOpenCodeGoModel } from "../lib/llm/models";
 import crypto from "crypto";
+import { createClient } from "@supabase/supabase-js";
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
@@ -171,6 +172,8 @@ userRouter.get("/lookup", requireAuth, async (req, res) => {
 const MONTHLY_CREDIT_LIMIT = 999999;
 
 const PROFILE_SELECT =
+  "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us, quick_actions_visible";
+const PROFILE_SELECT_NO_PASSWORD =
   "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us, quick_actions_visible";
 const PROFILE_SELECT_NO_QUICK_ACTIONS =
   "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us";
@@ -185,6 +188,7 @@ type UserProfileRow = {
   professional_title?: string | null;
   practice_areas?: string[] | null;
   onboarding_version?: number | null;
+  password_set_at?: string | null;
   message_credits_used: number | null;
   credits_reset_date: string | null;
   tier: string | null;
@@ -311,6 +315,8 @@ function serializeProfile(
     professionalTitle: row.professional_title ?? null,
     practiceAreas: Array.isArray(row.practice_areas) ? row.practice_areas : [],
     onboardingComplete: row.onboarding_version === undefined || row.onboarding_version !== null,
+    onboardingVersion: row.onboarding_version === undefined ? 0 : row.onboarding_version,
+    passwordSet: row.password_set_at ? true : null,
     messageCreditsUsed: credits.used,
     creditsResetDate: credits.resetDate,
     creditsRemaining: Math.max(MONTHLY_CREDIT_LIMIT - credits.used, 0),
@@ -338,6 +344,9 @@ async function loadProfile(
     (async () => {
       const current = await db.from("user_profiles").select(PROFILE_SELECT).eq("user_id", userId).single();
       if (!current.error || current.error.code !== "42703") return current;
+      const noPassword = await db.from("user_profiles").select(PROFILE_SELECT_NO_PASSWORD).eq("user_id", userId).single();
+      if (!noPassword.error) return noPassword;
+      if (noPassword.error.code !== "42703") return noPassword;
       const preOnboarding = await db.from("user_profiles").select(PROFILE_SELECT_BEFORE_ONBOARDING).eq("user_id", userId).single();
       if (!preOnboarding.error) return preOnboarding;
       if (preOnboarding.error.code !== "42703") return preOnboarding;
@@ -857,6 +866,42 @@ userRouter.post("/onboarding", requireAuth, async (req, res) => {
   const { data, error } = await loadProfile(db, userId);
   if (error) return void sendInternalError(res, error);
   res.json(data);
+});
+
+// The backend performs the password mutation through the authenticated
+// provider before recording its capability. An arbitrary browser assertion
+// cannot mark an account as password-enabled.
+userRouter.post("/security/password-set", requireAuth, async (req, res) => {
+  if (process.env.AUTH_PROVIDER?.toLowerCase() !== "supabase") {
+    return void res.status(403).json({ detail: "Password management is owned by your sign-in provider." });
+  }
+  const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown> : null;
+  if (!body || Object.keys(body).some(key => key !== "password") ||
+      typeof body.password !== "string" || body.password.length < 10 || body.password.length > 1024) {
+    return void res.status(400).json({ detail: "Enter a password of 10 to 1024 characters." });
+  }
+  const authUrl = process.env.SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SECRET_KEY;
+  if (!authUrl || !serviceKey) return void res.status(503).json({ detail: "Password management is unavailable." });
+  const userId = res.locals.userId as string;
+  try {
+    const provider = createClient(authUrl, serviceKey, { auth: { persistSession: false } });
+    const { data, error } = await provider.auth.admin.updateUserById(userId, { password: body.password });
+    if (error || data.user?.id !== userId) {
+      return void res.status(502).json({ detail: "The sign-in provider could not update the password." });
+    }
+    const db = createServerSupabase();
+    const { error: markerError } = await db.from("user_profiles")
+      .update({ password_set_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq("user_id", userId);
+    if (markerError) return void sendInternalError(res, markerError);
+    const { data: profile, error: profileError } = await loadProfile(db, userId);
+    if (profileError) return void sendInternalError(res, profileError);
+    res.json(profile);
+  } catch (error) {
+    sendInternalError(res, error);
+  }
 });
 
 // GET /user/mcp-connectors
