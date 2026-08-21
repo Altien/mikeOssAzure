@@ -134,6 +134,8 @@ export function installOfficeMock(seed: OfficeSeed): void {
   const officeStorageKey = "__mike_word_e2e_office_storage_v1";
   const accessTokenKey = "mike_token";
   const refreshTokenKey = "mike_refresh_token";
+  const editApplyModeKey = "mike_word_edit_apply_mode";
+  const chatStorageModePrefix = "mike_word_chat_storage_mode:";
 
   const clone = <T>(value: T): T => {
     if (value === undefined) return value;
@@ -222,26 +224,36 @@ export function installOfficeMock(seed: OfficeSeed): void {
   w.__WORD_CALLS__ = wordCalls;
 
   // ---- OfficeRuntime.storage ----
-  let storedOfficeValues: Record<string, string>;
+  const storedOfficeValues: Record<string, string> = {};
   const savedOfficeValues = sessionStorage.getItem(officeStorageKey);
   if (savedOfficeValues !== null) {
     try {
-      storedOfficeValues = JSON.parse(savedOfficeValues) as Record<
+      const parsedOfficeValues = JSON.parse(savedOfficeValues) as Record<
         string,
         string
       >;
+      const savedApplyMode = parsedOfficeValues[editApplyModeKey];
+      if (savedApplyMode === "approval" || savedApplyMode === "direct") {
+        storedOfficeValues[editApplyModeKey] =
+          savedApplyMode === "direct" ? "direct" : "approval";
+      }
+      for (const [key, savedValue] of Object.entries(parsedOfficeValues)) {
+        if (
+          key.startsWith(chatStorageModePrefix) &&
+          (savedValue === "cloud" || savedValue === "local")
+        ) {
+          storedOfficeValues[key] =
+            savedValue === "local" ? "local" : "cloud";
+        }
+      }
     } catch {
-      storedOfficeValues = {};
+      // Ignore malformed persisted mock preferences.
     }
-  } else {
-    storedOfficeValues = {};
   }
 
   // OfficeRuntime storage is persisted across task-pane reloads by this mock,
   // but auth credentials must never be copied into browser storage. Seeded and
   // newly issued tokens stay in memory for the lifetime of the current page.
-  delete storedOfficeValues[accessTokenKey];
-  delete storedOfficeValues[refreshTokenKey];
   let accessTokenValue = seed.token ?? null;
   let refreshTokenValue = seed.refreshToken ?? null;
 
@@ -267,8 +279,20 @@ export function installOfficeMock(seed: OfficeSeed): void {
           refreshTokenValue = value;
           return Promise.resolve();
         }
-        storedOfficeValues[key] = value;
-        persistOfficeValues();
+        if (
+          key === editApplyModeKey &&
+          (value === "approval" || value === "direct")
+        ) {
+          storedOfficeValues[key] =
+            value === "direct" ? "direct" : "approval";
+          persistOfficeValues();
+        } else if (
+          key.startsWith(chatStorageModePrefix) &&
+          (value === "cloud" || value === "local")
+        ) {
+          storedOfficeValues[key] = value === "local" ? "local" : "cloud";
+          persistOfficeValues();
+        }
         return Promise.resolve();
       },
       removeItem: (key: string) => {
