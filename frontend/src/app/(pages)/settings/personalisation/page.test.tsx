@@ -94,6 +94,31 @@ describe("PersonalisationPage", () => {
         );
     });
 
+    it("does not drop an earlier pending edit when an Other box turns invalid", async () => {
+        const user = userEvent.setup();
+        const { unmount } = render(<PersonalisationPage />);
+
+        // Title edit is pending (still inside the debounce window)...
+        await user.click(screen.getByRole("button", { name: "Title" }));
+        await user.click(screen.getByRole("menuitemradio", { name: "Partner" }));
+        // ...when the user ticks "Other" and leaves it empty.
+        await user.click(
+            screen.getByRole("button", { name: "Practice areas" }),
+        );
+        await user.click(screen.getByRole("menuitemcheckbox", { name: "Other" }));
+        await user.keyboard("{Escape}");
+
+        unmount(); // flush: the Title change must survive
+        await waitFor(() =>
+            expect(updatePersonalisation).toHaveBeenCalledWith({
+                jurisdiction: "Singapore",
+                practiceSetting: "private_practice",
+                professionalTitle: "Partner",
+                practiceAreas: ["Litigation"],
+            }),
+        );
+    });
+
     it("flushes a save that is still inside its debounce window on unmount", async () => {
         const user = userEvent.setup();
         const { unmount } = render(<PersonalisationPage />);

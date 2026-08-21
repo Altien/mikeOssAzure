@@ -6,20 +6,10 @@ import {
     PersonalisationFields,
     personalisationInitialValues,
     type PersonalisationField,
-    type PersonalisationFieldGroup,
     usePersonalisationFields,
 } from "@/app/components/settings/PersonalisationFields";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import type { PersonalisationDetails } from "@/app/lib/mikeApi";
-
-const FIELD_GROUP: Record<PersonalisationField, PersonalisationFieldGroup> = {
-    professionalTitle: "professionalTitle",
-    practiceSetting: "practiceSetting",
-    jurisdiction: "jurisdiction",
-    otherJurisdiction: "jurisdiction",
-    practiceAreas: "practiceAreas",
-    otherPracticeArea: "practiceAreas",
-};
 
 function fieldStatus(
     field: PersonalisationField,
@@ -92,11 +82,13 @@ function PersonalisationForm({
         const snapshot = JSON.stringify(details);
         latestSnapshotRef.current = snapshot;
         flushRef.current = null;
-        if (
-            !pendingField ||
-            form.invalidGroups.includes(FIELD_GROUP[pendingField]) ||
-            snapshot === persistedSnapshotRef.current
-        ) {
+        // No per-field "is the edited group invalid" guard here: the
+        // substitution above already neutralises invalid groups, so the
+        // snapshot comparison alone decides. A guard keyed on the LAST
+        // edited field would drop an earlier still-pending change (edit
+        // Title, then tick an empty "Other" inside the debounce window —
+        // the Title edit must still be saved).
+        if (!pendingField || snapshot === persistedSnapshotRef.current) {
             return;
         }
 
