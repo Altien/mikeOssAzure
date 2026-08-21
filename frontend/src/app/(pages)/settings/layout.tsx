@@ -22,7 +22,11 @@ const TABS: TabDef[] = [
     },
     { id: "security", label: "Security", href: "/settings/security" },
     { id: "models", label: "Model Preferences", href: "/settings/models" },
-    { id: "api-keys", label: "BYOK", href: "/settings/api-keys" },
+    {
+        id: "byok",
+        label: "Bring Your Own Keys",
+        href: "/settings/byok",
+    },
     { id: "connectors", label: "Connectors", href: "/settings/connectors" },
 ];
 

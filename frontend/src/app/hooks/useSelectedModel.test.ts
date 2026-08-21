@@ -39,6 +39,7 @@ describe("useSelectedModel", () => {
             useSelectedModel({
                 openRouterModels: ["openai/gpt-5.4"],
                 vercelModels: [],
+                openCodeGoModels: [],
             }),
         );
 
@@ -52,6 +53,7 @@ describe("useSelectedModel", () => {
             useSelectedModel({
                 openRouterModels: ["openai/gpt-5.4"],
                 vercelModels: [],
+                openCodeGoModels: [],
             }),
         );
 
@@ -59,6 +61,34 @@ describe("useSelectedModel", () => {
         expect(window.localStorage.getItem(STORAGE_KEY)).toBe(
             "gemini-3-flash-preview",
         );
+    });
+
+    it("keeps an OpenCode Go selection that is in the loaded saved lists", () => {
+        window.localStorage.setItem(STORAGE_KEY, "opencode-go/glm-5");
+
+        const { result } = renderHook(() =>
+            useSelectedModel({
+                openRouterModels: [],
+                vercelModels: [],
+                openCodeGoModels: ["glm-5"],
+            }),
+        );
+
+        expect(result.current[0]).toBe("opencode-go/glm-5");
+    });
+
+    it("resets an OpenCode Go selection the user no longer has saved", () => {
+        window.localStorage.setItem(STORAGE_KEY, "opencode-go/kimi-k3");
+
+        const { result } = renderHook(() =>
+            useSelectedModel({
+                openRouterModels: [],
+                vercelModels: [],
+                openCodeGoModels: ["glm-5"],
+            }),
+        );
+
+        expect(result.current[0]).toBe("gemini-3-flash-preview");
     });
 
     it("leaves a router selection alone while the lists are still loading", () => {

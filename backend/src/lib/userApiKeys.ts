@@ -9,6 +9,7 @@ export type ApiKeyProvider =
     | "openai"
     | "openrouter"
     | "vercel"
+    | "opencode-go"
     | "courtlistener";
 export type ApiKeySource = "user" | "env" | null;
 export type ApiKeyStatus = Record<ApiKeyProvider, boolean> & {
@@ -28,6 +29,7 @@ const PROVIDERS: ApiKeyProvider[] = [
     "openai",
     "openrouter",
     "vercel",
+    "opencode-go",
     "courtlistener",
 ];
 
@@ -51,6 +53,8 @@ function envApiKey(provider: ApiKeyProvider): string | null {
                 process.env.VERCEL_AI_GATEWAY_API_KEY?.trim() ||
                 null
             );
+        case "opencode-go":
+            return process.env.OPENCODE_API_KEY?.trim() || null;
         case "courtlistener":
             return process.env.COURTLISTENER_API_TOKEN?.trim() || null;
         default:
@@ -124,6 +128,7 @@ export async function getUserApiKeyStatus(
         openai: false,
         openrouter: false,
         vercel: false,
+        "opencode-go": false,
         courtlistener: false,
         sources: {
             claude: null,
@@ -131,6 +136,7 @@ export async function getUserApiKeyStatus(
             openai: null,
             openrouter: null,
             vercel: null,
+            "opencode-go": null,
             courtlistener: null,
         },
     };
@@ -169,6 +175,7 @@ export async function getUserApiKeys(
         openai: envApiKey("openai"),
         openrouter: envApiKey("openrouter"),
         vercel: envApiKey("vercel"),
+        "opencode-go": envApiKey("opencode-go"),
         courtlistener: envApiKey("courtlistener"),
     };
 

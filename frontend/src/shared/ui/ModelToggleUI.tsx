@@ -21,6 +21,7 @@ export type ModelToggleGroup =
   | "OpenAI"
   | "OpenRouter"
   | "Vercel AI Gateway"
+  | "OpenCode Go"
   | "Local";
 
 export interface ModelToggleOption {
@@ -35,6 +36,7 @@ export const MODEL_TOGGLE_GROUPS: readonly ModelToggleGroup[] = [
   "OpenAI",
   "OpenRouter",
   "Vercel AI Gateway",
+  "OpenCode Go",
   "Local",
 ];
 

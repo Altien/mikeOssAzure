@@ -305,7 +305,7 @@ test.describe("Settings", () => {
         // API keys were split out of /settings/models into their own settings
         // page (the "API Keys" sidebar entry) — /settings/models now holds only
         // model preferences.
-        await page.goto("/settings/api-keys");
+        await page.goto("/settings/byok");
 
         // The shared settings layout still renders "Settings"
         await expect(
@@ -313,7 +313,7 @@ test.describe("Settings", () => {
         ).toBeVisible({ timeout: 10_000 });
 
         // The h2 "API Keys" section is present
-        // REGRESSION: fails if the /settings/api-keys page is broken or the API Keys section is removed
+        // REGRESSION: fails if the /settings/byok page is broken or the API Keys section is removed
         await expect(
             page.getByRole("heading", { name: "API Keys" }),
         ).toBeVisible({ timeout: 10_000 });

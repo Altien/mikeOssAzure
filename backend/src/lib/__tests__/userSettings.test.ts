@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getUserApiKeys, getUserRouterModels } = vi.hoisted(() => ({
+const { getUserApiKeys, getAllUserRouterModels } = vi.hoisted(() => ({
     getUserApiKeys: vi.fn(),
-    getUserRouterModels: vi.fn(),
+    getAllUserRouterModels: vi.fn(),
 }));
 
 vi.mock("../userApiKeys", () => ({
@@ -13,7 +13,8 @@ vi.mock("../routerModels", async () => ({
     ...(await vi.importActual<typeof import("../routerModels")>(
         "../routerModels",
     )),
-    getUserRouterModels: (...args: unknown[]) => getUserRouterModels(...args),
+    getAllUserRouterModels: (...args: unknown[]) =>
+        getAllUserRouterModels(...args),
 }));
 
 vi.mock("../supabase", () => ({ createServerSupabase: vi.fn() }));
@@ -41,9 +42,11 @@ const NO_KEYS = {
 beforeEach(() => {
     vi.clearAllMocks();
     getUserApiKeys.mockResolvedValue(NO_KEYS);
-    getUserRouterModels.mockImplementation(async (_user, router) =>
-        router === "openrouter" ? ["allowed/model"] : [],
-    );
+    getAllUserRouterModels.mockResolvedValue({
+        openrouter: ["allowed/model"],
+        vercel: [],
+        "opencode-go": [],
+    });
 });
 
 describe("getUserModelSettings router-model allowlist", () => {

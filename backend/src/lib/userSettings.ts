@@ -8,9 +8,11 @@ import {
 } from "./llm";
 import { getUserApiKeys as getStoredUserApiKeys } from "./userApiKeys";
 import {
-    getUserRouterModels,
+    getAllUserRouterModels,
     isRouterModelSelected,
+    ROUTER_SLUGS,
     routerForModelId,
+    type RouterModelSelections,
 } from "./routerModels";
 
 export type UserModelSettings = {
@@ -27,17 +29,14 @@ export type UserModelSettings = {
 // fallback).
 function resolveTitleModel(
     apiKeys: UserApiKeys,
-    openRouterModels: string[],
-    vercelModels: string[],
+    routerModels: RouterModelSelections,
 ): string {
     if (apiKeys.gemini?.trim()) return DEFAULT_TITLE_MODEL;
     if (apiKeys.openai?.trim()) return OPENAI_LOW_MODELS[0];
     if (apiKeys.claude?.trim()) return "claude-haiku-4-5";
-    if (apiKeys.openrouter?.trim() && openRouterModels[0]) {
-        return `openrouter/${openRouterModels[0]}`;
-    }
-    if (apiKeys.vercel?.trim() && vercelModels[0]) {
-        return `vercel/${vercelModels[0]}`;
+    for (const slug of ROUTER_SLUGS) {
+        const first = routerModels[slug][0];
+        if (apiKeys[slug]?.trim() && first) return `${slug}/${first}`;
     }
     return DEFAULT_TITLE_MODEL;
 }
@@ -47,17 +46,15 @@ export async function getUserModelSettings(
     db?: ReturnType<typeof createServerSupabase>,
 ): Promise<UserModelSettings> {
     const client = db ?? createServerSupabase();
-    const [profileResult, api_keys, openRouterModels, vercelModels] =
-        await Promise.all([
-            client
-                .from("user_profiles")
-                .select("title_model, tabular_model, legal_research_us")
-                .eq("user_id", userId)
-                .single(),
-            getStoredUserApiKeys(userId, client),
-            getUserRouterModels(userId, "openrouter", client),
-            getUserRouterModels(userId, "vercel", client),
-        ]);
+    const [profileResult, api_keys, routerModels] = await Promise.all([
+        client
+            .from("user_profiles")
+            .select("title_model, tabular_model, legal_research_us")
+            .eq("user_id", userId)
+            .single(),
+        getStoredUserApiKeys(userId, client),
+        getAllUserRouterModels(userId, client),
+    ]);
     const data = profileResult.data;
 
     // A stored preference can name a router model the user has since removed
@@ -68,7 +65,7 @@ export async function getUserModelSettings(
     const guardRouterModel = (model: string, fallback: string): string => {
         if (
             !routerForModelId(model) ||
-            isRouterModelSelected(model, openRouterModels, vercelModels)
+            isRouterModelSelected(model, routerModels)
         ) {
             return model;
         }
@@ -77,11 +74,7 @@ export async function getUserModelSettings(
         );
         return fallback;
     };
-    const titleFallback = resolveTitleModel(
-        api_keys,
-        openRouterModels,
-        vercelModels,
-    );
+    const titleFallback = resolveTitleModel(api_keys, routerModels);
 
     return {
         title_model: guardRouterModel(

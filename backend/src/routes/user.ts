@@ -7,6 +7,7 @@ import {
     DEFAULT_TABULAR_MODEL,
     DEFAULT_TITLE_MODEL,
     CLAUDE_LOW_MODELS,
+    isSupportedOpenCodeGoModel,
     OPENAI_LOW_MODELS,
     resolveModel,
 } from "../lib/llm";
@@ -43,8 +44,11 @@ import {
 } from "../lib/userDataExport";
 import { findProfileUserByEmail } from "../lib/userLookup";
 import {
-    getUserRouterModels,
+    getAllUserRouterModels,
     replaceUserRouterModels,
+    ROUTER_SLUGS,
+    type RouterModelSelections,
+    type RouterSlug,
 } from "../lib/routerModels";
 
 export const userRouter = Router();
@@ -307,9 +311,30 @@ async function selectProfileLegacy(
 
 const CATALOG_MODEL_ID_RE = /^[^\s/]+\/[^\s]+$/;
 
+/**
+ * A router's catalog-id shape. OpenRouter and Vercel publish vendor/model
+ * pairs; OpenCode Go publishes bare model names ("glm-5"), so requiring a
+ * slash there would reject its entire catalog.
+ */
+const ROUTER_MODEL_ID_RE: Record<RouterSlug, RegExp> = {
+    openrouter: CATALOG_MODEL_ID_RE,
+    vercel: CATALOG_MODEL_ID_RE,
+    "opencode-go": /^[^\s]+$/,
+};
+
+/**
+ * The profile field each router's selection is read from and written to.
+ * Mirrored by the frontend's updateUserProfile payload.
+ */
+export const ROUTER_PROFILE_FIELDS: Record<RouterSlug, string> = {
+    openrouter: "openRouterModels",
+    vercel: "vercelModels",
+    "opencode-go": "openCodeGoModels",
+};
+
 export function normalizeRouterModels(
     value: unknown,
-    provider: "openrouter" | "vercel",
+    provider: RouterSlug,
 ): string[] {
     if (!Array.isArray(value)) return [];
     const models: string[] = [];
@@ -323,12 +348,15 @@ export function normalizeRouterModels(
         // the router's own slug (OpenRouter's "openrouter/auto", Vercel's
         // "vercel/v0-1.5-md"); for those the raw id IS the canonical form
         // and stripping would destroy it.
+        const catalogIdRe = ROUTER_MODEL_ID_RE[provider];
         const stripped = trimmed.replace(new RegExp(`^${provider}/`), "");
-        const model = CATALOG_MODEL_ID_RE.test(stripped) ? stripped : trimmed;
+        const model = catalogIdRe.test(stripped) ? stripped : trimmed;
         if (
             !model ||
             model.length > 200 ||
-            !CATALOG_MODEL_ID_RE.test(model) ||
+            !catalogIdRe.test(model) ||
+            (provider === "opencode-go" &&
+                !isSupportedOpenCodeGoModel(model)) ||
             seen.has(model)
         ) {
             continue;
@@ -340,10 +368,20 @@ export function normalizeRouterModels(
     return models;
 }
 
+function routerTitleFallback(
+    routerModels: RouterModelSelections,
+    apiKeyStatus?: ApiKeyStatus,
+): string | null {
+    for (const slug of ROUTER_SLUGS) {
+        const first = routerModels[slug][0];
+        if (apiKeyStatus?.[slug] && first) return `${slug}/${first}`;
+    }
+    return null;
+}
+
 function serializeProfile(
+    routerModels: RouterModelSelections,
     row: UserProfileRow,
-    openRouterModels: string[],
-    vercelModels: string[],
     apiKeyStatus?: ApiKeyStatus,
 ) {
     const creditsUsed = row.message_credits_used ?? 0;
@@ -353,11 +391,8 @@ function serializeProfile(
           ? OPENAI_LOW_MODELS[0]
           : apiKeyStatus?.claude
             ? CLAUDE_LOW_MODELS[0]
-            : apiKeyStatus?.openrouter && openRouterModels[0]
-              ? `openrouter/${openRouterModels[0]}`
-              : apiKeyStatus?.vercel && vercelModels[0]
-                ? `vercel/${vercelModels[0]}`
-                : DEFAULT_TITLE_MODEL;
+            : (routerTitleFallback(routerModels, apiKeyStatus) ??
+              DEFAULT_TITLE_MODEL);
     return {
         displayName: row.display_name,
         organisation: row.organisation,
@@ -370,8 +405,12 @@ function serializeProfile(
         mfaOnLogin: row.mfa_on_login === true,
         legalResearchUs: row.legal_research_us !== false,
         quickActionsVisible: row.quick_actions_visible !== false,
-        openRouterModels,
-        vercelModels,
+        ...Object.fromEntries(
+            ROUTER_SLUGS.map((slug) => [
+                ROUTER_PROFILE_FIELDS[slug],
+                routerModels[slug],
+            ]),
+        ),
         ...(apiKeyStatus ? { apiKeyStatus } : {}),
     };
 }
@@ -388,8 +427,7 @@ function validateProfilePayload(body: unknown):
               quick_actions_visible?: boolean;
               updated_at: string;
           };
-          openRouterModels?: string[];
-          vercelModels?: string[];
+          routerModels?: Partial<Record<RouterSlug, string[]>>;
       }
     | { ok: false; detail: string } {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -404,8 +442,7 @@ function validateProfilePayload(body: unknown):
         "tabularModel",
         "legalResearchUs",
         "quickActionsVisible",
-        "openRouterModels",
-        "vercelModels",
+        ...ROUTER_SLUGS.map((slug) => ROUTER_PROFILE_FIELDS[slug]),
     ]);
     const invalidField = Object.keys(raw).find(
         (key) => !allowedFields.has(key),
@@ -426,8 +463,7 @@ function validateProfilePayload(body: unknown):
         quick_actions_visible?: boolean;
         updated_at: string;
     } = { updated_at: new Date().toISOString() };
-    let openRouterModels: string[] | undefined;
-    let vercelModels: string[] | undefined;
+    const routerModels: Partial<Record<RouterSlug, string[]>> = {};
 
     if ("displayName" in raw) {
         if (raw.displayName !== null && typeof raw.displayName !== "string") {
@@ -471,56 +507,33 @@ function validateProfilePayload(body: unknown):
         update.title_model = resolved;
     }
 
-    if ("openRouterModels" in raw) {
-        if (!Array.isArray(raw.openRouterModels)) {
+    for (const slug of ROUTER_SLUGS) {
+        const field = ROUTER_PROFILE_FIELDS[slug];
+        if (!(field in raw)) continue;
+        const value = raw[field];
+        if (!Array.isArray(value)) {
             return {
                 ok: false,
-                detail: "openRouterModels must be an array of model IDs",
+                detail: `${field} must be an array of model IDs`,
             };
         }
         // Check the cap before normalizing: normalizeRouterModels truncates
         // at 50, so a longer payload would otherwise surface as the
         // misleading "invalid or duplicate model ID".
-        if (raw.openRouterModels.length > 50) {
+        if (value.length > 50) {
             return {
                 ok: false,
-                detail: "openRouterModels can include at most 50 models",
+                detail: `${field} can include at most 50 models`,
             };
         }
-        const models = normalizeRouterModels(
-            raw.openRouterModels,
-            "openrouter",
-        );
-        if (models.length !== raw.openRouterModels.length) {
+        const models = normalizeRouterModels(value, slug);
+        if (models.length !== value.length) {
             return {
                 ok: false,
-                detail: "openRouterModels contains an invalid or duplicate model ID",
+                detail: `${field} contains an invalid or duplicate model ID`,
             };
         }
-        openRouterModels = models;
-    }
-
-    if ("vercelModels" in raw) {
-        if (!Array.isArray(raw.vercelModels)) {
-            return {
-                ok: false,
-                detail: "vercelModels must be an array of model IDs",
-            };
-        }
-        if (raw.vercelModels.length > 50) {
-            return {
-                ok: false,
-                detail: "vercelModels can include at most 50 models",
-            };
-        }
-        const models = normalizeRouterModels(raw.vercelModels, "vercel");
-        if (models.length !== raw.vercelModels.length) {
-            return {
-                ok: false,
-                detail: "vercelModels contains an invalid or duplicate model ID",
-            };
-        }
-        vercelModels = models;
+        routerModels[slug] = models;
     }
 
     if ("legalResearchUs" in raw) {
@@ -543,12 +556,7 @@ function validateProfilePayload(body: unknown):
         update.quick_actions_visible = raw.quickActionsVisible;
     }
 
-    return {
-        ok: true,
-        update,
-        ...(openRouterModels ? { openRouterModels } : {}),
-        ...(vercelModels ? { vercelModels } : {}),
-    };
+    return { ok: true, update, routerModels };
 }
 
 function readBooleanBodyField(
@@ -649,17 +657,9 @@ async function loadProfile(
     }
 
     try {
-        const [openRouterModels, vercelModels] = await Promise.all([
-            getUserRouterModels(userId, "openrouter", db),
-            getUserRouterModels(userId, "vercel", db),
-        ]);
+        const routerModels = await getAllUserRouterModels(userId, db);
         return {
-            data: serializeProfile(
-                row,
-                openRouterModels,
-                vercelModels,
-                options.apiKeyStatus,
-            ),
+            data: serializeProfile(routerModels, row, options.apiKeyStatus),
             error: null,
         };
     } catch (routerModelsError) {
@@ -729,29 +729,11 @@ userRouter.patch("/profile", requireAuth, async (req, res) => {
     if (updateError)
         return void res.status(500).json({ detail: updateError.message });
 
-    if (parsed.openRouterModels !== undefined) {
+    for (const slug of ROUTER_SLUGS) {
+        const models = parsed.routerModels?.[slug];
+        if (models === undefined) continue;
         try {
-            await replaceUserRouterModels(
-                userId,
-                "openrouter",
-                parsed.openRouterModels,
-                db,
-            );
-        } catch (routerModelsError) {
-            return void res.status(500).json({
-                detail: errorMessage(routerModelsError),
-            });
-        }
-    }
-
-    if (parsed.vercelModels !== undefined) {
-        try {
-            await replaceUserRouterModels(
-                userId,
-                "vercel",
-                parsed.vercelModels,
-                db,
-            );
+            await replaceUserRouterModels(userId, slug, models, db);
         } catch (routerModelsError) {
             return void res.status(500).json({
                 detail: errorMessage(routerModelsError),

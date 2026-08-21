@@ -5,6 +5,7 @@ import type {
   StreamChatResult,
   NormalizedToolCall,
   NormalizedToolResult,
+  Provider,
 } from "./types";
 import { toClaudeTools } from "./tools";
 import { createRawLlmStreamRecorder, logRawLlmStream } from "./rawStreamLog";
@@ -21,7 +22,16 @@ type NativeMessage = {
 
 const MAX_TOKENS = 16384;
 
-function apiKey(override?: string | null): string {
+export type AnthropicMessagesAdapterConfig = {
+  provider: Extract<Provider, "claude" | "opencode-go">;
+  label: string;
+  model: string;
+  apiKey: string;
+  baseURL?: string;
+  adaptiveThinking?: boolean;
+};
+
+function claudeApiKey(override?: string | null): string {
   const key = override?.trim() || process.env.ANTHROPIC_API_KEY?.trim() || "";
   if (!key) {
     throw new Error(
@@ -31,9 +41,11 @@ function apiKey(override?: string | null): string {
   return key;
 }
 
-function client(override?: string | null): Anthropic {
-  const apiKeyValue = apiKey(override);
-  return new Anthropic({ apiKey: apiKeyValue });
+function client(config: AnthropicMessagesAdapterConfig): Anthropic {
+  return new Anthropic({
+    apiKey: config.apiKey,
+    ...(config.baseURL ? { baseURL: config.baseURL } : {}),
+  });
 }
 
 function toNativeMessages(
@@ -42,22 +54,25 @@ function toNativeMessages(
   return messages.map((m) => ({ role: m.role, content: m.content }));
 }
 
-function claudeErrorMessage(error: unknown): string {
-  const parsedObject = claudeStreamFailureMessage(error);
+function anthropicErrorMessage(error: unknown, label: string): string {
+  const parsedObject = anthropicStreamFailureMessage(error, label);
   if (parsedObject) return parsedObject;
   if (error instanceof Error && error.message) {
-    const parsed = parseClaudeErrorPayload(error.message);
+    const parsed = parseAnthropicErrorPayload(error.message, label);
     if (parsed) return parsed;
-    return error.message.startsWith("Claude error:")
+    return error.message.startsWith(`${label} error:`)
       ? error.message
-      : `Claude error: ${error.message}`;
+      : `${label} error: ${error.message}`;
   }
-  const parsed = parseClaudeErrorPayload(String(error));
+  const parsed = parseAnthropicErrorPayload(String(error), label);
   if (parsed) return parsed;
-  return `Claude error: ${String(error)}`;
+  return `${label} error: ${String(error)}`;
 }
 
-function parseClaudeErrorPayload(value: string): string | null {
+function parseAnthropicErrorPayload(
+  value: string,
+  label: string,
+): string | null {
   const trimmed = value.trim();
   const jsonStart = trimmed.indexOf("{");
   if (jsonStart < 0) return null;
@@ -66,13 +81,16 @@ function parseClaudeErrorPayload(value: string): string | null {
   const payload = trimmed.slice(jsonStart, jsonEnd + 1);
   try {
     const parsed = JSON.parse(payload) as unknown;
-    return claudeStreamFailureMessage(parsed);
+    return anthropicStreamFailureMessage(parsed, label);
   } catch {
     return null;
   }
 }
 
-function claudeStreamFailureMessage(event: unknown): string | null {
+function anthropicStreamFailureMessage(
+  event: unknown,
+  label: string,
+): string | null {
   if (!event || typeof event !== "object") return null;
   const record = event as Record<string, unknown>;
   const error = record.error;
@@ -85,10 +103,10 @@ function claudeStreamFailureMessage(event: unknown): string | null {
   const message =
     typeof err.message === "string" && err.message.trim()
       ? err.message.trim()
-      : "Claude stream failed.";
+      : `${label} stream failed.`;
   return type
-    ? `Claude error (${type}): ${message}`
-    : `Claude error: ${message}`;
+    ? `${label} error (${type}): ${message}`
+    : `${label} error: ${message}`;
 }
 
 function abortError(): Error {
@@ -101,26 +119,26 @@ function throwIfAborted(signal?: AbortSignal) {
   if (signal?.aborted) throw abortError();
 }
 
-export async function streamClaude(
+export async function streamAnthropicMessages(
   params: StreamChatParams,
+  config: AnthropicMessagesAdapterConfig,
 ): Promise<StreamChatResult> {
   const {
-    model,
     systemPrompt,
     tools = [],
     callbacks = {},
     runTools,
-    apiKeys,
     enableThinking,
   } = params;
+  const { model, provider, label } = config;
   const maxIter = params.maxIterations ?? 10;
-  const anthropic = client(apiKeys?.claude);
+  const anthropic = client(config);
   const claudeTools = toClaudeTools(tools);
 
   const messages: NativeMessage[] = toNativeMessages(params.messages);
   let fullText = "";
   const rawStreamRecorder = createRawLlmStreamRecorder({
-    provider: "claude",
+    provider,
     model,
   });
 
@@ -138,7 +156,7 @@ export async function streamClaude(
         // Claude 4.x models require `thinking.type: "adaptive"` and
         // drive effort via `output_config.effort` rather than a fixed
         // token budget. We only opt in when the caller requested it.
-        ...(enableThinking
+        ...(enableThinking && config.adaptiveThinking
           ? ({
               thinking: { type: "adaptive" },
               output_config: { effort: "high" },
@@ -156,7 +174,7 @@ export async function streamClaude(
 
       stream.on("streamEvent", (event) => {
         logRawLlmStream({
-          provider: "claude",
+          provider,
           model,
           iteration: iter,
           label: "streamEvent",
@@ -167,7 +185,7 @@ export async function streamClaude(
           label: "streamEvent",
           payload: event,
         });
-        const failureMessage = claudeStreamFailureMessage(event);
+        const failureMessage = anthropicStreamFailureMessage(event, label);
         if (failureMessage) {
           streamFailureMessage = failureMessage;
           stream.abort();
@@ -175,7 +193,7 @@ export async function streamClaude(
       });
       stream.on("error", (error) => {
         logRawLlmStream({
-          provider: "claude",
+          provider,
           model,
           iteration: iter,
           label: "error",
@@ -191,7 +209,7 @@ export async function streamClaude(
       stream.on("text", (delta) => {
         callbacks.onContentDelta?.(delta);
       });
-      if (enableThinking) {
+      if (enableThinking && config.adaptiveThinking) {
         stream.on("thinking", (delta) => {
           sawThinking = true;
           callbacks.onReasoningDelta?.(delta);
@@ -204,7 +222,7 @@ export async function streamClaude(
       } catch (error) {
         if (params.abortSignal?.aborted) throw abortError();
         if (streamFailureMessage) throw new Error(streamFailureMessage);
-        throw new Error(claudeErrorMessage(error));
+        throw new Error(anthropicErrorMessage(error, label));
       } finally {
         params.abortSignal?.removeEventListener("abort", abortStream);
       }
@@ -265,6 +283,45 @@ export async function streamClaude(
   }
 }
 
+export async function completeAnthropicMessagesText(
+  params: {
+    model: string;
+    systemPrompt?: string;
+    user: string;
+    maxTokens?: number;
+  },
+  config: AnthropicMessagesAdapterConfig,
+): Promise<string> {
+  const anthropic = client(config);
+  let resp: Awaited<ReturnType<typeof anthropic.messages.create>>;
+  try {
+    resp = await anthropic.messages.create({
+      model: config.model,
+      max_tokens: params.maxTokens ?? 512,
+      system: params.systemPrompt,
+      messages: [{ role: "user", content: params.user }],
+    });
+  } catch (error) {
+    throw new Error(anthropicErrorMessage(error, config.label));
+  }
+  return resp.content
+    .filter((b): b is Anthropic.TextBlock => b.type === "text")
+    .map((b) => b.text)
+    .join("");
+}
+
+export async function streamClaude(
+  params: StreamChatParams,
+): Promise<StreamChatResult> {
+  return streamAnthropicMessages(params, {
+    provider: "claude",
+    label: "Claude",
+    model: params.model,
+    apiKey: claudeApiKey(params.apiKeys?.claude),
+    adaptiveThinking: true,
+  });
+}
+
 export async function completeClaudeText(params: {
   model: string;
   systemPrompt?: string;
@@ -272,23 +329,12 @@ export async function completeClaudeText(params: {
   maxTokens?: number;
   apiKeys?: { claude?: string | null };
 }): Promise<string> {
-  const anthropic = client(params.apiKeys?.claude);
-  let resp: Awaited<ReturnType<typeof anthropic.messages.create>>;
-  try {
-    resp = await anthropic.messages.create({
-      model: params.model,
-      max_tokens: params.maxTokens ?? 512,
-      system: params.systemPrompt,
-      messages: [{ role: "user", content: params.user }],
-    });
-  } catch (error) {
-    throw new Error(claudeErrorMessage(error));
-  }
-  const text = resp.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("");
-  return text;
+  return completeAnthropicMessagesText(params, {
+    provider: "claude",
+    label: "Claude",
+    model: params.model,
+    apiKey: claudeApiKey(params.apiKeys?.claude),
+  });
 }
 
 // Helper re-export for callers wanting to hand normalized results back in.

@@ -232,3 +232,102 @@ describe("GET /models/vercel", () => {
         );
     });
 });
+
+describe("GET /models/opencode-go", () => {
+    beforeEach(() => {
+        getUserApiKeys.mockResolvedValue({ "opencode-go": "oc-user-key" });
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.clearAllMocks();
+        delete process.env.OPENCODE_GO_BASE_URL;
+    });
+
+    it("requires a configured OpenCode Go key", async () => {
+        getUserApiKeys.mockResolvedValue({});
+        const fetchMock = vi.fn();
+        vi.stubGlobal("fetch", fetchMock);
+
+        const response = await request(app).get("/models/opencode-go");
+
+        expect(response.status).toBe(422);
+        expect(response.body.code).toBe("missing_api_key");
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("returns supported Chat Completions and Messages models with the key server-side", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(
+            new Response(
+                JSON.stringify({
+                    data: [
+                        // Qwen and MiniMax use Anthropic Messages; GPT uses the
+                        // unsupported Responses protocol.
+                        { id: "qwen3.8-max", name: "Qwen3.8 Max" },
+                        { id: "gpt-5.6-luna", name: "GPT-5.6 Luna" },
+                        { id: "minimax-m3", name: "MiniMax M3" },
+                        { id: "glm-5.3", name: "GLM-5.3" },
+                        { id: "qwen3.8-max", name: "Qwen3.8 Max (updated)" },
+                        { id: "kimi-k3" },
+                        // The upstream response has no protocol metadata, so
+                        // unknown future models must fail closed too.
+                        { id: "future-model", name: "Future Model" },
+                        { id: "bad id" },
+                        { id: "   " },
+                        null,
+                    ],
+                }),
+                {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                },
+            ),
+        );
+        vi.stubGlobal("fetch", fetchMock);
+
+        const response = await request(app).get("/models/opencode-go");
+
+        expect(response.status).toBe(200);
+        expect(response.body.models).toEqual([
+            { id: "glm-5.3", label: "GLM-5.3" },
+            { id: "kimi-k3", label: "kimi-k3" },
+            { id: "minimax-m3", label: "MiniMax M3" },
+            { id: "qwen3.8-max", label: "Qwen3.8 Max (updated)" },
+        ]);
+        expect(fetchMock).toHaveBeenCalledWith(
+            "https://opencode.ai/zen/go/v1/models",
+            { headers: { Authorization: "Bearer oc-user-key" } },
+        );
+        // The user's key must never reach the browser.
+        expect(JSON.stringify(response.body)).not.toContain("oc-user-key");
+    });
+
+    it("honors OPENCODE_GO_BASE_URL like the chat adapter", async () => {
+        process.env.OPENCODE_GO_BASE_URL = "http://localhost:4242/v1/";
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValue(
+                new Response(JSON.stringify({ data: [] }), { status: 200 }),
+            );
+        vi.stubGlobal("fetch", fetchMock);
+
+        const response = await request(app).get("/models/opencode-go");
+
+        expect(response.status).toBe(200);
+        expect(fetchMock.mock.calls[0]?.[0]).toBe(
+            "http://localhost:4242/v1/models",
+        );
+    });
+
+    it("reports an upstream failure as a bad gateway", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockResolvedValue(new Response("nope", { status: 401 })),
+        );
+
+        const response = await request(app).get("/models/opencode-go");
+
+        expect(response.status).toBe(502);
+        expect(response.body.detail).toContain("(401)");
+    });
+});

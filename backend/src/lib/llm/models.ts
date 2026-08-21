@@ -55,6 +55,37 @@ export const DEFAULT_MAIN_MODEL = "gemini-3-flash-preview";
 export const DEFAULT_TITLE_MODEL = "gemini-3.5-flash-lite";
 export const DEFAULT_TABULAR_MODEL = "gemini-3-flash-preview";
 
+// OpenCode Go publishes one catalog across three incompatible wire protocols:
+// OpenAI Responses, Anthropic Messages, and OpenAI Chat Completions. The live
+// /models payload does not identify a model's protocol, so keep these lists
+// fail-closed and in sync with https://opencode.ai/docs/go/#endpoints. A new
+// catalog entry is not offered until Mike can actually speak its protocol.
+export const OPENCODE_GO_CHAT_COMPLETIONS_MODEL_IDS: ReadonlySet<string> =
+    new Set([
+        "glm-5",
+        "glm-5.1",
+        "glm-5.2",
+        "glm-5.3",
+        "kimi-k2.6",
+        "kimi-k2.7-code",
+        "kimi-k3",
+        "deepseek-v4-pro",
+        "deepseek-v4-flash",
+        "mimo-v2.5",
+        "mimo-v2.5-pro",
+        "hy3",
+    ]);
+
+export const OPENCODE_GO_MESSAGES_MODEL_IDS: ReadonlySet<string> = new Set([
+    "minimax-m3",
+    "minimax-m2.7",
+    "minimax-m2.5",
+    "qwen3.8-max",
+    "qwen3.7-max",
+    "qwen3.7-plus",
+    "qwen3.6-plus",
+]);
+
 const ALL_MODELS = new Set<string>([
     ...CLAUDE_MAIN_MODELS,
     ...GEMINI_MAIN_MODELS,
@@ -75,6 +106,7 @@ export function providerForModel(model: string): Provider {
     if (model.startsWith("ollama")) return "ollama";
     if (model.startsWith("openrouter/")) return "openrouter";
     if (model.startsWith("vercel/")) return "vercel";
+    if (model.startsWith("opencode-go/")) return "opencode-go";
     if (model.startsWith("claude")) return "claude";
     if (model.startsWith("gemini")) return "gemini";
     if (model.startsWith("gpt-")) return "openai";
@@ -98,7 +130,10 @@ export function resolveModel(
         canonical &&
         (ALL_MODELS.has(canonical) ||
             canonical.startsWith("ollama/") ||
-            /^(?:openrouter|vercel)\/[^\s/]+\/[^\s]+$/.test(canonical))
+            /^(?:openrouter|vercel)\/[^\s/]+\/[^\s]+$/.test(canonical) ||
+            // OpenCode Go's catalog ids are single-segment ("glm-5"), not the
+            // vendor/model pairs OpenRouter and Vercel publish.
+            /^opencode-go\/[^\s]+$/.test(canonical))
     )
         return canonical;
     return fallback;
@@ -110,4 +145,25 @@ export function openRouterModelId(model: string): string {
 
 export function vercelModelId(model: string): string {
     return model.replace(/^vercel\//, "");
+}
+
+export function openCodeGoModelId(model: string): string {
+    return model.replace(/^opencode-go\//, "");
+}
+
+export function isOpenCodeGoChatCompletionsModel(model: string): boolean {
+    return OPENCODE_GO_CHAT_COMPLETIONS_MODEL_IDS.has(
+        openCodeGoModelId(model),
+    );
+}
+
+export function isOpenCodeGoMessagesModel(model: string): boolean {
+    return OPENCODE_GO_MESSAGES_MODEL_IDS.has(openCodeGoModelId(model));
+}
+
+export function isSupportedOpenCodeGoModel(model: string): boolean {
+    return (
+        isOpenCodeGoChatCompletionsModel(model) ||
+        isOpenCodeGoMessagesModel(model)
+    );
 }

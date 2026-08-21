@@ -16,6 +16,10 @@ import {
     resolveModel,
     openRouterModelId,
     vercelModelId,
+    openCodeGoModelId,
+    isOpenCodeGoChatCompletionsModel,
+    isOpenCodeGoMessagesModel,
+    isSupportedOpenCodeGoModel,
 } from "../llm/models";
 
 // ---------------------------------------------------------------------------
@@ -63,6 +67,10 @@ describe("providerForModel", () => {
         expect(providerForModel("vercel/anthropic/claude-sonnet-4.5")).toBe(
             "vercel",
         );
+    });
+
+    it("maps namespaced OpenCode Go ids to the opencode-go provider", () => {
+        expect(providerForModel("opencode-go/glm-5")).toBe("opencode-go");
     });
 
     it("throws on an unknown model id", () => {
@@ -156,6 +164,45 @@ describe("resolveModel", () => {
         expect(resolveModel("vercel/invalid", DEFAULT_MAIN_MODEL)).toBe(
             DEFAULT_MAIN_MODEL,
         );
+    });
+
+    it("accepts OpenCode Go's single-segment model ids", () => {
+        // Unlike the other two routers, OpenCode Go's catalog ids are bare
+        // names — requiring a vendor/model pair would reject all of them.
+        expect(resolveModel("opencode-go/glm-5", DEFAULT_MAIN_MODEL)).toBe(
+            "opencode-go/glm-5",
+        );
+        expect(resolveModel("opencode-go/", DEFAULT_MAIN_MODEL)).toBe(
+            DEFAULT_MAIN_MODEL,
+        );
+        expect(resolveModel("opencode-go/a b", DEFAULT_MAIN_MODEL)).toBe(
+            DEFAULT_MAIN_MODEL,
+        );
+    });
+});
+
+describe("openCodeGoModelId", () => {
+    it("removes only the internal provider namespace", () => {
+        expect(openCodeGoModelId("opencode-go/glm-5")).toBe("glm-5");
+        expect(openCodeGoModelId("glm-5")).toBe("glm-5");
+    });
+});
+
+describe("OpenCode Go protocol classification", () => {
+    it("classifies supported models and rejects unknown protocols", () => {
+        expect(isOpenCodeGoChatCompletionsModel("opencode-go/glm-5.3")).toBe(
+            true,
+        );
+        expect(isOpenCodeGoChatCompletionsModel("kimi-k3")).toBe(true);
+        expect(isOpenCodeGoChatCompletionsModel("qwen3.8-max")).toBe(false);
+        expect(isOpenCodeGoMessagesModel("opencode-go/qwen3.8-max")).toBe(
+            true,
+        );
+        expect(isOpenCodeGoMessagesModel("minimax-m3")).toBe(true);
+        expect(isSupportedOpenCodeGoModel("glm-5.3")).toBe(true);
+        expect(isSupportedOpenCodeGoModel("qwen3.8-max")).toBe(true);
+        expect(isSupportedOpenCodeGoModel("gpt-5.6-luna")).toBe(false);
+        expect(isSupportedOpenCodeGoModel("future-model")).toBe(false);
     });
 });
 

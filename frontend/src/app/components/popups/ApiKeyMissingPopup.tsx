@@ -24,7 +24,7 @@ export function ApiKeyMissingPopup({ open, onClose, provider, message }: Props) 
 
     const handleGoToSettings = () => {
         onClose();
-        router.push("/settings/api-keys");
+        router.push("/settings/byok");
     };
 
     return (

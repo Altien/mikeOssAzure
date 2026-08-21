@@ -8,6 +8,7 @@ import {
     streamVercel,
     completeVercelText,
 } from "./openrouter";
+import { streamOpenCodeGo, completeOpenCodeGoText } from "./openCodeGo";
 import { providerForModel } from "./models";
 import type { StreamChatParams, StreamChatResult, UserApiKeys } from "./types";
 
@@ -22,6 +23,7 @@ export async function streamChatWithTools(
     if (provider === "openai") return streamOpenAI(params);
     if (provider === "openrouter") return streamOpenRouter(params);
     if (provider === "vercel") return streamVercel(params);
+    if (provider === "opencode-go") return streamOpenCodeGo(params);
     if (provider === "ollama") return streamOllama(params);
     return streamGemini(params);
 }
@@ -38,6 +40,7 @@ export async function completeText(params: {
     if (provider === "openai") return completeOpenAIText(params);
     if (provider === "openrouter") return completeOpenRouterText(params);
     if (provider === "vercel") return completeVercelText(params);
+    if (provider === "opencode-go") return completeOpenCodeGoText(params);
     if (provider === "ollama") return completeOllamaText(params);
     return completeGeminiText(params);
 }
