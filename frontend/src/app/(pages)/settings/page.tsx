@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { LogOut, Trash2 } from "lucide-react";
 import { PillButton } from "@/app/components/ui/pill-button";
@@ -36,6 +36,8 @@ export default function SettingsPage() {
     // Dev (OSS-6, auth): see the Email and Danger Zone notes.
     const { authProvider } = useConfig();
     const emailEditable = authProvider === "supabase";
+    const displayNameInputRef = useRef<HTMLInputElement>(null);
+    const organisationInputRef = useRef<HTMLInputElement>(null);
     const [displayName, setDisplayName] = useState("");
     const [isSavingName, setIsSavingName] = useState(false);
     const [saved, setSaved] = useState(false);
@@ -59,10 +61,19 @@ export default function SettingsPage() {
         router.push("/");
     };
 
+    // Each field syncs from the profile independently, and never while the
+    // user is typing in it: saving one field on blur refreshes the whole
+    // profile, and a combined sync here would wipe in-progress text from
+    // the sibling input when that refresh lands.
     useEffect(() => {
+        if (document.activeElement === displayNameInputRef.current) return;
         setDisplayName(profile?.displayName ?? "");
+    }, [profile?.displayName]);
+
+    useEffect(() => {
+        if (document.activeElement === organisationInputRef.current) return;
         setOrganisation(profile?.organisation ?? "");
-    }, [profile?.displayName, profile?.organisation]);
+    }, [profile?.organisation]);
 
     useEffect(() => {
         if (user?.email) {
@@ -217,6 +228,7 @@ export default function SettingsPage() {
                             </div>
                             <div className="space-y-2">
                                 <SettingsTextInput
+                                    ref={displayNameInputRef}
                                     type="text"
                                     value={displayName}
                                     onChange={(e) => {
@@ -249,6 +261,7 @@ export default function SettingsPage() {
                             </div>
                             <div className="space-y-2">
                                 <SettingsTextInput
+                                    ref={organisationInputRef}
                                     type="text"
                                     value={organisation}
                                     onChange={(e) => {
