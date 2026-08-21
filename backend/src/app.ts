@@ -42,6 +42,7 @@ import { handleUnhandledError, protectInternalErrorResponses } from "./middlewar
 // Ceiling for JSON API requests. File uploads use multipart handling and
 // are governed by separate upload limits.
 const JSON_BODY_LIMIT = "50mb";
+const TOOL_RESULT_PATH = "/api/word-chat/tool-result";
 
 function envInt(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -78,13 +79,14 @@ function makeLimiter(options: {
   windowMs: number;
   max: number;
   message?: string;
+  skip?: (req: express.Request) => boolean;
 }) {
   return rateLimit({
     windowMs: options.windowMs,
     max: options.max,
     standardHeaders: true,
     legacyHeaders: false,
-    skip: (req) => req.method === "OPTIONS",
+    skip: (req) => req.method === "OPTIONS" || options.skip?.(req) === true,
     message: {
       detail: options.message ?? "Too many requests. Please try again later.",
     },
@@ -117,6 +119,13 @@ export function buildApp(): express.Express {
   const generalLimiter = makeLimiter({
     windowMs: minutes(envInt("RATE_LIMIT_GENERAL_WINDOW_MINUTES", 15)),
     max: envInt("RATE_LIMIT_GENERAL_MAX", 300),
+    skip: (req) => req.path === TOOL_RESULT_PATH,
+  });
+
+  const toolResultLimiter = makeLimiter({
+    windowMs: minutes(envInt("RATE_LIMIT_TOOL_RESULT_WINDOW_MINUTES", 15)),
+    max: envInt("RATE_LIMIT_TOOL_RESULT_MAX", 2000),
+    message: "Too many tool results. Please try again later.",
   });
 
   const chatLimiter = makeLimiter({
@@ -224,6 +233,9 @@ export function buildApp(): express.Express {
     isStaticAsset(req) ? next() : generalLimiter(req, res, next),
   );
 
+  // Parse this return channel before the general 50 MB parser. Its full
+  // /api path also gives it a separate limiter budget under static hosting.
+  app.post(TOOL_RESULT_PATH, toolResultLimiter, express.json({ limit: "2mb" }));
   app.use(express.json({ limit: JSON_BODY_LIMIT }));
   // /install posts form-encoded bodies (the bootstrap-token paste form).
   // Limit is small — the only field is a token + maybe a few config values.
