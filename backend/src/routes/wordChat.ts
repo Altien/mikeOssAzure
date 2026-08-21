@@ -30,6 +30,7 @@ import {
   submitClientToolResult,
   withoutEmptyAssistantReservations,
 } from "../lib/chat";
+import { enqueueChatTurnAudit } from "../lib/audit";
 import {
   getUserModelSettings,
   persistLastSelectedChatModel,
@@ -1086,13 +1087,12 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
   };
   const updateChatActivity = async (): Promise<void> => {
     if (!persistChat) return;
-    const update =
-      !chatTitle && lastUser?.content
-        ? {
-            title: lastUser.content.slice(0, 120),
-            updated_at: new Date().toISOString(),
-          }
-        : { updated_at: new Date().toISOString() };
+    const nextTitle =
+      !chatTitle && lastUser?.content ? lastUser.content.slice(0, 120) : null;
+    const update = {
+      ...(nextTitle ? { title: nextTitle } : {}),
+      updated_at: new Date().toISOString(),
+    };
     const { error } = await db
       .from("word_chats")
       .update(update)
@@ -1100,7 +1100,12 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
       .eq("user_id", userId);
     if (error) {
       console.error("[word-chat] failed to update chat activity", error);
+      return;
     }
+    // Mirror the title we just persisted back into the local variable so the
+    // audit enqueue below names the chat, the way chat.ts does. Without this
+    // the first turn of every Word chat would audit under a null title.
+    if (nextTitle) chatTitle = nextTitle;
   };
 
   try {
@@ -1165,9 +1170,50 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
       write("data: [DONE]\n\n");
       return;
     }
+    // Word turns used to be audited nowhere, unlike routes/chat.ts and
+    // routes/projectChat.ts. chatId/projectId stay null because a Word chat
+    // lives in word_chats — neither chats.id nor projects.id is a legal value
+    // for those columns — so `surface: "word"` is what makes these rows
+    // identifiable in the history feed. Placement mirrors chat.ts: after the
+    // response is durable, immediately before [DONE].
+    void enqueueChatTurnAudit(
+      db,
+      {
+        userId,
+        userEmail,
+        chatId: null,
+        projectId: null,
+        surface: "word",
+        // Never the raw prompt: storage:"local" is the user asking that this
+        // conversation NOT be kept server-side, so the audit row records that
+        // a Word turn happened and which document it touched, not what was
+        // said. In cloud mode chatTitle is the prompt-derived title the
+        // server already stores, so nothing is lost there.
+        title: chatTitle ?? activeDocumentName ?? null,
+        model: selectedModel,
+      },
+      // Word edits are applied client-side in the document, not persisted as
+      // doc_created/doc_edited artifacts, so there is nothing here for the
+      // artifact fan-out to map — only the chat.message row.
+      [],
+    );
     write("data: [DONE]\n\n");
   } catch (error) {
     if (isAbortError(error)) {
+      void enqueueChatTurnAudit(
+        db,
+        {
+          userId,
+          userEmail,
+          chatId: null,
+          projectId: null,
+          surface: "word",
+          title: chatTitle ?? activeDocumentName ?? null,
+          model: selectedModel,
+          status: "cancelled",
+        },
+        null,
+      );
       if (error instanceof AssistantStreamError) {
         const partial = buildCancelledAssistantMessage({
           fullText: error.fullText,
