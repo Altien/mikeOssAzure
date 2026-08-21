@@ -132,6 +132,8 @@ export function installOfficeMock(seed: OfficeSeed): void {
   const w = window as any;
   const documentStateKey = "__mike_word_e2e_document_v1";
   const officeStorageKey = "__mike_word_e2e_office_storage_v1";
+  const accessTokenKey = "mike_token";
+  const refreshTokenKey = "mike_refresh_token";
 
   const clone = <T>(value: T): T => {
     if (value === undefined) return value;
@@ -233,15 +235,15 @@ export function installOfficeMock(seed: OfficeSeed): void {
     }
   } else {
     storedOfficeValues = {};
-    if (seed.token != null) storedOfficeValues.mike_token = seed.token;
-    if (seed.refreshToken != null) {
-      storedOfficeValues.mike_refresh_token = seed.refreshToken;
-    }
-    sessionStorage.setItem(
-      officeStorageKey,
-      JSON.stringify(storedOfficeValues),
-    );
   }
+
+  // OfficeRuntime storage is persisted across task-pane reloads by this mock,
+  // but auth credentials must never be copied into browser storage. Seeded and
+  // newly issued tokens stay in memory for the lifetime of the current page.
+  delete storedOfficeValues[accessTokenKey];
+  delete storedOfficeValues[refreshTokenKey];
+  let accessTokenValue = seed.token ?? null;
+  let refreshTokenValue = seed.refreshToken ?? null;
 
   const persistOfficeValues = (): void => {
     sessionStorage.setItem(
@@ -251,14 +253,33 @@ export function installOfficeMock(seed: OfficeSeed): void {
   };
   w.OfficeRuntime = {
     storage: {
-      getItem: (key: string) =>
-        Promise.resolve(storedOfficeValues[key] ?? null),
+      getItem: (key: string) => {
+        if (key === accessTokenKey) return Promise.resolve(accessTokenValue);
+        if (key === refreshTokenKey) return Promise.resolve(refreshTokenValue);
+        return Promise.resolve(storedOfficeValues[key] ?? null);
+      },
       setItem: (key: string, value: string) => {
+        if (key === accessTokenKey) {
+          accessTokenValue = value;
+          return Promise.resolve();
+        }
+        if (key === refreshTokenKey) {
+          refreshTokenValue = value;
+          return Promise.resolve();
+        }
         storedOfficeValues[key] = value;
         persistOfficeValues();
         return Promise.resolve();
       },
       removeItem: (key: string) => {
+        if (key === accessTokenKey) {
+          accessTokenValue = null;
+          return Promise.resolve();
+        }
+        if (key === refreshTokenKey) {
+          refreshTokenValue = null;
+          return Promise.resolve();
+        }
         delete storedOfficeValues[key];
         persistOfficeValues();
         return Promise.resolve();
