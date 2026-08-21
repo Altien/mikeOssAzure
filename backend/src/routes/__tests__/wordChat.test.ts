@@ -319,3 +319,43 @@ describe("Word chat history routes", () => {
  process.env.AUTH_PROVIDER = "entra"; resetDbState(); dbState.document.error = {message: "throw"};
  const res = await request(makeApp()).get(`/api/word-chat?document_id=${DOCUMENT_ID}`).set(...AUTH); expect(res.status).toBe(500);
  });
+
+describe("POST /api/word-chat/tool-result", () => {
+  const TOOL_CALL_ID = "7f0e19cf-9be0-4b53-a1c4-2f2ffb92e611";
+  beforeEach(() => { process.env.AUTH_PROVIDER = "entra"; resetDbState(); });
+
+  it("rejects malformed IDs and gives the same 404 for unknown calls", async () => {
+    const app = makeApp();
+    const malformed = await request(app).post("/api/word-chat/tool-result")
+      .set(...AUTH).send({ tool_call_id: "not-a-uuid", result: {} });
+    expect(malformed.status).toBe(400);
+    expect(malformed.body.detail).toBe("tool_call_id must be a UUID");
+    const missing = await request(app).post("/api/word-chat/tool-result")
+      .set(...AUTH).send({ tool_call_id: TOOL_CALL_ID, result: {} });
+    expect(missing.status).toBe(404);
+    expect(missing.body.detail).toBe("Unknown or expired tool call");
+  });
+
+  it("delivers once to the authenticated owner then expires", async () => {
+    const { waitForClientToolResult } = await import("../../lib/chat/tools/wordClientTools");
+    const pending = waitForClientToolResult({ callId: TOOL_CALL_ID, userId: "u1" });
+    const app = makeApp();
+    const first = await request(app).post("/api/word-chat/tool-result").set(...AUTH)
+      .send({ tool_call_id: TOOL_CALL_ID, result: { edits: [{ index: 0, status: "proposed" }] } });
+    expect(first.status).toBe(204);
+    await expect(pending).resolves.toEqual({ edits: [{ index: 0, status: "proposed" }] });
+    const second = await request(app).post("/api/word-chat/tool-result").set(...AUTH)
+      .send({ tool_call_id: TOOL_CALL_ID, result: {} });
+    expect(second.status).toBe(404);
+  });
+
+  it("does not deliver another user's pending result", async () => {
+    const { waitForClientToolResult, submitClientToolResult } = await import("../../lib/chat/tools/wordClientTools");
+    const pending = waitForClientToolResult({ callId: TOOL_CALL_ID, userId: "someone-else" });
+    const response = await request(makeApp()).post("/api/word-chat/tool-result").set(...AUTH)
+      .send({ tool_call_id: TOOL_CALL_ID, result: {} });
+    expect(response.status).toBe(404);
+    submitClientToolResult(TOOL_CALL_ID, "someone-else", {});
+    await pending;
+  });
+});
