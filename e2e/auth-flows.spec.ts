@@ -10,6 +10,7 @@
  * config (e2e/.auth/user.json), so auth.setup.ts must run first.
  */
 import { test, expect } from "@playwright/test";
+import { completeOnboardingIfRequired } from "./onboarding";
 
 /* ─── Unauthenticated tests ───────────────────────────────────────────────── */
 
@@ -131,7 +132,7 @@ test.describe("logout (isolated user)", () => {
         await page.fill("#password", logoutPassword);
         await page.click('button[type="submit"]');
 
-        await page.waitForURL(/\/assistant/, { timeout: 15_000 });
+        await completeOnboardingIfRequired(page);
         await page.waitForLoadState("networkidle");
 
     /* The AppSidebar renders a user-profile toggle button at the very bottom

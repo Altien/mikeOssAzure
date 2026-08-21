@@ -9,7 +9,7 @@
  *  - New accounts receive editable default workflows, including "Proofread"
  *  - WorkflowPromptEditor.tsx: editorProps class = "workflow-editor-content" on the ProseMirror div
  *  - WorkflowDetailPage save status: text "Saving…" → "Saved" rendered in a plain <span>
- *  - settings/page.tsx: h2 "Profile"; Input placeholder "Enter your name"; Button "Save" / "Saved"
+ *  - settings/page.tsx: h2 "Profile"; display name autosaves on blur
  *  - settings/layout.tsx: h1 "Settings" in layout header
  *  - settings/models/page.tsx: h2 "API Keys"; label texts include "Anthropic (Claude) API Key" etc.
  */
@@ -240,12 +240,9 @@ test.describe("Settings", () => {
 
         const newName = `E2E Test User ${Date.now()}`;
 
-        // The Save button is the sibling of the input in the same "flex gap-2" row.
-        // Scope it to that row so it is the Display-Name button, not the Organisation one.
-        // TODO: verify selector if the Profile section layout changes
-        const saveBtn = nameInput
-            .locator("xpath=parent::div")
-            .getByRole("button", { name: /save/i });
+        const nameStatus = nameInput
+            .locator("xpath=../..")
+            .locator('[aria-live="polite"]');
 
         // Robustly save the new name and verify it persists. This retry exists
         // for a real client-side hazard, independent of infrastructure:
@@ -253,14 +250,10 @@ test.describe("Settings", () => {
         //  Async hydration race. The settings page hydrates this input from a profile
         //  fetch (UserProfileContext → `if (profile?.displayName) setDisplayName(...)`).
         //  Under cold-start the auth state can settle late and trigger a SECOND profile
-        //  fetch that overwrites the field AFTER we type — so the stale stored name is
-        //  what handleSaveDisplayName persists (observed: a *previous* run's name was
-        //  saved). We therefore (re)fill immediately before saving and re-verify the
-        //  persisted value; if a late overwrite slipped a stale value in, the persist
-        //  check fails and the block re-runs (auth has settled by then, so it converges).
-        //
-        // On success the label flips Save → "Saved" for ~2 s (Display-Name button only; the
-        // Organisation button stays "Save").
+        //  fetch that overwrites the field AFTER we type. We therefore (re)fill
+        //  immediately before blurring and re-verify the persisted value; if a
+        //  late overwrite slipped a stale value in, the persist check fails and
+        //  the block re-runs after auth has settled.
         //
         // REGRESSION: a broken profile PATCH / save handler never reaches "Saved" and never
         // persists newName, so every attempt fails and toPass exhausts → the test fails.
@@ -286,9 +279,8 @@ test.describe("Settings", () => {
             await nameInput.fill(newName);
             await expect(nameInput).toHaveValue(newName, { timeout: 2_000 });
 
-            await expect(saveBtn).toBeEnabled({ timeout: 5_000 });
-            await saveBtn.click();
-            await expect(saveBtn).toHaveText(/saved/i, { timeout: 8_000 });
+            await nameInput.press("Tab");
+            await expect(nameStatus).toHaveText("Saved", { timeout: 8_000 });
 
             // Navigate away and back; the freshly fetched profile must show newName.
             await page.goto("/assistant");

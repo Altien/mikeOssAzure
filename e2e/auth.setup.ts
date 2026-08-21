@@ -1,6 +1,7 @@
 import { test as setup, expect } from "@playwright/test";
 import path from "path";
 import fs from "fs";
+import { completeOnboardingIfRequired } from "./onboarding";
 
 const authFile = path.join(__dirname, ".auth/user.json");
 
@@ -105,29 +106,7 @@ setup("authenticate", async ({ page }) => {
     /* New fixture users must complete the onboarding lifecycle before their
        shared authenticated state can be used by the rest of the suite. On
        later runs the already-onboarded user goes directly to /assistant. */
-    await page.waitForURL(/\/(assistant|onboarding\/profile)/, {
-        timeout: 15_000,
-    });
-    if (new URL(page.url()).pathname === "/onboarding/profile") {
-        const continueButton = page.getByRole("button", { name: "Continue" });
-        const assistantInput = page.getByRole("combobox", {
-            name: "How can I help?",
-        });
-        // A legacy-exempt profile can briefly visit /onboarding/profile while
-        // the profile request is loading, then redirect to /assistant. Wait
-        // for either stable outcome instead of clicking based on the URL alone.
-        await expect(continueButton.or(assistantInput)).toBeVisible({
-            timeout: 15_000,
-        });
-        if (await continueButton.isVisible()) {
-            await continueButton.click();
-            await page.waitForURL(/\/onboarding\/practice/, {
-                timeout: 15_000,
-            });
-            await page.getByRole("button", { name: "Skip" }).click();
-        }
-    }
-    await page.waitForURL(/\/assistant/, { timeout: 15_000 });
+    await completeOnboardingIfRequired(page);
 
     /* Save the authenticated session for all subsequent tests */
     await page.context().storageState({ path: authFile });
