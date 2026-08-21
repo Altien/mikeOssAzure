@@ -16,25 +16,20 @@ function setStatus(message: string): void {
 }
 
 function send(message: GoogleOAuthDialogMessage): boolean {
-  const payload = JSON.stringify(message);
+  // No legacy (option-less) retry on failure: dropping targetOrigin would
+  // weaken the receiver's origin check (session.ts skips it when the host
+  // omits event.origin), and every host this add-in supports has the
+  // DialogOrigin 1.1 set. A visible failure beats a weaker handoff.
   try {
-    Office.context.ui.messageParent(payload, {
+    Office.context.ui.messageParent(JSON.stringify(message), {
       targetOrigin: window.location.origin,
     });
     return true;
   } catch {
-    // Hosts without the DialogOrigin 1.1 requirement set reject the
-    // messageOptions overload. The legacy form is same-domain-only, which
-    // is the same restriction we were expressing explicitly above.
-    try {
-      Office.context.ui.messageParent(payload);
-      return true;
-    } catch {
-      setStatus(
-        "Could not hand the session back to Word. Close this window and try signing in again."
-      );
-      return false;
-    }
+    setStatus(
+      "Could not hand the session back to Word. Close this window and try signing in again."
+    );
+    return false;
   }
 }
 
@@ -122,16 +117,11 @@ async function runGoogleOAuth(): Promise<void> {
       accessToken: data.session.access_token,
       refreshToken: data.session.refresh_token,
     };
-    // Drop the temporary client's persisted copy of the session before
-    // handing the tokens to the task pane. scope "local" clears only this
-    // window's storage and refresh timer — it does not revoke the session
-    // the task pane is about to adopt.
-    try {
-      await supabase.auth.signOut({ scope: "local" });
-    } catch {
-      // Cleanup is best-effort; clearTemporaryAuthStorage below removes
-      // the persisted keys either way.
-    }
+    // Deliberately NO supabase.auth.signOut() here: even scope "local"
+    // POSTs /logout with the session JWT, and GoTrue revokes that session's
+    // refresh token server-side — the very token being handed to the task
+    // pane below. Removing the persisted storage keys (next line) plus
+    // autoRefreshToken:false is the complete local cleanup.
     clearTemporaryAuthStorage();
     if (send(message)) {
       setStatus("Signed in. You can return to Word.");
