@@ -38,6 +38,7 @@ const PROFILE_FIXTURE = {
     tabularModel: "gemini-3-flash-preview",
     mfaOnLogin: false,
     legalResearchUs: true,
+    darkMode: false,
     apiKeyStatus: {
         claude: false,
         gemini: true,
@@ -134,6 +135,8 @@ function Probe() {
             </button>
             <button onClick={() => void ctx.reloadProfile()}>reload-profile</button>
             <button onClick={() => void ctx.updatePersonalisation({ professionalTitle: "Partner" })}>set-personalisation</button>
+            <button onClick={() => void ctx.updateDarkMode(true)}>dark-on</button>
+            <button onClick={() => void ctx.updateDarkMode(false)}>dark-off</button>
         </div>
     );
 }
@@ -398,6 +401,28 @@ describe("UserProfileContext: reloadProfile", () => {
 });
 
 describe("UserProfileContext: account and request fences", () => {
+    it("saves dark mode and rolls back a rejected change", async () => {
+        authedFor(TEST_USER);
+        const bodies: unknown[] = [];
+        server.use(
+            http.get("*/api/user/profile", () => HttpResponse.json(PROFILE_FIXTURE)),
+            http.patch("*/api/user/profile", async ({ request }) => {
+                const body = await request.json() as { darkMode: boolean };
+                bodies.push(body);
+                return body.darkMode
+                    ? HttpResponse.json({ ...PROFILE_FIXTURE, darkMode: true })
+                    : HttpResponse.json({ error: "failed" }, { status: 500 });
+            }),
+        );
+        renderProbe();
+        await waitReady();
+        fireEvent.click(screen.getByText("dark-on"));
+        await waitFor(() => expect(readProfile().darkMode).toBe(true));
+        await waitFor(() => expect(bodies).toEqual([{ darkMode: true }]));
+        fireEvent.click(screen.getByText("dark-off"));
+        await waitFor(() => expect(bodies).toHaveLength(2));
+        await waitFor(() => expect(readProfile().darkMode).toBe(true));
+    });
     it("ignores an old account fetch and a save response after identity changes", async () => {
         let releaseOldFetch!: (response: Response) => void;
         let releaseSave!: (response: Response) => void;

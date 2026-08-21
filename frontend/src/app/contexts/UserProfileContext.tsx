@@ -24,6 +24,7 @@ import {
     updateUserMfaOnLogin,
     updateUserProfile,
 } from "@/app/lib/mikeApi";
+import { applyDarkMode } from "@/app/lib/theme";
 
 interface UserProfile {
     displayName: string | null;
@@ -47,6 +48,7 @@ interface UserProfile {
     openRouterModels: string[];
     vercelModels: string[];
     openCodeGoModels: string[];
+    darkMode: boolean;
     apiKeys: ApiKeyState;
 }
 
@@ -82,6 +84,7 @@ interface UserProfileContextType {
     updateOpenRouterModels: (models: string[]) => Promise<boolean>;
     updateVercelModels: (models: string[]) => Promise<boolean>;
     updateOpenCodeGoModels: (models: string[]) => Promise<boolean>;
+    updateDarkMode: (enabled: boolean) => Promise<void>;
     updateApiKey: (
         provider: ApiKeyProvider,
         value: string | null,
@@ -146,6 +149,7 @@ function toProfile(data: ApiUserProfile): UserProfile {
         onboardingVersion: profile.onboardingVersion ?? null,
         onboardingComplete: profile.onboardingComplete !== false,
         passwordSet: profile.passwordSet === true ? true : null,
+        darkMode: profile.darkMode === true,
         mfaOnLogin: profile.mfaOnLogin === true,
         openRouterModels: Array.isArray(profile.openRouterModels)
             ? profile.openRouterModels
@@ -171,11 +175,13 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     const authEpochRef = useRef(0);
     const writeEpochRef = useRef(0);
     const loadEpochRef = useRef(0);
+    const darkModeRequestRef = useRef(0);
     if (identityRef.current !== identity) {
         identityRef.current = identity;
         authEpochRef.current++;
         writeEpochRef.current++;
         loadEpochRef.current++;
+        darkModeRequestRef.current++;
     }
     const accountGuard = useCallback((owner: string) => {
         const epoch = authEpochRef.current;
@@ -236,6 +242,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 openRouterModels: [],
                 vercelModels: [],
                 openCodeGoModels: [],
+                darkMode: false,
                 apiKeys: emptyApiKeys(),
             });
         } finally {
@@ -253,6 +260,10 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             setLoading(false);
         }
     }, [isAuthenticated, userId, loadProfile]);
+
+    useEffect(() => {
+        applyDarkMode(profile?.darkMode === true);
+    }, [profile?.darkMode]);
 
     const updateDisplayName = useCallback(
         async (displayName: string): Promise<boolean> => {
@@ -467,6 +478,29 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         [user],
     );
 
+    const updateDarkMode = useCallback(
+        async (enabled: boolean): Promise<void> => {
+            if (!user) throw new Error("Sign in to update Dark Mode.");
+            const current = accountGuard(user.id);
+            if (!current()) throw new Error("Sign in to update Dark Mode.");
+            const request = ++darkModeRequestRef.current;
+            const previous = profile?.darkMode === true;
+            setProfile((prev) => prev ? { ...prev, darkMode: enabled } : null);
+            applyDarkMode(enabled);
+            try {
+                await updateUserProfile({ darkMode: enabled }, current);
+                if (!current() || request !== darkModeRequestRef.current) return;
+                setProfile((prev) => prev ? { ...prev, darkMode: enabled } : null);
+            } catch (error) {
+                if (!current() || request !== darkModeRequestRef.current) return;
+                setProfile((prev) => prev ? { ...prev, darkMode: previous } : null);
+                applyDarkMode(previous);
+                throw error;
+            }
+        },
+        [user, profile?.darkMode, accountGuard],
+    );
+
     const updateApiKey = useCallback(
         async (
             provider: ApiKeyProvider,
@@ -536,6 +570,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 updateOpenRouterModels,
                 updateVercelModels,
                 updateOpenCodeGoModels,
+                updateDarkMode,
                 updateApiKey,
                 reloadProfile,
                 incrementMessageCredits,

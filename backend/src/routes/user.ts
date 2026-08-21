@@ -171,6 +171,8 @@ userRouter.get("/lookup", requireAuth, async (req, res) => {
 const MONTHLY_CREDIT_LIMIT = 999999;
 
 const PROFILE_SELECT =
+  "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us, quick_actions_visible, dark_mode";
+const PROFILE_SELECT_NO_DARK_MODE =
   "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us, quick_actions_visible";
 const PROFILE_SELECT_NO_PASSWORD =
   "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us, quick_actions_visible";
@@ -206,6 +208,7 @@ type UserProfileRow = {
   fast_model: string | null;
   legal_research_us: boolean | null;
   quick_actions_visible: boolean | null;
+  dark_mode?: boolean | null;
 };
 
 type ProfileApiKeyStatus = Record<OrganisationCredentialProvider, boolean> & {
@@ -338,6 +341,7 @@ function serializeProfile(
     // 1fa0554); defaults to enabled.
     legalResearchUs: row.legal_research_us !== false,
     quickActionsVisible: row.quick_actions_visible !== false,
+    darkMode: row.dark_mode === true,
     apiKeyStatus,
     ...Object.fromEntries(ROUTER_SLUGS.map(slug => [ROUTER_PROFILE_FIELDS[slug], routerModels[slug]])),
   };
@@ -355,6 +359,11 @@ async function loadProfile(
       const current = await db.from("user_profiles").select(PROFILE_SELECT).eq("user_id", userId).single();
       if (!current.error) return current;
       let cascadeError = current.error;
+      if (isMissingProfileColumn(cascadeError, "dark_mode")) {
+        const noDark = await db.from("user_profiles").select(PROFILE_SELECT_NO_DARK_MODE).eq("user_id", userId).single();
+        if (!noDark.error) return noDark;
+        cascadeError = noDark.error;
+      }
       if (isMissingProfileColumn(cascadeError, "password_set_at")) {
         const noPassword = await db.from("user_profiles").select(PROFILE_SELECT_NO_PASSWORD).eq("user_id", userId).single();
         if (!noPassword.error) return noPassword;
@@ -422,6 +431,7 @@ type ProfileUpdate = {
   tabular_model?: string;
   legal_research_us?: boolean;
   quick_actions_visible?: boolean;
+  dark_mode?: boolean;
   updated_at: string;
 };
 
@@ -463,6 +473,7 @@ function validateProfilePayload(
     "tabularModel",
     "legalResearchUs",
     "quickActionsVisible",
+    "darkMode",
     ...ROUTER_SLUGS.map(slug => ROUTER_PROFILE_FIELDS[slug]),
   ]);
   const invalidField = Object.keys(raw).find((key) => !allowedFields.has(key));
@@ -543,6 +554,12 @@ function validateProfilePayload(
       return { ok: false, detail: "quickActionsVisible must be a boolean" };
     }
     update.quick_actions_visible = raw.quickActionsVisible;
+  }
+  if ("darkMode" in raw) {
+    if (typeof raw.darkMode !== "boolean") {
+      return { ok: false, detail: "darkMode must be a boolean" };
+    }
+    update.dark_mode = raw.darkMode;
   }
 
   const routerModels: Partial<Record<RouterSlug, string[]>> = {};
