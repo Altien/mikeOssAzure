@@ -59,6 +59,15 @@
       ],
       "@mike/model-toggle-ui": [
         "../frontend/src/shared/ui/ModelToggleUI.tsx"
+      ],
+      "@mike/google-icon-ui": [
+        "../frontend/src/shared/ui/GoogleIconUI.tsx"
+      ],
+      "@mike/auth-styles-ui": [
+        "../frontend/src/shared/ui/AuthStylesUI.ts"
+      ],
+      "@mike/auth-divider-ui": [
+        "../frontend/src/shared/ui/AuthDividerUI.tsx"
       ]
     },
     "jsx": "react-jsx",

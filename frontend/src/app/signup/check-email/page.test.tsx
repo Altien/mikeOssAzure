@@ -37,7 +37,7 @@ describe("SignupCheckEmailPage", () => {
         ).toHaveAttribute("href", "/login");
     });
 
-    it("redirects authenticated users to the assistant", async () => {
+    it("redirects authenticated users to onboarding", async () => {
         useAuth.mockReturnValue({
             isAuthenticated: true,
             authLoading: false,
@@ -46,7 +46,7 @@ describe("SignupCheckEmailPage", () => {
         render(<SignupCheckEmailPage />);
 
         await waitFor(() => {
-            expect(replace).toHaveBeenCalledWith("/assistant");
+            expect(replace).toHaveBeenCalledWith("/onboarding/profile");
         });
         expect(
             screen.queryByRole("heading", { name: "Check your email" }),

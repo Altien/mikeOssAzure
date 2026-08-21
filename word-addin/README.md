@@ -45,6 +45,16 @@ FORCE=1 bash word-addin/scripts/dev.sh
 `--setup-only` prepares the environment without launching Word. `FORCE=1`
 launches even when the backend health check fails.
 
+To run the development server without opening a new Word document, set the
+following in `word-addin/.env` (persistent) or before a single command:
+
+```bash
+WORD_ADDIN_SIDELOAD=0 bun dev
+```
+
+The same switch applies to `npm run dev`, `npm start`, and `scripts/dev.sh`.
+Set it back to `1` when you want automatic sideloading.
+
 ## What it supports
 
 - Chat about the open Word document with streamed responses

@@ -112,6 +112,7 @@ module.exports = async (_env, options) => {
       taskpane: "./src/taskpane/index.tsx",
       commands: "./src/commands/commands.ts",
       "auth-dialog": "./src/auth-dialog/auth-dialog.ts",
+      "oauth-dialog": "./src/oauth-dialog/index.ts",
     },
     output: {
       path: path.resolve(__dirname, "dist"),
@@ -153,6 +154,9 @@ module.exports = async (_env, options) => {
         "@mike/dropdown-ui": frontendSharedUi("DropdownUI.tsx"),
         "@mike/citation-pill-ui": frontendSharedUi("CitationPillUI.tsx"),
         "@mike/model-toggle-ui": frontendSharedUi("ModelToggleUI.tsx"),
+        "@mike/google-icon-ui": frontendSharedUi("GoogleIconUI.tsx"),
+        "@mike/auth-styles-ui": frontendSharedUi("AuthStylesUI.ts"),
+        "@mike/auth-divider-ui": frontendSharedUi("AuthDividerUI.tsx"),
       },
     },
     module: {
@@ -195,6 +199,11 @@ module.exports = async (_env, options) => {
         template: "./src/auth-dialog/auth-dialog.html",
         chunks: ["auth-dialog"],
       }),
+      new HtmlWebpackPlugin({
+        filename: "oauth-dialog.html",
+        template: "./src/oauth-dialog/index.html",
+        chunks: ["oauth-dialog"],
+      }),
       // Expose env vars to the bundle so TypeScript process.env calls compile
       new webpack.EnvironmentPlugin({
         // Backend ORIGIN (no /api suffix) — same meaning as the web
@@ -202,6 +211,10 @@ module.exports = async (_env, options) => {
         // Upstream divergence (sync-log: 148635e3): same-origin /api and
         // /config retain the Entra runtime configuration boundary.
         REACT_APP_API_BASE_URL: isDev ? "" : undefined,
+        // Public Supabase values are only used when runtime /config selects
+        // the Supabase provider. Entra/local paths never construct this client.
+        REACT_APP_SUPABASE_URL: "",
+        REACT_APP_SUPABASE_ANON_KEY: "",
         REACT_APP_DEFAULT_MODEL: "gemini-3-flash-preview",
         // The Mike web app origin — the task pane links here (e.g. the
         // account/api-keys page); it never fetches from it.

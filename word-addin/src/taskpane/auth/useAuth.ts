@@ -3,6 +3,7 @@ import {
   getSessionState,
   initialize,
   signIn,
+  signInWithGoogle,
   signOut,
   subscribe,
   type AuthMode,
@@ -21,7 +22,8 @@ interface AuthState {
   /** Backend auth mode from GET /config; null until known. */
   mode: AuthMode | null;
   /** Entra: Microsoft sign-in (no args). Local dev mode: pass the email. */
-  login: (email?: string) => Promise<void>;
+  login: (email?: string, password?: string) => Promise<void>;
+  loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -36,9 +38,10 @@ export function useAuth(): AuthState {
     return unsubscribe;
   }, []);
 
-  const login = useCallback((email?: string) => signIn(email), []);
+  const login = useCallback((email?: string, password?: string) => signIn(email, password), []);
+  const loginWithGoogle = useCallback(() => signInWithGoogle(), []);
   const logout = useCallback(() => signOut(), []);
 
   const { token, loading, error, mode } = getSessionState();
-  return { token, loading, error, mode, login, logout };
+  return { token, loading, error, mode, login, loginWithGoogle, logout };
 }

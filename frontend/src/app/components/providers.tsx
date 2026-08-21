@@ -6,6 +6,7 @@ import { AuthProvider } from "@/app/contexts/AuthContext";
 import { UserProfileProvider } from "@/app/contexts/UserProfileContext";
 import { FullScreenLoader } from "@/app/components/shared/FullScreenLoader";
 import { AoaiDeploymentsProvider } from "@/altien/models/aoaiDeployments";
+import { OnboardingGate } from "@/app/components/auth/OnboardingGate";
 
 // Upstream divergence (OSS-6, auth): dev wraps the tree in ConfigProvider
 // (runtime GET /config decides entra | local | supabase before AuthProvider
@@ -20,7 +21,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
                 <UserProfileProvider>
                     <AoaiDeploymentsProvider>
                         <Suspense fallback={<FullScreenLoader />}>
-                            {children}
+                            <OnboardingGate>{children}</OnboardingGate>
                         </Suspense>
                     </AoaiDeploymentsProvider>
                 </UserProfileProvider>

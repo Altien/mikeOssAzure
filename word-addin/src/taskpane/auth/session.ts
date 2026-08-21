@@ -22,14 +22,19 @@
 import { EntraAuth, entraConfigProblem, type EntraToken } from "./entra";
 import { API_BASE_URL, API_ORIGIN, loadRuntimeConfig } from "./runtimeConfig";
 import { describeNetworkFailure } from "../lib/networkError";
+import { parseGoogleOAuthDialogMessage } from "./oauthProtocol";
 
-export type AuthMode = "entra" | "local" | "unsupported";
+export type AuthMode = "entra" | "local" | "supabase" | "unsupported";
 
 const LOCAL_TOKEN_KEY = "mike_local_token";
 // Set by an explicit Sign out so NAA / MSAL silent SSO doesn't immediately
 // sign the pane back in on the next load; cleared by the next interactive
 // sign-in.
 const SIGNED_OUT_KEY = "mike_signed_out";
+const SUPABASE_ACCESS_KEY = "mike_word_supabase_access";
+const SUPABASE_REFRESH_KEY = "mike_word_supabase_refresh";
+const SUPABASE_URL = process.env.REACT_APP_SUPABASE_URL ?? "";
+const SUPABASE_ANON_KEY = process.env.REACT_APP_SUPABASE_ANON_KEY ?? "";
 
 // Refresh a little BEFORE the token's expiry so an in-flight request can't
 // race the boundary (covers modest client/server clock skew too).
@@ -83,6 +88,7 @@ let _sessionGeneration = 0;
 let _storageOperation: Promise<void> = Promise.resolve();
 let _mode: AuthMode | null = null;
 let _entra: EntraAuth | null = null;
+let _supabaseRefreshToken: string | null = null;
 let _token: string | null = null;
 let _expiresOn: number | null = null;
 let _loading = true;
@@ -153,6 +159,22 @@ async function prepare(): Promise<void> {
     return;
   }
 
+  if (cfg.authProvider === "supabase") {
+    _mode = "supabase";
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+      _setupError = "Supabase sign-in is not configured for this add-in.";
+      return;
+    }
+    try {
+      const access = window.sessionStorage.getItem(SUPABASE_ACCESS_KEY);
+      _supabaseRefreshToken = window.sessionStorage.getItem(SUPABASE_REFRESH_KEY);
+      if (generation === _sessionGeneration && access) {
+        setToken({ accessToken: access, expiresOn: jwtExpiresOn(access) });
+      }
+    } catch { /* Storage may be disabled; interactive login remains available. */ }
+    return;
+  }
+
   if (cfg.authProvider !== "entra") {
     // Upstream divergence (sync-log: b8bd5b0c): NOT SUPPORTED — Supabase
     // sign-in was removed from the add-in; dev deployments are Entra.
@@ -216,6 +238,9 @@ export async function getFreshAccessToken(): Promise<string | null> {
       return renewed.accessToken;
     }
   }
+  if (_mode === "supabase" && _supabaseRefreshToken && (!_token || isExpiring())) {
+    return refreshSession();
+  }
   return _token;
 }
 
@@ -245,6 +270,26 @@ async function doRefresh(): Promise<string | null> {
       setToken(renewed);
       return renewed.accessToken;
     }
+  }
+  if (_mode === "supabase" && _supabaseRefreshToken) {
+    const refreshToken = _supabaseRefreshToken;
+    let response: Response;
+    try {
+      response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+    } catch { return null; }
+    if (generation !== _sessionGeneration || refreshToken !== _supabaseRefreshToken) return null;
+    if (response.ok) {
+      const data = await response.json() as { access_token?: string; refresh_token?: string };
+      if (data.access_token && data.refresh_token) {
+        await writeSession(data.access_token, data.refresh_token, generation);
+        return data.access_token;
+      }
+    }
+    clearSupabaseSession();
   }
   if (_mode === "local") await storageSet(LOCAL_TOKEN_KEY, null);
   if (generation === _sessionGeneration) setToken(null);
@@ -279,11 +324,53 @@ async function signInLocal(email: string, generation: number): Promise<void> {
   setToken({ accessToken: data.token, expiresOn: null });
 }
 
+function jwtExpiresOn(token: string): number | null {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return null;
+    const decoded = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/"))) as { exp?: unknown };
+    return typeof decoded.exp === "number" ? decoded.exp * 1000 : null;
+  } catch { return null; }
+}
+
+async function writeSession(access: string, refresh: string, generation: number): Promise<boolean> {
+  if (generation !== _sessionGeneration) return false;
+  _supabaseRefreshToken = refresh;
+  try {
+    window.sessionStorage.setItem(SUPABASE_ACCESS_KEY, access);
+    window.sessionStorage.setItem(SUPABASE_REFRESH_KEY, refresh);
+  } catch { /* In-memory session still applies. */ }
+  if (generation !== _sessionGeneration) return false;
+  setToken({ accessToken: access, expiresOn: jwtExpiresOn(access) });
+  return true;
+}
+
+function clearSupabaseSession(): void {
+  _supabaseRefreshToken = null;
+  try {
+    window.sessionStorage.removeItem(SUPABASE_ACCESS_KEY);
+    window.sessionStorage.removeItem(SUPABASE_REFRESH_KEY);
+  } catch { /* Storage may be disabled. */ }
+  setToken(null);
+}
+
+async function signInSupabasePassword(email: string, password: string, generation: number): Promise<void> {
+  const response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!response.ok) throw new Error("Unable to sign in with those credentials.");
+  const data = await response.json() as { access_token?: string; refresh_token?: string };
+  if (!data.access_token || !data.refresh_token) throw new Error("Sign-in returned an incomplete session.");
+  await writeSession(data.access_token, data.refresh_token, generation);
+}
+
 /**
  * Interactive sign-in. Entra: Microsoft sign-in (NAA popup or Office dialog),
  * must run from a user gesture. Local: `email` is required.
  */
-export async function signIn(email?: string): Promise<void> {
+export async function signIn(email?: string, password?: string): Promise<void> {
   const generation = ++_sessionGeneration;
   _loading = true;
   _error = null;
@@ -303,6 +390,9 @@ export async function signIn(email?: string): Promise<void> {
     } else if (_mode === "local") {
       if (!email) throw new Error("Enter an email address");
       await signInLocal(email, generation);
+    } else if (_mode === "supabase") {
+      if (!email || !password) throw new Error("Enter an email and password");
+      await signInSupabasePassword(email, password, generation);
     }
   } catch (e) {
     if (generation !== _sessionGeneration) return;
@@ -314,11 +404,139 @@ export async function signIn(email?: string): Promise<void> {
   }
 }
 
+function createOAuthRequestId(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(
+    ""
+  );
+}
+
+/**
+ * Authenticate in an Office Dialog. The dialog starts and finishes on the
+ * add-in's own origin, while Google and Supabase occupy the intermediate
+ * navigation steps. Only a validated Supabase session is accepted here.
+ */
+export async function signInWithGoogle(): Promise<void> {
+  await ensureReady();
+  if (_mode !== "supabase" || !SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    _error = "Google sign-in is available only with Supabase authentication.";
+    broadcast();
+    return;
+  }
+  const generation = ++_sessionGeneration;
+  const requestId = createOAuthRequestId();
+  const expectedOrigin = window.location.origin;
+  const dialogUrl = new URL("/oauth-dialog.html", expectedOrigin);
+  dialogUrl.searchParams.set("requestId", requestId);
+
+  _loading = true;
+  _error = null;
+  broadcast();
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+
+    const fail = (message: string): void => {
+      if (settled) return;
+      settled = true;
+      if (generation === _sessionGeneration) {
+        _loading = false;
+        _error = message;
+        broadcast();
+      }
+      resolve();
+    };
+
+    try {
+      Office.context.ui.displayDialogAsync(
+        dialogUrl.toString(),
+        { height: 60, width: 45, displayInIframe: false },
+        (result) => {
+          if (result.status !== Office.AsyncResultStatus.Succeeded) {
+            fail(result.error?.message ?? "Unable to open Google sign-in.");
+            return;
+          }
+
+          const dialog = result.value;
+          const close = (): void => {
+            try {
+              dialog.close();
+            } catch {
+              // The host may already have closed the dialog.
+            }
+          };
+
+          dialog.addEventHandler(
+            Office.EventType.DialogMessageReceived,
+            (event) => {
+              if (settled) return;
+              if (!("message" in event)) return;
+              if (event.origin && event.origin !== expectedOrigin) {
+                close();
+                fail("Google sign-in returned from an unexpected origin.");
+                return;
+              }
+
+              const message = parseGoogleOAuthDialogMessage(event.message);
+              if (!message || message.requestId !== requestId) {
+                close();
+                fail("Google sign-in returned an invalid response.");
+                return;
+              }
+
+              if (message.status === "error") {
+                close();
+                fail(message.message);
+                return;
+              }
+
+              settled = true;
+              close();
+              void writeSession(
+                message.accessToken,
+                message.refreshToken,
+                generation
+              ).then((saved) => {
+                if (saved && generation === _sessionGeneration) {
+                  _loading = false;
+                  _error = null;
+                  broadcast();
+                }
+                resolve();
+              });
+            }
+          );
+
+          dialog.addEventHandler(
+            Office.EventType.DialogEventReceived,
+            (event) => {
+              if (!("error" in event)) return;
+              fail(
+                event.error === 12006
+                  ? "Google sign-in was cancelled."
+                  : `Google sign-in closed unexpectedly (Office error ${event.error}).`
+              );
+            }
+          );
+        }
+      );
+    } catch (error) {
+      fail(
+        error instanceof Error
+          ? error.message
+          : "Unable to open Google sign-in."
+      );
+    }
+  });
+}
+
 export async function signOut(): Promise<void> {
   ++_sessionGeneration;
   _loading = false;
   _error = null;
   setToken(null);
+  if (_mode === "supabase") clearSupabaseSession();
   if (_mode === "entra") {
     await storageSet(SIGNED_OUT_KEY, "1");
     await _entra?.signOut();

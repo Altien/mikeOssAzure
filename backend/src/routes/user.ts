@@ -171,13 +171,18 @@ userRouter.get("/lookup", requireAuth, async (req, res) => {
 const MONTHLY_CREDIT_LIMIT = 999999;
 
 const PROFILE_SELECT =
-  "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us, quick_actions_visible";
+  "display_name, organisation, jurisdiction, practice_areas, onboarding_version, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us, quick_actions_visible";
 const PROFILE_SELECT_NO_QUICK_ACTIONS =
   "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us";
+const PROFILE_SELECT_BEFORE_ONBOARDING =
+  "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us, quick_actions_visible";
 
 type UserProfileRow = {
   display_name: string | null;
   organisation: string | null;
+  jurisdiction?: string | null;
+  practice_areas?: string[] | null;
+  onboarding_version?: number | null;
   message_credits_used: number | null;
   credits_reset_date: string | null;
   tier: string | null;
@@ -299,6 +304,9 @@ function serializeProfile(
   return {
     displayName: row.display_name,
     organisation: row.organisation,
+    jurisdiction: row.jurisdiction ?? null,
+    practiceAreas: Array.isArray(row.practice_areas) ? row.practice_areas : [],
+    onboardingComplete: row.onboarding_version === undefined || row.onboarding_version !== null,
     messageCreditsUsed: credits.used,
     creditsResetDate: credits.resetDate,
     creditsRemaining: Math.max(MONTHLY_CREDIT_LIMIT - credits.used, 0),
@@ -326,6 +334,9 @@ async function loadProfile(
     (async () => {
       const current = await db.from("user_profiles").select(PROFILE_SELECT).eq("user_id", userId).single();
       if (!current.error || current.error.code !== "42703") return current;
+      const preOnboarding = await db.from("user_profiles").select(PROFILE_SELECT_BEFORE_ONBOARDING).eq("user_id", userId).single();
+      if (!preOnboarding.error) return preOnboarding;
+      if (preOnboarding.error.code !== "42703") return preOnboarding;
       const previous = await db.from("user_profiles").select(PROFILE_SELECT_NO_QUICK_ACTIONS).eq("user_id", userId).single();
       if (previous.data) {
         return { ...previous, data: { ...previous.data, quick_actions_visible: true } };
@@ -750,6 +761,39 @@ function readBooleanBodyField(
 
     return { ok: true, value: raw[field] };
 }
+
+// Onboarding is application profile state for every admitted identity provider.
+userRouter.post("/onboarding", requireAuth, async (req, res) => {
+  const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown> : null;
+  if (!body || Object.keys(body).some(key => key !== "jurisdiction" && key !== "practiceAreas")) {
+    return void res.status(400).json({ detail: "Invalid onboarding fields" });
+  }
+  const jurisdiction = typeof body.jurisdiction === "string" ? body.jurisdiction.trim() : "";
+  if (!jurisdiction || jurisdiction.length > 100 || !Array.isArray(body.practiceAreas) ||
+      body.practiceAreas.some(item => typeof item !== "string")) {
+    return void res.status(400).json({ detail: "Select a valid jurisdiction and practice areas" });
+  }
+  const practiceAreas = Array.from(new Set((body.practiceAreas as string[]).map(item => item.trim()).filter(Boolean)));
+  if (!practiceAreas.length || practiceAreas.length > 20 || practiceAreas.some(item => item.length > 100)) {
+    return void res.status(400).json({ detail: "Select between 1 and 20 valid practice areas" });
+  }
+  const userId = res.locals.userId as string;
+  const db = createServerSupabase();
+  const { data: profile, error: profileError } = await db.from("user_profiles")
+    .select("display_name").eq("user_id", userId).single();
+  if (profileError) return void sendInternalError(res, profileError);
+  if (!profile || typeof profile.display_name !== "string" || !profile.display_name.trim()) {
+    return void res.status(400).json({ detail: "Add your name before completing onboarding" });
+  }
+  const { error: updateError } = await db.from("user_profiles")
+    .update({ jurisdiction, practice_areas: practiceAreas, onboarding_version: 1, updated_at: new Date().toISOString() })
+    .eq("user_id", userId);
+  if (updateError) return void sendInternalError(res, updateError);
+  const { data, error } = await loadProfile(db, userId);
+  if (error) return void sendInternalError(res, error);
+  res.json(data);
+});
 
 // GET /user/mcp-connectors
 userRouter.get("/mcp-connectors", requireAuth, async (_req, res) => {

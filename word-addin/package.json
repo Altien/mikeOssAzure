@@ -20,6 +20,7 @@
   "dependencies": {
     "@azure/msal-browser": "^4.30.0",
     "@radix-ui/react-dropdown-menu": "^2.1.16",
+    "@supabase/supabase-js": "^2.112.3",
     "@tiptap/core": "3.31.3",
     "@tiptap/extension-table": "3.31.3",
     "@tiptap/pm": "3.31.3",

@@ -16,7 +16,7 @@ function CheckEmailContent() {
 
     useEffect(() => {
         if (!authLoading && isAuthenticated) {
-            router.replace("/assistant");
+            router.replace("/onboarding/profile");
         }
     }, [authLoading, isAuthenticated, router]);
 
