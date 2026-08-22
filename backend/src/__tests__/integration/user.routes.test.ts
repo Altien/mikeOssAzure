@@ -411,7 +411,7 @@ describe("user.routes", () => {
                 .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("db down");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
     });
 
@@ -511,7 +511,7 @@ describe("user.routes", () => {
                 .send({ api_key: "sk-x" });
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("kms unavailable");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
 
         it("is rejected with 403 mfa_verification_required when MFA is unsatisfied", async () => {
@@ -848,7 +848,7 @@ describe("user.routes", () => {
                 .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("export boom");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
 
         it("GET /user/export is rejected when MFA is unsatisfied", async () => {
@@ -924,7 +924,7 @@ describe("user.routes", () => {
                 .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("auth boom");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
 
         it("DELETE /user/chats returns 500 when cleanup throws", async () => {
@@ -935,7 +935,7 @@ describe("user.routes", () => {
                 .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("cascade failed");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
 
         it("DELETE /user/account is rejected when MFA is unsatisfied (no cleanup)", async () => {

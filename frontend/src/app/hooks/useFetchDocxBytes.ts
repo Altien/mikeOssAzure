@@ -102,9 +102,9 @@ export function useFetchDocxBytes(
                 setBytes(buf);
                 setDownloadUrl(url);
             })
-            .catch((e: unknown) => {
+            .catch(() => {
                 if (cancelled) return;
-                setError(e instanceof Error ? e.message : String(e));
+                setError("This document could not be loaded. Please try again.");
             })
             .finally(() => {
                 inFlight.delete(key);

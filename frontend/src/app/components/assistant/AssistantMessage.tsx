@@ -40,6 +40,7 @@ interface Props {
     errorMessage?: string;
     citations?: Citation[];
     citationStatus?: "started" | "partial" | "final";
+    activeCitation?: Citation | null;
     onCitationClick?: (citation: Citation) => void;
     onOpenCitationSource?: (citation: Citation) => void;
     onCaseClick?: (
@@ -110,6 +111,7 @@ export function AssistantMessage({
     errorMessage,
     citations = [],
     citationStatus,
+    activeCitation,
     onCitationClick,
     onOpenCitationSource,
     onCaseClick,
@@ -814,6 +816,7 @@ export function AssistantMessage({
                                             }
                                             caseCitations={caseCitations}
                                             caseDocuments={caseDocuments}
+                                            activeCitation={activeCitation}
                                             onCitationClick={onCitationClick}
                                             onCaseClick={onCaseClick}
                                             divRef={
@@ -1096,6 +1099,7 @@ export function AssistantMessage({
                 {showCitationBlock && (
                     <CitationsBlock
                         citations={citations}
+                        activeCitation={activeCitation}
                         onCitationClick={onCitationClick}
                         onOpenSource={handleOpenCitationSource}
                         canOpenSource={canOpenCitationSource}

@@ -127,7 +127,11 @@ jobs:
       - name: Init + start Supabase, load fresh schema
         run: |
           supabase init --force --with-vscode-settings=false || supabase init --force
-          supabase start
+          # E2E uses Auth, Postgres, PostgREST, and Kong only. Document storage
+          # is provided by MinIO above, and no spec reads local email. Excluding
+          # the unused services also avoids Inbucket claiming host port 54324,
+          # which can collide with runner processes before Playwright starts.
+          supabase start -x studio,imgproxy,inbucket,analytics,vector,realtime,storage,edge-runtime,functions,meta
           DB_URL=$(supabase status -o json | jq -r '.DB_URL')
           # A fresh database runs the current schema exactly once. Historical
           # migrations only upgrade older deployments; replaying them on top of

@@ -80,12 +80,8 @@ function ResetPasswordContent() {
             if (updateError) throw updateError;
             await supabase.auth.signOut({ scope: "global" });
             setSuccess(true);
-        } catch (updateError) {
-            setError(
-                updateError instanceof Error
-                    ? updateError.message
-                    : "Unable to update your password.",
-            );
+        } catch {
+            setError("Unable to update your password. Please try again.");
         } finally {
             setLoading(false);
         }

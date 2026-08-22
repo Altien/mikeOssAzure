@@ -20,6 +20,15 @@ import {
 } from "@/app/components/popups/MfaVerificationPopup";
 import { SettingsSection } from "../SettingsSection";
 import { SettingsToggle } from "../SettingsToggle";
+import {
+    knownErrorCodeMessage,
+    userFacingApiError,
+} from "@/app/lib/userFacingError";
+
+const MFA_VERIFICATION_ERROR_MESSAGES = {
+    mfa_verification_failed: "The verification code is invalid or expired.",
+    otp_expired: "The verification code is invalid or expired.",
+} as const;
 
 type MfaFactor = {
     id: string;
@@ -194,7 +203,7 @@ export default function SecurityPage() {
             traceMfa("[security/mfa] list factors failed", {
                 error: factorResult.error.message,
             });
-            setStatus(factorResult.error.message);
+            setStatus("MFA settings could not be loaded. Please try again.");
             setFactors([]);
         } else {
             const verifiedTotp = (factorResult.data.totp ?? []) as MfaFactor[];
@@ -211,7 +220,7 @@ export default function SecurityPage() {
             traceMfa("[security/mfa] assurance lookup failed", {
                 error: aalResult.error.message,
             });
-            setStatus(aalResult.error.message);
+            setStatus("MFA settings could not be loaded. Please try again.");
             setCurrentLevel(null);
             setNextLevel(null);
         } else {
@@ -285,11 +294,10 @@ export default function SecurityPage() {
             setVerificationCode("");
             setSetupKeyCopied(false);
         } catch (error) {
-            setStatus(
-                error instanceof Error
-                    ? error.message
-                    : "Failed to start MFA setup.",
-            );
+            traceMfa("[security/mfa] setup failed", {
+                errorType: error instanceof Error ? error.name : typeof error,
+            });
+            setStatus("Failed to start MFA setup. Please try again.");
         } finally {
             setBusy(false);
         }
@@ -339,9 +347,11 @@ export default function SecurityPage() {
             await refreshMfaState();
         } catch (error) {
             setStatus(
-                error instanceof Error
-                    ? error.message
-                    : "Failed to verify MFA code.",
+                knownErrorCodeMessage(
+                    error,
+                    MFA_VERIFICATION_ERROR_MESSAGES,
+                    "Failed to verify the MFA code. Please try again.",
+                ),
             );
         } finally {
             setBusy(false);
@@ -371,7 +381,10 @@ export default function SecurityPage() {
         const { data, error } =
             await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
         if (error) {
-            setStatus(error.message);
+            traceMfa("[security/mfa] state verification failed", {
+                errorType: error.name,
+            });
+            setStatus("MFA settings could not be verified. Please try again.");
             return;
         }
 
@@ -397,7 +410,10 @@ export default function SecurityPage() {
                 setPendingUnenrollFactorId(factorId);
                 return;
             }
-            setStatus(error.message);
+            traceMfa("[security/mfa] disable failed", {
+                errorType: error.name,
+            });
+            setStatus("MFA could not be disabled. Please try again.");
             return;
         }
 
@@ -421,9 +437,10 @@ export default function SecurityPage() {
             await saveLoginPreference(enabled);
         } catch (error) {
             setStatus(
-                error instanceof Error
-                    ? error.message
-                    : "Failed to update login authentication preference.",
+                userFacingApiError(
+                    error,
+                    "Failed to update login authentication preference.",
+                ),
             );
         } finally {
             setSavingLoginPreference(false);
@@ -443,9 +460,10 @@ export default function SecurityPage() {
                 setPendingLoginPreference(enabled);
             } else {
                 setStatus(
-                    error instanceof Error
-                        ? error.message
-                        : "Failed to update login authentication preference.",
+                    userFacingApiError(
+                        error,
+                        "Failed to update login authentication preference.",
+                    ),
                 );
             }
         } finally {

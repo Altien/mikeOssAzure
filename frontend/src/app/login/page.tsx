@@ -16,6 +16,12 @@ import {
 import { AuthDivider } from "@/app/components/auth/AuthDivider";
 import { GoogleAuthButton } from "@/app/components/auth/GoogleAuthButton";
 import { FieldLabel } from "@/app/components/ui/form-field";
+import { knownErrorCodeMessage } from "@/app/lib/userFacingError";
+
+const LOGIN_ERROR_MESSAGES = {
+    invalid_credentials: "The email or password is incorrect.",
+    email_not_confirmed: "Confirm your email address before logging in.",
+} as const;
 
 export default function LoginPage() {
     const router = useRouter();
@@ -47,9 +53,11 @@ export default function LoginPage() {
             router.push("/onboarding/profile");
         } catch (error: unknown) {
             setError(
-                error instanceof Error
-                    ? error.message
-                    : "An error occurred during login",
+                knownErrorCodeMessage(
+                    error,
+                    LOGIN_ERROR_MESSAGES,
+                    "Unable to log in right now. Please try again.",
+                ),
             );
         } finally {
             setLoading(false);
