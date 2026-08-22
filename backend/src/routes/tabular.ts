@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import { recordAudit } from "../lib/audit";
@@ -76,6 +77,8 @@ function formatPromptSuffix(format?: string, tags?: string[]): string {
 
 export const tabularRouter = Router();
 const TABULAR_GENERATION_CONCURRENCY = 3;
+const TABULAR_GENERATION_LEASE_SECONDS = 300;
+const TABULAR_GENERATION_HEARTBEAT_MS = 60_000;
 
 type DocumentGrouping = "document" | "folder";
 type ReviewRow = {
@@ -99,6 +102,16 @@ type SourceDocument = {
     library_folder_id?: string | null;
 };
 type SupabaseDb = ReturnType<typeof createServerSupabase>;
+
+function isReviewGenerationRunning(review: Record<string, unknown>): boolean {
+    if (!review.active_generation_id || !review.generation_lease_expires_at) {
+        return false;
+    }
+    const leaseExpiresAt = Date.parse(
+        String(review.generation_lease_expires_at),
+    );
+    return Number.isFinite(leaseExpiresAt) && leaseExpiresAt > Date.now();
+}
 
 function normalizeGrouping(value: unknown): DocumentGrouping {
     return value === "folder" ? "folder" : "document";
@@ -767,9 +780,16 @@ tabularRouter.get("/:reviewId", requireAuth, async (req, res) => {
         current_version_id?: string | null;
     }[];
     await attachActiveVersionPaths(db, docs);
+    const clientReview = { ...review };
+    delete clientReview.active_generation_id;
+    delete clientReview.generation_lease_expires_at;
 
     res.json({
-        review: { ...review, is_owner: access.isOwner },
+        review: {
+            ...clientReview,
+            is_owner: access.isOwner,
+            is_running: isReviewGenerationRunning(review),
+        },
         cells: (cells ?? []).map((cell) => ({
             ...cell,
             content: parseCellContent(cell.content),
@@ -1165,6 +1185,10 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     const { reviewId } = req.params;
     const db = createServerSupabase();
     const generationAbort = new AbortController();
+    const generationId = randomUUID();
+    let generationClaimed = false;
+    let leaseHeartbeat: ReturnType<typeof setInterval> | null = null;
+    let renewingLease = false;
     req.on("aborted", () => generationAbort.abort());
 
     const { data: review, error: reviewError } = await db
@@ -1220,6 +1244,72 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     }
     if (generationAbort.signal.aborted || res.destroyed) return;
 
+    const expectedUpdatedAt = req.body?.expected_updated_at;
+    if (
+        typeof expectedUpdatedAt !== "string" ||
+        !Number.isFinite(Date.parse(expectedUpdatedAt))
+    ) {
+        return void res.status(400).json({
+            detail: "expected_updated_at must be a valid timestamp",
+        });
+    }
+
+    const { data: startResult, error: startError } = await db.rpc(
+        "begin_tabular_review_generation",
+        {
+            target_review_id: reviewId,
+            expected_updated_at: expectedUpdatedAt,
+            target_generation_id: generationId,
+            lease_seconds: TABULAR_GENERATION_LEASE_SECONDS,
+        },
+    );
+    if (startError) {
+        return void res.status(500).json({ detail: startError.message });
+    }
+    if (startResult === "running") {
+        return void res.status(409).json({
+            code: "review_running",
+            detail: "This tabular review is already running elsewhere.",
+        });
+    }
+    if (startResult === "stale") {
+        return void res.status(409).json({
+            code: "review_stale",
+            detail: "A newer version of this tabular review is available.",
+        });
+    }
+    if (startResult === "not_found") {
+        return void res.status(404).json({ detail: "Review not found" });
+    }
+    if (startResult !== "started") {
+        return void res.status(500).json({
+            detail: "Failed to start tabular review generation",
+        });
+    }
+    generationClaimed = true;
+
+    leaseHeartbeat = setInterval(() => {
+        if (renewingLease || generationAbort.signal.aborted) return;
+        renewingLease = true;
+        void (async () => {
+            try {
+                const { data, error } = await db.rpc(
+                    "renew_tabular_review_generation",
+                    {
+                        target_review_id: reviewId,
+                        target_generation_id: generationId,
+                        lease_seconds: TABULAR_GENERATION_LEASE_SECONDS,
+                    },
+                );
+                if (error || data !== true) generationAbort.abort();
+            } catch {
+                generationAbort.abort();
+            } finally {
+                renewingLease = false;
+            }
+        })();
+    }, TABULAR_GENERATION_HEARTBEAT_MS);
+
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
@@ -1259,7 +1349,11 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                 if (existingCell) {
                     await db
                         .from("tabular_cells")
-                        .update({ status: "generating", content: null })
+                        .update({
+                            status: "generating",
+                            content: null,
+                            generation_id: generationId,
+                        })
                         .eq("id", existingCell.id);
                 } else {
                     await db.from("tabular_cells").insert({
@@ -1268,6 +1362,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                         document_id: row.document_id,
                         column_index: col.index,
                         status: "generating",
+                        generation_id: generationId,
                     });
                 }
             }
@@ -1288,10 +1383,12 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                             .update({
                                 content: JSON.stringify(result),
                                 status: "done",
+                                generation_id: null,
                             })
                             .eq("review_id", reviewId)
                             .eq("row_id", row.id)
-                            .eq("column_index", columnIndex);
+                            .eq("column_index", columnIndex)
+                            .eq("generation_id", generationId);
                         write(
                             `data: ${JSON.stringify({ type: "cell_update", row_id: row.id, column_index: columnIndex, content: result, status: "done" })}\n\n`,
                         );
@@ -1317,10 +1414,15 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                 if (!receivedColumns.has(col.index)) {
                     await db
                         .from("tabular_cells")
-                        .update({ status: incompleteStatus })
+                        .update({
+                            status: incompleteStatus,
+                            content: null,
+                            generation_id: null,
+                        })
                         .eq("review_id", reviewId)
                         .eq("row_id", row.id)
-                        .eq("column_index", col.index);
+                        .eq("column_index", col.index)
+                        .eq("generation_id", generationId);
                     write(
                         `data: ${JSON.stringify({ type: "cell_update", row_id: row.id, column_index: col.index, content: null, status: incompleteStatus })}\n\n`,
                     );
@@ -1370,6 +1472,24 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
         }
     } finally {
         streamFinished = true;
+        if (leaseHeartbeat) clearInterval(leaseHeartbeat);
+        if (generationClaimed) {
+            try {
+                const { error } = await db.rpc(
+                    "finish_tabular_review_generation",
+                    {
+                        target_review_id: reviewId,
+                        target_generation_id: generationId,
+                    },
+                );
+                if (error) throw error;
+            } catch (error) {
+                console.error(
+                    "[tabular/generate] failed to release generation lease",
+                    safeErrorLog(error),
+                );
+            }
+        }
         if (!res.writableEnded) res.end();
     }
 });

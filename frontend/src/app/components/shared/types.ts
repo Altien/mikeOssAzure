@@ -719,6 +719,8 @@ export interface TabularReview {
     shared_with?: string[];
     /** Server-set: true when the requesting user is the review's creator. */
     is_owner?: boolean;
+    /** Server-set: true while another generation request holds the review lease. */
+    is_running?: boolean;
     created_at: string;
     updated_at: string;
     document_count?: number;

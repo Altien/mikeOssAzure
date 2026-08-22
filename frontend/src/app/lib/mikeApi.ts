@@ -1564,12 +1564,14 @@ export async function deleteTabularReview(reviewId: string): Promise<void> {
 
 export async function streamTabularGeneration(
     reviewId: string,
+    expectedUpdatedAt: string,
     signal?: AbortSignal,
 ): Promise<Response> {
     const authHeaders = await getAuthHeader();
     return fetch(`${API_BASE}/tabular-review/${reviewId}/generate`, {
         method: "POST",
-        headers: { ...authHeaders },
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_updated_at: expectedUpdatedAt }),
         signal,
     });
 }

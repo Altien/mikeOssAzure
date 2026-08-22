@@ -1073,6 +1073,8 @@ create table if not exists public.tabular_reviews (
   practice text,
   document_grouping text not null default 'document' check (document_grouping in ('document', 'folder')),
   shared_with jsonb not null default '[]'::jsonb,
+  active_generation_id uuid,
+  generation_lease_expires_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -1206,8 +1208,87 @@ create table if not exists public.tabular_cells (
   content text,
   citations jsonb,
   status text not null default 'pending',
+  generation_id uuid,
   created_at timestamptz not null default now()
 );
+
+create or replace function public.begin_tabular_review_generation(
+  target_review_id uuid,
+  expected_updated_at timestamptz,
+  target_generation_id uuid,
+  lease_seconds integer default 300
+)
+returns text
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  current_review public.tabular_reviews%rowtype;
+begin
+  select *
+    into current_review
+    from public.tabular_reviews
+   where id = target_review_id
+   for update;
+
+  if not found then
+    return 'not_found';
+  end if;
+
+  if current_review.active_generation_id is not null
+     and current_review.generation_lease_expires_at > now() then
+    return 'running';
+  end if;
+
+  if current_review.updated_at is distinct from expected_updated_at then
+    return 'stale';
+  end if;
+
+  update public.tabular_reviews
+     set active_generation_id = target_generation_id,
+         generation_lease_expires_at = now()
+           + make_interval(secs => greatest(60, least(lease_seconds, 3600)))
+   where id = target_review_id;
+
+  return 'started';
+end;
+$$;
+
+create or replace function public.renew_tabular_review_generation(
+  target_review_id uuid,
+  target_generation_id uuid,
+  lease_seconds integer default 300
+)
+returns boolean
+language sql
+security definer
+set search_path = public, pg_temp
+as $$
+  update public.tabular_reviews
+     set generation_lease_expires_at = now()
+       + make_interval(secs => greatest(60, least(lease_seconds, 3600)))
+   where id = target_review_id
+     and active_generation_id = target_generation_id
+  returning true;
+$$;
+
+create or replace function public.finish_tabular_review_generation(
+  target_review_id uuid,
+  target_generation_id uuid
+)
+returns boolean
+language sql
+security definer
+set search_path = public, pg_temp
+as $$
+  update public.tabular_reviews
+     set active_generation_id = null,
+         generation_lease_expires_at = null
+   where id = target_review_id
+     and active_generation_id = target_generation_id
+  returning true;
+$$;
 
 create index if not exists idx_tabular_cells_review
   on public.tabular_cells(review_id, document_id, column_index);
@@ -2364,6 +2445,12 @@ revoke all on function public.install_missing_default_workflows(text, jsonb)
   from public, anon, authenticated;
 revoke all on function public.replace_user_router_models(uuid, text, text[])
   from public, anon, authenticated;
+revoke all on function public.begin_tabular_review_generation(uuid, timestamptz, uuid, integer)
+  from public, anon, authenticated;
+revoke all on function public.renew_tabular_review_generation(uuid, uuid, integer)
+  from public, anon, authenticated;
+revoke all on function public.finish_tabular_review_generation(uuid, uuid)
+  from public, anon, authenticated;
 
 grant select, insert, update, delete
   on public.default_workflow_installations,
@@ -2378,6 +2465,15 @@ grant execute
   to service_role;
 grant execute
   on function public.replace_user_router_models(uuid, text, text[])
+  to service_role;
+grant execute
+  on function public.begin_tabular_review_generation(uuid, timestamptz, uuid, integer)
+  to service_role;
+grant execute
+  on function public.renew_tabular_review_generation(uuid, uuid, integer)
+  to service_role;
+grant execute
+  on function public.finish_tabular_review_generation(uuid, uuid)
   to service_role;
 
 -- Tables created by this file are owned by the database bootstrap role. The

@@ -30,6 +30,7 @@ type QueryResult = { data: unknown; error: unknown };
 
 let supabaseState: {
     rpc: QueryResult;
+    rpcCalls: { fn: string; args: unknown }[];
     tables: Record<string, QueryResult>;
     inserts: { table: string; payload: unknown }[];
 };
@@ -37,6 +38,7 @@ let supabaseState: {
 function resetSupabaseState() {
     supabaseState = {
         rpc: { data: [], error: null },
+        rpcCalls: [],
         tables: {},
         inserts: [],
     };
@@ -87,7 +89,10 @@ function makeQuery(table: string) {
 function mockSupabase() {
     return {
         from: vi.fn((table: string) => makeQuery(table)),
-        rpc: vi.fn(() => Promise.resolve(supabaseState.rpc)),
+        rpc: vi.fn((fn: string, args: unknown) => {
+            supabaseState.rpcCalls.push({ fn, args });
+            return Promise.resolve(supabaseState.rpc);
+        }),
         auth: {
             getUser: () =>
                 Promise.resolve({ data: { user: { id: "u1" } }, error: null }),
@@ -550,6 +555,8 @@ describe("tabular.routes", () => {
                     project_id: null,
                     document_ids: ["d1"],
                     columns_config: [],
+                    active_generation_id: "generation-1",
+                    generation_lease_expires_at: "2099-01-01T00:00:00.000Z",
                 },
                 error: null,
             };
@@ -575,7 +582,11 @@ describe("tabular.routes", () => {
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
-            expect(res.body.review).toMatchObject({ id: "r1", is_owner: true });
+            expect(res.body.review).toMatchObject({
+                id: "r1",
+                is_owner: true,
+                is_running: true,
+            });
             expect(res.body.cells).toHaveLength(1);
             expect(res.body.documents).toEqual([
                 { id: "d1", current_version_id: null },
@@ -916,6 +927,81 @@ describe("tabular.routes", () => {
             expect(res.status).toBe(422);
             expect(res.body.code).toBe("missing_api_key");
         });
+
+        it("requires the version currently loaded by the client", async () => {
+            supabaseState.tables.tabular_reviews = {
+                data: {
+                    id: "r1",
+                    user_id: "u1",
+                    project_id: null,
+                    updated_at: "2026-08-22T10:00:00.000Z",
+                    columns_config: [{ index: 0, name: "Col", prompt: "p" }],
+                },
+                error: null,
+            };
+            supabaseState.tables.tabular_cells = { data: [], error: null };
+
+            const res = await request(app)
+                .post("/tabular-review/r1/generate")
+                .set(...AUTH)
+                .send({});
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toBe(
+                "expected_updated_at must be a valid timestamp",
+            );
+        });
+
+        it.each([
+            [
+                "running",
+                "review_running",
+                "This tabular review is already running elsewhere.",
+            ],
+            [
+                "stale",
+                "review_stale",
+                "A newer version of this tabular review is available.",
+            ],
+        ])(
+            "returns a distinct conflict when the atomic start result is %s",
+            async (startResult, code, detail) => {
+                supabaseState.tables.tabular_reviews = {
+                    data: {
+                        id: "r1",
+                        user_id: "u1",
+                        project_id: null,
+                        updated_at: "2026-08-22T10:00:00.000Z",
+                        columns_config: [
+                            { index: 0, name: "Col", prompt: "p" },
+                        ],
+                    },
+                    error: null,
+                };
+                supabaseState.tables.tabular_cells = {
+                    data: [],
+                    error: null,
+                };
+                supabaseState.rpc = { data: startResult, error: null };
+
+                const res = await request(app)
+                    .post("/tabular-review/r1/generate")
+                    .set(...AUTH)
+                    .send({
+                        expected_updated_at: "2026-08-22T10:00:00.000Z",
+                    });
+
+                expect(res.status).toBe(409);
+                expect(res.body).toEqual({ code, detail });
+                expect(supabaseState.rpcCalls[0]).toMatchObject({
+                    fn: "begin_tabular_review_generation",
+                    args: {
+                        target_review_id: "r1",
+                        expected_updated_at: "2026-08-22T10:00:00.000Z",
+                    },
+                });
+            },
+        );
     });
 
     // ── POST /tabular-review/:reviewId/chat (streaming GUARDS only) ───────

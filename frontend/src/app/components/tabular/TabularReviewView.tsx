@@ -47,6 +47,7 @@ import { PeopleModal } from "../modals/PeopleModal";
 import { OwnerOnlyPopup } from "../popups/OwnerOnlyPopup";
 import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
 import { ConfirmPopup } from "../popups/ConfirmPopup";
+import { WarningPopup } from "../popups/WarningPopup";
 import { HeaderActionsMenu } from "../shared/HeaderActionsMenu";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
@@ -83,6 +84,10 @@ export function TRView({ reviewId, projectId }: Props) {
     const [generating, setGenerating] = useState(false);
     const [generationPaused, setGenerationPaused] = useState(false);
     const [pausingGeneration, setPausingGeneration] = useState(false);
+    const [generationGuard, setGenerationGuard] = useState<
+        "running" | "stale" | null
+    >(null);
+    const [reloadingLatestReview, setReloadingLatestReview] = useState(false);
     const [savingColumn, setSavingColumn] = useState(false);
     const [savingColumnsConfig, setSavingColumnsConfig] = useState(false);
     const [addColOpen, setAddColOpen] = useState(false);
@@ -134,6 +139,7 @@ export function TRView({ reviewId, projectId }: Props) {
     const actionsRef = useRef<HTMLDivElement>(null);
     const tableRef = useRef<TRTableHandle>(null);
     const generationAbortRef = useRef<AbortController | null>(null);
+    const pauseRequestedRef = useRef(false);
 
     useEffect(
         () => () => {
@@ -318,8 +324,28 @@ export function TRView({ reviewId, projectId }: Props) {
         }
     }
 
+    async function refreshAfterPausedGeneration() {
+        for (let attempt = 0; attempt < 40; attempt += 1) {
+            const detail = await getTabularReview(reviewId);
+            if (!detail.review.is_running) {
+                setReview(detail.review);
+                setCells(detail.cells);
+                setRows(detail.rows);
+                setDocuments(detail.documents);
+                setColumns(detail.review.columns_config || []);
+                return;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+    }
+
     async function handleGenerate() {
         if (!review || generating) return;
+
+        if (review.is_running) {
+            setGenerationGuard("running");
+            return;
+        }
 
         // If columns changed since last save, update the review first
         if (columns.length === 0) return;
@@ -331,6 +357,7 @@ export function TRView({ reviewId, projectId }: Props) {
 
         const generationAbort = new AbortController();
         generationAbortRef.current = generationAbort;
+        pauseRequestedRef.current = false;
         setGenerationPaused(false);
         setPausingGeneration(false);
         setGenerating(true);
@@ -338,10 +365,22 @@ export function TRView({ reviewId, projectId }: Props) {
         try {
             const response = await streamTabularGeneration(
                 reviewId,
+                review.updated_at,
                 generationAbort.signal,
             );
             if (!response.ok) {
                 const payload = await response.json().catch(() => null);
+                if (payload?.code === "review_running") {
+                    setReview((current) =>
+                        current ? { ...current, is_running: true } : current,
+                    );
+                    setGenerationGuard("running");
+                    return;
+                }
+                if (payload?.code === "review_stale") {
+                    setGenerationGuard("stale");
+                    return;
+                }
                 const provider =
                     payload &&
                     ["claude", "gemini", "openai"].includes(payload.provider)
@@ -428,10 +467,39 @@ export function TRView({ reviewId, projectId }: Props) {
             }
         } finally {
             if (generationAbortRef.current === generationAbort) {
+                if (pauseRequestedRef.current) {
+                    try {
+                        await refreshAfterPausedGeneration();
+                    } catch (err) {
+                        console.error(
+                            "Failed to refresh the paused tabular review",
+                            err,
+                        );
+                    }
+                }
                 generationAbortRef.current = null;
+                pauseRequestedRef.current = false;
                 setGenerating(false);
                 setPausingGeneration(false);
             }
+        }
+    }
+
+    async function loadLatestReview() {
+        setReloadingLatestReview(true);
+        try {
+            const detail = await getTabularReview(reviewId);
+            setReview(detail.review);
+            setCells(detail.cells);
+            setRows(detail.rows);
+            setDocuments(detail.documents);
+            setColumns(detail.review.columns_config || []);
+            setGenerationPaused(false);
+            setGenerationGuard(detail.review.is_running ? "running" : null);
+        } catch (err) {
+            console.error("Failed to load the latest tabular review", err);
+        } finally {
+            setReloadingLatestReview(false);
         }
     }
 
@@ -451,6 +519,7 @@ export function TRView({ reviewId, projectId }: Props) {
                 ? { ...current, status: "pending" as const }
                 : current,
         );
+        pauseRequestedRef.current = true;
         generationAbortRef.current?.abort();
     }
 
@@ -1267,9 +1336,10 @@ export function TRView({ reviewId, projectId }: Props) {
                                   prev
                                       ? {
                                             ...prev,
-                                            shared_with: updated.shared_with,
+                                            ...updated,
+                                            is_owner: prev.is_owner,
                                         }
-                                      : prev,
+                                      : updated,
                               );
                           }
                 }
@@ -1330,6 +1400,34 @@ export function TRView({ reviewId, projectId }: Props) {
                 open={apiKeyModalProvider !== null}
                 provider={apiKeyModalProvider}
                 onClose={() => setApiKeyModalProvider(null)}
+            />
+
+            <WarningPopup
+                open={generationGuard === "running"}
+                title="Tabular review is already running"
+                message="This review is being run in another tab or by another collaborator. Wait for that run to finish or be paused before trying again."
+                onClose={() => {
+                    if (!reloadingLatestReview) setGenerationGuard(null);
+                }}
+                primaryAction={{
+                    label: reloadingLatestReview ? "Checking…" : "Check again",
+                    disabled: reloadingLatestReview,
+                    onClick: () => void loadLatestReview(),
+                }}
+            />
+
+            <WarningPopup
+                open={generationGuard === "stale"}
+                title="A newer version is available"
+                message="Load the latest version of this tabular review before running it."
+                onClose={() => {
+                    if (!reloadingLatestReview) setGenerationGuard(null);
+                }}
+                primaryAction={{
+                    label: reloadingLatestReview ? "Loading…" : "Load latest",
+                    disabled: reloadingLatestReview,
+                    onClick: () => void loadLatestReview(),
+                }}
             />
         </div>
     );

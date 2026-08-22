@@ -812,12 +812,22 @@ describe("streamTabularGeneration", () => {
         fetchMock.mockResolvedValue(streamResponse([]));
         const controller = new AbortController();
 
-        await streamTabularGeneration("r1", controller.signal);
+        await streamTabularGeneration(
+            "r1",
+            "2026-08-22T10:00:00.000Z",
+            controller.signal,
+        );
 
         const { url, init } = lastFetchCall();
         expect(url).toBe("http://localhost:3001/tabular-review/r1/generate");
         expect(init.method).toBe("POST");
-        expect(init.headers).toEqual({ Authorization: "Bearer token-123" });
+        expect(init.headers).toEqual({
+            Authorization: "Bearer token-123",
+            "Content-Type": "application/json",
+        });
+        expect(JSON.parse(init.body as string)).toEqual({
+            expected_updated_at: "2026-08-22T10:00:00.000Z",
+        });
         expect(init.signal).toBe(controller.signal);
     });
 });
