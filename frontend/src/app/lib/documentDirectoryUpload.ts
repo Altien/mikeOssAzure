@@ -17,7 +17,6 @@ export type DocumentUploadFolderPathResolution<TFolder> =
           folder_name: string;
           existing_folder_id: string;
           suggested_name: string;
-          can_replace: boolean;
       }
     | {
           conflict: false;
@@ -63,7 +62,6 @@ export async function resolveDocumentUploadRootFolder<TFolder>({
     baseFolderId,
     resolveFolderPath,
     chooseConflict,
-    replaceFolder,
 }: {
     rootFolderName: string;
     baseFolderId: string | null;
@@ -77,8 +75,7 @@ export async function resolveDocumentUploadRootFolder<TFolder>({
             DocumentUploadFolderPathResolution<TFolder>,
             { conflict: true }
         >,
-    ) => Promise<"replace" | "rename" | "cancel">;
-    replaceFolder: (folderId: string) => Promise<void>;
+    ) => Promise<"rename" | "cancel">;
 }): Promise<
     | Extract<
           DocumentUploadFolderPathResolution<TFolder>,
@@ -93,19 +90,11 @@ export async function resolveDocumentUploadRootFolder<TFolder>({
     while (resolution.conflict) {
         const choice = await chooseConflict(resolution);
         if (choice === "cancel") return null;
-        if (choice === "replace") {
-            await replaceFolder(resolution.existing_folder_id);
-            resolution = await resolveFolderPath(
-                [rootFolderName],
-                baseFolderId,
-            );
-        } else {
-            resolution = await resolveFolderPath(
-                [rootFolderName],
-                baseFolderId,
-                "rename",
-            );
-        }
+        resolution = await resolveFolderPath(
+            [rootFolderName],
+            baseFolderId,
+            "rename",
+        );
     }
     return resolution;
 }

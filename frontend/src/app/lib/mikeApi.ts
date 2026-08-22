@@ -774,7 +774,6 @@ export type FolderPathResolution<TFolder> =
           folder_name: string;
           existing_folder_id: string;
           suggested_name: string;
-          can_replace: boolean;
       }
     | {
           conflict: false;

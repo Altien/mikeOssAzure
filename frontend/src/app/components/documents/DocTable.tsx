@@ -597,10 +597,9 @@ export function DocTable({
     const [folderUploadConflict, setFolderUploadConflict] = useState<{
         folderName: string;
         suggestedName: string;
-        canReplace: boolean;
     } | null>(null);
     const folderUploadConflictResolverRef = useRef<
-        ((choice: "replace" | "rename" | "cancel") => void) | null
+        ((choice: "rename" | "cancel") => void) | null
     >(null);
     const [deletingDocIds, setDeletingDocIds] = useState<Set<string>>(() => new Set());
     const [documentUploadWarning, setDocumentUploadWarning] = useState<string | null>(null);
@@ -1190,13 +1189,11 @@ export function DocTable({
     function requestFolderUploadConflictChoice(conflict: {
         folder_name: string;
         suggested_name: string;
-        can_replace: boolean;
-    }): Promise<"replace" | "rename" | "cancel"> {
+    }): Promise<"rename" | "cancel"> {
         folderUploadConflictResolverRef.current?.("cancel");
         setFolderUploadConflict({
             folderName: conflict.folder_name,
             suggestedName: conflict.suggested_name,
-            canReplace: conflict.can_replace,
         });
         return new Promise((resolve) => {
             folderUploadConflictResolverRef.current = resolve;
@@ -1204,7 +1201,7 @@ export function DocTable({
     }
 
     function finishFolderUploadConflict(
-        choice: "replace" | "rename" | "cancel",
+        choice: "rename" | "cancel",
     ) {
         const resolve = folderUploadConflictResolverRef.current;
         folderUploadConflictResolverRef.current = null;
@@ -1273,10 +1270,6 @@ export function DocTable({
                     baseFolderId,
                     resolveFolderPath: operations.resolveFolderPath,
                     chooseConflict: requestFolderUploadConflictChoice,
-                    replaceFolder: async (folderId) => {
-                        await operations.deleteFolder(folderId);
-                        await operations.refreshCollection();
-                    },
                 });
                 if (!resolution) return;
 
@@ -2933,23 +2926,13 @@ export function DocTable({
                 title="Folder already exists"
                 message={
                     folderUploadConflict
-                        ? `A folder named “${folderUploadConflict.folderName}” already exists. Replace it and permanently delete all of its contents, or save this upload as “${folderUploadConflict.suggestedName}”.${folderUploadConflict.canReplace ? "" : " Only the project owner can replace the existing folder."}`
-                        : undefined
-                }
-                secondaryAction={
-                    folderUploadConflict
-                        ? {
-                              label: "Save over it",
-                              onClick: () =>
-                                  finishFolderUploadConflict("replace"),
-                              disabled: !folderUploadConflict.canReplace,
-                          }
+                        ? `A folder named “${folderUploadConflict.folderName}” already exists. This folder will be uploaded as “${folderUploadConflict.suggestedName}”.`
                         : undefined
                 }
                 primaryAction={
                     folderUploadConflict
                         ? {
-                              label: `Save as ${folderUploadConflict.suggestedName}`,
+                              label: "Continue",
                               onClick: () =>
                                   finishFolderUploadConflict("rename"),
                           }

@@ -1229,9 +1229,6 @@ projectsRouter.post(
     });
     if (error)
       return void res.status(500).json({ detail: error.message });
-    if (data && typeof data === "object" && "conflict" in data && data.conflict) {
-      return void res.json({ ...data, can_replace: access.isOwner });
-    }
     res.json(data);
   },
 );

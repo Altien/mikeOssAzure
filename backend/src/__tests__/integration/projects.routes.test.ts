@@ -537,7 +537,7 @@ describe("projects.routes", () => {
       });
     });
 
-    it("marks project replacement conflicts as owner-only", async () => {
+    it("returns project folder conflicts without replacement permissions", async () => {
       checkProjectAccess.mockResolvedValue({
         ok: true,
         isOwner: false,
@@ -559,14 +559,16 @@ describe("projects.routes", () => {
         .send({ segments: ["NDAs"] });
 
       expect(res.status).toBe(200);
-      expect(res.body).toMatchObject({
+      expect(res.body).toEqual({
         conflict: true,
-        can_replace: false,
+        folder_name: "NDAs",
+        existing_folder_id: "folder-1",
         suggested_name: "NDAs (2)",
       });
+      expect(res.body).not.toHaveProperty("can_replace");
     });
 
-    it("returns a replaceable conflict for the user's library", async () => {
+    it("returns library folder conflicts without replacement permissions", async () => {
       supabaseState.rpc = {
         data: {
           conflict: true,
@@ -583,11 +585,13 @@ describe("projects.routes", () => {
         .send({ segments: ["NDAs"] });
 
       expect(res.status).toBe(200);
-      expect(res.body).toMatchObject({
+      expect(res.body).toEqual({
         conflict: true,
-        can_replace: true,
+        folder_name: "NDAs",
+        existing_folder_id: "folder-1",
         suggested_name: "NDAs (3)",
       });
+      expect(res.body).not.toHaveProperty("can_replace");
     });
 
     it("rejects malformed path segments before calling the RPC", async () => {
