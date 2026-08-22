@@ -12,10 +12,15 @@ import { useAuth } from "@/app/contexts/AuthContext";
 import {
     type ApiKeyState,
     type ApiKeyProvider,
+    type PersonalisationDetails,
+    type PracticeSetting,
+    type ProfessionalTitle,
     type UserProfile as ApiUserProfile,
+    completeUserOnboarding,
     getUserProfile,
     isMfaRequiredError,
     saveApiKey,
+    syncUserPasswordSet,
     updateUserMfaOnLogin,
     updateUserProfile,
 } from "@/app/lib/mikeApi";
@@ -24,6 +29,13 @@ import { applyDarkMode } from "@/app/lib/theme";
 interface UserProfile {
     displayName: string | null;
     organisation: string | null;
+    jurisdiction: string | null;
+    practiceSetting: PracticeSetting | null;
+    professionalTitle: ProfessionalTitle | null;
+    practiceAreas: string[];
+    onboardingVersion: number | null;
+    onboardingComplete: boolean;
+    passwordSet: boolean;
     messageCreditsUsed: number;
     creditsResetDate: string;
     creditsRemaining: number;
@@ -55,6 +67,13 @@ interface UserProfileContextType {
     apiKeysDegraded: boolean;
     updateDisplayName: (name: string) => Promise<boolean>;
     updateOrganisation: (organisation: string) => Promise<boolean>;
+    completeOnboarding: (
+        details?: PersonalisationDetails,
+    ) => Promise<boolean>;
+    updatePersonalisation: (
+        details: PersonalisationDetails,
+    ) => Promise<boolean>;
+    syncPasswordSet: () => Promise<boolean>;
     updateModelPreference: (
         field: "titleModel" | "tabularModel",
         value: string,
@@ -114,6 +133,15 @@ function toProfile(data: ApiUserProfile): UserProfile {
 
     return {
         ...profile,
+        jurisdiction: profile.jurisdiction ?? null,
+        practiceSetting: profile.practiceSetting ?? null,
+        professionalTitle: profile.professionalTitle ?? null,
+        practiceAreas: Array.isArray(profile.practiceAreas)
+            ? profile.practiceAreas
+            : [],
+        onboardingVersion: profile.onboardingVersion ?? null,
+        onboardingComplete: profile.onboardingComplete !== false,
+        passwordSet: profile.passwordSet === true,
         mfaOnLogin: profile.mfaOnLogin === true,
         openRouterModels: Array.isArray(profile.openRouterModels)
             ? profile.openRouterModels
@@ -162,6 +190,13 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             setProfile({
                 displayName: null,
                 organisation: null,
+                jurisdiction: null,
+                practiceSetting: null,
+                professionalTitle: null,
+                practiceAreas: [],
+                onboardingVersion: 0,
+                onboardingComplete: true,
+                passwordSet: false,
                 messageCreditsUsed: 0,
                 creditsResetDate: futureResetDate.toISOString(),
                 creditsRemaining: 999999, // temporarily unlimited
@@ -231,6 +266,45 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         },
         [user],
     );
+
+    const completeOnboarding = useCallback(
+        async (details: PersonalisationDetails = {}): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                const updated = await completeUserOnboarding(details);
+                setProfile(toProfile(updated));
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [user],
+    );
+
+    const updatePersonalisation = useCallback(
+        async (details: PersonalisationDetails): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                const updated = await updateUserProfile(details);
+                setProfile(toProfile(updated));
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [user],
+    );
+
+    const syncPasswordSet = useCallback(async (): Promise<boolean> => {
+        if (!user) return false;
+        try {
+            const updated = await syncUserPasswordSet();
+            setProfile(toProfile(updated));
+            return true;
+        } catch {
+            return false;
+        }
+    }, [user]);
 
     const updateModelPreference = useCallback(
         async (
@@ -434,6 +508,9 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 apiKeysDegraded,
                 updateDisplayName,
                 updateOrganisation,
+                completeOnboarding,
+                updatePersonalisation,
+                syncPasswordSet,
                 updateModelPreference,
                 updateMfaOnLogin,
                 updateLegalResearchUs,

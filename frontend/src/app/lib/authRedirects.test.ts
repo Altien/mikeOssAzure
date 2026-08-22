@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
     authCallbackUrl,
     authErrorDescription,
@@ -6,12 +6,17 @@ import {
     safeAuthNext,
 } from "./authRedirects";
 
+afterEach(() => {
+    vi.unstubAllGlobals();
+});
+
 describe("safeAuthNext", () => {
     it("allows known internal destinations with query parameters", () => {
         expect(safeAuthNext("/settings?emailChange=processed")).toBe(
             "/settings?emailChange=processed",
         );
         expect(safeAuthNext("/reset-password")).toBe("/reset-password");
+        expect(safeAuthNext("/onboarding/profile")).toBe("/onboarding/profile");
     });
 
     it.each([
@@ -47,22 +52,28 @@ describe("authCallbackUrl", () => {
             "http://localhost:3000/auth/callback?next=%2Freset-password",
         );
     });
+
+    it("does not build a browser callback during server rendering", () => {
+        vi.stubGlobal("window", undefined);
+
+        expect(browserAuthCallbackUrl("/reset-password")).toBeUndefined();
+    });
 });
 
 describe("authErrorDescription", () => {
     it("reads provider errors from query parameters or implicit-flow hashes", () => {
         expect(
             authErrorDescription("?error_description=Expired+link", ""),
-        ).toBe("Expired link");
+        ).toBe("This confirmation link is invalid or has expired.");
         expect(
             authErrorDescription("", "#error=access_denied"),
-        ).toBe("access_denied");
+        ).toBe("Authentication was cancelled or denied.");
         expect(authErrorDescription("?error=query_error", "")).toBe(
-            "query_error",
+            "Authentication could not be completed. Please try again.",
         );
         expect(
             authErrorDescription("", "#error_description=Invalid+request"),
-        ).toBe("Invalid request");
+        ).toBe("This confirmation link is invalid or has expired.");
         expect(authErrorDescription("", "")).toBeNull();
     });
 });

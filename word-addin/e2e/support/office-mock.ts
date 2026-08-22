@@ -132,6 +132,10 @@ export function installOfficeMock(seed: OfficeSeed): void {
   const w = window as any;
   const documentStateKey = "__mike_word_e2e_document_v1";
   const officeStorageKey = "__mike_word_e2e_office_storage_v1";
+  const accessTokenKey = "mike_token";
+  const refreshTokenKey = "mike_refresh_token";
+  const editApplyModeKey = "mike_word_edit_apply_mode";
+  const chatStorageModePrefix = "mike_word_chat_storage_mode:";
 
   const clone = <T>(value: T): T => {
     if (value === undefined) return value;
@@ -220,28 +224,38 @@ export function installOfficeMock(seed: OfficeSeed): void {
   w.__WORD_CALLS__ = wordCalls;
 
   // ---- OfficeRuntime.storage ----
-  let storedOfficeValues: Record<string, string>;
+  const storedOfficeValues: Record<string, string> = {};
   const savedOfficeValues = sessionStorage.getItem(officeStorageKey);
   if (savedOfficeValues !== null) {
     try {
-      storedOfficeValues = JSON.parse(savedOfficeValues) as Record<
+      const parsedOfficeValues = JSON.parse(savedOfficeValues) as Record<
         string,
         string
       >;
+      const savedApplyMode = parsedOfficeValues[editApplyModeKey];
+      if (savedApplyMode === "approval" || savedApplyMode === "direct") {
+        storedOfficeValues[editApplyModeKey] =
+          savedApplyMode === "direct" ? "direct" : "approval";
+      }
+      for (const [key, savedValue] of Object.entries(parsedOfficeValues)) {
+        if (
+          key.startsWith(chatStorageModePrefix) &&
+          (savedValue === "cloud" || savedValue === "local")
+        ) {
+          storedOfficeValues[key] =
+            savedValue === "local" ? "local" : "cloud";
+        }
+      }
     } catch {
-      storedOfficeValues = {};
+      // Ignore malformed persisted mock preferences.
     }
-  } else {
-    storedOfficeValues = {};
-    if (seed.token != null) storedOfficeValues.mike_token = seed.token;
-    if (seed.refreshToken != null) {
-      storedOfficeValues.mike_refresh_token = seed.refreshToken;
-    }
-    sessionStorage.setItem(
-      officeStorageKey,
-      JSON.stringify(storedOfficeValues),
-    );
   }
+
+  // OfficeRuntime storage is persisted across task-pane reloads by this mock,
+  // but auth credentials must never be copied into browser storage. Seeded and
+  // newly issued tokens stay in memory for the lifetime of the current page.
+  let accessTokenValue = seed.token ?? null;
+  let refreshTokenValue = seed.refreshToken ?? null;
 
   const persistOfficeValues = (): void => {
     sessionStorage.setItem(
@@ -251,14 +265,45 @@ export function installOfficeMock(seed: OfficeSeed): void {
   };
   w.OfficeRuntime = {
     storage: {
-      getItem: (key: string) =>
-        Promise.resolve(storedOfficeValues[key] ?? null),
+      getItem: (key: string) => {
+        if (key === accessTokenKey) return Promise.resolve(accessTokenValue);
+        if (key === refreshTokenKey) return Promise.resolve(refreshTokenValue);
+        return Promise.resolve(storedOfficeValues[key] ?? null);
+      },
       setItem: (key: string, value: string) => {
-        storedOfficeValues[key] = value;
-        persistOfficeValues();
+        if (key === accessTokenKey) {
+          accessTokenValue = value;
+          return Promise.resolve();
+        }
+        if (key === refreshTokenKey) {
+          refreshTokenValue = value;
+          return Promise.resolve();
+        }
+        if (
+          key === editApplyModeKey &&
+          (value === "approval" || value === "direct")
+        ) {
+          storedOfficeValues[key] =
+            value === "direct" ? "direct" : "approval";
+          persistOfficeValues();
+        } else if (
+          key.startsWith(chatStorageModePrefix) &&
+          (value === "cloud" || value === "local")
+        ) {
+          storedOfficeValues[key] = value === "local" ? "local" : "cloud";
+          persistOfficeValues();
+        }
         return Promise.resolve();
       },
       removeItem: (key: string) => {
+        if (key === accessTokenKey) {
+          accessTokenValue = null;
+          return Promise.resolve();
+        }
+        if (key === refreshTokenKey) {
+          refreshTokenValue = null;
+          return Promise.resolve();
+        }
         delete storedOfficeValues[key];
         persistOfficeValues();
         return Promise.resolve();
@@ -295,6 +340,51 @@ export function installOfficeMock(seed: OfficeSeed): void {
     settings,
   };
 
+  const dialogHandlers = new Map<string, (event: any) => void>();
+  const oauthDialog = {
+    url: "",
+    options: null as Record<string, unknown> | null,
+    closed: false,
+    sendMessage(message: string, origin = window.location.origin): void {
+      dialogHandlers.get("DialogMessageReceived")?.({ message, origin });
+    },
+    sendEvent(error: number): void {
+      dialogHandlers.get("DialogEventReceived")?.({ error });
+    },
+  };
+  w.__OAUTH_DIALOG__ = oauthDialog;
+
+  const dialog = {
+    addEventHandler: (eventType: string, handler: (event: any) => void) => {
+      dialogHandlers.set(eventType, handler);
+    },
+    close: () => {
+      oauthDialog.closed = true;
+    },
+  };
+
+  const officeUi = {
+    displayDialogAsync: (
+      url: string,
+      options: Record<string, unknown>,
+      callback: (result: any) => void
+    ) => {
+      oauthDialog.url = url;
+      oauthDialog.options = clone(options);
+      oauthDialog.closed = false;
+      dialogHandlers.clear();
+      callback({
+        status: AsyncResultStatus.Succeeded,
+        value: dialog,
+      });
+    },
+  };
+
+  const EventType = {
+    DialogMessageReceived: "DialogMessageReceived",
+    DialogEventReceived: "DialogEventReceived",
+  };
+
   w.Office = {
     onReady: (callback?: any) => {
       const info = { host: "Word", platform: "PC" };
@@ -303,6 +393,7 @@ export function installOfficeMock(seed: OfficeSeed): void {
     },
     context: {
       document: officeDocument,
+      ui: officeUi,
       // WordApi (incl. 1.3's Range.compareLocationWith) is mocked below; the
       // WordApiDesktop sets stay unsupported so the app keeps exercising the
       // getTrackedChanges code paths, like Word on the web.
@@ -311,6 +402,7 @@ export function installOfficeMock(seed: OfficeSeed): void {
       },
     },
     AsyncResultStatus,
+    EventType,
   };
 
   const InsertLocation = {

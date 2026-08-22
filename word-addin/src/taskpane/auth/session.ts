@@ -2,12 +2,13 @@
 /**
  * Single source of truth for the add-in's Supabase session.
  *
- * The task pane authenticates with Supabase's password grant and then calls the
- * Mike API with the resulting JWT as a Bearer token. Those access tokens are
- * short-lived (Supabase defaults to a one-hour expiry), so a token persisted in
- * OfficeRuntime.storage during an earlier session is reliably expired by the
- * time the user reopens Word — and EVERY authenticated call then fails with
- * 401 "Invalid or expired token" (chat, projects, workflows, actions alike).
+ * The task pane authenticates with Supabase's password grant or a Google OAuth
+ * dialog, then calls the Mike API with the resulting JWT as a Bearer token.
+ * Those access tokens are short-lived (Supabase defaults to a one-hour expiry),
+ * so a token persisted in OfficeRuntime.storage during an earlier session is
+ * reliably expired by the time the user reopens Word — and EVERY authenticated
+ * call then fails with 401 "Invalid or expired token" (chat, projects,
+ * workflows, actions alike).
  * The original implementation stored ONLY the access token and never refreshed
  * it, so once that token aged out the session was wedged until a manual
  * sign-out / sign-in.
@@ -26,6 +27,7 @@ const ACCESS_KEY = "mike_token";
 const REFRESH_KEY = "mike_refresh_token";
 
 import { describeNetworkFailure } from "../lib/networkError";
+import { parseGoogleOAuthDialogMessage } from "./oauthProtocol";
 
 const SUPABASE_URL: string = process.env.REACT_APP_SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY: string = process.env.REACT_APP_SUPABASE_ANON_KEY ?? "";
@@ -353,6 +355,129 @@ export async function signIn(email: string, password: string): Promise<void> {
     _error = e instanceof Error ? e.message : "Login failed";
     broadcast();
   }
+}
+
+function createOAuthRequestId(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(
+    ""
+  );
+}
+
+/**
+ * Authenticate in an Office Dialog. The dialog starts and finishes on the
+ * add-in's own origin, while Google and Supabase occupy the intermediate
+ * navigation steps. Only a validated Supabase session is accepted here.
+ */
+export async function signInWithGoogle(): Promise<void> {
+  const generation = ++_sessionGeneration;
+  const requestId = createOAuthRequestId();
+  const expectedOrigin = window.location.origin;
+  const dialogUrl = new URL("/oauth-dialog.html", expectedOrigin);
+  dialogUrl.searchParams.set("requestId", requestId);
+
+  // Deliberately NOT `_loading = true`: that flag swaps the whole task pane
+  // for the bootstrap spinner (App.tsx renders it before the login page),
+  // which would unmount LoginPage and leave the user staring at a bare
+  // "Loading…" for the lifetime of the OAuth dialog with no way back. The
+  // login page stays mounted and shows its own "Continuing…" button state.
+  _error = null;
+  broadcast();
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+
+    const fail = (message: string): void => {
+      if (settled) return;
+      settled = true;
+      if (generation === _sessionGeneration) {
+        _error = message;
+        broadcast();
+      }
+      resolve();
+    };
+
+    try {
+      Office.context.ui.displayDialogAsync(
+        dialogUrl.toString(),
+        { height: 60, width: 45, displayInIframe: false },
+        (result) => {
+          if (result.status !== Office.AsyncResultStatus.Succeeded) {
+            fail(result.error?.message ?? "Unable to open Google sign-in.");
+            return;
+          }
+
+          const dialog = result.value;
+          const close = (): void => {
+            try {
+              dialog.close();
+            } catch {
+              // The host may already have closed the dialog.
+            }
+          };
+
+          dialog.addEventHandler(
+            Office.EventType.DialogMessageReceived,
+            (event) => {
+              if (settled) return;
+              if (!("message" in event)) return;
+              if (event.origin && event.origin !== expectedOrigin) {
+                close();
+                fail("Google sign-in returned from an unexpected origin.");
+                return;
+              }
+
+              const message = parseGoogleOAuthDialogMessage(event.message);
+              if (!message || message.requestId !== requestId) {
+                close();
+                fail("Google sign-in returned an invalid response.");
+                return;
+              }
+
+              if (message.status === "error") {
+                close();
+                fail(message.message);
+                return;
+              }
+
+              settled = true;
+              close();
+              void writeSession(
+                message.accessToken,
+                message.refreshToken,
+                generation
+              ).then((saved) => {
+                if (saved && generation === _sessionGeneration) {
+                  _error = null;
+                  broadcast();
+                }
+                resolve();
+              });
+            }
+          );
+
+          dialog.addEventHandler(
+            Office.EventType.DialogEventReceived,
+            (event) => {
+              if (!("error" in event)) return;
+              fail(
+                event.error === 12006
+                  ? "Google sign-in was cancelled."
+                  : `Google sign-in closed unexpectedly (Office error ${event.error}).`
+              );
+            }
+          );
+        }
+      );
+    } catch (error) {
+      fail(
+        error instanceof Error
+          ? error.message
+          : "Unable to open Google sign-in."
+      );
+    }
+  });
 }
 
 export async function signOut(): Promise<void> {

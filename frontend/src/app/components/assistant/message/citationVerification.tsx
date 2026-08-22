@@ -21,8 +21,7 @@ const PRESENTATION: Record<
   unverified: {
     label: "Could not verify quote",
     description: "Quote could not be matched to the source text.",
-    pillClassName:
-      "!border-0 !bg-red-100/85 !text-red-800 hover:!bg-red-200/80",
+    pillClassName: "!bg-red-100/85 !text-red-800 hover:!bg-red-200/80",
   },
 };
 

@@ -14,6 +14,7 @@ import {
     MikeApiError,
     addDocumentToProject,
     clearTabularCells,
+    completeUserOnboarding,
     copyDocumentVersionFromDocument,
     createChat,
     createQuickAction,
@@ -113,6 +114,8 @@ import {
     renameProjectFolder,
     renameTabularChat,
     replaceDocumentVersionFile,
+    resolveLibraryFolderPath,
+    resolveProjectFolderPath,
     resolveDocumentEdit,
     saveApiKey,
     bulkDeleteLibraryDocuments,
@@ -125,6 +128,7 @@ import {
     streamProjectChat,
     streamTabularChat,
     streamTabularGeneration,
+    syncUserPasswordSet,
     unhideWorkflow,
     updateMcpConnector,
     updateProject,
@@ -347,18 +351,38 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         await expect(getUserProfile()).rejects.toMatchObject({
             status: 500,
             code: null,
-            message: "API error: 500",
+            message: "Something went wrong. Please try again.",
         });
     });
 
-    it("uses the raw body text for non-JSON error responses", async () => {
+    it("discards raw JSON details from 5xx responses and keeps the request ID", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse(
+                {
+                    code: "internal_error",
+                    detail: "schema cache exposed an internal function name",
+                    request_id: "req-public-123",
+                },
+                { status: 500 },
+            ),
+        );
+
+        await expect(getUserProfile()).rejects.toMatchObject({
+            status: 500,
+            code: "internal_error",
+            requestId: "req-public-123",
+            message: "Something went wrong. Please try again.",
+        });
+    });
+
+    it("does not expose non-JSON server error responses", async () => {
         fetchMock.mockResolvedValue(
             new Response("upstream exploded", { status: 502 }),
         );
 
         await expect(getUserProfile()).rejects.toMatchObject({
             status: 502,
-            message: "upstream exploded",
+            message: "Something went wrong. Please try again.",
         });
     });
 
@@ -367,7 +391,7 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
 
         await expect(getUserProfile()).rejects.toMatchObject({
             status: 503,
-            message: "API error: 503",
+            message: "Something went wrong. Please try again.",
         });
     });
 
@@ -518,10 +542,12 @@ describe("downloadDocumentsZip", () => {
         });
     });
 
-    it("throws a plain Error carrying the response text", async () => {
+    it("does not expose a non-JSON error response", async () => {
         fetchMock.mockResolvedValue(new Response("bad ids", { status: 400 }));
 
-        await expect(downloadDocumentsZip(["x"])).rejects.toThrow("bad ids");
+        await expect(downloadDocumentsZip(["x"])).rejects.toThrow(
+            "The request could not be completed. Please try again.",
+        );
     });
 });
 
@@ -1579,7 +1605,21 @@ describe("multipart upload endpoints", () => {
         expect(init.headers).toEqual({ Authorization: "Bearer token-123" });
     });
 
-    it("upload failures throw a plain Error with the response text, not MikeApiError", async () => {
+    it("includes the destination folder in project and library uploads", async () => {
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(jsonResponse({ id: "d1" })),
+        );
+
+        await uploadProjectDocument("p1", file, "project-folder");
+        let body = lastFetchCall().init.body as FormData;
+        expect(body.get("folder_id")).toBe("project-folder");
+
+        await uploadLibraryDocument("files", file, "library-folder");
+        body = lastFetchCall().init.body as FormData;
+        expect(body.get("folder_id")).toBe("library-folder");
+    });
+
+    it("multipart upload failures use the sanitized API error contract", async () => {
         fetchMock.mockImplementation(() =>
             Promise.resolve(new Response("file too large", { status: 413 })),
         );
@@ -1588,15 +1628,17 @@ describe("multipart upload endpoints", () => {
             (e: unknown) => e,
         );
 
-        expect(error).toBeInstanceOf(Error);
-        expect(error).not.toBeInstanceOf(MikeApiError);
-        expect((error as Error).message).toBe("file too large");
+        expect(error).toBeInstanceOf(MikeApiError);
+        expect(error).toMatchObject({
+            status: 413,
+            message: "The request could not be completed. Please try again.",
+        });
 
         await expect(uploadStandaloneDocument(file)).rejects.toThrow(
-            "file too large",
+            "The request could not be completed. Please try again.",
         );
         await expect(uploadLibraryDocument("files", file)).rejects.toThrow(
-            "file too large",
+            "The request could not be completed. Please try again.",
         );
     });
 
@@ -1617,6 +1659,17 @@ describe("multipart upload endpoints", () => {
         expect(body.get("filename")).toBeNull();
     });
 
+    it("uploadDocumentVersion uses the sanitized API error contract", async () => {
+        fetchMock.mockResolvedValue(
+            new Response("database connection failed", { status: 500 }),
+        );
+
+        await expect(uploadDocumentVersion("d1", file)).rejects.toMatchObject({
+            status: 500,
+            message: "Something went wrong. Please try again.",
+        });
+    });
+
     it("replaceDocumentVersionFile PUTs to the version file route and surfaces errors", async () => {
         fetchMock.mockResolvedValue(jsonResponse({ id: "v1" }));
 
@@ -1632,7 +1685,9 @@ describe("multipart upload endpoints", () => {
         fetchMock.mockResolvedValue(new Response("nope", { status: 409 }));
         await expect(
             replaceDocumentVersionFile("d1", "v1", file),
-        ).rejects.toThrow("nope");
+        ).rejects.toThrow(
+            "The request could not be completed. Please try again.",
+        );
     });
 
     it("uploads workflow reference files as authenticated multipart data", async () => {
@@ -1742,11 +1797,51 @@ describe("query and payload defaults", () => {
         });
     });
 
+    it("resolves project and library upload paths with conflict choices", async () => {
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(
+                jsonResponse({
+                    conflict: false,
+                    folder_id: "f1",
+                    resolved_name: "NDAs (2)",
+                    folders: [],
+                }),
+            ),
+        );
+
+        await resolveProjectFolderPath("p1", ["NDAs"], null, "rename");
+        let call = lastFetchCall();
+        expect(call.url).toBe(
+            "http://localhost:3001/projects/p1/folder-paths/resolve",
+        );
+        expect(JSON.parse(call.init.body as string)).toEqual({
+            segments: ["NDAs"],
+            base_folder_id: null,
+            conflict_resolution: "rename",
+        });
+
+        await resolveLibraryFolderPath(
+            "templates",
+            ["Executed", "2026"],
+            "parent-1",
+            "reuse",
+        );
+        call = lastFetchCall();
+        expect(call.url).toBe(
+            "http://localhost:3001/library/templates/folder-paths/resolve",
+        );
+        expect(JSON.parse(call.init.body as string)).toEqual({
+            segments: ["Executed", "2026"],
+            base_folder_id: "parent-1",
+            conflict_resolution: "reuse",
+        });
+    });
+
     it("downloadDocumentsZip synthesizes a message when the error body is empty", async () => {
         fetchMock.mockResolvedValue(new Response("", { status: 500 }));
 
         await expect(downloadDocumentsZip(["d1"])).rejects.toThrow(
-            "API error: 500",
+            "Something went wrong. Please try again.",
         );
     });
 
@@ -1862,6 +1957,33 @@ describe("thin endpoint wrappers", () => {
             url: "/user/profile",
             method: "PATCH",
             body: { displayName: "Amal", titleModel: "m1" },
+        },
+        {
+            name: "completeUserOnboarding (defaults)",
+            call: () => completeUserOnboarding(),
+            url: "/user/onboarding",
+            method: "POST",
+            body: {},
+        },
+        {
+            name: "completeUserOnboarding (personalisation)",
+            call: () =>
+                completeUserOnboarding({
+                    jurisdiction: "Singapore",
+                    practiceAreas: ["Litigation"],
+                }),
+            url: "/user/onboarding",
+            method: "POST",
+            body: {
+                jurisdiction: "Singapore",
+                practiceAreas: ["Litigation"],
+            },
+        },
+        {
+            name: "syncUserPasswordSet",
+            call: () => syncUserPasswordSet(),
+            url: "/user/security/password-set",
+            method: "POST",
         },
         {
             name: "updateUserMfaOnLogin",

@@ -3,6 +3,7 @@ import {
   getSessionState,
   initialize,
   signIn,
+  signInWithGoogle,
   signOut,
   subscribe,
 } from "./session";
@@ -18,6 +19,7 @@ interface AuthState {
   loading: boolean;
   error: string | null;
   login: (email: string, password: string) => Promise<void>;
+  loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -36,8 +38,9 @@ export function useAuth(): AuthState {
     (email: string, password: string) => signIn(email, password),
     []
   );
+  const loginWithGoogle = useCallback(() => signInWithGoogle(), []);
   const logout = useCallback(() => signOut(), []);
 
   const { token, loading, error } = getSessionState();
-  return { token, loading, error, login, logout };
+  return { token, loading, error, login, loginWithGoogle, logout };
 }

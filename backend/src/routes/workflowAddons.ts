@@ -16,6 +16,7 @@ import {
 } from "../lib/storage";
 import { contentTypeForDocumentType } from "../lib/documentTypes";
 import { contentSha256 } from "../lib/documentVersions";
+import { sendInternalError } from "../lib/httpError";
 
 export const workflowAddonsRouter = Router();
 
@@ -43,7 +44,7 @@ workflowAddonsRouter.get(
     if (type === "assistant" || type === "tabular")
       query = query.eq("type", type);
     const { data, error } = await query.order("title", { ascending: true });
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
     res.json(data ?? []);
   }),
 );
@@ -71,7 +72,7 @@ workflowAddonsRouter.get(
         .eq("addon_id", data.id)
         .order("created_at", { ascending: true });
       if (referencesError) {
-        return void res.status(500).json({ detail: referencesError.message });
+        return void sendInternalError(res, referencesError);
       }
       references = assistantReferences;
     }
@@ -112,9 +113,10 @@ workflowAddonsRouter.post(
       .select("*")
       .single();
     if (error || !workflow) {
-      return void res
-        .status(500)
-        .json({ detail: error?.message ?? "Import failed" });
+      return void sendInternalError(
+        res,
+        error ?? new Error("Workflow add-on import returned no data"),
+      );
     }
 
     const createdStoragePaths: string[] = [];

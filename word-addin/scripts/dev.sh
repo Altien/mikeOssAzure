@@ -15,8 +15,9 @@
 #   5. Verifies port 3200 is free for the dev server and manifest.
 #   6. Installs the trusted dev HTTPS certificate if Word doesn't already trust
 #      it (this step may prompt for your keychain/admin password).
-#   7. Runs `npm start`; webpack loads `.env`, boots its dev server
-#      on https://localhost:3200 and sideloads the add-in into Word desktop.
+#   7. Runs `npm start`; webpack loads `.env` and boots its dev server on
+#      https://localhost:3200. It sideloads into Word unless
+#      WORD_ADDIN_SIDELOAD=0.
 #
 # Prerequisite: the Mike API must be running (`npm run dev` in backend/),
 # and frontend/.env.local must be filled in (see the repo README).
@@ -63,6 +64,8 @@ SUPA_URL="${SUPA_URL:-http://127.0.0.1:54321}"
 API_TARGET="${API_PROXY_TARGET:-$(read_addin_env API_PROXY_TARGET)}"
 [ -n "$API_TARGET" ] || API_TARGET="$(read_frontend_env NEXT_PUBLIC_API_BASE_URL)"
 API_TARGET="${API_TARGET:-http://localhost:3001}"
+SIDELOAD_SETTING="${WORD_ADDIN_SIDELOAD:-$(read_addin_env WORD_ADDIN_SIDELOAD)}"
+SIDELOAD_SETTING="${SIDELOAD_SETTING:-1}"
 if [ -z "$ANON" ]; then
     warn "Couldn't read a Supabase anon/publishable key from .env or $FE_ENV."
     warn "Fill it in first (see the repo README → Environment)."
@@ -89,6 +92,7 @@ REACT_APP_SUPABASE_URL=${DEV_ORIGIN}
 REACT_APP_SUPABASE_ANON_KEY=${ANON}
 REACT_APP_API_BASE_URL=${DEV_ORIGIN}/api
 REACT_APP_WEB_APP_URL=${WEB_APP_URL}
+WORD_ADDIN_SIDELOAD=${SIDELOAD_SETTING}
 SUPABASE_PROXY_TARGET=${SUPA_URL:-http://127.0.0.1:54321}
 API_PROXY_TARGET=${API_TARGET}
 EOF
@@ -214,8 +218,16 @@ if [ "$BACKEND_OK" != 1 ]; then
     warn "FORCE=1 set — launching despite the backend being down."
 fi
 
-step "Starting dev server + sideloading into Word"
-echo "    (webpack serves https://localhost:3200 and proxies /auth + /api to the"
-echo "     real backends; Word opens with the add-in.)"
-echo "    In Word: Home → Mike Legal AI → Mike"
+case "$SIDELOAD_SETTING" in
+0|false|FALSE|False|no|NO|No|off|OFF|Off)
+    step "Starting dev server without opening Word"
+    echo "    WORD_ADDIN_SIDELOAD=${SIDELOAD_SETTING}; webpack will serve the task pane only."
+    ;;
+*)
+    step "Starting dev server + sideloading into Word"
+    echo "    (webpack serves https://localhost:3200 and proxies /auth + /api to the"
+    echo "     real backends; Word opens with the add-in.)"
+    echo "    In Word: Home → Mike Legal AI → Mike"
+    ;;
+esac
 exec npm start

@@ -13,6 +13,15 @@ import {
     authGlassCardClassName,
     authInputClassName,
 } from "@/app/components/auth/authStyles";
+import { AuthDivider } from "@/app/components/auth/AuthDivider";
+import { GoogleAuthButton } from "@/app/components/auth/GoogleAuthButton";
+import { FieldLabel } from "@/app/components/ui/form-field";
+import { knownErrorCodeMessage } from "@/app/lib/userFacingError";
+
+const LOGIN_ERROR_MESSAGES = {
+    invalid_credentials: "The email or password is incorrect.",
+    email_not_confirmed: "Confirm your email address before logging in.",
+} as const;
 
 export default function LoginPage() {
     const router = useRouter();
@@ -24,7 +33,7 @@ export default function LoginPage() {
 
     useEffect(() => {
         if (!authLoading && isAuthenticated) {
-            router.replace("/assistant");
+            router.replace("/onboarding/profile");
         }
     }, [authLoading, isAuthenticated, router]);
 
@@ -41,12 +50,14 @@ export default function LoginPage() {
 
             if (error) throw error;
 
-            router.push("/assistant");
+            router.push("/onboarding/profile");
         } catch (error: unknown) {
             setError(
-                error instanceof Error
-                    ? error.message
-                    : "An error occurred during login",
+                knownErrorCodeMessage(
+                    error,
+                    LOGIN_ERROR_MESSAGES,
+                    "Unable to log in right now. Please try again.",
+                ),
             );
         } finally {
             setLoading(false);
@@ -60,20 +71,15 @@ export default function LoginPage() {
             </div>
             <div className="w-full max-w-md">
                 {/* Login Form */}
-                <div
-                    className={cn(authGlassCardClassName, "mb-4 pb-5")}
-                >
+                <div className={cn(authGlassCardClassName, "mb-4")}>
                     <h2 className="mb-6 text-left text-2xl font-medium font-serif text-gray-950">
                         Log In
                     </h2>
                     <form onSubmit={handleLogin} className="space-y-4">
                         <div>
-                            <label
-                                htmlFor="email"
-                                className="block text-sm font-medium text-gray-700 mb-2"
-                            >
+                            <FieldLabel htmlFor="email">
                                 Email
-                            </label>
+                            </FieldLabel>
                             <Input
                                 id="email"
                                 type="email"
@@ -85,13 +91,10 @@ export default function LoginPage() {
                         </div>
 
                         <div>
-                            <div className="mb-2 flex items-center justify-between gap-3">
-                                <label
-                                    htmlFor="password"
-                                    className="block text-sm font-medium text-gray-700"
-                                >
+                            <div className="flex items-start justify-between gap-3">
+                                <FieldLabel htmlFor="password">
                                     Password
-                                </label>
+                                </FieldLabel>
                                 <Link
                                     href="/forgot-password"
                                     className="text-xs font-medium text-gray-500 transition-colors hover:text-gray-950"
@@ -104,7 +107,6 @@ export default function LoginPage() {
                                 type="password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
-                                placeholder="Enter your password"
                                 required
                                 className={`w-full ${authInputClassName}`}
                             />
@@ -127,16 +129,22 @@ export default function LoginPage() {
                                 {loading ? "Logging in..." : "Log in"}
                             </PillButton>
                         </div>
-                        <div className="text-center text-sm text-gray-500">
-                            Don&apos;t have an account?{" "}
-                            <Link
-                                href="/signup"
-                                className="font-medium transition-colors hover:text-gray-950"
-                            >
-                                Sign up
-                            </Link>
-                        </div>
+                        <AuthDivider />
+                        <GoogleAuthButton
+                            onError={setError}
+                            disabled={loading}
+                            onLoadingChange={setLoading}
+                        />
                     </form>
+                </div>
+                <div className="text-center text-sm text-gray-500">
+                    Don&apos;t have an account?{" "}
+                    <Link
+                        href="/signup"
+                        className="font-medium transition-colors hover:text-gray-950"
+                    >
+                        Sign up
+                    </Link>
                 </div>
             </div>
         </div>

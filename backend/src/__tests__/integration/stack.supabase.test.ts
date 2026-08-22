@@ -62,7 +62,10 @@ maybeDescribe("Supabase stack — auth contract + RLS deny-all firewall", () => 
         });
 
         const a = await admin.auth.admin.createUser({
-            email: emailA, password, email_confirm: true,
+            email: emailA,
+            password,
+            email_confirm: true,
+            user_metadata: { full_name: "Google Stack User" },
         });
         const b = await admin.auth.admin.createUser({
             email: emailB, password, email_confirm: true,
@@ -103,6 +106,16 @@ maybeDescribe("Supabase stack — auth contract + RLS deny-all firewall", () => 
         expect(error).toBeNull();
         expect(data.user?.id).toBe(userA);
         expect(data.user?.email).toBe(emailA);
+    });
+
+    it("signup profile uses the OAuth-style full_name metadata", async () => {
+        const { data, error } = await admin
+            .from("user_profiles")
+            .select("display_name")
+            .eq("user_id", userA)
+            .single();
+        expect(error).toBeNull();
+        expect(data?.display_name).toBe("Google Stack User");
     });
 
     it("RLS: the service role sees seeded rows the owner cannot see via the user path", async () => {

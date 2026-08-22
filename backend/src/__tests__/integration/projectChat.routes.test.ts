@@ -80,6 +80,14 @@ vi.mock("../../lib/userSettings", () => ({
         title_model: "test-model",
         tabular_model: "test-model",
         api_keys: {},
+        personalisation: {
+            displayName: "Ada",
+            organisation: "Acme LLP",
+            jurisdiction: "Singapore",
+            practiceSetting: "private_practice",
+            professionalTitle: "Partner",
+            practiceAreas: ["Litigation"],
+        },
     })),
     getUserApiKeys: vi.fn(async () => ({})),
 }));
@@ -147,6 +155,9 @@ describe("POST /projects/:projectId/chat", () => {
         expect(runLLMStream).toHaveBeenCalledWith(
             expect.objectContaining({ emitDone: false }),
         );
+        const systemPromptExtra = buildMessages.mock.calls[0]?.[2] as string;
+        expect(systemPromptExtra).toContain("USER PERSONALISATION");
+        expect(systemPromptExtra).toContain('"organisation": "Acme LLP"');
     });
 
     it("normalizes validated request fields before using them", async () => {

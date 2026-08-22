@@ -88,7 +88,7 @@ Size is a rough guess: S ≈ an hour, M ≈ an afternoon.
       pagination, and error paths. Legal-research correctness. (M)
 - [x] `lib/systemWorkflows.ts` — mostly data: assert workflow definitions are
       well-formed (unique ids, non-empty skill markdown). (S)
-- [ ] `lib/llm/tools.ts` + `lib/llm/index.ts` — provider-neutral tool plumbing
+- [ ] `lib/llm/aiSdk.ts` + `lib/llm/providers.ts` — provider-neutral tool plumbing
       and provider selection with mocked provider modules. (M)
 - [ ] `lib/mcp/types.ts` + `lib/mcp/servers.ts` — server config validation and
       allow-listing logic; security relevant. (M)
@@ -100,7 +100,7 @@ Size is a rough guess: S ≈ an hour, M ≈ an afternoon.
       utilities), not the full tool handlers. (M)
 - [ ] `lib/chat/tools/toolDispatcher.ts` — dispatch table routing and argument
       validation with stubbed tools; don't try to cover every tool body. (M)
-- [ ] `lib/chat/streaming.ts` + `lib/llm/{claude,gemini,openai}.ts` — streaming
+- [ ] `lib/chat/streaming.ts` + `lib/llm/{aiSdk,providers}.ts` — streaming
       loops and provider adapters; hardest to unit test, consider extracting
       pure chunk-parsing helpers first. (M)
 

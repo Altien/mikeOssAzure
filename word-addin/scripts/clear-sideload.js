@@ -1,6 +1,6 @@
 /**
- * Best-effort `office-addin-debugging stop` before every `npm start` or
- * `bun dev` (wired as the "prestart" and "predev" hooks).
+ * Best-effort `office-addin-debugging stop` before an automatically sideloaded
+ * `npm start` or `bun dev` (wired as the "prestart" and "predev" hooks).
  *
  * Why: office-addin-debugging registers the add-in by hard-linking
  * manifest.xml into Word's sideload folder. If a previous run exited
@@ -14,10 +14,27 @@
  * its own, more actionable, error).
  */
 const { spawnSync } = require("child_process");
+const { existsSync } = require("fs");
+const path = require("path");
+
+const addinDir = path.resolve(__dirname, "..");
+const envPath = path.join(addinDir, ".env");
+if (existsSync(envPath) && typeof process.loadEnvFile === "function") {
+  process.loadEnvFile(envPath);
+}
+
+const disabledValues = new Set(["0", "false", "no", "off"]);
+if (
+  disabledValues.has(
+    String(process.env.WORD_ADDIN_SIDELOAD ?? "1").trim().toLowerCase()
+  )
+) {
+  process.exit(0);
+}
 
 spawnSync(
   process.platform === "win32" ? "npx.cmd" : "npx",
   ["--no-install", "office-addin-debugging", "stop", "manifest.xml"],
-  { stdio: "ignore", cwd: __dirname + "/.." }
+  { stdio: "ignore", cwd: addinDir }
 );
 process.exit(0);

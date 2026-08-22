@@ -235,7 +235,7 @@ describe("projects.routes", () => {
         .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("boom");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
 
     // Regression guard: legacy project pickers call GET /projects with no
@@ -355,7 +355,7 @@ describe("projects.routes", () => {
         .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("boom");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
     });
 
@@ -503,6 +503,141 @@ describe("projects.routes", () => {
     });
   });
 
+  describe("folder upload path resolution", () => {
+    it("resolves a project path through the atomic RPC", async () => {
+      const captured = captureRpcArgs();
+      supabaseState.rpc = {
+        data: {
+          conflict: false,
+          folder_id: "folder-2",
+          resolved_name: "NDAs (2)",
+          folders: [],
+        },
+        error: null,
+      };
+
+      const res = await request(app)
+        .post("/projects/p1/folder-paths/resolve")
+        .set(...AUTH)
+        .send({
+          segments: ["NDAs"],
+          base_folder_id: null,
+          conflict_resolution: "rename",
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.resolved_name).toBe("NDAs (2)");
+      expect(captured.name).toBe("resolve_project_folder_path");
+      expect(captured.args).toEqual({
+        target_project_id: "p1",
+        target_user_id: "u1",
+        base_folder_id: null,
+        path_segments: ["NDAs"],
+        conflict_resolution: "rename",
+      });
+    });
+
+    it("returns project folder conflicts without replacement permissions", async () => {
+      checkProjectAccess.mockResolvedValue({
+        ok: true,
+        isOwner: false,
+        project: { id: "p1", user_id: "u2", shared_with: ["u1@test.local"] },
+      });
+      supabaseState.rpc = {
+        data: {
+          conflict: true,
+          folder_name: "NDAs",
+          existing_folder_id: "folder-1",
+          suggested_name: "NDAs (2)",
+        },
+        error: null,
+      };
+
+      const res = await request(app)
+        .post("/projects/p1/folder-paths/resolve")
+        .set(...AUTH)
+        .send({ segments: ["NDAs"] });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        conflict: true,
+        folder_name: "NDAs",
+        existing_folder_id: "folder-1",
+        suggested_name: "NDAs (2)",
+      });
+      expect(res.body).not.toHaveProperty("can_replace");
+    });
+
+    it("returns library folder conflicts without replacement permissions", async () => {
+      supabaseState.rpc = {
+        data: {
+          conflict: true,
+          folder_name: "NDAs",
+          existing_folder_id: "folder-1",
+          suggested_name: "NDAs (3)",
+        },
+        error: null,
+      };
+
+      const res = await request(app)
+        .post("/library/files/folder-paths/resolve")
+        .set(...AUTH)
+        .send({ segments: ["NDAs"] });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        conflict: true,
+        folder_name: "NDAs",
+        existing_folder_id: "folder-1",
+        suggested_name: "NDAs (3)",
+      });
+      expect(res.body).not.toHaveProperty("can_replace");
+    });
+
+    it.each([
+      ["project", "/projects/p1/folder-paths/resolve"],
+      ["library", "/library/files/folder-paths/resolve"],
+    ])("does not expose raw %s folder RPC errors", async (_scope, path) => {
+      const rawError =
+        "Could not find resolve_project_folder_path in the schema cache";
+      supabaseState.rpc = {
+        data: null,
+        error: { message: rawError },
+      };
+      const consoleError = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+
+      const res = await request(app)
+        .post(path)
+        .set(...AUTH)
+        .send({ segments: ["NDAs"] });
+
+      expect(res.status).toBe(500);
+      expect(res.body).toMatchObject({
+        code: "internal_error",
+        detail: "Something went wrong. Please try again.",
+      });
+      expect(res.body.request_id).toEqual(expect.any(String));
+      expect(JSON.stringify(res.body)).not.toContain(rawError);
+      expect(consoleError).toHaveBeenCalled();
+      consoleError.mockRestore();
+    });
+
+    it("rejects malformed path segments before calling the RPC", async () => {
+      const captured = captureRpcArgs();
+
+      const res = await request(app)
+        .post("/library/files/folder-paths/resolve")
+        .set(...AUTH)
+        .send({ segments: ["NDAs", 42] });
+
+      expect(res.status).toBe(400);
+      expect(res.body.detail).toBe("Invalid folder path");
+      expect(captured.name).toBeUndefined();
+    });
+  });
+
     // ── POST /projects (create) ───────────────────────────────────────────
     describe("POST /projects", () => {
         it("returns 400 when name is missing/blank", async () => {
@@ -594,7 +729,7 @@ describe("projects.routes", () => {
                 .send({ name: "Delta" });
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("insert failed");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
     });
 
@@ -776,7 +911,7 @@ describe("projects.routes", () => {
         .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("cascade failed");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
     });
     // ── GET /projects/:projectId/export (tamper-evident manifest) ─────────
@@ -927,7 +1062,7 @@ describe("projects.routes", () => {
                 .set(...AUTH);
 
             expect(res.status).toBe(500);
-      expect(res.body.detail).toBe("Failed to build project export manifest");
+      expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
     });
 });

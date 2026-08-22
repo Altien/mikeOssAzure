@@ -1,6 +1,7 @@
 import { test as setup, expect } from "@playwright/test";
 import path from "path";
 import fs from "fs";
+import { completeOnboardingIfRequired } from "./onboarding";
 
 const authFile = path.join(__dirname, ".auth/user.json");
 
@@ -102,8 +103,10 @@ setup("authenticate", async ({ page }) => {
     await page.fill("#password", password);
     await page.click('button[type="submit"]');
 
-    /* After login the app redirects to /assistant */
-    await page.waitForURL(/\/assistant/, { timeout: 15_000 });
+    /* New fixture users must complete the onboarding lifecycle before their
+       shared authenticated state can be used by the rest of the suite. On
+       later runs the already-onboarded user goes directly to /assistant. */
+    await completeOnboardingIfRequired(page);
 
     /* Save the authenticated session for all subsequent tests */
     await page.context().storageState({ path: authFile });

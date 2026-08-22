@@ -43,7 +43,7 @@ export const FormTextInput = forwardRef<HTMLInputElement, FormTextInputProps>(
 FormTextInput.displayName = "FormTextInput";
 
 // Element-agnostic so the same props spread onto a label, p or span.
-type FieldLabelProps = HTMLAttributes<HTMLElement> & {
+type FieldLabelProps = Omit<HTMLAttributes<HTMLElement>, "className"> & {
     children: ReactNode;
     as?: "label" | "p" | "span";
     htmlFor?: string;
@@ -52,14 +52,10 @@ type FieldLabelProps = HTMLAttributes<HTMLElement> & {
 export function FieldLabel({
     as = "label",
     children,
-    className,
     htmlFor,
     ...props
 }: FieldLabelProps) {
-    const classes = cn(
-        "mb-2 block text-xs font-medium text-gray-700",
-        className,
-    );
+    const classes = "mb-2 block text-sm font-medium text-gray-700";
 
     // The non-label variants still need forwarded props: `id` is what lets a
     // caller point `aria-labelledby` at them.

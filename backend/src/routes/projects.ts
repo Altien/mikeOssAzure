@@ -9,6 +9,7 @@ import {
   contentSha256,
 } from "../lib/documentVersions";
 import { safeErrorLog } from "../lib/safeError";
+import { sendInternalError } from "../lib/httpError";
 import {
   buildProjectExportManifest,
   projectManifestFilename,
@@ -274,7 +275,7 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
       p_limit: pagination.limit,
       p_offset: pagination.offset,
     });
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
     return void res.json(data ?? []);
   }
 
@@ -298,7 +299,7 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
     : { p_user_id: userId, p_user_email: normalizedUserEmail ?? null };
 
   const { data, error } = await db.rpc("get_projects_overview", rpcArgs);
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendInternalError(res, error);
 
   const projects = (data ?? []) as { id: string }[];
   if (!includeDocuments || projects.length === 0) {
@@ -322,9 +323,9 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
       .order("created_at", { ascending: true }),
   ]);
   if (docsError)
-    return void res.status(500).json({ detail: docsError.message });
+    return void sendInternalError(res, docsError);
   if (foldersError)
-    return void res.status(500).json({ detail: foldersError.message });
+    return void sendInternalError(res, foldersError);
 
   const docsTyped = (docs ?? []) as unknown as {
     id: string;
@@ -408,7 +409,7 @@ projectsRouter.post("/", requireAuth, async (req, res) => {
     })
     .select("*")
     .single();
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendInternalError(res, error);
   res.status(201).json({ ...data, documents: [] });
 });
 
@@ -440,7 +441,7 @@ async function handleProjectDirectorySearch(req: Request, res: Response) {
   const projectResults = await Promise.all(projectQueries);
   const projectError = projectResults.find((result) => result.error)?.error;
   if (projectError)
-    return void res.status(500).json({ detail: projectError.message });
+    return void sendInternalError(res, projectError);
   const projectsById = new Map<string, Record<string, unknown>>();
   for (const result of projectResults) {
     for (const project of result.data ?? []) {
@@ -457,7 +458,7 @@ async function handleProjectDirectorySearch(req: Request, res: Response) {
     .ilike("filename", `%${escaped}%`)
     .is("deleted_at", null);
   if (versionsError)
-    return void res.status(500).json({ detail: versionsError.message });
+    return void sendInternalError(res, versionsError);
 
   const versionIds = (versions ?? []).map((version) => version.id as string);
   let matchedDocuments: Record<string, unknown>[] = [];
@@ -467,7 +468,7 @@ async function handleProjectDirectorySearch(req: Request, res: Response) {
       .select("*")
       .in("project_id", accessibleProjectIds)
       .in("current_version_id", versionIds);
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
     matchedDocuments = (data ?? []) as Record<string, unknown>[];
     await attachLatestVersionNumbers(
       db,
@@ -532,7 +533,7 @@ projectsRouter.get("/:projectId/directory", requireAuth, async (req, res) => {
     pagination,
   );
   if (result.error)
-    return void res.status(500).json({ detail: result.error.message });
+    return void sendInternalError(res, result.error);
   res.json({
     documents: result.documents,
     folders: result.folders,
@@ -550,7 +551,7 @@ projectsRouter.get("/filter-options", requireAuth, async (req, res) => {
     p_user_id: userId,
     p_user_email: normalizedUserEmail ?? null,
   });
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendInternalError(res, error);
 
   const row = (data?.[0] ?? {}) as {
     practices?: unknown;
@@ -610,7 +611,7 @@ projectsRouter.get("/ids", requireAuth, async (req, res) => {
       pagination: { limit: PROJECT_IDS_PAGE_SIZE, offset },
     });
     const { data, error } = await db.rpc("get_project_ids_overview", rpcArgs);
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
 
     const rows = (data ?? []) as { id: string; user_id: string }[];
     if (rows.length === 0) break;
@@ -799,8 +800,7 @@ projectsRouter.delete("/:projectId", requireAuth, async (req, res) => {
       return void res.status(404).json({ detail: "Project not found" });
     res.status(204).send();
   } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ detail });
+    sendInternalError(res, err);
   }
 });
 
@@ -1131,7 +1131,17 @@ projectsRouter.post(
     if (!access.ok)
       return void res.status(404).json({ detail: "Project not found" });
 
-    await handleDocumentUpload(req, res, userId, projectId, db);
+    const folderId =
+      typeof req.body?.folder_id === "string" && req.body.folder_id.trim()
+        ? req.body.folder_id.trim()
+        : null;
+    if (folderId) {
+      const folder = await loadProjectFolder(db, projectId, folderId);
+      if (!folder)
+        return void res.status(404).json({ detail: "Folder not found" });
+    }
+
+    await handleDocumentUpload(req, res, userId, projectId, db, folderId);
   },
 );
 
@@ -1155,13 +1165,81 @@ projectsRouter.get("/:projectId/chats", requireAuth, async (req, res) => {
     .select("*")
     .eq("project_id", projectId)
     .order("created_at", { ascending: false });
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendInternalError(res, error);
   const chats = data ?? [];
   await attachChatCreatorLabels(db, chats);
   res.json(chats);
 });
 
 // ── Folder routes ─────────────────────────────────────────────────────────────
+
+// POST /projects/:projectId/folder-paths/resolve
+projectsRouter.post(
+  "/:projectId/folder-paths/resolve",
+  requireAuth,
+  async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const { projectId } = req.params;
+    const body = req.body as {
+      base_folder_id?: string | null;
+      segments?: unknown;
+      conflict_resolution?: unknown;
+    };
+    const rawSegments = Array.isArray(body.segments) ? body.segments : [];
+    const segments = Array.isArray(body.segments)
+      ? body.segments
+          .filter((segment): segment is string => typeof segment === "string")
+          .map((segment) => segment.trim())
+      : [];
+    if (
+      rawSegments.length !== segments.length ||
+      segments.length === 0 ||
+      segments.length > 100 ||
+      segments.some((segment) => !segment || segment.length > 255)
+    ) {
+      return void res.status(400).json({ detail: "Invalid folder path" });
+    }
+    const conflictResolution =
+      body.conflict_resolution === "reuse" ||
+      body.conflict_resolution === "rename"
+        ? body.conflict_resolution
+        : "error";
+    const baseFolderId =
+      typeof body.base_folder_id === "string" && body.base_folder_id.trim()
+        ? body.base_folder_id.trim()
+        : null;
+
+    const db = createServerSupabase();
+    const access = await checkProjectAccess(projectId, userId, userEmail, db);
+    if (!access.ok)
+      return void res.status(404).json({ detail: "Project not found" });
+    if (baseFolderId) {
+      const parent = await loadProjectFolder(db, projectId, baseFolderId);
+      if (!parent)
+        return void res.status(404).json({ detail: "Parent folder not found" });
+    }
+
+    const { data, error } = await db.rpc("resolve_project_folder_path", {
+      target_project_id: projectId,
+      target_user_id: userId,
+      base_folder_id: baseFolderId,
+      path_segments: segments,
+      conflict_resolution: conflictResolution,
+    });
+    if (error) {
+      console.error("[projects/folder-paths/resolve] failed", {
+        projectId,
+        userId,
+        error: safeErrorLog(error),
+      });
+      return void res.status(500).json({
+        detail: "Could not prepare this folder upload. Please try again.",
+      });
+    }
+    res.json(data);
+  },
+);
 
 // POST /projects/:projectId/folders
 projectsRouter.post("/:projectId/folders", requireAuth, async (req, res) => {
@@ -1202,7 +1280,7 @@ projectsRouter.post("/:projectId/folders", requireAuth, async (req, res) => {
     })
     .select("*")
     .single();
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendInternalError(res, error);
   res.status(201).json(data);
 });
 
@@ -1292,7 +1370,7 @@ projectsRouter.delete(
     .select("id, parent_folder_id")
     .eq("project_id", projectId);
   if (foldersError)
-    return void res.status(500).json({ detail: foldersError.message });
+    return void sendInternalError(res, foldersError);
   if (!(allFolders ?? []).some((f) => f.id === folderId))
     return void res.status(404).json({ detail: "Folder not found" });
 
@@ -1320,7 +1398,7 @@ projectsRouter.delete(
     .eq("project_id", projectId)
     .in("folder_id", [...folderIds]);
     if (docsError)
-      return void res.status(500).json({ detail: docsError.message });
+      return void sendInternalError(res, docsError);
 
   const docIds = (docs ?? []).map((d) => d.id as string);
   const deleteDocsError = await deleteProjectDocumentsAndVersionFiles(
@@ -1329,14 +1407,14 @@ projectsRouter.delete(
     docIds,
   );
   if (deleteDocsError)
-    return void res.status(500).json({ detail: deleteDocsError.message });
+    return void sendInternalError(res, deleteDocsError);
 
     const { error } = await db
       .from("project_subfolders")
       .delete()
       .eq("id", folderId)
       .eq("project_id", projectId);
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendInternalError(res, error);
   res.status(204).send();
   },
 );
@@ -1400,6 +1478,7 @@ export async function handleDocumentUpload(
   userId: string,
   projectId: string | null,
   db: ReturnType<typeof createServerSupabase>,
+  folderId: string | null = null,
 ) {
   const file = req.file;
   if (!file) return void res.status(400).json({ detail: "file is required" });
@@ -1420,6 +1499,7 @@ export async function handleDocumentUpload(
       project_id: projectId,
       user_id: userId,
       status: "processing",
+      folder_id: folderId,
     })
     .select("*")
     .single();
@@ -1539,9 +1619,7 @@ export async function handleDocumentUpload(
     return void res.status(201).json(responseDoc);
   } catch (e) {
     await db.from("documents").update({ status: "error" }).eq("id", doc.id);
-    return void res
-      .status(500)
-      .json({ detail: `Document processing failed: ${String(e)}` });
+    return void sendInternalError(res, e);
   }
 }
 
