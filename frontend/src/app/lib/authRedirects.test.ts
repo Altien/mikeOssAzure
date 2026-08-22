@@ -1,10 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
     authCallbackUrl,
     authErrorDescription,
     browserAuthCallbackUrl,
     safeAuthNext,
 } from "./authRedirects";
+
+afterEach(() => {
+    vi.unstubAllGlobals();
+});
 
 describe("safeAuthNext", () => {
     it("allows known internal destinations with query parameters", () => {
@@ -46,6 +50,12 @@ describe("authCallbackUrl", () => {
         expect(browserAuthCallbackUrl("/reset-password")).toBe(
             "http://localhost:3000/auth/callback?next=%2Freset-password",
         );
+    });
+
+    it("does not build a browser callback during server rendering", () => {
+        vi.stubGlobal("window", undefined);
+
+        expect(browserAuthCallbackUrl("/reset-password")).toBeUndefined();
     });
 });
 
