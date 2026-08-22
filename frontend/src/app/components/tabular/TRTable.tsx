@@ -17,7 +17,7 @@ import { TabularCell as TabularCellComponent } from "./TabularCell";
 import { TREditColumnMenu } from "./TREditColumnMenu";
 import {
     TABLE_CHECKBOX_CLASS,
-    SkeletonDot,
+    SkeletonCheckbox,
     SkeletonLine,
     TableScrollArea,
 } from "../shared/TablePrimitive";
@@ -192,7 +192,7 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                         <div
                             className={`sticky left-0 z-[80] ${DOC_COL_W} ${TR_STICKY_CELL_BG} flex items-center border-b border-r border-gray-200 py-2 pl-3 pr-2 text-xs font-medium text-gray-500`}
                         >
-                            <SkeletonDot className="mr-3" />
+                            <SkeletonCheckbox />
                             <span>{firstColumnLabel}</span>
                         </div>
                         {Array.from({ length: SKELETON_COLS }).map((_, i) => (
@@ -214,7 +214,8 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                             style={{ minWidth: skeletonContentWidth }}
                         >
                             <div className={`sticky left-0 z-[60] ${DOC_COL_W} ${TR_STICKY_CELL_BG} flex items-center border-b border-r border-gray-200 py-2 pl-3 pr-2`}>
-                                <SkeletonDot className="mr-3" />
+                                <SkeletonCheckbox />
+                                <div className="mr-2 h-3.5 w-3.5 shrink-0 rounded bg-gray-100 animate-pulse" />
                                 <SkeletonLine className="h-4 w-32" />
                             </div>
                             {Array.from({ length: SKELETON_COLS }).map((_, col) => (

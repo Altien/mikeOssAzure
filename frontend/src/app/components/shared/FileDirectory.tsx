@@ -861,7 +861,7 @@ export function FileDirectory({
                                 key={i}
                                 className={`${DIRECTORY_GRID_CLASS} rounded-md px-2 py-2`}
                             >
-                                <div className="h-3.5 w-3.5 rounded border border-gray-200 shrink-0" />
+                                <div className="h-2.5 w-2.5 shrink-0 justify-self-center rounded bg-gray-100 animate-pulse" />
                                 <div className="h-3.5 w-3.5 rounded bg-gray-100 animate-pulse shrink-0" />
                                 <div
                                     className="h-3 rounded bg-gray-100 animate-pulse"

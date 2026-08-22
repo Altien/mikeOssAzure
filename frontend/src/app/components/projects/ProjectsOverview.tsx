@@ -31,7 +31,7 @@ import {
 } from "@/app/components/shared/FolderSvgIcon";
 import {
     TABLE_CHECKBOX_CLASS,
-    SkeletonDot,
+    SkeletonCheckbox,
     SkeletonLine,
     TableBody,
     TableCell,
@@ -456,7 +456,7 @@ export function ProjectsOverview() {
                     <TableHeaderRow>
                         <TableStickyCell header>
                             {effectiveLoading ? (
-                                <SkeletonDot className="mr-4" />
+                                <SkeletonCheckbox />
                             ) : (
                                 <input
                                     type="checkbox"
@@ -529,7 +529,7 @@ export function ProjectsOverview() {
                                     hover={false}
                                     bgClassName="bg-transparent"
                                 >
-                                    <SkeletonDot className="mr-4" />
+                                    <SkeletonCheckbox />
                                     <div className="mr-2 h-4 w-4 shrink-0 rounded bg-gray-100 animate-pulse" />
                                     <SkeletonLine className="h-3.5 w-48" />
                                 </TableStickyCell>

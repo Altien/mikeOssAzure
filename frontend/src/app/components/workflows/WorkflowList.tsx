@@ -37,7 +37,7 @@ import { WorkflowAddonPreviewModal } from "./WorkflowAddonPreviewModal";
 import { TableLoadMoreRow } from "@/app/components/shared/TableLoadMoreRow";
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import {
-  SkeletonDot,
+  SkeletonCheckbox,
   SkeletonLine,
   TABLE_CHECKBOX_CLASS,
   tableTreeCellStyle,
@@ -744,17 +744,21 @@ function WorkflowTable({
       header={
         <TableHeaderRow>
           <TableStickyCell header>
-            <input
-              type="checkbox"
-              checked={allSelected}
-              ref={(element) => {
-                if (element) element.indeterminate = someSelected;
-              }}
-              disabled={selectableIds.length === 0 || selectingAll}
-              onChange={toggleAll}
-              className={TABLE_CHECKBOX_CLASS}
-              title="Select all deletable workflows"
-            />
+            {loading ? (
+              <SkeletonCheckbox />
+            ) : (
+              <input
+                type="checkbox"
+                checked={allSelected}
+                ref={(element) => {
+                  if (element) element.indeterminate = someSelected;
+                }}
+                disabled={selectableIds.length === 0 || selectingAll}
+                onChange={toggleAll}
+                className={TABLE_CHECKBOX_CLASS}
+                title="Select all deletable workflows"
+              />
+            )}
             <span className="mr-1">Name</span>
             {!loading && (
               <TableFilters
@@ -837,6 +841,7 @@ function WorkflowTable({
           {[1, 2, 3].map((index) => (
             <TableRow key={index} interactive={false}>
               <TableStickyCell hover={false}>
+                <SkeletonCheckbox />
                 <SkeletonLine className="h-3.5 w-48" />
               </TableStickyCell>
               <TableCell className="ml-auto w-28">
@@ -851,9 +856,9 @@ function WorkflowTable({
               <TableCell className="w-28">
                 <SkeletonLine className="w-16" />
               </TableCell>
-              <TableCell className="w-8">
-                <SkeletonDot />
-              </TableCell>
+              <div className="flex w-8 shrink-0 justify-end">
+                <div className="h-6 w-6 rounded bg-gray-100 animate-pulse" />
+              </div>
             </TableRow>
           ))}
         </TableBody>
@@ -1127,17 +1132,21 @@ function AddonTable({
       header={
         <TableHeaderRow>
           <TableStickyCell header>
-            <input
-              type="checkbox"
-              checked={allSelected}
-              ref={(element) => {
-                if (element) element.indeterminate = someSelected;
-              }}
-              disabled={addonIds.length === 0 || bulkImporting}
-              onChange={toggleAll}
-              className={TABLE_CHECKBOX_CLASS}
-              title="Select all add-ons"
-            />
+            {loading ? (
+              <SkeletonCheckbox />
+            ) : (
+              <input
+                type="checkbox"
+                checked={allSelected}
+                ref={(element) => {
+                  if (element) element.indeterminate = someSelected;
+                }}
+                disabled={addonIds.length === 0 || bulkImporting}
+                onChange={toggleAll}
+                className={TABLE_CHECKBOX_CLASS}
+                title="Select all add-ons"
+              />
+            )}
             Name
           </TableStickyCell>
           <TableHeaderCell className="ml-auto w-28">Type</TableHeaderCell>
@@ -1150,11 +1159,30 @@ function AddonTable({
     >
       {loading ? (
         <TableBody>
-          <TableRow interactive={false}>
-            <TableStickyCell hover={false}>
-              <SkeletonLine className="w-48" />
-            </TableStickyCell>
-          </TableRow>
+          {[1, 2, 3].map((index) => (
+            <TableRow key={index} interactive={false}>
+              <TableStickyCell hover={false}>
+                <SkeletonCheckbox />
+                <SkeletonLine className="h-3.5 w-48" />
+              </TableStickyCell>
+              <TableCell className="ml-auto flex w-28 items-center">
+                <div className="mr-1.5 h-4 w-4 shrink-0 rounded bg-gray-100 animate-pulse" />
+                <SkeletonLine className="w-14" />
+              </TableCell>
+              <TableCell className="w-52">
+                <SkeletonLine className="w-24" />
+              </TableCell>
+              <TableCell className="w-40">
+                <SkeletonLine className="w-24" />
+              </TableCell>
+              <TableCell className="w-28">
+                <SkeletonLine className="w-16" />
+              </TableCell>
+              <TableCell className="w-20">
+                <SkeletonLine className="w-14" />
+              </TableCell>
+            </TableRow>
+          ))}
         </TableBody>
       ) : isEmpty ? (
         <TableEmptyState>

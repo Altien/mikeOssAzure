@@ -269,12 +269,12 @@ function ProjectTableLoading({ stickyCellBg }: { stickyCellBg: string }) {
             {[1, 2, 3, 4, 5].map((i) => (
                 <div key={i} className="flex h-10 min-w-max items-center pr-3">
                     <div className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${stickyCellBg} py-2 pl-3 pr-2`}>
-                        <div className="flex items-center">
+                        <div className="flex min-w-0 items-center">
                             <div className="mr-3 h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse" />
                             <div className="mr-2 h-4 w-4 shrink-0 rounded bg-gray-100 animate-pulse" />
                             <div
-                                className="h-3.5 rounded bg-gray-100 animate-pulse"
-                                style={{ width: `${210 + i * 16}px` }}
+                                className="h-3.5 min-w-0 flex-1 rounded bg-gray-100 animate-pulse"
+                                style={{ maxWidth: `${160 + i * 20}px` }}
                             />
                         </div>
                     </div>
