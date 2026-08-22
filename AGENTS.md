@@ -1,5 +1,23 @@
 # Agent Guidance
 
+## Shared UI guidance
+
+Read `docs/design-system.md` for non-trivial UI changes. Prefer existing
+primitives in `frontend/src/app/components/ui/`, shared web/Word controls in
+`frontend/src/shared/ui/`, and shell components in
+`frontend/src/app/components/shared/` before introducing feature markup or
+dependencies. When a shared control is used by Word, keep its Tailwind `@source`
+entry in `word-addin/src/taskpane/styles.css`. Keep loading states aligned with
+the corresponding layout.
+
+Use plain text for informational labels unless an established interactive pill
+control is appropriate. Preserve visible focus, accessible names for icon-only
+buttons, `type="button"` on non-submit form buttons, and ARIA selection state.
+Use `TABLE_CHECKBOX_CLASS` for standalone table checkboxes. Backend calls should
+go through `mikeApi.ts` so runtime auth and `/api` routing remain consistent.
+Never display raw backend, provider, or database errors; use the established
+generic user-facing fallback while retaining intentional 4xx messages.
+
 ## Upstream Compatibility
 
 This project is based on an upstream open-source repository. Prefer the smallest practical changes that achieve the local/Azure migration goals so future upstream changes remain easy to merge.
