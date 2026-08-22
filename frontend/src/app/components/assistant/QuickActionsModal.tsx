@@ -10,6 +10,7 @@ import { FieldLabel, FormTextInput } from "../ui/form-field";
 import { ToggleSwitch } from "../ui/toggle-switch";
 import { SearchBar } from "../ui/search-bar";
 import { listWorkflows } from "@/app/lib/mikeApi";
+import { userFacingApiError } from "@/app/lib/userFacingError";
 
 type Screen = "list" | "details" | "create";
 
@@ -102,11 +103,7 @@ export function QuickActionsModal({
       await onSave(selected);
       resetToList();
     } catch (reason) {
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : "Could not save quick action.",
-      );
+      setError(userFacingApiError(reason, "Could not save quick action."));
     } finally {
       setSaving(false);
     }
@@ -125,11 +122,7 @@ export function QuickActionsModal({
       });
       resetToList();
     } catch (reason) {
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : "Could not create quick action.",
-      );
+      setError(userFacingApiError(reason, "Could not create quick action."));
     } finally {
       setSaving(false);
     }

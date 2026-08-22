@@ -5,7 +5,7 @@ import {
   type OpenAIToolSchema,
 } from "../llm";
 import { resolveRequestedModel } from "../routerModels";
-import { safeErrorMessage } from "../safeError";
+import { safeErrorLog, UserFacingError } from "../safeError";
 import { createServerSupabase } from "../supabase";
 import { buildUserMcpTools, type McpToolEvent } from "../mcpConnectors";
 import type { SourceDocument } from "../sourceDocuments";
@@ -108,7 +108,7 @@ export type AssistantEvent =
       document: SourceDocument;
     }
   | { type: "content"; text: string }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string; safe_to_display?: boolean };
 
 export class AssistantStreamError extends Error {
   fullText: string;
@@ -119,6 +119,38 @@ export class AssistantStreamError extends Error {
     this.name = "AssistantStreamError";
     this.fullText = fullText;
     this.events = events;
+  }
+}
+
+export const ASSISTANT_ERROR_MESSAGE =
+  "The response could not be completed. Please try again.";
+const TOOL_ERROR_MESSAGE = "This tool could not complete its request.";
+
+function sanitizeAssistantEvent(event: AssistantEvent): AssistantEvent {
+  if (event.type === "error") {
+    return event.safe_to_display
+      ? event
+      : { ...event, message: ASSISTANT_ERROR_MESSAGE };
+  }
+  if ("error" in event && typeof event.error === "string" && event.error) {
+    return { ...event, error: TOOL_ERROR_MESSAGE };
+  }
+  return event;
+}
+
+export function sanitizeAssistantSseChunk(chunk: string): string {
+  if (!chunk.startsWith("data: ")) return chunk;
+  const payload = chunk.slice(6).trim();
+  if (!payload || payload === "[DONE]") return chunk;
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return chunk;
+    }
+    const sanitized = sanitizeAssistantEvent(parsed as AssistantEvent);
+    return `data: ${JSON.stringify(sanitized)}\n\n`;
+  } catch {
+    return chunk;
   }
 }
 
@@ -189,7 +221,7 @@ export async function runLLMStream(params: {
     docIndex,
     userId,
     db,
-    write,
+    write: unsafeWrite,
     extraTools,
     includeResearchTools = true,
     includeAskInputs = true,
@@ -202,6 +234,8 @@ export async function runLLMStream(params: {
     projectId,
     nonce,
   } = params;
+  const write = (chunk: string) =>
+    unsafeWrite(sanitizeAssistantSseChunk(chunk));
   const researchTools = includeResearchTools ? COURTLISTENER_TOOLS : [];
   const mcpTools = await buildUserMcpTools(userId, db);
   const conversationTools = includeAskInputs
@@ -563,12 +597,25 @@ export async function runLLMStream(params: {
       // prose telling the user to answer the picker or attach documents.
     } else if (isAbortError(err)) {
       flushPartialTurn({ emit: false });
-      throw new AssistantStreamAbortError(fullText, events);
+      throw new AssistantStreamAbortError(
+        fullText,
+        events.map(sanitizeAssistantEvent),
+      );
     } else {
       flushPartialTurn();
-      const message = safeErrorMessage(err, "Stream error");
-      events.push({ type: "error", message });
-      throw new AssistantStreamError(message, fullText, events);
+      console.error("[chat/stream] model stream failed", safeErrorLog(err));
+      const safeToDisplay = err instanceof UserFacingError;
+      const message = safeToDisplay ? err.message : ASSISTANT_ERROR_MESSAGE;
+      events.push({
+        type: "error",
+        message,
+        ...(safeToDisplay ? { safe_to_display: true } : {}),
+      });
+      throw new AssistantStreamError(
+        message,
+        fullText,
+        events.map(sanitizeAssistantEvent),
+      );
     }
   }
 
@@ -630,5 +677,9 @@ export async function runLLMStream(params: {
     write("data: [DONE]\n\n");
   }
 
-  return { fullText, events, citations };
+  return {
+    fullText,
+    events: events.map(sanitizeAssistantEvent),
+    citations,
+  };
 }

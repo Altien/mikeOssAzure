@@ -585,7 +585,7 @@ describe("POST /chat — streaming endpoint", () => {
 
         expect(res.status).toBe(500);
         expect(res.headers["content-type"]).not.toContain("text/event-stream");
-        expect(res.body.detail).toBe("Failed to start assistant response");
+        expect(res.body.detail).toBe("Something went wrong. Please try again.");
         expect(res.text).not.toContain('"type":"chat_id"');
         expect(findAssistantReservation()).toBeDefined();
         expect(runLLMStream).not.toHaveBeenCalled();
@@ -633,7 +633,8 @@ describe("POST /chat — streaming endpoint", () => {
             content: [
                 expect.objectContaining({
                     type: "error",
-                    message: "upstream LLM failure",
+                    message:
+                        "The response could not be completed. Please try again.",
                 }),
             ],
         });

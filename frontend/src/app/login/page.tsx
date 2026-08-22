@@ -13,6 +13,12 @@ import {
     authGlassCardClassName,
     authInputClassName,
 } from "@/app/components/auth/authStyles";
+import { knownErrorCodeMessage } from "@/app/lib/userFacingError";
+
+const LOGIN_ERROR_MESSAGES = {
+    invalid_credentials: "The email or password is incorrect.",
+    email_not_confirmed: "Confirm your email address before logging in.",
+} as const;
 
 export default function LoginPage() {
     const router = useRouter();
@@ -44,9 +50,11 @@ export default function LoginPage() {
             router.push("/assistant");
         } catch (error: unknown) {
             setError(
-                error instanceof Error
-                    ? error.message
-                    : "An error occurred during login",
+                knownErrorCodeMessage(
+                    error,
+                    LOGIN_ERROR_MESSAGES,
+                    "Unable to log in right now. Please try again.",
+                ),
             );
         } finally {
             setLoading(false);

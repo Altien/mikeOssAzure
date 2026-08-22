@@ -142,7 +142,7 @@ export default function SettingsPage() {
                 setEmail(user?.pendingEmail || user?.email || "");
                 setEmailWarning({
                     title: "Email already registered",
-                    message,
+                    message: "An account with this email already exists.",
                 });
                 return;
             }
@@ -157,7 +157,7 @@ export default function SettingsPage() {
                 return;
             }
 
-            setEmailStatus(message);
+            setEmailStatus("Failed to update email. Please try again.");
         } finally {
             setIsSavingEmail(false);
         }

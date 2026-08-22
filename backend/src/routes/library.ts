@@ -10,6 +10,7 @@ import { singleFileUpload } from "../lib/upload";
 import { handleDocumentUpload } from "./documents";
 import { parsePaginationQuery, type PaginationParams } from "../lib/pagination";
 import { normalizeSearchTerm } from "../lib/search";
+import { sendInternalError } from "../lib/httpError";
 
 export const libraryRouter = Router();
 
@@ -254,7 +255,7 @@ libraryRouter.get("/:kind", requireAuth, async (req, res) => {
       p_sort_key: sort.key,
       p_sort_direction: sort.direction,
     });
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
 
     const rows = (data ?? []) as Record<string, unknown>[];
     return void res.json({
@@ -363,7 +364,7 @@ libraryRouter.get("/:kind/filter-options", requireAuth, async (req, res) => {
     p_user_id: userId,
     p_library_kind: kind,
   });
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendInternalError(res, error);
   const row = (data?.[0] ?? {}) as { file_types?: unknown };
   res.json({
     fileTypes: Array.isArray(row.file_types)
@@ -395,7 +396,7 @@ libraryRouter.get("/:kind/ids", requireAuth, async (req, res) => {
       p_limit: LIBRARY_IDS_PAGE_SIZE,
       p_offset: offset,
     });
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
     const rows = (data ?? []) as { id: string }[];
     if (rows.length === 0) break;
     ids.push(...rows.map((row) => row.id));
@@ -439,7 +440,7 @@ libraryRouter.post(
         batch,
       );
       if (result.error)
-        return void res.status(500).json({ detail: result.error.message });
+        return void sendInternalError(res, result.error);
       deletedIds.push(...result.deletedIds);
     }
     res.json({ deletedIds });
@@ -479,7 +480,7 @@ libraryRouter.get(
       .select("*")
       .eq("user_id", userId)
       .eq("library_kind", kind);
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
 
     const folders = data ?? [];
     const foldersById = new Map(
@@ -533,7 +534,7 @@ libraryRouter.post("/:kind/folders", requireAuth, async (req, res) => {
     })
     .select("*")
     .single();
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendInternalError(res, error);
   res.status(201).json(data);
 });
 
@@ -618,7 +619,7 @@ libraryRouter.delete(
     .eq("user_id", userId)
     .eq("library_kind", kind);
   if (foldersError)
-    return void res.status(500).json({ detail: foldersError.message });
+    return void sendInternalError(res, foldersError);
   if (!(allFolders ?? []).some((folder) => folder.id === folderId)) {
     return void res.status(404).json({ detail: "Folder not found" });
   }
@@ -655,7 +656,7 @@ libraryRouter.delete(
     [...folderIds],
   );
     if (docsError)
-      return void res.status(500).json({ detail: docsError.message });
+      return void sendInternalError(res, docsError);
 
   const docIds = (docs ?? []).map((doc) => doc.id as string);
     const deleteDocsResult = await deleteLibraryDocumentsAndVersionFiles(
@@ -665,9 +666,7 @@ libraryRouter.delete(
     docIds,
   );
     if (deleteDocsResult.error)
-      return void res
-        .status(500)
-        .json({ detail: deleteDocsResult.error.message });
+      return void sendInternalError(res, deleteDocsResult.error);
 
   const { error } = await db
     .from("library_folders")
@@ -675,7 +674,7 @@ libraryRouter.delete(
     .eq("id", folderId)
     .eq("user_id", userId)
     .eq("library_kind", kind);
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendInternalError(res, error);
   res.status(204).send();
   },
 );

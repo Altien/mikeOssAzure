@@ -1,6 +1,8 @@
 import { Request, Response, NextFunction } from "express";
 import { createServerSupabase } from "../lib/supabase";
 import { syncProfileEmail } from "../lib/userLookup";
+import { sendInternalError } from "../lib/httpError";
+import { safeErrorLog } from "../lib/safeError";
 
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
@@ -50,7 +52,7 @@ async function enforceLoginMfaIfEnabled(
       code: error.code,
     });
     if (error.code === "42703") return true;
-    res.status(500).json({ detail: error.message });
+    sendInternalError(res, error);
     return false;
   }
 
@@ -67,7 +69,14 @@ async function enforceLoginMfaIfEnabled(
       userId: res.locals.userId,
       error: assuranceError.message,
     });
-    res.status(401).json({ detail: assuranceError.message });
+    console.error(
+      "[auth/mfa] login assurance lookup failed",
+      safeErrorLog(assuranceError),
+    );
+    res.status(401).json({
+      code: "authentication_failed",
+      detail: "Unable to verify authentication. Please sign in again.",
+    });
     return false;
   }
 
@@ -165,7 +174,11 @@ export async function requireMfaIfEnrolled(
       userId: res.locals.userId,
       error: error.message,
     });
-    res.status(401).json({ detail: error.message });
+    console.error("[auth/mfa] assurance lookup failed", safeErrorLog(error));
+    res.status(401).json({
+      code: "authentication_failed",
+      detail: "Unable to verify authentication. Please sign in again.",
+    });
     return;
   }
 

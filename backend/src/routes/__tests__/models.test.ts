@@ -26,6 +26,10 @@ vi.mock("../../lib/userApiKeys", () => ({
 }));
 
 import { modelsRouter } from "../models";
+import {
+    INTERNAL_ERROR_CODE,
+    INTERNAL_ERROR_MESSAGE,
+} from "../../lib/httpError";
 
 const app = express();
 app.use("/models", modelsRouter);
@@ -125,9 +129,11 @@ describe("GET /models/openrouter", () => {
         const response = await request(app).get("/models/openrouter");
 
         expect(response.status).toBe(502);
-        expect(response.body.detail).toContain(
-            "OpenRouter model catalog request failed (401)",
-        );
+        expect(response.body).toEqual({
+            code: INTERNAL_ERROR_CODE,
+            detail: INTERNAL_ERROR_MESSAGE,
+        });
+        expect(response.text).not.toContain("invalid key");
     });
 });
 
@@ -320,6 +326,9 @@ describe("GET /models/opencode-go", () => {
     });
 
     it("reports an upstream failure as a bad gateway", async () => {
+        const consoleError = vi
+            .spyOn(console, "error")
+            .mockImplementation(() => {});
         vi.stubGlobal(
             "fetch",
             vi.fn().mockResolvedValue(new Response("nope", { status: 401 })),
@@ -328,6 +337,12 @@ describe("GET /models/opencode-go", () => {
         const response = await request(app).get("/models/opencode-go");
 
         expect(response.status).toBe(502);
-        expect(response.body.detail).toContain("(401)");
+        expect(response.body).toEqual({
+            code: INTERNAL_ERROR_CODE,
+            detail: INTERNAL_ERROR_MESSAGE,
+        });
+        expect(response.text).not.toContain("nope");
+        expect(consoleError).toHaveBeenCalledOnce();
+        consoleError.mockRestore();
     });
 });

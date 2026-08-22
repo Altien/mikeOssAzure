@@ -15,6 +15,15 @@ import {
     authGlassCardClassName,
     authInputClassName,
 } from "@/app/components/auth/authStyles";
+import { knownErrorCodeMessage } from "@/app/lib/userFacingError";
+
+const SIGNUP_ERROR_MESSAGES = {
+    user_already_exists: "An account with this email already exists.",
+    email_exists: "An account with this email already exists.",
+    over_email_send_rate_limit:
+        "Too many signup emails were requested. Please wait and try again.",
+    weak_password: "Choose a stronger password and try again.",
+} as const;
 import {
     MIN_PASSWORD_LENGTH,
     minimumPasswordMessage,
@@ -118,9 +127,11 @@ function SignupContent() {
             }
         } catch (error: unknown) {
             setError(
-                error instanceof Error
-                    ? error.message
-                    : "An error occurred during signup",
+                knownErrorCodeMessage(
+                    error,
+                    SIGNUP_ERROR_MESSAGES,
+                    "Unable to create your account right now. Please try again.",
+                ),
             );
         } finally {
             setLoading(false);

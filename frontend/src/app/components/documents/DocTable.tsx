@@ -42,6 +42,7 @@ import { useAuth } from "@/app/contexts/AuthContext";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { UploadOverlay } from "@/app/components/assistant/UploadOverlay";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
+import { userFacingApiError } from "@/app/lib/userFacingError";
 import {
     formatUnsupportedDocumentWarning,
     partitionSupportedDocumentFiles,
@@ -179,24 +180,6 @@ interface DocTableProps {
     documentTypeOptions?: TableFilterOption<string>[];
     autoLoadOnScroll?: boolean;
     defaultSort?: DocumentSort | null;
-}
-
-function apiErrorDetail(error: unknown): string | null {
-    if (!(error instanceof Error)) return null;
-    try {
-        const parsed = JSON.parse(error.message) as unknown;
-        if (
-            parsed &&
-            typeof parsed === "object" &&
-            "detail" in parsed &&
-            typeof parsed.detail === "string"
-        ) {
-            return parsed.detail;
-        }
-    } catch {
-        // Non-JSON errors can fall through to the plain message below.
-    }
-    return error.message || null;
 }
 
 function documentTypeValue(doc: Document): string {
@@ -1245,7 +1228,12 @@ export function DocTable({
         } catch (err) {
             console.error("Existing document version drop failed", err);
             restoreDocumentToLocalState(sourceDoc, sourceSnapshot);
-            setCollectionActionWarning(apiErrorDetail(err) ?? "Could not save this document as a new version.");
+            setCollectionActionWarning(
+                userFacingApiError(
+                    err,
+                    "Could not save this document as a new version.",
+                ),
+            );
         } finally {
             setUploadingVersionDocIds((prev) => {
                 const next = new Set(prev);
@@ -2406,7 +2394,10 @@ export function DocTable({
             setSelectionCameFromSelectAll(true);
         } catch (error) {
             setCollectionActionWarning(
-                apiErrorDetail(error) ?? "All matching files could not be selected. Please try again.",
+                userFacingApiError(
+                    error,
+                    "All matching files could not be selected. Please try again.",
+                ),
             );
         } finally {
             setSelectingAllDocuments(false);

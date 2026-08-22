@@ -3,6 +3,7 @@ import { Router } from "express";
 import { requireAuth, requireMfaIfEnrolled } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import { recordAudit } from "../lib/audit";
+import { sendInternalError } from "../lib/httpError";
 import {
     DEFAULT_TABULAR_MODEL,
     DEFAULT_TITLE_MODEL,
@@ -678,7 +679,7 @@ userRouter.post("/profile", requireAuth, async (_req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const error = await ensureProfileRow(db, userId);
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
     res.json({ ok: true });
 });
 
@@ -707,7 +708,7 @@ userRouter.get("/profile", requireAuth, async (_req, res) => {
         repairMissing: true,
         apiKeyStatus,
     });
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
     res.json({ ...data, apiKeyStatus });
 });
 
@@ -720,14 +721,14 @@ userRouter.patch("/profile", requireAuth, async (req, res) => {
     const db = createServerSupabase();
     const ensureError = await ensureProfileRow(db, userId);
     if (ensureError)
-        return void res.status(500).json({ detail: ensureError.message });
+        return void sendInternalError(res, ensureError);
 
     const { error: updateError } = await db
         .from("user_profiles")
         .update(parsed.update)
         .eq("user_id", userId);
     if (updateError)
-        return void res.status(500).json({ detail: updateError.message });
+        return void sendInternalError(res, updateError);
 
     for (const slug of ROUTER_SLUGS) {
         const models = parsed.routerModels?.[slug];
@@ -735,15 +736,13 @@ userRouter.patch("/profile", requireAuth, async (req, res) => {
         try {
             await replaceUserRouterModels(userId, slug, models, db);
         } catch (routerModelsError) {
-            return void res.status(500).json({
-                detail: errorMessage(routerModelsError),
-            });
+            return void sendInternalError(res, routerModelsError);
         }
     }
 
     const apiKeyStatus = await getUserApiKeyStatus(userId, db);
     const { data, error } = await loadProfile(db, userId, { apiKeyStatus });
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
     res.json({ ...data, apiKeyStatus });
 });
 
@@ -762,9 +761,7 @@ userRouter.patch(
         if (parsed.value) {
             const factorCheck = await userHasVerifiedTotpFactor(db, userId);
             if (!factorCheck.ok) {
-                return void res.status(500).json({
-                    detail: factorCheck.error.message,
-                });
+                return void sendInternalError(res, factorCheck.error);
             }
             if (!factorCheck.hasVerifiedTotp) {
                 return void res.status(400).json({
@@ -775,7 +772,7 @@ userRouter.patch(
 
         const ensureError = await ensureProfileRow(db, userId);
         if (ensureError)
-            return void res.status(500).json({ detail: ensureError.message });
+            return void sendInternalError(res, ensureError);
 
         const { error: updateError } = await db
             .from("user_profiles")
@@ -785,11 +782,11 @@ userRouter.patch(
             })
             .eq("user_id", userId);
         if (updateError)
-            return void res.status(500).json({ detail: updateError.message });
+            return void sendInternalError(res, updateError);
 
         const apiKeyStatus = await getUserApiKeyStatus(userId, db);
         const { data, error } = await loadProfile(db, userId, { apiKeyStatus });
-        if (error) return void res.status(500).json({ detail: error.message });
+        if (error) return void sendInternalError(res, error);
         res.json({ ...data, apiKeyStatus });
     },
 );
@@ -833,7 +830,7 @@ userRouter.put(
                 provider,
                 error: detail,
             });
-            res.status(500).json({ detail });
+            sendInternalError(res, err);
         }
     },
 );
@@ -852,7 +849,7 @@ userRouter.get("/mcp-connectors", requireAuth, async (_req, res) => {
             userId,
             error: detail,
         });
-        res.status(500).json({ detail });
+        sendInternalError(res, err);
     }
 });
 
@@ -874,7 +871,7 @@ userRouter.get(
                 connectorId: req.params.connectorId,
                 error: detail,
             });
-            res.status(404).json({ detail });
+            res.status(404).json({ detail: "Connector not found" });
         }
     },
 );
@@ -913,7 +910,9 @@ userRouter.post(
                 userId,
                 error: detail,
             });
-            res.status(400).json({ detail });
+            res.status(400).json({
+                detail: "Connector settings are invalid or the server could not be reached.",
+            });
         }
     },
 );
@@ -973,7 +972,9 @@ userRouter.patch(
                 connectorId: req.params.connectorId,
                 error: detail,
             });
-            res.status(400).json({ detail });
+            res.status(400).json({
+                detail: "Connector settings are invalid or the server could not be reached.",
+            });
         }
     },
 );
@@ -996,7 +997,7 @@ userRouter.delete(
                 connectorId: req.params.connectorId,
                 error: detail,
             });
-            res.status(500).json({ detail });
+            sendInternalError(res, err);
         }
     },
 );
@@ -1025,7 +1026,9 @@ userRouter.post(
                 connectorId: req.params.connectorId,
                 error: detail,
             });
-            res.status(400).json({ detail });
+            res.status(400).json({
+                detail: "Connector authorization could not be started.",
+            });
         }
     },
 );
@@ -1071,7 +1074,15 @@ userRouter.get("/mcp-connectors/oauth/callback", async (req, res) => {
         res.status(400)
             .set("Content-Security-Policy", mcpOAuthPopupCsp(nonce))
             .type("html")
-            .send(mcpOAuthPopupHtml({ success: false, detail }, nonce));
+            .send(
+                mcpOAuthPopupHtml(
+                    {
+                        success: false,
+                        detail: "Connector authorization could not be completed.",
+                    },
+                    nonce,
+                ),
+            );
     }
 });
 
@@ -1100,10 +1111,12 @@ userRouter.post(
             if (err instanceof McpOAuthRequiredError) {
                 return void res.status(401).json({
                     code: err.code,
-                    detail,
+                    detail: "This connector needs to be authorized again.",
                 });
             }
-            res.status(400).json({ detail });
+            res.status(400).json({
+                detail: "Connector tools could not be refreshed.",
+            });
         }
     },
 );
@@ -1137,7 +1150,9 @@ userRouter.patch(
                 toolId: req.params.toolId,
                 error: detail,
             });
-            res.status(400).json({ detail });
+            res.status(400).json({
+                detail: "Connector tool settings could not be updated.",
+            });
         }
     },
 );
@@ -1155,7 +1170,7 @@ userRouter.delete(
             await deleteUserAccountData(db, userId, userEmail);
             const { error } = await db.auth.admin.deleteUser(userId);
             if (error)
-                return void res.status(500).json({ detail: error.message });
+                return void sendInternalError(res, error);
             res.status(204).send();
         } catch (err) {
             const detail = errorMessage(err);
@@ -1163,7 +1178,7 @@ userRouter.delete(
                 userId,
                 error: detail,
             });
-            res.status(500).json({ detail });
+            sendInternalError(res, err);
         }
     },
 );
@@ -1185,7 +1200,7 @@ userRouter.delete(
                 userId,
                 error: detail,
             });
-            res.status(500).json({ detail });
+            sendInternalError(res, err);
         }
     },
 );
@@ -1207,7 +1222,7 @@ userRouter.delete(
                 userId,
                 error: detail,
             });
-            res.status(500).json({ detail });
+            sendInternalError(res, err);
         }
     },
 );
@@ -1229,7 +1244,7 @@ userRouter.delete(
                 userId,
                 error: detail,
             });
-            res.status(500).json({ detail });
+            sendInternalError(res, err);
         }
     },
 );
@@ -1260,7 +1275,7 @@ userRouter.get(
         } catch (err) {
             const detail = errorMessage(err);
             console.error("[user/export] failed", { userId, error: detail });
-            res.status(500).json({ detail });
+            sendInternalError(res, err);
         }
     },
 );
@@ -1294,7 +1309,7 @@ userRouter.get(
                 userId,
                 error: detail,
             });
-            res.status(500).json({ detail });
+            sendInternalError(res, err);
         }
     },
 );
@@ -1332,7 +1347,7 @@ userRouter.get(
                 userId,
                 error: detail,
             });
-            res.status(500).json({ detail });
+            sendInternalError(res, err);
         }
     },
 );

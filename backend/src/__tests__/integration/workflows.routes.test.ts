@@ -236,7 +236,7 @@ describe("workflows.routes", () => {
         .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("boom");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
     });
 
@@ -306,7 +306,7 @@ describe("workflows.routes", () => {
         .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("boom");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
     });
 

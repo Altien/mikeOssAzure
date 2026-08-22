@@ -347,18 +347,38 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         await expect(getUserProfile()).rejects.toMatchObject({
             status: 500,
             code: null,
-            message: "API error: 500",
+            message: "Something went wrong. Please try again.",
         });
     });
 
-    it("uses the raw body text for non-JSON error responses", async () => {
+    it("discards raw JSON details from 5xx responses and keeps the request ID", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse(
+                {
+                    code: "internal_error",
+                    detail: "schema cache exposed an internal function name",
+                    request_id: "req-public-123",
+                },
+                { status: 500 },
+            ),
+        );
+
+        await expect(getUserProfile()).rejects.toMatchObject({
+            status: 500,
+            code: "internal_error",
+            requestId: "req-public-123",
+            message: "Something went wrong. Please try again.",
+        });
+    });
+
+    it("does not expose non-JSON server error responses", async () => {
         fetchMock.mockResolvedValue(
             new Response("upstream exploded", { status: 502 }),
         );
 
         await expect(getUserProfile()).rejects.toMatchObject({
             status: 502,
-            message: "upstream exploded",
+            message: "Something went wrong. Please try again.",
         });
     });
 
@@ -367,7 +387,7 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
 
         await expect(getUserProfile()).rejects.toMatchObject({
             status: 503,
-            message: "API error: 503",
+            message: "Something went wrong. Please try again.",
         });
     });
 
@@ -518,10 +538,12 @@ describe("downloadDocumentsZip", () => {
         });
     });
 
-    it("throws a plain Error carrying the response text", async () => {
+    it("does not expose a non-JSON error response", async () => {
         fetchMock.mockResolvedValue(new Response("bad ids", { status: 400 }));
 
-        await expect(downloadDocumentsZip(["x"])).rejects.toThrow("bad ids");
+        await expect(downloadDocumentsZip(["x"])).rejects.toThrow(
+            "The request could not be completed. Please try again.",
+        );
     });
 });
 
@@ -1579,7 +1601,7 @@ describe("multipart upload endpoints", () => {
         expect(init.headers).toEqual({ Authorization: "Bearer token-123" });
     });
 
-    it("upload failures throw a plain Error with the response text, not MikeApiError", async () => {
+    it("multipart upload failures use the sanitized API error contract", async () => {
         fetchMock.mockImplementation(() =>
             Promise.resolve(new Response("file too large", { status: 413 })),
         );
@@ -1588,15 +1610,17 @@ describe("multipart upload endpoints", () => {
             (e: unknown) => e,
         );
 
-        expect(error).toBeInstanceOf(Error);
-        expect(error).not.toBeInstanceOf(MikeApiError);
-        expect((error as Error).message).toBe("file too large");
+        expect(error).toBeInstanceOf(MikeApiError);
+        expect(error).toMatchObject({
+            status: 413,
+            message: "The request could not be completed. Please try again.",
+        });
 
         await expect(uploadStandaloneDocument(file)).rejects.toThrow(
-            "file too large",
+            "The request could not be completed. Please try again.",
         );
         await expect(uploadLibraryDocument("files", file)).rejects.toThrow(
-            "file too large",
+            "The request could not be completed. Please try again.",
         );
     });
 
@@ -1632,7 +1656,9 @@ describe("multipart upload endpoints", () => {
         fetchMock.mockResolvedValue(new Response("nope", { status: 409 }));
         await expect(
             replaceDocumentVersionFile("d1", "v1", file),
-        ).rejects.toThrow("nope");
+        ).rejects.toThrow(
+            "The request could not be completed. Please try again.",
+        );
     });
 
     it("uploads workflow reference files as authenticated multipart data", async () => {
@@ -1746,7 +1772,7 @@ describe("query and payload defaults", () => {
         fetchMock.mockResolvedValue(new Response("", { status: 500 }));
 
         await expect(downloadDocumentsZip(["d1"])).rejects.toThrow(
-            "API error: 500",
+            "Something went wrong. Please try again.",
         );
     });
 
