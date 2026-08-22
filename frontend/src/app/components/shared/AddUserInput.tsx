@@ -9,6 +9,7 @@ import {
 } from "@/app/lib/mikeApi";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { cn } from "@/app/lib/utils";
+import { userFacingApiError } from "@/app/lib/userFacingError";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -65,9 +66,10 @@ export function AddUserInput({
             setInput("");
         } catch (err) {
             setError(
-                err instanceof Error
-                    ? err.message
-                    : "Could not add this user. Try again.",
+                userFacingApiError(
+                    err,
+                    "Could not add this user. Try again.",
+                ),
             );
         } finally {
             setChecking(false);

@@ -79,18 +79,26 @@ const devLog = (...args: Parameters<typeof console.log>) => {
 export class MikeApiError extends Error {
     status: number;
     code: string | null;
+    requestId: string | null;
 
     constructor(args: {
         message: string;
         status: number;
         code?: string | null;
+        requestId?: string | null;
     }) {
         super(args.message);
         this.name = "MikeApiError";
         this.status = args.status;
         this.code = args.code ?? null;
+        this.requestId = args.requestId ?? null;
     }
 }
+
+export const INTERNAL_ERROR_MESSAGE =
+    "Something went wrong. Please try again.";
+export const MALFORMED_ERROR_RESPONSE_MESSAGE =
+    "The request could not be completed. Please try again.";
 
 // Upstream divergence (sync-log: 3a10943): kept for API parity with
 // upstream, but dev's backend never emits mfa_verification_required —
@@ -177,18 +185,26 @@ async function toApiError(response: Response, path: string) {
         const parsed = JSON.parse(text) as {
             detail?: unknown;
             code?: unknown;
+            request_id?: unknown;
         };
+        const requestId =
+            typeof parsed.request_id === "string"
+                ? parsed.request_id
+                : response.headers.get("x-request-id");
         devLog("[mike-api] non-ok response", {
             path,
             status: response.status,
             code: parsed.code,
-            detail: parsed.detail,
+            requestId,
         });
         return new MikeApiError({
             status: response.status,
             code: typeof parsed.code === "string" ? parsed.code : null,
+            requestId,
             message:
-                typeof parsed.detail === "string" && parsed.detail
+                response.status >= 500
+                    ? INTERNAL_ERROR_MESSAGE
+                    : typeof parsed.detail === "string" && parsed.detail
                     ? parsed.detail
                     : `API error: ${response.status}`,
         });
@@ -196,11 +212,15 @@ async function toApiError(response: Response, path: string) {
         devLog("[mike-api] non-ok non-json response", {
             path,
             status: response.status,
-            bodyPreview: text.slice(0, 200),
+            requestId: response.headers.get("x-request-id"),
         });
         return new MikeApiError({
             status: response.status,
-            message: text || `API error: ${response.status}`,
+            requestId: response.headers.get("x-request-id"),
+            message:
+                response.status >= 500
+                    ? INTERNAL_ERROR_MESSAGE
+                    : MALFORMED_ERROR_RESPONSE_MESSAGE,
         });
     }
 }
@@ -1025,7 +1045,7 @@ export async function uploadLibraryDocument(
         body: form,
     });
     bounceIfUnauthorized(response);
-    if (!response.ok) throw new Error(await response.text());
+    if (!response.ok) throw await toApiError(response, `/library/${kind}/documents`);
     return response.json() as Promise<Document>;
 }
 
@@ -1152,7 +1172,7 @@ export async function uploadDocumentVersion(
         },
     );
     bounceIfUnauthorized(response);
-    if (!response.ok) throw new Error(await response.text());
+    if (!response.ok) throw await toApiError(response, `/single-documents/${documentId}/versions`);
     return response.json() as Promise<DocumentVersion>;
 }
 
@@ -1175,7 +1195,7 @@ export async function replaceDocumentVersionFile(
         },
     );
     bounceIfUnauthorized(response);
-    if (!response.ok) throw new Error(await response.text());
+    if (!response.ok) throw await toApiError(response, `/single-documents/${documentId}/versions/${versionId}/file`);
     return response.json() as Promise<DocumentVersion>;
 }
 
@@ -1239,7 +1259,7 @@ export async function uploadProjectDocument(
             body: form,
   });
     bounceIfUnauthorized(response);
-    if (!response.ok) throw new Error(await response.text());
+    if (!response.ok) throw await toApiError(response, `/projects/${projectId}/documents`);
     return response.json() as Promise<Document>;
 }
 
@@ -1253,7 +1273,7 @@ export async function uploadStandaloneDocument(file: File): Promise<Document> {
         body: form,
     });
     bounceIfUnauthorized(response);
-    if (!response.ok) throw new Error(await response.text());
+    if (!response.ok) throw await toApiError(response, "/single-documents");
     return response.json() as Promise<Document>;
 }
 
@@ -1351,8 +1371,7 @@ export async function downloadDocumentsZip(
     });
     bounceIfUnauthorized(response);
     if (!response.ok) {
-        const detail = await response.text();
-        throw new Error(detail || `API error: ${response.status}`);
+        throw await toApiError(response, "/single-documents/download-zip");
     }
     return response.blob();
 }

@@ -2,6 +2,7 @@ import { isSupportedOpenCodeGoModel } from "../lib/llm/models";
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { getOrganisationApiKeys } from "../lib/userApiKeys";
+import { sendInternalError } from "../lib/httpError";
 
 export const modelsRouter = Router();
 
@@ -61,9 +62,14 @@ modelsRouter.get("/openrouter", requireAuth, async (_req, res) => {
         );
         if (!response.ok) {
             const detail = await response.text().catch(() => "");
-            return void res.status(502).json({
-                detail: `OpenRouter model catalog request failed (${response.status})${detail ? `: ${detail}` : ""}`,
-            });
+            sendInternalError(
+                res,
+                new Error(
+                    `OpenRouter model catalog request failed (${response.status})${detail ? `: ${detail}` : ""}`,
+                ),
+                502,
+            );
+            return;
         }
 
         const payload = (await response.json()) as {
@@ -95,12 +101,7 @@ modelsRouter.get("/openrouter", requireAuth, async (_req, res) => {
         });
         res.json({ models });
     } catch (error) {
-        res.status(500).json({
-            detail:
-                error instanceof Error
-                    ? error.message
-                    : "Failed to list OpenRouter models.",
-        });
+        sendInternalError(res, error);
     }
 });
 
@@ -125,9 +126,14 @@ modelsRouter.get("/vercel", requireAuth, async (_req, res) => {
         const response = await fetch(`${baseUrl}/models`);
         if (!response.ok) {
             const detail = await response.text().catch(() => "");
-            return void res.status(502).json({
-                detail: `Vercel AI Gateway model catalog request failed (${response.status})${detail ? `: ${detail}` : ""}`,
-            });
+            sendInternalError(
+                res,
+                new Error(
+                    `Vercel AI Gateway model catalog request failed (${response.status})${detail ? `: ${detail}` : ""}`,
+                ),
+                502,
+            );
+            return;
         }
 
         const payload = (await response.json()) as {
@@ -193,12 +199,7 @@ modelsRouter.get("/vercel", requireAuth, async (_req, res) => {
         });
         res.json({ models });
     } catch (error) {
-        res.status(500).json({
-            detail:
-                error instanceof Error
-                    ? error.message
-                    : "Failed to list Vercel AI Gateway models.",
-        });
+        sendInternalError(res, error);
     }
 });
 
@@ -229,9 +230,14 @@ modelsRouter.get("/opencode-go", requireAuth, async (_req, res) => {
         });
         if (!response.ok) {
             const detail = await response.text().catch(() => "");
-            return void res.status(502).json({
-                detail: `OpenCode Go model catalog request failed (${response.status})${detail ? `: ${detail}` : ""}`,
-            });
+            sendInternalError(
+                res,
+                new Error(
+                    `OpenCode Go model catalog request failed (${response.status})${detail ? `: ${detail}` : ""}`,
+                ),
+                502,
+            );
+            return;
         }
 
         const payload = (await response.json()) as {
@@ -255,11 +261,6 @@ modelsRouter.get("/opencode-go", requireAuth, async (_req, res) => {
         );
         res.json({ models });
     } catch (error) {
-        res.status(500).json({
-            detail:
-                error instanceof Error
-                    ? error.message
-                    : "Failed to list OpenCode Go models.",
-        });
+        sendInternalError(res, error);
     }
 });

@@ -6,6 +6,7 @@ import { createServerSupabase } from "../lib/supabase";
 import { resolveVercelApiKey, getUserApiKeys } from "../lib/userApiKeys";
 import { resolveSecret, resolveProviderSecret } from "../lib/envSecrets";
 import { recordAudit } from "../lib/audit";
+import { sendInternalError } from "../lib/httpError";
 import { DEFAULT_TABULAR_MODEL, resolveModel } from "../lib/llm/models";
 import {
   completeUserMcpConnectorOAuth,
@@ -764,7 +765,7 @@ userRouter.get("/mcp-connectors", requireAuth, async (_req, res) => {
             userId,
             error: detail,
         });
-        res.status(500).json({ detail });
+        sendInternalError(res, err);
     }
 });
 
@@ -786,7 +787,7 @@ userRouter.get(
                 connectorId: req.params.connectorId,
                 error: detail,
             });
-            res.status(404).json({ detail });
+            res.status(404).json({ detail: "Connector not found" });
         }
     },
 );
@@ -824,7 +825,9 @@ userRouter.post(
                 userId,
                 error: detail,
             });
-            res.status(400).json({ detail });
+            res.status(400).json({
+                detail: "Connector settings are invalid or the server could not be reached.",
+            });
         }
     },
 );
@@ -883,7 +886,9 @@ userRouter.patch(
                 connectorId: req.params.connectorId,
                 error: detail,
             });
-            res.status(400).json({ detail });
+            res.status(400).json({
+                detail: "Connector settings are invalid or the server could not be reached.",
+            });
         }
     },
 );
@@ -905,7 +910,7 @@ userRouter.delete(
                 connectorId: req.params.connectorId,
                 error: detail,
             });
-            res.status(500).json({ detail });
+            sendInternalError(res, err);
         }
     },
 );
@@ -938,7 +943,9 @@ userRouter.post(
                 connectorId: req.params.connectorId,
                 error: detail,
             });
-            res.status(400).json({ detail });
+            res.status(400).json({
+                detail: "Connector authorization could not be started.",
+            });
         }
     },
 );
@@ -993,7 +1000,15 @@ userRouter.get("/mcp-connectors/oauth/callback", async (req, res) => {
             // postMessages its result to the opener.
             .set("Cross-Origin-Opener-Policy", "unsafe-none")
             .type("html")
-            .send(mcpOAuthPopupHtml({ success: false, detail }, nonce));
+            .send(
+                mcpOAuthPopupHtml(
+                    {
+                        success: false,
+                        detail: "Connector authorization could not be completed.",
+                    },
+                    nonce,
+                ),
+            );
     }
 });
 
@@ -1027,10 +1042,12 @@ userRouter.post(
                 // 07-mcp-connectors.md and matches the MFA pattern (403 + code).
                 return void res.status(428).json({
                     code: err.code,
-                    detail,
+                    detail: "This connector needs to be authorized again.",
                 });
             }
-            res.status(400).json({ detail });
+            res.status(400).json({
+                detail: "Connector tools could not be refreshed.",
+            });
         }
     },
 );
@@ -1063,7 +1080,9 @@ userRouter.patch(
                 toolId: req.params.toolId,
                 error: detail,
             });
-            res.status(400).json({ detail });
+            res.status(400).json({
+                detail: "Connector tool settings could not be updated.",
+            });
         }
     },
 );

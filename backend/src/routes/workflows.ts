@@ -29,6 +29,7 @@ import {
   contentTypeForDocumentType,
 } from "../lib/documentTypes";
 import { contentSha256 } from "../lib/documentVersions";
+import { sendInternalError } from "../lib/httpError";
 import {
   deleteFile,
   getSignedUrl,
@@ -139,11 +140,7 @@ async function ensureDefaultsForRequest(
     await ensureDefaultWorkflows(userId, db);
     return true;
   } catch (error) {
-    const detail =
-      error && typeof error === "object" && "message" in error
-        ? String(error.message)
-        : "Failed to install default workflows";
-    res.status(500).json({ detail });
+    sendInternalError(res, error);
     return false;
   }
 }
@@ -462,7 +459,7 @@ workflowsRouter.get(
         jurisdiction: normalizeSearchTerm(req.query.jurisdiction),
       });
       const { data, error } = await db.rpc("get_workflows_overview", rpcArgs);
-      if (error) return void res.status(500).json({ detail: error.message });
+      if (error) return void sendInternalError(res, error);
       const workflows = ((data ?? []) as WorkflowRecord[]).map(
         withDatabaseWorkflowSummary,
       );
@@ -475,7 +472,7 @@ workflowsRouter.get(
       p_type: workflowType,
     });
     if (error) {
-      return void res.status(500).json({ detail: error.message });
+      return void sendInternalError(res, error);
     }
 
     const databaseWorkflows = ((data ?? []) as WorkflowRecord[]).map(
@@ -524,7 +521,7 @@ workflowsRouter.get(
       p_type: type,
       p_scope: scope,
     });
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
 
     const row = (data?.[0] ?? {}) as Record<string, unknown>;
     const strings = (value: unknown) =>
@@ -580,7 +577,7 @@ workflowsRouter.get(
         "get_workflow_ids_overview",
         rpcArgs,
       );
-      if (error) return void res.status(500).json({ detail: error.message });
+      if (error) return void sendInternalError(res, error);
       const rows = (data ?? []) as { id: string; user_id: string }[];
       if (rows.length === 0) break;
       ids.push(...rows);
@@ -658,7 +655,7 @@ workflowsRouter.post(
         details: error.details,
         hint: error.hint,
       });
-      return void res.status(500).json({ detail: error.message });
+      return void sendInternalError(res, error);
     }
     devLog("[workflows/create] inserted", {
       id: data?.id,
@@ -752,7 +749,7 @@ workflowsRouter.delete(
       .eq("id", workflowId)
       .eq("user_id", userId)
       .select("id");
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
     if ((deleted ?? []).length > 0) {
       await Promise.all(
         (referenceDocuments ?? []).map((reference) =>
@@ -775,7 +772,7 @@ workflowsRouter.get(
       .from("hidden_workflows")
       .select("workflow_id")
       .eq("user_id", userId);
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
     res.json((data ?? []).map((r) => r.workflow_id));
   }),
 );
@@ -796,7 +793,7 @@ workflowsRouter.post(
         { user_id: userId, workflow_id },
         { onConflict: "user_id,workflow_id" },
       );
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
     res.status(204).send();
   }),
 );
@@ -814,7 +811,7 @@ workflowsRouter.delete(
       .delete()
       .eq("user_id", userId)
       .eq("workflow_id", workflowId);
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
     res.status(204).send();
   }),
 );
@@ -848,7 +845,7 @@ workflowsRouter.post(
       .eq("user_id", userId)
       .maybeSingle();
     if (workflowError) {
-      return void res.status(500).json({ detail: workflowError.message });
+      return void sendInternalError(res, workflowError);
     }
     if (!workflow) {
       return void res
@@ -893,7 +890,7 @@ workflowsRouter.post(
       .eq("status", "pending")
       .maybeSingle();
     if (pendingError) {
-      return void res.status(500).json({ detail: pendingError.message });
+      return void sendInternalError(res, pendingError);
     }
 
     if (pendingSubmission) {
@@ -911,9 +908,10 @@ workflowsRouter.post(
         .select("id, status, submitted_at, updated_at, reviewed_at")
         .single();
       if (updateError || !updated) {
-        return void res.status(500).json({
-          detail: updateError?.message ?? "Failed to update submission",
-        });
+        return void sendInternalError(
+          res,
+          updateError ?? new Error("Submission update returned no data"),
+        );
       }
       return void res.json({
         ...toOpenSourceSubmissionSummary(updated as OpenSourceSubmissionRow),
@@ -938,9 +936,10 @@ workflowsRouter.post(
       .select("id, status, submitted_at, updated_at, reviewed_at")
       .single();
     if (createError || !created) {
-      return void res.status(500).json({
-        detail: createError?.message ?? "Failed to create submission",
-      });
+      return void sendInternalError(
+        res,
+        createError ?? new Error("Submission create returned no data"),
+      );
     }
 
     res.status(201).json({
@@ -975,7 +974,7 @@ workflowsRouter.get(
       )
       .eq("workflow_id", req.params.workflowId)
       .order("created_at", { ascending: true });
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
     res.json(data ?? []);
   }),
 );
@@ -1047,9 +1046,10 @@ workflowsRouter.post(
       .single();
     if (error || !data) {
       await deleteFile(storagePath).catch(() => {});
-      return void res
-        .status(500)
-        .json({ detail: error?.message ?? "Upload failed" });
+      return void sendInternalError(
+        res,
+        error ?? new Error("Reference upload returned no data"),
+      );
     }
     res.status(201).json(data);
   }),
@@ -1163,9 +1163,10 @@ workflowsRouter.put(
       .single();
     if (error || !data) {
       await deleteFile(storagePath).catch(() => {});
-      return void res
-        .status(500)
-        .json({ detail: error?.message ?? "Replacement failed" });
+      return void sendInternalError(
+        res,
+        error ?? new Error("Reference replacement returned no data"),
+      );
     }
     if (current.storage_path !== storagePath) {
       await deleteFile(current.storage_path).catch(() => {});
@@ -1208,7 +1209,7 @@ workflowsRouter.delete(
       .from("workflow_reference_documents")
       .delete()
       .eq("id", reference.id);
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
     res.status(204).send();
   }),
 );
@@ -1286,7 +1287,7 @@ workflowsRouter.get(
       .select("id, shared_with_email, allow_edit, created_at")
       .eq("workflow_id", workflowId)
       .order("created_at", { ascending: true });
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
 
     res.json(shares ?? []);
   }),
@@ -1382,7 +1383,7 @@ workflowsRouter.post(
     const { error } = await db
       .from("workflow_shares")
       .upsert(rows, { onConflict: "workflow_id,shared_with_email" });
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
 
     res.status(204).send();
   }),

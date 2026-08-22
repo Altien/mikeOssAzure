@@ -164,20 +164,33 @@ describe("useAssistantChat SSE parsing", () => {
         ]);
     });
 
-    it("surfaces an error event on the assistant message and stops loading", async () => {
+    it("sanitizes an unexpected error event and stops loading", async () => {
         const { assistant, result } = await sendAndGetAssistant([
             'data: {"type":"content_delta","text":"Part"}\n\n',
             'data: {"type":"error","message":"model unavailable"}\n\n',
         ]);
 
-        expect(assistant?.error).toBe("model unavailable");
+        expect(assistant?.error).toBe("Sorry, something went wrong.");
         // Streamed content is finalized before the error event is appended.
         expect(assistant?.events).toEqual([
             { type: "content", text: "Part" },
-            { type: "error", message: "model unavailable" },
+            { type: "error", message: "Sorry, something went wrong." },
         ]);
         expect(result.current.isResponseLoading).toBe(false);
         expect(result.current.isLoadingCitations).toBe(false);
+    });
+
+    it("preserves an explicitly safe, actionable error event", async () => {
+        const { assistant } = await sendAndGetAssistant([
+            'data: {"type":"error","message":"Select a saved model first.","safe_to_display":true}\n\n',
+        ]);
+
+        expect(assistant?.error).toBe("Select a saved model first.");
+        expect(assistant?.events).toContainEqual({
+            type: "error",
+            message: "Select a saved model first.",
+            safe_to_display: true,
+        });
     });
 
     it("falls back to a readable message for blank error events", async () => {
@@ -241,7 +254,7 @@ describe("useAssistantChat SSE parsing", () => {
         const assistant = result.current.messages.findLast(
             (m) => m.role === "assistant",
         );
-        expect(assistant?.error).toBe("HTTP 429: quota exceeded");
+        expect(assistant?.error).toBe("Sorry, something went wrong.");
         expect(result.current.isResponseLoading).toBe(false);
     });
 

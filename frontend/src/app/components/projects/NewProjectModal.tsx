@@ -15,6 +15,7 @@ import { useAuth } from "@/app/contexts/AuthContext";
 import { Modal } from "../modals/Modal";
 import { FieldLabel, FormTextInput } from "../ui/form-field";
 import { ProjectPracticeField } from "./ProjectPracticeField";
+import { userFacingApiError } from "@/app/lib/userFacingError";
 
 interface Props {
     open: boolean;
@@ -89,7 +90,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
             resetForm();
             onClose();
         } catch (err: unknown) {
-            setError((err as Error).message || "Failed to create project");
+            setError(userFacingApiError(err, "Failed to create project"));
         } finally {
             setLoading(false);
         }

@@ -7,6 +7,7 @@ import {
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import { ensureDefaultWorkflows } from "../lib/workflowCatalog";
+import { sendInternalError } from "../lib/httpError";
 
 export const quickActionsRouter = Router();
 
@@ -157,7 +158,7 @@ quickActionsRouter.get(
       .eq("surface", surface)
       .order("sort_order", { ascending: true })
       .order("created_at", { ascending: true });
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
     res.json(
       await withWorkflowDetails(
         (data ?? []) as QuickActionRow[],
@@ -222,9 +223,10 @@ quickActionsRouter.post(
       .select("*")
       .single();
     if (error || !data) {
-      return void res
-        .status(500)
-        .json({ detail: error?.message ?? "Create failed" });
+      return void sendInternalError(
+        res,
+        error ?? new Error("Quick action create returned no data"),
+      );
     }
     res.status(201).json({ ...data, workflow });
   }),
@@ -324,7 +326,7 @@ quickActionsRouter.delete(
       .delete()
       .eq("id", req.params.quickActionId)
       .eq("user_id", userId);
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
     res.status(204).send();
   }),
 );

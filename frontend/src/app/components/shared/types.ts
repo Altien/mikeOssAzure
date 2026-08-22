@@ -160,7 +160,7 @@ export type AskInputsResponseEvent = {
 export type AssistantEvent =
     | AuthorityTraceAssistantEvent
     | { type: "reasoning"; text: string; isStreaming?: boolean }
-    | { type: "error"; message: string }
+    | { type: "error"; message: string; safe_to_display?: boolean }
     | {
           type: "tool_call_start";
           name: string;

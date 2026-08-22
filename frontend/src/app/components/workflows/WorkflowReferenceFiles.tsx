@@ -20,6 +20,7 @@ import {
   formatUnsupportedDocumentWarning,
   partitionSupportedDocumentFiles,
 } from "@/app/lib/documentUploadValidation";
+import { userFacingApiError } from "@/app/lib/userFacingError";
 import { EmptyState } from "@/app/components/ui/empty-state";
 import { ConfirmPopup } from "../popups/ConfirmPopup";
 import { FileTypeIcon } from "../shared/FileTypeIcon";
@@ -99,11 +100,7 @@ export const WorkflowReferenceFiles = forwardRef<
       setFiles(await listWorkflowReferenceFiles(workflowId));
       setError("");
     } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "Unable to load reference files.",
-      );
+      setError(userFacingApiError(caught, "Unable to load reference files."));
     } finally {
       setLoading(false);
     }
@@ -147,9 +144,7 @@ export const WorkflowReferenceFiles = forwardRef<
         setFiles((current) => [...current, created]);
       }
     } catch (caught) {
-      appendWarning(
-        caught instanceof Error ? caught.message : "Upload failed.",
-      );
+      appendWarning(userFacingApiError(caught, "Upload failed."));
     } finally {
       uploadInFlightRef.current = false;
       setBusyId(null);
@@ -164,9 +159,7 @@ export const WorkflowReferenceFiles = forwardRef<
       await replaceWorkflowReferenceFile(workflowId, target.id, file);
       await reload();
     } catch (caught) {
-      setError(
-        caught instanceof Error ? caught.message : "Replacement failed.",
-      );
+      setError(userFacingApiError(caught, "Replacement failed."));
     } finally {
       replaceTargetRef.current = null;
       setBusyId(null);
@@ -182,7 +175,7 @@ export const WorkflowReferenceFiles = forwardRef<
       anchor.download = resolved.filename || file.filename;
       anchor.click();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Download failed.");
+      setError(userFacingApiError(caught, "Download failed."));
     } finally {
       setBusyId(null);
     }
@@ -197,7 +190,7 @@ export const WorkflowReferenceFiles = forwardRef<
       await deleteWorkflowReferenceFile(workflowId, file.id);
       setFiles((current) => current.filter((item) => item.id !== file.id));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Delete failed.");
+      setError(userFacingApiError(caught, "Delete failed."));
     } finally {
       setBusyId(null);
       setPendingDeleteFile(null);

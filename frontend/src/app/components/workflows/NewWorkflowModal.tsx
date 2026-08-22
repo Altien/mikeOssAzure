@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MessageSquare, Table2, Upload } from "lucide-react";
 import { createWorkflow, updateWorkflow } from "@/app/lib/mikeApi";
+import { userFacingApiError } from "@/app/lib/userFacingError";
 import type { Workflow } from "../shared/types";
 import { PRACTICE_OPTIONS } from "./practices";
 import { Modal } from "../modals/Modal";
@@ -371,7 +372,12 @@ export function NewWorkflowModal({
             resetForm();
             onClose();
         } catch (err: unknown) {
-            setError((err as Error).message || `Failed to ${isEditing ? "update" : "create"} workflow`);
+            setError(
+                userFacingApiError(
+                    err,
+                    `Failed to ${isEditing ? "update" : "create"} workflow`,
+                ),
+            );
         } finally {
             setLoading(false);
         }

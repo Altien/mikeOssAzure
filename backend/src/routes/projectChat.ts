@@ -10,6 +10,7 @@ import {
     appendAskInputsResponseToLastAssistantMessage,
     appendAssistantEventsToLastAssistantMessage,
     AssistantStreamError,
+    ASSISTANT_ERROR_MESSAGE,
     buildCancelledAssistantMessage,
     extractCitations,
     generateSpotlightNonce,
@@ -30,7 +31,7 @@ import {
     getUserModelSettings,
 } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
-import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
+import { safeErrorLog } from "../lib/safeError";
 import { generateAssistantChatTitle } from "../lib/chatTitle";
 import { AUTHORITY_TRACE_SYSTEM_PROMPT } from "../altien/authorityTrace/chatTools";
 import {
@@ -86,7 +87,7 @@ projectChatRouter.get("/:chatId/skill", requireAuth, async (req, res) => {
         res.json({ binding: await getSkillChatBindingMetadata({ chatId, db }) });
     } catch (error) {
         res.status(409).json({
-            detail: safeErrorMessage(error, "Skill binding is unavailable"),
+            detail: "Skill binding is unavailable",
         });
     }
 });
@@ -136,7 +137,7 @@ projectChatRouter.post(
             );
         } catch (error) {
             res.status(409).json({
-                detail: safeErrorMessage(error, "Skill upgrade failed"),
+                detail: "Skill upgrade failed",
             });
         }
     },
@@ -292,10 +293,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             });
         } catch (error) {
             return void res.status(409).json({
-                detail: safeErrorMessage(
-                    error,
-                    "Explicit skill invocation failed",
-                ),
+                detail: "Explicit skill invocation failed",
             });
         }
     }
@@ -612,7 +610,7 @@ without pretending to have the skill's instructions or resources.`;
             return;
         }
         console.error("[project-chat/stream] error:", safeErrorLog(err));
-        const message = safeErrorMessage(err, "Stream error");
+        const message = ASSISTANT_ERROR_MESSAGE;
         const errorEvents = err instanceof AssistantStreamError
             ? stripTransientAssistantEvents(err.events)
             : [{ type: "error" as const, message }];

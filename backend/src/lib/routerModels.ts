@@ -1,4 +1,5 @@
 import { createServerSupabase } from "./supabase";
+import { UserFacingError } from "./safeError";
 import { resolveModel } from "./llm/models";
 
 type Db = ReturnType<typeof createServerSupabase>;
@@ -76,7 +77,7 @@ export async function resolveRequestedModel(
         return resolved;
     }
     if (onOutsideSelection === "throw") {
-        throw new Error(
+        throw new UserFacingError(
             `Model ${resolved} is not in your saved ${ROUTER_LABELS[router]} models — add it in Settings → Bring Your Own Keys → Routers.`,
         );
     }

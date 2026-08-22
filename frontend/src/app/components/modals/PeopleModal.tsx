@@ -212,12 +212,8 @@ export function PeopleModal({
         try {
             const next = [...sharedWith, email];
             await onSharedWithChange(next);
-        } catch (e) {
-            throw new Error(
-                e instanceof Error
-                    ? e.message
-                    : "Couldn't add the member. Try again.",
-            );
+        } catch {
+            throw new Error("Couldn't add the member. Try again.");
         } finally {
             setBusy(null);
         }
@@ -233,12 +229,8 @@ export function PeopleModal({
                 (e) => e.toLowerCase() !== email.toLowerCase(),
             );
             await onSharedWithChange(next);
-        } catch (e) {
-            setError(
-                e instanceof Error
-                    ? e.message
-                    : "Couldn't remove the member. Try again.",
-            );
+        } catch {
+            setError("Couldn't remove the member. Try again.");
         } finally {
             setBusy(null);
             setRemovingEmail(null);

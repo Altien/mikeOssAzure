@@ -10,6 +10,13 @@ const PROVIDER_KEY_PATTERNS = [
   /\bAIza[A-Za-z0-9_\-]{20,}\b/g,
 ];
 
+export class UserFacingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UserFacingError";
+  }
+}
+
 export function redactSensitiveText(value: string): string {
   let redacted = value;
   for (const pattern of SECRET_CONTEXT_PATTERNS) {

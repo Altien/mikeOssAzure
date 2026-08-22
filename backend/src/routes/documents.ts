@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import { recordAudit } from "../lib/audit";
+import { sendInternalError } from "../lib/httpError";
 import {
   buildContentDisposition,
   downloadFile,
@@ -69,7 +70,7 @@ documentsRouter.get("/", requireAuth, async (req, res) => {
     .is("project_id", null)
     .or("library_kind.eq.file,library_kind.is.null")
     .order("created_at", { ascending: false });
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendInternalError(res, error);
   const docs = (data ?? []) as unknown as {
     id: string;
     current_version_id?: string | null;
@@ -190,7 +191,7 @@ documentsRouter.post("/download-zip", requireAuth, async (req, res) => {
     .select("id, current_version_id, user_id, project_id")
     .in("id", document_ids);
 
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendInternalError(res, error);
   // Filter to docs the user actually has access to (own + shared-project).
   const accessChecks = await Promise.all(
     (rawDocs ?? []).map(async (d) => ({
@@ -916,9 +917,10 @@ documentsRouter.put(
           .filter((path): path is string => !!path)
           .map((path) => deleteFile(path).catch(() => {})),
       );
-      return void res.status(500).json({
-        detail: updateErr?.message ?? "Failed to replace version.",
-      });
+      return void sendInternalError(
+        res,
+        updateErr ?? new Error("Version replacement returned no data"),
+      );
     }
 
     await Promise.all(
@@ -962,7 +964,7 @@ documentsRouter.delete(
       .eq("document_id", documentId)
       .is("deleted_at", null);
     if (versionsErr) {
-      return void res.status(500).json({ detail: versionsErr.message });
+      return void sendInternalError(res, versionsErr);
     }
 
     const rows = (versions ?? []) as {
@@ -1008,7 +1010,7 @@ documentsRouter.delete(
         })
         .eq("id", documentId);
       if (updateErr) {
-        return void res.status(500).json({ detail: updateErr.message });
+        return void sendInternalError(res, updateErr);
       }
     }
 
@@ -1024,7 +1026,7 @@ documentsRouter.delete(
       .eq("document_id", documentId)
       .is("deleted_at", null);
     if (deleteErr) {
-      return void res.status(500).json({ detail: deleteErr.message });
+      return void sendInternalError(res, deleteErr);
     }
 
     await Promise.all(
@@ -1471,9 +1473,7 @@ export async function handleDocumentUpload(
     return void res.status(201).json(responseDoc);
   } catch (e) {
     await db.from("documents").update({ status: "error" }).eq("id", doc.id);
-    return void res
-      .status(500)
-      .json({ detail: `Document processing failed: ${String(e)}` });
+    return void sendInternalError(res, e);
   }
 }
 

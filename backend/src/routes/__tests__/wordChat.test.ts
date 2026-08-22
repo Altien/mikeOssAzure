@@ -106,7 +106,7 @@ describe("Word chat history routes", () => {
       .set(...AUTH);
 
     expect(res.status).toBe(500);
-    expect(res.body.detail).toBe("Failed to load Word chats");
+    expect(res.body.detail).toBe("Something went wrong. Please try again.");
     expect(recordedQueries.map(({ table }) => table)).toEqual([
       "word_documents",
     ]);
@@ -123,7 +123,7 @@ describe("Word chat history routes", () => {
       .set(...AUTH);
 
     expect(res.status).toBe(500);
-    expect(res.body.detail).toBe("Failed to load Word chats");
+    expect(res.body.detail).toBe("Something went wrong. Please try again.");
   });
 
   it("returns 500 rather than 404 when a detail document lookup fails", async () => {
@@ -137,7 +137,7 @@ describe("Word chat history routes", () => {
       .set(...AUTH);
 
     expect(res.status).toBe(500);
-    expect(res.body.detail).toBe("Failed to load Word chat");
+    expect(res.body.detail).toBe("Something went wrong. Please try again.");
   });
 
   it("returns 500 rather than 404 when the scoped chat lookup fails", async () => {
@@ -151,7 +151,7 @@ describe("Word chat history routes", () => {
       .set(...AUTH);
 
     expect(res.status).toBe(500);
-    expect(res.body.detail).toBe("Failed to load Word chat");
+    expect(res.body.detail).toBe("Something went wrong. Please try again.");
     expect(
       recordedQueries.find(({ table }) => table === "word_chats")?.filters,
     ).toEqual([

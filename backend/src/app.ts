@@ -1,4 +1,5 @@
 import express from "express";
+import { randomUUID } from "node:crypto";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
@@ -34,6 +35,7 @@ import { safeErrorLog } from "./lib/safeError";
 import { authorityTraceRouter } from "./altien/authorityTrace/router";
 import { skillsRouter } from "./altien/skills/router";
 import { auditRouter } from "./routes/audit";
+import { handleUnhandledError, protectInternalErrorResponses } from "./middleware/internalErrorResponse";
 
 // ── Rate-limit configuration (from upstream ba6f771) ───────────────────────
 
@@ -161,6 +163,14 @@ export function buildApp(): express.Express {
   // ERR_ERL_PERMISSIVE_TRUST_PROXY. `1` still honors X-Forwarded-Proto for the
   // OAuth redirect_uri and uses the ingress-stamped client IP for rate limiting.
   app.set("trust proxy", 1);
+
+  app.use((_req, res, next) => {
+    const requestId = randomUUID();
+    res.locals.requestId = requestId;
+    res.setHeader("X-Request-ID", requestId);
+    next();
+  });
+  app.use(protectInternalErrorResponses);
 
   // helmet (security headers) — taken from upstream ba6f771; CSP and COEP
   // stay disabled because dev serves a static-exported Next.js bundle from
@@ -384,5 +394,6 @@ export function buildApp(): express.Express {
     });
   }
 
+  app.use(handleUnhandledError);
   return app;
 }

@@ -10,6 +10,7 @@ import {
     FieldLabel,
     FormTextInput,
 } from "@/app/components/ui/form-field";
+import { userFacingApiError } from "@/app/lib/userFacingError";
 
 type OpenSourceContributorMode = "named" | "anonymous";
 type OpenSourceStatus = "idle" | "loading" | "complete";
@@ -114,9 +115,10 @@ export function OpenSourceWorkflowModal({
         } catch (err) {
             setStatus("idle");
             setError(
-                err instanceof Error
-                    ? err.message
-                    : "Failed to submit workflow for review.",
+                userFacingApiError(
+                    err,
+                    "Failed to submit workflow for review.",
+                ),
             );
         }
     }

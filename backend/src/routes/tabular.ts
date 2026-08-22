@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import { recordAudit } from "../lib/audit";
+import { sendInternalError } from "../lib/httpError";
 import { downloadFile } from "../lib/storage";
 import { attachActiveVersionPaths } from "../lib/documentVersions";
 import { docxToPdf, normalizeDocxZipPaths } from "../lib/convert";
@@ -15,6 +16,7 @@ import { extractPresentationText } from "../lib/officeText";
 import { spreadsheetToLLMText } from "../lib/spreadsheet";
 import {
     AssistantStreamError,
+    ASSISTANT_ERROR_MESSAGE,
     buildCancelledAssistantMessage,
     isAbortError,
     runLLMStream,
@@ -38,7 +40,7 @@ import {
     ensureReviewAccess,
     filterAccessibleDocumentIds,
 } from "../lib/access";
-import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
+import { safeErrorLog } from "../lib/safeError";
 import {
     findMissingUserEmails,
     loadProfileUsersByEmail,
@@ -469,7 +471,7 @@ async function loadReviewRowsOr500(
             safeErrorLog(error),
         );
         res.status(500).json({
-            detail: safeErrorMessage(error, "Failed to load review rows"),
+            detail: "Failed to load review rows",
         });
         return null;
     }
@@ -586,7 +588,7 @@ tabularRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
         "get_tabular_reviews_overview",
         rpcArgs,
     );
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
 
     res.json(data ?? []);
 }));
@@ -632,7 +634,7 @@ tabularRouter.get("/ids", requireAuth, asyncRoute(async (req, res) => {
             "get_tabular_review_ids_overview",
             rpcArgs,
         );
-        if (error) return void res.status(500).json({ detail: error.message });
+        if (error) return void sendInternalError(res, error);
 
         const rows = (data ?? []) as { id: string; user_id: string }[];
         if (rows.length === 0) break;
@@ -696,9 +698,10 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
         .select("*")
         .single();
     if (error || !review)
-        return void res
-            .status(500)
-            .json({ detail: error?.message ?? "Failed to create review" });
+        return void sendInternalError(
+            res,
+            error ?? new Error("Review create returned no data"),
+        );
 
     try {
         await createRowsForReview(
@@ -1075,9 +1078,10 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
         .select("*")
         .single();
     if (updateError || !updatedReview)
-        return void res.status(500).json({
-            detail: updateError?.message ?? "Failed to update review",
-        });
+        return void sendInternalError(
+            res,
+            updateError ?? new Error("Review update returned no data"),
+        );
 
     const rowShapeChanged =
         Array.isArray(req.body.document_ids) ||
@@ -1119,7 +1123,7 @@ tabularRouter.delete("/:reviewId", requireAuth, async (req, res) => {
         .delete()
         .eq("id", reviewId)
         .eq("user_id", userId);
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
     res.status(204).send();
 });
 
@@ -1758,7 +1762,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
             if (res.headersSent) {
                 try {
                     write(
-                        `data: ${JSON.stringify({ type: "error", message: safeErrorMessage(err, "Stream error") })}\n\ndata: [DONE]\n\n`,
+                        `data: ${JSON.stringify({ type: "error", message: "Stream error" })}\n\ndata: [DONE]\n\n`,
                     );
                 } catch {
                     /* ignore */
@@ -1838,7 +1842,7 @@ tabularRouter.delete(
             .delete()
             .eq("id", chatId)
             .eq("user_id", userId);
-        if (error) return void res.status(500).json({ detail: error.message });
+        if (error) return void sendInternalError(res, error);
         res.status(204).send();
     },
 );
@@ -1861,7 +1865,7 @@ tabularRouter.patch(
             .update({ title: title.slice(0, 200) })
             .eq("id", chatId)
             .eq("user_id", userId);
-        if (error) return void res.status(500).json({ detail: error.message });
+        if (error) return void sendInternalError(res, error);
         res.status(204).send();
     },
 );
@@ -2235,7 +2239,7 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
             return;
         }
         console.error("[tabular/chat] error", safeErrorLog(err));
-        const message = safeErrorMessage(err, "Stream error");
+        const message = ASSISTANT_ERROR_MESSAGE;
         const errorEvents =
             err instanceof AssistantStreamError
                 ? stripTransientAssistantEvents(err.events)
