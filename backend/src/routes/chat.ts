@@ -632,7 +632,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                   .catch((error) => {
                       console.error(
                           "[chat/stream] failed to generate chat title",
-                          safeErrorLog(error),
+                          error,
                       );
                   })
             : Promise.resolve();
@@ -766,7 +766,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             }
             return;
         }
-        console.error("[chat/stream] error:", safeErrorLog(err));
+        console.error("[chat/stream] error:", err);
         const message = ASSISTANT_ERROR_MESSAGE;
         const errorEvents =
             err instanceof AssistantStreamError

@@ -26,7 +26,7 @@ issue against this repository letting us know. That way we can:
 If you are unsure whether a change is upstream-eligible, file an
 issue here first and we will help you triage.
 
-## System Workflows
+## Mike Workflows
 
 System workflows live in the sibling
 [`Open-Legal-Products/mike-workflows`](https://github.com/Open-Legal-Products/mike-workflows)
@@ -37,11 +37,11 @@ for tabular review columns.
 
 How workflows reach users:
 
-- **Defaults.** Five hardcoded workflows (`DEFAULT_WORKFLOW_IDS` in
-  `backend/src/lib/workflowCatalog.ts`) are installed for every user on first
-  use, together with their quick-action settings. Changing which workflows are
-  defaults means editing that list — nothing in the workflow repository
-  controls it.
+- **Defaults.** Five workflows are marked as defaults by the ingestion policy
+  in `backend/src/lib/workflowCatalogSource.ts`. The workflow sync job stores
+  that classification and the Quick Action settings in
+  `mike_workflows`; Postgres installs independent, editable copies for each
+  user on first use.
 - **Add-ons.** Every other workflow in the repository ships in the Add-ons
   catalog. Users import an add-on as an independent, editable copy of the
   workflow.
@@ -50,29 +50,18 @@ How workflows reach users:
   exactly the workflow directories that exist under it — the build fails on
   either a listed-but-missing or an unlisted workflow.
 - The `metadata.mike-availability` frontmatter key is deprecated and ignored:
-  the default/add-on split comes from `DEFAULT_WORKFLOW_IDS`, not from the
-  workflow files. Existing files may keep the key; the generator accepts it
-  but never emits it.
+  the default/add-on split comes from `DEFAULT_WORKFLOWS`, not from the
+  workflow files. Existing files may keep the key; the ingestion parser
+  accepts it but does not use it for classification.
 
-After changing system workflows, regenerate the app files:
-
-```bash
-node scripts/build-workflows.js
-```
-
-The generator stamps the `mike-workflows` commit it read into the generated
-files (`SYSTEM_WORKFLOWS_SOURCE_COMMIT`), and upstream CI regenerates from that commit
-and fails on any drift — so always commit the regenerated files together with
-a workflow change.
-
-<!-- Dev fork rule (OSS-6 spec §3.3): the checked-in
-     `backend/src/lib/systemWorkflows.ts` is generated content and the runtime
-     source of truth. This fork has no dev-only system workflows, so it never
-     needs to regenerate: during an upstream sync, resolve conflicts on
-     `systemWorkflows.ts` (and `scripts/build-workflows.js`) by taking
-     upstream's version. Never hand-edit it. Regenerating locally requires
-     cloning `mike-workflows` as a sibling; the generator skips `landing/`
-     when that directory is absent. -->
+The Azure `db-migrate` job applies numbered SQL and then ingests the catalogue
+before the backend revision is activated. The job resolves its configured source
+ref to a full commit, validates that archive, uploads references through the
+configured storage provider, and atomically replaces active database rows.
+History stays available for existing `builtin-*` links. Backend request handlers
+read the database and do not run a lazy source sync. The optional
+`scripts/build-workflows.js` only generates landing-site assets; it is no longer
+the backend runtime source.
 
 
 ## Reporting issues

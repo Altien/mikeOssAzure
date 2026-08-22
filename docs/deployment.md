@@ -8,6 +8,16 @@ Apply numbered files in backend/migrations/ using the migration runner. Fresh an
 
 Identity values are Entra text IDs. Database roles and grants are explicit: the API uses its service role, while anonymous access is restricted. Preserve those grants when adding tables or RPCs.
 
+The Azure `db-migrate` Container App job applies the numbered schema, refreshes
+PostgREST's schema cache, and ingests the Mike workflow catalogue before the
+new backend revision is activated. It uses the private PostgREST endpoint,
+the same user-assigned identity as the backend for Key Vault and Blob Storage,
+and the `workflowRepository`/`workflowRef` deployment parameters. Pin
+`workflowRef` to a full commit for reproducible releases. Reference uploads
+must finish before the database switches active catalogue rows. A failed
+download, upload or replacement fails the job and leaves the previous active
+catalogue usable; do not bypass the job during deployment.
+
 ## Runtime configuration and credentials
 
 The frontend is statically exported and reads public identity/API configuration at runtime. Follow the deployment runbook for routing its assets and the backend /config endpoint; do not replace this with a Next.js production server or bake secrets into browser bundles.

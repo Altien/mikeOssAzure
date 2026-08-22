@@ -45,7 +45,7 @@ import {
   shouldConvertToPdf,
 } from "../../documentTypes";
 import { buildDownloadUrl } from "../../downloadTokens";
-import { safeErrorMessage } from "../../safeError";
+import { safeErrorLog } from "../../safeError";
 import { contentSha256, loadActiveVersion } from "../../documentVersions";
 import { type EditInput } from "../../docxTrackedChanges";
 import {
@@ -1864,9 +1864,11 @@ export async function runToolCalls(
               !insertedDocs ||
               insertedDocs.length !== newDocs.length
             ) {
-              fail(
-                `Failed to record replicated documents: ${safeErrorMessage(docErr?.message ?? "unknown")}`,
+              console.error(
+                "[replicate-document] failed to record documents",
+                safeErrorLog(docErr),
               );
+              fail("Failed to record replicated documents");
             } else {
               // Bulk insert N versions in one round-trip.
               const versionRows = newDocs.map((d, idx) => ({
@@ -1903,9 +1905,11 @@ export async function runToolCalls(
                     "id",
                     newDocs.map((d) => d.id),
                   );
-                fail(
-                  `Failed to record replicated document versions: ${safeErrorMessage(verErr?.message ?? "unknown")}`,
+                console.error(
+                  "[replicate-document] failed to record document versions",
+                  safeErrorLog(verErr),
                 );
+                fail("Failed to record replicated document versions");
               } else {
                 const versionByDocId = new Map<string, string>();
                 for (const v of insertedVersions as {
@@ -1939,10 +1943,7 @@ export async function runToolCalls(
                   if (!versionByDocId.get(d.id) || updateError) {
                     failedCopies.push({
                       filename: d.filename,
-                      error: safeErrorMessage(
-                        updateError?.message ??
-                          "Failed to link the copy to its version",
-                      ),
+                      error: "Failed to link the copy to its version",
                     });
                     brokenDocIds.push(d.id);
                   } else {
@@ -2049,7 +2050,8 @@ export async function runToolCalls(
             }
           }
         } catch (e) {
-          fail(`replicate_document failed: ${safeErrorMessage(e)}`);
+          console.error("[replicate-document] failed", safeErrorLog(e));
+          fail("replicate_document failed");
         }
       }
     } else if (tc.function.name === "generate_docx") {

@@ -6,12 +6,13 @@ const path = require("path");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const WORKSPACE_DIR = path.resolve(ROOT_DIR, "..");
-const WORKFLOWS_DIR = path.join(WORKSPACE_DIR, "mike-workflows");
+const WORKFLOWS_DIR = process.env.MIKE_WORKFLOWS_DIR
+  ? path.resolve(process.env.MIKE_WORKFLOWS_DIR)
+  : path.join(WORKSPACE_DIR, "mike-workflows");
 const WORKFLOW_COLLECTIONS = [
   { directory: "assistant-workflows", type: "assistant" },
   { directory: "tabular-review-workflows", type: "tabular" },
 ];
-const BACKEND_OUT = path.join(ROOT_DIR, "backend/src/lib/systemWorkflows.ts");
 const LANDING_OUT = path.join(ROOT_DIR, "landing/app/generated-workflows.ts");
 const WORKFLOW_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -23,7 +24,9 @@ function readJson(filePath) {
   try {
     return JSON.parse(readText(filePath));
   } catch (error) {
-    throw new Error(`${relative(filePath)} is not valid JSON: ${error.message}`);
+    throw new Error(
+      `${relative(filePath)} is not valid JSON: ${error.message}`,
+    );
   }
 }
 
@@ -50,7 +53,9 @@ function resolveSourceCommit() {
     );
   }
   if (!/^[0-9a-f]{40}$/.test(commit)) {
-    fail(`Unexpected git rev-parse output for ${relative(WORKFLOWS_DIR)}: ${commit}`);
+    fail(
+      `Unexpected git rev-parse output for ${relative(WORKFLOWS_DIR)}: ${commit}`,
+    );
   }
   return commit;
 }
@@ -141,7 +146,9 @@ function parseSimpleYaml(source, label) {
           }
           const object = {};
           if (itemText) {
-            const itemMatch = itemText.match(/^([A-Za-z_][A-Za-z0-9_-]*):(.*)$/);
+            const itemMatch = itemText.match(
+              /^([A-Za-z_][A-Za-z0-9_-]*):(.*)$/,
+            );
             if (!itemMatch) {
               fail(`${label}:${i + 1} is not a valid object list item`);
             }
@@ -230,7 +237,10 @@ function parseTableColumnsYaml(filePath) {
 
     const schemaMatch = line.match(/^\$schema:\s*(.+)$/);
     if (schemaMatch) {
-      result.$schema = parseScalar(schemaMatch[1], `${relative(filePath)}.$schema`);
+      result.$schema = parseScalar(
+        schemaMatch[1],
+        `${relative(filePath)}.$schema`,
+      );
       i++;
       continue;
     }
@@ -250,7 +260,10 @@ function parseTableColumnsYaml(filePath) {
     const itemMatch = line.match(/^  - index:\s*(.+)$/);
     if (itemMatch) {
       current = {
-        index: parseScalar(itemMatch[1], `${relative(filePath)}.columns_config.index`),
+        index: parseScalar(
+          itemMatch[1],
+          `${relative(filePath)}.columns_config.index`,
+        ),
       };
       result.columns_config.push(current);
       continue;
@@ -282,7 +295,12 @@ function parseTableColumnsYaml(filePath) {
       continue;
     }
 
-    if (rawValue === ">-" || rawValue === ">" || rawValue === "|-" || rawValue === "|") {
+    if (
+      rawValue === ">-" ||
+      rawValue === ">" ||
+      rawValue === "|-" ||
+      rawValue === "|"
+    ) {
       const parts = [];
       i++;
       for (; i < lines.length; i++) {
@@ -328,11 +346,18 @@ function normalizeContributors(value, label) {
   }
   return value.map((contributor, index) => {
     const contributorLabel = `${label}[${index}]`;
-    if (!contributor || typeof contributor !== "object" || Array.isArray(contributor)) {
+    if (
+      !contributor ||
+      typeof contributor !== "object" ||
+      Array.isArray(contributor)
+    ) {
       fail(`${contributorLabel} must be an object`);
     }
     assertString(contributor.name, `${contributorLabel}.name`);
-    assertOptionalString(contributor.organisation, `${contributorLabel}.organisation`);
+    assertOptionalString(
+      contributor.organisation,
+      `${contributorLabel}.organisation`,
+    );
     assertOptionalString(contributor.role, `${contributorLabel}.role`);
     assertOptionalString(contributor.linkedin, `${contributorLabel}.linkedin`);
     return {
@@ -390,14 +415,19 @@ function readWorkflow(category, workflowDir, pack) {
   const slug = path.basename(workflowDir);
   const metadataPath = path.join(workflowDir, "metadata.json");
   if (fs.existsSync(metadataPath)) {
-    fail(`${relative(metadataPath)} is no longer supported; use SKILL.md frontmatter`);
+    fail(
+      `${relative(metadataPath)} is no longer supported; use SKILL.md frontmatter`,
+    );
   }
   const skillPath = path.join(workflowDir, "SKILL.md");
   if (!fs.existsSync(skillPath)) {
     fail(`${relative(skillPath)} is required`);
   }
-  const { metadata: frontmatter, body, fullText: sourceSkillMd } =
-    readSkillFile(skillPath);
+  const {
+    metadata: frontmatter,
+    body,
+    fullText: sourceSkillMd,
+  } = readSkillFile(skillPath);
   let skillMd = body.trimStart();
   const label = `${relative(skillPath)} frontmatter`;
   const metadata = frontmatter.metadata;
@@ -436,14 +466,16 @@ function readWorkflow(category, workflowDir, pack) {
   assertString(metadata.author, `${label}.metadata.author`);
   assertString(metadata.language, `${label}.language`);
   assertString(metadata.version, `${label}.version`);
-  assertString(metadata["mike-display-name"], `${label}.metadata.mike-display-name`);
+  assertString(
+    metadata["mike-display-name"],
+    `${label}.metadata.mike-display-name`,
+  );
   if (metadata["mike-type"] !== category) {
     fail(`${label}.metadata.mike-type must be "${category}"`);
   }
-  // metadata.mike-availability is deprecated: the backend derives the
-  // default/add-on split from DEFAULT_WORKFLOW_IDS in
-  // backend/src/lib/workflowCatalog.ts, so the flag is accepted for
-  // backwards compatibility but never emitted. Warn (don't fail) on
+  // metadata.mike-availability is deprecated: backend ingestion derives the
+  // default/add-on split from its deployment policy, so the flag is accepted
+  // for backwards compatibility but never emitted. Warn (don't fail) on
   // unexpected values so existing content keeps building.
   const availability = metadata["mike-availability"];
   if (
@@ -485,11 +517,15 @@ function readWorkflow(category, workflowDir, pack) {
 
   if (category === "assistant") {
     if (!skillMd.trim()) {
-      fail(`${relative(skillPath)} must include instructions after frontmatter`);
+      fail(
+        `${relative(skillPath)} must include instructions after frontmatter`,
+      );
     }
     const tableColumnsPath = path.join(workflowDir, "table-columns.yaml");
     if (fs.existsSync(tableColumnsPath)) {
-      fail(`${relative(tableColumnsPath)} is only supported for tabular workflows`);
+      fail(
+        `${relative(tableColumnsPath)} is only supported for tabular workflows`,
+      );
     }
     return {
       id,
@@ -514,7 +550,9 @@ function readWorkflow(category, workflowDir, pack) {
   );
   const actualSchemaPath = path.resolve(workflowDir, tableConfig.$schema ?? "");
   if (actualSchemaPath !== expectedSchemaPath) {
-    fail(`${tableConfigLabel}.$schema must point to workflow-schema/table-columns.schema.yaml`);
+    fail(
+      `${tableConfigLabel}.$schema must point to workflow-schema/table-columns.schema.yaml`,
+    );
   }
   assertColumnConfig(tableConfig.columns_config, tableConfigLabel);
 
@@ -562,7 +600,9 @@ function loadWorkflows() {
         );
         for (const workflowName of pack.workflow_names) {
           if (!discoveredNames.has(workflowName)) {
-            fail(`${relative(path.join(entryDir, "pack.yaml"))} lists missing workflow '${workflowName}'`);
+            fail(
+              `${relative(path.join(entryDir, "pack.yaml"))} lists missing workflow '${workflowName}'`,
+            );
           }
         }
         // The reverse direction matters too: a workflow directory that
@@ -571,7 +611,9 @@ function loadWorkflows() {
         const listedNames = new Set(pack.workflow_names);
         for (const discoveredName of discoveredNames) {
           if (!listedNames.has(discoveredName)) {
-            fail(`${relative(path.join(entryDir, "pack.yaml"))} does not list discovered workflow '${discoveredName}'`);
+            fail(
+              `${relative(path.join(entryDir, "pack.yaml"))} does not list discovered workflow '${discoveredName}'`,
+            );
           }
         }
         return childDirectories.map((directory) => ({ directory, pack }));
@@ -601,25 +643,7 @@ function formatTs(value) {
   return JSON.stringify(value, null, 4);
 }
 
-function writeGeneratedFiles(workflows, sourceCommit) {
-  const systemWorkflows = workflows.map((workflow) => ({
-    user_id: null,
-    is_system: true,
-    created_at: "",
-    id: workflow.id,
-    metadata: workflow.metadata,
-    skill_md: workflow.skill_md,
-    columns_config: workflow.columns_config,
-    reference_files: workflow.reference_files,
-    pack: workflow.pack,
-  }));
-  const systemAssistantWorkflows = workflows
-    .filter((workflow) => workflow.metadata.type === "assistant")
-    .map((workflow) => ({
-      id: workflow.id,
-      title: workflow.metadata.title,
-      skill_md: workflow.skill_md,
-    }));
+function writeGeneratedFile(workflows, sourceCommit) {
   const landingWorkflows = workflows.map((workflow) => ({
     id: workflow.id,
     metadata: workflow.metadata,
@@ -628,14 +652,13 @@ function writeGeneratedFiles(workflows, sourceCommit) {
     columns: workflow.columns_config ?? [],
   }));
 
-  const backendText = `// This file is generated by scripts/build-workflows.js. Do not edit it directly.\n// Source: Open-Legal-Products/mike-workflows @ ${sourceCommit}\n\n// The mike-workflows commit these workflows were generated from.\nexport const SYSTEM_WORKFLOWS_SOURCE_COMMIT = "${sourceCommit}";\n\nexport type SystemWorkflowContributor = {\n    name: string;\n    organisation: string | null;\n    role: string | null;\n    linkedin: string | null;\n};\n\nexport type SystemWorkflowMetadata = {\n    name: string;\n    title: string;\n    description: string;\n    type: "assistant" | "tabular";\n    contributors: SystemWorkflowContributor[];\n    language: string;\n    version: string;\n    practice: string | null;\n    jurisdictions: string[] | null;\n};\n\nexport type SystemWorkflowReferenceFile = {\n    filename: string;\n    file_type: string;\n    size_bytes: number;\n    content_base64: string;\n};\n\nexport type SystemWorkflowPack = {\n    key: string;\n    title: string;\n    description: string;\n    version: string;\n    workflow_names: string[];\n};\n\nexport type SystemWorkflow = {\n    id: string;\n    user_id: null;\n    is_system: true;\n    created_at: string;\n    metadata: SystemWorkflowMetadata;\n    skill_md: string | null;\n    columns_config: { index: number; name: string; format?: string; prompt: string; tags?: string[] }[] | null;\n    reference_files: SystemWorkflowReferenceFile[];\n    pack: SystemWorkflowPack | null;\n};\n\nexport const SYSTEM_WORKFLOWS: SystemWorkflow[] = ${formatTs(systemWorkflows)};\n\nexport const SYSTEM_WORKFLOW_IDS = new Set(SYSTEM_WORKFLOWS.map((wf) => wf.id));\n\nexport const SYSTEM_ASSISTANT_WORKFLOWS: { id: string; title: string; skill_md: string }[] = ${formatTs(systemAssistantWorkflows)};\n`;
-
   const landingText = `// This file is generated by scripts/build-workflows.js. Do not edit it directly.\n// Source: Open-Legal-Products/mike-workflows @ ${sourceCommit}\nimport type { LandingWorkflow } from "./workflow-browser";\n\nexport const LANDING_WORKFLOWS: LandingWorkflow[] = ${formatTs(landingWorkflows)};\n`;
 
-  fs.writeFileSync(BACKEND_OUT, backendText);
   if (fs.existsSync(path.dirname(LANDING_OUT))) {
     fs.writeFileSync(LANDING_OUT, landingText);
+    return true;
   }
+  return false;
 }
 
 function main() {
@@ -655,9 +678,9 @@ function main() {
   }
 
   const sourceCommit = resolveSourceCommit();
-  writeGeneratedFiles(workflows, sourceCommit);
+  const generated = writeGeneratedFile(workflows, sourceCommit);
   console.log(
-    `Generated ${workflows.length} system workflows from mike-workflows @ ${sourceCommit}.`,
+    `${generated ? "Generated" : "Validated"} ${workflows.length} landing workflows from mike-workflows @ ${sourceCommit}.`,
   );
 }
 

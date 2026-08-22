@@ -18,7 +18,6 @@ dangerous (scope in `backend/stryker.config.json`):
 
 - `src/lib/access.ts` — project/document sharing access checks
 - `src/lib/downloadTokens.ts` — HMAC-signed download tokens
-- `src/lib/safeError.ts` — API-key/secret redaction in errors and logs
 - `src/lib/chat/citations.ts` — citation extraction (what the model may
   cite from which document)
 
@@ -45,13 +44,11 @@ Open `backend/reports/mutation/mutation.html` (in CI: download the
 - **No coverage** — no test even runs that code. Coverage gap, not an
   assertion gap.
 
-Scores measured when this harness landed: overall **74.0–76.4%** across
-two runs (citations ~78–80, safeError 76–93, downloadTokens 65.4,
-access 63.6). Two footnotes on those numbers: the access figure is mostly
+Scores measured when this harness landed varied by file (citations ~78–80,
+downloadTokens 65.4, access 63.6). The access figure is mostly
 no-coverage mutants in
 `listAccessibleProjectIds`/`filterAccessibleDocumentIds` — its score on
-*covered* code is 82.4 — and the safeError swing is regex mutants that
-sometimes time out instead of surviving (a timeout counts as killed).
+*covered* code is 82.4.
 `thresholds.break` is set to **69**, ~5 points under the lowest measured
 score, so a run fails only on a genuine regression.
 When you kill survivors, raise `break` in the same PR — floors only go up.

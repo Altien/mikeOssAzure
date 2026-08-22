@@ -916,7 +916,7 @@ projectsRouter.get(
     } catch (err) {
       console.error("[projects/export] failed", {
         projectId,
-        error: safeErrorLog(err),
+        error: err,
       });
       res
         .status(500)

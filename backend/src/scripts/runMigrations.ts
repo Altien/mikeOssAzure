@@ -1,6 +1,9 @@
 import { DefaultAzureCredential } from "@azure/identity";
 import { spawn } from "node:child_process";
 import { Client } from "pg";
+import { createServerSupabase } from "../lib/supabase";
+import { syncWorkflowCatalog } from "../lib/workflowCatalogSync";
+import { resolveProviderSecret } from "../lib/envSecrets";
 
 const AAD_SCOPE = "https://ossrdbms-aad.database.windows.net/.default";
 
@@ -204,6 +207,19 @@ async function main() {
 
   await ensureAuthenticatorRole(databaseUrl);
   await reloadPostgrestSchemaCache(databaseUrl);
+  // The same deployment job publishes the catalogue after its tables/RPCs
+  // exist and before the backend revision is activated. Reference bytes are
+  // uploaded first; a failed sync leaves the previous DB catalogue active and
+  // fails the job, so an empty or partial catalogue cannot be deployed.
+  const githubToken = await resolveProviderSecret("mike-workflows-github-token");
+  const result = await syncWorkflowCatalog(
+    createServerSupabase(),
+    githubToken ? { githubToken } : {},
+  );
+  console.log(
+    `[migrate] catalogue active: ${result.workflows} workflows, ` +
+      `${result.references} references, source ${result.sourceCommit}`,
+  );
 }
 
 main().catch((error) => {

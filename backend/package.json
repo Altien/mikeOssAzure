@@ -6,6 +6,7 @@
     "dev": "tsx watch --import ./dev-log.mjs src/index.ts",
     "dev:nolog": "tsx watch src/index.ts",
     "build": "tsc",
+    "sync:workflows": "node dist/jobs/syncWorkflows.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -63,6 +64,7 @@
     "pg": "^8.20.0",
     "undici": "^6.27.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "yaml": "2.9.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {

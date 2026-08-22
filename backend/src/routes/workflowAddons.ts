@@ -7,7 +7,6 @@ import {
 import crypto from "crypto";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
-import { syncWorkflowAddonCatalog } from "../lib/workflowCatalog";
 import {
   deleteFile,
   downloadFile,
@@ -17,6 +16,7 @@ import {
 import { contentTypeForDocumentType } from "../lib/documentTypes";
 import { contentSha256 } from "../lib/documentVersions";
 import { sendInternalError } from "../lib/httpError";
+import { safeErrorLog } from "../lib/safeError";
 
 export const workflowAddonsRouter = Router();
 
@@ -33,19 +33,24 @@ workflowAddonsRouter.get(
   requireAuth,
   asyncRoute(async (req, res) => {
     const db = createServerSupabase();
-    await syncWorkflowAddonCatalog(db);
     const type = typeof req.query.type === "string" ? req.query.type : null;
     let query = db
-      .from("workflow_addons")
+      .from("mike_workflows")
       .select(
-        "id, addon_key, pack_key, pack_title, pack_description, pack_version, version, title, description, type, contributors, language, practice, jurisdictions, active, updated_at",
+        "id, workflow_key, pack_key, pack_title, pack_description, pack_version, version, title, description, type, contributors, language, practice, jurisdictions, active, updated_at",
       )
+      .eq("distribution", "addon")
       .eq("active", true);
     if (type === "assistant" || type === "tabular")
       query = query.eq("type", type);
     const { data, error } = await query.order("title", { ascending: true });
     if (error) return void sendInternalError(res, error);
-    res.json(data ?? []);
+    res.json(
+      (data ?? []).map(({ workflow_key, ...addon }) => ({
+        ...addon,
+        addon_key: workflow_key,
+      })),
+    );
   }),
 );
 
@@ -54,11 +59,11 @@ workflowAddonsRouter.get(
   requireAuth,
   asyncRoute(async (req, res) => {
     const db = createServerSupabase();
-    await syncWorkflowAddonCatalog(db);
     const { data, error } = await db
-      .from("workflow_addons")
+      .from("mike_workflows")
       .select("*")
       .eq("id", req.params.addonId)
+      .eq("distribution", "addon")
       .eq("active", true)
       .maybeSingle();
     if (error || !data) {
@@ -67,16 +72,21 @@ workflowAddonsRouter.get(
     let references = null;
     if (data.type === "assistant") {
       const { data: assistantReferences, error: referencesError } = await db
-        .from("workflow_addon_reference_files")
+        .from("mike_workflow_reference_files")
         .select("id, filename, file_type, size_bytes, created_at")
-        .eq("addon_id", data.id)
+        .eq("mike_workflow_id", data.id)
         .order("created_at", { ascending: true });
       if (referencesError) {
         return void sendInternalError(res, referencesError);
       }
       references = assistantReferences;
     }
-    res.json({ ...data, reference_files: references ?? [] });
+    const { workflow_key, ...addon } = data;
+    res.json({
+      ...addon,
+      addon_key: workflow_key,
+      reference_files: references ?? [],
+    });
   }),
 );
 
@@ -86,11 +96,11 @@ workflowAddonsRouter.post(
   asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
-    await syncWorkflowAddonCatalog(db);
     const { data: addon } = await db
-      .from("workflow_addons")
+      .from("mike_workflows")
       .select("*")
       .eq("id", req.params.addonId)
+      .eq("distribution", "addon")
       .eq("active", true)
       .maybeSingle();
     if (!addon)
@@ -124,9 +134,9 @@ workflowAddonsRouter.post(
       const { data: references, error: referencesError } =
         addon.type === "assistant"
           ? await db
-              .from("workflow_addon_reference_files")
+              .from("mike_workflow_reference_files")
               .select("filename, file_type, storage_path, size_bytes")
-              .eq("addon_id", addon.id)
+              .eq("mike_workflow_id", addon.id)
               .order("created_at", { ascending: true })
           : { data: [], error: null };
       if (referencesError) throw referencesError;
@@ -174,12 +184,7 @@ workflowAddonsRouter.post(
         .delete()
         .eq("id", workflow.id)
         .eq("user_id", userId);
-      return void res.status(500).json({
-        detail:
-          referenceError instanceof Error
-            ? referenceError.message
-            : "Failed to copy add-on reference files",
-      });
+      return void sendInternalError(res, referenceError);
     }
 
     res.status(201).json({
@@ -208,7 +213,7 @@ workflowAddonsRouter.post(
 workflowAddonsRouter.use(
   (err: unknown, _req: Request, res: Response, next: NextFunction) => {
     if (res.headersSent) return next(err);
-    console.error("[workflow-addons] unhandled route error", err);
+    console.error("[workflow-addons] unhandled route error", safeErrorLog(err));
     res
       .status(500)
       .json({ detail: "Failed to process workflow add-on request" });

@@ -239,7 +239,7 @@ describe("workflow asset replication", () => {
         });
     });
 
-    it("creates no documents row and reports failure when the upload fails", async () => {
+    it("creates no documents row and reports a generic failure when the upload fails", async () => {
         const sourceLabel = "workflow-ref-workflow-1-1";
         const store: DocStore = new Map([
             [
@@ -282,7 +282,7 @@ describe("workflow asset replication", () => {
         const toolResult = result.toolResults[0] as { content: string };
         const payload = JSON.parse(toolResult.content);
         expect(payload.ok).toBe(false);
-        expect(payload.error).toContain("bucket unavailable");
+        expect(payload.error).toBe("replicate_document failed");
     });
 
     it("saves the same copy to Project Documents in a project chat", async () => {
