@@ -10,6 +10,7 @@ import {
 import { Copy, Loader2 } from "lucide-react";
 import { supabase } from "@/app/lib/supabase";
 import { PillButton } from "@/app/components/ui/pill-button";
+import { PasswordSettingsSection } from "@/app/components/settings/PasswordSettingsSection";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { isMfaRequiredError } from "@/app/lib/mikeApi";
 import { Modal } from "@/app/components/modals/Modal";
@@ -19,8 +20,15 @@ import {
 } from "@/app/components/popups/MfaVerificationPopup";
 import { SettingsSection } from "../SettingsSection";
 import { SettingsToggle } from "../SettingsToggle";
-import { useAuth } from "@/app/contexts/AuthContext";
-import { browserAuthCallbackUrl } from "@/app/lib/authRedirects";
+import {
+    knownErrorCodeMessage,
+    userFacingApiError,
+} from "@/app/lib/userFacingError";
+
+const MFA_VERIFICATION_ERROR_MESSAGES = {
+    mfa_verification_failed: "The verification code is invalid or expired.",
+    otp_expired: "The verification code is invalid or expired.",
+} as const;
 
 type MfaFactor = {
     id: string;
@@ -163,7 +171,6 @@ function MfaSettingsSkeleton() {
 }
 
 export default function SecurityPage() {
-    const { user } = useAuth();
     const { profile, updateMfaOnLogin } = useUserProfile();
     const [loading, setLoading] = useState(true);
     const [factors, setFactors] = useState<MfaFactor[]>([]);
@@ -182,10 +189,6 @@ export default function SecurityPage() {
     const [pendingLoginPreference, setPendingLoginPreference] = useState<
         boolean | null
     >(null);
-    const [passwordResetSending, setPasswordResetSending] = useState(false);
-    const [passwordResetStatus, setPasswordResetStatus] = useState<
-        string | null
-    >(null);
 
     async function refreshMfaState() {
         setLoading(true);
@@ -200,7 +203,7 @@ export default function SecurityPage() {
             traceMfa("[security/mfa] list factors failed", {
                 error: factorResult.error.message,
             });
-            setStatus(factorResult.error.message);
+            setStatus("MFA settings could not be loaded. Please try again.");
             setFactors([]);
         } else {
             const verifiedTotp = (factorResult.data.totp ?? []) as MfaFactor[];
@@ -217,7 +220,7 @@ export default function SecurityPage() {
             traceMfa("[security/mfa] assurance lookup failed", {
                 error: aalResult.error.message,
             });
-            setStatus(aalResult.error.message);
+            setStatus("MFA settings could not be loaded. Please try again.");
             setCurrentLevel(null);
             setNextLevel(null);
         } else {
@@ -291,11 +294,10 @@ export default function SecurityPage() {
             setVerificationCode("");
             setSetupKeyCopied(false);
         } catch (error) {
-            setStatus(
-                error instanceof Error
-                    ? error.message
-                    : "Failed to start MFA setup.",
-            );
+            traceMfa("[security/mfa] setup failed", {
+                errorType: error instanceof Error ? error.name : typeof error,
+            });
+            setStatus("Failed to start MFA setup. Please try again.");
         } finally {
             setBusy(false);
         }
@@ -345,9 +347,11 @@ export default function SecurityPage() {
             await refreshMfaState();
         } catch (error) {
             setStatus(
-                error instanceof Error
-                    ? error.message
-                    : "Failed to verify MFA code.",
+                knownErrorCodeMessage(
+                    error,
+                    MFA_VERIFICATION_ERROR_MESSAGES,
+                    "Failed to verify the MFA code. Please try again.",
+                ),
             );
         } finally {
             setBusy(false);
@@ -377,7 +381,10 @@ export default function SecurityPage() {
         const { data, error } =
             await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
         if (error) {
-            setStatus(error.message);
+            traceMfa("[security/mfa] state verification failed", {
+                errorType: error.name,
+            });
+            setStatus("MFA settings could not be verified. Please try again.");
             return;
         }
 
@@ -403,7 +410,10 @@ export default function SecurityPage() {
                 setPendingUnenrollFactorId(factorId);
                 return;
             }
-            setStatus(error.message);
+            traceMfa("[security/mfa] disable failed", {
+                errorType: error.name,
+            });
+            setStatus("MFA could not be disabled. Please try again.");
             return;
         }
 
@@ -427,9 +437,10 @@ export default function SecurityPage() {
             await saveLoginPreference(enabled);
         } catch (error) {
             setStatus(
-                error instanceof Error
-                    ? error.message
-                    : "Failed to update login authentication preference.",
+                userFacingApiError(
+                    error,
+                    "Failed to update login authentication preference.",
+                ),
             );
         } finally {
             setSavingLoginPreference(false);
@@ -449,36 +460,14 @@ export default function SecurityPage() {
                 setPendingLoginPreference(enabled);
             } else {
                 setStatus(
-                    error instanceof Error
-                        ? error.message
-                        : "Failed to update login authentication preference.",
+                    userFacingApiError(
+                        error,
+                        "Failed to update login authentication preference.",
+                    ),
                 );
             }
         } finally {
             setSavingLoginPreference(false);
-        }
-    }
-
-    async function sendPasswordReset() {
-        if (!user?.email || passwordResetSending) return;
-        setPasswordResetSending(true);
-        setPasswordResetStatus(null);
-        try {
-            const redirectTo = browserAuthCallbackUrl("/reset-password");
-            const { error } = await supabase.auth.resetPasswordForEmail(
-                user.email,
-                redirectTo ? { redirectTo } : undefined,
-            );
-            if (error) throw error;
-            setPasswordResetStatus(
-                `Password-reset instructions sent to ${user.email}.`,
-            );
-        } catch {
-            setPasswordResetStatus(
-                "Unable to send a password-reset email right now. Please try again.",
-            );
-        } finally {
-            setPasswordResetSending(false);
         }
     }
 
@@ -583,39 +572,7 @@ export default function SecurityPage() {
                     )}
                 </SettingsSection>
             </section>
-            <section className="space-y-3">
-                <h2 className="text-2xl font-medium font-serif text-gray-900">
-                    Password
-                </h2>
-                <SettingsSection>
-                    <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="min-w-0 space-y-1">
-                            <p className="text-sm font-medium text-gray-700">
-                                Reset password
-                            </p>
-                            <p className="text-sm text-gray-500">
-                                Send a secure password-reset link to {user?.email}.
-                            </p>
-                            {passwordResetStatus && (
-                                <p className="text-xs text-gray-500">
-                                    {passwordResetStatus}
-                                </p>
-                            )}
-                        </div>
-                        <PillButton
-                            tone="black"
-                            size="sm"
-                            onClick={() => void sendPasswordReset()}
-                            disabled={passwordResetSending || !user?.email}
-                            className="shrink-0"
-                        >
-                            {passwordResetSending
-                                ? "Sending..."
-                                : "Send reset email"}
-                        </PillButton>
-                    </div>
-                </SettingsSection>
-            </section>
+            <PasswordSettingsSection />
             <Modal
                 open={setupModalOpen}
                 onClose={() => void closeSetupModal()}

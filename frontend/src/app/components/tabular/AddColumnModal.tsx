@@ -476,10 +476,7 @@ export function AddColumnModal({ open, existingCount, onClose, onAdd, editingCol
 
                                 {/* Prompt */}
                                 <div className="mt-4 flex items-center justify-between">
-                                    <FieldLabel
-                                        htmlFor={promptInputId}
-                                        className="mb-0"
-                                    >
+                                    <FieldLabel htmlFor={promptInputId}>
                                         Prompt
                                     </FieldLabel>
                                     <button

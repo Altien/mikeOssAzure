@@ -273,6 +273,11 @@ export const TOOLS = [
             description:
               "Set to true for landscape page orientation. Default is portrait.",
           },
+          numberSections: {
+            type: "boolean",
+            description:
+              "Apply legal numbering to section headings. Default is false. Set true only when the user explicitly requests numbered sections/clauses or a workflow, playbook, or source template requires them. Never use it for demand letters, ordinary letters, notices, memos, or reports unless numbering was requested.",
+          },
           sections: {
             type: "array",
             description:

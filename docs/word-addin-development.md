@@ -14,6 +14,11 @@ The add-in uses the same Supabase project and Mike API as the web app:
 - The task pane requires HTTPS, so local development proxies Mike and Supabase
   through `https://localhost:3200`.
 
+Password and Google sign-in both produce the same Supabase session. Google
+sign-in uses a non-iframe Office Dialog that starts and finishes at
+`https://localhost:3200/oauth-dialog.html`; the intermediate Supabase and
+Google pages run outside the task pane.
+
 The add-in requires `WordApi 1.6` for tracked-change inspection, acceptance,
 and rejection.
 
@@ -49,6 +54,9 @@ steps manually:
    `REACT_APP_SUPABASE_ANON_KEY` should match the frontend configuration. The
    browser-facing URLs remain on the HTTPS dev server; the proxy targets point
    to the real services. Shell variables override `.env` for CI and deployment.
+   For a local Supabase CLI stack, use
+   `SUPABASE_PROXY_TARGET=http://127.0.0.1:54321` and follow the Google provider
+   setup in [Local development](local-development.md#local-google-authentication).
 
 3. Install the trusted development certificate:
 
@@ -69,6 +77,15 @@ steps manually:
    ```bash
    npm start
    ```
+
+   To start only webpack without opening a new Word document, set
+   `WORD_ADDIN_SIDELOAD=0` in `word-addin/.env`, or use it for one command:
+
+   ```bash
+   WORD_ADDIN_SIDELOAD=0 bun dev
+   ```
+
+   The toggle also applies to `npm run dev`, `npm start`, and the setup helper.
 
 The task pane appears under **Home → Mike Legal AI → Mike**. Use
 `npm run dev:server` only when you want webpack without automatic Word
@@ -121,6 +138,11 @@ The checked-in `manifest.xml` remains configured for localhost.
 Allow the deployed task-pane origin in the backend with
 `WORD_ADDIN_URL=https://word.example.com` or include it in `ALLOWED_ORIGINS`.
 Without that entry, browser CORS checks block production requests.
+
+For Google sign-in, add
+`https://word.example.com/oauth-dialog.html` to the Supabase Auth redirect
+allow list. Google's own authorized redirect URI remains the Supabase callback,
+for example `https://<project-ref>.supabase.co/auth/v1/callback`.
 
 ## Chat and storage behavior
 

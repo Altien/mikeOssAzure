@@ -10,7 +10,7 @@ import {
     useState,
 } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, ChevronLeft, Plus } from "lucide-react";
+import { ChevronDown, ChevronLeft, FolderUp, Plus } from "lucide-react";
 import {
     createProjectFolder,
     deleteProjectFolder,
@@ -19,6 +19,7 @@ import {
     moveSubfolderToFolder,
     renameProjectDocument,
     renameProjectFolder,
+    resolveProjectFolderPath,
     uploadProjectDocument,
 } from "@/app/lib/mikeApi";
 import type { Document } from "@/app/components/shared/types";
@@ -55,6 +56,9 @@ export function ProjectDocumentsView({ projectId, folderId = null }: Props) {
         setDocumentFolderBreadcrumbs,
     } = workspace;
     const [createFolderAction, setCreateFolderAction] = useState<
+        (() => void) | null
+    >(null);
+    const [uploadFolderAction, setUploadFolderAction] = useState<
         (() => void) | null
     >(null);
     const [folderBackAction, setFolderBackAction] = useState<
@@ -179,11 +183,22 @@ export function ProjectDocumentsView({ projectId, folderId = null }: Props) {
     }, [projectId, setFolders, setProject]);
     const operations = useMemo(
         () => ({
-            uploadDocument: (file: File) =>
-                uploadProjectDocument(projectId, file),
+            uploadDocument: (file: File, targetFolderId?: string | null) =>
+                uploadProjectDocument(projectId, file, targetFolderId),
             refreshCollection,
             createFolder: (name: string, parentFolderId?: string | null) =>
                 createProjectFolder(projectId, name, parentFolderId),
+            resolveFolderPath: (
+                segments: string[],
+                baseFolderId: string | null,
+                conflictResolution?: "error" | "reuse" | "rename",
+            ) =>
+                resolveProjectFolderPath(
+                    projectId,
+                    segments,
+                    baseFolderId,
+                    conflictResolution,
+                ),
             renameFolder: (folderId: string, name: string) =>
                 renameProjectFolder(projectId, folderId, name),
             deleteFolder: (folderId: string) =>
@@ -201,6 +216,12 @@ export function ProjectDocumentsView({ projectId, folderId = null }: Props) {
     const handleCreateFolderActionChange = useCallback(
         (action: (() => void) | null) => {
             setCreateFolderAction(() => action);
+        },
+        [],
+    );
+    const handleUploadFolderActionChange = useCallback(
+        (action: (() => void) | null) => {
+            setUploadFolderAction(() => action);
         },
         [],
     );
@@ -291,6 +312,13 @@ export function ProjectDocumentsView({ projectId, folderId = null }: Props) {
                 </div>
             )}
             <TabPillButton
+                onClick={uploadFolderAction ?? undefined}
+                disabled={!uploadFolderAction || projectLoading}
+            >
+                <FolderUp className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Upload folder</span>
+            </TabPillButton>
+            <TabPillButton
                 onClick={createFolderAction ?? undefined}
                 disabled={!createFolderAction || projectLoading}
             >
@@ -325,6 +353,9 @@ export function ProjectDocumentsView({ projectId, folderId = null }: Props) {
                 emptyStateTitle="Documents"
                 onAddDocumentsActionChange={
                     workspace.setAddDocumentsHeaderAction
+                }
+                onUploadFolderActionChange={
+                    handleUploadFolderActionChange
                 }
                 onCreateFolderActionChange={handleCreateFolderActionChange}
                 onFolderViewBackActionChange={handleFolderBackActionChange}

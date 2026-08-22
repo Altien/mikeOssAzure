@@ -26,8 +26,8 @@ bash word-addin/scripts/dev.sh
 ```
 
 The script installs dependencies, creates `word-addin/.env`, installs the local
-HTTPS certificate, verifies Mike and Supabase, and launches the add-in in Word.
-It is safe to run repeatedly.
+HTTPS certificate, verifies Mike and Supabase, and launches the add-in in Word
+unless automatic sideloading is disabled. It is safe to run repeatedly.
 
 The first certificate installation may request your keychain or administrator
 password. Fully quit Word and rerun the script afterward so Word reloads the
@@ -42,6 +42,16 @@ FORCE=1 bash word-addin/scripts/dev.sh
 
 `--setup-only` prepares the environment without launching Word. `FORCE=1`
 launches even when the backend health check fails.
+
+To run the development server without opening a new Word document, set the
+following in `word-addin/.env` (persistent) or before a single command:
+
+```bash
+WORD_ADDIN_SIDELOAD=0 bun dev
+```
+
+The same switch applies to `npm run dev`, `npm start`, and `scripts/dev.sh`.
+Set it back to `1` when you want automatic sideloading.
 
 ## What it supports
 
@@ -61,7 +71,7 @@ Run commands from `word-addin/` unless noted otherwise.
 
 | Command | Purpose |
 | --- | --- |
-| `npm start` | Start the HTTPS dev server and sideload into Word |
+| `npm start` | Start the HTTPS dev server; sideload unless `WORD_ADDIN_SIDELOAD=0` |
 | `npm run stop` | Stop the sideloaded development session |
 | `npm run dev:server` | Start webpack without launching Word |
 | `npm run typecheck` | Check application and E2E TypeScript |

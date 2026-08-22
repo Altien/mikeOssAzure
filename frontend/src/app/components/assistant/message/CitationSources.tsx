@@ -134,6 +134,7 @@ export function buildCitationAppendix(citations: Citation[]) {
 
 export function CitationsBlock({
     citations,
+    activeCitation,
     onCitationClick,
     onOpenSource,
     canOpenSource,
@@ -141,6 +142,7 @@ export function CitationsBlock({
     isLoading = false,
 }: {
     citations: Citation[];
+    activeCitation?: Citation | null;
     onCitationClick?: (citation: Citation) => void;
     onOpenSource?: (citation: Citation) => void;
     canOpenSource?: (citation: Citation) => boolean;
@@ -189,6 +191,10 @@ export function CitationsBlock({
                                         ({ annotation, index }) => (
                                             <CitationPillUI
                                                 key={`${row.key}:${index}`}
+                                                active={
+                                                    activeCitation ===
+                                                    annotation
+                                                }
                                                 onClick={() =>
                                                     onCitationClick?.(
                                                         annotation,

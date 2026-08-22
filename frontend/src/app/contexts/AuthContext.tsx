@@ -15,6 +15,7 @@ interface User {
     id: string;
     email: string;
     pendingEmail?: string | null;
+    createdWithGoogle: boolean;
 }
 
 interface AuthContextType {
@@ -23,15 +24,29 @@ interface AuthContextType {
     authLoading: boolean;
     signOut: () => Promise<void>;
     updateEmail: (email: string) => Promise<User>;
+    setPassword: (password: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export function authMethodState(
+    user: Pick<SupabaseUser, "app_metadata">,
+) {
+    const primaryProvider =
+        typeof user.app_metadata?.provider === "string"
+            ? user.app_metadata.provider
+            : null;
+    return {
+        createdWithGoogle: primaryProvider === "google",
+    };
+}
 
 function toUser(user: SupabaseUser): User {
     return {
         id: user.id,
         email: user.email || "",
         pendingEmail: user.new_email ?? null,
+        ...authMethodState(user),
     };
 }
 
@@ -91,6 +106,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return nextUser;
     };
 
+    const setPassword = async (password: string) => {
+        const { data, error } = await supabase.auth.updateUser({ password });
+        if (error) throw error;
+        if (!data.user) throw new Error("Unable to set password");
+
+        setUser(toUser(data.user));
+    };
+
     return (
         <AuthContext.Provider
             value={{
@@ -99,6 +122,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 authLoading,
                 signOut,
                 updateEmail,
+                setPassword,
             }}
         >
             {children}

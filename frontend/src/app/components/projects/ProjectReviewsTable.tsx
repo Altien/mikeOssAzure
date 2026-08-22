@@ -1,7 +1,7 @@
 "use client";
 
 import type { Dispatch, SetStateAction } from "react";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import {
     RowActionMenuItems,
     RowActions,
@@ -262,7 +262,6 @@ export function ProjectReviewsTable({
                                     }
                                     className="px-3"
                                 >
-                                    <Plus className="h-3.5 w-3.5" />
                                     Create
                                 </PillButton>
                             }

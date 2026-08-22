@@ -117,18 +117,94 @@ describe("FileDirectory", () => {
         const nameHeader = screen.getByText("Name");
         expect(nameHeader.parentElement?.firstElementChild).toBe(nameHeader);
 
-        const folderRow = screen
-            .getByText("Closing documents")
-            .closest("button");
-        expect(folderRow).toHaveStyle({ paddingLeft: "8px" });
+        const folderRow = screen.getByRole("button", {
+            name: "Expand Closing documents",
+        });
+        expect(folderRow.parentElement).toHaveStyle({ paddingLeft: "8px" });
         fireEvent.click(folderRow!);
 
         expect(screen.getByText("Agreement.pdf")).toBeInTheDocument();
-        expect(screen.getByText("Agreement.pdf").closest("button")).toHaveStyle(
+        expect(screen.getByText("Agreement.pdf").closest("label")).toHaveStyle(
             {
                 paddingLeft: "30px",
             },
         );
+    });
+
+    it("renders folder selection and expansion as sibling controls", () => {
+        const onChange = vi.fn();
+        const folder = {
+            id: "folder-1",
+            name: "Closing documents",
+            parent_folder_id: null,
+            created_at: "2026-08-03T00:00:00.000Z",
+        } as Folder;
+        const document = {
+            id: "document-1",
+            filename: "Agreement.pdf",
+            file_type: "pdf",
+            folder_id: folder.id,
+        } as Document;
+
+        render(
+            <FileDirectory
+                documents={[document]}
+                folders={[folder]}
+                selectedDocuments={[]}
+                onChange={onChange}
+                showTabs={false}
+                loadedFolderIds={new Set([folder.id])}
+            />,
+        );
+
+        const checkbox = screen.getByRole("checkbox", {
+            name: "Select all files in Closing documents",
+        });
+        const expandButton = screen.getByRole("button", {
+            name: "Expand Closing documents",
+        });
+
+        expect(checkbox).toHaveAttribute("type", "checkbox");
+        expect(checkbox.parentElement).toBe(expandButton.parentElement);
+        expect(expandButton).not.toContainElement(checkbox);
+
+        checkbox.focus();
+        expect(checkbox).toHaveFocus();
+        fireEvent.click(checkbox);
+        expect(onChange).toHaveBeenCalledWith([document]);
+        expect(screen.queryByText("Agreement.pdf")).not.toBeInTheDocument();
+
+        fireEvent.click(expandButton);
+        expect(screen.getByText("Agreement.pdf")).toBeInTheDocument();
+        const documentCheckbox = screen.getByRole("checkbox", {
+            name: "Select Agreement.pdf",
+        });
+        expect(documentCheckbox).toHaveAttribute("type", "checkbox");
+        expect(documentCheckbox.closest("label")).toContainElement(
+            screen.getByText("Agreement.pdf"),
+        );
+    });
+
+    it("renders project selection outside the project row button", () => {
+        render(
+            <FileDirectory
+                selectedDocuments={[]}
+                onChange={vi.fn()}
+                showTabs
+                initialTab="projects"
+            />,
+        );
+
+        const checkbox = screen.getByRole("checkbox", {
+            name: "Expand Acquisition and load all files before selecting it",
+        });
+        const expandButton = screen.getByRole("button", {
+            name: "Expand Acquisition",
+        });
+
+        expect(checkbox).toBeDisabled();
+        expect(checkbox.parentElement).toBe(expandButton.parentElement);
+        expect(expandButton).not.toContainElement(checkbox);
     });
 
     it("renders folders inside projects on the Projects tab", () => {
@@ -191,11 +267,12 @@ describe("FileDirectory", () => {
             />,
         );
 
-        const row = screen
-            .getByText("Existing agreement.pdf")
-            .closest("button");
-        expect(row).toBeDisabled();
-        fireEvent.click(row!);
+        const checkbox = screen.getByRole("checkbox", {
+            name: "Select Existing agreement.pdf",
+        });
+        expect(checkbox).toBeChecked();
+        expect(checkbox).toBeDisabled();
+        fireEvent.click(screen.getByText("Existing agreement.pdf"));
         expect(onChange).not.toHaveBeenCalled();
     });
 

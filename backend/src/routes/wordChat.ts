@@ -4,10 +4,12 @@ import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import {
   AssistantStreamError,
+  ASSISTANT_ERROR_MESSAGE,
   ACTIVE_WORD_DOCUMENT_ID,
   buildCancelledAssistantMessage,
   buildDocContext,
   buildMessages,
+  buildUserPersonalisationPrompt,
   buildWordChatSystemPrompt,
   buildWorkflowStore,
   enrichWithPriorEvents,
@@ -26,7 +28,7 @@ import {
   withoutEmptyAssistantReservations,
 } from "../lib/chat";
 import { getUserModelSettings } from "../lib/userSettings";
-import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
+import { safeErrorLog } from "../lib/safeError";
 import {
   persistWordDocumentEdits,
   WORD_EDIT_FORMATS,
@@ -766,16 +768,21 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
     nonce,
     "word_chat_messages",
   );
-  const { api_keys: configuredApiKeys } = await getUserModelSettings(
-    userId,
-    db,
-  );
+  const { api_keys: configuredApiKeys, personalisation } =
+    await getUserModelSettings(userId, db);
   const apiKeys = { ...configuredApiKeys };
   delete apiKeys.courtlistener;
+  const personalisationPrompt = buildUserPersonalisationPrompt(
+    personalisation,
+    nonce,
+  );
+  const wordSystemPrompt = [buildWordChatSystemPrompt(), personalisationPrompt]
+    .filter(Boolean)
+    .join("\n\n");
   const apiMessages = buildMessages(
     enrichedMessages,
     docAvailability,
-    buildWordChatSystemPrompt(),
+    wordSystemPrompt,
     docIndex,
     false,
     nonce,
@@ -911,7 +918,7 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
       return;
     }
     console.error("[word-chat] stream error", safeErrorLog(error));
-    const message = safeErrorMessage(error, "Stream error");
+    const message = ASSISTANT_ERROR_MESSAGE;
     const errorEvents =
       error instanceof AssistantStreamError
         ? stripTransientAssistantEvents(error.events)

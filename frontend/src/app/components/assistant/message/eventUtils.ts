@@ -1,9 +1,13 @@
 import type { AssistantEvent } from "../../shared/types";
 
 export function eventErrorMessage(event: AssistantEvent): string | null {
-    if (event.type === "error") return event.message;
+    if (event.type === "error") {
+        return event.safe_to_display
+            ? event.message
+            : "Sorry, something went wrong.";
+    }
     if ("error" in event && typeof event.error === "string" && event.error) {
-        return event.error;
+        return "Sorry, something went wrong.";
     }
     return null;
 }

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import { recordAudit } from "../lib/audit";
+import { sendInternalError } from "../lib/httpError";
 import { downloadFile } from "../lib/storage";
 import { attachActiveVersionPaths } from "../lib/documentVersions";
 import { docxToPdf, normalizeDocxZipPaths } from "../lib/convert";
@@ -15,6 +16,7 @@ import { extractPresentationText } from "../lib/officeText";
 import { spreadsheetToLLMText } from "../lib/spreadsheet";
 import {
     AssistantStreamError,
+    ASSISTANT_ERROR_MESSAGE,
     buildCancelledAssistantMessage,
     isAbortError,
     runLLMStream,
@@ -36,7 +38,7 @@ import {
     ensureReviewAccess,
     filterAccessibleDocumentIds,
 } from "../lib/access";
-import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
+import { safeErrorLog } from "../lib/safeError";
 import {
     findMissingUserEmails,
     loadProfileUsersByEmail,
@@ -530,7 +532,7 @@ tabularRouter.get("/", requireAuth, async (req, res) => {
         "get_tabular_reviews_overview",
         rpcArgs,
     );
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
 
     res.json(data ?? []);
 });
@@ -576,7 +578,7 @@ tabularRouter.get("/ids", requireAuth, async (req, res) => {
             "get_tabular_review_ids_overview",
             rpcArgs,
         );
-        if (error) return void res.status(500).json({ detail: error.message });
+        if (error) return void sendInternalError(res, error);
 
         const rows = (data ?? []) as { id: string; user_id: string }[];
         if (rows.length === 0) break;
@@ -636,9 +638,10 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
         .select("*")
         .single();
     if (error || !review)
-        return void res
-            .status(500)
-            .json({ detail: error?.message ?? "Failed to create review" });
+        return void sendInternalError(
+            res,
+            error ?? new Error("Review create returned no data"),
+        );
 
     try {
         await createRowsForReview(
@@ -765,7 +768,7 @@ tabularRouter.get("/:reviewId", requireAuth, async (req, res) => {
         .select("*")
         .eq("review_id", reviewId);
     if (cellsError)
-        return void res.status(500).json({ detail: cellsError.message });
+        return void sendInternalError(res, cellsError);
     const rows = await loadReviewRows(db, reviewId);
     const rowDocIds = rows.flatMap((row) => row.source_document_ids ?? []);
     const docIds = Array.isArray(review.document_ids)
@@ -985,9 +988,10 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
         .select("*")
         .single();
     if (updateError || !updatedReview)
-        return void res.status(500).json({
-            detail: updateError?.message ?? "Failed to update review",
-        });
+        return void sendInternalError(
+            res,
+            updateError ?? new Error("Review update returned no data"),
+        );
 
     const rowShapeChanged =
         Array.isArray(req.body.document_ids) ||
@@ -1029,7 +1033,7 @@ tabularRouter.delete("/:reviewId", requireAuth, async (req, res) => {
         .delete()
         .eq("id", reviewId)
         .eq("user_id", userId);
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
     res.status(204).send();
 });
 
@@ -1075,8 +1079,7 @@ tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
             lease_seconds: TABULAR_GENERATION_LEASE_SECONDS,
         },
     );
-    if (startError)
-        return void res.status(500).json({ detail: startError.message });
+    if (startError) return void sendInternalError(res, startError);
     if (startResult === "running") {
         return void res.status(409).json({
             code: "review_running",
@@ -1108,7 +1111,7 @@ tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
             })
             .eq("review_id", reviewId)
             .in("row_id", row_ids);
-        if (error) return void res.status(500).json({ detail: error.message });
+        if (error) return void sendInternalError(res, error);
         res.status(204).send();
     } finally {
         const { error } = await db.rpc("finish_tabular_review_generation", {
@@ -1212,8 +1215,7 @@ tabularRouter.post(
                 lease_seconds: TABULAR_GENERATION_LEASE_SECONDS,
             },
         );
-        if (startError)
-            return void res.status(500).json({ detail: startError.message });
+        if (startError) return void sendInternalError(res, startError);
         if (startResult === "running") {
             return void res.status(409).json({
                 code: "review_running",
@@ -1280,9 +1282,7 @@ tabularRouter.post(
                 .eq("row_id", row.id)
                 .eq("column_index", column_index);
             if (generatingError) {
-                return void res
-                    .status(500)
-                    .json({ detail: generatingError.message });
+                return void sendInternalError(res, generatingError);
             }
 
             const markdown = await loadRowDocumentText(db, row);
@@ -1321,9 +1321,7 @@ tabularRouter.post(
                 .eq("column_index", column_index)
                 .eq("generation_id", generationId);
             if (completedError) {
-                return void res
-                    .status(500)
-                    .json({ detail: completedError.message });
+                return void sendInternalError(res, completedError);
             }
 
             res.json(result);
@@ -1369,7 +1367,6 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     const db = createServerSupabase();
     const generationAbort = new AbortController();
     const generationId = randomUUID();
-    let generationClaimed = false;
     let leaseHeartbeat: ReturnType<typeof setInterval> | null = null;
     let renewingLease = false;
     req.on("aborted", () => generationAbort.abort());
@@ -1425,7 +1422,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
         },
     );
     if (startError) {
-        return void res.status(500).json({ detail: startError.message });
+        return void sendInternalError(res, startError);
     }
     if (startResult === "running") {
         return void res.status(409).json({
@@ -1447,8 +1444,6 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
             detail: "Failed to start tabular review generation",
         });
     }
-    generationClaimed = true;
-
     // Everything used to decide which cells need work is loaded only after
     // the atomic lease claim. Otherwise, a request can snapshot pending cells
     // while another run is finishing, acquire the newly released lease, and
@@ -1494,7 +1489,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
             .select("*")
             .eq("review_id", reviewId);
         if (cellsError) {
-            res.status(500).json({ detail: cellsError.message });
+            sendInternalError(res, cellsError);
             return;
         }
         for (const cell of cells ?? []) {
@@ -1665,7 +1660,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
             if (res.headersSent) {
                 try {
                     write(
-                        `data: ${JSON.stringify({ type: "error", message: safeErrorMessage(err, "Stream error") })}\n\ndata: [DONE]\n\n`,
+                        `data: ${JSON.stringify({ type: "error", message: ASSISTANT_ERROR_MESSAGE })}\n\ndata: [DONE]\n\n`,
                     );
                 } catch {
                     /* ignore */
@@ -1679,22 +1674,20 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     } finally {
         streamFinished = true;
         if (leaseHeartbeat) clearInterval(leaseHeartbeat);
-        if (generationClaimed) {
-            try {
-                const { error } = await db.rpc(
-                    "finish_tabular_review_generation",
-                    {
-                        target_review_id: reviewId,
-                        target_generation_id: generationId,
-                    },
-                );
-                if (error) throw error;
-            } catch (error) {
-                console.error(
-                    "[tabular/generate] failed to release generation lease",
-                    safeErrorLog(error),
-                );
-            }
+        try {
+            const { error } = await db.rpc(
+                "finish_tabular_review_generation",
+                {
+                    target_review_id: reviewId,
+                    target_generation_id: generationId,
+                },
+            );
+            if (error) throw error;
+        } catch (error) {
+            console.error(
+                "[tabular/generate] failed to release generation lease",
+                safeErrorLog(error),
+            );
         }
         if (!res.writableEnded) res.end();
     }
@@ -1745,7 +1738,7 @@ tabularRouter.delete(
             .delete()
             .eq("id", chatId)
             .eq("user_id", userId);
-        if (error) return void res.status(500).json({ detail: error.message });
+        if (error) return void sendInternalError(res, error);
         res.status(204).send();
     },
 );
@@ -1768,7 +1761,7 @@ tabularRouter.patch(
             .update({ title: title.slice(0, 200) })
             .eq("id", chatId)
             .eq("user_id", userId);
-        if (error) return void res.status(500).json({ detail: error.message });
+        if (error) return void sendInternalError(res, error);
         res.status(204).send();
     },
 );
@@ -2141,7 +2134,7 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
             return;
         }
         console.error("[tabular/chat] error", safeErrorLog(err));
-        const message = safeErrorMessage(err, "Stream error");
+        const message = ASSISTANT_ERROR_MESSAGE;
         const errorEvents =
             err instanceof AssistantStreamError
                 ? stripTransientAssistantEvents(err.events)

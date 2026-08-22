@@ -119,6 +119,7 @@ module.exports = async (_env, options) => {
     entry: {
       taskpane: "./src/taskpane/index.tsx",
       commands: "./src/commands/commands.ts",
+      oauthDialog: "./src/oauth-dialog/index.ts",
     },
     output: {
       path: path.resolve(__dirname, "dist"),
@@ -160,6 +161,9 @@ module.exports = async (_env, options) => {
         "@mike/dropdown-ui": frontendSharedUi("DropdownUI.tsx"),
         "@mike/citation-pill-ui": frontendSharedUi("CitationPillUI.tsx"),
         "@mike/model-toggle-ui": frontendSharedUi("ModelToggleUI.tsx"),
+        "@mike/google-icon-ui": frontendSharedUi("GoogleIconUI.tsx"),
+        "@mike/auth-styles-ui": frontendSharedUi("AuthStylesUI.ts"),
+        "@mike/auth-divider-ui": frontendSharedUi("AuthDividerUI.tsx"),
       },
     },
     module: {
@@ -196,6 +200,11 @@ module.exports = async (_env, options) => {
         filename: "commands.html",
         template: "./src/commands/commands.html",
         chunks: ["commands"],
+      }),
+      new HtmlWebpackPlugin({
+        filename: "oauth-dialog.html",
+        template: "./src/oauth-dialog/index.html",
+        chunks: ["oauthDialog"],
       }),
       // Expose env vars to the bundle so TypeScript process.env calls compile
       new webpack.EnvironmentPlugin({

@@ -59,18 +59,26 @@ const devLog = (...args: Parameters<typeof console.log>) => {
 export class MikeApiError extends Error {
     status: number;
     code: string | null;
+    requestId: string | null;
 
     constructor(args: {
         message: string;
         status: number;
         code?: string | null;
+        requestId?: string | null;
     }) {
         super(args.message);
         this.name = "MikeApiError";
         this.status = args.status;
         this.code = args.code ?? null;
+        this.requestId = args.requestId ?? null;
     }
 }
+
+export const INTERNAL_ERROR_MESSAGE =
+    "Something went wrong. Please try again.";
+export const MALFORMED_ERROR_RESPONSE_MESSAGE =
+    "The request could not be completed. Please try again.";
 
 export function isMfaRequiredError(error: unknown) {
     return (
@@ -146,18 +154,26 @@ async function toApiError(response: Response, path: string) {
         const parsed = JSON.parse(text) as {
             detail?: unknown;
             code?: unknown;
+            request_id?: unknown;
         };
+        const requestId =
+            typeof parsed.request_id === "string"
+                ? parsed.request_id
+                : response.headers.get("x-request-id");
         devLog("[mike-api] non-ok response", {
             path,
             status: response.status,
             code: parsed.code,
-            detail: parsed.detail,
+            requestId,
         });
         return new MikeApiError({
             status: response.status,
             code: typeof parsed.code === "string" ? parsed.code : null,
+            requestId,
             message:
-                typeof parsed.detail === "string" && parsed.detail
+                response.status >= 500
+                    ? INTERNAL_ERROR_MESSAGE
+                    : typeof parsed.detail === "string" && parsed.detail
                     ? parsed.detail
                     : `API error: ${response.status}`,
         });
@@ -165,11 +181,15 @@ async function toApiError(response: Response, path: string) {
         devLog("[mike-api] non-ok non-json response", {
             path,
             status: response.status,
-            bodyPreview: text.slice(0, 200),
+            requestId: response.headers.get("x-request-id"),
         });
         return new MikeApiError({
             status: response.status,
-            message: text || `API error: ${response.status}`,
+            requestId: response.headers.get("x-request-id"),
+            message:
+                response.status >= 500
+                    ? INTERNAL_ERROR_MESSAGE
+                    : MALFORMED_ERROR_RESPONSE_MESSAGE,
         });
     }
 }
@@ -365,9 +385,38 @@ export async function exportTabularReviewsData(): Promise<{
     return apiBlobRequest("/user/tabular-reviews/export");
 }
 
+export type PracticeSetting =
+    | "private_practice"
+    | "in_house"
+    | "not_practising";
+
+export type ProfessionalTitle =
+    | "Partner"
+    | "Senior Associate"
+    | "Associate"
+    | "Law Clerk"
+    | "Counsel"
+    | "General Counsel"
+    | "Legal Counsel"
+    | "Other";
+
+export interface PersonalisationDetails {
+    jurisdiction?: string | null;
+    practiceSetting?: PracticeSetting | null;
+    professionalTitle?: ProfessionalTitle | null;
+    practiceAreas?: string[];
+}
+
 export interface UserProfile {
     displayName: string | null;
     organisation: string | null;
+    jurisdiction: string | null;
+    practiceSetting: PracticeSetting | null;
+    professionalTitle: ProfessionalTitle | null;
+    practiceAreas: string[];
+    onboardingVersion: number | null;
+    onboardingComplete: boolean;
+    passwordSet: boolean;
     messageCreditsUsed: number;
     creditsResetDate: string;
     creditsRemaining: number;
@@ -479,6 +528,10 @@ export async function lookupUserByEmail(
 export async function updateUserProfile(payload: {
     displayName?: string | null;
     organisation?: string | null;
+    jurisdiction?: string | null;
+    practiceSetting?: PracticeSetting | null;
+    professionalTitle?: ProfessionalTitle | null;
+    practiceAreas?: string[];
     titleModel?: string;
     tabularModel?: string;
     legalResearchUs?: boolean;
@@ -491,6 +544,22 @@ export async function updateUserProfile(payload: {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+    });
+}
+
+export async function completeUserOnboarding(
+    payload: PersonalisationDetails = {},
+): Promise<UserProfile> {
+    return apiRequest<UserProfile>("/user/onboarding", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+}
+
+export async function syncUserPasswordSet(): Promise<UserProfile> {
+    return apiRequest<UserProfile>("/user/security/password-set", {
+        method: "POST",
     });
 }
 
@@ -746,6 +815,42 @@ export async function getProjectPeople(
 // Folders
 // ---------------------------------------------------------------------------
 
+export type FolderConflictResolution = "error" | "reuse" | "rename";
+
+export type FolderPathResolution<TFolder> =
+    | {
+          conflict: true;
+          folder_name: string;
+          existing_folder_id: string;
+          suggested_name: string;
+      }
+    | {
+          conflict: false;
+          folder_id: string;
+          resolved_name: string;
+          folders: TFolder[];
+      };
+
+export async function resolveProjectFolderPath(
+    projectId: string,
+    segments: string[],
+    baseFolderId: string | null,
+    conflictResolution: FolderConflictResolution = "error",
+): Promise<FolderPathResolution<Folder>> {
+    return apiRequest<FolderPathResolution<Folder>>(
+        `/projects/${projectId}/folder-paths/resolve`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                segments,
+                base_folder_id: baseFolderId,
+                conflict_resolution: conflictResolution,
+            }),
+        },
+    );
+}
+
 export async function createProjectFolder(
     projectId: string,
     name: string,
@@ -963,16 +1068,19 @@ export async function bulkDeleteLibraryDocuments(
 export async function uploadLibraryDocument(
     kind: LibraryKind,
     file: File,
+    folderId?: string | null,
 ): Promise<Document> {
     const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
+    if (folderId) form.append("folder_id", folderId);
     const response = await fetch(`${API_BASE}/library/${kind}/documents`, {
         method: "POST",
         headers: { ...authHeaders },
         body: form,
     });
-    if (!response.ok) throw new Error(await response.text());
+    if (!response.ok)
+        throw await toApiError(response, `/library/${kind}/documents`);
     return response.json() as Promise<Document>;
 }
 
@@ -989,6 +1097,26 @@ export async function createLibraryFolder(
             parent_folder_id: parentFolderId ?? null,
         }),
     });
+}
+
+export async function resolveLibraryFolderPath(
+    kind: LibraryKind,
+    segments: string[],
+    baseFolderId: string | null,
+    conflictResolution: FolderConflictResolution = "error",
+): Promise<FolderPathResolution<LibraryFolder>> {
+    return apiRequest<FolderPathResolution<LibraryFolder>>(
+        `/library/${kind}/folder-paths/resolve`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                segments,
+                base_folder_id: baseFolderId,
+                conflict_resolution: conflictResolution,
+            }),
+        },
+    );
 }
 
 export async function renameLibraryFolder(
@@ -1098,7 +1226,11 @@ export async function uploadDocumentVersion(
             body: form,
         },
     );
-    if (!response.ok) throw new Error(await response.text());
+    if (!response.ok)
+        throw await toApiError(
+            response,
+            `/single-documents/${documentId}/versions`,
+        );
     return response.json() as Promise<DocumentVersion>;
 }
 
@@ -1120,7 +1252,11 @@ export async function replaceDocumentVersionFile(
             body: form,
         },
     );
-    if (!response.ok) throw new Error(await response.text());
+    if (!response.ok)
+        throw await toApiError(
+            response,
+            `/single-documents/${documentId}/versions/${versionId}/file`,
+        );
     return response.json() as Promise<DocumentVersion>;
 }
 
@@ -1172,10 +1308,12 @@ export async function deleteDocumentVersion(
 export async function uploadProjectDocument(
     projectId: string,
     file: File,
+    folderId?: string | null,
 ): Promise<Document> {
     const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
+    if (folderId) form.append("folder_id", folderId);
     const response = await fetch(
         `${API_BASE}/projects/${projectId}/documents`,
         {
@@ -1184,7 +1322,8 @@ export async function uploadProjectDocument(
             body: form,
         },
     );
-    if (!response.ok) throw new Error(await response.text());
+    if (!response.ok)
+        throw await toApiError(response, `/projects/${projectId}/documents`);
     return response.json() as Promise<Document>;
 }
 
@@ -1197,7 +1336,8 @@ export async function uploadStandaloneDocument(file: File): Promise<Document> {
         headers: { ...authHeaders },
         body: form,
     });
-    if (!response.ok) throw new Error(await response.text());
+    if (!response.ok)
+        throw await toApiError(response, "/single-documents");
     return response.json() as Promise<Document>;
 }
 
@@ -1251,8 +1391,7 @@ export async function downloadDocumentsZip(
         body: JSON.stringify({ document_ids: documentIds }),
     });
     if (!response.ok) {
-        const detail = await response.text();
-        throw new Error(detail || `API error: ${response.status}`);
+        throw await toApiError(response, "/single-documents/download-zip");
     }
     return response.blob();
 }

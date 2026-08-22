@@ -48,8 +48,12 @@ const {
 // ---------------------------------------------------------------------------
 type QueryResult = { data: unknown; error: unknown };
 
+// A table entry may be a queue of results: each query consumes the next one,
+// and the last repeats. Lets tests drive the selectProfile fallback cascade
+// (first select fails with 42703, the retry succeeds).
 let supabaseState: {
-    tables: Record<string, QueryResult>;
+    tables: Record<string, QueryResult | QueryResult[]>;
+    updates: Record<string, unknown[]>;
     adminGetUserById: QueryResult;
     adminDeleteUser: { error: unknown };
 };
@@ -57,6 +61,7 @@ let supabaseState: {
 function resetSupabaseState() {
     supabaseState = {
         tables: {},
+        updates: {},
         adminGetUserById: {
             data: { user: { id: "u1", factors: [] } },
             error: null,
@@ -67,7 +72,13 @@ function resetSupabaseState() {
 resetSupabaseState();
 
 function resultForTable(table: string): QueryResult {
-    return supabaseState.tables[table] ?? { data: null, error: null };
+    const entry = supabaseState.tables[table];
+    if (Array.isArray(entry)) {
+        return entry.length > 1
+            ? (entry.shift() as QueryResult)
+            : (entry[0] ?? { data: null, error: null });
+    }
+    return entry ?? { data: null, error: null };
 }
 
 function makeQuery(table: string) {
@@ -95,6 +106,12 @@ function makeQuery(table: string) {
         "contains",
     ];
     for (const m of chain) q[m] = vi.fn(() => q);
+    // Record update payloads so tests can assert what a route WROTE (the
+    // per-table result stub only models what queries return).
+    q.update = vi.fn((payload: unknown) => {
+        (supabaseState.updates[table] ??= []).push(payload);
+        return q;
+    });
     q.single = vi.fn(() => Promise.resolve(resultForTable(table)));
     q.maybeSingle = vi.fn(() => Promise.resolve(resultForTable(table)));
     q.then = (
@@ -187,6 +204,12 @@ function profileRow(overrides: Record<string, unknown> = {}) {
     return {
         display_name: "Ada",
         organisation: "Acme",
+        jurisdiction: "Singapore",
+        practice_setting: "private_practice",
+        professional_title: "Partner",
+        practice_areas: ["Corporate and M&A"],
+        onboarding_version: 1,
+        password_set_at: null,
         message_credits_used: 3,
         credits_reset_date: "2999-01-01T00:00:00.000Z",
         tier: "Pro",
@@ -259,6 +282,13 @@ describe("user.routes", () => {
             expect(res.body).toMatchObject({
                 displayName: "Ada",
                 organisation: "Acme",
+                jurisdiction: "Singapore",
+                practiceSetting: "private_practice",
+                professionalTitle: "Partner",
+                practiceAreas: ["Corporate and M&A"],
+                onboardingComplete: true,
+                onboardingVersion: 1,
+                passwordSet: false,
                 messageCreditsUsed: 3,
                 tier: "Pro",
                 legalResearchUs: true,
@@ -291,6 +321,85 @@ describe("user.routes", () => {
             expect(requireMfaIfEnrolled).not.toHaveBeenCalled();
         });
 
+        it("keeps saved preferences on a database without the onboarding migration", async () => {
+            // Replicated live (PR #365 review): with the 20260821 columns
+            // dropped, the profile select failed on "jurisdiction", skipped
+            // every fallback tier, and silently reset legal_research_us and
+            // quick_actions_visible to defaults. The retry tier must preserve
+            // the user's saved values and report legacy-exempt onboarding.
+            const preMigrationRow = {
+                display_name: "Ada",
+                organisation: "Acme",
+                message_credits_used: 3,
+                credits_reset_date: "2999-01-01T00:00:00.000Z",
+                tier: "Pro",
+                title_model: null,
+                tabular_model: "gemini-3-flash-preview",
+                mfa_on_login: false,
+                legal_research_us: false,
+                quick_actions_visible: false,
+            };
+            supabaseState.tables.user_profiles = [
+                {
+                    data: null,
+                    error: {
+                        code: "42703",
+                        message:
+                            "column user_profiles.jurisdiction does not exist",
+                    },
+                },
+                { data: preMigrationRow, error: null },
+            ];
+
+            const res = await request(app)
+                .get("/user/profile")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body).toMatchObject({
+                legalResearchUs: false,
+                quickActionsVisible: false,
+                onboardingComplete: true,
+                onboardingVersion: 0,
+                passwordSet: false,
+                jurisdiction: null,
+                practiceAreas: [],
+            });
+        });
+
+        it("keeps live onboarding columns when only migration 02 is missing", async () => {
+            // password_set_at (20260821_02) missing must NOT drop the
+            // migration-01 columns that DO exist — otherwise a new user on
+            // such a database would report onboardingComplete: true and
+            // skip onboarding entirely.
+            const migration01Row = profileRow({ onboarding_version: null });
+            delete (migration01Row as Record<string, unknown>).password_set_at;
+            supabaseState.tables.user_profiles = [
+                {
+                    data: null,
+                    error: {
+                        code: "42703",
+                        message:
+                            "column user_profiles.password_set_at does not exist",
+                    },
+                },
+                { data: migration01Row, error: null },
+            ];
+
+            const res = await request(app)
+                .get("/user/profile")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body).toMatchObject({
+                jurisdiction: "Singapore",
+                practiceAreas: ["Corporate and M&A"],
+                onboardingComplete: false,
+                onboardingVersion: null,
+                passwordSet: false,
+            });
+        });
+
         it("returns 500 with detail when the profile load errors", async () => {
             supabaseState.tables.user_profiles = {
                 data: null,
@@ -302,7 +411,7 @@ describe("user.routes", () => {
                 .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("db down");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
     });
 
@@ -402,7 +511,7 @@ describe("user.routes", () => {
                 .send({ api_key: "sk-x" });
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("kms unavailable");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
 
         it("is rejected with 403 mfa_verification_required when MFA is unsatisfied", async () => {
@@ -487,6 +596,201 @@ describe("user.routes", () => {
                 "quickActionsVisible must be a boolean",
             );
         });
+
+        it("allows personalisation fields to be cleared", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow(),
+                error: null,
+            };
+
+            const res = await request(app)
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({
+                    jurisdiction: null,
+                    practiceSetting: null,
+                    professionalTitle: null,
+                    practiceAreas: [],
+                });
+
+            expect(res.status).toBe(200);
+        });
+
+        // display_name and organisation are injected into every chat's
+        // system prompt, so their size must be bounded like the other
+        // personalisation fields. Truncation (not rejection) mirrors
+        // handle_new_user's left(..., 200) and keeps any over-long value
+        // written before the cap editable rather than stuck.
+        it.each([
+            ["displayName", "display_name"],
+            ["organisation", "organisation"],
+        ] as const)(
+            "truncates %s to 200 characters",
+            async (field, column) => {
+                supabaseState.tables.user_profiles = {
+                    data: profileRow(),
+                    error: null,
+                };
+
+                const res = await request(app)
+                    .patch("/user/profile")
+                    .set(...AUTH)
+                    .send({ [field]: "x".repeat(250) });
+
+                expect(res.status).toBe(200);
+                const written = supabaseState.updates.user_profiles?.at(-1) as
+                    | Record<string, unknown>
+                    | undefined;
+                expect(written?.[column]).toBe("x".repeat(200));
+            },
+        );
+    });
+
+    describe("POST /user/onboarding", () => {
+        it("accepts a jurisdiction and normalized practice areas", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow({ onboarding_version: null }),
+                error: null,
+            };
+
+            const res = await request(app)
+                .post("/user/onboarding")
+                .set(...AUTH)
+                .send({
+                    jurisdiction: " Singapore ",
+                    practiceSetting: "private_practice",
+                    professionalTitle: "Senior Associate",
+                    practiceAreas: [" Corporate and M&A ", "Litigation"],
+                });
+
+            expect(res.status).toBe(200);
+            expect(res.body).toMatchObject({
+                displayName: "Ada",
+                jurisdiction: "Singapore",
+                practiceSetting: "private_practice",
+                professionalTitle: "Partner",
+                practiceAreas: ["Corporate and M&A"],
+                onboardingComplete: false,
+                onboardingVersion: null,
+            });
+        });
+
+        it("treats onboarding version 0 as legacy-exempt", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow({ onboarding_version: 0 }),
+                error: null,
+            };
+
+            const res = await request(app)
+                .get("/user/profile")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body).toMatchObject({
+                onboardingVersion: 0,
+                onboardingComplete: true,
+            });
+        });
+
+        it("allows users to skip all personalisation fields", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow({ onboarding_version: null }),
+                error: null,
+            };
+
+            const res = await request(app)
+                .post("/user/onboarding")
+                .set(...AUTH)
+                .send({ practiceAreas: [] });
+
+            expect(res.status).toBe(200);
+        });
+
+        it("rejects an invalid jurisdiction when one is supplied", async () => {
+            const res = await request(app)
+                .post("/user/onboarding")
+                .set(...AUTH)
+                .send({ jurisdiction: "" });
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toBe("Select a valid jurisdiction of practice");
+        });
+
+        it("requires a valid professional setting", async () => {
+            const res = await request(app)
+                .post("/user/onboarding")
+                .set(...AUTH)
+                .send({
+                    jurisdiction: "Singapore",
+                    practiceSetting: "law_firm",
+                    practiceAreas: ["Litigation"],
+                });
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toBe(
+                "Select a valid professional setting",
+            );
+        });
+
+        it("allows onboarding completion without a display name", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow({ display_name: null }),
+                error: null,
+            };
+
+            const res = await request(app)
+                .post("/user/onboarding")
+                .set(...AUTH)
+                .send({
+                    jurisdiction: "Singapore",
+                    practiceSetting: "in_house",
+                    practiceAreas: ["Litigation"],
+                });
+
+            expect(res.status).toBe(200);
+        });
+    });
+
+    describe("POST /user/security/password-set", () => {
+        it("records and returns verified password capability", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow({
+                    password_set_at: "2026-08-21T12:00:00.000Z",
+                }),
+                error: null,
+            };
+            supabaseRpc.mockResolvedValue({
+                data: "2026-08-21T12:00:00.000Z",
+                error: null,
+            });
+
+            const res = await request(app)
+                .post("/user/security/password-set")
+                .set(...AUTH)
+                .send({});
+
+            expect(res.status).toBe(200);
+            expect(res.body.passwordSet).toBe(true);
+            expect(supabaseRpc).toHaveBeenCalledWith(
+                "sync_user_password_set",
+                { p_user_id: "u1" },
+            );
+        });
+
+        it("rejects the marker when Supabase has no password", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow(),
+                error: null,
+            };
+            supabaseRpc.mockResolvedValue({ data: null, error: null });
+
+            const res = await request(app)
+                .post("/user/security/password-set")
+                .set(...AUTH)
+                .send({});
+
+            expect(res.status).toBe(409);
+        });
     });
 
     // ── Data export endpoints (MFA-guarded, attachment headers) ───────────
@@ -544,7 +848,7 @@ describe("user.routes", () => {
                 .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("export boom");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
 
         it("GET /user/export is rejected when MFA is unsatisfied", async () => {
@@ -620,7 +924,7 @@ describe("user.routes", () => {
                 .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("auth boom");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
 
         it("DELETE /user/chats returns 500 when cleanup throws", async () => {
@@ -631,7 +935,7 @@ describe("user.routes", () => {
                 .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("cascade failed");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
 
         it("DELETE /user/account is rejected when MFA is unsatisfied (no cleanup)", async () => {

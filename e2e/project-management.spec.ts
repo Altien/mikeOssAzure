@@ -210,7 +210,10 @@ test("create a folder inside a project", async ({ page }) => {
        "Add Subfolder" to "Folder" (a TabPillButton wired to the root
        createFolderAction — ProjectDocumentsView). Clicking it still renders the
        autofocused "Folder name" input at root level (creatingIn === null). */
-    const addSubfolderBtn = page.getByRole("button", { name: "Folder" });
+    const addSubfolderBtn = page.getByRole("button", {
+        name: "Folder",
+        exact: true,
+    });
     await waitForProjectLoaded(page, addSubfolderBtn);
 
     /* Clicking "Add Subfolder" sets creatingFolderIn = null (root level). */

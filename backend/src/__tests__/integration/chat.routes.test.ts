@@ -231,6 +231,14 @@ vi.mock("../../lib/userSettings", () => ({
         title_model: "test-model",
         tabular_model: "test-model",
         api_keys: {},
+        personalisation: {
+            displayName: "Ada",
+            organisation: "Acme LLP",
+            jurisdiction: "Singapore",
+            practiceSetting: "private_practice",
+            professionalTitle: "Partner",
+            practiceAreas: ["Litigation"],
+        },
     })),
     getUserApiKeys: vi.fn(async () => ({})),
 }));
@@ -270,6 +278,7 @@ describe("POST /chat — streaming endpoint", () => {
     });
 
     it("streams SSE with a chat_id event on the happy path", async () => {
+        const chatLib = await import("../../lib/chat");
         let reservationExistedBeforeStreaming = false;
         runLLMStream.mockImplementation(async () => {
             reservationExistedBeforeStreaming = !!findAssistantReservation();
@@ -292,6 +301,13 @@ describe("POST /chat — streaming endpoint", () => {
         expect(runLLMStream).toHaveBeenCalledTimes(1);
         expect(runLLMStream).toHaveBeenCalledWith(
             expect.objectContaining({ emitDone: false }),
+        );
+        const systemPromptExtra = vi.mocked(chatLib.buildMessages).mock
+            .calls[0]?.[2] as string;
+        expect(systemPromptExtra).toContain("USER PERSONALISATION");
+        expect(systemPromptExtra).toContain('"title": "Partner"');
+        expect(systemPromptExtra).toContain(
+            '"professional_setting": "Private practice"',
         );
 
         const metadata = JSON.parse(
@@ -381,6 +397,8 @@ describe("POST /chat — streaming endpoint", () => {
             >;
         };
         expect(systemPromptExtra).toContain("running inside Microsoft Word");
+        expect(systemPromptExtra).toContain("USER PERSONALISATION");
+        expect(systemPromptExtra).toContain('"jurisdiction": "Singapore"');
         expect(systemPromptExtra).toContain(
             '\"deleted_text\":\"exact text copied from the active Word document\"',
         );
@@ -585,7 +603,7 @@ describe("POST /chat — streaming endpoint", () => {
 
         expect(res.status).toBe(500);
         expect(res.headers["content-type"]).not.toContain("text/event-stream");
-        expect(res.body.detail).toBe("Failed to start assistant response");
+        expect(res.body.detail).toBe("Something went wrong. Please try again.");
         expect(res.text).not.toContain('"type":"chat_id"');
         expect(findAssistantReservation()).toBeDefined();
         expect(runLLMStream).not.toHaveBeenCalled();
@@ -633,7 +651,8 @@ describe("POST /chat — streaming endpoint", () => {
             content: [
                 expect.objectContaining({
                     type: "error",
-                    message: "upstream LLM failure",
+                    message:
+                        "The response could not be completed. Please try again.",
                 }),
             ],
         });

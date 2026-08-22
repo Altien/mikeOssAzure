@@ -5,11 +5,13 @@ import { recordChatTurn } from "../lib/audit";
 import {
     buildProjectDocContext,
     buildMessages,
+    buildUserPersonalisationPrompt,
     buildWorkflowStore,
     enrichWithPriorEvents,
     appendAskInputsResponseToLastAssistantMessage,
     appendAssistantEventsToLastAssistantMessage,
     AssistantStreamError,
+    ASSISTANT_ERROR_MESSAGE,
     buildCancelledAssistantMessage,
     extractCitations,
     generateSpotlightNonce,
@@ -30,7 +32,7 @@ import {
     getUserModelSettings,
 } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
-import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
+import { safeErrorLog } from "../lib/safeError";
 import { generateAssistantChatTitle } from "../lib/chatTitle";
 
 const PROJECT_SYSTEM_PROMPT_EXTRA = `PROJECT CONTEXT:
@@ -224,7 +226,15 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         api_keys: apiKeys,
         legal_research_us: legalResearchUs,
         title_model: titleModel,
+        personalisation,
     } = await getUserModelSettings(userId, db);
+    const personalisationPrompt = buildUserPersonalisationPrompt(
+        personalisation,
+        nonce,
+    );
+    if (personalisationPrompt) {
+        systemPromptExtra += `\n\n${personalisationPrompt}`;
+    }
     const apiMessages = buildMessages(
         messagesForLLM,
         docAvailability,
@@ -402,7 +412,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             return;
         }
         console.error("[project-chat/stream] error:", safeErrorLog(err));
-        const message = safeErrorMessage(err, "Stream error");
+        const message = ASSISTANT_ERROR_MESSAGE;
         const errorEvents = err instanceof AssistantStreamError
             ? stripTransientAssistantEvents(err.events)
             : [{ type: "error" as const, message }];

@@ -35,10 +35,12 @@ import { workflowDetailPath } from "./workflowRoutes";
 import { ConfirmPopup } from "../popups/ConfirmPopup";
 import { WorkflowAddonPreviewModal } from "./WorkflowAddonPreviewModal";
 import { TableLoadMoreRow } from "@/app/components/shared/TableLoadMoreRow";
+import { userFacingApiError } from "@/app/lib/userFacingError";
 import {
   SkeletonDot,
   SkeletonLine,
   TABLE_CHECKBOX_CLASS,
+  tableTreeCellStyle,
   TableBody,
   TableCell,
   TableEmptyState,
@@ -131,7 +133,6 @@ export function WorkflowList({
   >("idle");
   const [importingAddonId, setImportingAddonId] = useState<string | null>(null);
   const [bulkImportingAddons, setBulkImportingAddons] = useState(false);
-  const [loadError, setLoadError] = useState("");
   const [addonsError, setAddonsError] = useState("");
   const [actionError, setActionError] = useState("");
   const workflowActionsRef = useRef<HTMLDivElement>(null);
@@ -176,9 +177,7 @@ export function WorkflowList({
     listWorkflowAddons()
       .then(setAddons)
       .catch((error) => {
-        setAddonsError(
-          error instanceof Error ? error.message : "Unable to load add-ons.",
-        );
+        setAddonsError(userFacingApiError(error, "Unable to load add-ons."));
       })
       .finally(() => setAddonsLoading(false));
   }, []);
@@ -311,9 +310,10 @@ export function WorkflowList({
       router.push(workflowDetailPath(workflow));
     } catch (error) {
       setActionError(
-        error instanceof Error
-          ? `Could not import "${addon.title}": ${error.message}`
-          : `Could not import "${addon.title}".`,
+        userFacingApiError(
+          error,
+          `Could not import "${addon.title}".`,
+        ),
       );
     } finally {
       setImportingAddonId(null);
@@ -531,7 +531,7 @@ export function WorkflowList({
           key={activeTab}
           workflows={visibleWorkflows}
           loading={loading}
-          error={workflowsError?.message || loadError}
+          error={workflowsError ? "Unable to load workflows." : ""}
           onOpen={setSelected}
           onEdit={setEditingWorkflow}
           onDelete={(workflow) => requestWorkflowDeletion([workflow])}
@@ -872,7 +872,7 @@ function WorkflowTable({
                 onClick={onCreate}
                 className="px-3"
               >
-                <Plus className="h-3.5 w-3.5" /> Create
+                Create
               </PillButton>
             }
           />
@@ -1084,7 +1084,7 @@ function AddonTable({
         onClick={() => onOpen(addon)}
       >
         <TablePrimaryCell
-          className={nested ? "pl-12" : undefined}
+          style={nested ? tableTreeCellStyle(1) : undefined}
           label={addon.title}
           selected={selectedIds.includes(addon.id)}
           onSelectionChange={() => toggleOne(addon.id)}

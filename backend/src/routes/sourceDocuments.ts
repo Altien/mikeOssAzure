@@ -4,6 +4,7 @@ import { getCourtlistenerCaseOpinions } from "../lib/courtlistener";
 import { createServerSupabase } from "../lib/supabase";
 import { getUserModelSettings } from "../lib/userSettings";
 import { caseClusterId, normalizeCaseDocument } from "../lib/sourceDocuments";
+import { sendInternalError } from "../lib/httpError";
 
 export const sourceDocumentsRouter = Router();
 
@@ -60,8 +61,6 @@ sourceDocumentsRouter.get("/:documentId", async (req, res) => {
       }),
     );
   } catch (error) {
-    const detail =
-      error instanceof Error ? error.message : "Failed to load document";
-    return res.status(502).json({ detail });
+    return sendInternalError(res, error, 502);
   }
 });

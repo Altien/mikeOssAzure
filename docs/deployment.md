@@ -90,6 +90,30 @@ test every link against the deployed frontend before inviting users. Existing
 deployments must also apply the latest migration so confirmed email changes are
 mirrored into `user_profiles`.
 
+## Google authentication
+
+Create a **Web application** OAuth client in Google Auth Platform. Its
+authorized redirect URI is the Supabase Auth callback shown on the Google
+provider page, not Mike's frontend callback. For hosted Supabase it normally
+has this form:
+
+```text
+https://<project-ref>.supabase.co/auth/v1/callback
+```
+
+Enable Google under **Supabase > Authentication > Providers**, then enter the
+Google client ID and secret. In **Authentication > URL Configuration**, allow
+both deployed Mike clients:
+
+```text
+https://your-mike.example/auth/callback
+https://your-word-addin.example/oauth-dialog.html
+```
+
+The Word add-in completes authentication in an Office Dialog and returns the
+Supabase session to its existing token store. It does not retain Google's
+provider access token or request Google Drive or Gmail access.
+
 ## Install and run
 
 Install dependencies:
@@ -97,6 +121,7 @@ Install dependencies:
 ```bash
 npm install --prefix backend
 npm install --prefix frontend
+npm install --prefix word-addin
 ```
 
 For development, start the packages in separate terminals:

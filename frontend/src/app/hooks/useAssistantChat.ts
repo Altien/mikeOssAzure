@@ -17,8 +17,10 @@ interface UseAssistantChatOptions {
   projectId?: string;
 }
 
-function readableStreamError(value: unknown): string {
-  if (typeof value === "string" && value.trim()) return value.trim();
+function readableStreamError(value: unknown, safeToDisplay: boolean): string {
+  if (safeToDisplay && typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
   return "Sorry, something went wrong.";
 }
 
@@ -374,8 +376,8 @@ export function useAssistantChat({
           }));
 
       if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errText}`);
+        await response.body?.cancel().catch(() => {});
+        throw new Error(`Chat request failed with status ${response.status}`);
       }
 
       const reader = response.body?.getReader();
@@ -429,13 +431,21 @@ export function useAssistantChat({
             }
 
             if (data.type === "error") {
-              const message = readableStreamError(data.message);
+              const safeToDisplay = data.safe_to_display === true;
+              const message = readableStreamError(
+                data.message,
+                safeToDisplay,
+              );
               clearStreamingPlaceholders();
               finalizeStreamingContent();
               finalizeStreamingReasoning();
               eventsRef.current = [
                 ...eventsRef.current,
-                { type: "error", message },
+                {
+                  type: "error",
+                  message,
+                  ...(safeToDisplay ? { safe_to_display: true } : {}),
+                },
               ];
               const snapshot = [...eventsRef.current];
               updateLatestAssistantMessage((assistantMessage) => ({
@@ -1338,10 +1348,7 @@ export function useAssistantChat({
         });
       } else {
         finalizeStreamingContent();
-        const errorMessage =
-          error instanceof Error && error.message
-            ? error.message
-            : "Sorry, something went wrong.";
+        const errorMessage = "Sorry, something went wrong.";
         setMessages((prev) => {
           const assistantIndex = [...prev]
             .map((message, index) => ({ message, index }))
