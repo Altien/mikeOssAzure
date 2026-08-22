@@ -594,6 +594,34 @@ describe("projects.routes", () => {
       expect(res.body).not.toHaveProperty("can_replace");
     });
 
+    it.each([
+      ["project", "/projects/p1/folder-paths/resolve"],
+      ["library", "/library/files/folder-paths/resolve"],
+    ])("does not expose raw %s folder RPC errors", async (_scope, path) => {
+      const rawError =
+        "Could not find resolve_project_folder_path in the schema cache";
+      supabaseState.rpc = {
+        data: null,
+        error: { message: rawError },
+      };
+      const consoleError = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+
+      const res = await request(app)
+        .post(path)
+        .set(...AUTH)
+        .send({ segments: ["NDAs"] });
+
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({
+        detail: "Could not prepare this folder upload. Please try again.",
+      });
+      expect(JSON.stringify(res.body)).not.toContain(rawError);
+      expect(consoleError).toHaveBeenCalled();
+      consoleError.mockRestore();
+    });
+
     it("rejects malformed path segments before calling the RPC", async () => {
       const captured = captureRpcArgs();
 

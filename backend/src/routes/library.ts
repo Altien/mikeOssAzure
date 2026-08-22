@@ -566,8 +566,7 @@ libraryRouter.post(
       path_segments: segments,
       conflict_resolution: conflictResolution,
     });
-    if (error)
-      return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
     res.json(data);
   },
 );

@@ -1227,8 +1227,16 @@ projectsRouter.post(
       path_segments: segments,
       conflict_resolution: conflictResolution,
     });
-    if (error)
-      return void res.status(500).json({ detail: error.message });
+    if (error) {
+      console.error("[projects/folder-paths/resolve] failed", {
+        projectId,
+        userId,
+        error: safeErrorLog(error),
+      });
+      return void res.status(500).json({
+        detail: "Could not prepare this folder upload. Please try again.",
+      });
+    }
     res.json(data);
   },
 );

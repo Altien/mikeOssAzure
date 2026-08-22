@@ -1346,8 +1346,7 @@ export function DocTable({
         } catch (err) {
             console.error("Document drop upload failed", err);
             setCollectionActionWarning(
-                apiErrorDetail(err) ??
-                    "This folder could not be uploaded. Please try again.",
+                "This folder could not be uploaded. Please try again.",
             );
         } finally {
             setCollectionUploadProgress(null);
@@ -2784,6 +2783,7 @@ export function DocTable({
             setSelectedDocIds(ids);
             setSelectionCameFromSelectAll(true);
         } catch (error) {
+            console.error("Select all matching documents failed", error);
             setCollectionActionWarning(
                 userFacingApiError(
                     error,
