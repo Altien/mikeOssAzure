@@ -183,6 +183,19 @@ export function documentUploadProgressEntries(
     return progressEntries;
 }
 
+export function resolvedDocumentUploadProgressEntries(
+    entries: readonly DocumentUploadEntry[],
+    resolvedRootFolderNames: ReadonlyMap<string, string>,
+): DocumentUploadProgressEntry[] {
+    return documentUploadProgressEntries(entries).flatMap((entry) => {
+        if (entry.kind === "file") return [entry];
+        const resolvedName = resolvedRootFolderNames.get(entry.name);
+        return resolvedName
+            ? [{ ...entry, name: resolvedName }]
+            : [];
+    });
+}
+
 export function dataTransferHasDirectory(dataTransfer: DataTransfer): boolean {
     return Array.from(dataTransfer.items).some((item) => {
         const entry = (item as unknown as DirectoryDataTransferItem)
