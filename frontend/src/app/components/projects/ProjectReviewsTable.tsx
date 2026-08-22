@@ -9,7 +9,7 @@ import {
 import { TableLoadMoreRow } from "@/app/components/shared/TableLoadMoreRow";
 import {
     TABLE_CHECKBOX_CLASS,
-    SkeletonDot,
+    SkeletonCheckbox,
     SkeletonLine,
     TableBody,
     TableCell,
@@ -180,7 +180,7 @@ export function ProjectReviewsTable({
                 <TableHeaderRow className="pr-8 md:pr-8">
                     <TableStickyCell header>
                         {loading ? (
-                            <SkeletonDot className="mr-4" />
+                            <SkeletonCheckbox />
                         ) : (
                             <input
                                 type="checkbox"
@@ -397,7 +397,7 @@ function ProjectReviewsLoadingRows() {
                 <TableRow key={i} interactive={false} className="pr-8 md:pr-8">
                     <TableStickyCell hover={false}>
                         <div className="flex min-w-0 items-center">
-                            <SkeletonDot className="mr-4" />
+                            <SkeletonCheckbox />
                             <SkeletonLine
                                 className={`h-3.5 ${titleWidths[i - 1]}`}
                             />

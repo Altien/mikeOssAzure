@@ -171,11 +171,12 @@ export function SkeletonLine({ className }: { className?: string }) {
     );
 }
 
-export function SkeletonDot({ className }: { className?: string }) {
+export function SkeletonCheckbox({ className }: { className?: string }) {
     return (
         <div
+            aria-hidden="true"
             className={cn(
-                "h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse",
+                "mr-3 h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse",
                 className,
             )}
         />

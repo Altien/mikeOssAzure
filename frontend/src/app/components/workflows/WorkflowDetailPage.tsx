@@ -57,7 +57,7 @@ import { NewWorkflowModal } from "@/app/components/workflows/NewWorkflowModal";
 import { TabularReviewSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import {
   TABLE_CHECKBOX_CLASS,
-  SkeletonDot,
+  SkeletonCheckbox,
   SkeletonLine,
   TableBody,
   TableCell,
@@ -987,7 +987,7 @@ function TabularWorkflowEditorSkeleton() {
         header={
           <TableHeaderRow className="md:pr-10">
             <TableStickyCell header hover={false} widthClassName={NAME_COL_W}>
-              <SkeletonDot className="mr-4" />
+              <SkeletonCheckbox />
               <SkeletonLine className="h-2.5 w-20" />
             </TableStickyCell>
             <TableHeaderCell className="ml-auto w-36">
@@ -1004,7 +1004,7 @@ function TabularWorkflowEditorSkeleton() {
             <TableRow key={i} interactive={false} className="md:pr-10">
               <TableStickyCell hover={false} widthClassName={NAME_COL_W}>
                 <div className="flex min-w-0 flex-1 items-center">
-                  <SkeletonDot className="mr-4" />
+                  <SkeletonCheckbox />
                   <SkeletonLine className={`h-3 ${titleWidths[i - 1]}`} />
                 </div>
               </TableStickyCell>
