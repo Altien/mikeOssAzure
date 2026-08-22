@@ -54,7 +54,7 @@ import {
     DOCUMENT_UPLOAD_CONCURRENCY,
     documentUploadEntriesFromFiles,
     documentUploadFolderSegments,
-    documentUploadProgressEntries,
+    resolvedDocumentUploadProgressEntries,
     MAX_DOCUMENTS_PER_DIRECTORY_UPLOAD,
     resolveDocumentUploadRootFolder,
     settleWithConcurrency,
@@ -1231,11 +1231,17 @@ export function DocTable({
             );
             return;
         }
-        const progressEntries = documentUploadProgressEntries(supportedEntries);
-        setCollectionUploadProgress({
-            parentFolderId: baseFolderId,
-            entries: progressEntries,
-        });
+        const resolvedRootFolderNames = new Map<string, string>();
+        const updateCollectionUploadProgress = () => {
+            setCollectionUploadProgress({
+                parentFolderId: baseFolderId,
+                entries: resolvedDocumentUploadProgressEntries(
+                    supportedEntries,
+                    resolvedRootFolderNames,
+                ),
+            });
+        };
+        updateCollectionUploadProgress();
 
         try {
             const addResolvedFolders = (resolvedFolders: DocTableFolder[]) => {
@@ -1273,28 +1279,15 @@ export function DocTable({
                 });
                 if (!resolution) return;
 
+                resolvedRootFolderNames.set(
+                    rootFolderName,
+                    resolution.resolved_name,
+                );
+                updateCollectionUploadProgress();
                 addResolvedFolders(resolution.folders);
                 resolvedRoots.set(rootFolderName, {
                     folderId: resolution.folder_id,
                 });
-                if (resolution.resolved_name !== rootFolderName) {
-                    setCollectionUploadProgress((current) =>
-                        current
-                            ? {
-                                  ...current,
-                                  entries: current.entries.map((entry) =>
-                                      entry.kind === "folder" &&
-                                      entry.name === rootFolderName
-                                          ? {
-                                                ...entry,
-                                                name: resolution.resolved_name,
-                                            }
-                                          : entry,
-                                  ),
-                              }
-                            : current,
-                    );
-                }
             }
 
             const folderPathPromises = new Map<string, Promise<string>>();

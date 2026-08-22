@@ -7,6 +7,7 @@ import {
     documentUploadPathSegments,
     documentUploadProgressEntries,
     MAX_DOCUMENTS_PER_DIRECTORY_UPLOAD,
+    resolvedDocumentUploadProgressEntries,
     resolveDocumentUploadRootFolder,
     settleWithConcurrency,
 } from "./documentDirectoryUpload";
@@ -110,6 +111,30 @@ describe("document directory upload paths", () => {
             { kind: "folder", name: "Matter" },
             { kind: "file", name: "memo.docx" },
         ]);
+    });
+
+    it("does not show an unresolved folder as an uploading row", () => {
+        const entries = documentUploadEntriesFromFiles([
+            folderFile("agreement.pdf", "NDAs/agreement.pdf"),
+            new File(["memo"], "memo.docx"),
+        ]);
+
+        expect(
+            resolvedDocumentUploadProgressEntries(entries, new Map()),
+        ).toEqual([{ kind: "file", name: "memo.docx" }]);
+    });
+
+    it("shows the backend-resolved folder name once uploading can begin", () => {
+        const entries = documentUploadEntriesFromFiles([
+            folderFile("agreement.pdf", "NDAs/agreement.pdf"),
+        ]);
+
+        expect(
+            resolvedDocumentUploadProgressEntries(
+                entries,
+                new Map([["NDAs", "NDAs (2)"]]),
+            ),
+        ).toEqual([{ kind: "folder", name: "NDAs (2)" }]);
     });
 
     it("normalizes separators and excludes traversal segments", () => {
