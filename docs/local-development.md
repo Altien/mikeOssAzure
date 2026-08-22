@@ -71,6 +71,47 @@ leaves your machine. These links pass through `/auth/callback` and return to the
 relevant app screen. Local signup autoconfirm remains enabled by default; turn
 it off only when you specifically want to test the confirmation flow.
 
+## Local Google authentication
+
+Google OAuth works with either local Supabase option. Create a Google **Web
+application** OAuth client and keep its secret out of Git.
+
+For Docker Compose, register this Google authorized redirect URI:
+
+```text
+http://localhost:54321/auth/v1/callback
+```
+
+Google OAuth is enabled by default. Set the client values in the root `.env`,
+or set `GOTRUE_EXTERNAL_GOOGLE_ENABLED=false` to opt out. Then recreate Auth:
+
+```env
+GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID=<client-id>
+GOTRUE_EXTERNAL_GOOGLE_SECRET=<client-secret>
+```
+
+```bash
+docker compose up -d --force-recreate auth
+```
+
+For the Supabase CLI stack, register
+`http://127.0.0.1:54321/auth/v1/callback`, then set
+`SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID` and
+`SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_SECRET` in `backend/.env`. Google OAuth
+is enabled by default; set `[auth.external.google].enabled` to `false` in
+`backend/supabase/config.toml` to opt out locally. Restart the stack after a
+configuration change:
+
+```bash
+cd backend
+supabase stop
+supabase start
+```
+
+The checked-in configuration already allows the web callback and the local
+Word dialog callback at `https://localhost:3200/oauth-dialog.html`. Add your
+Google account as an OAuth test user while the Google app remains in testing.
+
 ## Local models with Ollama
 
 [Ollama](https://ollama.com) models are discovered dynamically. Anything shown

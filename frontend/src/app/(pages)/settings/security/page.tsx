@@ -10,6 +10,7 @@ import {
 import { Copy, Loader2 } from "lucide-react";
 import { supabase } from "@/app/lib/supabase";
 import { PillButton } from "@/app/components/ui/pill-button";
+import { PasswordSettingsSection } from "@/app/components/settings/PasswordSettingsSection";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { isMfaRequiredError } from "@/app/lib/mikeApi";
 import { Modal } from "@/app/components/modals/Modal";
@@ -19,8 +20,6 @@ import {
 } from "@/app/components/popups/MfaVerificationPopup";
 import { SettingsSection } from "../SettingsSection";
 import { SettingsToggle } from "../SettingsToggle";
-import { useAuth } from "@/app/contexts/AuthContext";
-import { browserAuthCallbackUrl } from "@/app/lib/authRedirects";
 import {
     knownErrorCodeMessage,
     userFacingApiError,
@@ -172,7 +171,6 @@ function MfaSettingsSkeleton() {
 }
 
 export default function SecurityPage() {
-    const { user } = useAuth();
     const { profile, updateMfaOnLogin } = useUserProfile();
     const [loading, setLoading] = useState(true);
     const [factors, setFactors] = useState<MfaFactor[]>([]);
@@ -190,10 +188,6 @@ export default function SecurityPage() {
     >(null);
     const [pendingLoginPreference, setPendingLoginPreference] = useState<
         boolean | null
-    >(null);
-    const [passwordResetSending, setPasswordResetSending] = useState(false);
-    const [passwordResetStatus, setPasswordResetStatus] = useState<
-        string | null
     >(null);
 
     async function refreshMfaState() {
@@ -477,29 +471,6 @@ export default function SecurityPage() {
         }
     }
 
-    async function sendPasswordReset() {
-        if (!user?.email || passwordResetSending) return;
-        setPasswordResetSending(true);
-        setPasswordResetStatus(null);
-        try {
-            const redirectTo = browserAuthCallbackUrl("/reset-password");
-            const { error } = await supabase.auth.resetPasswordForEmail(
-                user.email,
-                redirectTo ? { redirectTo } : undefined,
-            );
-            if (error) throw error;
-            setPasswordResetStatus(
-                `Password-reset instructions sent to ${user.email}.`,
-            );
-        } catch {
-            setPasswordResetStatus(
-                "Unable to send a password-reset email right now. Please try again.",
-            );
-        } finally {
-            setPasswordResetSending(false);
-        }
-    }
-
     const hasVerifiedFactor = factors.length > 0;
     const sessionVerified = currentLevel === "aal2";
     const loginMfaEnabled = profile?.mfaOnLogin === true;
@@ -601,39 +572,7 @@ export default function SecurityPage() {
                     )}
                 </SettingsSection>
             </section>
-            <section className="space-y-3">
-                <h2 className="text-2xl font-medium font-serif text-gray-900">
-                    Password
-                </h2>
-                <SettingsSection>
-                    <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="min-w-0 space-y-1">
-                            <p className="text-sm font-medium text-gray-700">
-                                Reset password
-                            </p>
-                            <p className="text-sm text-gray-500">
-                                Send a secure password-reset link to {user?.email}.
-                            </p>
-                            {passwordResetStatus && (
-                                <p className="text-xs text-gray-500">
-                                    {passwordResetStatus}
-                                </p>
-                            )}
-                        </div>
-                        <PillButton
-                            tone="black"
-                            size="sm"
-                            onClick={() => void sendPasswordReset()}
-                            disabled={passwordResetSending || !user?.email}
-                            className="shrink-0"
-                        >
-                            {passwordResetSending
-                                ? "Sending..."
-                                : "Send reset email"}
-                        </PillButton>
-                    </div>
-                </SettingsSection>
-            </section>
+            <PasswordSettingsSection />
             <Modal
                 open={setupModalOpen}
                 onClose={() => void closeSetupModal()}

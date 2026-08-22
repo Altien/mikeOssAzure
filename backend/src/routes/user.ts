@@ -59,6 +59,12 @@ const MONTHLY_CREDIT_LIMIT = 999999;
 type UserProfileRow = {
     display_name: string | null;
     organisation: string | null;
+    jurisdiction?: string | null;
+    practice_setting?: string | null;
+    professional_title?: string | null;
+    practice_areas?: string[] | null;
+    onboarding_version?: number | null;
+    password_set_at?: string | null;
     message_credits_used: number;
     credits_reset_date: string;
     tier: string;
@@ -175,7 +181,22 @@ function mcpOAuthPopupCsp(nonce: string) {
 }
 
 const PROFILE_SELECT =
+    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, quick_actions_visible";
+// PROFILE_SELECT minus the 20260821 onboarding / password-capability columns,
+// for databases that have not applied those migrations yet. Migration 02
+// (password_set_at) gets its own tier so a database that applied 01 but not
+// 02 keeps its live onboarding/personalisation columns.
+const PROFILE_SELECT_NO_PASSWORD =
+    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, quick_actions_visible";
+const PROFILE_SELECT_NO_ONBOARDING =
     "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, quick_actions_visible";
+const ONBOARDING_PROFILE_COLUMNS = [
+    "jurisdiction",
+    "practice_setting",
+    "professional_title",
+    "practice_areas",
+    "onboarding_version",
+];
 const PROFILE_SELECT_NO_QUICK_ACTIONS =
     "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us";
 const PROFILE_SELECT_NO_LEGAL =
@@ -212,8 +233,47 @@ async function selectProfile(
             ? await fullQuery.single()
             : await fullQuery.maybeSingle();
     if (!full.error) return full;
+    let cascadeError: unknown = full.error;
 
-    if (isMissingProfileColumn(full.error, "quick_actions_visible")) {
+    // A database that predates the 20260821 migrations rejects the full
+    // select on the first of the new columns, which would otherwise skip
+    // every tier below (they key on *their* new column's name) and land on
+    // a select that silently resets the legal-research and quick-action
+    // preferences to defaults. Two retry tiers, most-migrated first:
+    // missing only password_set_at (migration 02) keeps the live
+    // onboarding columns; missing the migration-01 columns drops them all,
+    // and serializeProfile treats the absent fields as legacy-exempt —
+    // matching what the migration's backfill would write.
+    if (isMissingProfileColumn(cascadeError, "password_set_at")) {
+        const prePasswordQuery = db
+            .from("user_profiles")
+            .select(PROFILE_SELECT_NO_PASSWORD)
+            .eq("user_id", userId);
+        const prePassword =
+            mode === "single"
+                ? await prePasswordQuery.single()
+                : await prePasswordQuery.maybeSingle();
+        if (!prePassword.error) return prePassword;
+        cascadeError = prePassword.error;
+    }
+    if (
+        ONBOARDING_PROFILE_COLUMNS.some((column) =>
+            isMissingProfileColumn(cascadeError, column),
+        )
+    ) {
+        const preOnboardingQuery = db
+            .from("user_profiles")
+            .select(PROFILE_SELECT_NO_ONBOARDING)
+            .eq("user_id", userId);
+        const preOnboarding =
+            mode === "single"
+                ? await preOnboardingQuery.single()
+                : await preOnboardingQuery.maybeSingle();
+        if (!preOnboarding.error) return preOnboarding;
+        cascadeError = preOnboarding.error;
+    }
+
+    if (isMissingProfileColumn(cascadeError, "quick_actions_visible")) {
         const previousQuery = db
             .from("user_profiles")
             .select(PROFILE_SELECT_NO_QUICK_ACTIONS)
@@ -397,6 +457,23 @@ function serializeProfile(
     return {
         displayName: row.display_name,
         organisation: row.organisation,
+        jurisdiction: row.jurisdiction ?? null,
+        practiceSetting: row.practice_setting ?? null,
+        professionalTitle: row.professional_title ?? null,
+        practiceAreas: Array.isArray(row.practice_areas)
+            ? row.practice_areas
+            : [],
+        // Databases that have not yet applied the onboarding migration must
+        // not lock existing users out of the app. NULL means a new user still
+        // needs onboarding; 0 identifies a legacy-exempt user; 1 is complete.
+        onboardingVersion:
+            row.onboarding_version === undefined
+                ? 0
+                : row.onboarding_version,
+        onboardingComplete:
+            row.onboarding_version === undefined ||
+            row.onboarding_version !== null,
+        passwordSet: !!row.password_set_at,
         messageCreditsUsed: creditsUsed,
         creditsResetDate: row.credits_reset_date,
         creditsRemaining: Math.max(MONTHLY_CREDIT_LIMIT - creditsUsed, 0),
@@ -416,12 +493,149 @@ function serializeProfile(
     };
 }
 
+const PRACTICE_SETTINGS = new Set([
+    "private_practice",
+    "in_house",
+    "not_practising",
+]);
+
+const PROFESSIONAL_TITLES = new Set([
+    "Partner",
+    "Senior Associate",
+    "Associate",
+    "Law Clerk",
+    "Counsel",
+    "General Counsel",
+    "Legal Counsel",
+    "Other",
+]);
+
+function isPracticeSetting(value: string): boolean {
+    return PRACTICE_SETTINGS.has(value);
+}
+
+function normalizeProfessionalTitle(
+    value: unknown,
+): string | null | undefined {
+    if (value === null || value === undefined || value === "") return null;
+    if (typeof value !== "string") return undefined;
+    const title = value.trim();
+    return PROFESSIONAL_TITLES.has(title) ? title : undefined;
+}
+
+function normalizePracticeAreas(value: unknown): string[] | null {
+    if (!Array.isArray(value)) return null;
+    const practiceAreas = Array.from(
+        new Set(
+            value
+                .filter((item): item is string => typeof item === "string")
+                .map((item) => item.trim())
+                .filter(Boolean),
+        ),
+    );
+    if (
+        practiceAreas.length > 20 ||
+        practiceAreas.some((item) => item.length > 100)
+    ) {
+        return null;
+    }
+    return practiceAreas;
+}
+
+type PersonalisationUpdate = {
+    jurisdiction?: string | null;
+    practice_setting?: string | null;
+    professional_title?: string | null;
+    practice_areas?: string[];
+};
+
+function parsePersonalisationPayload(
+    raw: Record<string, unknown>,
+    { allowClearing }: { allowClearing: boolean },
+):
+    | { ok: true; update: PersonalisationUpdate }
+    | { ok: false; detail: string } {
+    const update: PersonalisationUpdate = {};
+
+    if ("jurisdiction" in raw) {
+        if (
+            allowClearing &&
+            (raw.jurisdiction === null || raw.jurisdiction === "")
+        ) {
+            update.jurisdiction = null;
+        } else {
+            const jurisdiction =
+                typeof raw.jurisdiction === "string"
+                    ? raw.jurisdiction.trim()
+                    : "";
+            if (!jurisdiction || jurisdiction.length > 100) {
+                return {
+                    ok: false,
+                    detail: "Select a valid jurisdiction of practice",
+                };
+            }
+            update.jurisdiction = jurisdiction;
+        }
+    }
+
+    if ("practiceSetting" in raw) {
+        if (
+            allowClearing &&
+            (raw.practiceSetting === null || raw.practiceSetting === "")
+        ) {
+            update.practice_setting = null;
+        } else {
+            const practiceSetting =
+                typeof raw.practiceSetting === "string"
+                    ? raw.practiceSetting.trim()
+                    : "";
+            if (!isPracticeSetting(practiceSetting)) {
+                return {
+                    ok: false,
+                    detail: "Select a valid professional setting",
+                };
+            }
+            update.practice_setting = practiceSetting;
+        }
+    }
+
+    if ("professionalTitle" in raw) {
+        const professionalTitle = normalizeProfessionalTitle(
+            raw.professionalTitle,
+        );
+        if (
+            professionalTitle === undefined ||
+            (!allowClearing && professionalTitle === null)
+        ) {
+            return { ok: false, detail: "Select a valid title" };
+        }
+        update.professional_title = professionalTitle;
+    }
+
+    if ("practiceAreas" in raw) {
+        const practiceAreas = normalizePracticeAreas(raw.practiceAreas);
+        if (!practiceAreas) {
+            return {
+                ok: false,
+                detail: "Select no more than 20 valid practice areas",
+            };
+        }
+        update.practice_areas = practiceAreas;
+    }
+
+    return { ok: true, update };
+}
+
 function validateProfilePayload(body: unknown):
     | {
           ok: true;
           update: {
               display_name?: string | null;
               organisation?: string | null;
+              jurisdiction?: string | null;
+              practice_setting?: string | null;
+              professional_title?: string | null;
+              practice_areas?: string[];
               title_model?: string;
               tabular_model?: string;
               legal_research_us?: boolean;
@@ -439,6 +653,10 @@ function validateProfilePayload(body: unknown):
     const allowedFields = new Set([
         "displayName",
         "organisation",
+        "jurisdiction",
+        "practiceSetting",
+        "professionalTitle",
+        "practiceAreas",
         "titleModel",
         "tabularModel",
         "legalResearchUs",
@@ -458,6 +676,10 @@ function validateProfilePayload(body: unknown):
     const update: {
         display_name?: string | null;
         organisation?: string | null;
+        jurisdiction?: string | null;
+        practice_setting?: string | null;
+        professional_title?: string | null;
+        practice_areas?: string[];
         title_model?: string;
         tabular_model?: string;
         legal_research_us?: boolean;
@@ -466,6 +688,18 @@ function validateProfilePayload(body: unknown):
     } = { updated_at: new Date().toISOString() };
     const routerModels: Partial<Record<RouterSlug, string[]>> = {};
 
+    const personalisation = parsePersonalisationPayload(raw, {
+        allowClearing: true,
+    });
+    if (!personalisation.ok) return personalisation;
+    Object.assign(update, personalisation.update);
+
+    // Both fields flow into every chat's system prompt via
+    // buildUserPersonalisationPrompt, so an unbounded value would inflate
+    // token cost on every message. Truncate (not reject) at 200 characters:
+    // that is exactly what the signup trigger (handle_new_user's
+    // left(..., 200)) does to the same columns, and rejection would strand
+    // any over-long value written before this cap existed.
     if ("displayName" in raw) {
         if (raw.displayName !== null && typeof raw.displayName !== "string") {
             return {
@@ -473,7 +707,8 @@ function validateProfilePayload(body: unknown):
                 detail: "displayName must be a string or null",
             };
         }
-        update.display_name = raw.displayName?.trim() || null;
+        update.display_name =
+            raw.displayName?.trim().slice(0, 200) || null;
     }
 
     if ("organisation" in raw) {
@@ -483,7 +718,8 @@ function validateProfilePayload(body: unknown):
                 detail: "organisation must be a string or null",
             };
         }
-        update.organisation = raw.organisation?.trim() || null;
+        update.organisation =
+            raw.organisation?.trim().slice(0, 200) || null;
     }
 
     if ("tabularModel" in raw) {
@@ -743,6 +979,91 @@ userRouter.patch("/profile", requireAuth, async (req, res) => {
     const apiKeyStatus = await getUserApiKeyStatus(userId, db);
     const { data, error } = await loadProfile(db, userId, { apiKeyStatus });
     if (error) return void sendInternalError(res, error);
+    res.json({ ...data, apiKeyStatus });
+});
+
+// POST /user/onboarding
+userRouter.post("/onboarding", requireAuth, async (req, res) => {
+    const body =
+        req.body && typeof req.body === "object" && !Array.isArray(req.body)
+            ? (req.body as Record<string, unknown>)
+            : null;
+    if (!body) {
+        return void res.status(400).json({ detail: "Expected a JSON object" });
+    }
+
+    const invalidField = Object.keys(body).find(
+        (key) =>
+            key !== "jurisdiction" &&
+            key !== "practiceSetting" &&
+            key !== "professionalTitle" &&
+            key !== "practiceAreas",
+    );
+    if (invalidField) {
+        return void res.status(400).json({
+            detail: `Unsupported onboarding field: ${invalidField}`,
+        });
+    }
+
+    const personalisation = parsePersonalisationPayload(body, {
+        allowClearing: false,
+    });
+    if (!personalisation.ok) {
+        return void res.status(400).json({ detail: personalisation.detail });
+    }
+    const personalisationUpdate = personalisation.update;
+
+    const userId = res.locals.userId as string;
+    const db = createServerSupabase();
+    const ensureError = await ensureProfileRow(db, userId);
+    if (ensureError) {
+        return void res.status(500).json({ detail: ensureError.message });
+    }
+
+    const { error: updateError } = await db
+        .from("user_profiles")
+        .update({
+            ...personalisationUpdate,
+            onboarding_version: 1,
+            updated_at: new Date().toISOString(),
+        })
+        .eq("user_id", userId);
+    if (updateError) {
+        return void res.status(500).json({ detail: updateError.message });
+    }
+
+    const apiKeyStatus = await getUserApiKeyStatus(userId, db);
+    const { data, error } = await loadProfile(db, userId, { apiKeyStatus });
+    if (error) return void res.status(500).json({ detail: error.message });
+    res.json({ ...data, apiKeyStatus });
+});
+
+// POST /user/security/password-set
+// Record password capability only after verifying Supabase's auth.users row.
+userRouter.post("/security/password-set", requireAuth, async (_req, res) => {
+    const userId = res.locals.userId as string;
+    const db = createServerSupabase();
+    const ensureError = await ensureProfileRow(db, userId);
+    if (ensureError) {
+        return void res.status(500).json({ detail: ensureError.message });
+    }
+
+    const { data: passwordSetAt, error: syncError } = await db.rpc(
+        "sync_user_password_set",
+        { p_user_id: userId },
+    );
+    if (syncError) {
+        return void res.status(500).json({ detail: syncError.message });
+    }
+    if (!passwordSetAt) {
+        return void res.status(409).json({
+            detail: "Supabase has not recorded a password for this account",
+        });
+    }
+
+    const apiKeyStatus = await getUserApiKeyStatus(userId, db);
+    const { data, error } = await loadProfile(db, userId, { apiKeyStatus });
+    if (error) return void res.status(500).json({ detail: error.message });
     res.json({ ...data, apiKeyStatus });
 });
 

@@ -251,12 +251,13 @@ describe("RouterSettingsSection", () => {
         );
     });
 
-    it("renders saved models with the small pill button primitive", () => {
+    it("renders saved models with the option pill primitive", () => {
         render(<RouterSettingsSection />);
 
         const pill = screen.getByRole("button", {
             name: "Remove anthropic/claude-sonnet-4.5",
         });
+        expect(pill).toHaveAttribute("data-slot", "option-pill");
         expect(pill).toHaveClass("rounded-full", "text-xs");
     });
 });

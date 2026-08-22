@@ -16,6 +16,30 @@ create table if not exists public.user_profiles (
   email text,
   display_name text,
   organisation text,
+  jurisdiction text,
+  practice_setting text
+    check (
+      practice_setting is null
+      or practice_setting in ('private_practice', 'in_house', 'not_practising')
+    ),
+  professional_title text
+    check (
+      professional_title is null
+      or professional_title in (
+        'Partner',
+        'Senior Associate',
+        'Associate',
+        'Law Clerk',
+        'Counsel',
+        'General Counsel',
+        'Legal Counsel',
+        'Other'
+      )
+    ),
+  practice_areas text[] not null default '{}'::text[],
+  onboarding_version smallint
+    check (onboarding_version is null or onboarding_version >= 0),
+  password_set_at timestamptz,
   tier text not null default 'Free',
   message_credits_used integer not null default 0,
   credits_reset_date timestamptz not null default (now() + interval '30 days'),
@@ -55,7 +79,12 @@ begin
   values (
     new.id,
     lower(new.email),
-    nullif(left(btrim(coalesce(new.raw_user_meta_data ->> 'display_name', '')), 200), ''),
+    nullif(left(btrim(coalesce(
+      new.raw_user_meta_data ->> 'display_name',
+      new.raw_user_meta_data ->> 'full_name',
+      new.raw_user_meta_data ->> 'name',
+      ''
+    )), 200), ''),
     nullif(left(btrim(coalesce(new.raw_user_meta_data ->> 'organisation', '')), 200), '')
   )
   on conflict (user_id) do update
@@ -80,6 +109,37 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
+
+create or replace function public.sync_user_password_set(p_user_id uuid)
+returns timestamptz
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  recorded_at timestamptz;
+begin
+  update public.user_profiles as profile
+  set password_set_at = coalesce(profile.password_set_at, now()),
+      updated_at = now()
+  where profile.user_id = p_user_id
+    and exists (
+      select 1
+      from auth.users as auth_user
+      where auth_user.id = p_user_id
+        and auth_user.encrypted_password is not null
+        and auth_user.encrypted_password::text <> ''
+    )
+  returning profile.password_set_at into recorded_at;
+
+  return recorded_at;
+end;
+$$;
+
+revoke all on function public.sync_user_password_set(uuid)
+  from public, anon, authenticated;
+grant execute on function public.sync_user_password_set(uuid)
+  to service_role;
 
 create or replace function public.handle_user_email_updated()
 returns trigger

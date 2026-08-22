@@ -11,6 +11,7 @@ import {
 } from "@/app/components/auth/authStyles";
 import { browserAuthCallbackUrl } from "@/app/lib/authRedirects";
 import { supabase } from "@/app/lib/supabase";
+import { FieldLabel } from "@/app/components/ui/form-field";
 
 export default function ForgotPasswordPage() {
     const [email, setEmail] = useState("");
@@ -82,12 +83,9 @@ export default function ForgotPasswordPage() {
                                 className="mt-6 space-y-4"
                             >
                                 <div>
-                                    <label
-                                        htmlFor="email"
-                                        className="mb-2 block text-sm font-medium text-gray-700"
-                                    >
+                                    <FieldLabel htmlFor="email">
                                         Email
-                                    </label>
+                                    </FieldLabel>
                                     <Input
                                         id="email"
                                         type="email"

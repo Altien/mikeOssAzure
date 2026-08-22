@@ -7,7 +7,8 @@
  *   - auth/useAuth.ts token persistence in OfficeRuntime.storage
  *
  * The Supabase password grant (POST **\/auth/v1/token**) is mocked via
- * addin.mockLogin — no live backend is ever contacted.
+ * addin.mockLogin. Google dialog messages are supplied by the Office shim, so
+ * no live identity provider or backend is contacted.
  */
 import { test, expect } from "./support/fixtures";
 
@@ -23,6 +24,10 @@ test.describe("auth flow", () => {
     // to the LoginPage rather than getting stuck on the spinner.
     await expect(page.getByRole("button", { name: "Log in" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Log In" })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Continue with Google" })
+    ).toBeVisible();
+    await expect(page.getByRole("link", { name: "Sign up" })).toBeVisible();
     await expect(page.getByText("Mike", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Sign up" })).toHaveCount(0);
     await expect(page.getByText("Loading…")).toBeHidden();
@@ -32,7 +37,7 @@ test.describe("auth flow", () => {
     expect(await addin.getToken()).toBeNull();
   });
 
-  test("Log in stays disabled until both email and password are filled", async ({
+  test("Log in relies on required fields before submitting", async ({
     addin,
     page,
   }) => {
@@ -42,17 +47,16 @@ test.describe("auth flow", () => {
     const email = page.getByRole("textbox", { name: "Email" });
     const password = page.getByRole("textbox", { name: "Password" });
 
-    await expect(signIn).toBeDisabled();
+    await expect(signIn).toBeEnabled();
+    await signIn.click();
+    await expect(email).toBeFocused();
 
     await email.fill("lawyer@firm.com");
-    await expect(signIn).toBeDisabled();
+    await signIn.click();
+    await expect(password).toBeFocused();
 
     await password.fill("hunter2");
     await expect(signIn).toBeEnabled();
-
-    // Clearing either field re-disables the button.
-    await email.fill("");
-    await expect(signIn).toBeDisabled();
   });
 
   test("login form fits a narrow Word task pane without horizontal overflow", async ({
@@ -67,10 +71,14 @@ test.describe("auth flow", () => {
     const password = page.getByRole("textbox", { name: "Password" });
     await expect(email).toBeVisible();
     await expect(password).toBeVisible();
-    await expect(email).toHaveClass(/bg-white\/55/);
-    await expect(email).toHaveClass(/backdrop-blur-xl/);
-    await expect(password).toHaveClass(/bg-white\/55/);
-    await expect(password).toHaveClass(/backdrop-blur-xl/);
+    await expect(email).toHaveClass(/bg-gray-100/);
+    await expect(email).toHaveClass(/border-transparent/);
+    await expect(email).toHaveClass(/shadow-none/);
+    await expect(email).not.toHaveAttribute("placeholder");
+    await expect(password).toHaveClass(/bg-gray-100/);
+    await expect(password).toHaveClass(/border-transparent/);
+    await expect(password).toHaveClass(/shadow-none/);
+    await expect(password).not.toHaveAttribute("placeholder");
     const loginButton = page.getByRole("button", { name: "Log in" });
     await expect(loginButton).toHaveClass(/rounded-full/);
     await expect(loginButton).toHaveClass(/bg-gray-950\/88/);
@@ -81,24 +89,23 @@ test.describe("auth flow", () => {
     );
     expect(horizontalOverflow).toBeLessThanOrEqual(0);
 
+    const panel = await page.getByTestId("login-panel").boundingBox();
+    expect(panel).not.toBeNull();
     const form = await page.getByTestId("login-form").boundingBox();
     expect(form).not.toBeNull();
-    const loginForm = page.getByTestId("login-form");
-    await expect(loginForm).not.toHaveClass(/bg-gray-50\/95/);
-    await expect(loginForm).not.toHaveClass(/rounded-3xl/);
+    const loginCard = page.getByTestId("login-card");
+    await expect(loginCard).toHaveClass(/rounded-2xl/);
+    await expect(loginCard).toHaveClass(/border-white\/70/);
+    await expect(loginCard).toHaveClass(/bg-white\/72/);
+    await expect(loginCard).toHaveClass(/p-8/);
+    await expect(loginCard).toHaveClass(/shadow-sm/);
+    await expect(loginCard).toHaveClass(/backdrop-blur-2xl/);
     const button = await loginButton.boundingBox();
     expect(button).not.toBeNull();
-    expect((button?.width ?? 0) < (form?.width ?? 0) / 2).toBe(true);
+    expect(Math.abs((button?.width ?? 0) - (form?.width ?? 0))).toBeLessThan(2);
     expect(
-      Math.abs(
-        (button?.x ?? 0) +
-          (button?.width ?? 0) -
-          ((form?.x ?? 0) + (form?.width ?? 0))
-      )
+      Math.abs((panel?.y ?? 0) + (panel?.height ?? 0) / 2 - 310)
     ).toBeLessThan(2);
-    expect(Math.abs((form?.y ?? 0) + (form?.height ?? 0) / 2 - 310)).toBeLessThan(
-      2
-    );
     await expect(page.getByRole("heading", { name: "Log In" })).toHaveCSS(
       "text-align",
       "left"
@@ -146,6 +153,171 @@ test.describe("auth flow", () => {
 
     // Token is persisted into OfficeRuntime.storage under "mike_token".
     expect(await addin.getToken()).toBe("valid-jwt-123");
+  });
+
+  test("Google OAuth persists the returned Supabase session", async ({
+    addin,
+    page,
+  }) => {
+    await addin.gotoTaskpane();
+
+    await page.getByRole("button", { name: "Continue with Google" }).click();
+    const dialog = await page.evaluate(() => {
+      const state = (
+        window as typeof window & {
+          __OAUTH_DIALOG__: {
+            url: string;
+            options: Record<string, unknown>;
+          };
+        }
+      ).__OAUTH_DIALOG__;
+      return { url: state.url, options: state.options };
+    });
+    const requestId = new URL(dialog.url).searchParams.get("requestId");
+    expect(requestId).toBeTruthy();
+    expect(dialog.options).toMatchObject({ displayInIframe: false });
+
+    await page.evaluate(
+      ({ requestId }) => {
+        const state = (
+          window as typeof window & {
+            __OAUTH_DIALOG__: {
+              sendMessage: (message: string, origin?: string) => void;
+            };
+          }
+        ).__OAUTH_DIALOG__;
+        state.sendMessage(
+          JSON.stringify({
+            type: "mike-google-oauth",
+            requestId,
+            status: "success",
+            accessToken: "google-access",
+            refreshToken: "google-refresh",
+          })
+        );
+      },
+      { requestId }
+    );
+
+    await addin.expectAuthedShell();
+    expect(await addin.getToken()).toBe("google-access");
+    expect(await addin.getRefreshToken()).toBe("google-refresh");
+  });
+
+  test("Google OAuth rejects a response from another origin", async ({
+    addin,
+    page,
+  }) => {
+    await addin.gotoTaskpane();
+    await page.getByRole("button", { name: "Continue with Google" }).click();
+
+    const requestId = await page.evaluate(() => {
+      const state = (
+        window as typeof window & { __OAUTH_DIALOG__: { url: string } }
+      ).__OAUTH_DIALOG__;
+      return new URL(state.url).searchParams.get("requestId");
+    });
+
+    await page.evaluate(
+      ({ requestId }) => {
+        const state = (
+          window as typeof window & {
+            __OAUTH_DIALOG__: {
+              sendMessage: (message: string, origin?: string) => void;
+            };
+          }
+        ).__OAUTH_DIALOG__;
+        state.sendMessage(
+          JSON.stringify({
+            type: "mike-google-oauth",
+            requestId,
+            status: "success",
+            accessToken: "must-not-save",
+            refreshToken: "must-not-save",
+          }),
+          "https://attacker.example"
+        );
+      },
+      { requestId }
+    );
+
+    await expect(page.getByRole("alert")).toContainText("unexpected origin");
+    expect(await addin.getToken()).toBeNull();
+    expect(await addin.getRefreshToken()).toBeNull();
+  });
+
+  test("Google OAuth surfaces provider errors", async ({ addin, page }) => {
+    await addin.gotoTaskpane();
+    await page.getByRole("button", { name: "Continue with Google" }).click();
+
+    await page.evaluate(() => {
+      const state = (
+        window as typeof window & {
+          __OAUTH_DIALOG__: {
+            url: string;
+            sendMessage: (message: string, origin?: string) => void;
+          };
+        }
+      ).__OAUTH_DIALOG__;
+      const requestId = new URL(state.url).searchParams.get("requestId");
+      state.sendMessage(
+        JSON.stringify({
+          type: "mike-google-oauth",
+          requestId,
+          status: "error",
+          message: "Google access was denied",
+        })
+      );
+    });
+
+    await expect(page.getByRole("alert")).toContainText(
+      "Google access was denied"
+    );
+    expect(await addin.getToken()).toBeNull();
+  });
+
+  test("Google OAuth rejects malformed dialog messages", async ({
+    addin,
+    page,
+  }) => {
+    await addin.gotoTaskpane();
+    await page.getByRole("button", { name: "Continue with Google" }).click();
+
+    await page.evaluate(() => {
+      const state = (
+        window as typeof window & {
+          __OAUTH_DIALOG__: {
+            sendMessage: (message: string, origin?: string) => void;
+          };
+        }
+      ).__OAUTH_DIALOG__;
+      state.sendMessage("not-json");
+    });
+
+    await expect(page.getByRole("alert")).toContainText("invalid response");
+    expect(await addin.getToken()).toBeNull();
+  });
+
+  test("Google OAuth reports when the user closes the dialog", async ({
+    addin,
+    page,
+  }) => {
+    await addin.gotoTaskpane();
+    await page.getByRole("button", { name: "Continue with Google" }).click();
+
+    await page.evaluate(() => {
+      const state = (
+        window as typeof window & {
+          __OAUTH_DIALOG__: { sendEvent: (error: number) => void };
+        }
+      ).__OAUTH_DIALOG__;
+      state.sendEvent(12006);
+    });
+
+    await expect(page.getByRole("alert")).toContainText(
+      "Google sign-in was cancelled"
+    );
+    expect(await addin.getToken()).toBeNull();
   });
 
   test("Sign out clears the token and returns to the login page", async ({

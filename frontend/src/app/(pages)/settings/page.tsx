@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Trash2 } from "lucide-react";
 import { PillButton } from "@/app/components/ui/pill-button";
+import { Modal } from "@/app/components/modals/Modal";
 import { FieldLabel } from "@/app/components/ui/form-field";
 import { SettingsTextInput } from "@/app/components/settings/SettingsTextInput";
 import { useAuth } from "@/app/contexts/AuthContext";
@@ -34,27 +35,39 @@ export default function SettingsPage() {
     const [displayName, setDisplayName] = useState("");
     const [isSavingName, setIsSavingName] = useState(false);
     const [saved, setSaved] = useState(false);
+    const [nameError, setNameError] = useState<string | null>(null);
     const [organisation, setOrganisation] = useState("");
     const [isSavingOrg, setIsSavingOrg] = useState(false);
     const [orgSaved, setOrgSaved] = useState(false);
+    const [orgError, setOrgError] = useState<string | null>(null);
     const [email, setEmail] = useState("");
     const [isSavingEmail, setIsSavingEmail] = useState(false);
     const [emailSaved, setEmailSaved] = useState(false);
     const [emailStatus, setEmailStatus] = useState<string | null>(null);
     const [emailWarning, setEmailWarning] = useState<EmailWarning | null>(null);
     const [emailMfaOpen, setEmailMfaOpen] = useState(false);
+    const [googleEmailModalOpen, setGoogleEmailModalOpen] = useState(false);
     const [deleteConfirm, setDeleteConfirm] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
     const [accountDeleteMfaOpen, setAccountDeleteMfaOpen] = useState(false);
+    const requiresPasswordForEmailChange =
+        user?.createdWithGoogle === true && profile?.passwordSet !== true;
+
+    // Each field syncs from the profile independently. A combined effect
+    // (both setters, keyed on both values) wiped in-progress text from the
+    // sibling input whenever one field's blur-autosave refreshed the
+    // profile; per-field effects don't run then, because the sibling's own
+    // profile value did not change. Deliberately NO focused-input guard
+    // here: skipping the sync while focused let a profile that loads after
+    // mount leave the focused input empty, and blurring it then saved ""
+    // over the stored name.
+    useEffect(() => {
+        setDisplayName(profile?.displayName ?? "");
+    }, [profile?.displayName]);
 
     useEffect(() => {
-        if (profile?.displayName) {
-            setDisplayName(profile.displayName);
-        }
-        if (profile?.organisation) {
-            setOrganisation(profile.organisation);
-        }
-    }, [profile]);
+        setOrganisation(profile?.organisation ?? "");
+    }, [profile?.organisation]);
 
     useEffect(() => {
         if (user?.email) {
@@ -108,6 +121,10 @@ export default function SettingsPage() {
     };
 
     const handleSaveEmail = async () => {
+        if (requiresPasswordForEmailChange) {
+            setGoogleEmailModalOpen(true);
+            return;
+        }
         const nextEmail = email.trim();
         if (!nextEmail || nextEmail === user?.email) return;
 
@@ -164,28 +181,34 @@ export default function SettingsPage() {
     };
 
     const handleSaveDisplayName = async () => {
+        const nextName = displayName.trim();
+        if (nextName === (profile?.displayName ?? "")) return;
         setIsSavingName(true);
-        const success = await updateDisplayName(displayName.trim());
+        setNameError(null);
+        const success = await updateDisplayName(nextName);
         setIsSavingName(false);
 
         if (success) {
             setSaved(true);
             setTimeout(() => setSaved(false), 2000);
         } else {
-            alert("Failed to update display name. Please try again.");
+            setNameError("Unable to save your name.");
         }
     };
 
     const handleSaveOrganisation = async () => {
+        const nextOrganisation = organisation.trim();
+        if (nextOrganisation === (profile?.organisation ?? "")) return;
         setIsSavingOrg(true);
-        const success = await updateOrganisation(organisation.trim());
+        setOrgError(null);
+        const success = await updateOrganisation(nextOrganisation);
         setIsSavingOrg(false);
 
         if (success) {
             setOrgSaved(true);
             setTimeout(() => setOrgSaved(false), 2000);
         } else {
-            alert("Failed to update organisation. Please try again.");
+            setOrgError("Unable to save your organisation.");
         }
     };
 
@@ -201,70 +224,67 @@ export default function SettingsPage() {
                 <SettingsSection>
                     <div className="space-y-8 p-4">
                         <div>
-                            <FieldLabel className="text-sm text-gray-600">
-                                Display Name
-                            </FieldLabel>
+                            <div className="flex items-start justify-between gap-3">
+                                <FieldLabel>Display Name</FieldLabel>
+                                <span
+                                    className={`text-xs ${nameError ? "text-red-600" : "text-gray-400"}`}
+                                    aria-live="polite"
+                                >
+                                    {isSavingName
+                                        ? "Saving..."
+                                        : nameError
+                                          ? nameError
+                                          : saved
+                                            ? "Saved"
+                                            : ""}
+                                </span>
+                            </div>
                             <div className="space-y-2">
                                 <SettingsTextInput
                                     type="text"
                                     value={displayName}
-                                    onChange={(e) =>
-                                        setDisplayName(e.target.value)
+                                    onChange={(e) => {
+                                        setDisplayName(e.target.value);
+                                        setNameError(null);
+                                        setSaved(false);
+                                    }}
+                                    onBlur={() =>
+                                        void handleSaveDisplayName()
                                     }
                                     placeholder="Enter your name"
                                 />
-                                <div className="flex justify-end">
-                                    <button
-                                        type="button"
-                                        onClick={handleSaveDisplayName}
-                                        disabled={
-                                            isSavingName ||
-                                            !displayName.trim() ||
-                                            saved
-                                        }
-                                        className="text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
-                                    >
-                                        {isSavingName
-                                            ? "Saving..."
-                                            : saved
-                                              ? "Saved"
-                                              : "Save"}
-                                    </button>
-                                </div>
                             </div>
                         </div>
                         <div>
-                            <FieldLabel className="text-sm text-gray-600">
-                                Organisation
-                            </FieldLabel>
+                            <div className="flex items-start justify-between gap-3">
+                                <FieldLabel>Organisation</FieldLabel>
+                                <span
+                                    className={`text-xs ${orgError ? "text-red-600" : "text-gray-400"}`}
+                                    aria-live="polite"
+                                >
+                                    {isSavingOrg
+                                        ? "Saving..."
+                                        : orgError
+                                          ? orgError
+                                          : orgSaved
+                                            ? "Saved"
+                                            : ""}
+                                </span>
+                            </div>
                             <div className="space-y-2">
                                 <SettingsTextInput
                                     type="text"
                                     value={organisation}
-                                    onChange={(e) =>
-                                        setOrganisation(e.target.value)
+                                    onChange={(e) => {
+                                        setOrganisation(e.target.value);
+                                        setOrgError(null);
+                                        setOrgSaved(false);
+                                    }}
+                                    onBlur={() =>
+                                        void handleSaveOrganisation()
                                     }
                                     placeholder="Enter your organisation"
                                 />
-                                <div className="flex justify-end">
-                                    <button
-                                        type="button"
-                                        onClick={handleSaveOrganisation}
-                                        disabled={
-                                            isSavingOrg ||
-                                            organisation.trim() ===
-                                                (profile?.organisation ?? "") ||
-                                            orgSaved
-                                        }
-                                        className="text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
-                                    >
-                                        {isSavingOrg
-                                            ? "Saving..."
-                                            : orgSaved
-                                              ? "Saved"
-                                              : "Save"}
-                                    </button>
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -281,6 +301,7 @@ export default function SettingsPage() {
                         <SettingsTextInput
                             type="email"
                             value={email}
+                            disabled={requiresPasswordForEmailChange}
                             onChange={(event) => {
                                 setEmail(event.target.value);
                                 setEmailStatus(null);
@@ -309,14 +330,18 @@ export default function SettingsPage() {
                                 onClick={handleSaveEmail}
                                 disabled={
                                     isSavingEmail ||
-                                    !email.trim() ||
-                                    email.trim() === user.email ||
-                                    email.trim() === user.pendingEmail ||
-                                    emailSaved
+                                    (!requiresPasswordForEmailChange &&
+                                        (!email.trim() ||
+                                            email.trim() === user.email ||
+                                            email.trim() ===
+                                                user.pendingEmail ||
+                                            emailSaved))
                                 }
                                 className="text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
                             >
-                                {isSavingEmail
+                                {requiresPasswordForEmailChange
+                                    ? "Update"
+                                    : isSavingEmail
                                     ? "Saving..."
                                     : emailSaved
                                       ? "Saved"
@@ -389,6 +414,25 @@ export default function SettingsPage() {
                 message={emailWarning?.message}
                 onClose={() => setEmailWarning(null)}
             />
+            <Modal
+                open={googleEmailModalOpen}
+                onClose={() => setGoogleEmailModalOpen(false)}
+                breadcrumbs={["Account", "Change email"]}
+                size="sm"
+                className="h-auto"
+                primaryAction={{
+                    label: "Go to Security",
+                    onClick: () => {
+                        setGoogleEmailModalOpen(false);
+                        router.push("/settings/security");
+                    },
+                }}
+            >
+                <p className="pb-5 text-sm leading-relaxed text-gray-600">
+                    Your account was created with Google. To change your email,
+                    first add a password in Settings &gt; Security &gt; Password.
+                </p>
+            </Modal>
             <MfaVerificationPopup
                 open={accountDeleteMfaOpen}
                 onCancel={() => setAccountDeleteMfaOpen(false)}

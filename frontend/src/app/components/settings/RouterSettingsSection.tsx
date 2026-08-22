@@ -7,7 +7,7 @@ import {
     LiquidDropdownSurface,
 } from "@/app/components/ui/liquid-dropdown";
 import { FieldLabel } from "@/app/components/ui/form-field";
-import { PillButton } from "@/app/components/ui/pill-button";
+import { OptionPill } from "@/app/components/ui/option-pill";
 import { SETTINGS_CONTROL_CLASS } from "@/app/components/settings/SettingsTextInput";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import {
@@ -309,8 +309,8 @@ function RouterModelsSetting({
 
     return (
         <div className="px-4 py-5">
-            <div className="mb-2 flex items-center gap-2">
-                <FieldLabel className="text-sm">{label} models</FieldLabel>
+            <div className="flex items-center gap-2">
+                <FieldLabel>{label} models</FieldLabel>
                 {saving && (
                     <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
                 )}
@@ -485,14 +485,11 @@ function RouterModelsSetting({
             {selection.length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-1.5">
                     {selection.map((model) => (
-                        <PillButton
+                        <OptionPill
                             key={model}
-                            tone="white"
-                            size="sm"
                             disabled={saving}
                             aria-label={`Remove ${model}`}
                             title={`Remove ${model}`}
-                            className="max-w-full font-normal"
                             onClick={() =>
                                 void save(
                                     selection.filter(
@@ -503,7 +500,7 @@ function RouterModelsSetting({
                         >
                             <span className="truncate">{model}</span>
                             <X className="h-3 w-3 shrink-0 text-gray-400" />
-                        </PillButton>
+                        </OptionPill>
                     ))}
                 </div>
             )}

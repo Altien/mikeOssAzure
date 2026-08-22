@@ -3,13 +3,19 @@ const AUTH_REDIRECT_PATHS = new Set([
     "/login",
     "/reset-password",
     "/settings",
+    "/onboarding/profile",
+    "/onboarding/practice",
 ]);
 
 export function safeAuthNext(
     candidate: string | null | undefined,
     fallback = "/assistant",
 ): string {
-    if (!candidate || !candidate.startsWith("/") || candidate.startsWith("//")) {
+    if (
+        !candidate ||
+        !candidate.startsWith("/") ||
+        candidate.startsWith("//")
+    ) {
         return fallback;
     }
     if (candidate.includes("\\") || /[\u0000-\u001f\u007f]/.test(candidate)) {

@@ -14,6 +14,7 @@ import {
     MikeApiError,
     addDocumentToProject,
     clearTabularCells,
+    completeUserOnboarding,
     copyDocumentVersionFromDocument,
     createChat,
     createQuickAction,
@@ -125,6 +126,7 @@ import {
     streamProjectChat,
     streamTabularChat,
     streamTabularGeneration,
+    syncUserPasswordSet,
     unhideWorkflow,
     updateMcpConnector,
     updateProject,
@@ -1899,6 +1901,33 @@ describe("thin endpoint wrappers", () => {
             url: "/user/profile",
             method: "PATCH",
             body: { displayName: "Amal", titleModel: "m1" },
+        },
+        {
+            name: "completeUserOnboarding (defaults)",
+            call: () => completeUserOnboarding(),
+            url: "/user/onboarding",
+            method: "POST",
+            body: {},
+        },
+        {
+            name: "completeUserOnboarding (personalisation)",
+            call: () =>
+                completeUserOnboarding({
+                    jurisdiction: "Singapore",
+                    practiceAreas: ["Litigation"],
+                }),
+            url: "/user/onboarding",
+            method: "POST",
+            body: {
+                jurisdiction: "Singapore",
+                practiceAreas: ["Litigation"],
+            },
+        },
+        {
+            name: "syncUserPasswordSet",
+            call: () => syncUserPasswordSet(),
+            url: "/user/security/password-set",
+            method: "POST",
         },
         {
             name: "updateUserMfaOnLogin",
