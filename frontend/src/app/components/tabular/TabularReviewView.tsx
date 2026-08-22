@@ -823,11 +823,7 @@ export function TRView({ reviewId, projectId }: Props) {
                                     disabled: loading || savingColumnsConfig,
                                     title: "Add documents",
                                     icon: <Upload className="h-4 w-4" />,
-                                    label: (
-                                        <span className="hidden sm:inline">
-                                            Documents
-                                        </span>
-                                    ),
+                                    iconOnly: true,
                                 },
                             ],
                         },

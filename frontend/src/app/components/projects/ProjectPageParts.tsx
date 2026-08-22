@@ -1,6 +1,6 @@
 "use client";
 
-import { type CSSProperties, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import {
     CornerDownRight,
     Loader2,
@@ -19,7 +19,10 @@ import type { Project } from "@/app/components/shared/types";
 import type { DocumentVersion } from "@/app/lib/mikeApi";
 import { RowActions } from "@/app/components/shared/RowActions";
 import { HeaderActionsMenu } from "@/app/components/shared/HeaderActionsMenu";
-import { TABLE_PRIMARY_CELL_WIDTH_CLASS } from "@/app/components/shared/TablePrimitive";
+import {
+    TABLE_PRIMARY_CELL_WIDTH_CLASS,
+    tableTreeCellStyle,
+} from "@/app/components/shared/TablePrimitive";
 
 export type ProjectWorkspaceSection = "documents" | "assistant" | "reviews";
 
@@ -35,17 +38,7 @@ export const NAME_COL_W = TABLE_PRIMARY_CELL_WIDTH_CLASS;
 export const DOC_NAME_COL_W =
     "w-[292px] sm:w-[332px] md:w-[392px] lg:w-[452px] xl:w-[532px] 2xl:w-[592px] shrink-0";
 
-// Each nested row advances by the checkbox width (10px) plus the 12px gap,
-// placing its checkbox directly beneath its parent folder's chevron.
-const TREE_CONTROL_WIDTH_PX = 22;
-const TREE_NAME_PADDING_PX = 12;
-
-export function treeNameCellStyle(depth: number): CSSProperties | undefined {
-    if (depth <= 0) return undefined;
-    return {
-        paddingLeft: TREE_NAME_PADDING_PX + depth * TREE_CONTROL_WIDTH_PX,
-    };
-}
+export const treeNameCellStyle = tableTreeCellStyle;
 
 export function formatBytes(bytes: number): string {
     if (bytes < 1024) return `${bytes} B`;
@@ -399,7 +392,7 @@ export function ProjectPageHeader({
                   onClick: onAddDocuments ?? undefined,
                   disabled: !onAddDocuments,
                   icon: <Upload className="h-4 w-4" />,
-                  label: <span className="hidden sm:inline">Documents</span>,
+                  iconOnly: true,
                   title: "Add documents",
               }
             : activeSection === "assistant"

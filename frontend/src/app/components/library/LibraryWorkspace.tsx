@@ -13,7 +13,7 @@ import {
     useState,
 } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, Plus, Upload } from "lucide-react";
+import { ChevronLeft, FolderUp, Plus, Upload } from "lucide-react";
 import { DocTable } from "@/app/components/documents/DocTable";
 import type {
   DocTableFolderBreadcrumb,
@@ -37,6 +37,7 @@ import {
     moveLibraryFolder,
     renameLibraryDocument,
     renameLibraryFolder,
+  resolveLibraryFolderPath,
   searchLibraryDocuments,
     uploadLibraryDocument,
     type LibraryKind,
@@ -639,6 +640,9 @@ export function LibraryCollectionPage({
     const [createFolderAction, setCreateFolderAction] = useState<
         (() => void) | null
     >(null);
+    const [uploadFolderAction, setUploadFolderAction] = useState<
+        (() => void) | null
+    >(null);
     const [folderBackAction, setFolderBackAction] = useState<
         (() => void) | null
     >(null);
@@ -659,6 +663,12 @@ export function LibraryCollectionPage({
     const handleCreateFolderActionChange = useCallback(
         (action: (() => void) | null) => {
             setCreateFolderAction(() => action);
+        },
+        [],
+    );
+    const handleUploadFolderActionChange = useCallback(
+        (action: (() => void) | null) => {
+            setUploadFolderAction(() => action);
         },
         [],
     );
@@ -833,13 +843,25 @@ export function LibraryCollectionPage({
 
     const operations = useMemo(
         () => ({
-            uploadDocument: (file: File) => uploadLibraryDocument(kind, file),
+            uploadDocument: (file: File, folderId?: string | null) =>
+                uploadLibraryDocument(kind, file, folderId),
       refreshCollection: async () => {
         await loadLibrary(kind);
         setServerQueryRefreshVersion((current) => current + 1);
       },
             createFolder: (name: string, parentFolderId?: string | null) =>
                 createLibraryFolder(kind, name, parentFolderId),
+            resolveFolderPath: (
+                segments: string[],
+                baseFolderId: string | null,
+                conflictResolution?: "error" | "reuse" | "rename",
+            ) =>
+                resolveLibraryFolderPath(
+                    kind,
+                    segments,
+                    baseFolderId,
+                    conflictResolution,
+                ),
             renameFolder: (folderId: string, name: string) =>
                 renameLibraryFolder(kind, folderId, name),
       deleteFolder: (folderId: string) => deleteLibraryFolder(kind, folderId),
@@ -884,9 +906,7 @@ export function LibraryCollectionPage({
                         actions: [
                             {
                                 icon: <Upload className="h-3.5 w-3.5" />,
-                                label: (
-                  <span className="hidden sm:inline">{addCollectionLabel}</span>
-                                ),
+                                iconOnly: true,
                                 title: `Add ${addCollectionLabel}`,
                                 onClick: addDocumentsAction ?? undefined,
                                 disabled: !addDocumentsAction || loading,
@@ -914,6 +934,15 @@ export function LibraryCollectionPage({
                                 </TabPillButton>
                             )}
                             <TabPillButton
+                                onClick={uploadFolderAction ?? undefined}
+                                disabled={!uploadFolderAction || loading}
+                            >
+                                <FolderUp className="h-3.5 w-3.5" />
+                                <span className="hidden sm:inline">
+                                    Upload folder
+                                </span>
+                            </TabPillButton>
+                            <TabPillButton
                                 onClick={createFolderAction ?? undefined}
                                 disabled={!createFolderAction || loading}
                             >
@@ -934,6 +963,9 @@ export function LibraryCollectionPage({
                     operations={operations}
                     emptyStateTitle={title}
                     onAddDocumentsActionChange={handleAddDocumentsActionChange}
+                    onUploadFolderActionChange={
+                        handleUploadFolderActionChange
+                    }
           onCreateFolderActionChange={handleCreateFolderActionChange}
                     onFolderViewBackActionChange={handleFolderBackActionChange}
                     onFolderViewChange={handleFolderViewChange}

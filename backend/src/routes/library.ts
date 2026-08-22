@@ -458,8 +458,18 @@ libraryRouter.post(
     if (!kind)
       return void res.status(404).json({ detail: "Library not found" });
     const db = createServerSupabase();
+    const folderId =
+      typeof req.body?.folder_id === "string" && req.body.folder_id.trim()
+        ? req.body.folder_id.trim()
+        : null;
+    if (folderId) {
+      const folder = await loadLibraryFolder(db, userId, kind, folderId);
+      if (!folder)
+        return void res.status(404).json({ detail: "Folder not found" });
+    }
     await handleDocumentUpload(req, res, userId, null, db, {
       libraryKind: kind,
+      libraryFolderId: folderId,
     });
   },
 );
@@ -501,6 +511,63 @@ libraryRouter.get(
     }
 
     res.json({ folders: path });
+  },
+);
+
+// POST /library/:kind/folder-paths/resolve
+libraryRouter.post(
+  "/:kind/folder-paths/resolve",
+  requireAuth,
+  async (req, res) => {
+    const userId = res.locals.userId as string;
+    const kind = normalizeLibraryKind(req.params.kind);
+    if (!kind)
+      return void res.status(404).json({ detail: "Library not found" });
+    const body = req.body as {
+      base_folder_id?: string | null;
+      segments?: unknown;
+      conflict_resolution?: unknown;
+    };
+    const rawSegments = Array.isArray(body.segments) ? body.segments : [];
+    const segments = Array.isArray(body.segments)
+      ? body.segments
+          .filter((segment): segment is string => typeof segment === "string")
+          .map((segment) => segment.trim())
+      : [];
+    if (
+      rawSegments.length !== segments.length ||
+      segments.length === 0 ||
+      segments.length > 100 ||
+      segments.some((segment) => !segment || segment.length > 255)
+    ) {
+      return void res.status(400).json({ detail: "Invalid folder path" });
+    }
+    const conflictResolution =
+      body.conflict_resolution === "reuse" ||
+      body.conflict_resolution === "rename"
+        ? body.conflict_resolution
+        : "error";
+    const baseFolderId =
+      typeof body.base_folder_id === "string" && body.base_folder_id.trim()
+        ? body.base_folder_id.trim()
+        : null;
+
+    const db = createServerSupabase();
+    if (baseFolderId) {
+      const parent = await loadLibraryFolder(db, userId, kind, baseFolderId);
+      if (!parent)
+        return void res.status(404).json({ detail: "Parent folder not found" });
+    }
+
+    const { data, error } = await db.rpc("resolve_library_folder_path", {
+      target_user_id: userId,
+      target_library_kind: kind,
+      base_folder_id: baseFolderId,
+      path_segments: segments,
+      conflict_resolution: conflictResolution,
+    });
+    if (error) return void sendInternalError(res, error);
+    res.json(data);
   },
 );
 

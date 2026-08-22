@@ -40,6 +40,7 @@ import {
   SkeletonDot,
   SkeletonLine,
   TABLE_CHECKBOX_CLASS,
+  tableTreeCellStyle,
   TableBody,
   TableCell,
   TableEmptyState,
@@ -871,7 +872,7 @@ function WorkflowTable({
                 onClick={onCreate}
                 className="px-3"
               >
-                <Plus className="h-3.5 w-3.5" /> Create
+                Create
               </PillButton>
             }
           />
@@ -1083,7 +1084,7 @@ function AddonTable({
         onClick={() => onOpen(addon)}
       >
         <TablePrimaryCell
-          className={nested ? "pl-12" : undefined}
+          style={nested ? tableTreeCellStyle(1) : undefined}
           label={addon.title}
           selected={selectedIds.includes(addon.id)}
           onSelectionChange={() => toggleOne(addon.id)}
