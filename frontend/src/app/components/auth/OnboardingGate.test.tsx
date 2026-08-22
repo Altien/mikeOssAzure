@@ -79,6 +79,21 @@ describe("OnboardingGate", () => {
         expect(state.replace).not.toHaveBeenCalled();
     });
 
+    it.each(["/reset-password", "/forgot-password", "/verify-mfa"])(
+        "lets incomplete users reach the credential-recovery page %s",
+        (path) => {
+            state.pathname = path;
+            render(
+                <OnboardingGate>
+                    <div>Recovery page</div>
+                </OnboardingGate>,
+            );
+
+            expect(screen.getByText("Recovery page")).toBeInTheDocument();
+            expect(state.replace).not.toHaveBeenCalled();
+        },
+    );
+
     it("redirects completed users away from onboarding", async () => {
         state.pathname = "/onboarding/practice";
         state.profile = {

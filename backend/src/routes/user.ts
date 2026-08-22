@@ -181,6 +181,21 @@ function mcpOAuthPopupCsp(nonce: string) {
 
 const PROFILE_SELECT =
     "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, quick_actions_visible";
+// PROFILE_SELECT minus the 20260821 onboarding / password-capability columns,
+// for databases that have not applied those migrations yet. Migration 02
+// (password_set_at) gets its own tier so a database that applied 01 but not
+// 02 keeps its live onboarding/personalisation columns.
+const PROFILE_SELECT_NO_PASSWORD =
+    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, quick_actions_visible";
+const PROFILE_SELECT_NO_ONBOARDING =
+    "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, quick_actions_visible";
+const ONBOARDING_PROFILE_COLUMNS = [
+    "jurisdiction",
+    "practice_setting",
+    "professional_title",
+    "practice_areas",
+    "onboarding_version",
+];
 const PROFILE_SELECT_NO_QUICK_ACTIONS =
     "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us";
 const PROFILE_SELECT_NO_LEGAL =
@@ -217,8 +232,47 @@ async function selectProfile(
             ? await fullQuery.single()
             : await fullQuery.maybeSingle();
     if (!full.error) return full;
+    let cascadeError: unknown = full.error;
 
-    if (isMissingProfileColumn(full.error, "quick_actions_visible")) {
+    // A database that predates the 20260821 migrations rejects the full
+    // select on the first of the new columns, which would otherwise skip
+    // every tier below (they key on *their* new column's name) and land on
+    // a select that silently resets the legal-research and quick-action
+    // preferences to defaults. Two retry tiers, most-migrated first:
+    // missing only password_set_at (migration 02) keeps the live
+    // onboarding columns; missing the migration-01 columns drops them all,
+    // and serializeProfile treats the absent fields as legacy-exempt —
+    // matching what the migration's backfill would write.
+    if (isMissingProfileColumn(cascadeError, "password_set_at")) {
+        const prePasswordQuery = db
+            .from("user_profiles")
+            .select(PROFILE_SELECT_NO_PASSWORD)
+            .eq("user_id", userId);
+        const prePassword =
+            mode === "single"
+                ? await prePasswordQuery.single()
+                : await prePasswordQuery.maybeSingle();
+        if (!prePassword.error) return prePassword;
+        cascadeError = prePassword.error;
+    }
+    if (
+        ONBOARDING_PROFILE_COLUMNS.some((column) =>
+            isMissingProfileColumn(cascadeError, column),
+        )
+    ) {
+        const preOnboardingQuery = db
+            .from("user_profiles")
+            .select(PROFILE_SELECT_NO_ONBOARDING)
+            .eq("user_id", userId);
+        const preOnboarding =
+            mode === "single"
+                ? await preOnboardingQuery.single()
+                : await preOnboardingQuery.maybeSingle();
+        if (!preOnboarding.error) return preOnboarding;
+        cascadeError = preOnboarding.error;
+    }
+
+    if (isMissingProfileColumn(cascadeError, "quick_actions_visible")) {
         const previousQuery = db
             .from("user_profiles")
             .select(PROFILE_SELECT_NO_QUICK_ACTIONS)
@@ -639,6 +693,12 @@ function validateProfilePayload(body: unknown):
     if (!personalisation.ok) return personalisation;
     Object.assign(update, personalisation.update);
 
+    // Both fields flow into every chat's system prompt via
+    // buildUserPersonalisationPrompt, so an unbounded value would inflate
+    // token cost on every message. Truncate (not reject) at 200 characters:
+    // that is exactly what the signup trigger (handle_new_user's
+    // left(..., 200)) does to the same columns, and rejection would strand
+    // any over-long value written before this cap existed.
     if ("displayName" in raw) {
         if (raw.displayName !== null && typeof raw.displayName !== "string") {
             return {
@@ -646,7 +706,8 @@ function validateProfilePayload(body: unknown):
                 detail: "displayName must be a string or null",
             };
         }
-        update.display_name = raw.displayName?.trim() || null;
+        update.display_name =
+            raw.displayName?.trim().slice(0, 200) || null;
     }
 
     if ("organisation" in raw) {
@@ -656,7 +717,8 @@ function validateProfilePayload(body: unknown):
                 detail: "organisation must be a string or null",
             };
         }
-        update.organisation = raw.organisation?.trim() || null;
+        update.organisation =
+            raw.organisation?.trim().slice(0, 200) || null;
     }
 
     if ("tabularModel" in raw) {

@@ -9,6 +9,7 @@ import {
     usePersonalisationFields,
 } from "@/app/components/settings/PersonalisationFields";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import type { PersonalisationDetails } from "@/app/lib/mikeApi";
 
 function fieldStatus(
     field: PersonalisationField,
@@ -59,21 +60,41 @@ function PersonalisationForm({
     const latestSnapshotRef = useRef(initialSnapshot);
     const saveChainRef = useRef<Promise<void>>(Promise.resolve());
     const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const flushRef = useRef<(() => void) | null>(null);
 
     useEffect(() => {
-        const snapshot = JSON.stringify(form.details);
+        // A half-finished "Other …" box (ticked but empty) must not block
+        // saves of unrelated fields, and must never overwrite the stored
+        // value for its own group with a transient empty state — so those
+        // groups fall back to their last persisted values here.
+        const persisted = JSON.parse(
+            persistedSnapshotRef.current,
+        ) as PersonalisationDetails;
+        const details: PersonalisationDetails = {
+            ...form.details,
+            ...(form.invalidGroups.includes("jurisdiction")
+                ? { jurisdiction: persisted.jurisdiction }
+                : {}),
+            ...(form.invalidGroups.includes("practiceAreas")
+                ? { practiceAreas: persisted.practiceAreas }
+                : {}),
+        };
+        const snapshot = JSON.stringify(details);
         latestSnapshotRef.current = snapshot;
-        if (
-            !pendingField ||
-            form.validationError ||
-            snapshot === persistedSnapshotRef.current
-        ) {
+        flushRef.current = null;
+        // No per-field "is the edited group invalid" guard here: the
+        // substitution above already neutralises invalid groups, so the
+        // snapshot comparison alone decides. A guard keyed on the LAST
+        // edited field would drop an earlier still-pending change (edit
+        // Title, then tick an empty "Other" inside the debounce window —
+        // the Title edit must still be saved).
+        if (!pendingField || snapshot === persistedSnapshotRef.current) {
             return;
         }
 
         const field = pendingField;
-        const details = form.details;
-        const timeout = setTimeout(() => {
+        const fire = () => {
+            flushRef.current = null;
             saveChainRef.current = saveChainRef.current.then(async () => {
                 setSavingField(field);
                 setSavedField(null);
@@ -96,12 +117,14 @@ function PersonalisationForm({
                     );
                 }, 2000);
             });
-        }, 400);
+        };
+        const timeout = setTimeout(fire, 400);
+        flushRef.current = fire;
 
         return () => clearTimeout(timeout);
     }, [
         form.details,
-        form.validationError,
+        form.invalidGroups,
         pendingField,
         retryVersion,
         updatePersonalisation,
@@ -110,6 +133,9 @@ function PersonalisationForm({
     useEffect(
         () => () => {
             if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+            // A save still inside its debounce window when the user leaves
+            // the page fires immediately instead of being dropped.
+            flushRef.current?.();
         },
         [],
     );
@@ -134,6 +160,17 @@ function PersonalisationForm({
                                 fieldStatus(field, savingField, savedField)
                             }
                         />
+
+                        {form.validationError && !error && (
+                            <div
+                                className="mt-8 flex items-center justify-end text-xs"
+                                aria-live="polite"
+                            >
+                                <span className="text-red-600" role="alert">
+                                    {form.validationError}
+                                </span>
+                            </div>
+                        )}
 
                         {error && (
                             <div

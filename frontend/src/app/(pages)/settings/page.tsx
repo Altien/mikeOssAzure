@@ -53,10 +53,21 @@ export default function SettingsPage() {
     const requiresPasswordForEmailChange =
         user?.createdWithGoogle === true && profile?.passwordSet !== true;
 
+    // Each field syncs from the profile independently. A combined effect
+    // (both setters, keyed on both values) wiped in-progress text from the
+    // sibling input whenever one field's blur-autosave refreshed the
+    // profile; per-field effects don't run then, because the sibling's own
+    // profile value did not change. Deliberately NO focused-input guard
+    // here: skipping the sync while focused let a profile that loads after
+    // mount leave the focused input empty, and blurring it then saved ""
+    // over the stored name.
     useEffect(() => {
         setDisplayName(profile?.displayName ?? "");
+    }, [profile?.displayName]);
+
+    useEffect(() => {
         setOrganisation(profile?.organisation ?? "");
-    }, [profile?.displayName, profile?.organisation]);
+    }, [profile?.organisation]);
 
     useEffect(() => {
         if (user?.email) {

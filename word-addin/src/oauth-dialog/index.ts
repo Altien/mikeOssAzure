@@ -15,10 +15,22 @@ function setStatus(message: string): void {
   if (element) element.textContent = message;
 }
 
-function send(message: GoogleOAuthDialogMessage): void {
-  Office.context.ui.messageParent(JSON.stringify(message), {
-    targetOrigin: window.location.origin,
-  });
+function send(message: GoogleOAuthDialogMessage): boolean {
+  // No legacy (option-less) retry on failure: dropping targetOrigin would
+  // weaken the receiver's origin check (session.ts skips it when the host
+  // omits event.origin), and every host this add-in supports has the
+  // DialogOrigin 1.1 set. A visible failure beats a weaker handoff.
+  try {
+    Office.context.ui.messageParent(JSON.stringify(message), {
+      targetOrigin: window.location.origin,
+    });
+    return true;
+  } catch {
+    setStatus(
+      "Could not hand the session back to Word. Close this window and try signing in again."
+    );
+    return false;
+  }
 }
 
 function sendError(requestId: string, message: string): void {
@@ -32,8 +44,12 @@ function sendError(requestId: string, message: string): void {
 }
 
 function clearTemporaryAuthStorage(): void {
-  window.localStorage.removeItem(STORAGE_KEY);
-  window.localStorage.removeItem(`${STORAGE_KEY}-code-verifier`);
+  // localStorage is included only to sweep up sessions persisted there by
+  // earlier builds of this dialog; the client now writes sessionStorage.
+  for (const storage of [window.sessionStorage, window.localStorage]) {
+    storage.removeItem(STORAGE_KEY);
+    storage.removeItem(`${STORAGE_KEY}-code-verifier`);
+  }
   window.sessionStorage.removeItem(REQUEST_STORAGE_KEY);
 }
 
@@ -64,12 +80,19 @@ async function runGoogleOAuth(): Promise<void> {
     return;
   }
 
+  // This client exists only to run the PKCE round trip. Its persistence has
+  // to survive exactly one same-tab redirect (to Google and back), so it
+  // lives in sessionStorage — never localStorage, where a crash between the
+  // code exchange and cleanup would leave a full session readable on disk.
+  // The task pane's real session storage is OfficeRuntime.storage; browser
+  // storage must never hold long-lived credentials (see office-mock.ts).
   const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: {
+      autoRefreshToken: false,
       detectSessionInUrl: false,
       flowType: "pkce",
       persistSession: true,
-      storage: window.localStorage,
+      storage: window.sessionStorage,
       storageKey: STORAGE_KEY,
     },
   });
@@ -94,9 +117,15 @@ async function runGoogleOAuth(): Promise<void> {
       accessToken: data.session.access_token,
       refreshToken: data.session.refresh_token,
     };
+    // Deliberately NO supabase.auth.signOut() here: even scope "local"
+    // POSTs /logout with the session JWT, and GoTrue revokes that session's
+    // refresh token server-side — the very token being handed to the task
+    // pane below. Removing the persisted storage keys (next line) plus
+    // autoRefreshToken:false is the complete local cleanup.
     clearTemporaryAuthStorage();
-    setStatus("Signed in. You can return to Word.");
-    send(message);
+    if (send(message)) {
+      setStatus("Signed in. You can return to Word.");
+    }
     return;
   }
 
