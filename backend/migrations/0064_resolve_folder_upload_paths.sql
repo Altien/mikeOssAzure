@@ -2,8 +2,9 @@
 -- Advisory transaction locks serialize path creation within one project or
 -- one user library so two concurrent folder uploads cannot create the same
 -- path. Existing top-level folders are reported to the caller before any
--- mutation so the UI can explicitly cancel or create a suffixed copy. The
--- `reuse` mode is reserved for nested segments after the new root is chosen.
+-- mutation so the UI can confirm that the upload will use a suffixed name.
+-- The `reuse` mode is reserved for nested segments after that top-level choice
+-- has already been made.
 
 create or replace function public.resolve_project_folder_path(
   target_project_id uuid,
