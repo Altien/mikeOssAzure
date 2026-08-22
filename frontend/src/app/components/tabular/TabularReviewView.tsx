@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
     Plus,
     Loader2,
-    Pause,
+    Square,
     Play,
     ChevronDown,
     MessageSquare,
@@ -82,8 +82,7 @@ export function TRView({ reviewId, projectId }: Props) {
     const [columns, setColumns] = useState<ColumnConfig[]>([]);
     const [loading, setLoading] = useState(true);
     const [generating, setGenerating] = useState(false);
-    const [generationPaused, setGenerationPaused] = useState(false);
-    const [pausingGeneration, setPausingGeneration] = useState(false);
+    const [stoppingGeneration, setStoppingGeneration] = useState(false);
     const [generationGuard, setGenerationGuard] = useState<
         "running" | "stale" | null
     >(null);
@@ -139,7 +138,7 @@ export function TRView({ reviewId, projectId }: Props) {
     const actionsRef = useRef<HTMLDivElement>(null);
     const tableRef = useRef<TRTableHandle>(null);
     const generationAbortRef = useRef<AbortController | null>(null);
-    const pauseRequestedRef = useRef(false);
+    const stopRequestedRef = useRef(false);
 
     useEffect(
         () => () => {
@@ -324,7 +323,7 @@ export function TRView({ reviewId, projectId }: Props) {
         }
     }
 
-    async function refreshAfterPausedGeneration() {
+    async function refreshAfterStoppedGeneration() {
         for (let attempt = 0; attempt < 40; attempt += 1) {
             const detail = await getTabularReview(reviewId);
             if (!detail.review.is_running) {
@@ -357,9 +356,8 @@ export function TRView({ reviewId, projectId }: Props) {
 
         const generationAbort = new AbortController();
         generationAbortRef.current = generationAbort;
-        pauseRequestedRef.current = false;
-        setGenerationPaused(false);
-        setPausingGeneration(false);
+        stopRequestedRef.current = false;
+        setStoppingGeneration(false);
         setGenerating(true);
 
         try {
@@ -467,20 +465,20 @@ export function TRView({ reviewId, projectId }: Props) {
             }
         } finally {
             if (generationAbortRef.current === generationAbort) {
-                if (pauseRequestedRef.current) {
+                if (stopRequestedRef.current) {
                     try {
-                        await refreshAfterPausedGeneration();
+                        await refreshAfterStoppedGeneration();
                     } catch (err) {
                         console.error(
-                            "Failed to refresh the paused tabular review",
+                            "Failed to refresh the stopped tabular review",
                             err,
                         );
                     }
                 }
                 generationAbortRef.current = null;
-                pauseRequestedRef.current = false;
+                stopRequestedRef.current = false;
                 setGenerating(false);
-                setPausingGeneration(false);
+                setStoppingGeneration(false);
             }
         }
     }
@@ -494,7 +492,6 @@ export function TRView({ reviewId, projectId }: Props) {
             setRows(detail.rows);
             setDocuments(detail.documents);
             setColumns(detail.review.columns_config || []);
-            setGenerationPaused(false);
             setGenerationGuard(detail.review.is_running ? "running" : null);
         } catch (err) {
             console.error("Failed to load the latest tabular review", err);
@@ -503,10 +500,9 @@ export function TRView({ reviewId, projectId }: Props) {
         }
     }
 
-    function handlePauseGeneration() {
-        if (!generating || pausingGeneration) return;
-        setGenerationPaused(true);
-        setPausingGeneration(true);
+    function handleStopGeneration() {
+        if (!generating || stoppingGeneration) return;
+        setStoppingGeneration(true);
         setCells((current) =>
             current.map((cell) =>
                 cell.status === "generating"
@@ -519,7 +515,7 @@ export function TRView({ reviewId, projectId }: Props) {
                 ? { ...current, status: "pending" as const }
                 : current,
         );
-        pauseRequestedRef.current = true;
+        stopRequestedRef.current = true;
         generationAbortRef.current?.abort();
     }
 
@@ -947,36 +943,32 @@ export function TRView({ reviewId, projectId }: Props) {
                             actions: [
                                 {
                                     onClick: generating
-                                        ? handlePauseGeneration
+                                        ? handleStopGeneration
                                         : handleGenerate,
                                     disabled:
-                                        pausingGeneration ||
+                                        stoppingGeneration ||
                                         columns.length === 0 ||
                                         rows.length === 0 ||
                                         savingColumnsConfig,
-                                    title: pausingGeneration
-                                        ? "Pausing generation"
+                                    title: stoppingGeneration
+                                        ? "Stopping generation"
                                         : generating
-                                          ? "Pause generation"
-                                          : generationPaused
-                                            ? "Resume generation"
-                                            : "Run review",
-                                    icon: pausingGeneration ? (
+                                          ? "Stop generation"
+                                          : "Run review",
+                                    icon: stoppingGeneration ? (
                                         <Loader2 className="h-4 w-4 animate-spin" />
                                     ) : generating ? (
-                                        <Pause className="h-4 w-4" />
+                                        <Square className="h-3.5 w-3.5 fill-current" />
                                     ) : (
                                         <Play className="h-4 w-4" />
                                     ),
                                     label: (
                                         <span className="hidden sm:inline">
-                                            {pausingGeneration
-                                                ? "Pausing…"
+                                            {stoppingGeneration
+                                                ? "Stopping…"
                                                 : generating
-                                                  ? "Pause"
-                                                  : generationPaused
-                                                    ? "Resume"
-                                                    : "Run"}
+                                                  ? "Stop"
+                                                  : "Run"}
                                         </span>
                                     ),
                                 },
@@ -1405,7 +1397,7 @@ export function TRView({ reviewId, projectId }: Props) {
             <WarningPopup
                 open={generationGuard === "running"}
                 title="Tabular review is already running"
-                message="This review is being run in another tab or by another collaborator. Wait for that run to finish or be paused before trying again."
+                message="This review is being run in another tab or by another collaborator. Wait for that run to finish or be stopped before trying again."
                 onClose={() => {
                     if (!reloadingLatestReview) setGenerationGuard(null);
                 }}
