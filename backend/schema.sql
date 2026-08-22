@@ -2293,7 +2293,7 @@ as $$
   offset greatest(coalesce(p_offset, 0), 0);
 $$;
 
-+-- Resolve uploaded folder paths against the complete server-side hierarchy.
+-- Resolve uploaded folder paths against the complete server-side hierarchy.
 -- Advisory transaction locks serialize path creation within one project or
 -- one user library so two concurrent folder uploads cannot create the same
 -- path. Existing top-level folders are reported to the caller before any

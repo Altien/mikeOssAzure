@@ -614,9 +614,11 @@ describe("projects.routes", () => {
         .send({ segments: ["NDAs"] });
 
       expect(res.status).toBe(500);
-      expect(res.body).toEqual({
-        detail: "Could not prepare this folder upload. Please try again.",
+      expect(res.body).toMatchObject({
+        code: "internal_error",
+        detail: "Something went wrong. Please try again.",
       });
+      expect(res.body.request_id).toEqual(expect.any(String));
       expect(JSON.stringify(res.body)).not.toContain(rawError);
       expect(consoleError).toHaveBeenCalled();
       consoleError.mockRestore();

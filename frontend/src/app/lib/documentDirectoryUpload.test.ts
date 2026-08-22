@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
     collectDroppedDocumentUploadEntries,
+    dataTransferHasDirectory,
     DOCUMENT_UPLOAD_CONCURRENCY,
     documentUploadEntriesFromFiles,
     documentUploadFolderSegments,
@@ -21,6 +22,22 @@ function folderFile(name: string, relativePath: string) {
 }
 
 describe("document directory upload paths", () => {
+    it("returns immediately when there is no concurrent work", async () => {
+        const worker = vi.fn(async (value: number) => value);
+
+        await expect(settleWithConcurrency([], 0, worker)).resolves.toEqual([]);
+        expect(worker).not.toHaveBeenCalled();
+    });
+
+    it("clamps non-positive concurrency to one worker", async () => {
+        await expect(
+            settleWithConcurrency([1, 2], 0, async (value) => value * 2),
+        ).resolves.toEqual([
+            { status: "fulfilled", value: 2 },
+            { status: "fulfilled", value: 4 },
+        ]);
+    });
+
     it("keeps directory upload concurrency bounded and preserves result order", async () => {
         let active = 0;
         let maxActive = 0;
@@ -84,6 +101,9 @@ describe("document directory upload paths", () => {
 
         expect(documentUploadPathSegments(entry)).toEqual(["memo.docx"]);
         expect(documentUploadFolderSegments(entry)).toEqual([]);
+        expect(
+            documentUploadPathSegments({ file, relativePath: "" }),
+        ).toEqual(["memo.docx"]);
     });
 
     it("summarizes a selected directory as one top-level folder row", () => {
@@ -111,6 +131,11 @@ describe("document directory upload paths", () => {
             { kind: "folder", name: "Matter" },
             { kind: "file", name: "memo.docx" },
         ]);
+        expect(
+            documentUploadProgressEntries([
+                { file: new File(["memo"], "memo.docx"), relativePath: "." },
+            ]),
+        ).toEqual([{ kind: "file", name: "memo.docx" }]);
     });
 
     it("does not show an unresolved folder as an uploading row", () => {
@@ -196,6 +221,41 @@ describe("document directory upload paths", () => {
         ]);
     });
 
+    it("detects directory entries in a drag payload", () => {
+        const directoryItem = {
+            webkitGetAsEntry: () => ({ isDirectory: true }),
+        };
+        const fileItem = {
+            webkitGetAsEntry: () => ({ isDirectory: false }),
+        };
+
+        expect(
+            dataTransferHasDirectory({
+                items: [fileItem, directoryItem],
+            } as unknown as DataTransfer),
+        ).toBe(true);
+        expect(
+            dataTransferHasDirectory({
+                items: [{}, fileItem],
+            } as unknown as DataTransfer),
+        ).toBe(false);
+    });
+
+    it("falls back to the FileList when directory entry APIs are unavailable", async () => {
+        const file = new File(["memo"], "memo.docx");
+        const dataTransfer = {
+            items: [
+                { kind: "string" },
+                { kind: "file", webkitGetAsEntry: () => null },
+            ],
+            files: [file],
+        } as unknown as DataTransfer;
+
+        await expect(
+            collectDroppedDocumentUploadEntries(dataTransfer),
+        ).resolves.toEqual([{ file, relativePath: "memo.docx" }]);
+    });
+
     it("confirms before creating a suffixed folder", async () => {
         const resolveFolderPath = vi
             .fn()
@@ -232,6 +292,26 @@ describe("document directory upload paths", () => {
             "rename",
         );
         expect(result?.resolved_name).toBe("NDAs (2)");
+    });
+
+    it("returns a conflict-free root folder without prompting", async () => {
+        const resolution = {
+            conflict: false as const,
+            folder_id: "folder-1",
+            resolved_name: "NDAs",
+            folders: [],
+        };
+        const chooseConflict = vi.fn();
+
+        await expect(
+            resolveDocumentUploadRootFolder({
+                rootFolderName: "NDAs",
+                baseFolderId: "parent-1",
+                resolveFolderPath: vi.fn().mockResolvedValue(resolution),
+                chooseConflict,
+            }),
+        ).resolves.toEqual(resolution);
+        expect(chooseConflict).not.toHaveBeenCalled();
     });
 
     it("does not create a suffixed folder when the alert is dismissed", async () => {
