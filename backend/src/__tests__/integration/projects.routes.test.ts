@@ -503,6 +503,107 @@ describe("projects.routes", () => {
     });
   });
 
+  describe("folder upload path resolution", () => {
+    it("resolves a project path through the atomic RPC", async () => {
+      const captured = captureRpcArgs();
+      supabaseState.rpc = {
+        data: {
+          conflict: false,
+          folder_id: "folder-2",
+          resolved_name: "NDAs (2)",
+          folders: [],
+        },
+        error: null,
+      };
+
+      const res = await request(app)
+        .post("/projects/p1/folder-paths/resolve")
+        .set(...AUTH)
+        .send({
+          segments: ["NDAs"],
+          base_folder_id: null,
+          conflict_resolution: "rename",
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.resolved_name).toBe("NDAs (2)");
+      expect(captured.name).toBe("resolve_project_folder_path");
+      expect(captured.args).toEqual({
+        target_project_id: "p1",
+        target_user_id: "u1",
+        base_folder_id: null,
+        path_segments: ["NDAs"],
+        conflict_resolution: "rename",
+      });
+    });
+
+    it("marks project replacement conflicts as owner-only", async () => {
+      checkProjectAccess.mockResolvedValue({
+        ok: true,
+        isOwner: false,
+        project: { id: "p1", user_id: "u2", shared_with: ["u1@test.local"] },
+      });
+      supabaseState.rpc = {
+        data: {
+          conflict: true,
+          folder_name: "NDAs",
+          existing_folder_id: "folder-1",
+          suggested_name: "NDAs (2)",
+        },
+        error: null,
+      };
+
+      const res = await request(app)
+        .post("/projects/p1/folder-paths/resolve")
+        .set(...AUTH)
+        .send({ segments: ["NDAs"] });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        conflict: true,
+        can_replace: false,
+        suggested_name: "NDAs (2)",
+      });
+    });
+
+    it("returns a replaceable conflict for the user's library", async () => {
+      supabaseState.rpc = {
+        data: {
+          conflict: true,
+          folder_name: "NDAs",
+          existing_folder_id: "folder-1",
+          suggested_name: "NDAs (3)",
+        },
+        error: null,
+      };
+
+      const res = await request(app)
+        .post("/library/files/folder-paths/resolve")
+        .set(...AUTH)
+        .send({ segments: ["NDAs"] });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        conflict: true,
+        can_replace: true,
+        suggested_name: "NDAs (3)",
+      });
+    });
+
+    it("rejects malformed path segments before calling the RPC", async () => {
+      const captured = captureRpcArgs();
+
+      const res = await request(app)
+        .post("/library/files/folder-paths/resolve")
+        .set(...AUTH)
+        .send({ segments: ["NDAs", 42] });
+
+      expect(res.status).toBe(400);
+      expect(res.body.detail).toBe("Invalid folder path");
+      expect(captured.name).toBeUndefined();
+    });
+  });
+
     // ── POST /projects (create) ───────────────────────────────────────────
     describe("POST /projects", () => {
         it("returns 400 when name is missing/blank", async () => {

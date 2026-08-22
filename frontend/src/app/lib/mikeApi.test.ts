@@ -113,6 +113,8 @@ import {
     renameProjectFolder,
     renameTabularChat,
     replaceDocumentVersionFile,
+    resolveLibraryFolderPath,
+    resolveProjectFolderPath,
     resolveDocumentEdit,
     saveApiKey,
     bulkDeleteLibraryDocuments,
@@ -1601,6 +1603,20 @@ describe("multipart upload endpoints", () => {
         expect(init.headers).toEqual({ Authorization: "Bearer token-123" });
     });
 
+    it("includes the destination folder in project and library uploads", async () => {
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(jsonResponse({ id: "d1" })),
+        );
+
+        await uploadProjectDocument("p1", file, "project-folder");
+        let body = lastFetchCall().init.body as FormData;
+        expect(body.get("folder_id")).toBe("project-folder");
+
+        await uploadLibraryDocument("files", file, "library-folder");
+        body = lastFetchCall().init.body as FormData;
+        expect(body.get("folder_id")).toBe("library-folder");
+    });
+
     it("multipart upload failures use the sanitized API error contract", async () => {
         fetchMock.mockImplementation(() =>
             Promise.resolve(new Response("file too large", { status: 413 })),
@@ -1776,6 +1792,46 @@ describe("query and payload defaults", () => {
         expect(JSON.parse(lastFetchCall().init.body as string)).toEqual({
             name: "Precedents",
             parent_folder_id: "parent-1",
+        });
+    });
+
+    it("resolves project and library upload paths with conflict choices", async () => {
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(
+                jsonResponse({
+                    conflict: false,
+                    folder_id: "f1",
+                    resolved_name: "NDAs (2)",
+                    folders: [],
+                }),
+            ),
+        );
+
+        await resolveProjectFolderPath("p1", ["NDAs"], null, "rename");
+        let call = lastFetchCall();
+        expect(call.url).toBe(
+            "http://localhost:3001/projects/p1/folder-paths/resolve",
+        );
+        expect(JSON.parse(call.init.body as string)).toEqual({
+            segments: ["NDAs"],
+            base_folder_id: null,
+            conflict_resolution: "rename",
+        });
+
+        await resolveLibraryFolderPath(
+            "templates",
+            ["Executed", "2026"],
+            "parent-1",
+            "reuse",
+        );
+        call = lastFetchCall();
+        expect(call.url).toBe(
+            "http://localhost:3001/library/templates/folder-paths/resolve",
+        );
+        expect(JSON.parse(call.init.body as string)).toEqual({
+            segments: ["Executed", "2026"],
+            base_folder_id: "parent-1",
+            conflict_resolution: "reuse",
         });
     });
 

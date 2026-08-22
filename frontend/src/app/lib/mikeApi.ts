@@ -766,6 +766,43 @@ export async function getProjectPeople(
 // Folders
 // ---------------------------------------------------------------------------
 
+export type FolderConflictResolution = "error" | "reuse" | "rename";
+
+export type FolderPathResolution<TFolder> =
+    | {
+          conflict: true;
+          folder_name: string;
+          existing_folder_id: string;
+          suggested_name: string;
+          can_replace: boolean;
+      }
+    | {
+          conflict: false;
+          folder_id: string;
+          resolved_name: string;
+          folders: TFolder[];
+      };
+
+export async function resolveProjectFolderPath(
+    projectId: string,
+    segments: string[],
+    baseFolderId: string | null,
+    conflictResolution: FolderConflictResolution = "error",
+): Promise<FolderPathResolution<Folder>> {
+    return apiRequest<FolderPathResolution<Folder>>(
+        `/projects/${projectId}/folder-paths/resolve`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                segments,
+                base_folder_id: baseFolderId,
+                conflict_resolution: conflictResolution,
+            }),
+        },
+    );
+}
+
 export async function createProjectFolder(
     projectId: string,
     name: string,
@@ -983,10 +1020,12 @@ export async function bulkDeleteLibraryDocuments(
 export async function uploadLibraryDocument(
     kind: LibraryKind,
     file: File,
+    folderId?: string | null,
 ): Promise<Document> {
     const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
+    if (folderId) form.append("folder_id", folderId);
     const response = await fetch(`${API_BASE}/library/${kind}/documents`, {
         method: "POST",
         headers: { ...authHeaders },
@@ -1010,6 +1049,26 @@ export async function createLibraryFolder(
             parent_folder_id: parentFolderId ?? null,
         }),
     });
+}
+
+export async function resolveLibraryFolderPath(
+    kind: LibraryKind,
+    segments: string[],
+    baseFolderId: string | null,
+    conflictResolution: FolderConflictResolution = "error",
+): Promise<FolderPathResolution<LibraryFolder>> {
+    return apiRequest<FolderPathResolution<LibraryFolder>>(
+        `/library/${kind}/folder-paths/resolve`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                segments,
+                base_folder_id: baseFolderId,
+                conflict_resolution: conflictResolution,
+            }),
+        },
+    );
 }
 
 export async function renameLibraryFolder(
@@ -1201,10 +1260,12 @@ export async function deleteDocumentVersion(
 export async function uploadProjectDocument(
     projectId: string,
     file: File,
+    folderId?: string | null,
 ): Promise<Document> {
     const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
+    if (folderId) form.append("folder_id", folderId);
     const response = await fetch(
         `${API_BASE}/projects/${projectId}/documents`,
         {

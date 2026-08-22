@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
-import { Plus } from "lucide-react";
 import {
     RowActionMenuItems,
     RowActions,
@@ -237,7 +236,6 @@ export function ProjectAssistantTable({
                                 onClick={onCreateChat}
                                 className="px-3"
                             >
-                                <Plus className="h-3.5 w-3.5" />
                                 Create
                             </PillButton>
                         }

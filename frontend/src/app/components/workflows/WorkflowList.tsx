@@ -871,7 +871,7 @@ function WorkflowTable({
                 onClick={onCreate}
                 className="px-3"
               >
-                <Plus className="h-3.5 w-3.5" /> Create
+                Create
               </PillButton>
             }
           />

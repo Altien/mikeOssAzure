@@ -1131,7 +1131,17 @@ projectsRouter.post(
     if (!access.ok)
       return void res.status(404).json({ detail: "Project not found" });
 
-    await handleDocumentUpload(req, res, userId, projectId, db);
+    const folderId =
+      typeof req.body?.folder_id === "string" && req.body.folder_id.trim()
+        ? req.body.folder_id.trim()
+        : null;
+    if (folderId) {
+      const folder = await loadProjectFolder(db, projectId, folderId);
+      if (!folder)
+        return void res.status(404).json({ detail: "Folder not found" });
+    }
+
+    await handleDocumentUpload(req, res, userId, projectId, db, folderId);
   },
 );
 
@@ -1162,6 +1172,69 @@ projectsRouter.get("/:projectId/chats", requireAuth, async (req, res) => {
 });
 
 // ── Folder routes ─────────────────────────────────────────────────────────────
+
+// POST /projects/:projectId/folder-paths/resolve
+projectsRouter.post(
+  "/:projectId/folder-paths/resolve",
+  requireAuth,
+  async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const { projectId } = req.params;
+    const body = req.body as {
+      base_folder_id?: string | null;
+      segments?: unknown;
+      conflict_resolution?: unknown;
+    };
+    const rawSegments = Array.isArray(body.segments) ? body.segments : [];
+    const segments = Array.isArray(body.segments)
+      ? body.segments
+          .filter((segment): segment is string => typeof segment === "string")
+          .map((segment) => segment.trim())
+      : [];
+    if (
+      rawSegments.length !== segments.length ||
+      segments.length === 0 ||
+      segments.length > 100 ||
+      segments.some((segment) => !segment || segment.length > 255)
+    ) {
+      return void res.status(400).json({ detail: "Invalid folder path" });
+    }
+    const conflictResolution =
+      body.conflict_resolution === "reuse" ||
+      body.conflict_resolution === "rename"
+        ? body.conflict_resolution
+        : "error";
+    const baseFolderId =
+      typeof body.base_folder_id === "string" && body.base_folder_id.trim()
+        ? body.base_folder_id.trim()
+        : null;
+
+    const db = createServerSupabase();
+    const access = await checkProjectAccess(projectId, userId, userEmail, db);
+    if (!access.ok)
+      return void res.status(404).json({ detail: "Project not found" });
+    if (baseFolderId) {
+      const parent = await loadProjectFolder(db, projectId, baseFolderId);
+      if (!parent)
+        return void res.status(404).json({ detail: "Parent folder not found" });
+    }
+
+    const { data, error } = await db.rpc("resolve_project_folder_path", {
+      target_project_id: projectId,
+      target_user_id: userId,
+      base_folder_id: baseFolderId,
+      path_segments: segments,
+      conflict_resolution: conflictResolution,
+    });
+    if (error)
+      return void res.status(500).json({ detail: error.message });
+    if (data && typeof data === "object" && "conflict" in data && data.conflict) {
+      return void res.json({ ...data, can_replace: access.isOwner });
+    }
+    res.json(data);
+  },
+);
 
 // POST /projects/:projectId/folders
 projectsRouter.post("/:projectId/folders", requireAuth, async (req, res) => {
@@ -1400,6 +1473,7 @@ export async function handleDocumentUpload(
   userId: string,
   projectId: string | null,
   db: ReturnType<typeof createServerSupabase>,
+  folderId: string | null = null,
 ) {
   const file = req.file;
   if (!file) return void res.status(400).json({ detail: "file is required" });
@@ -1420,6 +1494,7 @@ export async function handleDocumentUpload(
       project_id: projectId,
       user_id: userId,
       status: "processing",
+      folder_id: folderId,
     })
     .select("*")
     .single();

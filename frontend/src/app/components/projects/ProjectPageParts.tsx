@@ -399,7 +399,7 @@ export function ProjectPageHeader({
                   onClick: onAddDocuments ?? undefined,
                   disabled: !onAddDocuments,
                   icon: <Upload className="h-4 w-4" />,
-                  label: <span className="hidden sm:inline">Documents</span>,
+                  iconOnly: true,
                   title: "Add documents",
               }
             : activeSection === "assistant"
