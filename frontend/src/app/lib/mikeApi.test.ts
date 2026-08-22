@@ -808,15 +808,17 @@ describe("streamTabularChat", () => {
 });
 
 describe("streamTabularGeneration", () => {
-    it("POSTs to the generate route with auth only", async () => {
+    it("POSTs to the generate route with auth and an abort signal", async () => {
         fetchMock.mockResolvedValue(streamResponse([]));
+        const controller = new AbortController();
 
-        await streamTabularGeneration("r1");
+        await streamTabularGeneration("r1", controller.signal);
 
         const { url, init } = lastFetchCall();
         expect(url).toBe("http://localhost:3001/tabular-review/r1/generate");
         expect(init.method).toBe("POST");
         expect(init.headers).toEqual({ Authorization: "Bearer token-123" });
+        expect(init.signal).toBe(controller.signal);
     });
 });
 

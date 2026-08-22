@@ -75,6 +75,7 @@ function formatPromptSuffix(format?: string, tags?: string[]): string {
 }
 
 export const tabularRouter = Router();
+const TABULAR_GENERATION_CONCURRENCY = 3;
 
 type DocumentGrouping = "document" | "folder";
 type ReviewRow = {
@@ -1163,6 +1164,8 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     const userEmail = res.locals.userEmail as string | undefined;
     const { reviewId } = req.params;
     const db = createServerSupabase();
+    const generationAbort = new AbortController();
+    req.on("aborted", () => generationAbort.abort());
 
     const { data: review, error: reviewError } = await db
         .from("tabular_reviews")
@@ -1215,6 +1218,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
             ...missingKey,
         });
     }
+    if (generationAbort.signal.aborted || res.destroyed) return;
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -1222,110 +1226,151 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders();
 
-    const write = (line: string) => res.write(line);
+    let streamFinished = false;
+    res.on("close", () => {
+        if (!streamFinished) generationAbort.abort();
+    });
+    const write = (line: string) => {
+        if (res.destroyed || res.writableEnded) return false;
+        return res.write(line);
+    };
 
     try {
-        await Promise.all(
-            rows.map(async (row) => {
-                const markdown = await loadRowDocumentText(db, row);
+        let nextRowIndex = 0;
+        const processRow = async (row: ReviewRow) => {
+            if (generationAbort.signal.aborted) return;
+            const markdown = await loadRowDocumentText(db, row);
+            if (generationAbort.signal.aborted) return;
 
-                // Filter to only columns that need processing
-                const columnsToProcess = columns.filter((col) => {
-                    const cell = cellMap.get(`${row.id}:${col.index}`);
-                    return !(cell?.status === "done" && cell?.content);
-                });
-                if (columnsToProcess.length === 0) return;
+            // Filter to only columns that need processing.
+            const columnsToProcess = columns.filter((col) => {
+                const cell = cellMap.get(`${row.id}:${col.index}`);
+                return !(cell?.status === "done" && cell?.content);
+            });
+            if (columnsToProcess.length === 0) return;
 
-                // Mark all as generating upfront
-                for (const col of columnsToProcess) {
-                    write(
-                        `data: ${JSON.stringify({ type: "cell_update", row_id: row.id, column_index: col.index, content: null, status: "generating" })}\n\n`,
-                    );
-                    const existingCell = cellMap.get(`${row.id}:${col.index}`);
-                    if (existingCell) {
+            // Mark only rows that have actually started as generating. Rows
+            // still in the worker queue remain pending and can be resumed.
+            for (const col of columnsToProcess) {
+                write(
+                    `data: ${JSON.stringify({ type: "cell_update", row_id: row.id, column_index: col.index, content: null, status: "generating" })}\n\n`,
+                );
+                const existingCell = cellMap.get(`${row.id}:${col.index}`);
+                if (existingCell) {
+                    await db
+                        .from("tabular_cells")
+                        .update({ status: "generating", content: null })
+                        .eq("id", existingCell.id);
+                } else {
+                    await db.from("tabular_cells").insert({
+                        review_id: reviewId,
+                        row_id: row.id,
+                        document_id: row.document_id,
+                        column_index: col.index,
+                        status: "generating",
+                    });
+                }
+            }
+
+            // Single LLM call for all columns, streaming one JSON line per
+            // column. Aborting the request pauses every active worker.
+            const receivedColumns = new Set<number>();
+            try {
+                await queryTabularAllColumns(
+                    tabular_model,
+                    row.label,
+                    markdown,
+                    columnsToProcess,
+                    async (columnIndex, result) => {
+                        receivedColumns.add(columnIndex);
                         await db
                             .from("tabular_cells")
-                            .update({ status: "generating", content: null })
-                            .eq("id", existingCell.id);
-                    } else {
-                        await db.from("tabular_cells").insert({
-                            review_id: reviewId,
-                            row_id: row.id,
-                            document_id: row.document_id,
-                            column_index: col.index,
-                            status: "generating",
-                        });
-                    }
-                }
-
-                // Single LLM call for all columns, streaming one JSON line per column
-                const receivedColumns = new Set<number>();
-                try {
-                    await queryTabularAllColumns(
-                        tabular_model,
-                        row.label,
-                        markdown,
-                        columnsToProcess,
-                        async (columnIndex, result) => {
-                            receivedColumns.add(columnIndex);
-                            await db
-                                .from("tabular_cells")
-                                .update({
-                                    content: JSON.stringify(result),
-                                    status: "done",
-                                })
-                                .eq("review_id", reviewId)
-                                .eq("row_id", row.id)
-                                .eq("column_index", columnIndex);
-                            write(
-                                `data: ${JSON.stringify({ type: "cell_update", row_id: row.id, column_index: columnIndex, content: result, status: "done" })}\n\n`,
-                            );
-                        },
-                        api_keys,
-                    );
-                } catch (err) {
+                            .update({
+                                content: JSON.stringify(result),
+                                status: "done",
+                            })
+                            .eq("review_id", reviewId)
+                            .eq("row_id", row.id)
+                            .eq("column_index", columnIndex);
+                        write(
+                            `data: ${JSON.stringify({ type: "cell_update", row_id: row.id, column_index: columnIndex, content: result, status: "done" })}\n\n`,
+                        );
+                    },
+                    api_keys,
+                    generationAbort.signal,
+                );
+            } catch (err) {
+                if (!generationAbort.signal.aborted) {
                     console.error(
                         `[tabular/generate] queryTabularAllColumns error row=${row.id}`,
                         safeErrorLog(err),
                     );
                 }
+            }
 
-                // Mark any columns the LLM didn't return as error
-                for (const col of columnsToProcess) {
-                    if (!receivedColumns.has(col.index)) {
-                        await db
-                            .from("tabular_cells")
-                            .update({ status: "error" })
-                            .eq("review_id", reviewId)
-                            .eq("row_id", row.id)
-                            .eq("column_index", col.index);
-                        write(
-                            `data: ${JSON.stringify({ type: "cell_update", row_id: row.id, column_index: col.index, content: null, status: "error" })}\n\n`,
-                        );
-                    }
+            // Paused cells return to pending; genuine missing model output is
+            // still an error. Completed cells remain untouched.
+            const incompleteStatus = generationAbort.signal.aborted
+                ? "pending"
+                : "error";
+            for (const col of columnsToProcess) {
+                if (!receivedColumns.has(col.index)) {
+                    await db
+                        .from("tabular_cells")
+                        .update({ status: incompleteStatus })
+                        .eq("review_id", reviewId)
+                        .eq("row_id", row.id)
+                        .eq("column_index", col.index);
+                    write(
+                        `data: ${JSON.stringify({ type: "cell_update", row_id: row.id, column_index: col.index, content: null, status: incompleteStatus })}\n\n`,
+                    );
                 }
-            }),
+            }
+        };
+
+        const runWorker = async () => {
+            while (!generationAbort.signal.aborted) {
+                const rowIndex = nextRowIndex++;
+                if (rowIndex >= rows.length) return;
+                await processRow(rows[rowIndex]);
+            }
+        };
+        await Promise.all(
+            Array.from(
+                {
+                    length: Math.min(
+                        TABULAR_GENERATION_CONCURRENCY,
+                        rows.length,
+                    ),
+                },
+                () => runWorker(),
+            ),
         );
 
-        void recordAudit(db, {
-            userId,
-            userEmail,
-            action: "tabular.generated",
-            surface: "tabular",
-            reviewId,
-        });
-        write("data: [DONE]\n\n");
+        if (!generationAbort.signal.aborted) {
+            void recordAudit(db, {
+                userId,
+                userEmail,
+                action: "tabular.generated",
+                surface: "tabular",
+                reviewId,
+            });
+            write("data: [DONE]\n\n");
+        }
     } catch (err) {
-        console.error("[tabular/generate] stream error", safeErrorLog(err));
-        try {
-            write(
-                `data: ${JSON.stringify({ type: "error", message: safeErrorMessage(err, "Stream error") })}\n\ndata: [DONE]\n\n`,
-            );
-        } catch {
-            /* ignore */
+        if (!generationAbort.signal.aborted) {
+            console.error("[tabular/generate] stream error", safeErrorLog(err));
+            try {
+                write(
+                    `data: ${JSON.stringify({ type: "error", message: safeErrorMessage(err, "Stream error") })}\n\ndata: [DONE]\n\n`,
+                );
+            } catch {
+                /* ignore */
+            }
         }
     } finally {
-        res.end();
+        streamFinished = true;
+        if (!res.writableEnded) res.end();
     }
 });
 
@@ -1973,6 +2018,7 @@ async function queryTabularAllColumns(
     columns: Column[],
     onResult: (columnIndex: number, result: CellResult) => Promise<void>,
     apiKeys?: import("../lib/llm").UserApiKeys,
+    abortSignal?: AbortSignal,
 ): Promise<void> {
     const columnsDesc = columns
         .map((col) => {
@@ -2028,6 +2074,7 @@ Rules:
         }
     };
 
+    let abortError: unknown;
     try {
         await streamChatWithTools({
             model,
@@ -2035,6 +2082,7 @@ Rules:
             messages: [{ role: "user", content: USER }],
             tools: [],
             apiKeys,
+            abortSignal,
             callbacks: {
                 onContentDelta: (delta) => {
                     contentBuffer += delta;
@@ -2051,14 +2099,19 @@ Rules:
             },
         });
     } catch (err) {
-        console.error(
-            "[queryTabularAllColumns] stream failed",
-            safeErrorLog(err),
-        );
+        if (abortSignal?.aborted) {
+            abortError = err;
+        } else {
+            console.error(
+                "[queryTabularAllColumns] stream failed",
+                safeErrorLog(err),
+            );
+        }
     }
 
     if (contentBuffer.trim()) pending.push(processLine(contentBuffer));
     await Promise.all(pending);
+    if (abortError) throw abortError;
 }
 
 async function extractDocumentMarkdown(
