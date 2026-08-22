@@ -2,7 +2,6 @@ import { Request, Response, NextFunction } from "express";
 import { createServerSupabase } from "../lib/supabase";
 import { syncProfileEmail } from "../lib/userLookup";
 import { sendInternalError } from "../lib/httpError";
-import { safeErrorLog } from "../lib/safeError";
 
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
@@ -71,7 +70,7 @@ async function enforceLoginMfaIfEnabled(
     });
     console.error(
       "[auth/mfa] login assurance lookup failed",
-      safeErrorLog(assuranceError),
+      assuranceError,
     );
     res.status(401).json({
       code: "authentication_failed",
@@ -174,7 +173,7 @@ export async function requireMfaIfEnrolled(
       userId: res.locals.userId,
       error: error.message,
     });
-    console.error("[auth/mfa] assurance lookup failed", safeErrorLog(error));
+    console.error("[auth/mfa] assurance lookup failed", error);
     res.status(401).json({
       code: "authentication_failed",
       detail: "Unable to verify authentication. Please sign in again.",

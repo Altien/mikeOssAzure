@@ -32,7 +32,6 @@ import {
     getUserModelSettings,
 } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
-import { safeErrorLog } from "../lib/safeError";
 import { generateAssistantChatTitle } from "../lib/chatTitle";
 
 const PROJECT_SYSTEM_PROMPT_EXTRA = `PROJECT CONTEXT:
@@ -299,7 +298,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
                   .catch((error) => {
                       console.error(
                           "[project-chat/stream] failed to generate chat title",
-                          safeErrorLog(error),
+                          error,
                       );
                   })
             : Promise.resolve();
@@ -411,7 +410,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             }
             return;
         }
-        console.error("[project-chat/stream] error:", safeErrorLog(err));
+        console.error("[project-chat/stream] error:", err);
         const message = ASSISTANT_ERROR_MESSAGE;
         const errorEvents = err instanceof AssistantStreamError
             ? stripTransientAssistantEvents(err.events)

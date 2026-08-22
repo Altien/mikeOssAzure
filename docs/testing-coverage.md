@@ -27,7 +27,7 @@ Per-area statement coverage from `npm run test:coverage`:
 
 | Lib area | % statements | Tested? |
 | --- | ---: | :---: |
-| `lib/safeError.ts`, `lib/userDataCleanup.ts`, `lib/manifestSigning.ts`, `lib/supabase.ts` | 100 | ✓ |
+| `lib/userDataCleanup.ts`, `lib/manifestSigning.ts`, `lib/supabase.ts` | 100 | ✓ |
 | `lib/llm/models.ts` | 96 | ✓ |
 | `lib/chat/types.ts` | 95 | ✓ |
 | `lib/documentVersions.ts` | 98 | ✓ |
@@ -37,7 +37,8 @@ Per-area statement coverage from `npm run test:coverage`:
 | `lib/downloadTokens.ts` | 87 | ✓ |
 | `lib/access.ts` | 76 | ✓ |
 | `lib/storage.ts`, `lib/upload.ts` | 58 | partial |
-| `lib/workflowCatalog.ts` | 55 | partial |
+| `lib/workflowCatalog.ts` | 69 | partial |
+| `lib/workflowCatalogSource.ts`, `lib/workflowCatalogSync.ts` | 74–96 | ✓ |
 | `lib/userDataExport.ts` | 43 | partial |
 | `lib/chat/contextBuilders.ts`, `lib/chat/tools/toolDispatcher.ts` | 37–38 | partial |
 | `lib/userApiKeys.ts` | 13 | partial — provider/env helpers only |
@@ -47,7 +48,7 @@ Per-area statement coverage from `npm run test:coverage`:
 | `lib/mcp/**` | 6 | minimal |
 | `lib/userSettings.ts`, `lib/officeText.ts`, `lib/spreadsheet.ts` | 0 | ✗ |
 
-Global: **39.84% statements / 35.64% branches / 42.32% functions / 40.77%
+Global: **52.72% statements / 46.31% branches / 53.24% functions / 54.11%
 lines**. The global number remains relatively low because `src/lib/**` includes
 several large feature libs (toolDispatcher, documentOps, CourtListener, MCP,
 and provider adapters) that dominate the line count.
@@ -86,8 +87,9 @@ Size is a rough guess: S ≈ an hour, M ≈ an afternoon.
       integrity. (M)
 - [ ] `lib/courtlistener.ts` — API client with mocked fetch: query building,
       pagination, and error paths. Legal-research correctness. (M)
-- [x] `lib/systemWorkflows.ts` — mostly data: assert workflow definitions are
-      well-formed (unique ids, non-empty skill markdown). (S)
+- [x] `lib/workflowCatalogSource.ts`, `lib/workflowCatalogSync.ts` — validate
+      downloaded workflow definitions, temporary-file cleanup, asset uploads,
+      and the transactional import payload. (M)
 - [ ] `lib/llm/aiSdk.ts` + `lib/llm/providers.ts` — provider-neutral tool plumbing
       and provider selection with mocked provider modules. (M)
 - [ ] `lib/mcp/types.ts` + `lib/mcp/servers.ts` — server config validation and

@@ -9,7 +9,6 @@ import {
   INTERNAL_ERROR_MESSAGE,
   sendInternalError,
 } from "../lib/httpError";
-import { safeErrorLog } from "../lib/safeError";
 
 type ErrorBody = {
   code?: unknown;
@@ -56,7 +55,7 @@ export function protectInternalErrorResponses(
       method: req.method,
       path: req.originalUrl,
       status: res.statusCode,
-      error: safeErrorLog(errorBody?.detail ?? body),
+      error: errorBody?.detail ?? body,
     });
 
     return originalJson(publicBody);

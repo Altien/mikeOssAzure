@@ -16,7 +16,10 @@ import {
 import { buildSystemPrompt } from "./prompts";
 import { parseCitations, createCitation } from "./citations";
 import type { AssistantEvent } from "./streaming";
-import { ensureDefaultWorkflows } from "../workflowCatalog";
+import {
+  catalogWorkflowId,
+  ensureDefaultWorkflows,
+} from "../workflowCatalog";
 
 // ---------------------------------------------------------------------------
 // Prompt-injection spotlighting helpers
@@ -753,7 +756,6 @@ export async function buildWorkflowStore(
   userEmail: string | null | undefined,
   db: ReturnType<typeof createServerSupabase>,
 ): Promise<WorkflowStore> {
-  const { SYSTEM_ASSISTANT_WORKFLOWS } = await import("../systemWorkflows.js");
   const store: WorkflowStore = new Map();
   const normalizedUserEmail = (userEmail ?? "").trim().toLowerCase();
 
@@ -767,15 +769,30 @@ export async function buildWorkflowStore(
     console.error("[buildWorkflowStore] ensureDefaultWorkflows failed:", err);
   }
 
-  // Keep repository IDs readable for historical chat attachments, but do not
-  // expose them through list_workflows. Current discovery happens through the
-  // user's owned/shared workflows and the Add-ons catalog.
-  for (const wf of SYSTEM_ASSISTANT_WORKFLOWS) {
-    store.set(wf.id, {
-      title: wf.title,
-      skill_md: wf.skill_md,
-      listed: false,
-    });
+  // Keep catalog IDs readable for historical chat attachments, but do not
+  // expose them through list_workflows. Active versions sort first; inactive
+  // content-addressed versions remain available as a fallback.
+  const { data: catalogWorkflows, error: catalogError } = await db
+    .from("mike_workflows")
+    .select("workflow_key, title, prompt_md, active, updated_at")
+    .eq("type", "assistant")
+    .order("active", { ascending: false })
+    .order("updated_at", { ascending: false });
+  if (catalogError) {
+    console.error(
+      "[buildWorkflowStore] workflow catalog lookup failed",
+      catalogError,
+    );
+  } else {
+    for (const workflow of catalogWorkflows ?? []) {
+      const id = catalogWorkflowId(workflow.workflow_key);
+      if (store.has(id) || !workflow.prompt_md) continue;
+      store.set(id, {
+        title: workflow.title,
+        skill_md: workflow.prompt_md,
+        listed: false,
+      });
+    }
   }
 
   // Then overlay user-owned assistant workflows.

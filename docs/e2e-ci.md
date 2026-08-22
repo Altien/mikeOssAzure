@@ -23,12 +23,14 @@ job:
    that the supported upgrade path (its pinned baseline plus later migrations)
    converges with this fresh-install path;
 4. writes `backend/.env` and `frontend/.env.local` from the live Supabase values;
-5. **builds** the web app (`next build`) and serves it with `next start` — a
+5. builds the backend and runs the pinned `sync:workflows` release job, matching
+   production ordering so the default and add-on catalog exists before startup;
+6. **builds** the web app (`next build`) and serves it with `next start` — a
    production build, not `next dev`, so there is no on-demand compilation (which
    makes first-hit page loads slow enough to time out specs) and no dev
    hydration-error overlay (whose injected DOM pollutes text locators). Starts the
    backend API (`:3001`) and the web server (`:3000`) and waits for both healthy;
-6. runs `npx playwright test` and uploads the HTML report + traces as an artifact
+7. runs `npx playwright test` and uploads the HTML report + traces as an artifact
    (`playwright-report`) on pass, fail, or timeout.
 
 `e2e/auth.setup.ts` bootstraps the shared test user (`e2e@mike.local`) against

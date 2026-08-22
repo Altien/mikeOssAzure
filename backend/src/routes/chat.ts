@@ -31,7 +31,6 @@ import {
 } from "../lib/chat";
 import { getUserModelSettings } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
-import { safeErrorLog } from "../lib/safeError";
 import { generateAssistantChatTitle } from "../lib/chatTitle";
 import { sendInternalError } from "../lib/httpError";
 
@@ -353,7 +352,7 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
 
         res.json({ title });
     } catch (err) {
-        console.error("[generate-title]", safeErrorLog(err));
+        console.error("[generate-title]", err);
         res.status(500).json({ detail: "Failed to generate title" });
     }
 });
@@ -610,7 +609,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                   .catch((error) => {
                       console.error(
                           "[chat/stream] failed to generate chat title",
-                          safeErrorLog(error),
+                          error,
                       );
                   })
             : Promise.resolve();
@@ -743,7 +742,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             }
             return;
         }
-        console.error("[chat/stream] error:", safeErrorLog(err));
+        console.error("[chat/stream] error:", err);
         const message = ASSISTANT_ERROR_MESSAGE;
         const errorEvents =
             err instanceof AssistantStreamError

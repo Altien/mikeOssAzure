@@ -38,7 +38,6 @@ import {
     ensureReviewAccess,
     filterAccessibleDocumentIds,
 } from "../lib/access";
-import { safeErrorLog } from "../lib/safeError";
 import {
     findMissingUserEmails,
     loadProfileUsersByEmail,
@@ -474,7 +473,7 @@ async function loadRowDocumentText(
                 } catch (error) {
                     console.error(
                         `[tabular] extraction error doc=${doc.id}`,
-                        safeErrorLog(error),
+                        error,
                     );
                 }
             }
@@ -1121,7 +1120,7 @@ tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
         if (error) {
             console.error(
                 "[tabular/clear-cells] failed to release generation lease",
-                safeErrorLog(error),
+                error,
             );
         }
     }
@@ -1256,13 +1255,13 @@ tabularRouter.post(
                     if (error || data !== true) {
                         console.error(
                             "[tabular/regenerate-cell] failed to renew generation lease",
-                            safeErrorLog(error ?? "Lease is no longer active"),
+                            error ?? "Lease is no longer active",
                         );
                     }
                 } catch (error) {
                     console.error(
                         "[tabular/regenerate-cell] failed to renew generation lease",
-                        safeErrorLog(error),
+                        error,
                     );
                 } finally {
                     renewingLease = false;
@@ -1335,7 +1334,7 @@ tabularRouter.post(
                 .eq("generation_id", generationId);
             console.error(
                 "[tabular/regenerate-cell] generation failed",
-                safeErrorLog(error),
+                error,
             );
             if (!res.headersSent) {
                 res.status(500).json({ detail: "Generation failed" });
@@ -1352,7 +1351,7 @@ tabularRouter.post(
             if (error) {
                 console.error(
                     "[tabular/regenerate-cell] failed to release generation lease",
-                    safeErrorLog(error),
+                    error,
                 );
             }
         }
@@ -1595,7 +1594,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                 if (!generationAbort.signal.aborted) {
                     console.error(
                         `[tabular/generate] queryTabularAllColumns error row=${row.id}`,
-                        safeErrorLog(err),
+                        err,
                     );
                 }
             }
@@ -1656,7 +1655,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
         }
     } catch (err) {
         if (!generationAbort.signal.aborted) {
-            console.error("[tabular/generate] stream error", safeErrorLog(err));
+            console.error("[tabular/generate] stream error", err);
             if (res.headersSent) {
                 try {
                     write(
@@ -1686,7 +1685,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
         } catch (error) {
             console.error(
                 "[tabular/generate] failed to release generation lease",
-                safeErrorLog(error),
+                error,
             );
         }
         if (!res.writableEnded) res.end();
@@ -2133,7 +2132,7 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
             }
             return;
         }
-        console.error("[tabular/chat] error", safeErrorLog(err));
+        console.error("[tabular/chat] error", err);
         const message = ASSISTANT_ERROR_MESSAGE;
         const errorEvents =
             err instanceof AssistantStreamError
@@ -2251,7 +2250,7 @@ The "summary" field must contain only the extracted value with inline citations 
     } catch (err) {
         console.error(
             "[queryTabularCell] completion failed",
-            safeErrorLog(err),
+            err,
         );
         return null;
     }
@@ -2423,7 +2422,7 @@ Rules:
         } else {
             console.error(
                 "[queryTabularAllColumns] stream failed",
-                safeErrorLog(err),
+                err,
             );
         }
     }

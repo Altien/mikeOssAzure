@@ -8,12 +8,14 @@ import crypto from "crypto";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import {
-  SYSTEM_WORKFLOWS,
-  type SystemWorkflow,
-} from "../lib/systemWorkflows";
+  catalogWorkflowToLegacy,
+  ensureDefaultWorkflows,
+  findCatalogWorkflow,
+  listActiveCatalogWorkflows,
+  type LegacyCatalogWorkflow,
+} from "../lib/workflowCatalog";
 import { findMissingUserEmails } from "../lib/userLookup";
 import { workflowNameFromSkillMd } from "../lib/workflowName";
-import { ensureDefaultWorkflows } from "../lib/workflowCatalog";
 import { parsePaginationQuery } from "../lib/pagination";
 import { normalizeSearchTerm } from "../lib/search";
 import { parseWorkflowSort } from "../lib/sort";
@@ -171,7 +173,7 @@ function withOpenSourceSubmission<T extends object>(
   };
 }
 
-function withSystemWorkflowAccess(workflow: SystemWorkflow) {
+function withSystemWorkflowAccess(workflow: LegacyCatalogWorkflow) {
   return withWorkflowAccess(workflow, {
     allowEdit: false,
     isOwner: false,
@@ -484,13 +486,17 @@ workflowsRouter.get(
   requireAuth,
   asyncRoute(async (req, res) => {
     const workflowType =
-      typeof req.query.type === "string" && req.query.type
+      req.query.type === "assistant" || req.query.type === "tabular"
         ? req.query.type
         : null;
+    const db = createServerSupabase();
+    const catalog = await listActiveCatalogWorkflows(db, {
+      type: workflowType,
+    });
     res.json(
-      SYSTEM_WORKFLOWS.filter(
-        (workflow) => !workflowType || workflow.metadata.type === workflowType,
-      ).map(withSystemWorkflowAccess),
+      catalog
+        .map(catalogWorkflowToLegacy)
+        .map(withSystemWorkflowAccess),
     );
   }),
 );
@@ -724,14 +730,14 @@ workflowsRouter.delete(
   asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const { workflowId } = req.params;
-    const systemWorkflow = SYSTEM_WORKFLOWS.find(
-      (workflow) => workflow.id === workflowId,
-    );
-    if (systemWorkflow) {
-      return void res.json(withSystemWorkflowAccess(systemWorkflow));
+    const db = createServerSupabase();
+    const catalogWorkflow = await findCatalogWorkflow(workflowId, db);
+    if (catalogWorkflow) {
+      return void res.json(
+        withSystemWorkflowAccess(catalogWorkflowToLegacy(catalogWorkflow)),
+      );
     }
 
-    const db = createServerSupabase();
     const { data: referenceDocuments } = await db
       .from("workflow_reference_documents")
       .select("storage_path")
@@ -1216,14 +1222,14 @@ workflowsRouter.get(
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { workflowId } = req.params;
-    const systemWorkflow = SYSTEM_WORKFLOWS.find(
-      (workflow) => workflow.id === workflowId,
-    );
-    if (systemWorkflow) {
-      return void res.json(withSystemWorkflowAccess(systemWorkflow));
+    const db = createServerSupabase();
+    const catalogWorkflow = await findCatalogWorkflow(workflowId, db);
+    if (catalogWorkflow) {
+      return void res.json(
+        withSystemWorkflowAccess(catalogWorkflowToLegacy(catalogWorkflow)),
+      );
     }
 
-    const db = createServerSupabase();
     const access = await resolveWorkflowAccess(
       workflowId,
       userId,
