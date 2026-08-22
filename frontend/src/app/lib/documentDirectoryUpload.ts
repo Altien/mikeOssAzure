@@ -1,0 +1,223 @@
+export type DocumentUploadEntry = {
+    file: File;
+    relativePath: string;
+};
+
+export type DocumentUploadProgressEntry = {
+    kind: "file" | "folder";
+    name: string;
+};
+
+export type DocumentUploadFolderPathResolution<TFolder> =
+    | {
+          conflict: true;
+          folder_name: string;
+          existing_folder_id: string;
+          suggested_name: string;
+          can_replace: boolean;
+      }
+    | {
+          conflict: false;
+          folder_id: string;
+          resolved_name: string;
+          folders: TFolder[];
+      };
+
+export async function resolveDocumentUploadRootFolder<TFolder>({
+    rootFolderName,
+    baseFolderId,
+    resolveFolderPath,
+    chooseConflict,
+    replaceFolder,
+}: {
+    rootFolderName: string;
+    baseFolderId: string | null;
+    resolveFolderPath: (
+        segments: string[],
+        baseFolderId: string | null,
+        conflictResolution?: "error" | "reuse" | "rename",
+    ) => Promise<DocumentUploadFolderPathResolution<TFolder>>;
+    chooseConflict: (
+        conflict: Extract<
+            DocumentUploadFolderPathResolution<TFolder>,
+            { conflict: true }
+        >,
+    ) => Promise<"replace" | "rename" | "cancel">;
+    replaceFolder: (folderId: string) => Promise<void>;
+}): Promise<
+    | Extract<
+          DocumentUploadFolderPathResolution<TFolder>,
+          { conflict: false }
+      >
+    | null
+> {
+    let resolution = await resolveFolderPath(
+        [rootFolderName],
+        baseFolderId,
+    );
+    while (resolution.conflict) {
+        const choice = await chooseConflict(resolution);
+        if (choice === "cancel") return null;
+        if (choice === "replace") {
+            await replaceFolder(resolution.existing_folder_id);
+            resolution = await resolveFolderPath(
+                [rootFolderName],
+                baseFolderId,
+            );
+        } else {
+            resolution = await resolveFolderPath(
+                [rootFolderName],
+                baseFolderId,
+                "rename",
+            );
+        }
+    }
+    return resolution;
+}
+
+type DroppedFileEntry = {
+    isFile: true;
+    isDirectory: false;
+    name: string;
+    file: (
+        success: (file: File) => void,
+        error?: (error: DOMException) => void,
+    ) => void;
+};
+
+type DroppedDirectoryReader = {
+    readEntries: (
+        success: (entries: DroppedEntry[]) => void,
+        error?: (error: DOMException) => void,
+    ) => void;
+};
+
+type DroppedDirectoryEntry = {
+    isFile: false;
+    isDirectory: true;
+    name: string;
+    createReader: () => DroppedDirectoryReader;
+};
+
+type DroppedEntry = DroppedFileEntry | DroppedDirectoryEntry;
+
+type DirectoryDataTransferItem = {
+    webkitGetAsEntry?: () => DroppedEntry | null;
+};
+
+export function documentUploadEntriesFromFiles(
+    files: Iterable<File>,
+): DocumentUploadEntry[] {
+    return Array.from(files, (file) => ({
+        file,
+        relativePath: file.webkitRelativePath || file.name,
+    }));
+}
+
+export function documentUploadPathSegments(
+    entry: Pick<DocumentUploadEntry, "relativePath" | "file">,
+): string[] {
+    const path = entry.relativePath || entry.file.name;
+    return path
+        .replace(/\\/g, "/")
+        .split("/")
+        .map((segment) => segment.trim())
+        .filter(
+            (segment) =>
+                segment.length > 0 && segment !== "." && segment !== "..",
+        );
+}
+
+export function documentUploadFolderSegments(
+    entry: Pick<DocumentUploadEntry, "relativePath" | "file">,
+): string[] {
+    return documentUploadPathSegments(entry).slice(0, -1);
+}
+
+export function documentUploadProgressEntries(
+    entries: readonly DocumentUploadEntry[],
+): DocumentUploadProgressEntry[] {
+    const progressEntries: DocumentUploadProgressEntry[] = [];
+    const folderNames = new Set<string>();
+
+    for (const entry of entries) {
+        const segments = documentUploadPathSegments(entry);
+        if (segments.length > 1) {
+            const folderName = segments[0];
+            if (!folderNames.has(folderName)) {
+                folderNames.add(folderName);
+                progressEntries.push({ kind: "folder", name: folderName });
+            }
+            continue;
+        }
+        progressEntries.push({
+            kind: "file",
+            name: segments[0] ?? entry.file.name,
+        });
+    }
+
+    return progressEntries;
+}
+
+export function dataTransferHasDirectory(dataTransfer: DataTransfer): boolean {
+    return Array.from(dataTransfer.items).some((item) => {
+        const entry = (item as unknown as DirectoryDataTransferItem)
+            .webkitGetAsEntry?.();
+        return entry?.isDirectory === true;
+    });
+}
+
+function readFile(entry: DroppedFileEntry): Promise<File> {
+    return new Promise((resolve, reject) => entry.file(resolve, reject));
+}
+
+async function readDirectoryEntries(
+    entry: DroppedDirectoryEntry,
+): Promise<DroppedEntry[]> {
+    const reader = entry.createReader();
+    const result: DroppedEntry[] = [];
+    while (true) {
+        const batch = await new Promise<DroppedEntry[]>((resolve, reject) =>
+            reader.readEntries(resolve, reject),
+        );
+        if (batch.length === 0) return result;
+        result.push(...batch);
+    }
+}
+
+async function walkDroppedEntry(
+    entry: DroppedEntry,
+    parentPath: string,
+): Promise<DocumentUploadEntry[]> {
+    const relativePath = parentPath
+        ? `${parentPath}/${entry.name}`
+        : entry.name;
+    if (entry.isFile) {
+        const file = await readFile(entry);
+        return [{ file, relativePath }];
+    }
+
+    const children = await readDirectoryEntries(entry);
+    return (
+        await Promise.all(
+            children.map((child) => walkDroppedEntry(child, relativePath)),
+        )
+    ).flat();
+}
+
+export async function collectDroppedDocumentUploadEntries(
+    dataTransfer: DataTransfer,
+): Promise<DocumentUploadEntry[]> {
+    const entries = Array.from(dataTransfer.items)
+        .filter((item) => item.kind === "file")
+        .map((item) =>
+            (item as unknown as DirectoryDataTransferItem)
+                .webkitGetAsEntry?.(),
+        )
+        .filter((entry): entry is DroppedEntry => !!entry);
+
+    if (entries.length === 0) {
+        return documentUploadEntriesFromFiles(dataTransfer.files);
+    }
+    return (await Promise.all(entries.map((entry) => walkDroppedEntry(entry, "")))).flat();
+}

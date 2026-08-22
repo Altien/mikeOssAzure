@@ -49,6 +49,24 @@ import {
     SUPPORTED_DOCUMENT_ACCEPT,
 } from "@/app/lib/documentUploadValidation";
 import {
+    collectDroppedDocumentUploadEntries,
+    dataTransferHasDirectory,
+    documentUploadEntriesFromFiles,
+    documentUploadFolderSegments,
+    documentUploadProgressEntries,
+    resolveDocumentUploadRootFolder,
+    type DocumentUploadEntry,
+    type DocumentUploadFolderPathResolution,
+    type DocumentUploadProgressEntry,
+} from "@/app/lib/documentDirectoryUpload";
+import {
+    MULTI_DOCUMENT_DRAG_TYPE,
+    readDocumentDragPayload,
+    selectedDocumentRange,
+    SINGLE_DOCUMENT_DRAG_TYPE,
+    writeDocumentDragPayload,
+} from "@/app/lib/docTableSelection";
+import {
     DOC_NAME_COL_W,
     DocIcon,
     DocVersionHistory,
@@ -120,9 +138,17 @@ const SORT_KEY_LABELS: Record<DocumentSortKey, string> = {
 };
 
 interface DocTableOperations {
-    uploadDocument: (file: File) => Promise<Document>;
+    uploadDocument: (
+        file: File,
+        folderId?: string | null,
+    ) => Promise<Document>;
     refreshCollection: () => Promise<void>;
     createFolder: (name: string, parentFolderId?: string | null) => Promise<DocTableFolder>;
+    resolveFolderPath: (
+        segments: string[],
+        baseFolderId: string | null,
+        conflictResolution?: "error" | "reuse" | "rename",
+    ) => Promise<DocumentUploadFolderPathResolution<DocTableFolder>>;
     renameFolder: (folderId: string, name: string) => Promise<DocTableFolder>;
     deleteFolder: (folderId: string) => Promise<void>;
     moveFolder: (folderId: string, parentFolderId: string | null) => Promise<DocTableFolder>;
@@ -147,6 +173,7 @@ interface DocTableProps {
         onSelect: (documents: Document[]) => void,
     ) => ReactNode;
     onAddDocumentsActionChange?: (action: (() => void) | null) => void;
+    onUploadFolderActionChange?: (action: (() => void) | null) => void;
     onCreateFolderActionChange?: (action: (() => void) | null) => void;
     onFolderViewBackActionChange?: (action: (() => void) | null) => void;
     onFolderViewChange?: (path: DocTableFolderBreadcrumb[]) => void;
@@ -282,6 +309,7 @@ export function DocTable({
     emptyStateTitle,
     renderAddDocumentsModal,
     onAddDocumentsActionChange,
+    onUploadFolderActionChange,
     onCreateFolderActionChange,
     onFolderViewBackActionChange,
     onFolderViewChange,
@@ -325,6 +353,9 @@ export function DocTable({
     const [sort, setSort] = useState<DocumentSort | null>(null);
     const serverQueryActive = serverDocuments !== null;
     const documentUploadInputRef = useRef<HTMLInputElement>(null);
+    const directoryUploadInputRef = useRef<HTMLInputElement>(null);
+    const tableRootRef = useRef<HTMLDivElement>(null);
+    const selectionAnchorIdRef = useRef<string | null>(null);
     const autoLoadTriggeredRef = useRef(false);
     const loadingRef = useRef(loading);
     const renderAddDocumentsModalRef = useRef(renderAddDocumentsModal);
@@ -348,6 +379,16 @@ export function DocTable({
         onAddDocumentsActionChange?.(openAddDocuments);
         return () => onAddDocumentsActionChange?.(null);
     }, [onAddDocumentsActionChange, openAddDocuments]);
+
+    const openUploadFolder = useCallback(() => {
+        if (loadingRef.current) return;
+        directoryUploadInputRef.current?.click();
+    }, []);
+
+    useEffect(() => {
+        onUploadFolderActionChange?.(openUploadFolder);
+        return () => onUploadFolderActionChange?.(null);
+    }, [onUploadFolderActionChange, openUploadFolder]);
 
     // Version-history expansion (per-doc). versionsByDocId caches fetched
     // versions so toggling closed + open again doesn't refetch. loadingIds
@@ -545,7 +586,18 @@ export function DocTable({
     const [dragOverVersionDocId, setDragOverVersionDocId] = useState<string | null>(null);
     const [uploadingVersionDocIds, setUploadingVersionDocIds] = useState<Set<string>>(() => new Set());
     const [versionUploadTargetDoc, setVersionUploadTargetDoc] = useState<Document | null>(null);
-    const [uploadingDroppedFilenames, setUploadingDroppedFilenames] = useState<string[]>([]);
+    const [collectionUploadProgress, setCollectionUploadProgress] = useState<{
+        parentFolderId: string | null;
+        entries: DocumentUploadProgressEntry[];
+    } | null>(null);
+    const [folderUploadConflict, setFolderUploadConflict] = useState<{
+        folderName: string;
+        suggestedName: string;
+        canReplace: boolean;
+    } | null>(null);
+    const folderUploadConflictResolverRef = useRef<
+        ((choice: "replace" | "rename" | "cancel") => void) | null
+    >(null);
     const [deletingDocIds, setDeletingDocIds] = useState<Set<string>>(() => new Set());
     const [documentUploadWarning, setDocumentUploadWarning] = useState<string | null>(null);
     const [documentRenameWarning, setDocumentRenameWarning] = useState<string | null>(null);
@@ -563,6 +615,14 @@ export function DocTable({
         documentCount: number;
     } | null>(null);
     const [pendingDeleteFolderStatus, setPendingDeleteFolderStatus] = useState<"idle" | "deleting" | "deleted">("idle");
+
+    useEffect(
+        () => () => {
+            folderUploadConflictResolverRef.current?.("cancel");
+            folderUploadConflictResolverRef.current = null;
+        },
+        [],
+    );
 
     const openCreateFolder = useCallback(() => {
         if (loadingRef.current) return;
@@ -583,6 +643,7 @@ export function DocTable({
         setSelectionCameFromSelectAll(false);
         setConfirmDeleteAllOpen(false);
         setContextMenu(null);
+        selectionAnchorIdRef.current = null;
         setTypeFilter(null);
         setSort(null);
     }, [scopeKey]);
@@ -1099,7 +1160,10 @@ export function DocTable({
 
     function hasMovePayload(dt: DataTransfer): boolean {
         return Array.from(dt.types).some(
-            (type) => type === "application/mike-doc" || type === "application/mike-folder",
+            (type) =>
+                type === SINGLE_DOCUMENT_DRAG_TYPE ||
+                type === MULTI_DOCUMENT_DRAG_TYPE ||
+                type === "application/mike-folder",
         );
     }
 
@@ -1108,7 +1172,7 @@ export function DocTable({
     }
 
     function hasDocumentPayload(dt: DataTransfer): boolean {
-        return Array.from(dt.types).includes("application/mike-doc");
+        return Array.from(dt.types).includes(SINGLE_DOCUMENT_DRAG_TYPE);
     }
 
     function currentVersionNumber(doc: Document): number | null {
@@ -1119,19 +1183,193 @@ export function DocTable({
         return !!(doc?.user_id && user?.id && doc.user_id !== user.id);
     }
 
-    async function handleDropCollectionFiles(files: File[]) {
-        if (files.length === 0) return;
-        const { supported, unsupported } = partitionSupportedDocumentFiles(files);
+    function requestFolderUploadConflictChoice(conflict: {
+        folder_name: string;
+        suggested_name: string;
+        can_replace: boolean;
+    }): Promise<"replace" | "rename" | "cancel"> {
+        folderUploadConflictResolverRef.current?.("cancel");
+        setFolderUploadConflict({
+            folderName: conflict.folder_name,
+            suggestedName: conflict.suggested_name,
+            canReplace: conflict.can_replace,
+        });
+        return new Promise((resolve) => {
+            folderUploadConflictResolverRef.current = resolve;
+        });
+    }
+
+    function finishFolderUploadConflict(
+        choice: "replace" | "rename" | "cancel",
+    ) {
+        const resolve = folderUploadConflictResolverRef.current;
+        folderUploadConflictResolverRef.current = null;
+        setFolderUploadConflict(null);
+        resolve?.(choice);
+    }
+
+    async function handleCollectionUploadEntries(
+        entries: DocumentUploadEntry[],
+        baseFolderId: string | null = viewedFolderIdRef.current,
+    ) {
+        if (entries.length === 0) return;
+        const { supported, unsupported } = partitionSupportedDocumentFiles(
+            entries.map((entry) => entry.file),
+        );
         setDocumentUploadWarning(formatUnsupportedDocumentWarning(unsupported));
         if (supported.length === 0) return;
-        setUploadingDroppedFilenames(supported.map((file) => file.name));
+        const supportedFiles = new Set(supported);
+        const supportedEntries = entries.filter((entry) =>
+            supportedFiles.has(entry.file),
+        );
+        const progressEntries = documentUploadProgressEntries(supportedEntries);
+        setCollectionUploadProgress({
+            parentFolderId: baseFolderId,
+            entries: progressEntries,
+        });
+
         try {
-            const uploaded = await Promise.all(supported.map((file) => operations.uploadDocument(file)));
+            const addResolvedFolders = (resolvedFolders: DocTableFolder[]) => {
+                setFolders((current) => {
+                    const next = [...current];
+                    const knownIds = new Set(current.map((folder) => folder.id));
+                    for (const folder of resolvedFolders) {
+                        if (knownIds.has(folder.id)) continue;
+                        knownIds.add(folder.id);
+                        next.push(folder);
+                    }
+                    return next;
+                });
+            };
+
+            const rootFolderNames = Array.from(
+                new Set(
+                    supportedEntries.flatMap((entry) => {
+                        const segments = documentUploadFolderSegments(entry);
+                        return segments.length > 0 ? [segments[0]] : [];
+                    }),
+                ),
+            );
+            const resolvedRoots = new Map<
+                string,
+                { folderId: string }
+            >();
+
+            for (const rootFolderName of rootFolderNames) {
+                const resolution = await resolveDocumentUploadRootFolder({
+                    rootFolderName,
+                    baseFolderId,
+                    resolveFolderPath: operations.resolveFolderPath,
+                    chooseConflict: requestFolderUploadConflictChoice,
+                    replaceFolder: async (folderId) => {
+                        await operations.deleteFolder(folderId);
+                        await operations.refreshCollection();
+                    },
+                });
+                if (!resolution) return;
+
+                addResolvedFolders(resolution.folders);
+                resolvedRoots.set(rootFolderName, {
+                    folderId: resolution.folder_id,
+                });
+                if (resolution.resolved_name !== rootFolderName) {
+                    setCollectionUploadProgress((current) =>
+                        current
+                            ? {
+                                  ...current,
+                                  entries: current.entries.map((entry) =>
+                                      entry.kind === "folder" &&
+                                      entry.name === rootFolderName
+                                          ? {
+                                                ...entry,
+                                                name: resolution.resolved_name,
+                                            }
+                                          : entry,
+                                  ),
+                              }
+                            : current,
+                    );
+                }
+            }
+
+            const folderPathPromises = new Map<string, Promise<string>>();
+            const resolveEntryFolder = async (entry: DocumentUploadEntry) => {
+                const segments = documentUploadFolderSegments(entry);
+                if (segments.length === 0) return baseFolderId;
+                const root = resolvedRoots.get(segments[0]);
+                if (!root) throw new Error("Folder root was not resolved");
+                const remainingSegments = segments.slice(1);
+                if (remainingSegments.length === 0) return root.folderId;
+                const key = JSON.stringify([root.folderId, remainingSegments]);
+                const existing = folderPathPromises.get(key);
+                if (existing) return existing;
+                const pending = operations
+                    .resolveFolderPath(
+                        remainingSegments,
+                        root.folderId,
+                        "reuse",
+                    )
+                    .then((nestedResolution) => {
+                        if (nestedResolution.conflict) {
+                            throw new Error("Nested folder path conflicted");
+                        }
+                        addResolvedFolders(nestedResolution.folders);
+                        return nestedResolution.folder_id;
+                    });
+                folderPathPromises.set(key, pending);
+                return pending;
+            };
+
+            const results = await Promise.allSettled(
+                supportedEntries.map(async (entry) => {
+                    const folderId = await resolveEntryFolder(entry);
+                    return operations.uploadDocument(entry.file, folderId);
+                }),
+            );
+            const uploaded = results.flatMap((result) =>
+                result.status === "fulfilled" ? [result.value] : [],
+            );
             handleDocsSelected(uploaded);
+            const failedCount = results.length - uploaded.length;
+            if (failedCount > 0) {
+                setCollectionActionWarning(
+                    `${failedCount} ${failedCount === 1 ? "document" : "documents"} could not be uploaded. Please try again.`,
+                );
+            }
         } catch (err) {
             console.error("Document drop upload failed", err);
+            setCollectionActionWarning(
+                apiErrorDetail(err) ??
+                    "This folder could not be uploaded. Please try again.",
+            );
         } finally {
-            setUploadingDroppedFilenames([]);
+            setCollectionUploadProgress(null);
+        }
+    }
+
+    function handleDropCollectionFiles(
+        files: File[],
+        baseFolderId?: string | null,
+    ) {
+        return handleCollectionUploadEntries(
+            documentUploadEntriesFromFiles(files),
+            baseFolderId,
+        );
+    }
+
+    async function handleDroppedCollectionDataTransfer(
+        dataTransfer: DataTransfer,
+        baseFolderId?: string | null,
+    ) {
+        try {
+            const entries =
+                await collectDroppedDocumentUploadEntries(dataTransfer);
+            await handleCollectionUploadEntries(entries, baseFolderId);
+        } catch (error) {
+            console.error("Folder drop traversal failed", error);
+            setCollectionActionWarning(
+                "This folder could not be read. Please try selecting it with Upload folder.",
+            );
         }
     }
 
@@ -1164,10 +1402,12 @@ export function DocTable({
             if (!hasFiles(event.dataTransfer)) return;
             event.preventDefault();
             event.stopPropagation();
+            const dataTransfer = event.dataTransfer;
             collectionDragDepthRef.current = 0;
             setIsDraggingCollectionFiles(false);
             setDragOverFileRoot(false);
-            void handleDropCollectionFiles(Array.from(event.dataTransfer?.files ?? []));
+            if (!dataTransfer) return;
+            void handleDroppedCollectionDataTransfer(dataTransfer);
         }
 
         window.addEventListener("dragenter", handleDragEnter);
@@ -1250,6 +1490,7 @@ export function DocTable({
     }
 
     function handleDocumentVersionDragOver(e: DragEvent<HTMLDivElement>, docId: string) {
+        if (dataTransferHasDirectory(e.dataTransfer)) return;
         if (!hasFilePayload(e.dataTransfer) && !hasDocumentPayload(e.dataTransfer)) {
             return;
         }
@@ -1268,6 +1509,7 @@ export function DocTable({
     }
 
     function handleDocumentVersionDrop(e: DragEvent<HTMLDivElement>, doc: Document) {
+        if (dataTransferHasDirectory(e.dataTransfer)) return;
         if (!hasFilePayload(e.dataTransfer) && !hasDocumentPayload(e.dataTransfer)) {
             return;
         }
@@ -1283,20 +1525,26 @@ export function DocTable({
             void handleDropDocumentVersions(doc, Array.from(e.dataTransfer.files));
             return;
         }
-        void handleDropExistingDocumentVersion(doc, e.dataTransfer.getData("application/mike-doc"));
+        void handleDropExistingDocumentVersion(
+            doc,
+            readDocumentDragPayload(e.dataTransfer)[0] ?? "",
+        );
     }
 
     async function handleDropOnFolder(targetFolderId: string | null, dt: DataTransfer) {
         if (!hasMovePayload(dt)) return;
-        const docId = dt.getData("application/mike-doc");
+        const docIds = readDocumentDragPayload(dt);
         const subFolderId = dt.getData("application/mike-folder");
-        if (docId) {
-            const doc = documents.find((d) => d.id === docId);
-            if (!doc || (doc.folder_id ?? null) === targetFolderId) return;
+        if (docIds.length > 0) {
+            const movingIds = docIds.filter((id) => {
+                const doc = documents.find((candidate) => candidate.id === id);
+                return doc && (doc.folder_id ?? null) !== targetFolderId;
+            });
+            if (movingIds.length === 0) return;
             const updatedAt = new Date().toISOString();
             setDocuments((prev) =>
                 prev.map((document) =>
-                    document.id === docId
+                    movingIds.includes(document.id)
                         ? {
                               ...document,
                               folder_id: targetFolderId,
@@ -1305,17 +1553,32 @@ export function DocTable({
                         : document,
                 ),
             );
-            const updated = await operations.moveDocument(
-                docId,
-                targetFolderId,
+            const results = await Promise.allSettled(
+                movingIds.map((documentId) =>
+                    operations.moveDocument(documentId, targetFolderId),
+                ),
+            );
+            const updatedById = new Map(
+                results.flatMap((result) =>
+                    result.status === "fulfilled"
+                        ? [[result.value.id, result.value] as const]
+                        : [],
+                ),
             );
             setDocuments((prev) =>
                 prev.map((document) =>
-                    document.id === docId
-                        ? { ...document, ...updated }
+                    updatedById.has(document.id)
+                        ? { ...document, ...updatedById.get(document.id)! }
                         : document,
                 ),
             );
+            const failedCount = results.length - updatedById.size;
+            if (failedCount > 0) {
+                await operations.refreshCollection();
+                setCollectionActionWarning(
+                    `${failedCount} ${failedCount === 1 ? "document" : "documents"} could not be moved. Please try again.`,
+                );
+            }
         } else if (subFolderId && subFolderId !== targetFolderId) {
             if (targetFolderId !== null && wouldCreateCycle(subFolderId, targetFolderId)) return;
             const folder = folders.find((f) => f.id === subFolderId);
@@ -1404,12 +1667,14 @@ export function DocTable({
         fileType,
         depth,
         statusLabel,
+        entryKind = "file",
     }: {
         key: string;
         filename: string;
         fileType: string | null;
         depth: number;
         statusLabel: string;
+        entryKind?: "file" | "folder";
     }) {
         return (
             <div key={key} className="group flex h-10 min-w-max items-center pr-3">
@@ -1419,14 +1684,28 @@ export function DocTable({
                 >
                     <div className="flex items-center">
                         <Loader2 className="mr-3 h-2.5 w-2.5 animate-spin text-gray-400 shrink-0" />
+                        {entryKind === "folder" && (
+                            <span className="mr-2 flex h-4 w-4 shrink-0 items-center justify-center">
+                                <ChevronRight className="h-4 w-4 text-gray-400" />
+                            </span>
+                        )}
                         <span className="mr-2 shrink-0">
-                            <DocIcon fileType={fileType ?? filename} muted />
+                            {entryKind === "folder" ? (
+                                <SubfolderSvgIcon className="h-4 w-4 opacity-50" />
+                            ) : (
+                                <DocIcon fileType={fileType ?? filename} muted />
+                            )}
                         </span>
                         <span className="text-xs text-gray-400 truncate">{filename}</span>
                     </div>
                 </div>
                 <div className="ml-auto w-20 shrink-0 text-xs text-gray-300 lowercase truncate">
-                    {fileType ?? (filename.includes(".") ? filename.split(".").pop() : "file")}
+                    {entryKind === "folder"
+                        ? "folder"
+                        : fileType ??
+                          (filename.includes(".")
+                              ? filename.split(".").pop()
+                              : "file")}
                 </div>
                 <div className="w-24 shrink-0 text-xs text-gray-300">{statusLabel}</div>
                 <div className="w-20 shrink-0 text-xs text-gray-300">—</div>
@@ -1437,14 +1716,21 @@ export function DocTable({
         );
     }
 
-    function renderUploadingDocumentRows(depth: number) {
-        return uploadingDroppedFilenames.map((filename) =>
+    function renderUploadingDocumentRows(
+        depth: number,
+        parentFolderId: string | null,
+    ) {
+        if (collectionUploadProgress?.parentFolderId !== parentFolderId) {
+            return null;
+        }
+        return collectionUploadProgress.entries.map((entry, index) =>
             renderDocumentActivityRow({
-                key: `uploading-doc-${filename}`,
-                filename,
+                key: `uploading-${entry.kind}-${entry.name}-${index}`,
+                filename: entry.name,
                 fileType: null,
                 depth,
                 statusLabel: "Uploading",
+                entryKind: entry.kind,
             }),
         );
     }
@@ -1483,6 +1769,86 @@ export function DocTable({
             for (const id of ancestorIds) next.delete(id);
             return next;
         });
+    }
+
+    function visibleDocumentIds(): string[] {
+        return Array.from(
+            tableRootRef.current?.querySelectorAll<HTMLElement>(
+                "[data-document-row][data-document-id]",
+            ) ?? [],
+            (row) => row.dataset.documentId,
+        ).filter((id): id is string => !!id);
+    }
+
+    function updateDocumentSelection(
+        doc: Document,
+        selected: boolean,
+        shiftKey: boolean,
+    ) {
+        const ids = shiftKey
+            ? selectedDocumentRange(
+                  visibleDocumentIds(),
+                  selectionAnchorIdRef.current,
+                  doc.id,
+              )
+            : [doc.id];
+        if (!selected) {
+            for (const id of ids) {
+                clearSelectedFolderAncestors(
+                    documents.find((candidate) => candidate.id === id)
+                        ?.folder_id,
+                );
+            }
+        }
+        setSelectionCameFromSelectAll(false);
+        setSelectedDocIds((current) => {
+            const next = new Set(current);
+            for (const id of ids) {
+                if (selected) next.add(id);
+                else next.delete(id);
+            }
+            return [...next];
+        });
+        selectionAnchorIdRef.current = doc.id;
+    }
+
+    function handleDocumentRowClick(
+        event: React.MouseEvent<HTMLDivElement>,
+        doc: Document,
+    ) {
+        if (event.shiftKey) {
+            event.preventDefault();
+            updateDocumentSelection(doc, true, true);
+            return;
+        }
+        selectionAnchorIdRef.current = doc.id;
+        setViewingDocVersion(null);
+        setViewingDoc(doc);
+    }
+
+    function handleDocumentDragStart(
+        event: DragEvent<HTMLDivElement>,
+        doc: Document,
+    ) {
+        if (renamingDocumentId === doc.id) {
+            event.preventDefault();
+            return;
+        }
+        const visibleIds = new Set(visibleDocumentIds());
+        const selectedVisibleIds = selectedDocIds.filter((id) =>
+            visibleIds.has(id),
+        );
+        const draggedIds = writeDocumentDragPayload(
+            event.dataTransfer,
+            doc.id,
+            selectedVisibleIds,
+        );
+        if (!selectedDocIds.includes(doc.id)) {
+            setSelectedFolderIds(new Set());
+            setSelectionCameFromSelectAll(false);
+            setSelectedDocIds(draggedIds);
+        }
+        selectionAnchorIdRef.current = doc.id;
     }
 
     useEffect(() => {
@@ -1532,8 +1898,19 @@ export function DocTable({
             effectiveSort.direction === "desc"
                 ? -1
                 : 1;
+        const uploadingFolderNames = new Set(
+            collectionUploadProgress?.parentFolderId === parentId
+                ? collectionUploadProgress.entries
+                      .filter((entry) => entry.kind === "folder")
+                      .map((entry) => entry.name)
+                : [],
+        );
         const childFolders = folders
-            .filter((f) => f.parent_folder_id === parentId)
+            .filter(
+                (folder) =>
+                    folder.parent_folder_id === parentId &&
+                    !uploadingFolderNames.has(folder.name),
+            )
             .sort((a, b) => a.name.localeCompare(b.name) * nameMultiplier);
         const allChildDocs = filteredDocs.filter(
             (d) => (d.folder_id ?? null) === parentId,
@@ -1601,7 +1978,7 @@ export function DocTable({
 
         return (
             <div className="flex flex-col">
-                {parentId === null && renderUploadingDocumentRows(depth)}
+                {renderUploadingDocumentRows(depth, parentId)}
                 {childDocs.map((doc) => {
                     const docName = doc.filename;
                     const isProcessing = doc.status === "pending" || doc.status === "processing";
@@ -1632,15 +2009,11 @@ export function DocTable({
                         >
                             <div
                                 data-document-row
+                                data-document-id={doc.id}
                                 draggable={renamingDocumentId !== doc.id}
-                                onDragStart={(e) => {
-                                    if (renamingDocumentId === doc.id) {
-                                        e.preventDefault();
-                                        return;
-                                    }
-                                    e.dataTransfer.setData("application/mike-doc", doc.id);
-                                    e.dataTransfer.effectAllowed = "copyMove";
-                                }}
+                                onDragStart={(event) =>
+                                    handleDocumentDragStart(event, doc)
+                                }
                                 onDragEnd={() => {
                                     setDragOverRoot(false);
                                     setDragOverFolderId(null);
@@ -1649,10 +2022,9 @@ export function DocTable({
                                 onDragOver={(e) => handleDocumentVersionDragOver(e, doc.id)}
                                 onDragLeave={handleDocumentVersionDragLeave}
                                 onDrop={(e) => handleDocumentVersionDrop(e, doc)}
-                                onClick={() => {
-                                    setViewingDocVersion(null);
-                                    setViewingDoc(doc);
-                                }}
+                                onClick={(event) =>
+                                    handleDocumentRowClick(event, doc)
+                                }
                                 onContextMenu={(e) => {
                                     e.preventDefault();
                                     e.stopPropagation();
@@ -1686,18 +2058,15 @@ export function DocTable({
                                                         <input
                                                             type="checkbox"
                                                             checked={selectedDocIds.includes(doc.id)}
-                                                            onChange={() => {
-                                                                if (selectedDocIds.includes(doc.id)) {
-                                                                    clearSelectedFolderAncestors(
-                                                                        doc.folder_id,
-                                                                    );
-                                                                }
-                                                                setSelectedDocIds((prev) =>
-                                                                    prev.includes(doc.id)
-                                                                        ? prev.filter((x) => x !== doc.id)
-                                                                        : [...prev, doc.id],
-                                                                );
-                                                            }}
+                                                            onChange={(event) =>
+                                                                updateDocumentSelection(
+                                                                    doc,
+                                                                    event.target.checked,
+                                                                    (
+                                                                        event.nativeEvent as MouseEvent
+                                                                    ).shiftKey,
+                                                                )
+                                                            }
                                                             onClick={(e) => e.stopPropagation()}
                                                             className="mr-3 h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black"
                                                         />
@@ -1904,9 +2273,19 @@ export function DocTable({
                                     e.stopPropagation();
                                 }}
                                 onDragOver={(e) => {
-                                    if (!hasMovePayload(e.dataTransfer)) return;
+                                    if (
+                                        !hasMovePayload(e.dataTransfer) &&
+                                        !hasFilePayload(e.dataTransfer)
+                                    ) {
+                                        return;
+                                    }
                                     e.preventDefault();
                                     e.stopPropagation();
+                                    e.dataTransfer.dropEffect = hasFilePayload(
+                                        e.dataTransfer,
+                                    )
+                                        ? "copy"
+                                        : "move";
                                     setDragOverFolderId(folder.id);
                                     setDragOverVersionDocId(null);
                                 }}
@@ -1915,12 +2294,24 @@ export function DocTable({
                                     setDragOverFolderId(null);
                                 }}
                                 onDrop={async (e) => {
-                                    if (!hasMovePayload(e.dataTransfer)) return;
+                                    if (
+                                        !hasMovePayload(e.dataTransfer) &&
+                                        !hasFilePayload(e.dataTransfer)
+                                    ) {
+                                        return;
+                                    }
                                     e.preventDefault();
                                     e.stopPropagation();
                                     setDragOverFolderId(null);
                                     setDragOverRoot(false);
                                     setDragOverVersionDocId(null);
+                                    if (hasFilePayload(e.dataTransfer)) {
+                                        await handleDroppedCollectionDataTransfer(
+                                            e.dataTransfer,
+                                            folder.id,
+                                        );
+                                        return;
+                                    }
                                     await handleDropOnFolder(folder.id, e.dataTransfer);
                                 }}
                                 onClick={() => openFolderView(folder.id)}
@@ -1975,15 +2366,6 @@ export function DocTable({
                                                     }
                                                     return [...next];
                                                 });
-                                                if (
-                                                    !allFolderDocumentsSelected &&
-                                                    !expandedFolderIds.has(folder.id)
-                                                ) {
-                                                    setExpandedFolderIds((current) =>
-                                                        new Set([...current, folder.id]),
-                                                    );
-                                                    void expandFolderChildren(folder.id);
-                                                }
                                             }}
                                             onClick={(event) =>
                                                 event.stopPropagation()
@@ -2283,6 +2665,9 @@ export function DocTable({
             return a.filename.localeCompare(b.filename) * multiplier;
         });
     }, [docs, effectiveSort, enableHeaderFilters, q, serverQueryActive, typeFilter]);
+    const hasVisibleCollectionUpload =
+        collectionUploadProgress?.parentFolderId === viewedFolderId &&
+        collectionUploadProgress.entries.length > 0;
     const viewedFolderIsEmpty =
         !!viewedFolder &&
         !loadingChildFolderIds.has(viewedFolder.id) &&
@@ -2291,7 +2676,7 @@ export function DocTable({
             (folder) => folder.parent_folder_id === viewedFolder.id,
         ) &&
         creatingFolderIn !== viewedFolder.id &&
-        uploadingDroppedFilenames.length === 0;
+        !hasVisibleCollectionUpload;
 
     const nameSortDirection = effectiveSort?.key === "name" ? effectiveSort.direction : null;
     const sizeSortDirection = effectiveSort?.key === "size" ? effectiveSort.direction : null;
@@ -2472,7 +2857,10 @@ export function DocTable({
     ) : undefined;
 
     return (
-        <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+        <div
+            ref={tableRootRef}
+            className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden"
+        >
             <input
                 ref={versionUploadInputRef}
                 type="file"
@@ -2492,9 +2880,24 @@ export function DocTable({
                     void handleDropCollectionFiles(files);
                 }}
             />
+            <input
+                ref={directoryUploadInputRef}
+                type="file"
+                accept={SUPPORTED_DOCUMENT_ACCEPT}
+                multiple
+                className="hidden"
+                {...{ webkitdirectory: "", directory: "" }}
+                onChange={(event) => {
+                    const entries = documentUploadEntriesFromFiles(
+                        event.target.files ?? [],
+                    );
+                    event.target.value = "";
+                    void handleCollectionUploadEntries(entries);
+                }}
+            />
             <UploadOverlay
                 open={isDraggingCollectionFiles}
-                label="Drop files here to upload"
+                label="Drop files or folders here to upload"
                 warning={documentUploadWarning}
                 onWarningClose={() => setDocumentUploadWarning(null)}
             />
@@ -2507,6 +2910,35 @@ export function DocTable({
                 open={!!collectionActionWarning}
                 onClose={() => setCollectionActionWarning(null)}
                 message={collectionActionWarning}
+            />
+            <WarningPopup
+                open={!!folderUploadConflict}
+                onClose={() => finishFolderUploadConflict("cancel")}
+                title="Folder already exists"
+                message={
+                    folderUploadConflict
+                        ? `A folder named “${folderUploadConflict.folderName}” already exists. Replace it and permanently delete all of its contents, or save this upload as “${folderUploadConflict.suggestedName}”.${folderUploadConflict.canReplace ? "" : " Only the project owner can replace the existing folder."}`
+                        : undefined
+                }
+                secondaryAction={
+                    folderUploadConflict
+                        ? {
+                              label: "Save over it",
+                              onClick: () =>
+                                  finishFolderUploadConflict("replace"),
+                              disabled: !folderUploadConflict.canReplace,
+                          }
+                        : undefined
+                }
+                primaryAction={
+                    folderUploadConflict
+                        ? {
+                              label: `Save as ${folderUploadConflict.suggestedName}`,
+                              onClick: () =>
+                                  finishFolderUploadConflict("rename"),
+                          }
+                        : undefined
+                }
             />
             <ConfirmPopup
                 open={confirmDeleteAllOpen && selectedDocIds.length > 0}
@@ -2637,7 +3069,7 @@ export function DocTable({
                                     setDragOverFileRoot(false);
                                 }
                             }}
-                            onDrop={(e) => {
+                            onDrop={async (e) => {
                                 if (!hasFilePayload(e.dataTransfer)) return;
                                 e.preventDefault();
                                 e.stopPropagation();
@@ -2647,7 +3079,9 @@ export function DocTable({
                                 setDragOverRoot(false);
                                 setDragOverFolderId(null);
                                 setDragOverVersionDocId(null);
-                                void handleDropCollectionFiles(Array.from(e.dataTransfer.files));
+                                await handleDroppedCollectionDataTransfer(
+                                    e.dataTransfer,
+                                );
                             }}
                         >
                             {dragOverRoot && dragOverFolderId === null && (
@@ -2667,7 +3101,7 @@ export function DocTable({
                             ) : docs.length === 0 &&
                             (serverQueryActive || folders.length === 0) &&
                             creatingFolderIn === undefined &&
-                            uploadingDroppedFilenames.length === 0 ? (
+                            !hasVisibleCollectionUpload ? (
                                 serverQueryActive ? (
                                     <div className="flex-1 flex flex-col items-center justify-center py-24 text-center">
                                         <p className="text-sm text-gray-400">No matches found</p>
@@ -2681,7 +3115,7 @@ export function DocTable({
                                             <EmptyState
                                                 icon={<LibrarySkeuoIcon />}
                                                 title={emptyStateTitle}
-                                                description="Upload documents or drop them here"
+                                                description="Upload documents or drop files and folders here"
                                                 action={
                                                     <PillButton
                                                         tone="black"
@@ -2738,7 +3172,10 @@ export function DocTable({
                                     {/* Search: flat list; no search: folder tree */}
                                     {q ? (
                                         <>
-                                            {renderUploadingDocumentRows(0)}
+                                            {renderUploadingDocumentRows(
+                                                0,
+                                                viewedFolderId,
+                                            )}
                                             {filteredDocs.map((doc) => {
                                                 const docName = doc.filename;
                                                 const isProcessing =
@@ -2765,15 +3202,14 @@ export function DocTable({
                                                     <div key={doc.id}>
                                                         <div
                                                             data-document-row
+                                                            data-document-id={doc.id}
                                                             draggable={renamingDocumentId !== doc.id}
-                                                            onDragStart={(e) => {
-                                                                if (renamingDocumentId === doc.id) {
-                                                                    e.preventDefault();
-                                                                    return;
-                                                                }
-                                                                e.dataTransfer.setData("application/mike-doc", doc.id);
-                                                                e.dataTransfer.effectAllowed = "copyMove";
-                                                            }}
+                                                            onDragStart={(event) =>
+                                                                handleDocumentDragStart(
+                                                                    event,
+                                                                    doc,
+                                                                )
+                                                            }
                                                             onDragEnd={() => {
                                                                 setDragOverRoot(false);
                                                                 setDragOverFolderId(null);
@@ -2782,10 +3218,12 @@ export function DocTable({
                                                             onDragOver={(e) => handleDocumentVersionDragOver(e, doc.id)}
                                                             onDragLeave={handleDocumentVersionDragLeave}
                                                             onDrop={(e) => handleDocumentVersionDrop(e, doc)}
-                                                            onClick={() => {
-                                                                setViewingDocVersion(null);
-                                                                setViewingDoc(doc);
-                                                            }}
+                                                            onClick={(event) =>
+                                                                handleDocumentRowClick(
+                                                                    event,
+                                                                    doc,
+                                                                )
+                                                            }
                                                             onContextMenu={(e) => {
                                                                 e.preventDefault();
                                                                 e.stopPropagation();
@@ -2810,22 +3248,15 @@ export function DocTable({
                                                                         <input
                                                                             type="checkbox"
                                                                             checked={selectedDocIds.includes(doc.id)}
-                                                                            onChange={() => {
-                                                                                if (
-                                                                                    selectedDocIds.includes(doc.id)
-                                                                                ) {
-                                                                                    clearSelectedFolderAncestors(
-                                                                                        doc.folder_id,
-                                                                                    );
-                                                                                }
-                                                                                setSelectedDocIds((prev) =>
-                                                                                    prev.includes(doc.id)
-                                                                                        ? prev.filter(
-                                                                                              (x) => x !== doc.id,
-                                                                                          )
-                                                                                        : [...prev, doc.id],
-                                                                                );
-                                                                            }}
+                                                                            onChange={(event) =>
+                                                                                updateDocumentSelection(
+                                                                                    doc,
+                                                                                    event.target.checked,
+                                                                                    (
+                                                                                        event.nativeEvent as MouseEvent
+                                                                                    ).shiftKey,
+                                                                                )
+                                                                            }
                                                                             onClick={(e) => e.stopPropagation()}
                                                                             className="mr-3 h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black"
                                                                         />

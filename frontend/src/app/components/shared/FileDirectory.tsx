@@ -12,7 +12,6 @@ import { Loader2 } from "lucide-react";
 import type { Document, LibraryFolder, Project } from "./types";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { ProjectSvgIcon, SubfolderSvgIcon } from "./FolderSvgIcon";
-import { CheckSquare } from "@/app/components/ui/check-square";
 import { SearchBar } from "@/app/components/ui/search-bar";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 import { SkeletonLine } from "./TablePrimitive";
@@ -35,6 +34,10 @@ type DirectoryFolder = Pick<
 
 const DIRECTORY_GRID_CLASS =
     "grid grid-cols-[14px_14px_minmax(0,1fr)_48px_84px_64px] items-center gap-2";
+const DIRECTORY_ROW_ACTION_CLASS =
+    "col-span-5 grid min-w-0 grid-cols-[14px_minmax(0,1fr)_48px_84px_64px] items-center gap-2 text-left";
+const DIRECTORY_CHECKBOX_CLASS =
+    "h-2.5 w-2.5 shrink-0 justify-self-center cursor-pointer rounded border-gray-200 accent-black disabled:cursor-not-allowed";
 
 const DIRECTORY_TABS: { value: DirectoryTab; label: string }[] = [
     { value: "files", label: "Files" },
@@ -54,6 +57,41 @@ const EMPTY_LEVEL_STATE: Record<
   Record<string, boolean>
 > = { files: {}, templates: {} };
 const DIRECTORY_SEARCH_PAGE_SIZE = 40;
+
+function DirectorySelectionCheckbox({
+  checked,
+  disabled,
+  indeterminate,
+  label,
+  onChange,
+}: {
+  checked: boolean;
+  disabled: boolean;
+  indeterminate: boolean;
+  label: string;
+  onChange: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (inputRef.current) {
+      inputRef.current.indeterminate = indeterminate;
+    }
+  }, [indeterminate]);
+
+  return (
+    <input
+      ref={inputRef}
+      type="checkbox"
+      checked={checked}
+      disabled={disabled}
+      onChange={onChange}
+      aria-checked={indeterminate ? "mixed" : checked}
+      aria-label={label}
+      className={DIRECTORY_CHECKBOX_CLASS}
+    />
+  );
+}
 
 function mergeDirectoryRows<T extends { id: string }>(current: T[], next: T[]) {
   const rows = new Map(current.map((row) => [row.id, row]));
@@ -584,17 +622,22 @@ export function FileDirectory({
         const selected = checkedIds.has(doc.id);
         const disabled = disabledDocumentIds?.has(doc.id) ?? false;
         return (
-            <button
-                type="button"
+            <label
                 key={doc.id}
-                onClick={() => toggle(doc)}
-                disabled={disabled}
                 style={{ paddingLeft: indentedRowPadding(depth) }}
-                className={`w-full rounded-md ${DIRECTORY_GRID_CLASS} py-2 pr-2 text-xs transition-all text-left disabled:cursor-not-allowed disabled:opacity-50 ${
+                className={`w-full rounded-md ${DIRECTORY_GRID_CLASS} py-2 pr-2 text-left text-xs transition-all ${
+                    disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
+                } ${
           selected ? APP_SURFACE_ACTIVE_CLASS : APP_SURFACE_HOVER_CLASS
                 }`}
             >
-                <CheckSquare state={selected ? "checked" : "unchecked"} />
+                <DirectorySelectionCheckbox
+                    checked={selected}
+                    indeterminate={false}
+                    disabled={disabled}
+                    label={`Select ${doc.filename}`}
+                    onChange={() => toggle(doc)}
+                />
                 <DocFileIcon fileType={doc.file_type} />
                 <span
           className={`min-w-0 truncate ${selected ? "text-gray-900" : "text-gray-700"}`}
@@ -606,7 +649,7 @@ export function FileDirectory({
                     created={formatDate(doc.created_at)}
                     size={formatBytes(doc.size_bytes)}
                 />
-            </button>
+            </label>
         );
     }
 
@@ -639,41 +682,37 @@ export function FileDirectory({
             const isExpanded = !!q || expandedLibraryFolders.has(folder.id);
             return (
                 <div key={folder.id}>
-                    <button
-                        type="button"
-            onClick={() =>
-              toggleLibraryFolder(folder.id, libraryTab, projectId)
-            }
+                    <div
                         style={{ paddingLeft: indentedRowPadding(depth) }}
-                        className={`w-full rounded-md ${DIRECTORY_GRID_CLASS} py-2 pr-2 text-xs transition-all text-left ${APP_SURFACE_HOVER_CLASS}`}
+                        className={`w-full rounded-md ${DIRECTORY_GRID_CLASS} py-2 pr-2 text-xs transition-all ${APP_SURFACE_HOVER_CLASS}`}
                     >
-                        <CheckSquare
-                            role="checkbox"
-                            aria-checked={someSelected ? "mixed" : allSelected}
-              aria-disabled={!folderSelectionReady}
-              aria-label={
-                folderSelectionReady
-                  ? `Select all files in ${folder.name}`
-                  : `Expand ${folder.name} and load all files before selecting it`
-              }
-                            onClick={(e) => {
-                                e.stopPropagation();
-                if (folderSelectionReady) {
-                                toggleDocuments(docsInFolder);
-                }
-                            }}
-                            state={
-                                allSelected
-                                    ? "checked"
-                                    : someSelected
-                                      ? "indeterminate"
-                                      : "unchecked"
-                            }
-                            muted={
+                        <DirectorySelectionCheckbox
+                            checked={allSelected}
+                            indeterminate={someSelected}
+                            disabled={
                                 !folderSelectionReady ||
                                 docsInFolder.length === 0
                             }
+                            label={
+                                folderSelectionReady
+                                    ? `Select all files in ${folder.name}`
+                                    : `Expand ${folder.name} and load all files before selecting it`
+                            }
+                            onChange={() => toggleDocuments(docsInFolder)}
                         />
+                        <button
+                            type="button"
+                            aria-expanded={isExpanded}
+                            aria-label={`${isExpanded ? "Collapse" : "Expand"} ${folder.name}`}
+                            onClick={() =>
+                                toggleLibraryFolder(
+                                    folder.id,
+                                    libraryTab,
+                                    projectId,
+                                )
+                            }
+                            className={DIRECTORY_ROW_ACTION_CLASS}
+                        >
             {(libraryTab && loadingFolderIds[libraryTab].has(folder.id)) ||
             (projectId &&
               loadingProjectLevels.has(`${projectId}:${folder.id}`)) ||
@@ -696,7 +735,8 @@ export function FileDirectory({
                             {docsInFolder.length}{" "}
                             {docsInFolder.length === 1 ? "file" : "files"}
                         </span>
-                    </button>
+                        </button>
+                    </div>
                     {isExpanded && (
                         <div>
                             {renderFolderRows(
@@ -1070,42 +1110,38 @@ export function FileDirectory({
                   !allProjectDocsSelected;
                             return (
                                 <div key={project.id}>
-                                    <button
-                                        type="button"
-                      onClick={() => toggleFolder(project.id)}
+                                    <div
                                         className={`w-full rounded-md ${DIRECTORY_GRID_CLASS} px-2 py-2 text-xs transition-all text-left ${APP_SURFACE_HOVER_CLASS}`}
                                     >
-                                        <CheckSquare
-                                            role="checkbox"
-                                            aria-checked={
+                                        <DirectorySelectionCheckbox
+                                            checked={allProjectDocsSelected}
+                                            indeterminate={
                                                 someProjectDocsSelected
-                                                    ? "mixed"
-                                                    : allProjectDocsSelected
                                             }
-                        aria-label={
-                          projectSelectionReady
-                            ? `Select all files in ${project.name}`
-                            : `Expand ${project.name} and load all files before selecting it`
-                        }
-                        aria-disabled={!projectSelectionReady}
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                          if (projectSelectionReady) {
-                                                toggleDocuments(docs);
-                          }
-                                            }}
-                                            state={
-                                                allProjectDocsSelected
-                                                    ? "checked"
-                                                    : someProjectDocsSelected
-                                                      ? "indeterminate"
-                                                      : "unchecked"
-                                            }
-                                            muted={
+                                            disabled={
                                                 !projectSelectionReady ||
                                                 docs.length === 0
                                             }
+                                            label={
+                                                projectSelectionReady
+                                                    ? `Select all files in ${project.name}`
+                                                    : `Expand ${project.name} and load all files before selecting it`
+                                            }
+                                            onChange={() =>
+                                                toggleDocuments(docs)
+                                            }
                                         />
+                                        <button
+                                            type="button"
+                                            aria-expanded={isExpanded}
+                                            aria-label={`${isExpanded ? "Collapse" : "Expand"} ${project.name}`}
+                                            onClick={() =>
+                                                toggleFolder(project.id)
+                                            }
+                                            className={
+                                                DIRECTORY_ROW_ACTION_CLASS
+                                            }
+                                        >
                                         <ProjectSvgIcon
                                             open={isExpanded}
                                             className="h-3.5 w-3.5 shrink-0"
@@ -1125,7 +1161,8 @@ export function FileDirectory({
                                         <span className="truncate text-right text-gray-400">
                         {docs.length} {docs.length === 1 ? "file" : "files"}
                                         </span>
-                                    </button>
+                                        </button>
+                                    </div>
                                     {isExpanded && (
                                         <div>
                         {loadingProjectLevels.has(`${project.id}:root`) ? (

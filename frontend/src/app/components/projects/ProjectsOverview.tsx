@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronDown, Plus } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import {
     getProjectFilterOptions,
     type ProjectFilterOptions,
@@ -591,7 +591,6 @@ export function ProjectsOverview() {
                                         onClick={() => setModalOpen(true)}
                                         className="px-3"
                                     >
-                                        <Plus className="h-3.5 w-3.5" />
                                         Create
                                     </PillButton>
                                 }

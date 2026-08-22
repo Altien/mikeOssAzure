@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useDebouncedValue } from "@/app/hooks/useDebouncedValue";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronDown, Loader2, Plus } from "lucide-react";
+import { ChevronDown, Loader2 } from "lucide-react";
 import {
     RowActionMenuItems,
     RowActions,
@@ -588,7 +588,6 @@ export default function TabularReviewsPage() {
                                     disabled={creating}
                                     className="mt-4 px-3"
                                 >
-                                    <Plus className="h-3.5 w-3.5" />
                                     Create
                                 </PillButton>
                             </>
