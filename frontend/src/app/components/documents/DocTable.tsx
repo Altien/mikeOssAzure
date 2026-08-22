@@ -2920,24 +2920,18 @@ export function DocTable({
                 onClose={() => setCollectionActionWarning(null)}
                 message={collectionActionWarning}
             />
-            <WarningPopup
+            <ConfirmPopup
                 open={!!folderUploadConflict}
-                onClose={() => finishFolderUploadConflict("cancel")}
                 title="Folder already exists"
                 message={
                     folderUploadConflict
                         ? `A folder named “${folderUploadConflict.folderName}” already exists. This folder will be uploaded as “${folderUploadConflict.suggestedName}”.`
                         : undefined
                 }
-                primaryAction={
-                    folderUploadConflict
-                        ? {
-                              label: "Continue",
-                              onClick: () =>
-                                  finishFolderUploadConflict("rename"),
-                          }
-                        : undefined
-                }
+                confirmLabel="Continue"
+                cancelLabel="Cancel"
+                onCancel={() => finishFolderUploadConflict("cancel")}
+                onConfirm={() => finishFolderUploadConflict("rename")}
             />
             <ConfirmPopup
                 open={confirmDeleteAllOpen && selectedDocIds.length > 0}
