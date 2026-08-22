@@ -21,6 +21,10 @@ describe("DocTable range selection", () => {
         expect(selectedDocumentRange(["a", "b"], "missing", "b")).toEqual([
             "b",
         ]);
+        expect(selectedDocumentRange(["a", "b"], null, "b")).toEqual(["b"]);
+        expect(selectedDocumentRange(["a", "b"], "a", "missing")).toEqual([
+            "missing",
+        ]);
     });
 });
 
@@ -60,5 +64,33 @@ describe("DocTable document drag payload", () => {
 
         expect(values.get(SINGLE_DOCUMENT_DRAG_TYPE)).toBe("b");
         expect(readDocumentDragPayload(dataTransfer)).toEqual(["b"]);
+    });
+
+    it("deduplicates and filters malformed multi-row payloads", () => {
+        const dataTransfer = {
+            getData: (type: string) =>
+                type === MULTI_DOCUMENT_DRAG_TYPE
+                    ? JSON.stringify(["a", "", "a", 7, "b"])
+                    : "legacy",
+        };
+
+        expect(readDocumentDragPayload(dataTransfer)).toEqual(["a", "b"]);
+    });
+
+    it("falls back to the legacy payload when multi-row data is invalid", () => {
+        expect(
+            readDocumentDragPayload({
+                getData: (type: string) =>
+                    type === MULTI_DOCUMENT_DRAG_TYPE ? "{invalid" : "legacy",
+            }),
+        ).toEqual(["legacy"]);
+        expect(
+            readDocumentDragPayload({
+                getData: (type: string) =>
+                    type === MULTI_DOCUMENT_DRAG_TYPE
+                        ? JSON.stringify({ id: "a" })
+                        : "",
+            }),
+        ).toEqual([]);
     });
 });
