@@ -1641,6 +1641,17 @@ describe("multipart upload endpoints", () => {
         expect(body.get("filename")).toBeNull();
     });
 
+    it("uploadDocumentVersion uses the sanitized API error contract", async () => {
+        fetchMock.mockResolvedValue(
+            new Response("database connection failed", { status: 500 }),
+        );
+
+        await expect(uploadDocumentVersion("d1", file)).rejects.toMatchObject({
+            status: 500,
+            message: "Something went wrong. Please try again.",
+        });
+    });
+
     it("replaceDocumentVersionFile PUTs to the version file route and surfaces errors", async () => {
         fetchMock.mockResolvedValue(jsonResponse({ id: "v1" }));
 
