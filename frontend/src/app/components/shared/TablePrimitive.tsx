@@ -4,6 +4,7 @@ import {
     useEffect,
     useRef,
     useState,
+    type CSSProperties,
     type HTMLAttributes,
     type ComponentType,
     type MouseEvent as ReactMouseEvent,
@@ -44,6 +45,22 @@ export const TABLE_PRIMARY_CELL_WIDTH_CLASS =
     "w-[248px] sm:w-[292px] md:w-[332px] shrink-0";
 export const TABLE_CHECKBOX_CLASS =
     "mr-3 h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black";
+
+// A child checkbox is centered beneath its parent folder's 16px chevron.
+// Root padding is 12px; advancing one level crosses the 10px checkbox, its
+// 12px margin, and half the 6px width difference between both controls.
+const TABLE_TREE_ROOT_PADDING_PX = 12;
+const TABLE_TREE_DEPTH_INDENT_PX = 25;
+
+export function tableTreeCellStyle(
+    depth: number,
+): CSSProperties | undefined {
+    if (depth <= 0) return undefined;
+    return {
+        paddingLeft:
+            TABLE_TREE_ROOT_PADDING_PX + depth * TABLE_TREE_DEPTH_INDENT_PX,
+    };
+}
 
 type DivProps = HTMLAttributes<HTMLDivElement>;
 
@@ -329,6 +346,7 @@ export function TableRow({
 export function TableStickyCell({
     children,
     className,
+    style,
     widthClassName = TABLE_PRIMARY_CELL_WIDTH_CLASS,
     bgClassName = TABLE_STICKY_CELL_BG,
     header = false,
@@ -341,6 +359,7 @@ export function TableStickyCell({
 }) {
     return (
         <div
+            style={style}
             className={cn(
                 "sticky left-0 z-[60] flex pl-3 pr-2 text-left",
                 widthClassName,
@@ -360,6 +379,7 @@ export function TableStickyCell({
 export function TablePrimaryCell({
     children,
     className,
+    style,
     widthClassName = TABLE_PRIMARY_CELL_WIDTH_CLASS,
     bgClassName,
     selected,
@@ -412,6 +432,7 @@ export function TablePrimaryCell({
 
     return (
         <TableStickyCell
+            style={style}
             widthClassName={widthClassName}
             bgClassName={selected ? APP_SURFACE_ACTIVE_CLASS : bgClassName}
             className={className}
