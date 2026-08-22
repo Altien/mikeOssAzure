@@ -72,7 +72,7 @@ export function MfaVerificationPopup({
                 devLog("[mfa-popup] list factors failed", {
                     error: listError.message,
                 });
-                setError(listError.message);
+                setError("Authenticator verification could not be loaded.");
                 setFactors([]);
                 setSelectedFactorId("");
             } else {
@@ -110,7 +110,7 @@ export function MfaVerificationPopup({
             devLog("[mfa-popup] verification failed", {
                 error: verifyError.message,
             });
-            setError(verifyError.message);
+            setError("The verification code is invalid or expired.");
             return;
         }
 

@@ -11,6 +11,7 @@ import {
     appendAskInputsResponseToLastAssistantMessage,
     appendAssistantEventsToLastAssistantMessage,
     AssistantStreamError,
+    ASSISTANT_ERROR_MESSAGE,
     buildCancelledAssistantMessage,
     extractCitations,
     generateSpotlightNonce,
@@ -29,8 +30,9 @@ import {
 } from "../lib/chat";
 import { getUserModelSettings } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
-import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
+import { safeErrorLog } from "../lib/safeError";
 import { generateAssistantChatTitle } from "../lib/chatTitle";
+import { sendInternalError } from "../lib/httpError";
 
 export const chatRouter = Router();
 
@@ -113,7 +115,7 @@ chatRouter.get("/", requireAuth, async (req, res) => {
         p_limit: limit,
         p_offset: offset,
     });
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
     res.json(data ?? []);
 });
 
@@ -144,7 +146,7 @@ chatRouter.post("/create", requireAuth, async (req, res) => {
         .select("id")
         .single();
 
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
     res.json({ id: data.id });
 });
 
@@ -317,7 +319,7 @@ chatRouter.delete("/:chatId", requireAuth, async (req, res) => {
         .eq("id", chatId)
         .eq("user_id", userId);
 
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendInternalError(res, error);
     res.status(204).send();
 });
 
@@ -736,7 +738,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             return;
         }
         console.error("[chat/stream] error:", safeErrorLog(err));
-        const message = safeErrorMessage(err, "Stream error");
+        const message = ASSISTANT_ERROR_MESSAGE;
         const errorEvents =
             err instanceof AssistantStreamError
                 ? stripTransientAssistantEvents(err.events)

@@ -90,13 +90,9 @@ export default function VerifyMfaPage() {
                         "No verified authenticator factor is available for this account.",
                     );
                 }
-            } catch (loadError) {
+            } catch {
                 if (cancelled) return;
-                setError(
-                    loadError instanceof Error
-                        ? loadError.message
-                        : "Unable to load authenticator verification.",
-                );
+                setError("Unable to load authenticator verification.");
             } finally {
                 if (!cancelled) setLoading(false);
             }
@@ -122,7 +118,7 @@ export default function VerifyMfaPage() {
         setVerifying(false);
 
         if (verifyError) {
-            setError(verifyError.message);
+            setError("The verification code is invalid or expired.");
             return;
         }
 

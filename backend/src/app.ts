@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { randomUUID } from "node:crypto";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -20,6 +21,10 @@ import { sourceDocumentsRouter } from "./routes/sourceDocuments";
 import { auditRouter } from "./routes/audit";
 import { manifestPublicKey } from "./lib/manifestSigning";
 import { safeErrorLog } from "./lib/safeError";
+import {
+  handleUnhandledError,
+  protectInternalErrorResponses,
+} from "./middleware/internalErrorResponse";
 
 export const app = express();
 const isProduction = process.env.NODE_ENV === "production";
@@ -96,6 +101,13 @@ const dataDeleteLimiter = makeLimiter({
 
 app.disable("x-powered-by");
 app.set("trust proxy", envInt("TRUST_PROXY_HOPS", 1));
+app.use((_req, res, next) => {
+  const requestId = randomUUID();
+  res.locals.requestId = requestId;
+  res.setHeader("X-Request-ID", requestId);
+  next();
+});
+app.use(protectInternalErrorResponses);
 
 app.use(
   helmet({
@@ -219,3 +231,5 @@ app.get("/manifest-signing-key", (_req, res) => {
     });
   }
 });
+
+app.use(handleUnhandledError);

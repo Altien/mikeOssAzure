@@ -37,6 +37,7 @@ import {
     startMcpConnectorOAuth,
     updateMcpConnector,
 } from "@/app/lib/mikeApi";
+import { userFacingApiError } from "@/app/lib/userFacingError";
 import { settingsGlassIconButtonClassName } from "../settingsStyles";
 import { SettingsSection } from "../SettingsSection";
 import { SettingsToggle } from "../SettingsToggle";
@@ -157,7 +158,7 @@ export default function ConnectorsPage() {
             setConnectors(await listMcpConnectors());
         } catch (err) {
             setError(
-                err instanceof Error ? err.message : "Failed to load connectors.",
+                userFacingApiError(err, "Failed to load connectors."),
             );
         } finally {
             setLoading(false);
@@ -227,9 +228,10 @@ export default function ConnectorsPage() {
             replaceConnector(await getMcpConnector(connectorId));
         } catch (err) {
             setDetailError(
-                err instanceof Error
-                    ? err.message
-                    : "Failed to load connector details.",
+                userFacingApiError(
+                    err,
+                    "Failed to load connector details.",
+                ),
             );
         } finally {
             setLoadingConnectorId((current) =>
@@ -255,8 +257,7 @@ export default function ConnectorsPage() {
                 setPendingMfaAction(action);
                 return;
             }
-            const message =
-                err instanceof Error ? err.message : "Action failed.";
+            const message = userFacingApiError(err, "Action failed.");
             if (action.type === "create") setAddError(message);
             else if (action.type === "save") setDetailError(message);
             else setError(message);
@@ -409,9 +410,7 @@ export default function ConnectorsPage() {
                 setAddStep("form");
                 setAddAuthMessage(null);
                 setAddError(
-                    err instanceof Error
-                        ? err.message
-                        : "Failed to add connector.",
+                    userFacingApiError(err, "Failed to add connector."),
                 );
             } finally {
                 setBusyKey(null);

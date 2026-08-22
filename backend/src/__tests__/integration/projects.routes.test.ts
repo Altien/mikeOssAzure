@@ -235,7 +235,7 @@ describe("projects.routes", () => {
         .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("boom");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
 
     // Regression guard: legacy project pickers call GET /projects with no
@@ -355,7 +355,7 @@ describe("projects.routes", () => {
         .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("boom");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
     });
 
@@ -594,7 +594,7 @@ describe("projects.routes", () => {
                 .send({ name: "Delta" });
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("insert failed");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
     });
 
@@ -776,7 +776,7 @@ describe("projects.routes", () => {
         .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("cascade failed");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
     });
     // ── GET /projects/:projectId/export (tamper-evident manifest) ─────────
@@ -927,7 +927,7 @@ describe("projects.routes", () => {
                 .set(...AUTH);
 
             expect(res.status).toBe(500);
-      expect(res.body.detail).toBe("Failed to build project export manifest");
+      expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
     });
 });

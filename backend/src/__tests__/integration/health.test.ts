@@ -44,6 +44,9 @@ describe("GET /health", () => {
         const res = await request(app).get("/health");
         expect(res.status).toBe(200);
         expect(res.body).toEqual({ ok: true });
+        expect(res.headers["x-request-id"]).toMatch(
+            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+        );
     });
 });
 
@@ -107,7 +110,11 @@ describe("GET /manifest-signing-key", () => {
         const res = await request(app).get("/manifest-signing-key");
 
         expect(res.status).toBe(500);
-        expect(res.body.detail).toBe("Manifest signing key is misconfigured");
+        expect(res.body).toMatchObject({
+            code: "internal_error",
+            detail: "Something went wrong. Please try again.",
+        });
+        expect(res.body.request_id).toBe(res.headers["x-request-id"]);
     });
 });
 

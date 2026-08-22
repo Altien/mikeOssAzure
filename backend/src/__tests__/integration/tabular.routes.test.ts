@@ -185,7 +185,7 @@ describe("tabular.routes", () => {
         .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("boom");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
     });
 
@@ -510,7 +510,7 @@ describe("tabular.routes", () => {
                 .send({ document_ids: [], columns_config: [] });
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("insert failed");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
     });
 
@@ -661,7 +661,7 @@ describe("tabular.routes", () => {
                 .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("delete failed");
+            expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
     });
 

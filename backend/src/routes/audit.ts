@@ -6,6 +6,7 @@ import { Router } from "express";
 import { requireAuth, requireMfaIfEnrolled } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import { normalizeDisplayName } from "../lib/userLookup";
+import { sendInternalError } from "../lib/httpError";
 
 export const auditRouter = Router();
 auditRouter.use(requireAuth);
@@ -194,7 +195,7 @@ auditRouter.get("/", async (req, res) => {
   if (!parsed.ok) return void res.status(400).json({ detail: parsed.error });
   const q = parsed.query;
   const { data, error, count } = await queryEvents(db, userId, email, q);
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendInternalError(res, error);
   res.json({
     events: data ?? [],
     total: count ?? 0,
@@ -223,7 +224,7 @@ auditRouter.get("/export", requireMfaIfEnrolled, async (req, res) => {
   const q = parsed.query;
   q.page = 1;
   const { data, error } = await queryEvents(db, userId, email, q, false);
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendInternalError(res, error);
   const header =
     "created_at,user,action,status,title,application,project_id,model";
   const rows = ((data ?? []) as Record<string, unknown>[]).map((e) =>

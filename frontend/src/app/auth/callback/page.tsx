@@ -41,14 +41,14 @@ function AuthCallbackContent() {
                 const { error: exchangeError } =
                     await supabase.auth.exchangeCodeForSession(code);
                 if (exchangeError) {
-                    setError(exchangeError.message);
+                    setError("This confirmation link is invalid or has expired.");
                     return;
                 }
             } else {
                 const { data, error: sessionError } =
                     await supabase.auth.getSession();
                 if (sessionError) {
-                    setError(sessionError.message);
+                    setError("Authentication could not be completed. Please try again.");
                     return;
                 }
                 if (!data.session) {
