@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import { recordAudit } from "../lib/audit";
@@ -77,6 +78,9 @@ function formatPromptSuffix(format?: string, tags?: string[]): string {
 }
 
 export const tabularRouter = Router();
+const TABULAR_GENERATION_CONCURRENCY = 3;
+const TABULAR_GENERATION_LEASE_SECONDS = 300;
+const TABULAR_GENERATION_HEARTBEAT_MS = 60_000;
 
 type DocumentGrouping = "document" | "folder";
 type ReviewRow = {
@@ -100,6 +104,16 @@ type SourceDocument = {
     library_folder_id?: string | null;
 };
 type SupabaseDb = ReturnType<typeof createServerSupabase>;
+
+function isReviewGenerationRunning(review: Record<string, unknown>): boolean {
+    if (!review.active_generation_id || !review.generation_lease_expires_at) {
+        return false;
+    }
+    const leaseExpiresAt = Date.parse(
+        String(review.generation_lease_expires_at),
+    );
+    return Number.isFinite(leaseExpiresAt) && leaseExpiresAt > Date.now();
+}
 
 function normalizeGrouping(value: unknown): DocumentGrouping {
     return value === "folder" ? "folder" : "document";
@@ -769,9 +783,16 @@ tabularRouter.get("/:reviewId", requireAuth, async (req, res) => {
         current_version_id?: string | null;
     }[];
     await attachActiveVersionPaths(db, docs);
+    const clientReview = { ...review };
+    delete clientReview.active_generation_id;
+    delete clientReview.generation_lease_expires_at;
 
     res.json({
-        review: { ...review, is_owner: access.isOwner },
+        review: {
+            ...clientReview,
+            is_owner: access.isOwner,
+            is_running: isReviewGenerationRunning(review),
+        },
         cells: (cells ?? []).map((cell) => ({
             ...cell,
             content: parseCellContent(cell.content),
@@ -1031,7 +1052,9 @@ tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
     const db = createServerSupabase();
     const { data: review, error: reviewError } = await db
         .from("tabular_reviews")
-        .select("id, user_id, project_id")
+        .select(
+            "id, user_id, project_id, updated_at, active_generation_id, generation_lease_expires_at",
+        )
         .eq("id", reviewId)
         .single();
     if (reviewError || !review)
@@ -1039,14 +1062,69 @@ tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
     const access = await ensureReviewAccess(review, userId, userEmail, db);
     if (!access.ok)
         return void res.status(404).json({ detail: "Review not found" });
+    if (isReviewGenerationRunning(review)) {
+        return void res.status(409).json({
+            code: "review_running",
+            detail: "This tabular review is currently running.",
+        });
+    }
 
-    const { error } = await db
-        .from("tabular_cells")
-        .update({ content: null, status: "pending" })
-        .eq("review_id", reviewId)
-        .in("row_id", row_ids);
-    if (error) return void sendInternalError(res, error);
-    res.status(204).send();
+    const mutationId = randomUUID();
+    const { data: startResult, error: startError } = await db.rpc(
+        "begin_tabular_review_generation",
+        {
+            target_review_id: reviewId,
+            expected_updated_at: review.updated_at,
+            target_generation_id: mutationId,
+            lease_seconds: TABULAR_GENERATION_LEASE_SECONDS,
+        },
+    );
+    if (startError) return void sendInternalError(res, startError);
+    if (startResult === "running") {
+        return void res.status(409).json({
+            code: "review_running",
+            detail: "This tabular review is currently running.",
+        });
+    }
+    if (startResult === "stale") {
+        return void res.status(409).json({
+            code: "review_stale",
+            detail: "A newer version of this tabular review is available.",
+        });
+    }
+    if (startResult !== "started") {
+        return void res.status(startResult === "not_found" ? 404 : 500).json({
+            detail:
+                startResult === "not_found"
+                    ? "Review not found"
+                    : "Failed to clear tabular review cells",
+        });
+    }
+
+    try {
+        const { error } = await db
+            .from("tabular_cells")
+            .update({
+                content: null,
+                status: "pending",
+                generation_id: null,
+            })
+            .eq("review_id", reviewId)
+            .in("row_id", row_ids);
+        if (error) return void sendInternalError(res, error);
+        res.status(204).send();
+    } finally {
+        const { error } = await db.rpc("finish_tabular_review_generation", {
+            target_review_id: reviewId,
+            target_generation_id: mutationId,
+        });
+        if (error) {
+            console.error(
+                "[tabular/clear-cells] failed to release generation lease",
+                safeErrorLog(error),
+            );
+        }
+    }
 });
 
 // POST /tabular-review/:reviewId/regenerate-cell
@@ -1078,6 +1156,12 @@ tabularRouter.post(
         const access = await ensureReviewAccess(review, userId, userEmail, db);
         if (!access.ok)
             return void res.status(404).json({ detail: "Review not found" });
+        if (isReviewGenerationRunning(review)) {
+            return void res.status(409).json({
+                code: "review_running",
+                detail: "This tabular review is currently running.",
+            });
+        }
 
         const column = (
             review.columns_config as {
@@ -1121,43 +1205,157 @@ tabularRouter.post(
             });
         }
 
-        await db
-            .from("tabular_cells")
-            .update({ status: "generating", content: null })
-            .eq("review_id", reviewId)
-            .eq("row_id", row.id)
-            .eq("column_index", column_index);
-
-        const markdown = await loadRowDocumentText(db, row);
-
-        const result = await queryTabularCell(
-            tabular_model,
-            row.label,
-            markdown,
-            column.prompt,
-            column.format,
-            column.tags,
-            api_keys,
+        const generationId = randomUUID();
+        const { data: startResult, error: startError } = await db.rpc(
+            "begin_tabular_review_generation",
+            {
+                target_review_id: reviewId,
+                expected_updated_at: review.updated_at,
+                target_generation_id: generationId,
+                lease_seconds: TABULAR_GENERATION_LEASE_SECONDS,
+            },
         );
+        if (startError) return void sendInternalError(res, startError);
+        if (startResult === "running") {
+            return void res.status(409).json({
+                code: "review_running",
+                detail: "This tabular review is currently running.",
+            });
+        }
+        if (startResult === "stale") {
+            return void res.status(409).json({
+                code: "review_stale",
+                detail: "A newer version of this tabular review is available.",
+            });
+        }
+        if (startResult !== "started") {
+            return void res
+                .status(startResult === "not_found" ? 404 : 500)
+                .json({
+                    detail:
+                        startResult === "not_found"
+                            ? "Review not found"
+                            : "Failed to regenerate tabular review cell",
+                });
+        }
 
-        if (!result) {
-            await db
+        let renewingLease = false;
+        const leaseHeartbeat = setInterval(() => {
+            if (renewingLease) return;
+            renewingLease = true;
+            void (async () => {
+                try {
+                    const { data, error } = await db.rpc(
+                        "renew_tabular_review_generation",
+                        {
+                            target_review_id: reviewId,
+                            target_generation_id: generationId,
+                            lease_seconds: TABULAR_GENERATION_LEASE_SECONDS,
+                        },
+                    );
+                    if (error || data !== true) {
+                        console.error(
+                            "[tabular/regenerate-cell] failed to renew generation lease",
+                            safeErrorLog(error ?? "Lease is no longer active"),
+                        );
+                    }
+                } catch (error) {
+                    console.error(
+                        "[tabular/regenerate-cell] failed to renew generation lease",
+                        safeErrorLog(error),
+                    );
+                } finally {
+                    renewingLease = false;
+                }
+            })();
+        }, TABULAR_GENERATION_HEARTBEAT_MS);
+
+        try {
+            const { error: generatingError } = await db
                 .from("tabular_cells")
-                .update({ status: "error" })
+                .update({
+                    status: "generating",
+                    content: null,
+                    generation_id: generationId,
+                })
                 .eq("review_id", reviewId)
                 .eq("row_id", row.id)
                 .eq("column_index", column_index);
-            return void res.status(500).json({ detail: "Generation failed" });
+            if (generatingError) {
+                return void sendInternalError(res, generatingError);
+            }
+
+            const markdown = await loadRowDocumentText(db, row);
+            const result = await queryTabularCell(
+                tabular_model,
+                row.label,
+                markdown,
+                column.prompt,
+                column.format,
+                column.tags,
+                api_keys,
+            );
+
+            if (!result) {
+                await db
+                    .from("tabular_cells")
+                    .update({ status: "error", generation_id: null })
+                    .eq("review_id", reviewId)
+                    .eq("row_id", row.id)
+                    .eq("column_index", column_index)
+                    .eq("generation_id", generationId);
+                return void res
+                    .status(500)
+                    .json({ detail: "Generation failed" });
+            }
+
+            const { error: completedError } = await db
+                .from("tabular_cells")
+                .update({
+                    content: JSON.stringify(result),
+                    status: "done",
+                    generation_id: null,
+                })
+                .eq("review_id", reviewId)
+                .eq("row_id", row.id)
+                .eq("column_index", column_index)
+                .eq("generation_id", generationId);
+            if (completedError) {
+                return void sendInternalError(res, completedError);
+            }
+
+            res.json(result);
+        } catch (error) {
+            await db
+                .from("tabular_cells")
+                .update({ status: "error", generation_id: null })
+                .eq("review_id", reviewId)
+                .eq("row_id", row.id)
+                .eq("column_index", column_index)
+                .eq("generation_id", generationId);
+            console.error(
+                "[tabular/regenerate-cell] generation failed",
+                safeErrorLog(error),
+            );
+            if (!res.headersSent) {
+                res.status(500).json({ detail: "Generation failed" });
+            }
+        } finally {
+            clearInterval(leaseHeartbeat);
+            const { error } = await db.rpc(
+                "finish_tabular_review_generation",
+                {
+                    target_review_id: reviewId,
+                    target_generation_id: generationId,
+                },
+            );
+            if (error) {
+                console.error(
+                    "[tabular/regenerate-cell] failed to release generation lease",
+                    safeErrorLog(error),
+                );
+            }
         }
-
-        await db
-            .from("tabular_cells")
-            .update({ content: JSON.stringify(result), status: "done" })
-            .eq("review_id", reviewId)
-            .eq("row_id", row.id)
-            .eq("column_index", column_index);
-
-        res.json(result);
     },
 );
 
@@ -1167,6 +1365,11 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     const userEmail = res.locals.userEmail as string | undefined;
     const { reviewId } = req.params;
     const db = createServerSupabase();
+    const generationAbort = new AbortController();
+    const generationId = randomUUID();
+    let leaseHeartbeat: ReturnType<typeof setInterval> | null = null;
+    let renewingLease = false;
+    req.on("aborted", () => generationAbort.abort());
 
     const { data: review, error: reviewError } = await db
         .from("tabular_reviews")
@@ -1189,28 +1392,6 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     if (columns.length === 0)
         return void res.status(400).json({ detail: "No columns configured" });
 
-    let rows = await loadReviewRows(db, reviewId);
-
-    const { data: cells, error: cellsError } = await db
-        .from("tabular_cells")
-        .select("*")
-        .eq("review_id", reviewId);
-    if (cellsError)
-        return void sendInternalError(res, cellsError);
-    const cellMap = new Map<string, Record<string, unknown>>();
-    for (const cell of cells ?? [])
-        cellMap.set(`${cell.row_id}:${cell.column_index}`, cell);
-
-    const sourceIds = [
-        ...new Set(rows.flatMap((row) => row.source_document_ids ?? [])),
-    ];
-    const allowedSourceIds = new Set(
-        await filterAccessibleDocumentIds(sourceIds, userId, userEmail, db),
-    );
-    rows = rows.filter((row) =>
-        (row.source_document_ids ?? []).every((id) => allowedSourceIds.has(id)),
-    );
-
     const { tabular_model, api_keys } = await getUserModelSettings(userId, db);
     const missingKey = missingModelApiKey(tabular_model, api_keys);
     if (missingKey) {
@@ -1220,116 +1401,295 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
         });
     }
 
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("X-Accel-Buffering", "no");
-    res.flushHeaders();
+    const expectedUpdatedAt = req.body?.expected_updated_at;
+    if (
+        typeof expectedUpdatedAt !== "string" ||
+        !Number.isFinite(Date.parse(expectedUpdatedAt))
+    ) {
+        return void res.status(400).json({
+            detail: "expected_updated_at must be a valid timestamp",
+        });
+    }
+    if (generationAbort.signal.aborted || res.destroyed) return;
 
-    const write = (line: string) => res.write(line);
+    const { data: startResult, error: startError } = await db.rpc(
+        "begin_tabular_review_generation",
+        {
+            target_review_id: reviewId,
+            expected_updated_at: expectedUpdatedAt,
+            target_generation_id: generationId,
+            lease_seconds: TABULAR_GENERATION_LEASE_SECONDS,
+        },
+    );
+    if (startError) {
+        return void sendInternalError(res, startError);
+    }
+    if (startResult === "running") {
+        return void res.status(409).json({
+            code: "review_running",
+            detail: "This tabular review is already running elsewhere.",
+        });
+    }
+    if (startResult === "stale") {
+        return void res.status(409).json({
+            code: "review_stale",
+            detail: "A newer version of this tabular review is available.",
+        });
+    }
+    if (startResult === "not_found") {
+        return void res.status(404).json({ detail: "Review not found" });
+    }
+    if (startResult !== "started") {
+        return void res.status(500).json({
+            detail: "Failed to start tabular review generation",
+        });
+    }
+    // Everything used to decide which cells need work is loaded only after
+    // the atomic lease claim. Otherwise, a request can snapshot pending cells
+    // while another run is finishing, acquire the newly released lease, and
+    // regenerate results that were completed after its stale snapshot.
+    let rows: ReviewRow[] = [];
+    const cellMap = new Map<string, Record<string, unknown>>();
+
+    let streamFinished = false;
+    res.on("close", () => {
+        if (!streamFinished) generationAbort.abort();
+    });
+    const write = (line: string) => {
+        if (res.destroyed || res.writableEnded) return false;
+        return res.write(line);
+    };
 
     try {
-        await Promise.all(
-            rows.map(async (row) => {
-                const markdown = await loadRowDocumentText(db, row);
-
-                // Filter to only columns that need processing
-                const columnsToProcess = columns.filter((col) => {
-                    const cell = cellMap.get(`${row.id}:${col.index}`);
-                    return !(cell?.status === "done" && cell?.content);
-                });
-                if (columnsToProcess.length === 0) return;
-
-                // Mark all as generating upfront
-                for (const col of columnsToProcess) {
-                    write(
-                        `data: ${JSON.stringify({ type: "cell_update", row_id: row.id, column_index: col.index, content: null, status: "generating" })}\n\n`,
+        leaseHeartbeat = setInterval(() => {
+            if (renewingLease || generationAbort.signal.aborted) return;
+            renewingLease = true;
+            void (async () => {
+                try {
+                    const { data, error } = await db.rpc(
+                        "renew_tabular_review_generation",
+                        {
+                            target_review_id: reviewId,
+                            target_generation_id: generationId,
+                            lease_seconds: TABULAR_GENERATION_LEASE_SECONDS,
+                        },
                     );
-                    const existingCell = cellMap.get(`${row.id}:${col.index}`);
-                    if (existingCell) {
+                    if (error || data !== true) generationAbort.abort();
+                } catch {
+                    generationAbort.abort();
+                } finally {
+                    renewingLease = false;
+                }
+            })();
+        }, TABULAR_GENERATION_HEARTBEAT_MS);
+
+        rows = await loadReviewRows(db, reviewId);
+        const { data: cells, error: cellsError } = await db
+            .from("tabular_cells")
+            .select("*")
+            .eq("review_id", reviewId);
+        if (cellsError) {
+            sendInternalError(res, cellsError);
+            return;
+        }
+        for (const cell of cells ?? []) {
+            cellMap.set(`${cell.row_id}:${cell.column_index}`, cell);
+        }
+
+        const sourceIds = [
+            ...new Set(rows.flatMap((row) => row.source_document_ids ?? [])),
+        ];
+        const allowedSourceIds = new Set(
+            await filterAccessibleDocumentIds(
+                sourceIds,
+                userId,
+                userEmail,
+                db,
+            ),
+        );
+        rows = rows.filter((row) =>
+            (row.source_document_ids ?? []).every((id) =>
+                allowedSourceIds.has(id),
+            ),
+        );
+
+        if (generationAbort.signal.aborted || res.destroyed) return;
+
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.setHeader("X-Accel-Buffering", "no");
+        res.flushHeaders();
+
+        let nextRowIndex = 0;
+        const processRow = async (row: ReviewRow) => {
+            if (generationAbort.signal.aborted) return;
+            const markdown = await loadRowDocumentText(db, row);
+            if (generationAbort.signal.aborted) return;
+
+            // Filter to only columns that need processing.
+            const columnsToProcess = columns.filter((col) => {
+                const cell = cellMap.get(`${row.id}:${col.index}`);
+                return !(cell?.status === "done" && cell?.content);
+            });
+            if (columnsToProcess.length === 0) return;
+
+            // Mark only rows that have actually started as generating. Rows
+            // still in the worker queue remain pending and can be resumed.
+            for (const col of columnsToProcess) {
+                write(
+                    `data: ${JSON.stringify({ type: "cell_update", row_id: row.id, column_index: col.index, content: null, status: "generating" })}\n\n`,
+                );
+                const existingCell = cellMap.get(`${row.id}:${col.index}`);
+                if (existingCell) {
+                    await db
+                        .from("tabular_cells")
+                        .update({
+                            status: "generating",
+                            content: null,
+                            generation_id: generationId,
+                        })
+                        .eq("id", existingCell.id);
+                } else {
+                    await db.from("tabular_cells").insert({
+                        review_id: reviewId,
+                        row_id: row.id,
+                        document_id: row.document_id,
+                        column_index: col.index,
+                        status: "generating",
+                        generation_id: generationId,
+                    });
+                }
+            }
+
+            // Single LLM call for all columns, streaming one JSON line per
+            // column. Aborting the request stops every active worker.
+            const receivedColumns = new Set<number>();
+            try {
+                await queryTabularAllColumns(
+                    tabular_model,
+                    row.label,
+                    markdown,
+                    columnsToProcess,
+                    async (columnIndex, result) => {
+                        receivedColumns.add(columnIndex);
                         await db
                             .from("tabular_cells")
-                            .update({ status: "generating", content: null })
-                            .eq("id", existingCell.id);
-                    } else {
-                        await db.from("tabular_cells").insert({
-                            review_id: reviewId,
-                            row_id: row.id,
-                            document_id: row.document_id,
-                            column_index: col.index,
-                            status: "generating",
-                        });
-                    }
-                }
-
-                // Single LLM call for all columns, streaming one JSON line per column
-                const receivedColumns = new Set<number>();
-                try {
-                    await queryTabularAllColumns(
-                        tabular_model,
-                        row.label,
-                        markdown,
-                        columnsToProcess,
-                        async (columnIndex, result) => {
-                            receivedColumns.add(columnIndex);
-                            await db
-                                .from("tabular_cells")
-                                .update({
-                                    content: JSON.stringify(result),
-                                    status: "done",
-                                })
-                                .eq("review_id", reviewId)
-                                .eq("row_id", row.id)
-                                .eq("column_index", columnIndex);
-                            write(
-                                `data: ${JSON.stringify({ type: "cell_update", row_id: row.id, column_index: columnIndex, content: result, status: "done" })}\n\n`,
-                            );
-                        },
-                        api_keys,
-                    );
-                } catch (err) {
+                            .update({
+                                content: JSON.stringify(result),
+                                status: "done",
+                                generation_id: null,
+                            })
+                            .eq("review_id", reviewId)
+                            .eq("row_id", row.id)
+                            .eq("column_index", columnIndex)
+                            .eq("generation_id", generationId);
+                        write(
+                            `data: ${JSON.stringify({ type: "cell_update", row_id: row.id, column_index: columnIndex, content: result, status: "done" })}\n\n`,
+                        );
+                    },
+                    api_keys,
+                    generationAbort.signal,
+                );
+            } catch (err) {
+                if (!generationAbort.signal.aborted) {
                     console.error(
                         `[tabular/generate] queryTabularAllColumns error row=${row.id}`,
                         safeErrorLog(err),
                     );
                 }
+            }
 
-                // Mark any columns the LLM didn't return as error
-                for (const col of columnsToProcess) {
-                    if (!receivedColumns.has(col.index)) {
-                        await db
-                            .from("tabular_cells")
-                            .update({ status: "error" })
-                            .eq("review_id", reviewId)
-                            .eq("row_id", row.id)
-                            .eq("column_index", col.index);
-                        write(
-                            `data: ${JSON.stringify({ type: "cell_update", row_id: row.id, column_index: col.index, content: null, status: "error" })}\n\n`,
-                        );
-                    }
+            // Stopped cells return to pending; genuine missing model output is
+            // still an error. Completed cells remain untouched.
+            const incompleteStatus = generationAbort.signal.aborted
+                ? "pending"
+                : "error";
+            for (const col of columnsToProcess) {
+                if (!receivedColumns.has(col.index)) {
+                    await db
+                        .from("tabular_cells")
+                        .update({
+                            status: incompleteStatus,
+                            content: null,
+                            generation_id: null,
+                        })
+                        .eq("review_id", reviewId)
+                        .eq("row_id", row.id)
+                        .eq("column_index", col.index)
+                        .eq("generation_id", generationId);
+                    write(
+                        `data: ${JSON.stringify({ type: "cell_update", row_id: row.id, column_index: col.index, content: null, status: incompleteStatus })}\n\n`,
+                    );
                 }
-            }),
+            }
+        };
+
+        const runWorker = async () => {
+            while (!generationAbort.signal.aborted) {
+                const rowIndex = nextRowIndex++;
+                if (rowIndex >= rows.length) return;
+                await processRow(rows[rowIndex]);
+            }
+        };
+        await Promise.all(
+            Array.from(
+                {
+                    length: Math.min(
+                        TABULAR_GENERATION_CONCURRENCY,
+                        rows.length,
+                    ),
+                },
+                () => runWorker(),
+            ),
         );
 
-        void recordAudit(db, {
-            userId,
-            userEmail,
-            action: "tabular.generated",
-            surface: "tabular",
-            reviewId,
-        });
-        write("data: [DONE]\n\n");
+        if (!generationAbort.signal.aborted) {
+            void recordAudit(db, {
+                userId,
+                userEmail,
+                action: "tabular.generated",
+                surface: "tabular",
+                reviewId,
+            });
+            write("data: [DONE]\n\n");
+        }
     } catch (err) {
-        console.error("[tabular/generate] stream error", safeErrorLog(err));
-        try {
-            write(
-                `data: ${JSON.stringify({ type: "error", message: ASSISTANT_ERROR_MESSAGE })}\n\ndata: [DONE]\n\n`,
-            );
-        } catch {
-            /* ignore */
+        if (!generationAbort.signal.aborted) {
+            console.error("[tabular/generate] stream error", safeErrorLog(err));
+            if (res.headersSent) {
+                try {
+                    write(
+                        `data: ${JSON.stringify({ type: "error", message: ASSISTANT_ERROR_MESSAGE })}\n\ndata: [DONE]\n\n`,
+                    );
+                } catch {
+                    /* ignore */
+                }
+            } else if (!res.destroyed && !res.writableEnded) {
+                res.status(500).json({
+                    detail: "Failed to prepare tabular review generation",
+                });
+            }
         }
     } finally {
-        res.end();
+        streamFinished = true;
+        if (leaseHeartbeat) clearInterval(leaseHeartbeat);
+        try {
+            const { error } = await db.rpc(
+                "finish_tabular_review_generation",
+                {
+                    target_review_id: reviewId,
+                    target_generation_id: generationId,
+                },
+            );
+            if (error) throw error;
+        } catch (error) {
+            console.error(
+                "[tabular/generate] failed to release generation lease",
+                safeErrorLog(error),
+            );
+        }
+        if (!res.writableEnded) res.end();
     }
 });
 
@@ -1977,6 +2337,7 @@ async function queryTabularAllColumns(
     columns: Column[],
     onResult: (columnIndex: number, result: CellResult) => Promise<void>,
     apiKeys?: import("../lib/llm").UserApiKeys,
+    abortSignal?: AbortSignal,
 ): Promise<void> {
     const columnsDesc = columns
         .map((col) => {
@@ -2032,6 +2393,7 @@ Rules:
         }
     };
 
+    let abortError: unknown;
     try {
         await streamChatWithTools({
             model,
@@ -2039,6 +2401,7 @@ Rules:
             messages: [{ role: "user", content: USER }],
             tools: [],
             apiKeys,
+            abortSignal,
             callbacks: {
                 onContentDelta: (delta) => {
                     contentBuffer += delta;
@@ -2055,14 +2418,19 @@ Rules:
             },
         });
     } catch (err) {
-        console.error(
-            "[queryTabularAllColumns] stream failed",
-            safeErrorLog(err),
-        );
+        if (abortSignal?.aborted) {
+            abortError = err;
+        } else {
+            console.error(
+                "[queryTabularAllColumns] stream failed",
+                safeErrorLog(err),
+            );
+        }
     }
 
     if (contentBuffer.trim()) pending.push(processLine(contentBuffer));
     await Promise.all(pending);
+    if (abortError) throw abortError;
 }
 
 async function extractDocumentMarkdown(

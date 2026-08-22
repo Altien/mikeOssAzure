@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
     Plus,
     Loader2,
+    Square,
     Play,
     ChevronDown,
     MessageSquare,
@@ -29,6 +30,7 @@ import {
     streamTabularGeneration,
     updateTabularReview,
     uploadReviewDocument,
+    MikeApiError,
 } from "@/app/lib/mikeApi";
 import type {
     ColumnConfig,
@@ -46,6 +48,7 @@ import { PeopleModal } from "../modals/PeopleModal";
 import { OwnerOnlyPopup } from "../popups/OwnerOnlyPopup";
 import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
 import { ConfirmPopup } from "../popups/ConfirmPopup";
+import { WarningPopup } from "../popups/WarningPopup";
 import { HeaderActionsMenu } from "../shared/HeaderActionsMenu";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
@@ -80,6 +83,11 @@ export function TRView({ reviewId, projectId }: Props) {
     const [columns, setColumns] = useState<ColumnConfig[]>([]);
     const [loading, setLoading] = useState(true);
     const [generating, setGenerating] = useState(false);
+    const [stoppingGeneration, setStoppingGeneration] = useState(false);
+    const [generationGuard, setGenerationGuard] = useState<
+        "running" | "stale" | null
+    >(null);
+    const [reloadingLatestReview, setReloadingLatestReview] = useState(false);
     const [savingColumn, setSavingColumn] = useState(false);
     const [savingColumnsConfig, setSavingColumnsConfig] = useState(false);
     const [addColOpen, setAddColOpen] = useState(false);
@@ -130,12 +138,23 @@ export function TRView({ reviewId, projectId }: Props) {
         useState<ModelProvider | null>(null);
     const actionsRef = useRef<HTMLDivElement>(null);
     const tableRef = useRef<TRTableHandle>(null);
+    const generationAbortRef = useRef<AbortController | null>(null);
+    const stopRequestedRef = useRef(false);
+
+    useEffect(
+        () => () => {
+            generationAbortRef.current?.abort();
+        },
+        [],
+    );
     const router = useRouter();
     const { profile, apiKeysDegraded } = useUserProfile();
     // Unknown key state fails open; the submit gates below already skip when
     // apiKeys is undefined.
     const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
     const tabularModel = profile?.tabularModel ?? "gemini-3-flash-preview";
+    const cellMutationsBlocked =
+        generating || stoppingGeneration || review?.is_running === true;
 
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
@@ -257,6 +276,10 @@ export function TRView({ reviewId, projectId }: Props) {
     }
 
     async function handleRegenerateCell(rowId: string, colIndex: number) {
+        if (cellMutationsBlocked) {
+            setGenerationGuard("running");
+            return;
+        }
         if (apiKeys && !isModelAvailable(tabularModel, apiKeys)) {
             setApiKeyModalProvider(getModelProvider(tabularModel));
             return;
@@ -293,6 +316,13 @@ export function TRView({ reviewId, projectId }: Props) {
                     : null,
             );
         } catch (err) {
+            if (
+                err instanceof MikeApiError &&
+                (err.code === "review_running" || err.code === "review_stale")
+            ) {
+                await loadLatestReview();
+                return;
+            }
             console.error("Regeneration failed", err);
             setCells((prev) =>
                 prev.map((c) =>
@@ -307,8 +337,28 @@ export function TRView({ reviewId, projectId }: Props) {
         }
     }
 
+    async function refreshAfterStoppedGeneration() {
+        for (let attempt = 0; attempt < 40; attempt += 1) {
+            const detail = await getTabularReview(reviewId);
+            if (!detail.review.is_running) {
+                setReview(detail.review);
+                setCells(detail.cells);
+                setRows(detail.rows);
+                setDocuments(detail.documents);
+                setColumns(detail.review.columns_config || []);
+                return;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+    }
+
     async function handleGenerate() {
         if (!review || generating) return;
+
+        if (review.is_running) {
+            setGenerationGuard("running");
+            return;
+        }
 
         // If columns changed since last save, update the review first
         if (columns.length === 0) return;
@@ -318,12 +368,31 @@ export function TRView({ reviewId, projectId }: Props) {
             return;
         }
 
+        const generationAbort = new AbortController();
+        generationAbortRef.current = generationAbort;
+        stopRequestedRef.current = false;
+        setStoppingGeneration(false);
         setGenerating(true);
 
         try {
-            const response = await streamTabularGeneration(reviewId);
+            const response = await streamTabularGeneration(
+                reviewId,
+                review.updated_at,
+                generationAbort.signal,
+            );
             if (!response.ok) {
                 const payload = await response.json().catch(() => null);
+                if (payload?.code === "review_running") {
+                    setReview((current) =>
+                        current ? { ...current, is_running: true } : current,
+                    );
+                    setGenerationGuard("running");
+                    return;
+                }
+                if (payload?.code === "review_stale") {
+                    setGenerationGuard("stale");
+                    return;
+                }
                 const provider =
                     payload &&
                     ["claude", "gemini", "openai"].includes(payload.provider)
@@ -405,10 +474,63 @@ export function TRView({ reviewId, projectId }: Props) {
                 }
             }
         } catch (err) {
-            console.error("Generation failed", err);
+            if (!generationAbort.signal.aborted) {
+                console.error("Generation failed", err);
+            }
         } finally {
-            setGenerating(false);
+            if (generationAbortRef.current === generationAbort) {
+                if (stopRequestedRef.current) {
+                    try {
+                        await refreshAfterStoppedGeneration();
+                    } catch (err) {
+                        console.error(
+                            "Failed to refresh the stopped tabular review",
+                            err,
+                        );
+                    }
+                }
+                generationAbortRef.current = null;
+                stopRequestedRef.current = false;
+                setGenerating(false);
+                setStoppingGeneration(false);
+            }
         }
+    }
+
+    async function loadLatestReview() {
+        setReloadingLatestReview(true);
+        try {
+            const detail = await getTabularReview(reviewId);
+            setReview(detail.review);
+            setCells(detail.cells);
+            setRows(detail.rows);
+            setDocuments(detail.documents);
+            setColumns(detail.review.columns_config || []);
+            setGenerationGuard(detail.review.is_running ? "running" : null);
+        } catch (err) {
+            console.error("Failed to load the latest tabular review", err);
+        } finally {
+            setReloadingLatestReview(false);
+        }
+    }
+
+    function handleStopGeneration() {
+        if (!generating || stoppingGeneration) return;
+        setStoppingGeneration(true);
+        setCells((current) =>
+            current.map((cell) =>
+                cell.status === "generating"
+                    ? { ...cell, status: "pending" as const }
+                    : cell,
+            ),
+        );
+        setExpandedCell((current) =>
+            current?.status === "generating"
+                ? { ...current, status: "pending" as const }
+                : current,
+        );
+        stopRequestedRef.current = true;
+        generationAbortRef.current?.abort();
     }
 
     async function handleAddColumn(newColumns: ColumnConfig[]) {
@@ -556,6 +678,12 @@ export function TRView({ reviewId, projectId }: Props) {
 
     async function clearResultsForRows(rowIds: string[]) {
         if (rowIds.length === 0) return;
+        if (cellMutationsBlocked) {
+            setGenerationGuard("running");
+            return;
+        }
+        const previousCells = cells;
+        const previousSelectedRowIds = selectedRowIds;
         setCells((prev) =>
             prev.map((c) =>
                 rowIds.includes(c.row_id)
@@ -565,7 +693,20 @@ export function TRView({ reviewId, projectId }: Props) {
         );
         setSelectedRowIds([]);
         setActionsOpen(false);
-        await clearTabularCells(reviewId, rowIds);
+        try {
+            await clearTabularCells(reviewId, rowIds);
+        } catch (err) {
+            if (
+                err instanceof MikeApiError &&
+                (err.code === "review_running" || err.code === "review_stale")
+            ) {
+                await loadLatestReview();
+                return;
+            }
+            setCells(previousCells);
+            setSelectedRowIds(previousSelectedRowIds);
+            console.error("Failed to clear tabular review results", err);
+        }
     }
 
     async function handleClearResults() {
@@ -803,7 +944,9 @@ export function TRView({ reviewId, projectId }: Props) {
                                                 label: "Clear results",
                                                 icon: X,
                                                 onSelect: handleClearAllResults,
-                                                disabled: rows.length === 0,
+                                                disabled:
+                                                    rows.length === 0 ||
+                                                    cellMutationsBlocked,
                                             },
                                             {
                                                 label: "Delete",
@@ -830,20 +973,33 @@ export function TRView({ reviewId, projectId }: Props) {
                         {
                             actions: [
                                 {
-                                    onClick: handleGenerate,
+                                    onClick: generating
+                                        ? handleStopGeneration
+                                        : handleGenerate,
                                     disabled:
-                                        generating ||
+                                        stoppingGeneration ||
                                         columns.length === 0 ||
                                         rows.length === 0 ||
                                         savingColumnsConfig,
-                                    icon: generating ? (
+                                    title: stoppingGeneration
+                                        ? "Stopping generation"
+                                        : generating
+                                          ? "Stop generation"
+                                          : "Run review",
+                                    icon: stoppingGeneration ? (
                                         <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : generating ? (
+                                        <Square className="h-3.5 w-3.5 fill-current" />
                                     ) : (
                                         <Play className="h-4 w-4" />
                                     ),
                                     label: (
                                         <span className="hidden sm:inline">
-                                            {generating ? "Running…" : "Run"}
+                                            {stoppingGeneration
+                                                ? "Stopping…"
+                                                : generating
+                                                  ? "Stop"
+                                                  : "Run"}
                                         </span>
                                     ),
                                 },
@@ -920,7 +1076,10 @@ export function TRView({ reviewId, projectId }: Props) {
                                                             onClick={
                                                                 handleClearResults
                                                             }
-                                                            className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50 transition-colors"
+                                                            disabled={
+                                                                cellMutationsBlocked
+                                                            }
+                                                            className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
                                                         >
                                                             Clear results
                                                         </button>
@@ -938,6 +1097,9 @@ export function TRView({ reviewId, projectId }: Props) {
                                             {/* Mobile (toolbar dropdown): flattened entries */}
                                             <TabPillButton
                                                 onClick={handleClearResults}
+                                                disabled={
+                                                    cellMutationsBlocked
+                                                }
                                                 className="md:hidden"
                                             >
                                                 Clear results
@@ -1102,11 +1264,14 @@ export function TRView({ reviewId, projectId }: Props) {
                                     setExpandedCellCitation(undefined);
                                 }
                             }}
-                            onRegenerate={() =>
-                                handleRegenerateCell(
-                                    expandedRow.id,
-                                    expandedCell.column_index,
-                                )
+                            onRegenerate={
+                                cellMutationsBlocked
+                                    ? undefined
+                                    : () =>
+                                          handleRegenerateCell(
+                                              expandedRow.id,
+                                              expandedCell.column_index,
+                                          )
                             }
                             displayDocument={
                                 !!expandedDoc &&
@@ -1203,9 +1368,10 @@ export function TRView({ reviewId, projectId }: Props) {
                                   prev
                                       ? {
                                             ...prev,
-                                            shared_with: updated.shared_with,
+                                            ...updated,
+                                            is_owner: prev.is_owner,
                                         }
-                                      : prev,
+                                      : updated,
                               );
                           }
                 }
@@ -1266,6 +1432,34 @@ export function TRView({ reviewId, projectId }: Props) {
                 open={apiKeyModalProvider !== null}
                 provider={apiKeyModalProvider}
                 onClose={() => setApiKeyModalProvider(null)}
+            />
+
+            <WarningPopup
+                open={generationGuard === "running"}
+                title="Tabular review is already running"
+                message="This review is being run in another tab or by another collaborator. Wait for that run to finish or be stopped before trying again."
+                onClose={() => {
+                    if (!reloadingLatestReview) setGenerationGuard(null);
+                }}
+                primaryAction={{
+                    label: reloadingLatestReview ? "Checking…" : "Check again",
+                    disabled: reloadingLatestReview,
+                    onClick: () => void loadLatestReview(),
+                }}
+            />
+
+            <WarningPopup
+                open={generationGuard === "stale"}
+                title="A newer version is available"
+                message="Load the latest version of this tabular review before running it."
+                onClose={() => {
+                    if (!reloadingLatestReview) setGenerationGuard(null);
+                }}
+                primaryAction={{
+                    label: reloadingLatestReview ? "Loading…" : "Load latest",
+                    disabled: reloadingLatestReview,
+                    onClick: () => void loadLatestReview(),
+                }}
             />
         </div>
     );
