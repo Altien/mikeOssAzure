@@ -30,6 +30,7 @@ import {
     streamTabularGeneration,
     updateTabularReview,
     uploadReviewDocument,
+    MikeApiError,
 } from "@/app/lib/mikeApi";
 import type {
     ColumnConfig,
@@ -152,6 +153,8 @@ export function TRView({ reviewId, projectId }: Props) {
     // apiKeys is undefined.
     const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
     const tabularModel = profile?.tabularModel ?? "gemini-3-flash-preview";
+    const cellMutationsBlocked =
+        generating || stoppingGeneration || review?.is_running === true;
 
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
@@ -273,6 +276,10 @@ export function TRView({ reviewId, projectId }: Props) {
     }
 
     async function handleRegenerateCell(rowId: string, colIndex: number) {
+        if (cellMutationsBlocked) {
+            setGenerationGuard("running");
+            return;
+        }
         if (apiKeys && !isModelAvailable(tabularModel, apiKeys)) {
             setApiKeyModalProvider(getModelProvider(tabularModel));
             return;
@@ -309,6 +316,13 @@ export function TRView({ reviewId, projectId }: Props) {
                     : null,
             );
         } catch (err) {
+            if (
+                err instanceof MikeApiError &&
+                (err.code === "review_running" || err.code === "review_stale")
+            ) {
+                await loadLatestReview();
+                return;
+            }
             console.error("Regeneration failed", err);
             setCells((prev) =>
                 prev.map((c) =>
@@ -664,6 +678,12 @@ export function TRView({ reviewId, projectId }: Props) {
 
     async function clearResultsForRows(rowIds: string[]) {
         if (rowIds.length === 0) return;
+        if (cellMutationsBlocked) {
+            setGenerationGuard("running");
+            return;
+        }
+        const previousCells = cells;
+        const previousSelectedRowIds = selectedRowIds;
         setCells((prev) =>
             prev.map((c) =>
                 rowIds.includes(c.row_id)
@@ -673,7 +693,20 @@ export function TRView({ reviewId, projectId }: Props) {
         );
         setSelectedRowIds([]);
         setActionsOpen(false);
-        await clearTabularCells(reviewId, rowIds);
+        try {
+            await clearTabularCells(reviewId, rowIds);
+        } catch (err) {
+            if (
+                err instanceof MikeApiError &&
+                (err.code === "review_running" || err.code === "review_stale")
+            ) {
+                await loadLatestReview();
+                return;
+            }
+            setCells(previousCells);
+            setSelectedRowIds(previousSelectedRowIds);
+            console.error("Failed to clear tabular review results", err);
+        }
     }
 
     async function handleClearResults() {
@@ -911,7 +944,9 @@ export function TRView({ reviewId, projectId }: Props) {
                                                 label: "Clear results",
                                                 icon: X,
                                                 onSelect: handleClearAllResults,
-                                                disabled: rows.length === 0,
+                                                disabled:
+                                                    rows.length === 0 ||
+                                                    cellMutationsBlocked,
                                             },
                                             {
                                                 label: "Delete",
@@ -1045,7 +1080,10 @@ export function TRView({ reviewId, projectId }: Props) {
                                                             onClick={
                                                                 handleClearResults
                                                             }
-                                                            className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50 transition-colors"
+                                                            disabled={
+                                                                cellMutationsBlocked
+                                                            }
+                                                            className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
                                                         >
                                                             Clear results
                                                         </button>
@@ -1063,6 +1101,9 @@ export function TRView({ reviewId, projectId }: Props) {
                                             {/* Mobile (toolbar dropdown): flattened entries */}
                                             <TabPillButton
                                                 onClick={handleClearResults}
+                                                disabled={
+                                                    cellMutationsBlocked
+                                                }
                                                 className="md:hidden"
                                             >
                                                 Clear results
@@ -1227,11 +1268,14 @@ export function TRView({ reviewId, projectId }: Props) {
                                     setExpandedCellCitation(undefined);
                                 }
                             }}
-                            onRegenerate={() =>
-                                handleRegenerateCell(
-                                    expandedRow.id,
-                                    expandedCell.column_index,
-                                )
+                            onRegenerate={
+                                cellMutationsBlocked
+                                    ? undefined
+                                    : () =>
+                                          handleRegenerateCell(
+                                              expandedRow.id,
+                                              expandedCell.column_index,
+                                          )
                             }
                             displayDocument={
                                 !!expandedDoc &&

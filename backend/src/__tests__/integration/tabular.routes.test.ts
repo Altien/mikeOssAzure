@@ -31,6 +31,7 @@ type QueryResult = { data: unknown; error: unknown };
 let supabaseState: {
     rpc: QueryResult;
     rpcCalls: { fn: string; args: unknown }[];
+    operations: string[];
     tables: Record<string, QueryResult>;
     inserts: { table: string; payload: unknown }[];
 };
@@ -39,6 +40,7 @@ function resetSupabaseState() {
     supabaseState = {
         rpc: { data: [], error: null },
         rpcCalls: [],
+        operations: [],
         tables: {},
         inserts: [],
     };
@@ -88,8 +90,12 @@ function makeQuery(table: string) {
 
 function mockSupabase() {
     return {
-        from: vi.fn((table: string) => makeQuery(table)),
+        from: vi.fn((table: string) => {
+            supabaseState.operations.push(`from:${table}`);
+            return makeQuery(table);
+        }),
         rpc: vi.fn((fn: string, args: unknown) => {
+            supabaseState.operations.push(`rpc:${fn}`);
             supabaseState.rpcCalls.push({ fn, args });
             return Promise.resolve(supabaseState.rpc);
         }),
@@ -704,9 +710,15 @@ describe("tabular.routes", () => {
             expect(res.body.detail).toBe("Review not found");
         });
 
-        it("returns 204 on success", async () => {
+        it("rejects clearing cells while generation holds the review lease", async () => {
             supabaseState.tables.tabular_reviews = {
-                data: { id: "r1", user_id: "u1", project_id: null },
+                data: {
+                    id: "r1",
+                    user_id: "u1",
+                    project_id: null,
+                    active_generation_id: "00000000-0000-4000-8000-000000000001",
+                    generation_lease_expires_at: "2099-01-01T00:00:00.000Z",
+                },
                 error: null,
             };
 
@@ -715,7 +727,61 @@ describe("tabular.routes", () => {
                 .set(...AUTH)
                 .send({ row_ids: ["row-1"] });
 
+            expect(res.status).toBe(409);
+            expect(res.body).toEqual({
+                code: "review_running",
+                detail: "This tabular review is currently running.",
+            });
+            expect(supabaseState.operations).not.toContain("from:tabular_cells");
+        });
+
+        it("atomically rejects clearing when a run starts after the review read", async () => {
+            supabaseState.tables.tabular_reviews = {
+                data: {
+                    id: "r1",
+                    user_id: "u1",
+                    project_id: null,
+                    updated_at: "2026-08-22T10:00:00.000Z",
+                },
+                error: null,
+            };
+            supabaseState.rpc = { data: "running", error: null };
+
+            const res = await request(app)
+                .post("/tabular-review/r1/clear-cells")
+                .set(...AUTH)
+                .send({ row_ids: ["row-1"] });
+
+            expect(res.status).toBe(409);
+            expect(res.body.code).toBe("review_running");
+            expect(supabaseState.rpcCalls[0]?.fn).toBe(
+                "begin_tabular_review_generation",
+            );
+            expect(supabaseState.operations).not.toContain("from:tabular_cells");
+        });
+
+        it("returns 204 on success", async () => {
+            supabaseState.tables.tabular_reviews = {
+                data: {
+                    id: "r1",
+                    user_id: "u1",
+                    project_id: null,
+                    updated_at: "2026-08-22T10:00:00.000Z",
+                },
+                error: null,
+            };
+            supabaseState.rpc = { data: "started", error: null };
+
+            const res = await request(app)
+                .post("/tabular-review/r1/clear-cells")
+                .set(...AUTH)
+                .send({ row_ids: ["row-1"] });
+
             expect(res.status).toBe(204);
+            expect(supabaseState.rpcCalls.map(({ fn }) => fn)).toEqual([
+                "begin_tabular_review_generation",
+                "finish_tabular_review_generation",
+            ]);
         });
     });
 
@@ -745,6 +811,77 @@ describe("tabular.routes", () => {
 
             expect(res.status).toBe(404);
             expect(res.body.detail).toBe("Review not found");
+        });
+
+        it("rejects cell regeneration while generation holds the review lease", async () => {
+            supabaseState.tables.tabular_reviews = {
+                data: {
+                    id: "r1",
+                    user_id: "u1",
+                    project_id: null,
+                    active_generation_id: "00000000-0000-4000-8000-000000000001",
+                    generation_lease_expires_at: "2099-01-01T00:00:00.000Z",
+                    columns_config: [{ index: 0, name: "Col", prompt: "p" }],
+                },
+                error: null,
+            };
+
+            const res = await request(app)
+                .post("/tabular-review/r1/regenerate-cell")
+                .set(...AUTH)
+                .send({ row_id: "row-1", column_index: 0 });
+
+            expect(res.status).toBe(409);
+            expect(res.body).toEqual({
+                code: "review_running",
+                detail: "This tabular review is currently running.",
+            });
+            expect(supabaseState.operations).not.toContain(
+                "from:tabular_review_rows",
+            );
+        });
+
+        it("atomically rejects regeneration when a run starts after the review read", async () => {
+            supabaseState.tables.tabular_reviews = {
+                data: {
+                    id: "r1",
+                    user_id: "u1",
+                    project_id: null,
+                    updated_at: "2026-08-22T10:00:00.000Z",
+                    columns_config: [{ index: 0, name: "Col", prompt: "p" }],
+                },
+                error: null,
+            };
+            supabaseState.tables.tabular_review_rows = {
+                data: [
+                    {
+                        id: "row-1",
+                        review_id: "r1",
+                        label: "Document",
+                        row_type: "document",
+                        document_id: "d1",
+                        sort_index: 0,
+                    },
+                ],
+                error: null,
+            };
+            supabaseState.tables.tabular_review_row_sources = {
+                data: [{ row_id: "row-1", document_id: "d1" }],
+                error: null,
+            };
+            supabaseState.rpc = { data: "running", error: null };
+
+            const res = await request(app)
+                .post("/tabular-review/r1/regenerate-cell")
+                .set(...AUTH)
+                .send({ row_id: "row-1", column_index: 0 });
+
+            expect(res.status).toBe(409);
+            expect(res.body.code).toBe("review_running");
+            expect(supabaseState.rpcCalls[0]?.fn).toBe(
+                "begin_tabular_review_generation",
+            );
+            expect(supabaseState.operations).not.toContain("from:tabular_cells");
         });
 
         it("returns 400 when the column is not configured", async () => {
@@ -949,6 +1086,53 @@ describe("tabular.routes", () => {
             expect(res.status).toBe(400);
             expect(res.body.detail).toBe(
                 "expected_updated_at must be a valid timestamp",
+            );
+        });
+
+        it("claims the lease before loading rows and cells", async () => {
+            supabaseState.tables.tabular_reviews = {
+                data: {
+                    id: "r1",
+                    user_id: "u1",
+                    project_id: null,
+                    updated_at: "2026-08-22T10:00:00.000Z",
+                    columns_config: [{ index: 0, name: "Col", prompt: "p" }],
+                },
+                error: null,
+            };
+            supabaseState.tables.tabular_review_rows = {
+                data: [],
+                error: null,
+            };
+            supabaseState.tables.tabular_cells = {
+                data: null,
+                error: { message: "cell snapshot failed" },
+            };
+            supabaseState.rpc = { data: "started", error: null };
+
+            const res = await request(app)
+                .post("/tabular-review/r1/generate")
+                .set(...AUTH)
+                .send({
+                    expected_updated_at: "2026-08-22T10:00:00.000Z",
+                });
+
+            expect(res.status).toBe(500);
+            expect(res.body.detail).toBe("cell snapshot failed");
+            const beginIndex = supabaseState.operations.indexOf(
+                "rpc:begin_tabular_review_generation",
+            );
+            const rowsIndex = supabaseState.operations.indexOf(
+                "from:tabular_review_rows",
+            );
+            const cellsIndex = supabaseState.operations.indexOf(
+                "from:tabular_cells",
+            );
+            expect(beginIndex).toBeGreaterThanOrEqual(0);
+            expect(rowsIndex).toBeGreaterThan(beginIndex);
+            expect(cellsIndex).toBeGreaterThan(rowsIndex);
+            expect(supabaseState.rpcCalls.at(-1)?.fn).toBe(
+                "finish_tabular_review_generation",
             );
         });
 
