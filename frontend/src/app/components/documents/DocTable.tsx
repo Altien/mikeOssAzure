@@ -51,10 +51,13 @@ import {
 import {
     collectDroppedDocumentUploadEntries,
     dataTransferHasDirectory,
+    DOCUMENT_UPLOAD_CONCURRENCY,
     documentUploadEntriesFromFiles,
     documentUploadFolderSegments,
     documentUploadProgressEntries,
+    MAX_DOCUMENTS_PER_DIRECTORY_UPLOAD,
     resolveDocumentUploadRootFolder,
+    settleWithConcurrency,
     type DocumentUploadEntry,
     type DocumentUploadFolderPathResolution,
     type DocumentUploadProgressEntry,
@@ -1223,6 +1226,14 @@ export function DocTable({
         const supportedEntries = entries.filter((entry) =>
             supportedFiles.has(entry.file),
         );
+        if (
+            supportedEntries.length > MAX_DOCUMENTS_PER_DIRECTORY_UPLOAD
+        ) {
+            setCollectionActionWarning(
+                `You can upload up to ${MAX_DOCUMENTS_PER_DIRECTORY_UPLOAD} supported documents at a time. Nothing was uploaded.`,
+            );
+            return;
+        }
         const progressEntries = documentUploadProgressEntries(supportedEntries);
         setCollectionUploadProgress({
             parentFolderId: baseFolderId,
@@ -1321,11 +1332,13 @@ export function DocTable({
                 return pending;
             };
 
-            const results = await Promise.allSettled(
-                supportedEntries.map(async (entry) => {
+            const results = await settleWithConcurrency(
+                supportedEntries,
+                DOCUMENT_UPLOAD_CONCURRENCY,
+                async (entry) => {
                     const folderId = await resolveEntryFolder(entry);
                     return operations.uploadDocument(entry.file, folderId);
-                }),
+                },
             );
             const uploaded = results.flatMap((result) =>
                 result.status === "fulfilled" ? [result.value] : [],

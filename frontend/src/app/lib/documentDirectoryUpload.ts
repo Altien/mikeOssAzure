@@ -3,6 +3,9 @@ export type DocumentUploadEntry = {
     relativePath: string;
 };
 
+export const MAX_DOCUMENTS_PER_DIRECTORY_UPLOAD = 50;
+export const DOCUMENT_UPLOAD_CONCURRENCY = 2;
+
 export type DocumentUploadProgressEntry = {
     kind: "file" | "folder";
     name: string;
@@ -22,6 +25,38 @@ export type DocumentUploadFolderPathResolution<TFolder> =
           resolved_name: string;
           folders: TFolder[];
       };
+
+export async function settleWithConcurrency<TItem, TResult>(
+    items: readonly TItem[],
+    concurrency: number,
+    worker: (item: TItem, index: number) => Promise<TResult>,
+): Promise<PromiseSettledResult<TResult>[]> {
+    if (items.length === 0) return [];
+    const results = new Array<PromiseSettledResult<TResult>>(items.length);
+    const workerCount = Math.min(
+        items.length,
+        Math.max(1, Math.floor(concurrency)),
+    );
+    let nextIndex = 0;
+
+    const runWorker = async () => {
+        while (nextIndex < items.length) {
+            const index = nextIndex;
+            nextIndex += 1;
+            try {
+                results[index] = {
+                    status: "fulfilled",
+                    value: await worker(items[index], index),
+                };
+            } catch (reason) {
+                results[index] = { status: "rejected", reason };
+            }
+        }
+    };
+
+    await Promise.all(Array.from({ length: workerCount }, runWorker));
+    return results;
+}
 
 export async function resolveDocumentUploadRootFolder<TFolder>({
     rootFolderName,

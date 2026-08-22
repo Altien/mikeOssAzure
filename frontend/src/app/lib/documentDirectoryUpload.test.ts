@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import {
     collectDroppedDocumentUploadEntries,
+    DOCUMENT_UPLOAD_CONCURRENCY,
     documentUploadEntriesFromFiles,
     documentUploadFolderSegments,
     documentUploadPathSegments,
     documentUploadProgressEntries,
+    MAX_DOCUMENTS_PER_DIRECTORY_UPLOAD,
     resolveDocumentUploadRootFolder,
+    settleWithConcurrency,
 } from "./documentDirectoryUpload";
 
 function folderFile(name: string, relativePath: string) {
@@ -17,6 +20,46 @@ function folderFile(name: string, relativePath: string) {
 }
 
 describe("document directory upload paths", () => {
+    it("keeps directory upload concurrency bounded and preserves result order", async () => {
+        let active = 0;
+        let maxActive = 0;
+        let releaseFirstWave = () => {};
+        const firstWave = new Promise<void>((resolve) => {
+            releaseFirstWave = resolve;
+        });
+
+        const pending = settleWithConcurrency(
+            [0, 1, 2, 3],
+            DOCUMENT_UPLOAD_CONCURRENCY,
+            async (value) => {
+                active += 1;
+                maxActive = Math.max(maxActive, active);
+                if (value < DOCUMENT_UPLOAD_CONCURRENCY) await firstWave;
+                active -= 1;
+                if (value === 2) throw new Error("upload failed");
+                return value * 2;
+            },
+        );
+
+        await vi.waitFor(() =>
+            expect(active).toBe(DOCUMENT_UPLOAD_CONCURRENCY),
+        );
+        expect(maxActive).toBe(DOCUMENT_UPLOAD_CONCURRENCY);
+        releaseFirstWave();
+
+        await expect(pending).resolves.toEqual([
+            { status: "fulfilled", value: 0 },
+            { status: "fulfilled", value: 2 },
+            { status: "rejected", reason: expect.any(Error) },
+            { status: "fulfilled", value: 6 },
+        ]);
+        expect(maxActive).toBe(DOCUMENT_UPLOAD_CONCURRENCY);
+    });
+
+    it("caps a directory upload at the backend hourly request limit", () => {
+        expect(MAX_DOCUMENTS_PER_DIRECTORY_UPLOAD).toBe(50);
+    });
+
     it("preserves the selected root folder and nested subfolders", () => {
         const file = folderFile(
             "agreement.pdf",
