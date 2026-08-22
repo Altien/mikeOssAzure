@@ -171,48 +171,7 @@ describe("document directory upload paths", () => {
         ]);
     });
 
-    it("deletes an existing folder before resolving a replacement", async () => {
-        const calls: string[] = [];
-        const resolveFolderPath = vi
-            .fn()
-            .mockImplementationOnce(async () => ({
-                conflict: true as const,
-                folder_name: "NDAs",
-                existing_folder_id: "old-folder",
-                suggested_name: "NDAs (2)",
-                can_replace: true,
-            }))
-            .mockImplementationOnce(async () => {
-                calls.push("resolve-new-folder");
-                return {
-                    conflict: false as const,
-                    folder_id: "new-folder",
-                    resolved_name: "NDAs",
-                    folders: [],
-                };
-            });
-        const replaceFolder = vi.fn(async () => {
-            calls.push("delete-old-folder");
-        });
-
-        const result = await resolveDocumentUploadRootFolder({
-            rootFolderName: "NDAs",
-            baseFolderId: null,
-            resolveFolderPath,
-            chooseConflict: async () => "replace",
-            replaceFolder,
-        });
-
-        expect(calls).toEqual(["delete-old-folder", "resolve-new-folder"]);
-        expect(replaceFolder).toHaveBeenCalledWith("old-folder");
-        expect(result).toMatchObject({
-            conflict: false,
-            folder_id: "new-folder",
-            resolved_name: "NDAs",
-        });
-    });
-
-    it("creates a suffixed folder without deleting the existing one", async () => {
+    it("confirms before creating a suffixed folder", async () => {
         const resolveFolderPath = vi
             .fn()
             .mockResolvedValueOnce({
@@ -220,7 +179,6 @@ describe("document directory upload paths", () => {
                 folder_name: "NDAs",
                 existing_folder_id: "old-folder",
                 suggested_name: "NDAs (2)",
-                can_replace: true,
             })
             .mockResolvedValueOnce({
                 conflict: false as const,
@@ -228,22 +186,45 @@ describe("document directory upload paths", () => {
                 resolved_name: "NDAs (2)",
                 folders: [],
             });
-        const replaceFolder = vi.fn(async () => {});
+        const chooseConflict = vi.fn(async () => "rename" as const);
 
         const result = await resolveDocumentUploadRootFolder({
             rootFolderName: "NDAs",
             baseFolderId: null,
             resolveFolderPath,
-            chooseConflict: async () => "rename",
-            replaceFolder,
+            chooseConflict,
         });
 
-        expect(replaceFolder).not.toHaveBeenCalled();
+        expect(chooseConflict).toHaveBeenCalledWith({
+            conflict: true,
+            folder_name: "NDAs",
+            existing_folder_id: "old-folder",
+            suggested_name: "NDAs (2)",
+        });
         expect(resolveFolderPath).toHaveBeenLastCalledWith(
             ["NDAs"],
             null,
             "rename",
         );
         expect(result?.resolved_name).toBe("NDAs (2)");
+    });
+
+    it("does not create a suffixed folder when the alert is dismissed", async () => {
+        const resolveFolderPath = vi.fn().mockResolvedValue({
+            conflict: true as const,
+            folder_name: "NDAs",
+            existing_folder_id: "old-folder",
+            suggested_name: "NDAs (2)",
+        });
+
+        const result = await resolveDocumentUploadRootFolder({
+            rootFolderName: "NDAs",
+            baseFolderId: null,
+            resolveFolderPath,
+            chooseConflict: async () => "cancel",
+        });
+
+        expect(result).toBeNull();
+        expect(resolveFolderPath).toHaveBeenCalledTimes(1);
     });
 });

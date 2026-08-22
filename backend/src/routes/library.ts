@@ -590,9 +590,6 @@ libraryRouter.post(
     });
     if (error)
       return void sendInternalError(res, error);
-    if (data && typeof data === "object" && "conflict" in data && data.conflict) {
-      return void res.json({ ...data, can_replace: true });
-    }
     res.json(data);
   },
 );
