@@ -989,7 +989,7 @@ export function TRView({ reviewId, projectId }: Props) {
                                     icon: stoppingGeneration ? (
                                         <Loader2 className="h-4 w-4 animate-spin" />
                                     ) : generating ? (
-                                        <Square className="h-3.5 w-3.5 fill-current" />
+                                        <Square className="h-3.5 w-3.5" />
                                     ) : (
                                         <Play className="h-4 w-4" />
                                     ),

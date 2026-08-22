@@ -26,7 +26,7 @@ import { useAuth } from "@/app/contexts/AuthContext";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import {
     TABLE_CHECKBOX_CLASS,
-    SkeletonDot,
+    SkeletonCheckbox,
     SkeletonLine,
     TableBody,
     TableCell,
@@ -475,7 +475,7 @@ export default function TabularReviewsPage() {
                     <TableHeaderRow>
                         <TableStickyCell header>
                             {effectiveLoading ? (
-                                <SkeletonDot className="mr-4" />
+                                <SkeletonCheckbox />
                             ) : (
                                 <input
                                     type="checkbox"
@@ -531,7 +531,7 @@ export default function TabularReviewsPage() {
                                     hover={false}
                                     bgClassName="bg-transparent"
                                 >
-                                    <SkeletonDot className="mr-4" />
+                                    <SkeletonCheckbox />
                                     <SkeletonLine className="h-3.5 w-48" />
                                 </TableStickyCell>
                                 <TableCell className="ml-auto w-24">

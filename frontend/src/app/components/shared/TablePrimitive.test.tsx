@@ -1,9 +1,23 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
+    SkeletonCheckbox,
     TablePrimaryCell,
     tableTreeCellStyle,
 } from "./TablePrimitive";
+
+describe("table skeletons", () => {
+    it("uses the same geometry as a table checkbox", () => {
+        const { container } = render(<SkeletonCheckbox />);
+
+        expect(container.firstChild).toHaveClass(
+            "mr-3",
+            "h-2.5",
+            "w-2.5",
+            "shrink-0",
+        );
+    });
+});
 
 describe("table tree indentation", () => {
     it("centers each child checkbox beneath its parent chevron", () => {

@@ -7,7 +7,7 @@ import {
 } from "@/app/components/shared/RowActions";
 import {
     TABLE_CHECKBOX_CLASS,
-    SkeletonDot,
+    SkeletonCheckbox,
     SkeletonLine,
     TableBody,
     TableCell,
@@ -181,7 +181,7 @@ export function ProjectAssistantTable({
                 <TableHeaderRow className="pr-8 md:pr-8">
                     <TableStickyCell header>
                         {loading ? (
-                            <SkeletonDot className="mr-4" />
+                            <SkeletonCheckbox />
                         ) : (
                             <input
                                 type="checkbox"
@@ -339,7 +339,7 @@ function ProjectAssistantLoadingRows() {
                 >
                     <TableStickyCell hover={false}>
                         <div className="flex min-w-0 items-center">
-                            <SkeletonDot className="mr-4" />
+                            <SkeletonCheckbox />
                             <SkeletonLine
                                 className={`h-3.5 ${titleWidths[i - 1]}`}
                             />
