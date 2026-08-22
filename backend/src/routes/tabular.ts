@@ -1368,7 +1368,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
             }
 
             // Single LLM call for all columns, streaming one JSON line per
-            // column. Aborting the request pauses every active worker.
+            // column. Aborting the request stops every active worker.
             const receivedColumns = new Set<number>();
             try {
                 await queryTabularAllColumns(
@@ -1405,7 +1405,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                 }
             }
 
-            // Paused cells return to pending; genuine missing model output is
+            // Stopped cells return to pending; genuine missing model output is
             // still an error. Completed cells remain untouched.
             const incompleteStatus = generationAbort.signal.aborted
                 ? "pending"
