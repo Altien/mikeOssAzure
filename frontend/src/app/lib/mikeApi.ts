@@ -1674,6 +1674,7 @@ export async function deleteTabularReview(reviewId: string): Promise<void> {
 
 export async function streamTabularGeneration(
     reviewId: string,
+    signal?: AbortSignal,
 ): Promise<Response> {
     const authHeaders = await getAuthHeader();
     const response = await fetch(
@@ -1681,6 +1682,7 @@ export async function streamTabularGeneration(
         {
             method: "POST",
             headers: { ...authHeaders },
+            signal,
         },
     );
     bounceIfUnauthorized(response);

@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
     Plus,
     Loader2,
+    Pause,
     Play,
     ChevronDown,
     MessageSquare,
@@ -80,6 +81,8 @@ export function TRView({ reviewId, projectId }: Props) {
     const [columns, setColumns] = useState<ColumnConfig[]>([]);
     const [loading, setLoading] = useState(true);
     const [generating, setGenerating] = useState(false);
+    const [generationPaused, setGenerationPaused] = useState(false);
+    const [pausingGeneration, setPausingGeneration] = useState(false);
     const [savingColumn, setSavingColumn] = useState(false);
     const [savingColumnsConfig, setSavingColumnsConfig] = useState(false);
     const [addColOpen, setAddColOpen] = useState(false);
@@ -130,6 +133,14 @@ export function TRView({ reviewId, projectId }: Props) {
         useState<ModelProvider | null>(null);
     const actionsRef = useRef<HTMLDivElement>(null);
     const tableRef = useRef<TRTableHandle>(null);
+    const generationAbortRef = useRef<AbortController | null>(null);
+
+    useEffect(
+        () => () => {
+            generationAbortRef.current?.abort();
+        },
+        [],
+    );
     const router = useRouter();
     const { profile, apiKeysDegraded } = useUserProfile();
     // Unknown key state fails open; the submit gates below already skip when
@@ -318,10 +329,17 @@ export function TRView({ reviewId, projectId }: Props) {
             return;
         }
 
+        const generationAbort = new AbortController();
+        generationAbortRef.current = generationAbort;
+        setGenerationPaused(false);
+        setPausingGeneration(false);
         setGenerating(true);
 
         try {
-            const response = await streamTabularGeneration(reviewId);
+            const response = await streamTabularGeneration(
+                reviewId,
+                generationAbort.signal,
+            );
             if (!response.ok) {
                 const payload = await response.json().catch(() => null);
                 const provider =
@@ -405,10 +423,35 @@ export function TRView({ reviewId, projectId }: Props) {
                 }
             }
         } catch (err) {
-            console.error("Generation failed", err);
+            if (!generationAbort.signal.aborted) {
+                console.error("Generation failed", err);
+            }
         } finally {
-            setGenerating(false);
+            if (generationAbortRef.current === generationAbort) {
+                generationAbortRef.current = null;
+                setGenerating(false);
+                setPausingGeneration(false);
+            }
         }
+    }
+
+    function handlePauseGeneration() {
+        if (!generating || pausingGeneration) return;
+        setGenerationPaused(true);
+        setPausingGeneration(true);
+        setCells((current) =>
+            current.map((cell) =>
+                cell.status === "generating"
+                    ? { ...cell, status: "pending" as const }
+                    : cell,
+            ),
+        );
+        setExpandedCell((current) =>
+            current?.status === "generating"
+                ? { ...current, status: "pending" as const }
+                : current,
+        );
+        generationAbortRef.current?.abort();
     }
 
     async function handleAddColumn(newColumns: ColumnConfig[]) {
@@ -834,20 +877,37 @@ export function TRView({ reviewId, projectId }: Props) {
                         {
                             actions: [
                                 {
-                                    onClick: handleGenerate,
+                                    onClick: generating
+                                        ? handlePauseGeneration
+                                        : handleGenerate,
                                     disabled:
-                                        generating ||
+                                        pausingGeneration ||
                                         columns.length === 0 ||
                                         rows.length === 0 ||
                                         savingColumnsConfig,
-                                    icon: generating ? (
+                                    title: pausingGeneration
+                                        ? "Pausing generation"
+                                        : generating
+                                          ? "Pause generation"
+                                          : generationPaused
+                                            ? "Resume generation"
+                                            : "Run review",
+                                    icon: pausingGeneration ? (
                                         <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : generating ? (
+                                        <Pause className="h-4 w-4" />
                                     ) : (
                                         <Play className="h-4 w-4" />
                                     ),
                                     label: (
                                         <span className="hidden sm:inline">
-                                            {generating ? "Running…" : "Run"}
+                                            {pausingGeneration
+                                                ? "Pausing…"
+                                                : generating
+                                                  ? "Pause"
+                                                  : generationPaused
+                                                    ? "Resume"
+                                                    : "Run"}
                                         </span>
                                     ),
                                 },
