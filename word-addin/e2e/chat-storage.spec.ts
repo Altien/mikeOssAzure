@@ -69,12 +69,12 @@ test("cloud is default and local mode persists document chats in IndexedDB", asy
     cloudSwitch.locator(
       "xpath=ancestor::div[contains(@class, 'rounded-xl')][1]",
     ),
-  ).toHaveClass(/bg-white\/55/);
+  ).toHaveClass(/liquid-glass-flat/);
   await expect(
     page
       .getByRole("button", { name: "Delete" })
       .locator("xpath=ancestor::div[contains(@class, 'rounded-xl')][1]"),
-  ).toHaveClass(/bg-white\/55/);
+  ).toHaveClass(/liquid-glass-flat/);
   await expect(cloudSwitch).toBeChecked();
   await cloudSwitch.click();
   await expect(cloudSwitch).not.toBeChecked();
