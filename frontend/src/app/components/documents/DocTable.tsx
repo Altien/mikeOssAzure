@@ -84,9 +84,9 @@ import { LibrarySkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import { EmptyState } from "@/app/components/ui/empty-state";
 import { PillButton } from "@/app/components/ui/pill-button";
 import {
-    APP_SURFACE_ACTIVE_CLASS,
-    APP_SURFACE_GROUP_HOVER_CLASS,
-    APP_SURFACE_HOVER_CLASS,
+    LIQUID_GLASS_SELECTED_CLASS,
+    LIQUID_GLASS_GROUP_HOVER_CLASS,
+    LIQUID_GLASS_HOVER_CLASS,
 } from "@/app/components/ui/liquid-surface";
 import {
     TABLE_CHECKBOX_CLASS,
@@ -2036,18 +2036,18 @@ export function DocTable({
                                         showFolderActions: false,
                                     });
                                 }}
-                                className={`group flex h-10 min-w-max items-center pr-3 cursor-pointer transition-colors ${isVersionDragOver ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : isSelected ? APP_SURFACE_ACTIVE_CLASS : APP_SURFACE_HOVER_CLASS}`}
+                                className={`group flex h-10 min-w-max items-center pr-3 cursor-pointer transition-colors ${isVersionDragOver ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : isSelected ? LIQUID_GLASS_SELECTED_CLASS : LIQUID_GLASS_HOVER_CLASS}`}
                             >
                                 {(() => {
                                     const rowBg = isVersionDragOver
                                         ? "bg-blue-50"
                                         : isSelected
-                                          ? APP_SURFACE_ACTIVE_CLASS
+                                          ? LIQUID_GLASS_SELECTED_CLASS
                                           : stickyCellBg;
                                     return (
                                         <>
                                             <div
-                                                className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${rowBg} py-2 pl-3 pr-2 transition-colors ${isVersionDragOver || isSelected ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
+                                                className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${rowBg} py-2 pl-3 pr-2 transition-colors ${isVersionDragOver || isSelected ? "" : LIQUID_GLASS_GROUP_HOVER_CLASS}`}
                                                 style={treeNameCellStyle(depth)}
                                             >
                                                 <div className="flex items-center">
@@ -2122,7 +2122,7 @@ export function DocTable({
                                                 {hasVersions ? (
                                                     <button
                                                         onClick={() => void toggleVersions(doc.id)}
-                                                        className={`flex items-center gap-1 rounded px-1 py-0.5 transition-colors ${APP_SURFACE_HOVER_CLASS}`}
+                                                        className={`flex items-center gap-1 rounded px-1 py-0.5 transition-colors ${LIQUID_GLASS_HOVER_CLASS}`}
                                                     >
                                                         <span>{versionNumber}</span>
                                                         {isVersionsOpen ? (
@@ -2325,10 +2325,10 @@ export function DocTable({
                                         showFolderActions: true,
                                     });
                                 }}
-                                className={`group flex h-10 min-w-max items-center pr-3 ${APP_SURFACE_HOVER_CLASS} cursor-pointer transition-colors ${isRenaming ? "" : "select-none"} ${dragOverFolderId === folder.id ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : ""}`}
+                                className={`group flex h-10 min-w-max items-center pr-3 ${LIQUID_GLASS_HOVER_CLASS} cursor-pointer transition-colors ${isRenaming ? "" : "select-none"} ${dragOverFolderId === folder.id ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : ""}`}
                             >
                                 <div
-                                    className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} py-2 pl-3 pr-2 ${dragOverFolderId === folder.id ? "bg-blue-50" : stickyCellBg} transition-colors ${dragOverFolderId === folder.id ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
+                                    className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} py-2 pl-3 pr-2 ${dragOverFolderId === folder.id ? "bg-blue-50" : stickyCellBg} transition-colors ${dragOverFolderId === folder.id ? "" : LIQUID_GLASS_GROUP_HOVER_CLASS}`}
                                     style={treeNameCellStyle(depth)}
                                 >
                                     <div className="flex items-center">
@@ -3222,10 +3222,10 @@ export function DocTable({
                                                                     showFolderActions: false,
                                                                 });
                                                             }}
-                                                            className={`group flex h-10 min-w-max items-center pr-3 cursor-pointer transition-colors ${isVersionDragOver ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : isSelected ? APP_SURFACE_ACTIVE_CLASS : APP_SURFACE_HOVER_CLASS}`}
+                                                            className={`group flex h-10 min-w-max items-center pr-3 cursor-pointer transition-colors ${isVersionDragOver ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : isSelected ? LIQUID_GLASS_SELECTED_CLASS : LIQUID_GLASS_HOVER_CLASS}`}
                                                         >
                                                             <div
-                                                                className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${isVersionDragOver ? "bg-blue-50" : isSelected ? APP_SURFACE_ACTIVE_CLASS : stickyCellBg} py-2 pl-3 pr-2 transition-colors ${isVersionDragOver || isSelected ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
+                                                                className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${isVersionDragOver ? "bg-blue-50" : isSelected ? LIQUID_GLASS_SELECTED_CLASS : stickyCellBg} py-2 pl-3 pr-2 transition-colors ${isVersionDragOver || isSelected ? "" : LIQUID_GLASS_GROUP_HOVER_CLASS}`}
                                                             >
                                                                 <div className="flex items-center">
                                                                     {isProcessing || isUploadingVersion ? (
@@ -3305,7 +3305,7 @@ export function DocTable({
                                                                 {hasVersions ? (
                                                                     <button
                                                                         onClick={() => void toggleVersions(doc.id)}
-                                                                        className={`flex items-center gap-1 rounded px-1 py-0.5 transition-colors ${APP_SURFACE_HOVER_CLASS}`}
+                                                                        className={`flex items-center gap-1 rounded px-1 py-0.5 transition-colors ${LIQUID_GLASS_HOVER_CLASS}`}
                                                                     >
                                                                         <span>{versionNumber}</span>
                                                                         {isVersionsOpen ? (

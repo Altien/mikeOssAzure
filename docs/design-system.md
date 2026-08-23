@@ -29,7 +29,8 @@ also register it for Tailwind class scanning in
 The convention for a cross-target primitive is a `XxxUI.tsx` in `src/shared/ui/`
 plus a thin re-export in `components/ui/` so web callers use one import path —
 see `GlassCardUI`/`glass-card.tsx`, `PillButtonUI`/`pill-button.tsx`, and
-`GlassIconButtonUI`/`glass-icon-button.tsx`.
+`GlassIconButtonUI`/`glass-icon-button.tsx`. `MikeIconUI` similarly owns the
+single icon implementation used by thin web and Word add-in re-exports.
 
 ## Color tokens
 
@@ -48,13 +49,25 @@ These back the "liquid glass" chrome and are the ones most feature code needs.
 | `--app-surface-active` | `bg-app-surface-active` | `#eff0f3` | Selected or pressed row/item. |
 | `--app-floating` | `bg-app-floating` | `#fefefe` | Detached floating elements above a surface. |
 
-Use the class-name constants in `components/ui/liquid-surface.ts`
-(`APP_SURFACE_HOVER_CLASS`, `APP_SURFACE_ACTIVE_CLASS`,
-`LIQUID_PANEL_SURFACE_CLASS`, …) rather than retyping the utilities, so the
-hover/active pair stays consistent.
+Use the class-name constants in `components/ui/liquid-surface.ts` rather than
+retyping the utilities. Liquid-glass controls use
+`LIQUID_GLASS_HOVER_CLASS`/`LIQUID_GLASS_SELECTED_CLASS`; modal rows use the
+modal-specific pair documented under elevation below.
 
-`--color-azure: 0, 136, 255` is a raw RGB triple consumed as
-`rgb(var(--color-azure))` by the statute/regulation viewer styles.
+### Component color roles
+
+Theme-sensitive colors that do not describe elevation live in
+`frontend/src/shared/ui/ThemeTokensUI.css`. This includes document tabs,
+workflow-editor prose and tables, document/citation highlights, dropdown hover
+and selected states, chat fades and shimmers, and spreadsheet canvas overlays.
+The file is imported by both the web app and Word add-in and provides light and
+`.dark` values.
+
+Dropdown primitives use `theme-dropdown-item` and
+`theme-dropdown-selected`. They consume the same general liquid-glass hover
+and selected color tokens as the liquid-glass state classes, so menu and
+surface interactions remain visually consistent without copied palette
+utilities.
 
 ### shadcn semantic tokens
 
@@ -86,10 +99,17 @@ stay on the overridden steps for brand blue.
 ### Dark mode
 
 `@custom-variant dark (&:is(.dark *))` — class-based, not
-`prefers-color-scheme`. The shadcn tokens have `.dark` values; the `--app-*`
-surface tokens do **not**. Since the app chrome is built on `--app-*`, dark mode
-is currently incomplete. Do not treat a `dark:` variant as supported until those
-tokens gain dark values.
+`prefers-color-scheme`. The shadcn tokens, `--app-*` surface tokens, and shared
+liquid-glass material tokens all have `.dark` values. The user preference adds
+`.dark` to the document root, so semantic surface and material classes switch
+without component-level `dark:` shadow recipes. The preference lives in
+Settings > Appearance.
+
+`MikeIcon` is the exception: the mark is inline SVG, so no class-based
+remapping reaches its gradient stops. It subscribes to the document theme class
+itself and swaps its dark-glass blades for the white ones. Anything else drawing
+brand-colored SVG should follow the same pattern rather than hard-coding a
+single palette.
 
 ## Typography
 
@@ -134,18 +154,58 @@ icon buttons), `rounded-lg`/`rounded-md` (rows, list items), `rounded-xl`
 
 ## Elevation and the glass surface
 
-The signature surface is a translucent white "liquid glass" panel: a
-`border-white/70` hairline, a `bg-white/55`–`bg-white/65` fill, inset highlight
-shadows, and `backdrop-blur-xl`/`-2xl`. Do not retype the shadow triple. Use one
-of:
+The signature surface combines a light fill, hairline border, inset highlight
+shadows, and soft elevation. Each liquid-glass class owns all three material
+properties—background, border, and shadow—through light/dark CSS variables in
+`LiquidGlassUI.css`; components should not repeat a surface border utility. The
+flat tier uses a solid fill so broad surfaces
+and sticky table cells render as one continuous plane; the higher and overlay
+tiers retain their translucency where depth or underlying content matters.
+Elevation is centralized in
+`frontend/src/shared/ui/LiquidGlassUI.css`, with class-name constants in
+`LiquidGlassUI.ts`. Do not write a new `shadow-[...]` recipe for a general glass
+surface.
+
+Use the lowest tier that communicates the required depth:
+
+| Material | Class | Use for |
+| --- | --- | --- |
+| Flat | `liquid-glass-flat` | Solid-fill assistant response/message surfaces, tables, glass cards, and signup/login/onboarding cards. |
+| Subtle | `liquid-glass-subtle` | Modal inputs, dropdown triggers, tab pills, PageHeader actions, and search/select controls. |
+| Float | `liquid-glass-float` | Open dropdowns/submenus, `AppSidebar`, and persistent app/assistant/document/tabular side panels. Uses the original AppSidebar shadow depth. |
+| Modal | `liquid-glass-modal` | The modal frame only; modal contents use the appropriate general tier. |
+| Translucent | `liquid-glass-translucent` | Chat composer, ask-input surfaces, slash menus, and other translucent content overlays. |
+| Translucent action modifier | `liquid-glass-translucent-action` | Compact over-message actions such as scroll-to-bottom; use with `liquid-glass-translucent`. |
+
+Interactive color is separate from elevation so every tier can share one
+state treatment:
+
+| State | Class constant | Rendered class | Use for |
+| --- | --- | --- | --- |
+| General hover | `LIQUID_GLASS_HOVER_CLASS` | `liquid-glass-hover` | Liquid-glass controls and rows outside a modal. |
+| General selected | `LIQUID_GLASS_SELECTED_CLASS` | `liquid-glass-selected` | Selected liquid-glass controls and rows outside a modal. |
+| General pressed | `LIQUID_GLASS_PRESSED_CLASS` | `liquid-glass-pressed` | Momentary press feedback where needed. |
+| Modal row hover | `LIQUID_GLASS_MODAL_ROW_HOVER_CLASS` | `liquid-glass-modal-row-hover` | FileDirectory, Quick Actions, workflow picker, and other rows on a modal frame. |
+| Modal row selected | `LIQUID_GLASS_MODAL_ROW_SELECTED_CLASS` | `liquid-glass-modal-row-selected` | Selected rows on a modal frame. |
+
+The modal row pair is intentionally distinct because `liquid-glass-modal` has
+a darker resting fill. Do not use it for inputs or buttons merely because they
+happen to appear inside a modal; it is for selectable list rows on the modal
+frame.
+
+Every material owns its base light- and dark-theme fill, border, and elevation.
+Interactive state classes may override the base fill for selected, hovered, or
+focused states. The translucent material additionally owns its blur and hover
+treatment because chat messages visibly pass underneath it.
+
+Compose the material classes through the established primitives and constants:
 
 - `GLASS_CARD_SURFACE_CLASS` / `GlassCard` — cards
-- `LIQUID_PANEL_SURFACE_CLASS`, `LIQUID_TABLE_SURFACE_CLASS`,
-  `APP_PANEL_SHADOW_CLASS` in `components/ui/liquid-surface.ts` — panels, tables
+- `LIQUID_FLOAT_PANEL_SURFACE_CLASS`,
+  `LIQUID_SUBTLE_PANEL_SURFACE_CLASS`, and `LIQUID_TABLE_SURFACE_CLASS` in
+  `components/ui/liquid-surface.ts` — panels and tables
 - `LiquidDropdownContent` / `LiquidDropdownSurface` — menus
 - `GlassIconButton` — circular icon buttons
-- `.white-liquid-glass` in `globals.css` — the raw-CSS equivalent, for the few
-  places that cannot use Tailwind classes
 
 ## Primitives in `components/ui/`
 
@@ -161,6 +221,7 @@ of:
 | `toggle-switch` | `role="switch"` toggle with a text label. |
 | `dropdown-menu` | Radix/shadcn menu primitives. |
 | `liquid-dropdown` | The glass skin over `dropdown-menu` — use this in app chrome. |
+| `CitationPillUI` | Canonical numbered citation control for web, tabular review, and Word. Uses neutral gray by default, red for verification errors, and blue for the selected state. |
 | `glass-card`, `liquid-surface` | Card component and shared surface class constants. |
 | `empty-state` | Icon + display heading + copy + optional action, for "nothing here yet". Wrap in `TableEmptyState` inside a table. |
 | `check-square` | The selection square used by directory/picker rows. Decorative by default; the row owns the ARIA state. |
@@ -198,9 +259,9 @@ These are the rules the primitives already follow. Match them in new work.
   `focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40
   focus-visible:ring-offset-2`. If you write `outline-none` you owe the element a
   replacement indicator in the same class string.
-- **A background tint is not a focus indicator** when the tint is a ~1% luminance
-  step. `liquid-dropdown` items pair `focus:bg-app-surface-active` with a ring
-  for this reason.
+- **A background tint is not a focus indicator** when the tint is a small
+  luminance step. `liquid-dropdown` items pair the semantic focus tint with a
+  ring for this reason.
 - **Icon-only controls need a name.** `GlassIconButton` requires `aria-label` in
   its type. When a control has a *visible* label, do not override it with a
   different `aria-label` (WCAG 2.5.3) — `cite-button` only sets one when its text

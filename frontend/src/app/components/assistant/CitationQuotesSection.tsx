@@ -11,6 +11,10 @@ import {
 } from "./message/citationVerification";
 import { ContextNumberBadge } from "./ContextNumberBadge";
 import { RESPONSE_GLASS_SURFACE } from "./message/messageStyles";
+import {
+    LIQUID_GLASS_HOVER_CLASS,
+    LIQUID_GLASS_SUBTLE_CLASS,
+} from "@/shared/ui/LiquidGlassUI";
 
 export type CitationQuoteSectionItem = {
     id: string;
@@ -135,10 +139,10 @@ export function CitationQuotesSection({
                                             className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] transition-colors ${
                                                 currentIndex === index &&
                                                 !isUnverified
-                                                    ? "bg-white font-medium text-gray-800 shadow-[0_1px_3px_rgba(0,0,0,0.22)]"
+                                                    ? "!bg-blue-100 !text-blue-900 font-medium dark:!bg-blue-950 dark:!text-white"
                                                     : isUnverified
-                                                      ? "cursor-not-allowed bg-red-100/55 text-red-600"
-                                                      : "bg-gray-200 text-gray-500 hover:bg-gray-300 hover:text-gray-700"
+                                                      ? "cursor-not-allowed !bg-red-100/85 !text-red-800 dark:!bg-red-950 dark:!text-white"
+                                                      : "bg-gray-200/80 text-gray-800 hover:bg-gray-200 hover:text-gray-950"
                                             }`}
                                         >
                                             {index + 1}
@@ -229,14 +233,16 @@ function QuoteItem({
             <div
                 className={`w-full rounded-xl px-3 py-2 text-left ${
                     isSelected
-                        ? "bg-blue-100/70"
+                        ? "citation-quote-selected"
                         : "bg-gray-100"
                 }`}
             >
                 <div>
                     <p
                         className={`font-serif text-sm leading-6 ${
-                            isSelected ? "text-blue-950" : "text-gray-700"
+                            isSelected
+                                ? "citation-quote-selected-text"
+                                : "text-gray-700"
                         }`}
                     >
                         &ldquo;{quote.quote.replace(/"/g, "'")}&rdquo;
@@ -244,7 +250,7 @@ function QuoteItem({
                             <span
                                 className={`text-sm ${
                                     isSelected
-                                        ? "text-blue-900"
+                                        ? "citation-quote-selected-muted"
                                         : "text-gray-500"
                                 }`}
                             >
@@ -258,7 +264,7 @@ function QuoteItem({
                 <CiteButton
                     quoteText={quote.quote}
                     quoteLabel={quoteLabel}
-                    className="h-6 rounded-full bg-white px-2 text-gray-600 shadow-sm hover:bg-gray-50"
+                    className={`h-6 rounded-full px-2 text-gray-600 ${LIQUID_GLASS_SUBTLE_CLASS} ${LIQUID_GLASS_HOVER_CLASS}`}
                     showText
                 />
                 <PillButton

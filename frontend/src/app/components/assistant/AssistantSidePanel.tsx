@@ -13,7 +13,7 @@ import { DocPanel, type DocPanelMode } from "./DocPanel";
 import { FileTypeIcon } from "../shared/FileTypeIcon";
 import type { Citation, EditAnnotation, PanelDocument } from "../shared/types";
 import { cn } from "@/app/lib/utils";
-import { APP_PANEL_SHADOW_CLASS } from "@/app/components/ui/liquid-surface";
+import { LIQUID_GLASS_FLOAT_CLASS } from "@/app/components/ui/liquid-surface";
 
 // ---------------------------------------------------------------------------
 // Tab data
@@ -283,8 +283,8 @@ export function AssistantSidePanel({
             ref={panelRef}
             className={cn(
                 "relative flex h-full w-full shrink-0 flex-col md:my-3 md:mr-3 md:h-[calc(100%-1.5rem)] md:w-[var(--assistant-panel-width)]",
-                "rounded-2xl border border-white/70 bg-white/50 backdrop-blur-2xl",
-                APP_PANEL_SHADOW_CLASS,
+                "rounded-2xl backdrop-blur-2xl",
+                LIQUID_GLASS_FLOAT_CLASS,
                 "overflow-hidden",
             )}
             style={
@@ -306,8 +306,7 @@ export function AssistantSidePanel({
             {/* Tab strip (Chrome-style) */}
             <div
                 className={cn(
-                    "flex items-end gap-1 px-1 pt-2",
-                    "bg-gray-200/80",
+                    "document-tab-strip flex items-end gap-1 px-1 pt-2",
                 )}
             >
                 <div className="flex-1 flex items-end gap-1 overflow-hidden px-2">
@@ -389,11 +388,10 @@ export function AssistantSidePanel({
                                 }}
                                 onDragEnd={clearTabDrag}
                                 onClick={() => onActivateTab(tab.id)}
+                                data-active={isActive ? "true" : "false"}
                                 className={cn(
-                                    "group relative flex items-center gap-1.5 pl-3 pr-1.5 h-8 min-w-0 max-w-[220px] rounded-t-lg cursor-pointer select-none transition-colors",
-                                    isActive
-                                        ? "z-20 bg-white text-gray-800 before:content-[''] before:absolute before:bottom-0 before:-left-2 before:z-20 before:h-2 before:w-2 before:rounded-br-lg before:shadow-[4px_4px_0_4px_white] before:transition-shadow after:content-[''] after:absolute after:bottom-0 after:-right-2 after:z-20 after:h-2 after:w-2 after:rounded-bl-lg after:shadow-[-4px_4px_0_4px_white] after:transition-shadow"
-                                        : "z-10 bg-gray-100 text-gray-600 hover:bg-gray-100 before:content-[''] before:absolute before:bottom-0 before:-left-2 before:h-2 before:w-2 before:rounded-br-lg before:shadow-[4px_4px_0_4px_#f3f4f6] before:transition-shadow after:content-[''] after:absolute after:bottom-0 after:-right-2 after:h-2 after:w-2 after:rounded-bl-lg after:shadow-[-4px_4px_0_4px_#f3f4f6] after:transition-shadow",
+                                    "document-tab group relative flex items-center gap-1.5 pl-3 pr-1.5 h-8 min-w-0 max-w-[220px] rounded-t-lg cursor-pointer select-none transition-colors",
+                                    isActive ? "z-20" : "z-10",
                                     onReorderTabs && tabs.length > 1
                                         ? "cursor-grab active:cursor-grabbing"
                                         : "",

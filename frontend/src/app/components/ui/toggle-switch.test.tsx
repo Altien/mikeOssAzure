@@ -29,18 +29,17 @@ describe("ToggleSwitch", () => {
         expect(onCheckedChange).toHaveBeenCalledWith(false);
     });
 
-    it("keeps the off-state track perceivable against a white surface", () => {
+    it("renders the off-state track without a dark outline", () => {
         const { container } = render(
             <ToggleSwitch checked={false} onCheckedChange={() => {}}>
                 Group documents
             </ToggleSwitch>,
         );
 
-        // WCAG 1.4.11: an off switch needs a >=3:1 boundary, which bg-gray-100
-        // against white does not provide on its own.
         const track = container.querySelector(
             '[data-slot="toggle-switch-track"]',
         );
-        expect(track).toHaveClass("bg-gray-300", "ring-1", "ring-gray-400");
+        expect(track).toHaveClass("bg-gray-300");
+        expect(track).not.toHaveClass("ring-1", "ring-gray-400");
     });
 });

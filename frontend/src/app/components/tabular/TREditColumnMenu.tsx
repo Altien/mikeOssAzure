@@ -19,11 +19,15 @@ import {
 import { GlassIconButton } from "@/app/components/ui/glass-icon-button";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { FieldLabel } from "@/app/components/ui/form-field";
+import {
+    LIQUID_GLASS_FLOAT_CLASS,
+    LIQUID_GLASS_SUBTLE_CLASS,
+} from "@/shared/ui/LiquidGlassUI";
 
 // Liquid-glass field styling shared by the menu's inputs/controls, matching the
 // modal's glass treatment (translucent white over the light-gray panel).
 const GLASS_FIELD =
-    "border border-white/70 bg-white/55 shadow-[0_3px_9px_rgba(15,23,42,0.052),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] backdrop-blur-xl";
+    `${LIQUID_GLASS_SUBTLE_CLASS} backdrop-blur-xl`;
 
 export interface TREditColumnMenuProps {
     column: ColumnConfig;
@@ -238,7 +242,7 @@ export function TREditColumnMenu({
                 createPortal(
                     <div
                         ref={panelRef}
-                        className="fixed z-[40] rounded-3xl border border-white/70 bg-gray-50/95 p-3 shadow-[0_14px_40px_rgba(15,23,42,0.071),0_5px_14px_rgba(15,23,42,0.047)] backdrop-blur-3xl"
+                        className={`fixed z-[40] rounded-3xl p-3 ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-3xl`}
                         style={{
                             top: menuPos.top,
                             left: menuPos.left,

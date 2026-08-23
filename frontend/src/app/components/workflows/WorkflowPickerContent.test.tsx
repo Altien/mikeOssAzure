@@ -33,6 +33,12 @@ describe("WorkflowPickerContent row labels", () => {
     it("shows practice instead of the legacy system/custom label", () => {
         render(<WorkflowPickerContent {...commonProps} selected={null} />);
 
+        expect(
+            screen.getByRole("button", { name: /Review agreement/ }),
+        ).toHaveClass("liquid-glass-modal-row-hover");
+        expect(
+            document.querySelector('[data-slot="workflow-picker-list"]'),
+        ).toHaveClass("overflow-x-hidden", "px-1");
         expect(screen.getByText("Commercial")).toBeInTheDocument();
         expect(screen.queryByText("System")).not.toBeInTheDocument();
         expect(screen.queryByText("Custom")).not.toBeInTheDocument();

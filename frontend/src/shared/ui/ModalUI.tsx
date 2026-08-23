@@ -7,6 +7,7 @@ import {
     type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { LIQUID_GLASS_MODAL_CLASS } from "./LiquidGlassUI";
 import { X } from "lucide-react";
 import { GlassIconButtonUI } from "./GlassIconButtonUI";
 
@@ -137,7 +138,7 @@ export function ModalUI({
                 aria-label={ariaLabel}
                 aria-hidden={open ? undefined : true}
                 tabIndex={-1}
-                className={`flex w-full flex-col rounded-3xl border border-white/70 bg-gray-50/95 shadow-[0_14px_40px_rgba(15,23,42,0.101),0_5px_14px_rgba(15,23,42,0.067)] backdrop-blur-3xl ${sizeClassName[size]} ${className}`}
+                className={`flex w-full flex-col rounded-3xl ${LIQUID_GLASS_MODAL_CLASS} backdrop-blur-3xl ${sizeClassName[size]} ${className}`}
             >
                 {hasHeader && (
                     <header className="flex items-center justify-between gap-3 p-4 pl-5">

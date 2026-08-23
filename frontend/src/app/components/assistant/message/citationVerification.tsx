@@ -1,5 +1,11 @@
 import { CircleAlert } from "lucide-react";
 import type { Citation, DocumentCitationQuote } from "../../shared/types";
+import { PillButton } from "../../ui/pill-button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "../../ui/popover";
 
 export type CitationVerificationDisplayState = "verified" | "unverified";
 
@@ -9,25 +15,16 @@ type VerificationPresentation = {
   pillClassName: string;
 };
 
-const PRESENTATION: Record<
-  CitationVerificationDisplayState,
-  VerificationPresentation
-> = {
-  verified: {
-    label: "Matched source",
-    description: "Quote matched the extracted document text.",
-    pillClassName: "",
-  },
-  unverified: {
-    label: "Could not verify quote",
-    description: "Quote could not be matched to the source text.",
-    pillClassName: "!bg-red-100/85 !text-red-800 hover:!bg-red-200/80",
-  },
+const UNVERIFIED_PRESENTATION: VerificationPresentation = {
+  label: "Could not verify quote",
+  description: "Quote could not be matched to the source text.",
+  pillClassName:
+    "!bg-red-100/85 !text-red-800 hover:!bg-red-200/80 hover:!text-red-800 dark:!bg-red-950 dark:!text-white dark:hover:!bg-red-900 dark:hover:!text-white",
 };
 
 export function citationVerificationState(
   citation: Citation,
-): CitationVerificationDisplayState | null {
+): CitationVerificationDisplayState {
   return citation.verified === false ? "unverified" : "verified";
 }
 
@@ -38,21 +35,22 @@ export function quoteVerificationState(
 }
 
 export function citationVerificationPillClassName(citation: Citation): string {
-  const state = citationVerificationState(citation);
-  return state ? PRESENTATION[state].pillClassName : "";
+  return citationVerificationState(citation) === "unverified"
+    ? UNVERIFIED_PRESENTATION.pillClassName
+    : "";
 }
 
 export function citationVerificationDescription(
   citation: Citation,
 ): string | null {
   const state = citationVerificationState(citation);
-  return state === "unverified" ? PRESENTATION.unverified.description : null;
+  return state === "unverified" ? UNVERIFIED_PRESENTATION.description : null;
 }
 
 export function citationVerificationAriaLabel(citation: Citation): string {
   const state = citationVerificationState(citation);
   const suffix =
-    state === "unverified" ? `. ${PRESENTATION.unverified.label}` : "";
+    state === "unverified" ? `. ${UNVERIFIED_PRESENTATION.label}` : "";
   return `Citation ${citation.ref}${suffix}`;
 }
 
@@ -63,14 +61,34 @@ export function CitationVerificationBadge({
 }) {
   if (state !== "unverified") return null;
 
-  const presentation = PRESENTATION.unverified;
+  const presentation = UNVERIFIED_PRESENTATION;
   return (
-    <span
-      className="inline-flex h-6 w-fit items-center gap-1 rounded-full bg-red-100/55 px-1.5 font-sans text-[10px] font-medium text-red-700 shadow-[0_2px_8px_rgba(185,28,28,0.11),0_1px_2px_rgba(15,23,42,0.06),inset_0_1px_0_rgba(255,255,255,0.82),inset_0_-3px_7px_rgba(254,202,202,0.32)] backdrop-blur-xl"
-      title={presentation.description}
-    >
-      <CircleAlert className="h-3 w-3" aria-hidden="true" />
-      {presentation.label}
-    </span>
+    <Popover>
+      <PopoverTrigger asChild>
+        <PillButton
+          tone="white"
+          size="sm"
+          className="h-6 w-fit gap-1 px-1.5 font-sans text-[10px] !text-red-600 hover:!text-red-700"
+        >
+          <CircleAlert className="h-3 w-3" aria-hidden="true" />
+          {presentation.label}
+        </PillButton>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        sideOffset={6}
+        className="z-[220] w-72"
+      >
+        <span className="block text-xs font-medium text-gray-900">
+          Quote not found in document
+        </span>
+        <span className="mt-1 block text-xs font-normal leading-5 text-gray-600">
+          The language model produced a quote that could not be found in the
+          source document. Treat it as hallucinated and double-check the
+          related section of the assistant response against the document
+          before relying on it.
+        </span>
+      </PopoverContent>
+    </Popover>
   );
 }

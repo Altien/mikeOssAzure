@@ -1,0 +1,148 @@
+:root {
+    --liquid-glass-background-flat: #fdfdfe;
+    --liquid-glass-background-subtle: rgba(255, 255, 255, 0.55);
+    --liquid-glass-background-float: rgba(253, 253, 254, 0.92);
+    --liquid-glass-background-modal: rgba(249, 250, 251, 0.95);
+    --liquid-glass-border-flat: rgba(255, 255, 255, 0.7);
+    --liquid-glass-border-subtle: rgba(255, 255, 255, 0.7);
+    --liquid-glass-border-float: rgba(255, 255, 255, 0.7);
+    --liquid-glass-border-modal: rgba(255, 255, 255, 0.7);
+
+    /* Tier 1: broad, relatively flat surfaces such as tables and messages. */
+    --liquid-glass-shadow-flat:
+        0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1),
+        inset 0 1px 0 rgba(255, 255, 255, 0.55);
+
+    /* Tier 2: compact controls that need a soft, tactile bevel. */
+    --liquid-glass-shadow-subtle:
+        0 3px 9px rgba(15, 23, 42, 0.052),
+        inset 0 1px 0 rgba(255, 255, 255, 0.86),
+        inset 0 -1px 0 rgba(255, 255, 255, 0.58);
+
+    /* Tier 3: persistent app chrome, using the original AppSidebar depth. */
+    --liquid-glass-shadow-float:
+        0 -1px 6px rgba(15, 23, 42, 0.034),
+        0 4px 9px rgba(15, 23, 42, 0.074),
+        inset 0 1px 0 rgba(255, 255, 255, 0.85);
+
+    /* Modal frames sit above every general elevation tier. */
+    --liquid-glass-shadow-modal:
+        0 14px 40px rgba(15, 23, 42, 0.101), 0 5px 14px rgba(15, 23, 42, 0.067),
+        inset 0 1px 0 rgba(255, 255, 255, 0.62);
+
+    /* Chat overlays remain translucent because messages pass beneath them. */
+    --liquid-glass-translucent-background: rgba(255, 255, 255, 0.6);
+    --liquid-glass-translucent-background-action: rgba(255, 255, 255, 0.3);
+    --liquid-glass-translucent-background-action-hover: rgba(255, 255, 255, 0.45);
+    --liquid-glass-translucent-border: rgba(255, 255, 255, 0.65);
+    --liquid-glass-shadow-translucent:
+        0 4px 10px rgba(15, 23, 42, 0.12),
+        inset 0 1px 0 rgba(255, 255, 255, 0.85),
+        inset 0 -6px 14px rgba(255, 255, 255, 0.18);
+    --liquid-glass-shadow-translucent-action:
+        0 5px 16px rgba(15, 23, 42, 0.13),
+        inset 0 1px 0 rgba(255, 255, 255, 0.75),
+        inset 0 -8px 18px rgba(255, 255, 255, 0.26);
+    --liquid-glass-shadow-translucent-action-hover:
+        0 7px 20px rgba(15, 23, 42, 0.16),
+        inset 0 1px 0 rgba(255, 255, 255, 0.85),
+        inset 0 -8px 18px rgba(255, 255, 255, 0.32);
+}
+
+.dark {
+    --liquid-glass-background-flat: #131922;
+    --liquid-glass-background-subtle: rgba(19, 25, 34, 0.9);
+    --liquid-glass-background-float: rgba(23, 30, 40, 0.92);
+    --liquid-glass-background-modal: rgba(15, 20, 28, 0.95);
+    --liquid-glass-border-flat: rgba(148, 163, 184, 0.12);
+    --liquid-glass-border-subtle: rgba(148, 163, 184, 0.16);
+    --liquid-glass-border-float: rgba(148, 163, 184, 0.18);
+    --liquid-glass-border-modal: rgba(148, 163, 184, 0.16);
+
+    --liquid-glass-shadow-flat:
+        0 1px 3px rgba(0, 0, 0, 0.24), 0 1px 2px rgba(0, 0, 0, 0.18),
+        inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    --liquid-glass-shadow-subtle:
+        0 4px 10px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.07),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.32);
+    --liquid-glass-shadow-float:
+        0 -1px 6px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.28),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    --liquid-glass-shadow-modal:
+        0 22px 64px rgba(0, 0, 0, 0.52), 0 8px 20px rgba(0, 0, 0, 0.34),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    --liquid-glass-translucent-background: rgba(19, 25, 34, 0.76);
+    --liquid-glass-translucent-background-action: rgba(23, 30, 40, 0.62);
+    --liquid-glass-translucent-background-action-hover: rgba(31, 41, 54, 0.78);
+    --liquid-glass-translucent-border: rgba(148, 163, 184, 0.2);
+    --liquid-glass-shadow-translucent:
+        0 8px 22px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.08),
+        inset 0 -6px 14px rgba(0, 0, 0, 0.24);
+    --liquid-glass-shadow-translucent-action:
+        0 8px 22px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.07),
+        inset 0 -8px 18px rgba(0, 0, 0, 0.24);
+    --liquid-glass-shadow-translucent-action-hover:
+        0 10px 28px rgba(0, 0, 0, 0.46), inset 0 1px 0 rgba(255, 255, 255, 0.1),
+        inset 0 -8px 18px rgba(0, 0, 0, 0.3);
+}
+
+.liquid-glass-flat {
+    box-shadow: var(--liquid-glass-shadow-flat);
+}
+
+:where(.liquid-glass-flat) {
+    border: 1px solid var(--liquid-glass-border-flat);
+    background-color: var(--liquid-glass-background-flat);
+}
+
+.liquid-glass-subtle {
+    box-shadow: var(--liquid-glass-shadow-subtle);
+}
+
+:where(.liquid-glass-subtle) {
+    border: 1px solid var(--liquid-glass-border-subtle);
+    background-color: var(--liquid-glass-background-subtle);
+}
+
+.liquid-glass-float {
+    box-shadow: var(--liquid-glass-shadow-float);
+}
+
+:where(.liquid-glass-float) {
+    border: 1px solid var(--liquid-glass-border-float);
+    background-color: var(--liquid-glass-background-float);
+}
+
+.liquid-glass-modal {
+    box-shadow: var(--liquid-glass-shadow-modal);
+}
+
+:where(.liquid-glass-modal) {
+    border: 1px solid var(--liquid-glass-border-modal);
+    background-color: var(--liquid-glass-background-modal);
+}
+
+.liquid-glass-translucent {
+    box-shadow: var(--liquid-glass-shadow-translucent);
+    backdrop-filter: blur(40px);
+}
+
+:where(.liquid-glass-translucent) {
+    border: 1px solid var(--liquid-glass-translucent-border);
+    background: var(--liquid-glass-translucent-background);
+}
+
+.liquid-glass-translucent-action {
+    background: var(--liquid-glass-translucent-background-action);
+    box-shadow: var(--liquid-glass-shadow-translucent-action);
+    backdrop-filter: blur(24px);
+}
+
+:where(.liquid-glass-translucent-action) {
+    border: 1px solid var(--liquid-glass-translucent-border);
+}
+
+.liquid-glass-translucent-action:hover {
+    background: var(--liquid-glass-translucent-background-action-hover);
+    box-shadow: var(--liquid-glass-shadow-translucent-action-hover);
+}

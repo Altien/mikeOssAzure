@@ -2,20 +2,23 @@
 
 import * as React from "react";
 import {
+    DropdownMenuCheckboxItem,
     DropdownMenuContent,
     DropdownMenuItem,
     DropdownMenuRadioItem,
 } from "@/app/components/ui/dropdown-menu";
 import { cn } from "@/app/lib/utils";
-import { APP_SURFACE_HOVER_CLASS } from "@/app/components/ui/liquid-surface";
+import { LIQUID_GLASS_FLOAT_CLASS } from "@/shared/ui/LiquidGlassUI";
 
-const LIQUID_DROPDOWN_CLASS =
-    "rounded-2xl border border-white/70 bg-app-surface shadow-[0_8px_24px_rgba(15,23,42,0.12),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-10px_24px_rgba(255,255,255,0.18)] backdrop-blur-2xl";
+const LIQUID_DROPDOWN_CHROME_CLASS =
+    "rounded-2xl backdrop-blur-2xl";
+const LIQUID_DROPDOWN_SURFACE_CLASS =
+    `${LIQUID_DROPDOWN_CHROME_CLASS} ${LIQUID_GLASS_FLOAT_CLASS}`;
 
 // The highlighted item has to be distinguishable from a merely hovered one:
 // `app-surface-hover` is a ~1% luminance step, so focus also gets a ring.
 const LIQUID_DROPDOWN_ITEM_CLASS =
-    `cursor-pointer text-xs text-gray-600 transition-colors ${APP_SURFACE_HOVER_CLASS} focus:bg-app-surface-active focus:text-gray-900 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/40`;
+    "theme-dropdown-item cursor-pointer text-xs text-gray-600 transition-colors focus:text-gray-900 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/40";
 
 export function LiquidDropdownContent({
     className,
@@ -23,7 +26,7 @@ export function LiquidDropdownContent({
 }: React.ComponentProps<typeof DropdownMenuContent>) {
     return (
         <DropdownMenuContent
-            className={cn(LIQUID_DROPDOWN_CLASS, className)}
+            className={cn(LIQUID_DROPDOWN_CHROME_CLASS, className)}
             {...props}
         />
     );
@@ -36,7 +39,7 @@ export const LiquidDropdownSurface = React.forwardRef<
     return (
         <div
             ref={ref}
-            className={cn(LIQUID_DROPDOWN_CLASS, className)}
+            className={cn(LIQUID_DROPDOWN_SURFACE_CLASS, className)}
             {...props}
         />
     );
@@ -44,11 +47,19 @@ export const LiquidDropdownSurface = React.forwardRef<
 
 export function LiquidDropdownItem({
     className,
+    selected = false,
     ...props
-}: React.ComponentProps<typeof DropdownMenuItem>) {
+}: React.ComponentProps<typeof DropdownMenuItem> & {
+    selected?: boolean;
+}) {
     return (
         <DropdownMenuItem
-            className={cn(LIQUID_DROPDOWN_ITEM_CLASS, className)}
+            data-selected={selected ? "true" : undefined}
+            className={cn(
+                LIQUID_DROPDOWN_ITEM_CLASS,
+                selected && "text-gray-900",
+                className,
+            )}
             {...props}
         />
     );
@@ -75,6 +86,22 @@ export function LiquidDropdownRadioItem({
     return (
         <DropdownMenuRadioItem
             className={cn(LIQUID_DROPDOWN_ITEM_CLASS, className)}
+            {...props}
+        />
+    );
+}
+
+export function LiquidDropdownCheckboxItem({
+    className,
+    ...props
+}: React.ComponentProps<typeof DropdownMenuCheckboxItem>) {
+    return (
+        <DropdownMenuCheckboxItem
+            className={cn(
+                LIQUID_DROPDOWN_ITEM_CLASS,
+                "pl-3 pr-8 [&>span]:right-2 [&>span]:left-auto",
+                className,
+            )}
             {...props}
         />
     );

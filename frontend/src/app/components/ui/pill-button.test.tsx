@@ -45,6 +45,17 @@ describe("PillButton", () => {
         );
     });
 
+    it("uses the flat liquid surface for the white tone", () => {
+        render(<PillButton tone="white">Cancel</PillButton>);
+
+        const button = screen.getByRole("button", { name: "Cancel" });
+        expect(button).toHaveClass(
+            "liquid-glass-flat",
+            "liquid-glass-hover",
+        );
+        expect(button).not.toHaveClass("bg-white", "shadow-sm");
+    });
+
     it("applies the normal size class when requested", () => {
         render(
             <PillButton tone="blue" size="normal">

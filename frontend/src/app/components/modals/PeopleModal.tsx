@@ -5,6 +5,10 @@ import { User, Loader2 } from "lucide-react";
 import type { ProjectPeople } from "@/app/lib/mikeApi";
 import { AddUserInput } from "../shared/AddUserInput";
 import { Modal } from "./Modal";
+import {
+    LIQUID_GLASS_FLOAT_CLASS,
+    LIQUID_GLASS_MODAL_ROW_HOVER_CLASS,
+} from "@/shared/ui/LiquidGlassUI";
 
 /**
  * Any resource the modal can manage members for — projects today, tabular
@@ -319,7 +323,7 @@ export function PeopleModal({
                                 return (
                                     <li
                                         key={`${entry.role}-${rowKey}`}
-                                        className="group relative flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-gray-100/70"
+                                        className={`${LIQUID_GLASS_MODAL_ROW_HOVER_CLASS} group relative flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors`}
                                     >
                                         <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-white/80 bg-white text-gray-700 shadow-[0_4px_12px_rgba(15,23,42,0.10),inset_0_1px_0_rgba(255,255,255,0.92),inset_0_-1px_0_rgba(255,255,255,0.64)]">
                                             {initial ? (
@@ -384,7 +388,7 @@ export function PeopleModal({
                                                         {memberMenuEmail ===
                                                             entryEmail && (
                                                             <div
-                                                                className="absolute right-0 top-full z-30 mt-1 min-w-28 overflow-hidden rounded-xl border border-white/70 bg-gray-50/95 p-1 shadow-[0_8px_20px_rgba(15,23,42,0.09),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] backdrop-blur-2xl"
+                                                                className={`absolute right-0 top-full z-30 mt-1 min-w-28 overflow-hidden rounded-xl p-1 ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-2xl`}
                                                                 onClick={(
                                                                     event,
                                                                 ) =>

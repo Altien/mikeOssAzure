@@ -17,8 +17,9 @@ import type { Chat } from "@/app/components/shared/types";
 import { ChatSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import { cn } from "@/app/lib/utils";
 import {
-    APP_SURFACE_ACTIVE_CLASS,
-    APP_SURFACE_HOVER_CLASS,
+    LIQUID_GLASS_SELECTED_CLASS,
+    LIQUID_GLASS_HOVER_CLASS,
+    LIQUID_GLASS_SUBTLE_CLASS,
 } from "@/app/components/ui/liquid-surface";
 
 interface Props {
@@ -59,8 +60,8 @@ export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props
             className={cn(
                 "group relative flex h-8 w-full items-center rounded-md transition-colors",
                 isActive
-                    ? `${APP_SURFACE_ACTIVE_CLASS} pr-1`
-                    : `pr-3 ${APP_SURFACE_HOVER_CLASS} hover:pr-1`,
+                    ? `${LIQUID_GLASS_SELECTED_CLASS} pr-1`
+                    : `pr-3 ${LIQUID_GLASS_HOVER_CLASS} hover:pr-1`,
             )}
         >
             {isRenaming ? (
@@ -74,7 +75,7 @@ export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props
                             if (e.key === "Enter") void handleRenameSave();
                             if (e.key === "Escape") handleRenameCancel();
                         }}
-                        className="flex-1 bg-white shadow-inner rounded px-1 py-0.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className={`flex-1 rounded px-1 py-0.5 text-sm ${LIQUID_GLASS_SUBTLE_CLASS} focus:outline-none focus:ring-1 focus:ring-blue-500`}
                     />
                     <button
                         onClick={() => void handleRenameSave()}

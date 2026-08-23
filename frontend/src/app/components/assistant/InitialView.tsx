@@ -14,6 +14,10 @@ import {
     updateQuickAction,
 } from "@/app/lib/mikeApi";
 import type { Message, QuickAction } from "../shared/types";
+import {
+    LIQUID_GLASS_HOVER_CLASS,
+    LIQUID_GLASS_SUBTLE_CLASS,
+} from "@/shared/ui/LiquidGlassUI";
 
 interface InitialViewProps {
     onSubmit: (message: Message) => void;
@@ -254,7 +258,7 @@ export function InitialView({ onSubmit }: InitialViewProps) {
                                     key={action.id}
                                     type="button"
                                     onClick={() => handleQuickAction(action)}
-                                    className="inline-flex h-8 items-center justify-center rounded-full border border-white/70 bg-white/55 px-3 font-medium text-gray-600 shadow-[0_3px_9px_rgba(15,23,42,0.06),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] backdrop-blur-xl transition-all hover:bg-white hover:text-gray-900 active:scale-[0.98] disabled:cursor-default disabled:opacity-45 disabled:active:scale-100"
+                                    className={`inline-flex h-8 items-center justify-center rounded-full px-3 font-medium text-gray-600 ${LIQUID_GLASS_SUBTLE_CLASS} ${LIQUID_GLASS_HOVER_CLASS} backdrop-blur-xl transition-all hover:text-gray-900 active:scale-[0.98] disabled:cursor-default disabled:opacity-45 disabled:active:scale-100`}
                                 >
                                     {action.name?.trim() ||
                                         action.workflow.title}

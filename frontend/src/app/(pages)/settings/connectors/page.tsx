@@ -11,8 +11,8 @@ import {
 } from "lucide-react";
 import { FieldLabel } from "@/app/components/ui/form-field";
 import {
-    APP_SURFACE_HOVER_CLASS,
-    APP_SURFACE_PRESSED_CLASS,
+    LIQUID_GLASS_HOVER_CLASS,
+    LIQUID_GLASS_PRESSED_CLASS,
 } from "@/app/components/ui/liquid-surface";
 import {
     SETTINGS_CONTROL_CLASS,
@@ -600,7 +600,7 @@ export default function ConnectorsPage() {
                         <button
                             type="button"
                             onClick={() => setAddOpen(true)}
-                            className={`flex h-6 items-center justify-center gap-1 rounded-full px-2.5 text-xs font-medium text-gray-500 transition-colors hover:text-gray-900 ${APP_SURFACE_HOVER_CLASS} ${APP_SURFACE_PRESSED_CLASS}`}
+                            className={`flex h-6 items-center justify-center gap-1 rounded-full px-2.5 text-xs font-medium text-gray-500 transition-colors hover:text-gray-900 ${LIQUID_GLASS_HOVER_CLASS} ${LIQUID_GLASS_PRESSED_CLASS}`}
                         >
                             <Plus className="h-3.5 w-3.5" />
                             Add
