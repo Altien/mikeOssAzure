@@ -32,7 +32,10 @@ import {
 } from "@/app/components/documents/DocTable";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 import { ProjectSectionToolbar, useProjectWorkspace } from "./ProjectWorkspace";
-import { APP_SURFACE_HOVER_CLASS } from "@/app/components/ui/liquid-surface";
+import {
+    LIQUID_GLASS_HOVER_CLASS,
+    LIQUID_GLASS_FLOAT_CLASS,
+} from "@/app/components/ui/liquid-surface";
 
 interface Props {
     projectId: string;
@@ -277,13 +280,13 @@ export function ProjectDocumentsView({ projectId, folderId = null }: Props) {
                         <ChevronDown className="h-3.5 w-3.5" />
                     </TabPillButton>
                     {actionsOpen && (
-                        <div className="absolute top-full right-0 z-[120] mt-1 w-36 overflow-hidden rounded-lg border border-gray-100 bg-app-surface shadow-lg">
+                        <div className={`absolute right-0 top-full z-[120] mt-1 w-36 overflow-hidden rounded-lg ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-2xl`}>
                             <button
                                 onClick={() => {
                                     setActionsOpen(false);
                                     void selectionActions.onDownload();
                                 }}
-                                className={`w-full px-3 py-1.5 text-left text-xs text-gray-600 transition-colors ${APP_SURFACE_HOVER_CLASS}`}
+                                className={`w-full px-3 py-1.5 text-left text-xs text-gray-600 transition-colors ${LIQUID_GLASS_HOVER_CLASS}`}
                             >
                                 Download
                             </button>
@@ -293,7 +296,7 @@ export function ProjectDocumentsView({ projectId, folderId = null }: Props) {
                                         setActionsOpen(false);
                                         void selectionActions.onRemoveFromFolder();
                                     }}
-                                    className={`w-full px-3 py-1.5 text-left text-xs text-gray-600 transition-colors ${APP_SURFACE_HOVER_CLASS}`}
+                                    className={`w-full px-3 py-1.5 text-left text-xs text-gray-600 transition-colors ${LIQUID_GLASS_HOVER_CLASS}`}
                                 >
                                     Remove from subfolder
                                 </button>

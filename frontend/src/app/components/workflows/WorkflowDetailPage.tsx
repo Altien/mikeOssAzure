@@ -52,7 +52,10 @@ import { PageHeader } from "@/app/components/shared/PageHeader";
 import { EmptyState } from "@/app/components/ui/empty-state";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
-import { LIQUID_TABLE_SURFACE_CLASS } from "@/app/components/ui/liquid-surface";
+import {
+  LIQUID_GLASS_FLOAT_CLASS,
+  LIQUID_TABLE_SURFACE_CLASS,
+} from "@/app/components/ui/liquid-surface";
 import { NewWorkflowModal } from "@/app/components/workflows/NewWorkflowModal";
 import { TabularReviewSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import {
@@ -696,7 +699,7 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
                               <ChevronDown className="h-3.5 w-3.5" />
                             </TabPillButton>
                             {colActionsOpen && (
-                              <div className="absolute top-full right-0 mt-1 w-36 rounded-lg border border-gray-100 bg-white shadow-lg z-50 overflow-hidden">
+                              <div className={`absolute right-0 top-full z-50 mt-1 w-36 overflow-hidden rounded-lg ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-2xl`}>
                                 <button
                                   onClick={handleDeleteSelectedColumns}
                                   className="w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 transition-colors"

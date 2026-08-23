@@ -3,6 +3,11 @@ import type {
     ComponentProps,
     ReactNode,
 } from "react";
+import {
+    LIQUID_GLASS_HOVER_CLASS,
+    LIQUID_GLASS_PRESSED_CLASS,
+    LIQUID_GLASS_SUBTLE_CLASS,
+} from "./LiquidGlassUI";
 
 export function HeaderButtonsUI({
     className = "",
@@ -10,7 +15,7 @@ export function HeaderButtonsUI({
 }: ComponentProps<"div">) {
     return (
         <div
-            className={`flex shrink-0 items-center gap-2 rounded-full border border-white/70 bg-app-surface px-1 py-1 shadow-[0_8px_24px_rgba(15,23,42,0.06)] backdrop-blur-2xl ${className}`}
+            className={`flex shrink-0 items-center gap-2 rounded-full px-1 py-1 ${LIQUID_GLASS_SUBTLE_CLASS} backdrop-blur-2xl ${className}`}
             {...props}
         />
     );
@@ -36,8 +41,8 @@ export function headerButtonClassName({
 } = {}) {
     return [
         "flex h-7 items-center justify-center rounded-full text-sm transition-colors disabled:cursor-default disabled:text-gray-300 disabled:hover:bg-transparent disabled:hover:text-gray-300",
-        "hover:bg-app-surface-hover",
-        "active:bg-app-surface-active",
+        LIQUID_GLASS_HOVER_CLASS,
+        LIQUID_GLASS_PRESSED_CLASS,
         iconOnly ? "w-7" : "w-7 gap-1.5 px-0 sm:w-auto sm:px-3",
         disabled ? "cursor-default" : "cursor-pointer",
         "text-gray-500 hover:text-gray-900",

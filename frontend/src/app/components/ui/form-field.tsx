@@ -7,6 +7,7 @@ import {
     type ReactNode,
 } from "react";
 import { cn } from "@/app/lib/utils";
+import { LIQUID_GLASS_SUBTLE_CLASS } from "@/shared/ui/LiquidGlassUI";
 
 // `outline-none` removes the browser's focus indicator, so every variant has to
 // supply its own `focus-visible:` ring or the field becomes unusable by keyboard.
@@ -14,7 +15,7 @@ const FOCUS_RING_CLASS =
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2";
 
 export const FORM_CONTROL_GLASS_CLASS =
-    `w-full rounded-xl border border-white/70 bg-white px-3 text-sm text-gray-700 shadow-[0_3px_9px_rgba(15,23,42,0.052),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] outline-none placeholder:text-gray-400 backdrop-blur-xl transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${FOCUS_RING_CLASS}`;
+    `w-full rounded-xl px-3 text-sm text-gray-700 ${LIQUID_GLASS_SUBTLE_CLASS} outline-none placeholder:text-gray-400 backdrop-blur-xl transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${FOCUS_RING_CLASS}`;
 
 type FormTextInputVariant = "glass" | "minimal";
 

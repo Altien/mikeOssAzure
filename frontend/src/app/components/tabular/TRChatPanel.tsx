@@ -43,15 +43,18 @@ import {
 } from "@/app/lib/modelAvailability";
 import type { ApiKeyState } from "@/app/lib/mikeApi";
 import {
-    APP_SURFACE_ACTIVE_CLASS,
-    APP_SURFACE_HOVER_CLASS,
-    LIQUID_PANEL_SURFACE_CLASS,
+    LIQUID_GLASS_SELECTED_CLASS,
+    LIQUID_GLASS_HOVER_CLASS,
+    LIQUID_GLASS_SUBTLE_CLASS,
+    LIQUID_GLASS_TRANSLUCENT_CLASS,
+    LIQUID_FLOAT_PANEL_SURFACE_CLASS,
 } from "@/app/components/ui/liquid-surface";
 import {
     LiquidDropdownButton,
     LiquidDropdownSurface,
 } from "@/app/components/ui/liquid-dropdown";
 import { cn } from "@/app/lib/utils";
+import { CitationPillUI } from "@/shared/ui/CitationPillUI";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -327,7 +330,7 @@ function TRAssistantMessage({
                             const cit = citationsList[idx];
                             if (cit) {
                                 return (
-                                    <button
+                                    <CitationPillUI
                                         onClick={() =>
                                             onCitationClick(
                                                 cit.col_index,
@@ -335,10 +338,10 @@ function TRAssistantMessage({
                                             )
                                         }
                                         title={`${cit.col_name} · ${cit.doc_name.replace(/\.[^.]+$/, "")}`}
-                                        className="mx-0.5 inline-flex items-center justify-center rounded-full w-4 h-4 text-[10px] font-medium bg-gray-100 text-gray-900 hover:bg-gray-200 transition-colors align-super font-serif"
+                                        className="mx-0.5 align-super"
                                     >
                                         {cit.ref}
-                                    </button>
+                                    </CitationPillUI>
                                 );
                             }
                         }
@@ -510,7 +513,8 @@ function TRChatInput({
             <div
                 className={cn(
                     "pt-2 pb-1.5 flex flex-col gap-1",
-                    "rounded-xl border border-white/65 bg-white/60 shadow-[0_4px_10px_rgba(15,23,42,0.12),inset_0_1px_0_rgba(255,255,255,0.85),inset_0_-6px_14px_rgba(255,255,255,0.18)] backdrop-blur-2xl",
+                    "rounded-xl",
+                    LIQUID_GLASS_TRANSLUCENT_CLASS,
                 )}
             >
                 <textarea
@@ -647,7 +651,7 @@ function HistoryDropdown({
                                             setRenamingChatId(null);
                                     }}
                                     onBlur={() => commitRename(chat.id)}
-                                    className={`w-full rounded-lg px-2 py-1.5 text-xs text-gray-700 outline-none ${APP_SURFACE_ACTIVE_CLASS}`}
+                                    className={`w-full rounded-lg px-2 py-1.5 text-xs text-gray-700 outline-none ${LIQUID_GLASS_SELECTED_CLASS}`}
                                 />
                             );
                         }
@@ -679,7 +683,7 @@ function HistoryDropdown({
                                     }}
                                     title="Chat options"
                                     className={cn(
-                                        `absolute right-1.5 flex h-5 w-5 items-center justify-center rounded-full text-gray-400 transition-colors hover:text-gray-700 ${APP_SURFACE_HOVER_CLASS}`,
+                                        `absolute right-1.5 flex h-5 w-5 items-center justify-center rounded-full text-gray-400 transition-colors hover:text-gray-700 ${LIQUID_GLASS_HOVER_CLASS}`,
                                         menu?.chatId === chat.id
                                             ? "opacity-100"
                                             : "opacity-0 group-hover:opacity-100",
@@ -750,8 +754,8 @@ function findLastContentIndex(events: AssistantEvent[]): number {
 // ---------------------------------------------------------------------------
 
 const HEADER_PILL_CLASS =
-    "flex shrink-0 items-center gap-1 rounded-full border border-white/70 bg-app-surface px-1 py-0.5 shadow-[0_8px_24px_rgba(15,23,42,0.06)] backdrop-blur-2xl";
-const HEADER_PILL_BUTTON_CLASS = `flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-gray-500 transition-colors hover:text-gray-900 ${APP_SURFACE_HOVER_CLASS}`;
+    `flex shrink-0 items-center gap-1 rounded-full px-1 py-0.5 ${LIQUID_GLASS_SUBTLE_CLASS} backdrop-blur-xl`;
+const HEADER_PILL_BUTTON_CLASS = `flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-gray-500 transition-colors hover:text-gray-900 ${LIQUID_GLASS_HOVER_CLASS}`;
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -1784,7 +1788,7 @@ export function TRChatPanel({
                 // md+: fixed width beside the table, top-aligned with it
                 // (below the toolbar).
                 "flex-1 min-w-0 mx-3 mb-3 md:flex-none md:w-[var(--tr-chat-panel-width)] md:mt-12 md:-ml-4 md:mr-6",
-                LIQUID_PANEL_SURFACE_CLASS,
+                LIQUID_FLOAT_PANEL_SURFACE_CLASS,
                 "overflow-hidden",
             )}
         >
@@ -1812,7 +1816,7 @@ export function TRChatPanel({
                         <button
                             onClick={() => setHistoryOpen((v) => !v)}
                             title="Chat history"
-                            className={`flex h-5 min-w-0 items-center gap-1 rounded-full px-1.5 text-gray-700 transition-colors ${APP_SURFACE_HOVER_CLASS}`}
+                            className={`flex h-5 min-w-0 items-center gap-1 rounded-full px-1.5 text-gray-700 transition-colors ${LIQUID_GLASS_HOVER_CLASS}`}
                         >
                             <span className="min-w-0 truncate text-xs font-medium">
                                 {currentChatTitle ?? "New chat"}
@@ -1866,21 +1870,21 @@ export function TRChatPanel({
             {/* Messages */}
             <div
                 ref={messagesContainerRef}
-                className="flex-1 overflow-y-auto px-4 pt-12 flex flex-col"
+                className="tr-chat-message-fades flex-1 overflow-y-auto px-4 pt-12 flex flex-col"
                 style={{ paddingBottom: Math.ceil(inputHeight + 16) }}
             >
                 {isLoadingMessages && (
                     <div className="flex flex-col gap-4">
                         <div className="flex justify-end">
                             <div className="bg-gray-100 rounded-2xl p-3 w-3/5">
-                                <div className="h-3 bg-gradient-to-r from-gray-200 via-gray-300 to-gray-200 bg-[length:200%_100%] animate-[shimmer_2s_ease-in-out_infinite] rounded w-full" />
+                                <div className="theme-shimmer h-3 bg-[length:200%_100%] animate-[shimmer_2s_ease-in-out_infinite] rounded w-full" />
                             </div>
                         </div>
                         <div className="space-y-2">
                             {[1, 2, 3, 4].map((i) => (
                                 <div
                                     key={i}
-                                    className={`h-3 bg-gradient-to-r from-gray-200 via-gray-300 to-gray-200 bg-[length:200%_100%] animate-[shimmer_2s_ease-in-out_infinite] rounded ${i === 3 ? "w-5/6" : i === 4 ? "w-4/6" : "w-full"}`}
+                                    className={`theme-shimmer h-3 bg-[length:200%_100%] animate-[shimmer_2s_ease-in-out_infinite] rounded ${i === 3 ? "w-5/6" : i === 4 ? "w-4/6" : "w-full"}`}
                                 />
                             ))}
                         </div>
@@ -1914,12 +1918,6 @@ export function TRChatPanel({
                     </div>
                 )}
             </div>
-
-            {/* Top blur overlay — messages fade out under the header */}
-            <div className="pointer-events-none absolute top-0 left-0 right-2 z-[5] h-10 backdrop-blur-2xl bg-gradient-to-b from-white/80 to-transparent [mask-image:linear-gradient(to_bottom,black_65%,transparent)]" />
-
-            {/* Bottom blur overlay — messages fade out under the input */}
-            <div className="pointer-events-none absolute bottom-0 left-0 right-2 z-[5] h-32 backdrop-blur-2xl bg-gradient-to-t from-white/80 to-transparent [mask-image:linear-gradient(to_top,black_65%,transparent)]" />
 
             {/* Input */}
             <TRChatInput

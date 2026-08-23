@@ -48,11 +48,16 @@ describe("PersonalisationPage", () => {
         await user.click(
             screen.getByRole("button", { name: "Practice areas" }),
         );
-        await user.click(
-            screen.getByRole("menuitemcheckbox", {
-                name: "Data Protection and Privacy",
-            }),
+        const practiceAreaOption = screen.getByRole("menuitemcheckbox", {
+            name: "Data Protection and Privacy",
+        });
+        expect(practiceAreaOption).toHaveClass(
+            "text-xs",
+            "pl-3",
+            "theme-dropdown-item",
         );
+        expect(practiceAreaOption).not.toHaveClass("pl-8");
+        await user.click(practiceAreaOption);
         await user.keyboard("{Escape}");
         await waitFor(() =>
             expect(updatePersonalisation).toHaveBeenCalledWith({

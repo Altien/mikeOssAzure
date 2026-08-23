@@ -95,10 +95,8 @@ test.describe("auth flow", () => {
     expect(form).not.toBeNull();
     const loginCard = page.getByTestId("login-card");
     await expect(loginCard).toHaveClass(/rounded-2xl/);
-    await expect(loginCard).toHaveClass(/border-white\/70/);
-    await expect(loginCard).toHaveClass(/bg-white\/72/);
+    await expect(loginCard).toHaveClass(/liquid-glass-flat/);
     await expect(loginCard).toHaveClass(/p-8/);
-    await expect(loginCard).toHaveClass(/shadow-sm/);
     await expect(loginCard).toHaveClass(/backdrop-blur-2xl/);
     const button = await loginButton.boundingBox();
     expect(button).not.toBeNull();

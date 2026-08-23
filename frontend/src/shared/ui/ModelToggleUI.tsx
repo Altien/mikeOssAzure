@@ -51,7 +51,7 @@ export interface ModelToggleUIProps {
 }
 
 const itemClassName =
-  "flex cursor-pointer select-none items-center gap-2 rounded-xl px-2.5 py-1.5 text-xs text-gray-700 outline-none transition-colors hover:bg-gray-100 focus:bg-gray-100 focus:text-gray-900 data-[highlighted]:bg-gray-100 data-[highlighted]:text-gray-900 data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&>*]:pointer-events-none";
+  "theme-dropdown-item flex cursor-pointer select-none items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-gray-700 outline-none transition-colors focus:text-gray-900 data-[highlighted]:text-gray-900 data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&>*]:pointer-events-none";
 
 /**
  * Platform-neutral model-picker presentation. Hosts own model discovery and
@@ -102,7 +102,7 @@ export function ModelToggleUI({
                   : "API key missing for selected model"
           }
           disabled={loading || models.length === 0}
-          className={`flex h-8 shrink-0 items-center rounded-full text-sm text-gray-400 transition-colors enabled:cursor-pointer enabled:hover:text-gray-700 disabled:cursor-default disabled:hover:text-gray-400 ${compact ? "w-8 justify-center px-0" : "gap-1.5 px-2"} ${open ? "text-gray-700" : ""}`}
+          className={`flex h-8 shrink-0 items-center rounded-lg text-sm text-gray-400 transition-colors enabled:cursor-pointer enabled:hover:text-gray-700 disabled:cursor-default disabled:hover:text-gray-400 ${compact ? "w-8 justify-center px-0" : "gap-1.5 px-2"} ${open ? "text-gray-700" : ""}`}
         >
           {compact ? (
             loading ? (
@@ -149,7 +149,8 @@ export function ModelToggleUI({
                 items.map((model) => (
                   <DropdownItem
                     key={model.id}
-                    className={`${itemClassName} ${model.id === value ? "bg-gray-100 text-gray-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]" : ""}`}
+                    selected={model.id === value}
+                    className={`${itemClassName} ${model.id === value ? "text-gray-900" : ""}`}
                     onSelect={() => onChange(model.id)}
                   >
                     <span className="flex-1">{model.label}</span>

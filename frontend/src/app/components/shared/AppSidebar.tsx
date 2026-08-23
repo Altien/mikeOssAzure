@@ -31,9 +31,9 @@ import { listProjectSummaries } from "@/app/lib/mikeApi";
 import type { Project } from "@/app/components/shared/types";
 import { cn } from "@/app/lib/utils";
 import {
-    APP_PANEL_SHADOW_CLASS,
-    APP_SURFACE_ACTIVE_CLASS,
-    APP_SURFACE_HOVER_CLASS,
+    LIQUID_GLASS_FLOAT_CLASS,
+    LIQUID_GLASS_SELECTED_CLASS,
+    LIQUID_GLASS_HOVER_CLASS,
 } from "@/app/components/ui/liquid-surface";
 
 const NAV_ITEMS = [
@@ -254,10 +254,10 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
             <div
                 className={cn(
                     isOpen
-                        ? "w-64 h-[calc(100dvh-1rem)] md:h-[calc(100dvh-1.5rem)] bg-app-surface"
-                        : "max-md:hidden w-14 md:h-[calc(100dvh-1.5rem)] md:bg-app-surface h-auto bg-transparent pointer-events-none md:pointer-events-auto",
-                    "my-2 ml-2 mr-0 md:my-3 md:ml-3 md:mr-0 rounded-2xl border border-white/70 backdrop-blur-2xl overflow-visible",
-                    APP_PANEL_SHADOW_CLASS,
+                        ? "w-64 h-[calc(100dvh-1rem)] md:h-[calc(100dvh-1.5rem)]"
+                        : "max-md:hidden w-14 md:h-[calc(100dvh-1.5rem)] h-auto pointer-events-none md:pointer-events-auto",
+                    "my-2 ml-2 mr-0 md:my-3 md:ml-3 md:mr-0 rounded-2xl backdrop-blur-2xl overflow-visible",
+                    LIQUID_GLASS_FLOAT_CLASS,
                     "flex flex-col transition-all duration-300 absolute md:relative z-[99]",
                 )}
             >
@@ -289,7 +289,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                         className={cn(
                             "h-9 w-9 p-2.5 items-center flex transition-colors",
                             "rounded-md",
-                            APP_SURFACE_HOVER_CLASS,
+                            LIQUID_GLASS_HOVER_CLASS,
                         )}
                         title={isOpen ? "Close sidebar" : "Open sidebar"}
                     >
@@ -314,8 +314,8 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                 className={cn(
                                     "w-full h-9 flex items-center gap-3 px-2.5 py-2 rounded-md transition-colors text-left",
                                     isActive
-                                        ? `${APP_SURFACE_ACTIVE_CLASS} text-gray-900`
-                                        : `text-gray-700 ${APP_SURFACE_HOVER_CLASS}`,
+                                        ? `${LIQUID_GLASS_SELECTED_CLASS} text-gray-900`
+                                        : `text-gray-700 ${LIQUID_GLASS_HOVER_CLASS}`,
                                     !isOpen ? "hidden md:flex" : "flex",
                                 )}
                             >
@@ -421,8 +421,8 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                                             className={cn(
                                                                 "flex h-8 w-full items-center gap-2 rounded-md px-2.5 py-1 text-left text-xs transition-colors",
                                                                 isActive
-                                                                    ? `${APP_SURFACE_ACTIVE_CLASS} text-gray-900`
-                                                                    : `text-gray-700 ${APP_SURFACE_HOVER_CLASS}`,
+                                                                    ? `${LIQUID_GLASS_SELECTED_CLASS} text-gray-900`
+                                                                    : `text-gray-700 ${LIQUID_GLASS_HOVER_CLASS}`,
                                                             )}
                                                         >
                                                             <ProjectSvgIcon
@@ -553,14 +553,13 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                     setIsDropdownOpen(!isDropdownOpen)
                                 }
                                 className={cn(
-                                    "flex items-center transition-colors w-full px-2.5 py-3 border-t",
-                                    "rounded-xl border-white/60",
+                                    "flex w-full items-center rounded-xl px-2.5 py-3 transition-colors",
                                     !isOpen ? "hidden md:flex" : "",
                                     pathname.startsWith("/settings") ||
                                         pathname === "/history" ||
                                         isDropdownOpen
-                                        ? APP_SURFACE_ACTIVE_CLASS
-                                        : APP_SURFACE_HOVER_CLASS,
+                                        ? LIQUID_GLASS_SELECTED_CLASS
+                                        : LIQUID_GLASS_HOVER_CLASS,
                                 )}
                                 title={!isOpen ? user.email : undefined}
                             >
@@ -593,7 +592,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                     className={cn(
                                         "absolute bottom-full left-0 z-50 mb-1 p-1 whitespace-nowrap",
                                         isOpen ? "right-0" : "w-56",
-                                        "bg-app-floating rounded-xl shadow-[0_6px_17px_rgba(15,23,42,0.1)] border border-white/70 backdrop-blur-xl",
+                                        `${LIQUID_GLASS_FLOAT_CLASS} rounded-xl backdrop-blur-xl`,
                                     )}
                                 >
                                     <button
@@ -603,9 +602,9 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                         }}
                                         className={cn(
                                             "flex w-full items-center gap-2 rounded-md px-4 py-2 text-left text-sm text-gray-700",
-                                            APP_SURFACE_HOVER_CLASS,
+                                            LIQUID_GLASS_HOVER_CLASS,
                                             pathname === "/history" &&
-                                                APP_SURFACE_ACTIVE_CLASS,
+                                                LIQUID_GLASS_SELECTED_CLASS,
                                         )}
                                     >
                                         <HistorySkeuoIcon className="h-4 w-4" />
@@ -618,7 +617,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                         }}
                                         className={cn(
                                             "w-full px-4 py-2 text-left text-sm text-gray-700 flex items-center gap-2 rounded-md",
-                                            APP_SURFACE_HOVER_CLASS,
+                                            LIQUID_GLASS_HOVER_CLASS,
                                         )}
                                     >
                                         <SettingsSkeuoIcon className="h-4 w-4" />
@@ -633,7 +632,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                         }}
                                         className={cn(
                                             "flex w-full items-center gap-2 rounded-md px-4 py-2 text-left text-sm text-gray-700",
-                                            APP_SURFACE_HOVER_CLASS,
+                                            LIQUID_GLASS_HOVER_CLASS,
                                         )}
                                     >
                                         <SignOutSkeuoIcon className="h-4 w-4" />

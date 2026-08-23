@@ -22,7 +22,7 @@ describe("ModalUI", () => {
 
         expect(
             screen.getByRole("dialog", { name: "Add documents" }),
-        ).toBeVisible();
+        ).toHaveClass("liquid-glass-modal");
         expect(screen.getByText("Select documents")).toBeVisible();
         expect(screen.getByRole("button", { name: "Confirm" })).toBeVisible();
 

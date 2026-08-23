@@ -40,7 +40,8 @@ describe("ModelToggle responsive trigger", () => {
         );
 
         const trigger = screen.getByRole("button", { name: "Choose model" });
-        expect(trigger).toHaveClass("w-8");
+        expect(trigger).toHaveClass("w-8", "rounded-lg");
+        expect(trigger).not.toHaveClass("rounded-full");
         expect(trigger).not.toHaveTextContent("No API Key");
         expect(trigger.querySelector("svg")).toBeInTheDocument();
     });
@@ -55,6 +56,29 @@ describe("ModelToggle responsive trigger", () => {
         );
 
         expect(screen.getByText("Gemini 3 Flash")).toHaveClass("max-w-[200px]");
+    });
+
+    it("does not add an inset shadow to the selected model row", async () => {
+        const user = userEvent.setup();
+        render(
+            <ModelToggle
+                value="gemini-3-flash-preview"
+                onChange={vi.fn()}
+                apiKeys={keys({ gemini: true })}
+            />,
+        );
+
+        await user.click(screen.getByRole("button", { name: "Choose model" }));
+
+        const selectedRow = screen
+            .getAllByText("Gemini 3 Flash")
+            .find((element) => element.closest('[role="menuitem"]'))
+            ?.closest('[role="menuitem"]');
+        expect(selectedRow).toHaveClass("theme-dropdown-item", "text-gray-900");
+        expect(selectedRow).toHaveClass("rounded-md");
+        expect(selectedRow).not.toHaveClass("rounded-xl");
+        expect(selectedRow).toHaveAttribute("data-selected", "true");
+        expect(selectedRow?.className).not.toContain("shadow-[inset_");
     });
 });
 

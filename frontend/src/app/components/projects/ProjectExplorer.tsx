@@ -16,6 +16,7 @@ import {
     ProjectSvgIcon,
     SubfolderSvgIcon,
 } from "@/app/components/shared/FolderSvgIcon";
+import { LIQUID_GLASS_FLOAT_CLASS } from "@/shared/ui/LiquidGlassUI";
 
 interface Props {
     projectName?: string | null;
@@ -235,7 +236,7 @@ export function ProjectExplorer({
                                 className={`flex items-center gap-1.5 py-1.5 pr-2 rounded-sm cursor-pointer select-none transition-colors group ${
                                     isDragTarget
                                         ? "bg-blue-50 ring-1 ring-inset ring-blue-200"
-                                        : "hover:bg-gray-50"
+                                        : "theme-dropdown-item"
                                 }`}
                                 style={{ paddingLeft: basePadding }}
                                 onClick={() => toggleFolder(folder.id)}
@@ -297,7 +298,7 @@ export function ProjectExplorer({
                                 )
                             }
                             className={`flex items-center gap-2 py-1.5 pr-4 rounded-sm cursor-pointer select-none transition-colors ${
-                                isSelected ? "bg-gray-100 text-gray-900" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                                isSelected ? "theme-dropdown-selected text-gray-900" : "theme-dropdown-item text-gray-600 hover:text-gray-900"
                             }`}
                             style={{ paddingLeft: basePadding }}
                         >
@@ -370,12 +371,12 @@ export function ProjectExplorer({
             {contextMenu && (
                 <div
                     ref={contextMenuRef}
-                    className="fixed z-50 w-44 rounded-lg border border-gray-100 bg-white shadow-lg overflow-hidden text-xs"
+                    className={`fixed z-50 w-44 overflow-hidden rounded-lg text-xs ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-2xl`}
                     style={{ top: contextMenu.y, left: contextMenu.x }}
                 >
                     {onCreateFolder && (
                         <button
-                            className="w-full px-3 py-1.5 text-left text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                            className="theme-dropdown-item flex w-full items-center gap-2 px-3 py-1.5 text-left text-gray-700"
                             onClick={() => {
                                 setContextMenu(null);
                                 if (contextMenu.parentId) {
@@ -393,7 +394,7 @@ export function ProjectExplorer({
                     )}
                     {contextMenu.folderId && onRenameFolder && (
                         <button
-                            className="w-full px-3 py-1.5 text-left text-gray-700 hover:bg-gray-50"
+                            className="theme-dropdown-item w-full px-3 py-1.5 text-left text-gray-700"
                             onClick={() => {
                                 const f = folders.find((x) => x.id === contextMenu.folderId);
                                 setRenameValue(f?.name ?? "");

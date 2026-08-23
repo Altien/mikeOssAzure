@@ -3,6 +3,7 @@
 import { Library } from "lucide-react";
 import { FileTypeIcon } from "../shared/FileTypeIcon";
 import type { MessageFile } from "../shared/types";
+import { LIQUID_GLASS_FLAT_CLASS } from "@/shared/ui/LiquidGlassUI";
 
 interface Props {
     content: string;
@@ -29,7 +30,7 @@ export function UserMessage({ content, files, workflow, onFileClick }: Props) {
                         {hasFiles &&
                             files.map((f, i) => {
                                 const className =
-                                    "inline-flex items-center gap-1 rounded-[10px] border border-white/70 bg-white py-0.5 pl-2 pr-2.5 text-xs text-gray-800 shadow-sm backdrop-blur-xl";
+                                    `inline-flex items-center gap-1 rounded-[10px] py-0.5 pl-2 pr-2.5 text-xs text-gray-800 ${LIQUID_GLASS_FLAT_CLASS} backdrop-blur-xl`;
                                 const fileContent = (
                                     <>
                                         <FileTypeIcon

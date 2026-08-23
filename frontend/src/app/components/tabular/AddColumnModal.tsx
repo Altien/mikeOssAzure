@@ -11,6 +11,10 @@ import { Modal } from "../modals/Modal";
 import { ModalSelect } from "../modals/ModalSelect";
 import { ModalTextarea } from "../modals/ModalTextarea";
 import { FieldLabel, FormTextInput } from "../ui/form-field";
+import {
+    LIQUID_GLASS_FLOAT_CLASS,
+    LIQUID_GLASS_SUBTLE_CLASS,
+} from "@/shared/ui/LiquidGlassUI";
 
 interface ColumnDraft {
     name: string;
@@ -347,14 +351,14 @@ export function AddColumnModal({ open, existingCount, onClose, onAdd, editingCol
                                             />
                                         </button>
                                         {presetsOpenIndex === index && (
-                                            <div className="absolute left-0 right-0 top-full mt-1 z-50 rounded-xl border border-gray-100 bg-white shadow-lg overflow-y-auto max-h-64">
+                                            <div className={`absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-y-auto rounded-xl ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-2xl`}>
                                                 <button
                                                     type="button"
                                                     onClick={() => {
                                                         updateColumn(index, { ...EMPTY_DRAFT });
                                                         setPresetsOpenIndex(null);
                                                     }}
-                                                    className="w-full px-3 py-2 text-left text-sm text-gray-400 hover:bg-gray-50 transition-colors border-b border-gray-100"
+                                                    className="theme-dropdown-item w-full border-b border-gray-100 px-3 py-2 text-left text-sm text-gray-400 transition-colors"
                                                 >
                                                     No Preset
                                                 </button>
@@ -381,7 +385,7 @@ export function AddColumnModal({ open, existingCount, onClose, onAdd, editingCol
                                                                     null,
                                                                 );
                                                             }}
-                                                            className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                                                            className="theme-dropdown-item w-full px-3 py-2 text-left text-sm text-gray-700 transition-colors"
                                                         >
                                                             {preset.name}
                                                         </button>
@@ -422,7 +426,9 @@ export function AddColumnModal({ open, existingCount, onClose, onAdd, editingCol
                                         <FieldLabel htmlFor={tagInputId}>
                                             Tags
                                         </FieldLabel>
-                                        <div className="mt-1 flex flex-wrap gap-1.5 rounded-xl border border-white/70 bg-white/55 px-2 py-1.5 shadow-[0_3px_9px_rgba(15,23,42,0.052),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] backdrop-blur-xl">
+                                        <div
+                                            className={`mt-1 flex flex-wrap gap-1.5 rounded-xl px-2 py-1.5 ${LIQUID_GLASS_SUBTLE_CLASS} backdrop-blur-xl`}
+                                        >
                                             {column.tags.map((tag, tagIdx) => (
                                                 <span
                                                     key={tag}

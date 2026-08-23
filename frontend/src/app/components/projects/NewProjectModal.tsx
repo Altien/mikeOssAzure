@@ -16,6 +16,7 @@ import { Modal } from "../modals/Modal";
 import { FieldLabel, FormTextInput } from "../ui/form-field";
 import { ProjectPracticeField } from "./ProjectPracticeField";
 import { userFacingApiError } from "@/app/lib/userFacingError";
+import { LIQUID_GLASS_MODAL_ROW_HOVER_CLASS } from "@/shared/ui/LiquidGlassUI";
 
 interface Props {
     open: boolean;
@@ -271,7 +272,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                                         return (
                                             <li
                                                 key={entry.email}
-                                                className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-gray-100/70"
+                                                className={`${LIQUID_GLASS_MODAL_ROW_HOVER_CLASS} flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors`}
                                             >
                                                 <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-white/80 bg-white text-gray-700 shadow-[0_4px_12px_rgba(15,23,42,0.10),inset_0_1px_0_rgba(255,255,255,0.92),inset_0_-1px_0_rgba(255,255,255,0.64)]">
                                                     {initial ? (

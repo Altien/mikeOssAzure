@@ -23,8 +23,8 @@ import {
   searchProjectDirectory,
 } from "@/app/lib/mikeApi";
 import {
-    APP_SURFACE_ACTIVE_CLASS,
-    APP_SURFACE_HOVER_CLASS,
+    LIQUID_GLASS_MODAL_ROW_HOVER_CLASS,
+    LIQUID_GLASS_MODAL_ROW_SELECTED_CLASS,
 } from "@/app/components/ui/liquid-surface";
 
 type DirectoryFolder = Pick<
@@ -628,7 +628,9 @@ export function FileDirectory({
                 className={`w-full rounded-md ${DIRECTORY_GRID_CLASS} py-2 pr-2 text-left text-xs transition-all ${
                     disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
                 } ${
-          selected ? APP_SURFACE_ACTIVE_CLASS : APP_SURFACE_HOVER_CLASS
+          selected
+            ? LIQUID_GLASS_MODAL_ROW_SELECTED_CLASS
+            : LIQUID_GLASS_MODAL_ROW_HOVER_CLASS
                 }`}
             >
                 <DirectorySelectionCheckbox
@@ -684,7 +686,7 @@ export function FileDirectory({
                 <div key={folder.id}>
                     <div
                         style={{ paddingLeft: indentedRowPadding(depth) }}
-                        className={`w-full rounded-md ${DIRECTORY_GRID_CLASS} py-2 pr-2 text-xs transition-all ${APP_SURFACE_HOVER_CLASS}`}
+                        className={`w-full rounded-md ${DIRECTORY_GRID_CLASS} py-2 pr-2 text-xs transition-all ${LIQUID_GLASS_MODAL_ROW_HOVER_CLASS}`}
                     >
                         <DirectorySelectionCheckbox
                             checked={allSelected}
@@ -1111,7 +1113,7 @@ export function FileDirectory({
                             return (
                                 <div key={project.id}>
                                     <div
-                                        className={`w-full rounded-md ${DIRECTORY_GRID_CLASS} px-2 py-2 text-xs transition-all text-left ${APP_SURFACE_HOVER_CLASS}`}
+                                        className={`w-full rounded-md ${DIRECTORY_GRID_CLASS} px-2 py-2 text-xs transition-all text-left ${LIQUID_GLASS_MODAL_ROW_HOVER_CLASS}`}
                                     >
                                         <DirectorySelectionCheckbox
                                             checked={allProjectDocsSelected}

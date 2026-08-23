@@ -1,0 +1,224 @@
+:root {
+    /* Color roles shared by the web app and Word add-in. These describe what a
+       color does; liquid-glass classes separately describe surface depth. */
+    --document-tab-active-background: var(--app-surface, #fdfdfe);
+    --document-tab-inactive-background: #f3f4f6;
+    --document-tab-strip-background: rgba(229, 231, 235, 0.8);
+    --document-tab-outline: #e5e7eb;
+    --document-tab-active-text: #1f2937;
+    --document-tab-inactive-text: #4b5563;
+
+    --editor-text: #374151;
+    --editor-heading: #111827;
+    --editor-strong-text: #1f2937;
+    --editor-muted-text: #4b5563;
+    --editor-border: #e5e7eb;
+    --editor-grid-line: #f3f4f6;
+    --editor-table-header: #f9fafb;
+
+    --pdf-highlight-background: rgba(37, 99, 235, 0.2);
+    --docx-highlight-background: rgba(37, 99, 235, 0.35);
+    --case-highlight-background: rgb(191, 219, 254);
+    --citation-selected-background: rgba(0, 136, 255, 0.09);
+    --citation-selected-text: #172554;
+    --citation-selected-muted-text: #1e3a8a;
+
+    --liquid-glass-hover-background: #f5f6f8;
+    --liquid-glass-selected-background: var(--app-surface-active, #eff0f3);
+    --liquid-glass-modal-row-hover-background: #f3f4f6;
+    --liquid-glass-modal-row-selected-background: #e5e7eb;
+
+    --content-fade-color: var(--app-surface, #fdfdfe);
+    --shimmer-edge: #e5e7eb;
+    --shimmer-middle: #d1d5db;
+
+    --spreadsheet-header-tint: rgba(148, 163, 184, 0.18);
+    --spreadsheet-header-corner: #eceef2;
+    --spreadsheet-header-hover: rgba(209, 213, 219, 0.65);
+    --spreadsheet-header-selected: rgba(156, 163, 175, 0.28);
+    --spreadsheet-highlight-background: rgba(59, 130, 246, 0.16);
+    --spreadsheet-highlight-outline: #3b82f6;
+}
+
+.dark {
+    --document-tab-active-background: var(--app-surface, #131922);
+    --document-tab-inactive-background: var(--app-surface-hover, #19212c);
+    --document-tab-strip-background: rgba(34, 44, 56, 0.84);
+    --document-tab-outline: rgba(255, 255, 255, 0.1);
+    --document-tab-active-text: #f3f4f6;
+    --document-tab-inactive-text: #9ca3af;
+
+    --editor-text: #d1d5db;
+    --editor-heading: #f3f4f6;
+    --editor-strong-text: #e5e7eb;
+    --editor-muted-text: #9ca3af;
+    --editor-border: rgba(255, 255, 255, 0.12);
+    --editor-grid-line: rgba(255, 255, 255, 0.08);
+    --editor-table-header: var(--app-surface-hover, #19212c);
+
+    --pdf-highlight-background: rgba(96, 165, 250, 0.28);
+    --docx-highlight-background: rgba(96, 165, 250, 0.34);
+    --case-highlight-background: rgba(59, 130, 246, 0.34);
+    --citation-selected-background: rgba(59, 130, 246, 0.2);
+    --citation-selected-text: #dbeafe;
+    --citation-selected-muted-text: #93c5fd;
+
+    --liquid-glass-hover-background: var(--app-surface-hover, #19212c);
+    --liquid-glass-selected-background: var(--app-surface-active, #222c38);
+    --liquid-glass-modal-row-hover-background: rgba(25, 33, 44, 0.9);
+    --liquid-glass-modal-row-selected-background: #222c38;
+
+    --content-fade-color: var(--app-surface, #131922);
+    --shimmer-edge: #253142;
+    --shimmer-middle: #364152;
+
+    --spreadsheet-header-tint: rgba(15, 23, 42, 0.34);
+    --spreadsheet-header-corner: #222c38;
+    --spreadsheet-header-hover: rgba(51, 65, 85, 0.72);
+    --spreadsheet-header-selected: rgba(71, 85, 105, 0.58);
+    --spreadsheet-highlight-background: rgba(96, 165, 250, 0.24);
+    --spreadsheet-highlight-outline: #60a5fa;
+}
+
+.document-tab-divider,
+.document-tab-strip {
+    box-shadow: inset 0 -1px 0 var(--document-tab-outline);
+}
+
+.document-tab-strip {
+    background-color: var(--document-tab-strip-background);
+}
+
+.document-tab {
+    color: var(--document-tab-inactive-text);
+    background-color: var(--document-tab-inactive-background);
+}
+
+.document-tab::before,
+.document-tab::after {
+    position: absolute;
+    bottom: 0;
+    width: 0.5rem;
+    height: 0.5rem;
+    content: "";
+    transition: box-shadow 150ms;
+}
+
+.document-tab::before {
+    left: -0.5rem;
+    border-bottom-right-radius: 0.5rem;
+    box-shadow: 4px 4px 0 4px var(--document-tab-inactive-background);
+}
+
+.document-tab::after {
+    right: -0.5rem;
+    border-bottom-left-radius: 0.5rem;
+    box-shadow: -4px 4px 0 4px var(--document-tab-inactive-background);
+}
+
+.document-tab[data-active="true"] {
+    color: var(--document-tab-active-text);
+    background-color: var(--document-tab-active-background);
+    filter: drop-shadow(0 -1px 0 var(--document-tab-outline))
+        drop-shadow(-1px 0 0 var(--document-tab-outline))
+        drop-shadow(1px 0 0 var(--document-tab-outline));
+}
+
+.document-tab[data-active="true"]::before {
+    box-shadow: 4px 4px 0 4px var(--document-tab-active-background);
+}
+
+.document-tab[data-active="true"]::after {
+    box-shadow: -4px 4px 0 4px var(--document-tab-active-background);
+}
+
+.theme-dropdown-item:hover,
+.theme-dropdown-item:focus,
+.theme-dropdown-item[data-highlighted],
+.liquid-glass-hover:not(:disabled):hover {
+    background-color: var(--liquid-glass-hover-background);
+}
+
+.theme-dropdown-item[data-selected="true"],
+.theme-dropdown-item[data-state="checked"],
+.liquid-glass-selected {
+    background-color: var(--liquid-glass-selected-background);
+}
+
+.theme-dropdown-selected,
+.theme-dropdown-item.theme-dropdown-selected {
+    background-color: var(--liquid-glass-selected-background);
+}
+
+.liquid-glass-pressed:not(:disabled):active {
+    background-color: var(--liquid-glass-selected-background);
+}
+
+.group:hover .liquid-glass-group-hover {
+    background-color: var(--liquid-glass-hover-background);
+}
+
+.liquid-glass-modal-row-hover:not(:disabled):hover {
+    background-color: var(--liquid-glass-modal-row-hover-background);
+}
+
+.liquid-glass-modal-row-selected {
+    background-color: var(--liquid-glass-modal-row-selected-background);
+}
+
+.citation-quote-selected {
+    background-color: var(--citation-selected-background);
+}
+
+.citation-quote-selected-text {
+    color: var(--citation-selected-text);
+}
+
+.citation-quote-selected-muted {
+    color: var(--citation-selected-muted-text);
+}
+
+.theme-shimmer {
+    background-image: linear-gradient(
+        to right,
+        var(--shimmer-edge),
+        var(--shimmer-middle),
+        var(--shimmer-edge)
+    );
+}
+
+.content-bottom-fade {
+    background: linear-gradient(to bottom, transparent, var(--content-fade-color));
+}
+
+.assistant-chat-message-fade {
+    mask-image: linear-gradient(
+        to bottom,
+        black 0,
+        black calc(100% - 7rem),
+        transparent 100%
+    );
+    -webkit-mask-image: linear-gradient(
+        to bottom,
+        black 0,
+        black calc(100% - 7rem),
+        transparent 100%
+    );
+}
+
+.tr-chat-message-fades {
+    mask-image: linear-gradient(
+        to bottom,
+        transparent 0,
+        black 2.5rem,
+        black calc(100% - 8rem),
+        transparent 100%
+    );
+    -webkit-mask-image: linear-gradient(
+        to bottom,
+        transparent 0,
+        black 2.5rem,
+        black calc(100% - 8rem),
+        transparent 100%
+    );
+}

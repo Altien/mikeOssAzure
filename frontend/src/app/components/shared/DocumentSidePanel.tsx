@@ -28,7 +28,12 @@ import {
 } from "@/app/components/shared/types";
 import type { DocumentVersion } from "@/app/lib/mikeApi";
 import { cn } from "@/app/lib/utils";
-import { LIQUID_PANEL_SURFACE_CLASS } from "@/app/components/ui/liquid-surface";
+import {
+    LIQUID_FLOAT_PANEL_SURFACE_CLASS,
+    LIQUID_GLASS_FLAT_CLASS,
+    LIQUID_GLASS_HOVER_CLASS,
+    LIQUID_GLASS_SUBTLE_CLASS,
+} from "@/app/components/ui/liquid-surface";
 import { formatBytes } from "@/app/components/projects/ProjectPageParts";
 
 const MIN_DOC_COLUMN_WIDTH = 420;
@@ -461,7 +466,7 @@ export function DocumentSidePanel({
             ref={panelRef}
             className={cn(
                 "fixed z-[190] flex flex-col",
-                LIQUID_PANEL_SURFACE_CLASS,
+                LIQUID_FLOAT_PANEL_SURFACE_CLASS,
                 "inset-3 md:left-auto overflow-hidden",
             )}
             style={isMobile ? undefined : { width: panelWidth }}
@@ -489,7 +494,7 @@ export function DocumentSidePanel({
                             className={cn(
                                 "h-6 rounded-full px-2 text-[11px] font-medium transition-colors",
                                 mobilePane === "document"
-                                    ? "bg-white text-gray-900 shadow-[0_1px_3px_rgba(15,23,42,0.08)]"
+                                    ? `${LIQUID_GLASS_SUBTLE_CLASS} text-gray-900`
                                     : "text-gray-500 hover:text-gray-800",
                             )}
                         >
@@ -501,7 +506,7 @@ export function DocumentSidePanel({
                             className={cn(
                                 "h-6 rounded-full px-2 text-[11px] font-medium transition-colors",
                                 mobilePane === "details"
-                                    ? "bg-white text-gray-900 shadow-[0_1px_3px_rgba(15,23,42,0.08)]"
+                                    ? `${LIQUID_GLASS_SUBTLE_CLASS} text-gray-900`
                                     : "text-gray-500 hover:text-gray-800",
                             )}
                         >
@@ -682,16 +687,10 @@ export function DocumentSidePanel({
                         </div>
                     </div>
 
-                    <div className="mb-2 shrink-0 text-xs font-medium text-gray-900">
+                    <div className="mb-2 mt-4 shrink-0 text-xs font-medium text-gray-900">
                         Versions
                     </div>
-                    <div
-                        className={cn(
-                            "flex min-h-0 flex-1 flex-col overflow-visible rounded-xl",
-                            "bg-[#eceef1] px-2",
-                        )}
-                    >
-                        <div className="min-h-0 flex-1 overflow-y-auto py-2">
+                    <div className="-mx-2 min-h-0 flex-1 overflow-y-auto px-2 py-2">
                             {versionsLoading && versions.length === 0 ? (
                                 <div className="space-y-1.5">
                                     {Array.from({
@@ -750,7 +749,7 @@ export function DocumentSidePanel({
                                                 }}
                                                 aria-disabled={deleted}
                                                 className={cn(
-                                                    "group relative flex w-full flex-col overflow-hidden rounded-lg border border-white/70 bg-white px-3 py-2 shadow-[0_1px_4px_rgba(15,23,42,0.045),inset_0_1px_0_rgba(255,255,255,0.72)] backdrop-blur-xl transition-all hover:bg-white",
+                                                    `group relative flex w-full flex-col overflow-hidden rounded-lg px-3 py-2 ${LIQUID_GLASS_FLAT_CLASS} ${LIQUID_GLASS_HOVER_CLASS} transition-all`,
                                                     deleted
                                                         ? "cursor-not-allowed opacity-55"
                                                         : "cursor-pointer",
@@ -895,7 +894,6 @@ export function DocumentSidePanel({
                                     })}
                                 </div>
                             )}
-                        </div>
                     </div>
 
                     {uploadError && (
@@ -1025,7 +1023,7 @@ function DataRow({ label, value }: { label: string; value: string }) {
 
 function VersionUploadSkeleton() {
     return (
-        <div className="rounded-lg border border-white/70 bg-white px-3 py-2 shadow-[0_1px_4px_rgba(15,23,42,0.045),inset_0_1px_0_rgba(255,255,255,0.72)]">
+        <div className={`rounded-lg px-3 py-2 ${LIQUID_GLASS_FLAT_CLASS}`}>
             <div className="animate-pulse space-y-2">
                 <div className="flex items-center justify-between gap-3">
                     <div className="flex min-w-0 flex-1 items-center gap-1.5">

@@ -7,8 +7,8 @@ import { ClosedProjectSvgIcon } from "@/app/components/shared/FolderSvgIcon";
 import type { Project } from "../shared/types";
 import { Modal } from "./Modal";
 import {
-    APP_SURFACE_ACTIVE_CLASS,
-    APP_SURFACE_HOVER_CLASS,
+    LIQUID_GLASS_MODAL_ROW_HOVER_CLASS,
+    LIQUID_GLASS_MODAL_ROW_SELECTED_CLASS,
 } from "@/app/components/ui/liquid-surface";
 
 type PrimaryAction = Omit<
@@ -106,7 +106,7 @@ export function ProjectPickerModal({
                                                 isSelected ? null : project.id,
                                             )
                                         }
-                                        className={`w-full flex rounded-md items-center gap-2 px-2 py-2 text-xs transition-all text-left ${isSelected ? APP_SURFACE_ACTIVE_CLASS : APP_SURFACE_HOVER_CLASS}`}
+                                        className={`w-full flex rounded-md items-center gap-2 px-2 py-2 text-xs transition-all text-left ${isSelected ? LIQUID_GLASS_MODAL_ROW_SELECTED_CLASS : LIQUID_GLASS_MODAL_ROW_HOVER_CLASS}`}
                                     >
                                         <CheckSquare
                                             state={

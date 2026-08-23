@@ -192,7 +192,7 @@ describe("HistoryPage", () => {
     await screen.findByText("Alex Lawyer");
 
     await user.click(screen.getByRole("button", { name: "Select date range" }));
-    expect(screen.getByRole("menu")).toHaveClass("bg-app-surface");
+    expect(screen.getByRole("menu")).toHaveClass("liquid-glass-float");
     expect(screen.getByRole("menu")).toHaveAttribute("data-align", "start");
     expect(screen.getAllByRole("grid")).toHaveLength(2);
     expect(
