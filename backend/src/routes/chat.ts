@@ -662,7 +662,27 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             eventCount: events?.length ?? 0,
         });
 
-        const persistedEvents = stripTransientAssistantEvents(events);
+        // Upstream providers occasionally end the stream cleanly but empty
+        // (observed via OpenRouter). Silence reads as a hung composer, so
+        // surface it — unless tools produced visible artifacts, which carry
+        // their own completion signal.
+        const emptyCompletion = !fullText?.trim() && (!events || events.length === 0);
+        const emptyCompletionEvent = {
+            type: "error" as const,
+            message: "The model returned an empty response. Try again, or pick a different model.",
+            safe_to_display: true,
+        };
+        if (emptyCompletion) {
+            write(
+                `data: ${JSON.stringify(emptyCompletionEvent)}\n\n`,
+            );
+        }
+
+        // The assistant row was reserved before streaming. Persist the visible
+        // error through the same terminal path before emitting [DONE].
+        const persistedEvents = stripTransientAssistantEvents(
+            emptyCompletion ? [emptyCompletionEvent] : events,
+        );
         if (askInputsResponse) {
             await appendAssistantEventsToLastAssistantMessage(
                 db,
