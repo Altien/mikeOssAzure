@@ -19,6 +19,7 @@ const TABS: TabDef[] = [
         label: "Personalisation",
         href: "/settings/personalisation",
     },
+    { id: "appearance", label: "Appearance", href: "/settings/appearance" },
     { id: "features", label: "Features", href: "/settings/features" },
     {
         id: "privacy-data",

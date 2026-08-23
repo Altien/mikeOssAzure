@@ -37,11 +37,12 @@ import { SubfolderSvgIcon } from "../shared/FolderSvgIcon";
 import { CitationQuotesSection } from "../assistant/CitationQuotesSection";
 import { cn } from "@/app/lib/utils";
 import {
-    APP_SURFACE_HOVER_CLASS,
-    APP_SURFACE_PRESSED_CLASS,
-    LIQUID_PANEL_SURFACE_CLASS,
+    LIQUID_GLASS_HOVER_CLASS,
+    LIQUID_GLASS_PRESSED_CLASS,
+    LIQUID_FLOAT_PANEL_SURFACE_CLASS,
 } from "@/app/components/ui/liquid-surface";
 import { GlassIconButton } from "@/app/components/ui/glass-icon-button";
+import { CitationPillUI } from "@/shared/ui/CitationPillUI";
 
 function isDocxDocument(d: {
     file_type?: string | null;
@@ -320,7 +321,7 @@ export function TRSidePanel({
             ref={panelRef}
             className={cn(
                 "fixed z-100 flex flex-row",
-                LIQUID_PANEL_SURFACE_CLASS,
+                LIQUID_FLOAT_PANEL_SURFACE_CLASS,
                 "right-3 top-3 bottom-3 overflow-hidden",
             )}
         >
@@ -414,7 +415,7 @@ export function TRSidePanel({
             {/* Info column — right, 300px fixed */}
             <div className="flex w-[300px] shrink-0 flex-col overflow-hidden">
                 {/* Header */}
-                <div className="mb-2 flex min-h-11 shrink-0 items-center justify-end gap-1.5 border-b border-white/30 px-3">
+                <div className="mb-2 flex min-h-11 shrink-0 items-center justify-end gap-1.5 px-3">
                     {doc && (
                         <button
                             type="button"
@@ -440,6 +441,7 @@ export function TRSidePanel({
                     )}
                     {onRegenerate && (
                         <button
+                            type="button"
                             onClick={async () => {
                                 setRegenerating(true);
                                 try {
@@ -450,7 +452,7 @@ export function TRSidePanel({
                             }}
                             disabled={regenerating}
                             title="Regenerate"
-                            className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:opacity-40"
+                            className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 disabled:opacity-40"
                         >
                             {regenerating ? (
                                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -485,8 +487,8 @@ export function TRSidePanel({
                                         }
                                         className={cn(
                                             "flex min-h-6 w-full items-center gap-1.5 rounded-md px-1 text-left text-gray-800 transition-colors",
-                                            APP_SURFACE_HOVER_CLASS,
-                                            APP_SURFACE_PRESSED_CLASS,
+                                            LIQUID_GLASS_HOVER_CLASS,
+                                            LIQUID_GLASS_PRESSED_CLASS,
                                         )}
                                         aria-expanded={folderExpanded}
                                     >
@@ -521,8 +523,8 @@ export function TRSidePanel({
                                                         }
                                                         className={cn(
                                                             "flex min-h-6 w-full items-center gap-1.5 rounded-md py-1 pl-5 pr-1 text-left text-xs text-gray-800 transition-colors",
-                                                            APP_SURFACE_HOVER_CLASS,
-                                                            APP_SURFACE_PRESSED_CLASS,
+                                                            LIQUID_GLASS_HOVER_CLASS,
+                                                            LIQUID_GLASS_PRESSED_CLASS,
                                                         )}
                                                         title={
                                                             sourceDocument.filename
@@ -594,7 +596,7 @@ export function TRSidePanel({
                             <h4 className="mb-2 text-xs font-medium text-gray-900">
                                 Results
                             </h4>
-                            <div className="text-xs leading-relaxed text-slate-600">
+                            <div className="text-xs leading-relaxed text-gray-700">
                                 <MarkdownContent
                                     citations={summaryCitations}
                                     onCitationClick={handleCitationOpen}
@@ -611,7 +613,7 @@ export function TRSidePanel({
                                 <h4 className="mb-2 text-xs font-medium text-gray-900">
                                     Reasoning
                                 </h4>
-                                <div className="text-xs leading-relaxed text-slate-600">
+                                <div className="text-xs leading-relaxed text-gray-700">
                                     <MarkdownContent
                                         citations={reasoningCitations}
                                         onCitationClick={handleCitationOpen}
@@ -707,8 +709,8 @@ function CellNavigatorButton({
             title={title ? `${label}: ${title}` : label}
             className={cn(
                 "flex h-7 w-7 items-center justify-center rounded-md text-gray-600 transition-colors disabled:cursor-default disabled:opacity-25",
-                APP_SURFACE_HOVER_CLASS,
-                APP_SURFACE_PRESSED_CLASS,
+                LIQUID_GLASS_HOVER_CLASS,
+                LIQUID_GLASS_PRESSED_CLASS,
                 className,
             )}
         >
@@ -745,8 +747,7 @@ function CitationBadge({
     onClick: (citation: TRPanelCitation) => void;
 }) {
     return (
-        <button
-            type="button"
+        <CitationPillUI
             data-page={citation.page}
             data-sheet={citation.sheet}
             data-cell={citation.cell}
@@ -763,10 +764,10 @@ function CitationBadge({
                     citationRef: index + 1,
                 })
             }
-            className="inline-flex items-center justify-center rounded-full bg-gray-200 w-3.5 h-3.5 text-[9px] font-medium text-gray-700 align-super cursor-pointer hover:bg-gray-300 transition-colors"
+            className="align-super"
         >
             {index + 1}
-        </button>
+        </CitationPillUI>
     );
 }
 

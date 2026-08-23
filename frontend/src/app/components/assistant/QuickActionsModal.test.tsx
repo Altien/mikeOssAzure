@@ -41,9 +41,19 @@ describe("QuickActionsModal", () => {
             />,
         );
 
+        expect(
+            screen.getByRole("button", { name: /Proofread agreement/ }),
+        ).toHaveClass("liquid-glass-modal-row-hover");
+        expect(
+            document.querySelector('[data-slot="quick-actions-list"]'),
+        ).toHaveClass("overflow-x-hidden", "px-1");
+
         fireEvent.click(
             screen.getByRole("button", { name: /Proofread agreement/ }),
         );
+        expect(
+            document.querySelector('[data-slot="quick-action-form"]'),
+        ).not.toHaveClass("overflow-y-auto");
         const save = screen.getByRole("button", { name: "Save" });
         expect(save).toBeDisabled();
 

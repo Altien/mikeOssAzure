@@ -3,6 +3,10 @@
 import { type ButtonHTMLAttributes, type ReactElement } from "react";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
+import {
+    LIQUID_GLASS_HOVER_CLASS,
+    LIQUID_GLASS_SUBTLE_CLASS,
+} from "./LiquidGlassUI";
 
 export type GlassIconButtonUIProps = Omit<
     ButtonHTMLAttributes<HTMLButtonElement>,
@@ -14,7 +18,7 @@ export type GlassIconButtonUIProps = Omit<
 };
 
 const BASE_CLASS =
-    "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/70 bg-white/55 text-gray-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.75),inset_0_-1px_0_rgba(255,255,255,0.55),0_6px_18px_rgba(15,23,42,0.08)] backdrop-blur-xl transition-colors hover:bg-white/75 hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2";
+    `flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-gray-500 ${LIQUID_GLASS_SUBTLE_CLASS} ${LIQUID_GLASS_HOVER_CLASS} backdrop-blur-xl transition-colors hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2`;
 
 export function glassIconButtonUIClassName(className?: string) {
     return twMerge(clsx(BASE_CLASS, className));

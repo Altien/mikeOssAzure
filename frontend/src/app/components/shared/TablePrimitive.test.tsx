@@ -1,10 +1,43 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import {
     SkeletonCheckbox,
+    TableFilters,
+    TableScrollArea,
     TablePrimaryCell,
     tableTreeCellStyle,
 } from "./TablePrimitive";
+
+describe("table filters", () => {
+    it("marks the current option with the shared dropdown selected state", async () => {
+        const user = userEvent.setup();
+        render(
+            <TableFilters
+                label="Filter by file type"
+                value="pdf"
+                allLabel="All file types"
+                options={[
+                    { value: "pdf", label: "PDF" },
+                    { value: "docx", label: "Word" },
+                ]}
+                onChange={vi.fn()}
+            />,
+        );
+
+        await user.click(
+            screen.getByRole("button", { name: "Filter by file type" }),
+        );
+
+        expect(screen.getByRole("menuitem", { name: "PDF" })).toHaveAttribute(
+            "data-selected",
+            "true",
+        );
+        expect(
+            screen.getByRole("menuitem", { name: "All file types" }),
+        ).not.toHaveAttribute("data-selected");
+    });
+});
 
 describe("table skeletons", () => {
     it("uses the same geometry as a table checkbox", () => {
@@ -16,6 +49,18 @@ describe("table skeletons", () => {
             "w-2.5",
             "shrink-0",
         );
+    });
+});
+
+describe("table surface", () => {
+    it("uses the flat liquid-glass tier", () => {
+        const { container } = render(
+            <TableScrollArea>
+                <div>Rows</div>
+            </TableScrollArea>,
+        );
+
+        expect(container.querySelector(".liquid-glass-flat")).not.toBeNull();
     });
 });
 

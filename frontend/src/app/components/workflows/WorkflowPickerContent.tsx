@@ -17,9 +17,11 @@ import {
 } from "../tabular/columnFormat";
 import { TAG_COLORS } from "../tabular/pillUtils";
 import {
-    APP_SURFACE_ACTIVE_CLASS,
-    APP_SURFACE_HOVER_CLASS,
+    LIQUID_GLASS_HOVER_CLASS,
+    LIQUID_GLASS_MODAL_ROW_HOVER_CLASS,
+    LIQUID_GLASS_MODAL_ROW_SELECTED_CLASS,
 } from "@/app/components/ui/liquid-surface";
+import { LIQUID_GLASS_SUBTLE_CLASS } from "@/shared/ui/LiquidGlassUI";
 
 type WorkflowPreviewMode = "auto" | "prompt" | "columns";
 type MobilePickerPane = "list" | "details";
@@ -119,7 +121,10 @@ export function WorkflowPickerContent({
                     placeholder="Search workflows..."
                 />
 
-                <div className="min-h-0 min-w-0 flex-1 overflow-y-auto rounded-sm pt-2">
+                <div
+                    data-slot="workflow-picker-list"
+                    className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto rounded-sm px-1 pt-2"
+                >
                     {loading ? (
                         <div className="space-y-px">
                             {[60, 45, 75, 50, 65, 40, 55].map(
@@ -164,8 +169,8 @@ export function WorkflowPickerContent({
                                         }
                                         className={`flex min-w-0 w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs transition-all ${
                                             isSelected
-                                                ? `${APP_SURFACE_ACTIVE_CLASS} text-gray-900`
-                                                : APP_SURFACE_HOVER_CLASS
+                                                ? `${LIQUID_GLASS_MODAL_ROW_SELECTED_CLASS} text-gray-900`
+                                                : LIQUID_GLASS_MODAL_ROW_HOVER_CLASS
                                         } ${disabled ? "cursor-not-allowed opacity-45" : ""}`}
                                     >
                                         <span
@@ -231,7 +236,9 @@ function WorkflowPreview({
         <div
             className={`${className} min-h-0 min-w-0 flex-1 flex-col overflow-visible`}
         >
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col rounded-2xl border border-white/70 bg-white/55 p-1 shadow-[0_3px_9px_rgba(15,23,42,0.06),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] backdrop-blur-xl">
+            <div
+                className={`flex min-h-0 min-w-0 flex-1 flex-col rounded-2xl p-1 ${LIQUID_GLASS_SUBTLE_CLASS} backdrop-blur-xl`}
+            >
                 <div className="flex h-9 shrink-0 items-center justify-between px-3">
                     <p className="min-w-0 flex-1 truncate text-xs font-medium text-gray-700">
                         {workflow.metadata.title}
@@ -240,7 +247,7 @@ function WorkflowPreview({
                         <button
                             type="button"
                             onClick={onClear}
-                            className={`rounded-md p-1 text-gray-400 transition-colors hover:text-gray-600 ${APP_SURFACE_HOVER_CLASS}`}
+                            className={`rounded-md p-1 text-gray-400 transition-colors hover:text-gray-600 ${LIQUID_GLASS_HOVER_CLASS}`}
                         >
                             <X className="h-3.5 w-3.5" />
                         </button>
@@ -378,8 +385,8 @@ function WorkflowColumnPreview({ columns }: { columns: ColumnConfig[] }) {
                                 }
                                 className={`flex min-w-0 w-full items-center gap-2.5 rounded-md px-3 py-2.5 text-left text-xs transition-all ${
                                     isExpanded
-                                        ? APP_SURFACE_ACTIVE_CLASS
-                                        : APP_SURFACE_HOVER_CLASS
+                                        ? LIQUID_GLASS_MODAL_ROW_SELECTED_CLASS
+                                        : LIQUID_GLASS_MODAL_ROW_HOVER_CLASS
                                 }`}
                             >
                                 <FormatIcon

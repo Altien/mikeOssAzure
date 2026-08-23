@@ -6,6 +6,7 @@ describe("FormTextInput", () => {
     it("replaces the suppressed outline with a focus ring", () => {
         render(<FormTextInput aria-label="Name" />);
         expect(screen.getByRole("textbox", { name: "Name" })).toHaveClass(
+            "liquid-glass-subtle",
             "focus-visible:ring-2",
         );
     });

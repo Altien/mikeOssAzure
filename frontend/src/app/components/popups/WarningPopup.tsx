@@ -6,6 +6,7 @@ import { AlertCircle, X } from "lucide-react";
 import { GlassIconButton } from "@/app/components/ui/glass-icon-button";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { cn } from "@/app/lib/utils";
+import { LIQUID_GLASS_FLOAT_CLASS } from "@/shared/ui/LiquidGlassUI";
 
 interface WarningPopupAction {
     label: ReactNode;
@@ -44,7 +45,7 @@ export function WarningPopup({
         <div className="pointer-events-none fixed left-1/2 top-5 z-[220] w-[min(92vw,520px)] -translate-x-1/2 px-4">
             <div
                 className={cn(
-                    "pointer-events-auto relative flex rounded-2xl border border-white/70 bg-white px-3 py-3 text-xs shadow-[0_4px_12px_rgba(15,23,42,0.11),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-6px_12px_rgba(255,255,255,0.2)] backdrop-blur-2xl",
+                    `pointer-events-auto relative flex rounded-2xl px-3 py-3 text-xs ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-2xl`,
                     className,
                 )}
             >

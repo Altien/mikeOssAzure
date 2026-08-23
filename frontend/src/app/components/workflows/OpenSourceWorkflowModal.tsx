@@ -11,6 +11,7 @@ import {
     FormTextInput,
 } from "@/app/components/ui/form-field";
 import { userFacingApiError } from "@/app/lib/userFacingError";
+import { LIQUID_GLASS_FLAT_CLASS } from "@/shared/ui/LiquidGlassUI";
 
 type OpenSourceContributorMode = "named" | "anonymous";
 type OpenSourceStatus = "idle" | "loading" | "complete";
@@ -192,7 +193,7 @@ export function OpenSourceWorkflowModal({
                         is accepted.
                     </p>
                     {pending && (
-                        <p className="rounded-xl border border-white/70 bg-white/55 px-3 py-2 text-xs leading-5 text-gray-600 shadow-[0_8px_24px_rgba(15,23,42,0.07),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-1px_0_rgba(255,255,255,0.55)] backdrop-blur-xl">
+                        <p className={`rounded-xl px-3 py-2 text-xs leading-5 text-gray-600 ${LIQUID_GLASS_FLAT_CLASS}`}>
                             You already have a pending submission. This will
                             replace that pending snapshot.
                         </p>

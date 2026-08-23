@@ -66,7 +66,6 @@
 
 :root {
     --radius: 0.625rem;
-    --color-azure: 0, 136, 255;
     --app-background: #fafafa;
     --app-surface: #fdfdfe;
     --app-surface-hover: #f5f6f8;
@@ -106,6 +105,12 @@
 }
 
 .dark {
+    color-scheme: dark;
+    --app-background: #0b0f14;
+    --app-surface: #131922;
+    --app-surface-hover: #19212c;
+    --app-surface-active: #222c38;
+    --app-floating: #171e28;
     --background: oklch(0.145 0 0);
     --foreground: oklch(0.985 0 0);
     --card: oklch(0.205 0 0);

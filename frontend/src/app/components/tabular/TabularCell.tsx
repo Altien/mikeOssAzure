@@ -9,6 +9,7 @@ import { preprocessCitations, type ParsedCitation } from "./citation-utils";
 import { getPillClass } from "./pillUtils";
 import { SkeletonLine } from "../shared/TablePrimitive";
 import { TRExpandedCellSurface } from "./TRExpandedCellSurface";
+import { CitationPillUI } from "@/shared/ui/CitationPillUI";
 
 interface Props {
     cell: TCell;
@@ -122,7 +123,7 @@ function CellMarkdown({
                         const citation = citations[idx];
                         if (citation) {
                             return (
-                                <span
+                                <CitationPillUI
                                     title={`${formatCitationLocation(citation)}: "${citation.quote}"`}
                                     onClick={(e) => {
                                         e.stopPropagation();
@@ -139,10 +140,10 @@ function CellMarkdown({
                                             onExpand();
                                         }
                                     }}
-                                    className="mx-0.5 inline-flex items-center justify-center rounded-full bg-gray-200 w-3.5 h-3.5 text-[9px] font-medium text-gray-700 align-super cursor-pointer hover:bg-gray-300 transition-colors"
+                                    className="mx-0.5 align-super"
                                 >
                                     {idx + 1}
-                                </span>
+                                </CitationPillUI>
                             );
                         }
                     }

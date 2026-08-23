@@ -13,22 +13,30 @@ describe("TabPillButton", () => {
 
     it("reports its selected state to assistive tech", () => {
         render(<TabPillButton active>Mine</TabPillButton>);
-        expect(screen.getByRole("button", { name: "Mine" })).toHaveAttribute(
+        const button = screen.getByRole("button", { name: "Mine" });
+        expect(button).toHaveAttribute(
             "aria-pressed",
             "true",
         );
+        expect(button).toHaveClass(
+            "border-white/80",
+            "bg-white",
+            "text-gray-900",
+        );
+        expect(button).not.toHaveClass("liquid-glass-selected");
     });
 
     it("omits aria-pressed when the button is not a toggle", () => {
         render(<TabPillButton>Neutral</TabPillButton>);
-        expect(
-            screen.getByRole("button", { name: "Neutral" }),
-        ).not.toHaveAttribute("aria-pressed");
+        const button = screen.getByRole("button", { name: "Neutral" });
+        expect(button).not.toHaveAttribute("aria-pressed");
+        expect(button).toHaveClass("liquid-glass-hover");
     });
 
     it("has a visible keyboard focus ring", () => {
         render(<TabPillButton active>Mine</TabPillButton>);
         expect(screen.getByRole("button", { name: "Mine" })).toHaveClass(
+            "liquid-glass-subtle",
             "focus-visible:ring-2",
         );
     });

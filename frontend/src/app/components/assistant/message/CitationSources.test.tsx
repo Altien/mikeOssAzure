@@ -19,7 +19,7 @@ function documentCitation(ref: number, verified?: boolean): DocumentCitation {
 }
 
 describe("CitationsBlock verification states", () => {
-  it("marks only unverified document citation buttons", () => {
+  it("marks unverified document citation buttons with the error colors", () => {
     render(
       <CitationsBlock
         citations={[documentCitation(1, false), documentCitation(2)]}
@@ -30,12 +30,16 @@ describe("CitationsBlock verification states", () => {
       screen.getByRole("button", {
         name: "Citation 1. Could not verify quote",
       }),
-    ).toHaveClass("!bg-red-100/85");
+    ).toHaveClass(
+      "!bg-red-100/85",
+      "!text-red-800",
+      "dark:!bg-red-950",
+      "dark:!text-white",
+    );
     const verifiedButton = screen.getByRole("button", {
       name: "Citation 2",
     });
-    expect(verifiedButton).toHaveClass("bg-gray-200/80");
-    expect(verifiedButton).not.toHaveClass("!bg-red-100/85");
+    expect(verifiedButton).toHaveClass("bg-gray-200/80", "text-gray-800");
   });
 
   it("includes only unverified warnings in citation tooltips", () => {
@@ -57,7 +61,7 @@ describe("CitationsBlock verification states", () => {
     render(<CitationsBlock citations={[citation]} />);
 
     const button = screen.getByRole("button", { name: "Citation 4" });
-    expect(button).not.toHaveClass("!bg-red-100/85");
+    expect(button).toHaveClass("bg-gray-200/80", "text-gray-800");
   });
 
   it("adds the selected quote background only to the active citation", () => {
@@ -71,14 +75,15 @@ describe("CitationsBlock verification states", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Citation 2" })).toHaveClass(
-      "bg-blue-200/70",
+    expect(screen.getByRole("button", { name: "Citation 2" })).toHaveAttribute(
+      "data-active",
+      "true",
     );
     expect(
       screen.getByRole("button", { name: "Citation 2" }),
     ).toHaveAttribute("aria-current", "true");
     expect(
       screen.getByRole("button", { name: "Citation 1" }),
-    ).not.toHaveClass("bg-blue-200/70");
+    ).not.toHaveAttribute("data-active");
   });
 });

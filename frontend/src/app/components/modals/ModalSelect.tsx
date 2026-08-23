@@ -3,6 +3,12 @@
 import { useState } from "react";
 import { ChevronDown, type LucideIcon } from "lucide-react";
 import { cn } from "@/app/lib/utils";
+import {
+    LIQUID_GLASS_FLOAT_CLASS,
+    LIQUID_GLASS_HOVER_CLASS,
+    LIQUID_GLASS_SELECTED_CLASS,
+    LIQUID_GLASS_SUBTLE_CLASS,
+} from "@/shared/ui/LiquidGlassUI";
 
 export type ModalSelectOption =
     | string
@@ -70,7 +76,8 @@ export function ModalSelect({
                 onClick={() => setOpen(!isOpen)}
                 disabled={disabled}
                 className={cn(
-                    "flex h-10 w-full items-center justify-between rounded-xl border border-white/70 bg-white/55 px-3 text-sm text-gray-700 shadow-[0_3px_9px_rgba(15,23,42,0.052),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] backdrop-blur-xl transition-colors hover:bg-white/70 focus:bg-white/70 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60",
+                    `flex h-10 w-full items-center justify-between rounded-xl px-3 text-sm text-gray-700 ${LIQUID_GLASS_SUBTLE_CLASS} ${LIQUID_GLASS_HOVER_CLASS} backdrop-blur-xl transition-colors focus:outline-none disabled:cursor-not-allowed disabled:opacity-60`,
+                    isOpen && LIQUID_GLASS_SELECTED_CLASS,
                     className,
                 )}
                 aria-haspopup="listbox"
@@ -106,7 +113,7 @@ export function ModalSelect({
                     role="listbox"
                     aria-labelledby={id}
                     className={cn(
-                        "absolute left-0 top-full z-30 mt-1 max-h-56 w-full overflow-y-auto rounded-2xl border border-white/70 bg-gray-50/95 p-1 shadow-[0_12px_32px_rgba(15,23,42,0.156),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] backdrop-blur-2xl",
+                        `absolute left-0 top-full z-30 mt-1 max-h-56 w-full overflow-y-auto rounded-2xl p-1 ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-2xl`,
                         menuClassName,
                     )}
                 >
@@ -118,9 +125,9 @@ export function ModalSelect({
                             aria-selected={option.value === value}
                             onClick={() => handleSelect(option.value)}
                             className={cn(
-                                "flex w-full items-center rounded-md px-3 py-2 text-left text-sm transition-all hover:bg-gray-100/70",
+                                "theme-dropdown-item flex w-full items-center rounded-md px-3 py-2 text-left text-sm transition-all",
                                 option.value === value
-                                    ? "bg-gray-100 text-gray-900"
+                                    ? "theme-dropdown-selected text-gray-900"
                                     : "text-gray-700",
                             )}
                         >

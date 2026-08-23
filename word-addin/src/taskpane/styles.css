@@ -2,6 +2,8 @@
 
 /* Local design tokens shared by the task pane's reusable UI components. */
 @import "../shared/styles/tokens.css";
+@import "../../../frontend/src/shared/ui/LiquidGlassUI.css";
+@import "../../../frontend/src/shared/ui/ThemeTokensUI.css";
 
 /* Tailwind v4 content detection: scan all add-in component sources. */
 @source "../";
@@ -17,8 +19,10 @@
 @source "../../../frontend/src/shared/ui/DropdownUI.tsx";
 @source "../../../frontend/src/shared/ui/CitationPillUI.tsx";
 @source "../../../frontend/src/shared/ui/ModelToggleUI.tsx";
+@source "../../../frontend/src/shared/ui/MikeIconUI.tsx";
 @source "../../../frontend/src/shared/ui/AuthStylesUI.ts";
 @source "../../../frontend/src/shared/ui/AuthDividerUI.tsx";
+@source "../../../frontend/src/shared/ui/LiquidGlassUI.ts";
 
 /* The web supplies these font variables via next/font; the add-in supplies
    them here (the actual font files are loaded via a <link> in index.html).
@@ -34,7 +38,7 @@
     min-height: 100%;
     padding: 0.875rem 1rem;
     outline: none;
-    color: #374151;
+    color: var(--editor-text);
     font-family: var(--font-inter);
     font-size: 0.875rem;
     line-height: 1.65;
@@ -43,7 +47,7 @@
 .workflow-editor-content h1,
 .workflow-editor-content h2,
 .workflow-editor-content h3 {
-    color: #111827;
+    color: var(--editor-heading);
     font-weight: 600;
 }
 
@@ -102,7 +106,7 @@
 }
 
 .workflow-editor-content strong {
-    color: #1f2937;
+    color: var(--editor-strong-text);
     font-weight: 600;
 }
 
@@ -113,7 +117,7 @@
 .workflow-editor-content .tableWrapper {
     margin: 0.75rem 0;
     overflow-x: auto;
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--editor-border);
     border-radius: 0.375rem;
 }
 
@@ -127,14 +131,14 @@
 }
 
 .workflow-editor-content thead {
-    background: #f9fafb;
+    background: var(--editor-table-header);
 }
 
 .workflow-editor-content th,
 .workflow-editor-content td {
     padding: 0.5rem 0.75rem;
-    border-right: 1px solid #f3f4f6;
-    border-bottom: 1px solid #f3f4f6;
+    border-right: 1px solid var(--editor-grid-line);
+    border-bottom: 1px solid var(--editor-grid-line);
     vertical-align: top;
     word-break: break-word;
 }
@@ -149,12 +153,12 @@
 }
 
 .workflow-editor-content th {
-    color: #374151;
+    color: var(--editor-text);
     font-weight: 600;
 }
 
 .workflow-editor-content td {
-    color: #4b5563;
+    color: var(--editor-muted-text);
 }
 
 .workflow-editor-content th p,

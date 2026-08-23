@@ -25,6 +25,7 @@ describe("AskInputPopup", () => {
             name: "What is the registered address?",
         });
         expect(input.tagName).toBe("TEXTAREA");
+        expect(input.closest(".liquid-glass-translucent")).not.toBeNull();
         expect(input).toHaveAttribute("maxlength", "5000");
         expect(screen.getByText("0 / 5,000")).toBeInTheDocument();
 

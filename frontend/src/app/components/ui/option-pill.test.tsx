@@ -3,11 +3,17 @@ import { describe, expect, it } from "vitest";
 import { OptionPill } from "./option-pill";
 
 describe("OptionPill", () => {
-    it("renders a compact white option without action-button styling", () => {
+    it("renders a compact subtle-glass option without action-button styling", () => {
         render(<OptionPill>Litigation</OptionPill>);
 
         const option = screen.getByRole("button", { name: "Litigation" });
         expect(option).toHaveAttribute("data-slot", "option-pill");
-        expect(option).toHaveClass("rounded-full", "bg-white", "text-xs");
+        expect(option).toHaveClass(
+            "rounded-full",
+            "liquid-glass-subtle",
+            "liquid-glass-hover",
+            "text-xs",
+        );
+        expect(option).not.toHaveClass("bg-white", "shadow-sm");
     });
 });

@@ -17,7 +17,10 @@ import {
   Table2,
 } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
-import { LIQUID_TABLE_SURFACE_CLASS } from "@/app/components/ui/liquid-surface";
+import {
+  LIQUID_GLASS_FLOAT_CLASS,
+  LIQUID_TABLE_SURFACE_CLASS,
+} from "@/app/components/ui/liquid-surface";
 
 interface Props {
   value: string;
@@ -450,7 +453,7 @@ export function WorkflowPromptEditor({
               <div
                 role="dialog"
                 aria-label="Insert table"
-                className="absolute left-0 top-full z-[250] mt-1 w-max rounded-md border border-gray-200 bg-white p-2 shadow-lg"
+                className={`absolute left-0 top-full z-[250] mt-1 w-max rounded-md p-2 ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-2xl`}
               >
                 <div
                   className="grid gap-1"

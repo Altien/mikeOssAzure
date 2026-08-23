@@ -24,9 +24,9 @@ import {
     LiquidDropdownItem,
 } from "@/app/components/ui/liquid-dropdown";
 import {
-    APP_SURFACE_ACTIVE_CLASS,
-    APP_SURFACE_GROUP_HOVER_CLASS,
-    APP_SURFACE_HOVER_CLASS,
+    LIQUID_GLASS_SELECTED_CLASS,
+    LIQUID_GLASS_GROUP_HOVER_CLASS,
+    LIQUID_GLASS_HOVER_CLASS,
     LIQUID_TABLE_SURFACE_CLASS,
 } from "@/app/components/ui/liquid-surface";
 
@@ -102,12 +102,13 @@ export function TableFilters<T extends string>({
         <DropdownMenu open={open} onOpenChange={setOpen}>
             <DropdownMenuTrigger asChild>
                 <button
+                    type="button"
                     aria-label={label}
                     title={selected?.label ?? label}
                     className={`flex h-[18px] w-[22px] items-center justify-center rounded-sm transition-colors ${
                         value
-                            ? `text-gray-700 ${APP_SURFACE_HOVER_CLASS} hover:text-gray-900`
-                            : `text-gray-400 ${APP_SURFACE_HOVER_CLASS} hover:text-gray-700`
+                            ? `text-gray-700 ${LIQUID_GLASS_HOVER_CLASS} hover:text-gray-900`
+                            : `text-gray-400 ${LIQUID_GLASS_HOVER_CLASS} hover:text-gray-700`
                     }`}
                 >
                     <ChevronDown
@@ -122,6 +123,7 @@ export function TableFilters<T extends string>({
                 className={`z-[120] overflow-hidden ${widthClassName}`}
             >
                 <LiquidDropdownItem
+                    selected={value === null}
                     onSelect={() => onChange(null)}
                     className="flex w-full items-center justify-between px-3 py-2"
                 >
@@ -137,6 +139,7 @@ export function TableFilters<T extends string>({
                     return (
                         <LiquidDropdownItem
                             key={option.value}
+                            selected={value === option.value}
                             onSelect={() => onChange(option.value)}
                             className="flex w-full items-center justify-between px-3 py-2"
                         >
@@ -313,8 +316,8 @@ export function TableRow({
                 className={cn(
                     "group flex h-10 min-w-max items-center pr-3 transition-colors",
                     interactive && "cursor-pointer",
-                    interactive && !selected && APP_SURFACE_HOVER_CLASS,
-                    selected && APP_SURFACE_ACTIVE_CLASS,
+                    interactive && !selected && LIQUID_GLASS_HOVER_CLASS,
+                    selected && LIQUID_GLASS_SELECTED_CLASS,
                     className,
                 )}
                 onContextMenu={handleContextMenu}
@@ -368,7 +371,7 @@ export function TableStickyCell({
                 header
                     ? "z-[80] items-center self-stretch"
                     : "py-2 transition-colors",
-                !header && hover && APP_SURFACE_GROUP_HOVER_CLASS,
+                !header && hover && LIQUID_GLASS_GROUP_HOVER_CLASS,
                 className,
             )}
         >
@@ -435,7 +438,7 @@ export function TablePrimaryCell({
         <TableStickyCell
             style={style}
             widthClassName={widthClassName}
-            bgClassName={selected ? APP_SURFACE_ACTIVE_CLASS : bgClassName}
+            bgClassName={selected ? LIQUID_GLASS_SELECTED_CLASS : bgClassName}
             className={className}
             hover={!selected}
         >

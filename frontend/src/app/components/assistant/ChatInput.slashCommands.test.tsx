@@ -79,9 +79,14 @@ describe("ChatInput workflow slash commands", () => {
         );
 
         act(() => ref.current?.addDoc(document));
-        await user.click(
-            screen.getByRole("button", { name: "Open agreement.docx" }),
+        const openButton = screen.getByRole("button", {
+            name: "Open agreement.docx",
+        });
+        expect(openButton.parentElement).toHaveClass("liquid-glass-flat");
+        expect(openButton.parentElement).not.toHaveClass(
+            "liquid-glass-subtle",
         );
+        await user.click(openButton);
 
         expect(onDocumentClick).toHaveBeenCalledWith(document);
         expect(

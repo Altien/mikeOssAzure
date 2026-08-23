@@ -1,4 +1,4 @@
-import { render, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { ChatInput } from "./ChatInput";
@@ -93,6 +93,10 @@ describe("ChatInput model selection vs. a degraded profile", () => {
                 isLoading={false}
             />,
         );
+
+        expect(
+            screen.getByRole("combobox").closest(".liquid-glass-translucent"),
+        ).not.toBeNull();
 
         await waitFor(() =>
             expect(window.localStorage.getItem(STORAGE_KEY)).toBe(STORED),

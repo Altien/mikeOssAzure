@@ -15,6 +15,7 @@ import {
     highlightDocxQuote,
     QUOTE_HIGHLIGHT_CLASS,
 } from "../shared/views/highlightDocxQuote";
+import { LIQUID_GLASS_FLAT_CLASS } from "@/shared/ui/LiquidGlassUI";
 
 const CASE_HTML_SANITIZER_CONFIG = {
     ALLOWED_TAGS: [
@@ -161,14 +162,14 @@ export function CaseView({
         }, 50);
     }, [activeQuote, activeSubdocument, quoteFocusKey]);
 
-    const surfaceClassName = "bg-white/60 backdrop-blur-xl";
+    const surfaceClassName = LIQUID_GLASS_FLAT_CLASS;
     const visibleLoading = isLoading && subdocuments.length === 0;
     const visibleError = subdocuments.length === 0 ? error : null;
 
     return (
         <div className="flex min-h-0 flex-1 flex-col">
             {!visibleLoading && !visibleError && subdocuments.length > 1 && (
-                <div className="relative px-1 shadow-[inset_0_-1px_0_rgb(229_231_235)]">
+                <div className="document-tab-divider relative px-1">
                     <div className="relative z-10 flex items-end gap-1 overflow-hidden px-2 pt-1">
                         {subdocuments.map((subdocument) => {
                             const isActive =
@@ -184,18 +185,8 @@ export function CaseView({
                                         );
                                         onClearQuote?.();
                                     }}
-                                    style={
-                                        isActive
-                                            ? {
-                                                  filter: "drop-shadow(0 -1px 0 #e5e7eb) drop-shadow(-1px 0 0 #e5e7eb) drop-shadow(1px 0 0 #e5e7eb)",
-                                              }
-                                            : undefined
-                                    }
-                                    className={`group relative flex h-8 max-w-[180px] shrink-0 items-center rounded-t-lg px-3 font-serif text-[13px] transition-colors ${
-                                        isActive
-                                            ? "z-20 bg-white text-gray-800 before:content-[''] before:absolute before:bottom-0 before:-left-2 before:z-20 before:h-2 before:w-2 before:rounded-br-lg before:shadow-[4px_4px_0_4px_white] before:transition-shadow after:content-[''] after:absolute after:bottom-0 after:-right-2 after:z-20 after:h-2 after:w-2 after:rounded-bl-lg after:shadow-[-4px_4px_0_4px_white] after:transition-shadow"
-                                            : "z-10 bg-gray-100 text-gray-600 hover:bg-gray-100 before:content-[''] before:absolute before:bottom-0 before:-left-2 before:h-2 before:w-2 before:rounded-br-lg before:shadow-[4px_4px_0_4px_#f3f4f6] before:transition-shadow after:content-[''] after:absolute after:bottom-0 after:-right-2 after:h-2 after:w-2 after:rounded-bl-lg after:shadow-[-4px_4px_0_4px_#f3f4f6] after:transition-shadow"
-                                    }`}
+                                    data-active={isActive ? "true" : "false"}
+                                    className={`document-tab group relative flex h-8 max-w-[180px] shrink-0 items-center rounded-t-lg px-3 font-serif text-[13px] transition-colors ${isActive ? "z-20" : "z-10"}`}
                                 >
                                     <span className="truncate">
                                         {subdocument.title}

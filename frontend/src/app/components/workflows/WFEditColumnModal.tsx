@@ -11,6 +11,7 @@ import { Modal } from "../modals/Modal";
 import { ModalSelect } from "../modals/ModalSelect";
 import { ModalTextarea } from "../modals/ModalTextarea";
 import { FieldLabel, FormTextInput } from "../ui/form-field";
+import { LIQUID_GLASS_FLOAT_CLASS } from "@/shared/ui/LiquidGlassUI";
 
 interface ColumnDraft {
     name: string;
@@ -172,11 +173,11 @@ export function WFEditColumnModal({ column, onClose, onSave, onDelete }: Props) 
                                     <ChevronDown className={`h-4 w-4 transition-transform ${presetsOpen ? "rotate-180" : ""}`} />
                                 </button>
                                 {presetsOpen && (
-                                    <div className="absolute left-0 right-0 top-full mt-1 z-50 rounded-xl border border-gray-100 bg-white shadow-lg overflow-y-auto max-h-64">
+                                    <div className={`absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-y-auto rounded-xl ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-2xl`}>
                                         <button
                                             type="button"
                                             onClick={() => { update({ name: "", prompt: "", format: "text", tags: [], tagInput: "" }); setPresetsOpen(false); }}
-                                            className="w-full px-3 py-2 text-left text-sm text-gray-400 transition-all hover:bg-gray-100/70 border-b border-gray-100"
+                                            className="theme-dropdown-item w-full border-b border-gray-100 px-3 py-2 text-left text-sm text-gray-400 transition-all"
                                         >
                                             No Preset
                                         </button>
@@ -188,7 +189,7 @@ export function WFEditColumnModal({ column, onClose, onSave, onDelete }: Props) 
                                                     update({ name: preset.name, prompt: preset.prompt, format: preset.format, tags: preset.tags ?? [], tagInput: "" });
                                                     setPresetsOpen(false);
                                                 }}
-                                                className="w-full px-3 py-2 text-left text-sm text-gray-700 transition-all hover:bg-gray-100/70"
+                                                className="theme-dropdown-item w-full px-3 py-2 text-left text-sm text-gray-700 transition-all"
                                             >
                                                 {preset.name}
                                             </button>

@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { Citation, DocumentCitation } from "../../shared/types";
 import { CitationQuotesSection } from "../CitationQuotesSection";
@@ -41,15 +42,23 @@ describe("citation verification presentation", () => {
     expect(citationVerificationPillClassName(citation)).toBe("");
   });
 
-  it("shows unverified document citations in red without an outline", () => {
+  it("uses the red error style for unverified citations", () => {
     const citation = documentCitation(false);
     expect(citationVerificationState(citation)).toBe("unverified");
     expect(citationVerificationAriaLabel(citation)).toBe(
       "Citation 1. Could not verify quote",
     );
-    expect(citationVerificationPillClassName(citation)).not.toContain("border");
     expect(citationVerificationPillClassName(citation)).toContain(
       "!bg-red-100/85",
+    );
+    expect(citationVerificationPillClassName(citation)).toContain(
+      "!text-red-800",
+    );
+    expect(citationVerificationPillClassName(citation)).toContain(
+      "dark:!bg-red-950",
+    );
+    expect(citationVerificationPillClassName(citation)).toContain(
+      "dark:!text-white",
     );
   });
 
@@ -72,14 +81,28 @@ describe("citation verification presentation", () => {
     );
   });
 
-  it("renders an accessible per-quote warning badge", () => {
+  it("reveals an explanation from the white warning pill", async () => {
+    const user = userEvent.setup();
     render(<CitationVerificationBadge state="unverified" />);
-    const badge = screen.getByText("Could not verify quote");
-    expect(badge).toHaveAttribute(
-      "title",
-      "Quote could not be matched to the source text.",
+    const trigger = screen.getByRole("button", {
+      name: "Could not verify quote",
+    });
+    expect(trigger).toHaveClass("liquid-glass-flat", "!text-red-600");
+    expect(trigger).not.toHaveClass("bg-red-600/90");
+    expect(
+      screen.queryByText("Quote not found in document"),
+    ).not.toBeInTheDocument();
+
+    await user.click(trigger);
+
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(screen.getByText("Quote not found in document")).toBeVisible();
+    expect(
+      screen.getByText(/Treat it as hallucinated/),
+    ).toHaveTextContent(
+      "double-check the related section of the assistant response",
     );
-    expect(badge).toHaveClass("backdrop-blur-xl");
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
   });
 
   it("does not render a badge for verified quotes", () => {
@@ -109,7 +132,7 @@ describe("citation verification presentation", () => {
     expect(screen.getByText("Could not verify quote")).toBeVisible();
     expect(screen.getByRole("button", { name: "View" })).toBeDisabled();
     expect(screen.getByText(/Model supplied quote/)).not.toHaveClass(
-      "bg-blue-100/70",
+      "citation-quote-selected",
     );
   });
 

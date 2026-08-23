@@ -60,6 +60,9 @@
       "@mike/model-toggle-ui": [
         "../frontend/src/shared/ui/ModelToggleUI.tsx"
       ],
+      "@mike/mike-icon-ui": [
+        "../frontend/src/shared/ui/MikeIconUI.tsx"
+      ],
       "@mike/google-icon-ui": [
         "../frontend/src/shared/ui/GoogleIconUI.tsx"
       ],

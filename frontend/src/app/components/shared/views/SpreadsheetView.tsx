@@ -201,19 +201,28 @@ function applyExcelTextOverflow(sheets: LuckyExcelSheet[]): void {
  * CSS background on the header overlay divs, which sits in front of the canvas
  * and hides the labels entirely.
  */
-const HEADER_TINT = "rgba(148, 163, 184, 0.18)";
+function canvasThemeColor(
+    ctx: CanvasRenderingContext2D,
+    property: string,
+): string | null {
+    return (
+        getComputedStyle(ctx.canvas).getPropertyValue(property).trim() || null
+    );
+}
 
 function tintHeaderCell(
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    ctx: CanvasRenderingContext2D,
 ): void {
-  ctx.save();
-  ctx.fillStyle = HEADER_TINT;
-  ctx.fillRect(x, y, width, height);
-  ctx.restore();
+    const tint = canvasThemeColor(ctx, "--spreadsheet-header-tint");
+    if (!tint) return;
+    ctx.save();
+    ctx.fillStyle = tint;
+    ctx.fillRect(x, y, width, height);
+    ctx.restore();
 }
 
 /**
@@ -336,10 +345,19 @@ export function SpreadsheetView({
             }
             const w = info.endX - info.startX;
             const h = info.endY - info.startY;
+            const fill = canvasThemeColor(
+                ctx,
+                "--spreadsheet-highlight-background",
+            );
+            const outline = canvasThemeColor(
+                ctx,
+                "--spreadsheet-highlight-outline",
+            );
+            if (!fill || !outline) return;
             ctx.save();
-            ctx.fillStyle = "rgba(59, 130, 246, 0.16)";
+            ctx.fillStyle = fill;
             ctx.fillRect(info.startX, info.startY, w, h);
-            ctx.strokeStyle = "#3b82f6";
+            ctx.strokeStyle = outline;
             ctx.lineWidth = 2;
             ctx.strokeRect(info.startX + 1, info.startY + 1, w - 2, h - 2);
             ctx.restore();
@@ -371,6 +389,18 @@ export function SpreadsheetView({
         }),
         [afterRenderCell],
     );
+
+    // Fortune-sheet paints its grid on canvas, so CSS variable changes need an
+    // explicit repaint when the root dark-mode class changes.
+    useEffect(() => {
+        const repaint = () => window.dispatchEvent(new Event("resize"));
+        const observer = new MutationObserver(repaint);
+        observer.observe(document.documentElement, {
+            attributes: true,
+            attributeFilter: ["class"],
+        });
+        return () => observer.disconnect();
+    }, []);
 
     // Activate the cited sheet, bring the cell into view, and repaint the
     // highlight. We only scroll when the cell is off screen (centering it);
@@ -497,17 +527,17 @@ export function SpreadsheetView({
                        corner (no label) gets a matching gray background here; the
                        header strips are tinted on the canvas via render hooks. */
                     .fortune-sheet-viewer .fortune-left-top {
-                        background-color: #eceef2;
+                        background-color: var(--spreadsheet-header-corner);
                     }
 
                     .fortune-sheet-viewer .fortune-row-header-hover,
                     .fortune-sheet-viewer .fortune-col-header-hover {
-                        background-color: rgba(209, 213, 219, 0.65);
+                        background-color: var(--spreadsheet-header-hover);
                     }
 
                     .fortune-sheet-viewer .fortune-row-header-selected,
                     .fortune-sheet-viewer .fortune-col-header-selected {
-                        background-color: rgba(156, 163, 175, 0.28);
+                        background-color: var(--spreadsheet-header-selected);
                     }
                 `}</style>
             </div>

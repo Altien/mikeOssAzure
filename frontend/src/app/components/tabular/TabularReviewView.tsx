@@ -67,6 +67,7 @@ import { useSidebar } from "@/app/contexts/SidebarContext";
 import { PageHeader } from "../shared/PageHeader";
 import { TableToolbar } from "../shared/TableToolbar";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
+import { LIQUID_GLASS_FLOAT_CLASS } from "@/shared/ui/LiquidGlassUI";
 
 interface Props {
     reviewId: string;
@@ -1071,7 +1072,7 @@ export function TRView({ reviewId, projectId }: Props) {
                                                     <ChevronDown className="h-3.5 w-3.5" />
                                                 </TabPillButton>
                                                 {actionsOpen && (
-                                                    <div className="absolute top-full right-0 mt-1 w-36 rounded-lg border border-gray-100 bg-white shadow-lg z-50 overflow-hidden">
+                                                    <div className={`absolute right-0 top-full z-50 mt-1 w-36 overflow-hidden rounded-lg ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-2xl`}>
                                                         <button
                                                             onClick={
                                                                 handleClearResults
@@ -1079,7 +1080,7 @@ export function TRView({ reviewId, projectId }: Props) {
                                                             disabled={
                                                                 cellMutationsBlocked
                                                             }
-                                                            className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                                                            className="theme-dropdown-item w-full px-3 py-1.5 text-left text-xs text-gray-700 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
                                                         >
                                                             Clear results
                                                         </button>

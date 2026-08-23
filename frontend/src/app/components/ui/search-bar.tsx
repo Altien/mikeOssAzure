@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Search, X } from "lucide-react";
 import { cn } from "@/app/lib/utils";
+import { LIQUID_GLASS_SUBTLE_CLASS } from "@/shared/ui/LiquidGlassUI";
 
 type SearchBarSize = "sm" | "normal";
 
@@ -60,7 +61,7 @@ export const SearchBar = React.forwardRef<HTMLInputElement, SearchBarProps>(
             <div
                 data-slot="search-bar"
                 className={cn(
-                    "flex items-center border border-white/70 bg-white/55 text-gray-700 shadow-[0_3px_9px_rgba(15,23,42,0.06),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] backdrop-blur-xl transition-colors focus-within:border-white/90 focus-within:bg-white/70 focus-within:ring-2 focus-within:ring-blue-500/40",
+                    `flex items-center text-gray-700 ${LIQUID_GLASS_SUBTLE_CLASS} backdrop-blur-xl transition-colors focus-within:ring-2 focus-within:ring-blue-500/40`,
                     classes.wrapper,
                     className,
                     wrapperClassName,

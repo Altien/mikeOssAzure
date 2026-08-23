@@ -8,11 +8,11 @@ import { OptionPill } from "@/app/components/ui/option-pill";
 import { FieldLabel } from "@/app/components/ui/form-field";
 import {
     DropdownMenu,
-    DropdownMenuCheckboxItem,
     DropdownMenuRadioGroup,
     DropdownMenuTrigger,
 } from "@/app/components/ui/dropdown-menu";
 import {
+    LiquidDropdownCheckboxItem,
     LiquidDropdownContent,
     LiquidDropdownRadioItem,
 } from "@/app/components/ui/liquid-dropdown";
@@ -326,16 +326,16 @@ export function PersonalisationFields({
                         className="max-h-72 w-[var(--radix-dropdown-menu-trigger-width)] overflow-y-auto"
                     >
                         {COMMON_PRACTICE_AREAS.map((area) => (
-                            <DropdownMenuCheckboxItem
+                            <LiquidDropdownCheckboxItem
                                 key={area}
                                 checked={form.selectedAreas.includes(area)}
                                 onCheckedChange={() => form.toggleArea(area)}
                                 onSelect={(event) => event.preventDefault()}
                             >
                                 {area}
-                            </DropdownMenuCheckboxItem>
+                            </LiquidDropdownCheckboxItem>
                         ))}
-                        <DropdownMenuCheckboxItem
+                        <LiquidDropdownCheckboxItem
                             checked={form.otherSelected}
                             onCheckedChange={(checked) =>
                                 form.setOtherSelected(checked === true)
@@ -343,7 +343,7 @@ export function PersonalisationFields({
                             onSelect={(event) => event.preventDefault()}
                         >
                             Other
-                        </DropdownMenuCheckboxItem>
+                        </LiquidDropdownCheckboxItem>
                     </LiquidDropdownContent>
                 </DropdownMenu>
 

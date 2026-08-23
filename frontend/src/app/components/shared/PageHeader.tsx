@@ -20,7 +20,7 @@ import {
     LiquidDropdownItem,
 } from "@/app/components/ui/liquid-dropdown";
 import {
-    APP_SURFACE_ACTIVE_CLASS,
+    LIQUID_GLASS_SELECTED_CLASS,
 } from "@/app/components/ui/liquid-surface";
 import {
     HeaderButtonUI,
@@ -319,7 +319,7 @@ function PageHeaderSearchActionControl({
                             className:
                                 "cursor-text justify-start gap-2 px-3 text-gray-700 hover:text-gray-700",
                         }),
-                        `w-56 sm:w-80 ${APP_SURFACE_ACTIVE_CLASS}`,
+                        `w-56 sm:w-80 ${LIQUID_GLASS_SELECTED_CLASS}`,
                     )}
                 >
                     <Search className="h-3.5 w-3.5 text-gray-400 shrink-0" />

@@ -17,12 +17,14 @@ describe("HeaderButtonsUI", () => {
 
         expect(screen.getByTestId("actions")).toHaveClass(
             "rounded-full",
-            "bg-app-surface",
+            "liquid-glass-subtle",
         );
         expect(screen.getByRole("button", { name: "New chat" })).toHaveClass(
             "h-7",
             "w-7",
             "rounded-full",
+            "liquid-glass-hover",
+            "liquid-glass-pressed",
         );
     });
 });

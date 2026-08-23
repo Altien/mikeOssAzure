@@ -8,6 +8,10 @@ import {
     DropdownMenuTrigger,
 } from "@/app/components/ui/dropdown-menu";
 import { LiquidDropdownContent } from "@/app/components/ui/liquid-dropdown";
+import {
+    LIQUID_GLASS_HOVER_CLASS,
+    LIQUID_GLASS_SUBTLE_CLASS,
+} from "@/shared/ui/LiquidGlassUI";
 
 const DESKTOP_QUERY = "(min-width: 768px)";
 
@@ -82,7 +86,7 @@ export function TableToolbar<T extends string>({
                             type="button"
                             title="Toolbar actions"
                             aria-label="Toolbar actions"
-                            className="ml-auto inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/70 bg-white/65 text-gray-700 shadow-[0_3px_9px_rgba(15,23,42,0.05),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] backdrop-blur-xl transition-colors hover:bg-white hover:text-gray-900 active:scale-[0.98]"
+                            className={`ml-auto inline-flex h-7 w-7 items-center justify-center rounded-full text-gray-700 ${LIQUID_GLASS_SUBTLE_CLASS} ${LIQUID_GLASS_HOVER_CLASS} backdrop-blur-xl transition-colors hover:text-gray-900 active:scale-[0.98]`}
                         >
                             <Settings2 className="h-3.5 w-3.5" />
                         </button>

@@ -11,6 +11,7 @@ import { ToggleSwitch } from "../ui/toggle-switch";
 import { SearchBar } from "../ui/search-bar";
 import { listWorkflows } from "@/app/lib/mikeApi";
 import { userFacingApiError } from "@/app/lib/userFacingError";
+import { LIQUID_GLASS_MODAL_ROW_HOVER_CLASS } from "@/app/components/ui/liquid-surface";
 
 type Screen = "list" | "details" | "create";
 
@@ -191,7 +192,10 @@ export function QuickActionsModal({
               autoFocus
             />
           </div>
-          <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
+          <div
+            data-slot="quick-actions-list"
+            className="mt-2 min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-1"
+          >
             {error && (
               <p className="px-3 py-2 text-xs text-red-600" role="alert">
                 {error}
@@ -210,7 +214,7 @@ export function QuickActionsModal({
                     setSelected(action);
                     setScreen("details");
                   }}
-                  className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100"
+                  className={`flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm text-gray-700 transition-colors ${LIQUID_GLASS_MODAL_ROW_HOVER_CLASS}`}
                 >
                   <span className="min-w-0 flex-1 truncate font-medium">
                     {action.name}
@@ -324,7 +328,10 @@ function QuickActionForm({
   error: string | null;
 }) {
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-2 pt-1 pb-5">
+    <div
+      data-slot="quick-action-form"
+      className="flex min-h-0 flex-1 flex-col gap-6 px-2 pt-1 pb-5"
+    >
       <div>
         <FieldLabel htmlFor="quick-action-name">Name</FieldLabel>
         <FormTextInput

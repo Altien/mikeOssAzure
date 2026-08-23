@@ -5,7 +5,12 @@ import { Check, Code2, Plus } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { WorkflowAddon } from "../shared/types";
-import { LIQUID_PANEL_SURFACE_CLASS } from "@/app/components/ui/liquid-surface";
+import {
+  LIQUID_GLASS_HOVER_CLASS,
+  LIQUID_GLASS_SELECTED_CLASS,
+  LIQUID_GLASS_SUBTLE_CLASS,
+  LIQUID_SUBTLE_PANEL_SURFACE_CLASS,
+} from "@/app/components/ui/liquid-surface";
 import { Modal } from "../modals/Modal";
 import { FileTypeIcon } from "../shared/FileTypeIcon";
 
@@ -166,10 +171,10 @@ function DetailTabs({
           role="tab"
           aria-selected={active === tab.id}
           onClick={() => onChange(tab.id)}
-          className={`inline-flex h-7 items-center justify-center rounded-full border px-3 text-xs font-medium shadow-[0_3px_9px_rgba(15,23,42,0.05),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] backdrop-blur-xl transition-all ${
+          className={`inline-flex h-7 items-center justify-center rounded-full px-3 text-xs font-medium ${LIQUID_GLASS_SUBTLE_CLASS} backdrop-blur-xl transition-all ${
             active === tab.id
-              ? "border-white/80 bg-white text-gray-900"
-              : "border-white/60 bg-white/45 text-gray-400 hover:bg-white/65 hover:text-gray-700"
+              ? `${LIQUID_GLASS_SELECTED_CLASS} text-gray-900`
+              : `${LIQUID_GLASS_HOVER_CLASS} text-gray-400 hover:text-gray-700`
           }`}
         >
           {tab.label}
@@ -312,7 +317,7 @@ function WorkflowAddonPreviewDialog({
             </div>
           )}
           <div
-            className={`${LIQUID_PANEL_SURFACE_CLASS} flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl`}
+            className={`${LIQUID_SUBTLE_PANEL_SURFACE_CLASS} flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl`}
           >
             {view === "columns" ? (
               <>

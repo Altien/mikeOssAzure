@@ -62,7 +62,7 @@ describe("CitationQuotesSection", () => {
         );
         expect(citeButton.parentElement).toBe(viewButton.parentElement);
         expect(citeButton.parentElement).toHaveClass("justify-between");
-        expect(viewButton.closest(".shadow-sm")).not.toBeNull();
+        expect(viewButton.closest(".liquid-glass-flat")).not.toBeNull();
         expect(screen.getByText(/Matched source quote/)).toHaveTextContent(
             "“Matched source quote” (Page 2)",
         );

@@ -26,9 +26,9 @@ import { PillButton } from "@/app/components/ui/pill-button";
 import { TabularReviewSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import { TRFirstColumnCell } from "./TRFirstColumnCell";
 import {
-    APP_SURFACE_ACTIVE_CLASS,
-    APP_SURFACE_GROUP_HOVER_CLASS,
-    APP_SURFACE_HOVER_CLASS,
+    LIQUID_GLASS_SELECTED_CLASS,
+    LIQUID_GLASS_GROUP_HOVER_CLASS,
+    LIQUID_GLASS_HOVER_CLASS,
 } from "@/app/components/ui/liquid-surface";
 
 const SKELETON_COLS = 4;
@@ -385,10 +385,10 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                             (document): document is Document => !!document,
                         );
                     const rowBg = isSelected
-                        ? APP_SURFACE_ACTIVE_CLASS
-                        : APP_SURFACE_HOVER_CLASS;
+                        ? LIQUID_GLASS_SELECTED_CLASS
+                        : LIQUID_GLASS_HOVER_CLASS;
                     const stickyRowBg = isSelected
-                        ? APP_SURFACE_ACTIVE_CLASS
+                        ? LIQUID_GLASS_SELECTED_CLASS
                         : TR_STICKY_CELL_BG;
                     return (
                         <div
@@ -402,7 +402,7 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                                 selected={isSelected}
                                 closeSignal={scrollCloseSignal}
                                 onToggleSelection={() => toggleRow(row.id)}
-                                className={`sticky left-0 z-[60] ${DOC_COL_W} border-b border-r border-gray-200 py-2 pl-3 pr-2 text-xs text-gray-800 flex items-center transition-colors ${stickyRowBg} ${isSelected ? "" : APP_SURFACE_GROUP_HOVER_CLASS}`}
+                                className={`sticky left-0 z-[60] ${DOC_COL_W} border-b border-r border-gray-200 py-2 pl-3 pr-2 text-xs text-gray-800 flex items-center transition-colors ${stickyRowBg} ${isSelected ? "" : LIQUID_GLASS_GROUP_HOVER_CLASS}`}
                             />
                             {columns.map((col) => {
                                 const cell = getCell(row, col.index);

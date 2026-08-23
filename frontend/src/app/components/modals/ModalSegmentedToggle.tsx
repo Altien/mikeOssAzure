@@ -2,6 +2,11 @@
 
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/app/lib/utils";
+import {
+    LIQUID_GLASS_HOVER_CLASS,
+    LIQUID_GLASS_SELECTED_CLASS,
+    LIQUID_GLASS_SUBTLE_CLASS,
+} from "@/shared/ui/LiquidGlassUI";
 
 export interface SegmentedToggleOption<T extends string> {
     value: T;
@@ -29,7 +34,7 @@ export function ModalSegmentedToggle<T extends string>({
     return (
         <div
             className={cn(
-                "inline-grid gap-1 rounded-full bg-white/80 shadow-[0_6px_18px_rgba(15,23,42,0.08),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-1px_0_rgba(15,23,42,0.04)] backdrop-blur-xl",
+                `inline-grid gap-1 rounded-full ${LIQUID_GLASS_SUBTLE_CLASS} backdrop-blur-xl`,
                 size === "sm" ? "h-8 p-1" : "h-9 p-1",
                 className,
             )}
@@ -51,8 +56,8 @@ export function ModalSegmentedToggle<T extends string>({
                             "flex h-full items-center justify-center rounded-full text-xs transition-all disabled:cursor-not-allowed disabled:opacity-60",
                             size === "sm" ? "gap-1 px-3" : "gap-1.5 px-3",
                             active
-                                ? "bg-gray-100 text-gray-900"
-                                : "text-gray-500 hover:text-gray-700",
+                                ? `${LIQUID_GLASS_SELECTED_CLASS} text-gray-900`
+                                : `${LIQUID_GLASS_HOVER_CLASS} text-gray-500 hover:text-gray-700`,
                         )}
                     >
                         {Icon && (
