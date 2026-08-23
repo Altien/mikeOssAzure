@@ -175,6 +175,9 @@ jobs:
             echo "R2_ACCESS_KEY_ID=minioadmin"
             echo "R2_SECRET_ACCESS_KEY=minioadmin"
             echo "R2_BUCKET_NAME=mike"
+            # Keep the release-job fixture reproducible even when the source
+            # repository's main branch changes independently of this PR.
+            echo "MIKE_WORKFLOWS_REF=ce62e6a2d3f47e1d3567a4f2edc61898cfe9e78a"
             echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}"
           } >> backend/.env
           # next build inlines NEXT_PUBLIC_* at build time, so these must be set
@@ -184,6 +187,13 @@ jobs:
             echo "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=$ANON_KEY"
             echo "NEXT_PUBLIC_API_BASE_URL=http://localhost:3001"
           } > frontend/.env.local
+
+      # Production runs this as a release job after migrations and before the
+      # backend starts. E2E must exercise the same ordering so defaults exist.
+      - name: Sync Mike workflow catalog
+        run: |
+          npm run build --prefix backend
+          npm run sync:workflows --prefix backend
 
       # Serve a PRODUCTION build, not `next dev`. Two reasons the dev server makes
       # this suite flaky: (1) its on-demand route compilation makes the first hit

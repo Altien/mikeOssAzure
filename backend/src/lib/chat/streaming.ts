@@ -5,7 +5,7 @@ import {
   type OpenAIToolSchema,
 } from "../llm";
 import { resolveRequestedModel } from "../routerModels";
-import { safeErrorLog, UserFacingError } from "../safeError";
+import { UserFacingError } from "../userFacingError";
 import { createServerSupabase } from "../supabase";
 import { buildUserMcpTools, type McpToolEvent } from "../mcpConnectors";
 import type { SourceDocument } from "../sourceDocuments";
@@ -603,7 +603,7 @@ export async function runLLMStream(params: {
       );
     } else {
       flushPartialTurn();
-      console.error("[chat/stream] model stream failed", safeErrorLog(err));
+      console.error("[chat/stream] model stream failed", err);
       const safeToDisplay = err instanceof UserFacingError;
       const message = safeToDisplay ? err.message : ASSISTANT_ERROR_MESSAGE;
       events.push({

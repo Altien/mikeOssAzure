@@ -1,5 +1,4 @@
 import type { Response } from "express";
-import { safeErrorLog } from "./safeError";
 
 export const INTERNAL_ERROR_CODE = "internal_error";
 export const INTERNAL_ERROR_MESSAGE =
@@ -17,7 +16,7 @@ export function sendInternalError(
     requestId,
     method: res.req?.method,
     path: res.req?.originalUrl,
-    error: safeErrorLog(error),
+    error: error,
   });
 
   return res.status(status).json({

@@ -1,7 +1,7 @@
 # Mutation testing: prove the security-critical unit tests assert behavior.
 #
-# Stryker mutates src/lib/access.ts, downloadTokens.ts, safeError.ts and
-# chat/citations.ts (scope defined in backend/stryker.config.json) and
+# Stryker mutates src/lib/access.ts, downloadTokens.ts, and chat/citations.ts
+# (scope defined in backend/stryker.config.json) and
 # re-runs the vitest suite per mutant. A surviving mutant = a behavior
 # change (e.g. an access check inverted) that no test caught.
 #

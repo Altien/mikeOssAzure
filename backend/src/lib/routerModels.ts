@@ -1,5 +1,5 @@
 import { createServerSupabase } from "./supabase";
-import { UserFacingError } from "./safeError";
+import { UserFacingError } from "./userFacingError";
 import { resolveModel } from "./llm/models";
 
 type Db = ReturnType<typeof createServerSupabase>;

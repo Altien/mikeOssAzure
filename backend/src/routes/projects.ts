@@ -8,7 +8,6 @@ import {
   attachLatestVersionNumbers,
   contentSha256,
 } from "../lib/documentVersions";
-import { safeErrorLog } from "../lib/safeError";
 import { sendInternalError } from "../lib/httpError";
 import {
   buildProjectExportManifest,
@@ -859,7 +858,7 @@ projectsRouter.get(
     } catch (err) {
       console.error("[projects/export] failed", {
         projectId,
-        error: safeErrorLog(err),
+        error: err,
       });
       res
         .status(500)
@@ -1231,7 +1230,7 @@ projectsRouter.post(
       console.error("[projects/folder-paths/resolve] failed", {
         projectId,
         userId,
-        error: safeErrorLog(error),
+        error: error,
       });
       return void res.status(500).json({
         detail: "Could not prepare this folder upload. Please try again.",

@@ -242,29 +242,52 @@ describe("workflows.routes", () => {
 
     // ── GET /workflows/system ──────────────────────────────────────────────
     describe("GET /workflows/system", () => {
-        it("returns only system workflows, filtered by type, with no RPC call", async () => {
-            // Deliberately does NOT touch createServerSupabase's mock at
-            // all — this route makes no DB call whatsoever, so overriding
-            // it here (even just to assert non-invocation) would leave a
-            // queued mockImplementationOnce that the route never consumes,
-            // shifting every later test's mock by one call. The fact that
-            // this route resolves correctly using only the untouched
-            // module-level createServerSupabase mock (never called) is
-            // itself the proof no RPC/DB access happened.
+        it("returns catalog workflows in the legacy system response shape", async () => {
+            supabaseState.tables.mike_workflows = {
+                data: [
+                    {
+                        id: "catalog-1",
+                        workflow_key: "proofread",
+                        distribution: "default",
+                        version: "1.0.0",
+                        title: "Proofread",
+                        description: "Proofread a document.",
+                        type: "assistant",
+                        prompt_md: "# Proofread",
+                        columns_config: null,
+                        contributors: [],
+                        language: "English",
+                        practice: "General Transactions",
+                        jurisdictions: ["General"],
+                        pack_key: null,
+                        pack_title: null,
+                        pack_description: null,
+                        pack_version: null,
+                        source_commit: "a".repeat(40),
+                        content_hash: "b".repeat(64),
+                        active: true,
+                        created_at: "2026-08-23T00:00:00.000Z",
+                        updated_at: "2026-08-23T00:00:00.000Z",
+                    },
+                ],
+                error: null,
+            };
             const res = await request(app)
                 .get("/workflows/system?type=assistant")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
-            expect(Array.isArray(res.body)).toBe(true);
-            expect(res.body.length).toBeGreaterThan(0);
-      expect(
-        res.body.every(
-          (w: { is_system: boolean; metadata: { type: string } }) =>
-                w.is_system && w.metadata.type === "assistant",
-        ),
-      ).toBe(true);
-            expect(createServerSupabase).not.toHaveBeenCalled();
+            expect(res.body).toEqual([
+                expect.objectContaining({
+                    id: "builtin-proofread",
+                    is_system: true,
+                    metadata: expect.objectContaining({
+                        type: "assistant",
+                        title: "Proofread",
+                    }),
+                }),
+            ]);
+            expect(createServerSupabase).toHaveBeenCalled();
         });
     });
 

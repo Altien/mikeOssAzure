@@ -20,7 +20,6 @@ import { downloadsRouter } from "./routes/downloads";
 import { sourceDocumentsRouter } from "./routes/sourceDocuments";
 import { auditRouter } from "./routes/audit";
 import { manifestPublicKey } from "./lib/manifestSigning";
-import { safeErrorLog } from "./lib/safeError";
 import {
   handleUnhandledError,
   protectInternalErrorResponses,
@@ -225,7 +224,7 @@ app.get("/manifest-signing-key", (_req, res) => {
   try {
     res.json(manifestPublicKey());
   } catch (err) {
-    console.error("[manifest-signing-key] failed", safeErrorLog(err));
+    console.error("[manifest-signing-key] failed", err);
     res.status(500).json({
       detail: "Manifest signing key is misconfigured",
     });

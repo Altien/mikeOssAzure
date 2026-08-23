@@ -17,7 +17,6 @@ import {
 } from "@aws-sdk/client-s3";
 import * as S3Commands from "@aws-sdk/client-s3";
 import { getSignedUrl as awsGetSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { safeErrorLog } from "./safeError";
 
 const GetObjectCommand = (S3Commands as any).GetObjectCommand;
 
@@ -92,7 +91,7 @@ export async function downloadFile(key: string): Promise<ArrayBuffer | null> {
   } catch (error) {
     console.error("[storage] downloadFile failed", {
       key,
-      error: safeErrorLog(error),
+      error: error,
     });
     return null;
   }
@@ -157,7 +156,7 @@ export async function getSignedUrl(
   } catch (error) {
     console.error("[storage] getSignedUrl failed", {
       key,
-      error: safeErrorLog(error),
+      error: error,
     });
     return null;
   }

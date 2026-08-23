@@ -14,7 +14,7 @@ services:
       # ponytail: infra ports bind loopback only — reachable from the host for
       # debugging, never from the internet. Compose networking is unaffected, so
       # the other services still reach these by service name.
-      - "127.0.0.1:${DB_PORT:-54322}:5432"   # psql from host if needed
+      - "127.0.0.1:${DB_PORT:-54322}:5432" # psql from host if needed
     environment:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
@@ -103,6 +103,15 @@ services:
     depends_on:
       - auth
       - rest
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q --spider http://127.0.0.1:8000/rest/v1/ || exit 1",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
     restart: unless-stopped
 
   # --- One-shot: load schema.sql once auth.users exists; grant service_role.
@@ -117,6 +126,7 @@ services:
       DB: postgres://postgres:postgres@db:5432/postgres
     volumes:
       - ./backend/schema.sql:/schema.sql:ro
+      - ./backend/migrations/20260823_01_unified_workflow_catalog.sql:/workflow-catalog-migration.sql:ro
     entrypoint: ["bash", "-c"]
     command:
       - |
@@ -128,9 +138,13 @@ services:
         else
           psql "$$DB" -v ON_ERROR_STOP=1 -f /schema.sql;
         fi
+        # Existing Compose volumes skipped schema.sql above, so always replay
+        # this idempotent migration before the workflow ingestion job starts.
+        psql "$$DB" -v ON_ERROR_STOP=1 -f /workflow-catalog-migration.sql;
         psql "$$DB" -c "grant usage on schema public to service_role;
           grant all privileges on all tables in schema public to service_role;
-          grant all privileges on all sequences in schema public to service_role;"
+          grant all privileges on all sequences in schema public to service_role;
+          notify pgrst, 'reload schema';"
     restart: "no"
 
   # --- Local SMTP catcher. Auth emails land in its web inbox (no real sending).
@@ -138,8 +152,8 @@ services:
     image: axllent/mailpit:latest
     ports:
       # Loopback only: the inbox exposes auth + password-reset links.
-      - "127.0.0.1:${MAILPIT_PORT:-8025}:8025"   # web inbox
-      - "127.0.0.1:${MAILPIT_SMTP_PORT:-1025}:1025"   # SMTP
+      - "127.0.0.1:${MAILPIT_PORT:-8025}:8025" # web inbox
+      - "127.0.0.1:${MAILPIT_SMTP_PORT:-1025}:1025" # SMTP
     environment:
       MP_SMTP_AUTH_ACCEPT_ANY: "1"
       MP_SMTP_AUTH_ALLOW_INSECURE: "1"
@@ -177,8 +191,35 @@ services:
           aws --endpoint-url http://storage:9000 s3 mb s3://mike || true"
     restart: "no"
 
+  # --- One-shot: download, validate, and transactionally import mike-workflows.
+  workflow-sync:
+    build: ./backend
+    image: mike-backend:local
+    env_file:
+      - path: ./backend/.env
+        required: false
+      - path: .env
+        required: false
+    environment:
+      - SUPABASE_URL=http://gateway:8000
+      - SUPABASE_SECRET_KEY=${SUPABASE_SECRET_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU}
+      - R2_ENDPOINT_URL=http://storage:9000
+      - R2_ACCESS_KEY_ID=rustfsadmin
+      - R2_SECRET_ACCESS_KEY=rustfsadmin
+      - R2_BUCKET_NAME=mike
+    command: ["npm", "run", "sync:workflows"]
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      createbucket:
+        condition: service_completed_successfully
+      gateway:
+        condition: service_healthy
+    restart: "no"
+
   backend:
     build: ./backend
+    image: mike-backend:local
     ports:
       - "${BACKEND_PORT:-3001}:3001"
     # ponytail: both optional — local dev keeps secrets in backend/.env, hosted
@@ -207,9 +248,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      db-init:
-        condition: service_completed_successfully
-      createbucket:
+      workflow-sync:
         condition: service_completed_successfully
       auth:
         condition: service_started

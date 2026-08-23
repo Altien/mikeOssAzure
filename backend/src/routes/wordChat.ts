@@ -28,7 +28,6 @@ import {
   withoutEmptyAssistantReservations,
 } from "../lib/chat";
 import { getUserModelSettings } from "../lib/userSettings";
-import { safeErrorLog } from "../lib/safeError";
 import {
   persistWordDocumentEdits,
   WORD_EDIT_FORMATS,
@@ -294,7 +293,7 @@ wordChatRouter.get("/", requireAuth, async (req, res) => {
   if (!documentLookup.ok) {
     console.error(
       "[word-chat] failed to load document chats",
-      safeErrorLog(documentLookup.detail),
+      documentLookup.detail,
     );
     return void res.status(500).json({ detail: "Failed to load Word chats" });
   }
@@ -311,7 +310,7 @@ wordChatRouter.get("/", requireAuth, async (req, res) => {
     offset > 0 ? query.range(offset, offset + limit - 1) : query.limit(limit);
   const { data, error } = await query;
   if (error) {
-    console.error("[word-chat] failed to list chats", safeErrorLog(error));
+    console.error("[word-chat] failed to list chats", error);
     return void res.status(500).json({ detail: "Failed to load Word chats" });
   }
   res.json((data ?? []).map((chat) => ({ ...chat, project_id: null })));
@@ -336,7 +335,7 @@ wordChatRouter.get("/:chatId", requireAuth, async (req, res) => {
   if (!documentLookup.ok) {
     console.error(
       "[word-chat] failed to resolve chat document",
-      safeErrorLog(documentLookup.detail),
+      documentLookup.detail,
     );
     return void res.status(500).json({ detail: "Failed to load Word chat" });
   }
@@ -353,7 +352,7 @@ wordChatRouter.get("/:chatId", requireAuth, async (req, res) => {
   if (!chatLookup.ok) {
     console.error(
       "[word-chat] failed to load chat",
-      safeErrorLog(chatLookup.detail),
+      chatLookup.detail,
     );
     return void res.status(500).json({ detail: "Failed to load Word chat" });
   }
@@ -366,7 +365,7 @@ wordChatRouter.get("/:chatId", requireAuth, async (req, res) => {
     .eq("chat_id", req.params.chatId)
     .order("created_at", { ascending: true });
   if (error) {
-    console.error("[word-chat] failed to load messages", safeErrorLog(error));
+    console.error("[word-chat] failed to load messages", error);
     return void res.status(500).json({ detail: "Failed to load Word chat" });
   }
   const visibleMessages = withoutEmptyAssistantReservations(messages ?? []);
@@ -385,7 +384,7 @@ wordChatRouter.get("/:chatId", requireAuth, async (req, res) => {
     if (editsError) {
       console.error(
         "[word-chat] failed to load document edits",
-        safeErrorLog(editsError),
+        editsError,
       );
       return void res.status(500).json({ detail: "Failed to load Word chat" });
     }
@@ -442,7 +441,7 @@ wordChatRouter.put(
     if (!messageLookup.ok) {
       console.error(
         "[word-chat] failed to validate edit message",
-        safeErrorLog(messageLookup.detail),
+        messageLookup.detail,
       );
       return void res.status(500).json({ detail: "Failed to save Word edit" });
     }
@@ -466,7 +465,7 @@ wordChatRouter.put(
     if (insertError) {
       console.error(
         "[word-chat] failed to save edit",
-        safeErrorLog(insertError),
+        insertError,
       );
       return void res.status(500).json({ detail: "Failed to save Word edit" });
     }
@@ -479,7 +478,7 @@ wordChatRouter.put(
       .eq("block_index", parsedBlockIndex.value)
       .maybeSingle();
     if (error || !data) {
-      console.error("[word-chat] failed to load edit", safeErrorLog(error));
+      console.error("[word-chat] failed to load edit", error);
       return void res.status(500).json({ detail: "Failed to save Word edit" });
     }
     res.json(data);
@@ -587,7 +586,7 @@ wordChatRouter.patch(
       .select("*")
       .maybeSingle();
     if (error) {
-      console.error("[word-chat] failed to update edit", safeErrorLog(error));
+      console.error("[word-chat] failed to update edit", error);
       return void res
         .status(500)
         .json({ detail: "Failed to update Word edit" });
@@ -678,7 +677,7 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
     if (!existingLookup.ok) {
       console.error(
         "[word-chat] failed to resume chat",
-        safeErrorLog(existingLookup.detail),
+        existingLookup.detail,
       );
       return void res
         .status(500)
@@ -844,7 +843,7 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
     if (error) {
       console.error(
         "[word-chat] failed to update chat activity",
-        safeErrorLog(error),
+        error,
       );
     }
   };
@@ -917,7 +916,7 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
       await updateChatActivity();
       return;
     }
-    console.error("[word-chat] stream error", safeErrorLog(error));
+    console.error("[word-chat] stream error", error);
     const message = ASSISTANT_ERROR_MESSAGE;
     const errorEvents =
       error instanceof AssistantStreamError
