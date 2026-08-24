@@ -111,7 +111,7 @@ test.describe("Workflows", () => {
         const defaultWorkflow = page.getByText("Proofread", { exact: true });
         await expect(defaultWorkflow).toBeVisible({ timeout: 10_000 });
         await defaultWorkflow.click();
-        await page.getByRole("button", { name: "View Page" }).click();
+        await page.getByRole("button", { name: "Edit", exact: true }).click();
 
         await expect(page).toHaveURL(/\/workflows\/assistant\/.+/, {
             timeout: 10_000,

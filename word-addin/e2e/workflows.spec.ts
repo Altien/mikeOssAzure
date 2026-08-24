@@ -130,17 +130,18 @@ test("shows a full-pane workflow list and opens skill details", async ({
   await expect(
     header.getByRole("button", { name: "Use", exact: true }).locator("svg"),
   ).toHaveCount(1);
-  const detailsButton = header.getByRole("button", {
-    name: "Workflow details",
+  const actionsButton = header.getByRole("button", {
+    name: "Workflow actions",
   });
-  await expect(detailsButton).toBeVisible();
-  const detailsBounds = await detailsButton.boundingBox();
+  await expect(actionsButton).toBeVisible();
+  await expect(actionsButton.locator("svg")).toHaveCount(1);
+  const actionsBounds = await actionsButton.boundingBox();
   const useBounds = await header
     .getByRole("button", { name: "Use", exact: true })
     .boundingBox();
-  expect(detailsBounds).not.toBeNull();
+  expect(actionsBounds).not.toBeNull();
   expect(useBounds).not.toBeNull();
-  expect(detailsBounds!.x).toBeLessThan(useBounds!.x);
+  expect(actionsBounds!.x).toBeLessThan(useBounds!.x);
   await expect(page.getByTestId("workflow-skill-content")).toContainText(
     "Summarize the document.",
   );
@@ -285,7 +286,8 @@ test("opens and saves editable workflow metadata from the header", async ({
   await page
     .getByRole("button", { name: /Summarize document.*Litigation/ })
     .click();
-  await page.getByRole("button", { name: "Workflow details" }).click();
+  await page.getByRole("button", { name: "Workflow actions" }).click();
+  await page.getByRole("menuitem", { name: "Edit details" }).click();
 
   const modal = page.getByRole("dialog", { name: "View and Edit details" });
   await expect(modal).toBeVisible();
@@ -315,7 +317,7 @@ test("opens and saves editable workflow metadata from the header", async ({
     const body = request.postDataJSON() as { metadata?: unknown } | null;
     return !!body?.metadata;
   });
-  await modal.getByRole("button", { name: "Save changes" }).click();
+  await modal.getByRole("button", { name: "Save", exact: true }).click();
   const body = (await requestPromise).postDataJSON();
   expect(body).toEqual({
     metadata: {
