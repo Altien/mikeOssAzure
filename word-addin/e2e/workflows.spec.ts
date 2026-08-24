@@ -281,7 +281,38 @@ test("opens and saves editable workflow metadata from the header", async ({
     },
   };
   await openWorkflows(addin, WORKFLOWS);
-  await addin.mockApiJson("PATCH", "**/workflows/wf-summary", updatedWorkflow);
+  const skillPatchControl = {
+    releaseResponse: (): void => undefined,
+    markSeen: (): void => undefined,
+  };
+  const allowSkillPatchResponse = new Promise<void>((resolve) => {
+    skillPatchControl.releaseResponse = resolve;
+  });
+  const skillPatchSeen = new Promise<void>((resolve) => {
+    skillPatchControl.markSeen = resolve;
+  });
+  await page.route("**/workflows/wf-summary", async (route, request) => {
+    if (request.method() !== "PATCH") return route.fallback();
+    const body = request.postDataJSON() as {
+      metadata?: unknown;
+      skill_md?: string;
+    };
+    if (!body.metadata) {
+      skillPatchControl.markSeen();
+      await allowSkillPatchResponse;
+    }
+    const response = body.metadata
+      ? updatedWorkflow
+      : {
+          ...WORKFLOWS[0],
+          skill_md: body.skill_md ?? WORKFLOWS[0]!.skill_md,
+        };
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(response),
+    });
+  });
 
   await page
     .getByRole("button", { name: /Summarize document.*Litigation/ })
@@ -300,6 +331,24 @@ test("opens and saves editable workflow metadata from the header", async ({
   await expect(modal.getByLabel("Jurisdiction")).toContainText("Singapore");
 
   await modal.getByLabel("Title").fill("Updated summary workflow");
+  await skillPatchSeen;
+  const backgroundSaveResponse = page.waitForResponse((response) => {
+    if (
+      response.request().method() !== "PATCH" ||
+      !new URL(response.url()).pathname.endsWith("/workflows/wf-summary")
+    ) {
+      return false;
+    }
+    const body = response.request().postDataJSON() as {
+      skill_md?: unknown;
+    } | null;
+    return !!body?.skill_md;
+  });
+  skillPatchControl.releaseResponse();
+  await backgroundSaveResponse;
+  await expect(modal.getByLabel("Title")).toHaveValue(
+    "Updated summary workflow",
+  );
   await modal.getByLabel("Language").click();
   await page.getByRole("menuitem", { name: "French", exact: true }).click();
   await modal.getByLabel("Practice area").click();
