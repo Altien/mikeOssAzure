@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { WorkflowSlashCommandUI } from "@mike/workflow-slash-command-ui";
 import type { Workflow } from "../../types";
 import { deleteWorkflow, updateWorkflow } from "../../api/mikeApi";
@@ -58,9 +58,15 @@ export function WorkflowDetailsModal({
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const initializedWorkflowIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!open || !workflow) return;
+    if (!open || !workflow) {
+      initializedWorkflowIdRef.current = null;
+      return;
+    }
+    if (initializedWorkflowIdRef.current === workflow.id) return;
+    initializedWorkflowIdRef.current = workflow.id;
     setTitle(workflow.metadata.title);
 
     const nextLanguage = valueOrOther(
