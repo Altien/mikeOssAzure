@@ -10,14 +10,63 @@ import {
 const workflow = {
     id: "workflow-1",
     metadata: {
-        name: "contract-intake",
+        name: "ignored-machine-name",
         title: "Contract Intake",
     },
 } as Workflow;
 
 describe("workflow slash commands", () => {
-    it("derives the command from the workflow name", () => {
+    it("derives the command from the workflow title", () => {
         expect(workflowSlashCommand(workflow)).toBe("/contract-intake");
+    });
+
+    it("strips punctuation and replaces whitespace with hyphens", () => {
+        const titledWorkflow = {
+            ...workflow,
+            metadata: {
+                ...workflow.metadata,
+                title: "  Contract & Intake   2026!  ",
+            },
+        } as Workflow;
+
+        expect(workflowSlashCommand(titledWorkflow)).toBe(
+            "/contract-intake-2026",
+        );
+    });
+
+    it("preserves and normalizes hyphens in the workflow title", () => {
+        const titledWorkflow = {
+            ...workflow,
+            metadata: {
+                ...workflow.metadata,
+                title: "Pre-Merger - Review",
+            },
+        } as Workflow;
+
+        expect(workflowSlashCommand(titledWorkflow)).toBe(
+            "/pre-merger-review",
+        );
+    });
+
+    it("supports alphabetical and numeric characters outside ASCII", () => {
+        const titledWorkflow = {
+            ...workflow,
+            metadata: {
+                ...workflow.metadata,
+                title: "Révision 合同 2",
+            },
+        } as Workflow;
+
+        expect(workflowSlashCommand(titledWorkflow)).toBe("/révision-合同-2");
+    });
+
+    it("does not create a command when the title has no letters or numbers", () => {
+        const titledWorkflow = {
+            ...workflow,
+            metadata: { ...workflow.metadata, title: " --- !!! " },
+        } as Workflow;
+
+        expect(workflowSlashCommand(titledWorkflow)).toBeNull();
     });
 
     it("recognizes a slash command without arguments", () => {

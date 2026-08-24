@@ -25,19 +25,22 @@ const documents = [
 
 function renderTable(
     documentGrouping: "document" | "folder" = "folder",
+    tableRows: TabularReviewRow[] = [row],
+    onDocumentOpen = vi.fn(),
 ) {
-    return render(
+    const renderResult = render(
         <TRTable
             loading={false}
             documentGrouping={documentGrouping}
             columns={[]}
-            rows={[row]}
+            rows={tableRows}
             documents={documents}
             cells={[]}
             savingColumn={false}
             savingColumnsConfig={false}
             selectedRowIds={[]}
             onSelectionChange={vi.fn()}
+            onDocumentOpen={onDocumentOpen}
             onExpand={vi.fn()}
             onCitationClick={vi.fn()}
             onUpdateColumn={vi.fn()}
@@ -46,6 +49,7 @@ function renderTable(
             onAddDocuments={vi.fn()}
         />,
     );
+    return { ...renderResult, onDocumentOpen };
 }
 
 describe("TRTable", () => {
@@ -68,9 +72,37 @@ describe("TRTable", () => {
     });
 
     it("expands a folder row to list its source documents", () => {
-        renderTable();
+        const { onDocumentOpen } = renderTable();
         fireEvent.click(screen.getByText("Contracts"));
         expect(screen.getByText("Agreement.pdf")).toBeInTheDocument();
         expect(screen.getByText("Schedule.docx")).toBeInTheDocument();
+
+        fireEvent.click(
+            screen.getByRole("button", { name: "Open Agreement.pdf" }),
+        );
+        expect(onDocumentOpen).toHaveBeenCalledWith(row, documents[0]);
+    });
+
+    it("opens a standalone document row from its document name", () => {
+        const documentRow = {
+            ...row,
+            label: "Agreement.pdf",
+            row_type: "document",
+            document_id: "doc-1",
+            source_document_ids: ["doc-1"],
+        } as TabularReviewRow;
+        const { onDocumentOpen } = renderTable(
+            "document",
+            [documentRow],
+        );
+
+        fireEvent.click(
+            screen.getByRole("button", { name: "Open Agreement.pdf" }),
+        );
+
+        expect(onDocumentOpen).toHaveBeenCalledWith(
+            documentRow,
+            documents[0],
+        );
     });
 });

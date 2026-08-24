@@ -52,6 +52,7 @@ configureMikeApiClient({
 export {
   createQuickAction,
   createWorkflow,
+  deleteWorkflow,
   deleteWorkflowReferenceFile,
   getApiKeyStatus,
   getLibrary,

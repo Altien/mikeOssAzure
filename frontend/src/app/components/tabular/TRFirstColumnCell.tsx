@@ -15,6 +15,7 @@ interface Props {
     closeSignal: number;
     className: string;
     onToggleSelection: () => void;
+    onDocumentOpen: (document: Document) => void;
 }
 
 export function TRFirstColumnCell({
@@ -24,6 +25,7 @@ export function TRFirstColumnCell({
     closeSignal,
     className,
     onToggleSelection,
+    onDocumentOpen,
 }: Props) {
     const [expanded, setExpanded] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -48,6 +50,10 @@ export function TRFirstColumnCell({
             document.removeEventListener("mousedown", handleClickOutside);
     }, [expanded]);
 
+    const rowDocument =
+        sourceDocuments.find((document) => document.id === row.document_id) ??
+        sourceDocuments[0];
+
     return (
         <div ref={containerRef} className={`${className} relative`}>
             <input
@@ -70,7 +76,15 @@ export function TRFirstColumnCell({
                     </span>
                 </button>
             ) : (
-                <>
+                <button
+                    type="button"
+                    onClick={() => {
+                        if (rowDocument) onDocumentOpen(rowDocument);
+                    }}
+                    disabled={!rowDocument}
+                    aria-label={`Open ${row.label}`}
+                    className="flex min-w-0 flex-1 items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 disabled:cursor-default"
+                >
                     <FileTypeIcon
                         fileType={row.label}
                         className="mr-2 h-3.5 w-3.5"
@@ -78,7 +92,7 @@ export function TRFirstColumnCell({
                     <span className="line-clamp-1" title={row.label}>
                         {row.label}
                     </span>
-                </>
+                </button>
             )}
 
             {row.row_type === "folder" && expanded && (
@@ -92,9 +106,15 @@ export function TRFirstColumnCell({
                         </div>
                         <div className="max-h-64 overflow-y-auto">
                             {sourceDocuments.map((document) => (
-                                <div
+                                <button
                                     key={document.id}
-                                    className="flex min-h-7 items-center py-1"
+                                    type="button"
+                                    onClick={() => {
+                                        setExpanded(false);
+                                        onDocumentOpen(document);
+                                    }}
+                                    className="flex min-h-7 w-full items-center rounded-md py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50"
+                                    aria-label={`Open ${document.filename}`}
                                 >
                                     <CornerDownRight
                                         className="mr-2 h-3.5 w-3.5 shrink-0 text-gray-400"
@@ -113,7 +133,7 @@ export function TRFirstColumnCell({
                                     >
                                         {document.filename}
                                     </span>
-                                </div>
+                                </button>
                             ))}
                         </div>
                     </div>

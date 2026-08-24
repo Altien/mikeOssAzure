@@ -1,6 +1,6 @@
 "use client";
 
-import type { LucideIcon } from "lucide-react";
+import type { ComponentType } from "react";
 import { cn } from "@/app/lib/utils";
 import {
     LIQUID_GLASS_HOVER_CLASS,
@@ -11,7 +11,7 @@ import {
 export interface SegmentedToggleOption<T extends string> {
     value: T;
     label: string;
-    icon?: LucideIcon;
+    icon?: ComponentType<{ className?: string }>;
 }
 
 interface ModalSegmentedToggleProps<T extends string> {
