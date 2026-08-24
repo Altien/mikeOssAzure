@@ -115,7 +115,7 @@ export function TabularReviewDetailsModal({
             primaryAction={
                 canEdit
                     ? {
-                          label: saving ? "Saving..." : "Save changes",
+                          label: saving ? "Saving..." : "Save",
                           onClick: () => void handleSave(),
                           disabled:
                               saving ||

@@ -11,11 +11,12 @@ import { ChatInput as ChatInputShell } from "../../../shared/chat/ChatInput";
 import {
   getApiKeyStatus,
   getUserProfile,
+  listWorkflows,
   uploadStandaloneDocument,
   type ApiKeyStatus,
 } from "../../api/mikeApi";
 import { useSelectedModel } from "../../hooks/useSelectedModel";
-import type { Document } from "../../types";
+import type { Document, Workflow } from "../../types";
 import {
   partitionSupportedDocumentFiles,
   SUPPORTED_DOCUMENT_ACCEPT,
@@ -33,6 +34,11 @@ import type {
 } from "../../lib/wordChatTypes";
 import { isModelAvailable, missingModelProvider } from "../../lib/modelCatalog";
 import { loadWithRetry } from "../../lib/composerPreflight";
+import { workflowSlashCommandFromTitle } from "@mike/workflow-slash-command-ui";
+import {
+  WORD_WORKFLOW_SLASH_MENU_ID,
+  WorkflowSlashMenu,
+} from "./WorkflowSlashMenu";
 
 export interface ChatInputHandle {
   setDraft: (prompt: string) => void;
@@ -90,11 +96,36 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
     const [vercelModels, setVercelModels] = useState<string[]>([]);
     const [openCodeGoModels, setOpenCodeGoModels] = useState<string[]>([]);
     const [modelError, setModelError] = useState<string | null>(null);
+    const [slashWorkflows, setSlashWorkflows] = useState<Workflow[] | null>(
+      null,
+    );
+    const [activeSlashIndex, setActiveSlashIndex] = useState(0);
+    const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
     const localFileInputRef = useRef<HTMLInputElement>(null);
     const composerRef = useRef<HTMLDivElement>(null);
     const [compactControls, setCompactControls] = useState(false);
     const mountedRef = useRef(true);
     const uploadGenerationRef = useRef(0);
+
+    const slashQuery = (() => {
+      const trimmed = input.trim();
+      return /^\/\S*$/.test(trimmed) ? trimmed.toLowerCase() : null;
+    })();
+    const matchingSlashWorkflows = (slashWorkflows ?? []).filter((workflow) =>
+      workflowSlashCommandFromTitle(workflow.metadata.title)?.startsWith(
+        slashQuery ?? "",
+      ),
+    );
+    const slashCommandsLoading = slashQuery !== null && slashWorkflows === null;
+    const slashMenuOpen =
+      !slashMenuDismissed &&
+      !selectedWorkflow &&
+      slashQuery !== null &&
+      matchingSlashWorkflows.length > 0;
+    const resolvedSlashIndex = Math.min(
+      activeSlashIndex,
+      Math.max(0, matchingSlashWorkflows.length - 1),
+    );
 
     useImperativeHandle(
       ref,
@@ -112,6 +143,21 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         uploadGenerationRef.current += 1;
       };
     }, []);
+
+    useEffect(() => {
+      if (!slashCommandsLoading) return;
+      let cancelled = false;
+      void listWorkflows("assistant")
+        .then((workflows) => {
+          if (!cancelled) setSlashWorkflows(workflows);
+        })
+        .catch(() => {
+          if (!cancelled) setSlashWorkflows([]);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, [slashCommandsLoading]);
 
     useEffect(() => {
       const composer = composerRef.current;
@@ -219,8 +265,28 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       setUploadingLocalFiles(false);
     };
 
+    const selectSlashWorkflow = (workflow: Workflow): void => {
+      if (!workflowSlashCommandFromTitle(workflow.metadata.title)) return;
+      onSelectedWorkflowChange({
+        id: workflow.id,
+        title: workflow.metadata.title,
+      });
+      setInput("");
+      setSlashMenuDismissed(true);
+    };
+
     const submit = (): void => {
       const content = input.trim();
+      if (slashCommandsLoading) return;
+      const exactSlashWorkflow = (slashWorkflows ?? []).find(
+        (workflow) =>
+          workflowSlashCommandFromTitle(workflow.metadata.title) ===
+          content.toLowerCase(),
+      );
+      if (exactSlashWorkflow) {
+        selectSlashWorkflow(exactSlashWorkflow);
+        return;
+      }
       if (!content || isResponseLoading) return;
       if (!isModelAvailable(model, keyStatus)) {
         setModelError(
@@ -289,11 +355,65 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
               </button>
             </div>
           )}
-          <div ref={composerRef}>
+          <div ref={composerRef} className="relative">
+            {slashMenuOpen && (
+              <WorkflowSlashMenu
+                workflows={matchingSlashWorkflows}
+                activeIndex={resolvedSlashIndex}
+                onSelect={selectSlashWorkflow}
+              />
+            )}
             <ChatInputShell
               value={input}
-              onValueChange={setInput}
+              onValueChange={(value) => {
+                setInput(value);
+                setActiveSlashIndex(0);
+                setSlashMenuDismissed(false);
+              }}
               onSubmit={submit}
+              onKeyDown={(event) => {
+                if (slashMenuOpen && matchingSlashWorkflows.length > 0) {
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    setActiveSlashIndex(
+                      (resolvedSlashIndex + 1) %
+                        matchingSlashWorkflows.length,
+                    );
+                    return;
+                  }
+                  if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setActiveSlashIndex(
+                      (resolvedSlashIndex -
+                        1 +
+                        matchingSlashWorkflows.length) %
+                        matchingSlashWorkflows.length,
+                    );
+                    return;
+                  }
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    const workflow =
+                      matchingSlashWorkflows[resolvedSlashIndex];
+                    if (workflow) selectSlashWorkflow(workflow);
+                    return;
+                  }
+                }
+                if (slashMenuOpen && event.key === "Escape") {
+                  event.preventDefault();
+                  setSlashMenuDismissed(true);
+                }
+              }}
+              combobox={{
+                controls: slashMenuOpen
+                  ? WORD_WORKFLOW_SLASH_MENU_ID
+                  : undefined,
+                expanded: slashMenuOpen,
+                activeDescendant:
+                  slashMenuOpen && matchingSlashWorkflows.length > 0
+                    ? `${WORD_WORKFLOW_SLASH_MENU_ID}-${resolvedSlashIndex}`
+                    : undefined,
+              }}
               isLoading={isResponseLoading}
               onCancel={onCancel}
               disabled={false}

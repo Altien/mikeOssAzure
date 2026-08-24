@@ -210,7 +210,7 @@ describe("ChatInput workflow slash commands", () => {
         expect(input).toHaveValue("Document Quick Action prompt");
     });
 
-    it("treats slash as ordinary input when no workflows define commands", async () => {
+    it("treats slash as ordinary input when workflow titles cannot form commands", async () => {
         let resolveWorkflows!: (workflows: Workflow[]) => void;
         vi.mocked(listWorkflows).mockReturnValue(
             new Promise((resolve) => {
@@ -223,6 +223,7 @@ describe("ChatInput workflow slash commands", () => {
                 metadata: {
                     ...workflow.metadata,
                     name: null,
+                    title: "---",
                 },
             } as Workflow,
         ];

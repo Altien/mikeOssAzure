@@ -39,6 +39,22 @@ type RenderedPage = {
     textDivs: HTMLElement[];
 };
 
+/**
+ * ResizeObserver's content box shrinks when an overflow scrollbar appears.
+ * The border box does not, so it is the stable measurement for deciding when
+ * the viewer's containing panel has actually been resized.
+ */
+export function getObservedPanelWidth(entry: ResizeObserverEntry): number {
+    const borderBoxSize = entry.borderBoxSize as
+        | readonly ResizeObserverSize[]
+        | ResizeObserverSize
+        | undefined;
+    const borderBox = Array.isArray(borderBoxSize)
+        ? borderBoxSize[0]
+        : borderBoxSize;
+    return Math.round(borderBox?.inlineSize ?? entry.contentRect.width);
+}
+
 export function PdfView({
     doc,
     quotes,
@@ -53,6 +69,7 @@ export function PdfView({
         null,
     );
     const renderedPagesRef = useRef<RenderedPage[]>([]);
+    const renderGenerationRef = useRef(0);
     const quoteListRef = useRef<QuoteEntry[]>([]);
     const zoomRef = useRef(1.0);
     const currentPageRef = useRef(1);
@@ -84,7 +101,11 @@ export function PdfView({
         const el = scrollContainerRef.current;
         if (!el) return;
         const ro = new ResizeObserver((entries) => {
-            setContainerWidth(entries[0]?.contentRect.width ?? 0);
+            const entry = entries[0];
+            const nextWidth = entry ? getObservedPanelWidth(entry) : 0;
+            setContainerWidth((currentWidth) =>
+                currentWidth === nextWidth ? currentWidth : nextWidth,
+            );
         });
         ro.observe(el);
         return () => ro.disconnect();
@@ -212,10 +233,17 @@ export function PdfView({
             list: QuoteEntry[],
             scrollToPage?: number,
         ) => {
-            if (!containerRef.current) return;
-            containerRef.current.innerHTML = "";
+            const container = containerRef.current;
+            if (!container) return;
+            const renderGeneration = ++renderGenerationRef.current;
+            const isStale = () =>
+                renderGenerationRef.current !== renderGeneration ||
+                containerRef.current !== container;
+
+            container.innerHTML = "";
             renderedPagesRef.current = [];
             const lib = await getPdfJs();
+            if (isStale()) return;
             lib.TextLayer.cleanup();
 
             setNumPages(doc.numPages);
@@ -232,8 +260,9 @@ export function PdfView({
                     scrollContainerRef.current.style.opacity = "1";
             };
 
-            const panelW = containerRef.current.clientWidth;
+            const panelW = container.clientWidth;
             const firstPage = await doc.getPage(1);
+            if (isStale()) return;
             const naturalWidth = firstPage.getViewport({ scale: 1 }).width;
             const baseScale = Math.max(
                 0.5,
@@ -243,6 +272,7 @@ export function PdfView({
 
             for (let pageNum = 1; pageNum <= doc.numPages; pageNum++) {
                 const page = await doc.getPage(pageNum);
+                if (isStale()) return;
                 const viewport = page.getViewport({ scale });
 
                 const wrapper = document.createElement("div");
@@ -256,7 +286,7 @@ export function PdfView({
                 canvas.height = viewport.height;
                 canvas.style.display = "block";
                 wrapper.appendChild(canvas);
-                containerRef.current?.appendChild(wrapper);
+                container.appendChild(wrapper);
 
                 const ctx = canvas.getContext("2d");
                 if (!ctx) continue;
@@ -264,7 +294,9 @@ export function PdfView({
                 const task = page.render({ canvasContext: ctx, viewport });
                 try {
                     await task.promise;
+                    if (isStale()) return;
                 } catch (e: unknown) {
+                    if (isStale()) return;
                     if (
                         (e as { name?: string })?.name !==
                         "RenderingCancelledException"
@@ -290,6 +322,7 @@ export function PdfView({
                     viewport,
                 });
                 await textLayer.render();
+                if (isStale()) return;
                 const textDivs = textLayer.textDivs;
 
                 renderedPagesRef.current.push({
@@ -300,6 +333,8 @@ export function PdfView({
                     textDivs,
                 });
             }
+
+            if (isStale()) return;
 
             // Apply highlights across all entries, then scroll to the first hit.
             let targetPage: number | null = null;
@@ -443,6 +478,7 @@ export function PdfView({
     // Clean up PDF.js static font-measurement canvases on unmount
     useEffect(() => {
         return () => {
+            renderGenerationRef.current += 1;
             getPdfJs().then((lib) => lib.TextLayer.cleanup());
         };
     }, []);
@@ -476,6 +512,7 @@ export function PdfView({
         })();
         return () => {
             cancelled = true;
+            renderGenerationRef.current += 1;
         };
     }, [result, renderPDF]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -535,7 +572,7 @@ export function PdfView({
         >
             <div
                 ref={scrollContainerRef}
-                className="flex-1 overflow-auto px-3 pt-5 pb-3"
+                className="flex-1 overflow-auto px-3 pt-5 pb-3 [scrollbar-gutter:stable]"
             >
                 {loading && (
                     <div className="flex h-full items-center justify-center">

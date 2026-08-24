@@ -130,17 +130,18 @@ test("shows a full-pane workflow list and opens skill details", async ({
   await expect(
     header.getByRole("button", { name: "Use", exact: true }).locator("svg"),
   ).toHaveCount(1);
-  const detailsButton = header.getByRole("button", {
-    name: "Workflow details",
+  const actionsButton = header.getByRole("button", {
+    name: "Workflow actions",
   });
-  await expect(detailsButton).toBeVisible();
-  const detailsBounds = await detailsButton.boundingBox();
+  await expect(actionsButton).toBeVisible();
+  await expect(actionsButton.locator("svg")).toHaveCount(1);
+  const actionsBounds = await actionsButton.boundingBox();
   const useBounds = await header
     .getByRole("button", { name: "Use", exact: true })
     .boundingBox();
-  expect(detailsBounds).not.toBeNull();
+  expect(actionsBounds).not.toBeNull();
   expect(useBounds).not.toBeNull();
-  expect(detailsBounds!.x).toBeLessThan(useBounds!.x);
+  expect(actionsBounds!.x).toBeLessThan(useBounds!.x);
   await expect(page.getByTestId("workflow-skill-content")).toContainText(
     "Summarize the document.",
   );
@@ -280,12 +281,44 @@ test("opens and saves editable workflow metadata from the header", async ({
     },
   };
   await openWorkflows(addin, WORKFLOWS);
-  await addin.mockApiJson("PATCH", "**/workflows/wf-summary", updatedWorkflow);
+  const skillPatchControl = {
+    releaseResponse: (): void => undefined,
+    markSeen: (): void => undefined,
+  };
+  const allowSkillPatchResponse = new Promise<void>((resolve) => {
+    skillPatchControl.releaseResponse = resolve;
+  });
+  const skillPatchSeen = new Promise<void>((resolve) => {
+    skillPatchControl.markSeen = resolve;
+  });
+  await page.route("**/workflows/wf-summary", async (route, request) => {
+    if (request.method() !== "PATCH") return route.fallback();
+    const body = request.postDataJSON() as {
+      metadata?: unknown;
+      skill_md?: string;
+    };
+    if (!body.metadata) {
+      skillPatchControl.markSeen();
+      await allowSkillPatchResponse;
+    }
+    const response = body.metadata
+      ? updatedWorkflow
+      : {
+          ...WORKFLOWS[0],
+          skill_md: body.skill_md ?? WORKFLOWS[0]!.skill_md,
+        };
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(response),
+    });
+  });
 
   await page
     .getByRole("button", { name: /Summarize document.*Litigation/ })
     .click();
-  await page.getByRole("button", { name: "Workflow details" }).click();
+  await page.getByRole("button", { name: "Workflow actions" }).click();
+  await page.getByRole("menuitem", { name: "Edit details" }).click();
 
   const modal = page.getByRole("dialog", { name: "View and Edit details" });
   await expect(modal).toBeVisible();
@@ -298,6 +331,24 @@ test("opens and saves editable workflow metadata from the header", async ({
   await expect(modal.getByLabel("Jurisdiction")).toContainText("Singapore");
 
   await modal.getByLabel("Title").fill("Updated summary workflow");
+  await skillPatchSeen;
+  const backgroundSaveResponse = page.waitForResponse((response) => {
+    if (
+      response.request().method() !== "PATCH" ||
+      !new URL(response.url()).pathname.endsWith("/workflows/wf-summary")
+    ) {
+      return false;
+    }
+    const body = response.request().postDataJSON() as {
+      skill_md?: unknown;
+    } | null;
+    return !!body?.skill_md;
+  });
+  skillPatchControl.releaseResponse();
+  await backgroundSaveResponse;
+  await expect(modal.getByLabel("Title")).toHaveValue(
+    "Updated summary workflow",
+  );
   await modal.getByLabel("Language").click();
   await page.getByRole("menuitem", { name: "French", exact: true }).click();
   await modal.getByLabel("Practice area").click();
@@ -315,7 +366,7 @@ test("opens and saves editable workflow metadata from the header", async ({
     const body = request.postDataJSON() as { metadata?: unknown } | null;
     return !!body?.metadata;
   });
-  await modal.getByRole("button", { name: "Save changes" }).click();
+  await modal.getByRole("button", { name: "Save", exact: true }).click();
   const body = (await requestPromise).postDataJSON();
   expect(body).toEqual({
     metadata: {

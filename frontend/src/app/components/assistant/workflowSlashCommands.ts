@@ -1,10 +1,8 @@
 import type { Workflow } from "../shared/types";
-
-const WORKFLOW_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+import { workflowSlashCommandFromTitle } from "@/shared/ui/WorkflowSlashCommandUI";
 
 export function workflowSlashCommand(workflow: Workflow): string | null {
-    const name = workflow.metadata.name;
-    return name && WORKFLOW_NAME_PATTERN.test(name) ? `/${name}` : null;
+    return workflowSlashCommandFromTitle(workflow.metadata.title);
 }
 
 export function slashCommandQuery(value: string): string | null {

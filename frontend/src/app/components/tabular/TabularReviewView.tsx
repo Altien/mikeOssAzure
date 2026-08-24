@@ -116,6 +116,9 @@ export function TRView({ reviewId, projectId }: Props) {
             citationRef: number;
         } | undefined
     >(undefined);
+    const [expandedDocumentId, setExpandedDocumentId] = useState<
+        string | undefined
+    >(undefined);
     const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
     const [actionsOpen, setActionsOpen] = useState(false);
     const [search, setSearch] = useState("");
@@ -631,6 +634,26 @@ export function TRView({ reviewId, projectId }: Props) {
             tableRef.current?.scrollToCell(colIdx, rowIdx);
         }, 50);
         setTimeout(() => setHighlightedCell(null), 3000);
+    }
+
+    function handleDocumentOpen(
+        row: TabularReviewRow,
+        document: Document,
+    ) {
+        const firstColumn = [...columns].sort(
+            (left, right) => left.index - right.index,
+        )[0];
+        if (!firstColumn) return;
+        const firstCell = cells.find(
+            (cell) =>
+                cell.row_id === row.id &&
+                cell.column_index === firstColumn.index,
+        );
+        if (!firstCell) return;
+
+        setExpandedCell(firstCell);
+        setExpandedCellCitation(undefined);
+        setExpandedDocumentId(document.id);
     }
 
     async function handleDeleteDocuments() {
@@ -1172,9 +1195,11 @@ export function TRView({ reviewId, projectId }: Props) {
                                 uploadingFilenames={uploadingDroppedFilenames}
                                 dragOverFiles={dragOverReviewFiles}
                                 onSelectionChange={setSelectedRowIds}
+                                onDocumentOpen={handleDocumentOpen}
                                 onExpand={(cell) => {
                                     setExpandedCell(cell);
                                     setExpandedCellCitation(undefined);
+                                    setExpandedDocumentId(undefined);
                                 }}
                                 onCitationClick={(
                                     cell,
@@ -1194,6 +1219,7 @@ export function TRView({ reviewId, projectId }: Props) {
                                         documentId,
                                         citationRef,
                                     });
+                                    setExpandedDocumentId(undefined);
                                 }}
                                 onUpdateColumn={handleUpdateColumn}
                                 onDeleteColumn={handleDeleteColumn}
@@ -1232,10 +1258,12 @@ export function TRView({ reviewId, projectId }: Props) {
                         )
                             ? expandedCellCitation.documentId
                             : undefined;
+                    const requestedDocumentId =
+                        citedDocumentId ??
+                        expandedDocumentId ??
+                        expandedRow?.document_id;
                     const expandedDoc = documents.find(
-                        (document) =>
-                            document.id ===
-                            (citedDocumentId ?? expandedRow?.document_id),
+                        (document) => document.id === requestedDocumentId,
                     );
                     const expandedCol = columns.find(
                         (c) => c.index === expandedCell.column_index,
@@ -1253,6 +1281,7 @@ export function TRView({ reviewId, projectId }: Props) {
                             onClose={() => {
                                 setExpandedCell(null);
                                 setExpandedCellCitation(undefined);
+                                setExpandedDocumentId(undefined);
                             }}
                             onNavigate={(rowId, columnIndex) => {
                                 const nextCell = cells.find(
@@ -1263,6 +1292,7 @@ export function TRView({ reviewId, projectId }: Props) {
                                 if (nextCell) {
                                     setExpandedCell(nextCell);
                                     setExpandedCellCitation(undefined);
+                                    setExpandedDocumentId(undefined);
                                 }
                             }}
                             onRegenerate={
@@ -1276,8 +1306,10 @@ export function TRView({ reviewId, projectId }: Props) {
                             }
                             displayDocument={
                                 !!expandedDoc &&
-                                expandedCellCitation !== undefined
+                                (expandedCellCitation !== undefined ||
+                                    expandedDocumentId !== undefined)
                             }
+                            documentOnly={expandedDocumentId !== undefined}
                             citationQuote={expandedCellCitation?.quote}
                             citationPage={expandedCellCitation?.page}
                             citationSheet={expandedCellCitation?.sheet}
