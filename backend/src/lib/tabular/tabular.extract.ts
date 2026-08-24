@@ -287,19 +287,28 @@ export async function extractDocxMarkdown(buf: ArrayBuffer): Promise<string> {
         const { value: html } = await mammoth.convertToHtml({
             buffer: normalized,
         });
-        return html
+        let text = html
             .replace(
                 /<h([1-6])[^>]*>(.*?)<\/h\1>/gi,
                 (_, l, t) => "#".repeat(Number(l)) + " " + t + "\n\n",
             )
             .replace(/<strong[^>]*>(.*?)<\/strong>/gi, "**$1**")
             .replace(/<li[^>]*>(.*?)<\/li>/gi, "- $1\n")
-            .replace(/<p[^>]*>(.*?)<\/p>/gi, "$1\n\n")
-            .replace(/<[^>]+>/g, "")
+            .replace(/<p[^>]*>(.*?)<\/p>/gi, "$1\n\n");
+        // Strip tags until stable: a single pass leaves a reassembled tag
+        // behind for adversarial nestings like "<scr<script>ipt>".
+        let previous: string;
+        do {
+            previous = text;
+            text = text.replace(/<[^>]+>/g, "");
+        } while (text !== previous);
+        return text
             .replace(/&nbsp;/g, " ")
-            .replace(/&amp;/g, "&")
             .replace(/&lt;/g, "<")
             .replace(/&gt;/g, ">")
+            // Decode &amp; last so "&amp;lt;" yields the literal "&lt;"
+            // instead of being double-unescaped into "<".
+            .replace(/&amp;/g, "&")
             .replace(/\n{3,}/g, "\n\n")
             .trim();
     } catch {

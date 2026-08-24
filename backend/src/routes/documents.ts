@@ -545,7 +545,8 @@ documentsRouter.post(
           pdfStoragePath = pdfKey;
         } catch (err) {
           console.error(
-            `[versions/copy] Office→PDF conversion failed for ${filename}:`,
+            "[versions/copy] Office→PDF conversion failed",
+            { filename },
             err,
           );
         }
