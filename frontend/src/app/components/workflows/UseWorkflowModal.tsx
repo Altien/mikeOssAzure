@@ -238,7 +238,7 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
             secondaryAction={
                 screen === "select"
                     ? {
-                          label: "View Page",
+                          label: "Edit",
                           onClick: selectPageAction,
                       }
                     : screen === "details"

@@ -523,3 +523,9 @@ export async function updateWorkflow(
     body: JSON.stringify(payload),
   });
 }
+
+export async function deleteWorkflow(workflowId: string): Promise<void> {
+  await apiRequest(`/workflows/${workflowId}`, {
+    method: "DELETE",
+  });
+}

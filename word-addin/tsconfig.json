@@ -71,6 +71,9 @@
       ],
       "@mike/auth-divider-ui": [
         "../frontend/src/shared/ui/AuthDividerUI.tsx"
+      ],
+      "@mike/workflow-slash-command-ui": [
+        "../frontend/src/shared/ui/WorkflowSlashCommandUI.tsx"
       ]
     },
     "jsx": "react-jsx",

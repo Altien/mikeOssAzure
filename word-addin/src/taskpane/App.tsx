@@ -56,7 +56,10 @@ export default function App(): React.ReactElement {
   const [workflowPageSelection, setWorkflowPageSelection] =
     useState<Workflow | null>(null);
   const [workflowDetailsOpen, setWorkflowDetailsOpen] = useState(false);
+  const [workflowDeleteConfirmOpen, setWorkflowDeleteConfirmOpen] =
+    useState(false);
   const [newWorkflowOpen, setNewWorkflowOpen] = useState(false);
+  const [workflowListRevision, setWorkflowListRevision] = useState(0);
   const [newQuickActionOpen, setNewQuickActionOpen] = useState(false);
   const [chatWorkflow, setChatWorkflow] = useState<{
     id: string;
@@ -114,6 +117,7 @@ export default function App(): React.ReactElement {
       case "workflows":
         return (
           <WorkflowPicker
+            key={workflowListRevision}
             selectedWorkflow={workflowPageSelection}
             onSelectedWorkflowChange={setWorkflowPageSelection}
           />
@@ -148,6 +152,7 @@ export default function App(): React.ReactElement {
     setSelectedSection("chat");
     setWorkflowPageSelection(null);
     setWorkflowDetailsOpen(false);
+    setWorkflowDeleteConfirmOpen(false);
     setChatWorkflow(null);
     setChatId(selectedChatId);
     setChatInSession(true);
@@ -161,6 +166,7 @@ export default function App(): React.ReactElement {
     if (section !== "workflows") {
       setWorkflowPageSelection(null);
       setWorkflowDetailsOpen(false);
+      setWorkflowDeleteConfirmOpen(false);
     }
   };
 
@@ -168,6 +174,7 @@ export default function App(): React.ReactElement {
     setSelectedSection("chat");
     setWorkflowPageSelection(null);
     setWorkflowDetailsOpen(false);
+    setWorkflowDeleteConfirmOpen(false);
     setChatWorkflow(null);
     setChatId(null);
     setChatInSession(false);
@@ -182,6 +189,7 @@ export default function App(): React.ReactElement {
       title: workflowPageSelection.metadata.title,
     });
     setWorkflowDetailsOpen(false);
+    setWorkflowDeleteConfirmOpen(false);
     setWorkflowPageSelection(null);
     setSelectedSection("chat");
   };
@@ -199,9 +207,16 @@ export default function App(): React.ReactElement {
         }
         onWorkflowBack={() => {
           setWorkflowDetailsOpen(false);
+          setWorkflowDeleteConfirmOpen(false);
           setWorkflowPageSelection(null);
         }}
         onOpenWorkflowDetails={() => setWorkflowDetailsOpen(true)}
+        onDeleteWorkflow={() => setWorkflowDeleteConfirmOpen(true)}
+        canDeleteWorkflow={
+          !!workflowPageSelection &&
+          !workflowPageSelection.is_system &&
+          workflowPageSelection.allow_edit !== false
+        }
         onUseWorkflow={useSelectedWorkflow}
         onNewWorkflow={() => setNewWorkflowOpen(true)}
         onNewQuickAction={() => setNewQuickActionOpen(true)}
@@ -251,6 +266,17 @@ export default function App(): React.ReactElement {
         workflow={workflowPageSelection}
         onClose={() => setWorkflowDetailsOpen(false)}
         onUpdated={setWorkflowPageSelection}
+        deleteConfirmOpen={workflowDeleteConfirmOpen}
+        onDeleteConfirmOpenChange={setWorkflowDeleteConfirmOpen}
+        onDeleted={(workflowId) => {
+          setWorkflowDetailsOpen(false);
+          setWorkflowDeleteConfirmOpen(false);
+          setWorkflowPageSelection(null);
+          setWorkflowListRevision((current) => current + 1);
+          setChatWorkflow((current) =>
+            current?.id === workflowId ? null : current
+          );
+        }}
       />
       <NewWorkflowModal
         open={newWorkflowOpen}

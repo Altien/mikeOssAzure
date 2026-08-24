@@ -62,6 +62,7 @@ interface Props {
     dragOverFiles?: boolean;
     highlightedCell?: { colIdx: number; rowIdx: number } | null;
     onSelectionChange: (ids: string[]) => void;
+    onDocumentOpen: (row: TabularReviewRow, document: Document) => void;
     onExpand: (cell: TabularCell) => void;
     onCitationClick: (
         cell: TabularCell,
@@ -93,6 +94,7 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
         dragOverFiles = false,
         highlightedCell,
         onSelectionChange,
+        onDocumentOpen,
         onExpand,
         onCitationClick,
         onUpdateColumn,
@@ -402,6 +404,9 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                                 selected={isSelected}
                                 closeSignal={scrollCloseSignal}
                                 onToggleSelection={() => toggleRow(row.id)}
+                                onDocumentOpen={(document) =>
+                                    onDocumentOpen(row, document)
+                                }
                                 className={`sticky left-0 z-[60] ${DOC_COL_W} border-b border-r border-gray-200 py-2 pl-3 pr-2 text-xs text-gray-800 flex items-center transition-colors ${stickyRowBg} ${isSelected ? "" : LIQUID_GLASS_GROUP_HOVER_CLASS}`}
                             />
                             {columns.map((col) => {

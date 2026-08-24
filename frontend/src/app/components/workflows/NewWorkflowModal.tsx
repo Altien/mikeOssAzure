@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { MessageSquare, Table2, Upload } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Upload } from "lucide-react";
 import { createWorkflow, updateWorkflow } from "@/app/lib/mikeApi";
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import type { Workflow } from "../shared/types";
@@ -10,10 +10,19 @@ import { Modal } from "../modals/Modal";
 import { ModalSegmentedToggle } from "../modals/ModalSegmentedToggle";
 import { ModalSelect } from "../modals/ModalSelect";
 import { FieldLabel, FormTextInput } from "../ui/form-field";
+import { WorkflowSlashCommandUI } from "@/shared/ui/WorkflowSlashCommandUI";
+import {
+    ChatSkeuoIcon,
+    TabularReviewSkeuoIcon,
+} from "../shared/AppSidebarSkeuoIcons";
+import {
+    COUNTRY_OPTIONS,
+    OTHER_JURISDICTION_OPTION,
+} from "@/app/onboarding/options";
 
 const DEFAULT_LANGUAGE = "English";
-const DEFAULT_PRACTICE = "General Transactions";
-const DEFAULT_JURISDICTION = "General";
+const DEFAULT_PRACTICE = "";
+const DEFAULT_JURISDICTION = "";
 const LANGUAGE_OPTIONS = [
     "English",
     "Chinese",
@@ -57,38 +66,8 @@ const LANGUAGE_OPTIONS = [
     "Other",
 ] as const;
 const JURISDICTION_OPTIONS = [
-    "General",
-    "United States",
-    "England and Wales",
-    "European Union",
-    "Singapore",
-    "Hong Kong",
-    "Australia",
-    "Canada",
-    "India",
-    "Malaysia",
-    "Indonesia",
-    "Philippines",
-    "Thailand",
-    "Vietnam",
-    "Japan",
-    "South Korea",
-    "China",
-    "Taiwan",
-    "Germany",
-    "France",
-    "Netherlands",
-    "Ireland",
-    "Scotland",
-    "Luxembourg",
-    "Switzerland",
-    "Cayman Islands",
-    "British Virgin Islands",
-    "United Arab Emirates",
-    "Saudi Arabia",
-    "Brazil",
-    "Mexico",
-    "Other",
+    ...COUNTRY_OPTIONS,
+    OTHER_JURISDICTION_OPTION,
 ] as const;
 const US_STATE_OPTIONS = [
     "Alabama",
@@ -231,6 +210,31 @@ export function NewWorkflowModal({
         .split(",")
         .map((item) => item.trim())
         .filter(Boolean);
+    const hasChanges = useMemo(() => {
+        if (!editWorkflow) return true;
+
+        const initialLanguage = editWorkflow.metadata.language ?? DEFAULT_LANGUAGE;
+        const initialPractice = editWorkflow.metadata.practice?.trim() || null;
+        const initialJurisdictions =
+            editWorkflow.metadata.jurisdictions
+                ?.map((item) => item.trim())
+                .filter(Boolean) ?? [];
+
+        return (
+            title.trim() !== editWorkflow.metadata.title.trim() ||
+            (effectiveLanguage.trim() || null) !==
+                (initialLanguage.trim() || null) ||
+            effectivePractice !== initialPractice ||
+            JSON.stringify(effectiveJurisdictions) !==
+                JSON.stringify(initialJurisdictions)
+        );
+    }, [
+        editWorkflow,
+        effectiveJurisdictions,
+        effectiveLanguage,
+        effectivePractice,
+        title,
+    ]);
     const formId = "workflow-modal-form";
 
     const resetForm = useCallback(() => {
@@ -436,11 +440,14 @@ export function NewWorkflowModal({
                                   ? "Saving…"
                                   : "Creating…"
                               : isEditing
-                                ? "Save changes"
+                                ? "Save"
                                 : "Create workflow",
                           type: "submit",
                           form: formId,
-                          disabled: !title.trim() || loading,
+                          disabled:
+                              !title.trim() ||
+                              loading ||
+                              (isEditing && !hasChanges),
                       }
             }
             secondaryAction={
@@ -457,7 +464,7 @@ export function NewWorkflowModal({
             <form
                 id={formId}
                 onSubmit={handleSubmit}
-                className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-5"
+                className="-mx-2 flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-5"
             >
                 <div className="space-y-6">
                     <div>
@@ -474,6 +481,7 @@ export function NewWorkflowModal({
                             disabled={viewOnly}
                             autoFocus={!viewOnly}
                         />
+                        <WorkflowSlashCommandUI title={title} />
                     </div>
 
                     {!isEditing && (
@@ -486,12 +494,12 @@ export function NewWorkflowModal({
                                     {
                                         value: "assistant",
                                         label: "Assistant",
-                                        icon: MessageSquare,
+                                        icon: ChatSkeuoIcon,
                                     },
                                     {
                                         value: "tabular",
                                         label: "Tabular",
-                                        icon: Table2,
+                                        icon: TabularReviewSkeuoIcon,
                                     },
                                 ]}
                             />
@@ -549,6 +557,7 @@ export function NewWorkflowModal({
                                 id="workflow-practice"
                                 value={practice}
                                 options={PRACTICE_OPTIONS}
+                                placeholder="Select practice area"
                                 disabled={viewOnly}
                                 open={openDropdown === "practice"}
                                 onOpenChange={(nextOpen) =>
@@ -592,6 +601,7 @@ export function NewWorkflowModal({
                             id="workflow-jurisdiction"
                             value={jurisdiction}
                             options={jurisdictionOptions}
+                            placeholder="Select jurisdiction"
                             disabled={viewOnly}
                             open={openDropdown === "jurisdiction"}
                             onOpenChange={(nextOpen) =>

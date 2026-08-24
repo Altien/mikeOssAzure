@@ -4,7 +4,12 @@ import { useState } from "react";
 import { ChevronDown, type LucideIcon } from "lucide-react";
 import { cn } from "@/app/lib/utils";
 import {
-    LIQUID_GLASS_FLOAT_CLASS,
+    Dropdown,
+    DropdownContent,
+    DropdownItem,
+    DropdownTrigger,
+} from "@/shared/ui/DropdownUI";
+import {
     LIQUID_GLASS_HOVER_CLASS,
     LIQUID_GLASS_SELECTED_CLASS,
     LIQUID_GLASS_SUBTLE_CLASS,
@@ -69,63 +74,64 @@ export function ModalSelect({
     }
 
     return (
-        <div className="relative">
-            <button
-                id={id}
-                type="button"
-                onClick={() => setOpen(!isOpen)}
-                disabled={disabled}
-                className={cn(
-                    `flex h-10 w-full items-center justify-between rounded-xl px-3 text-sm text-gray-700 ${LIQUID_GLASS_SUBTLE_CLASS} ${LIQUID_GLASS_HOVER_CLASS} backdrop-blur-xl transition-colors focus:outline-none disabled:cursor-not-allowed disabled:opacity-60`,
-                    isOpen && LIQUID_GLASS_SELECTED_CLASS,
-                    className,
-                )}
-                aria-haspopup="listbox"
-                aria-expanded={isOpen}
-            >
-                <span className="flex min-w-0 items-center gap-2">
-                    {selected?.icon && (
-                        <selected.icon
-                            className={cn(
-                                "h-3.5 w-3.5 shrink-0",
-                                selected.iconClassName,
-                            )}
-                        />
+        <Dropdown open={isOpen} onOpenChange={setOpen}>
+            <DropdownTrigger asChild>
+                <button
+                    id={id}
+                    type="button"
+                    disabled={disabled}
+                    className={cn(
+                        `flex h-10 w-full items-center justify-between rounded-xl px-3 text-sm text-gray-700 ${LIQUID_GLASS_SUBTLE_CLASS} ${LIQUID_GLASS_HOVER_CLASS} backdrop-blur-xl transition-colors focus:outline-none disabled:cursor-not-allowed disabled:opacity-60`,
+                        isOpen && LIQUID_GLASS_SELECTED_CLASS,
+                        className,
                     )}
-                    <span
-                        className={cn(
-                            "truncate",
-                            !selected && !hasValue && "text-gray-400",
+                >
+                    <span className="flex min-w-0 items-center gap-2">
+                        {selected?.icon && (
+                            <selected.icon
+                                className={cn(
+                                    "h-3.5 w-3.5 shrink-0",
+                                    selected.iconClassName,
+                                )}
+                            />
                         )}
-                    >
-                        {selected?.label ?? (hasValue ? value : placeholder)}
+                        <span
+                            className={cn(
+                                "truncate",
+                                !selected && !hasValue && "text-gray-400",
+                            )}
+                        >
+                            {selected?.label ??
+                                (hasValue ? value : placeholder)}
+                        </span>
                     </span>
-                </span>
-                <ChevronDown
-                    className={cn(
-                        "ml-2 h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform",
-                        isOpen && "rotate-180",
-                    )}
-                />
-            </button>
+                    <ChevronDown
+                        className={cn(
+                            "ml-2 h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform",
+                            isOpen && "rotate-180",
+                        )}
+                    />
+                </button>
+            </DropdownTrigger>
             {isOpen && !disabled && (
-                <div
-                    role="listbox"
-                    aria-labelledby={id}
+                <DropdownContent
+                    align="start"
+                    sideOffset={4}
+                    collisionPadding={12}
+                    onEscapeKeyDown={(event) => event.stopPropagation()}
                     className={cn(
-                        `absolute left-0 top-full z-30 mt-1 max-h-56 w-full overflow-y-auto rounded-2xl p-1 ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-2xl`,
+                        "max-h-56 w-[var(--radix-dropdown-menu-trigger-width)] overflow-y-auto rounded-2xl p-1",
                         menuClassName,
                     )}
                 >
                     {normalizedOptions.map((option) => (
-                        <button
+                        <DropdownItem
                             key={option.value}
-                            type="button"
-                            role="option"
-                            aria-selected={option.value === value}
-                            onClick={() => handleSelect(option.value)}
+                            textValue={option.label}
+                            selected={option.value === value}
+                            onSelect={() => handleSelect(option.value)}
                             className={cn(
-                                "theme-dropdown-item flex w-full items-center rounded-md px-3 py-2 text-left text-sm transition-all",
+                                "theme-dropdown-item flex w-full items-center rounded-md px-3 py-2 text-left text-xs transition-all",
                                 option.value === value
                                     ? "theme-dropdown-selected text-gray-900"
                                     : "text-gray-700",
@@ -144,10 +150,10 @@ export function ModalSelect({
                                     {option.label}
                                 </span>
                             </span>
-                        </button>
+                        </DropdownItem>
                     ))}
-                </div>
+                </DropdownContent>
             )}
-        </div>
+        </Dropdown>
     );
 }

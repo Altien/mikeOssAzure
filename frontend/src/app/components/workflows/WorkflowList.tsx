@@ -937,7 +937,7 @@ function WorkflowTable({
                 />
                 <TableCell className="ml-auto w-28">
                   <span className="inline-flex items-center gap-1.5 text-xs text-gray-600">
-                    <Icon className="h-4 w-4 shrink-0" />
+                    <Icon className="h-3 w-3 shrink-0" />
                     {workflow.metadata.type === "tabular"
                       ? "Tabular"
                       : "Assistant"}
@@ -1096,7 +1096,7 @@ function AddonTable({
         />
         <TableCell className="ml-auto w-28">
           <span className="inline-flex items-center gap-1.5 text-xs text-gray-600">
-            <Icon className="h-4 w-4" />
+            <Icon className="h-3 w-3 shrink-0" />
             {addon.type === "tabular" ? "Tabular" : "Assistant"}
           </span>
         </TableCell>

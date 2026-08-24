@@ -21,6 +21,62 @@ vi.mock("../shared/views/SpreadsheetView", () => ({
 }));
 
 describe("TRSidePanel", () => {
+    it("shows only document metadata for a document-name click", () => {
+        const document = {
+            id: "doc-1",
+            filename: "Agreement.pdf",
+            file_type: "pdf",
+            active_version_number: 3,
+        } as Document;
+        const row = {
+            id: "row-1",
+            label: document.filename,
+            row_type: "document",
+            document_id: document.id,
+            source_document_ids: [document.id],
+        } as TabularReviewRow;
+        const column = {
+            index: 0,
+            name: "Clause",
+            prompt: "Extract the clause",
+        } as ColumnConfig;
+        const cell = {
+            id: "cell-1",
+            row_id: row.id,
+            column_index: column.index,
+            status: "done",
+            content: {
+                summary: "A result that should stay hidden",
+                flag: "green",
+                reasoning: "Hidden reasoning",
+            },
+        } as TabularCell;
+
+        render(
+            <TRSidePanel
+                cell={cell}
+                row={row}
+                rows={[row]}
+                document={document}
+                documents={[document]}
+                column={column}
+                columns={[column]}
+                displayDocument
+                documentOnly
+                onClose={vi.fn()}
+                onNavigate={vi.fn()}
+                onRegenerate={vi.fn()}
+            />,
+        );
+
+        expect(screen.getByText("PDF doc-1")).toBeInTheDocument();
+        expect(screen.getByText("Version")).toBeInTheDocument();
+        expect(screen.getByText("V3")).toBeInTheDocument();
+        expect(screen.queryByText("Column")).not.toBeInTheDocument();
+        expect(screen.queryByText("Results")).not.toBeInTheDocument();
+        expect(screen.queryByTitle("Regenerate")).not.toBeInTheDocument();
+    });
+
     it("opens the source document encoded in a grouped-row citation", () => {
         const documents = [
             {

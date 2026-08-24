@@ -118,9 +118,10 @@ export function ModalSelect({
         {normalizedOptions.map((option) => (
           <DropdownItem
             key={option.value}
+            textValue={option.label}
             selected={option.value === value}
             onSelect={() => onChange(option.value)}
-            className="text-sm"
+            className="text-xs"
           >
             <span className="truncate">{option.label}</span>
           </DropdownItem>

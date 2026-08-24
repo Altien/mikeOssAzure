@@ -22,6 +22,7 @@
 @source "../../../frontend/src/shared/ui/MikeIconUI.tsx";
 @source "../../../frontend/src/shared/ui/AuthStylesUI.ts";
 @source "../../../frontend/src/shared/ui/AuthDividerUI.tsx";
+@source "../../../frontend/src/shared/ui/WorkflowSlashCommandUI.tsx";
 @source "../../../frontend/src/shared/ui/LiquidGlassUI.ts";
 
 /* The web supplies these font variables via next/font; the add-in supplies

@@ -276,6 +276,21 @@ describe("FileDirectory", () => {
         expect(onChange).not.toHaveBeenCalled();
     });
 
+    it("shows upload activity with a checkbox spinner and muted file icon", () => {
+        render(
+            <FileDirectory
+                selectedDocuments={[]}
+                onChange={vi.fn()}
+                showTabs={false}
+                uploadingFilenames={["Uploading contract.docx"]}
+            />,
+        );
+
+        const row = screen.getByText("Uploading contract.docx").closest("div");
+        expect(row?.children[0]).toHaveClass("animate-spin");
+        expect(row?.children[1]).toHaveClass("grayscale", "opacity-35");
+    });
+
     it("loads the next page when the directory is scrolled to the bottom", () => {
         const onLoadMore = vi.fn();
         const document = {

@@ -1,6 +1,15 @@
 import React, { useState } from "react";
 import type { Message } from "../../types";
-import { Check, ChevronLeft, Ellipsis, Menu, Plus, X } from "lucide-react";
+import {
+  Check,
+  ChevronLeft,
+  Ellipsis,
+  Menu,
+  Pencil,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
 import {
   LiquidActionRow,
   LiquidIconButton,
@@ -42,6 +51,8 @@ interface FloatingHeaderProps {
   workflowDetailOpen?: boolean;
   onWorkflowBack?: () => void;
   onOpenWorkflowDetails?: () => void;
+  onDeleteWorkflow?: () => void;
+  canDeleteWorkflow?: boolean;
   onUseWorkflow?: () => void;
   onNewWorkflow?: () => void;
   onNewQuickAction?: () => void;
@@ -76,6 +87,8 @@ export function FloatingHeader({
   workflowDetailOpen = false,
   onWorkflowBack,
   onOpenWorkflowDetails,
+  onDeleteWorkflow,
+  canDeleteWorkflow = false,
   onUseWorkflow,
   onNewWorkflow,
   onNewQuickAction,
@@ -85,6 +98,7 @@ export function FloatingHeader({
   wordChatOwnerId,
 }: FloatingHeaderProps): React.ReactElement {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [workflowActionsOpen, setWorkflowActionsOpen] = useState(false);
 
   return (
     <header
@@ -197,14 +211,34 @@ export function FloatingHeader({
         </HeaderButtonsUI>
       ) : workflowDetailOpen ? (
         <HeaderButtonsUI className="pointer-events-auto relative z-10">
-          <HeaderButtonUI
-            iconOnly
-            onClick={onOpenWorkflowDetails}
-            aria-label="Workflow details"
-            title="Workflow details"
+          <Dropdown
+            open={workflowActionsOpen}
+            onOpenChange={setWorkflowActionsOpen}
           >
-            <Ellipsis className="h-4 w-4" />
-          </HeaderButtonUI>
+            <DropdownTrigger asChild>
+              <HeaderButtonUI
+                iconOnly
+                aria-label="Workflow actions"
+                title="Workflow actions"
+              >
+                <Ellipsis className="h-4 w-4" />
+              </HeaderButtonUI>
+            </DropdownTrigger>
+            <DropdownContent align="end" sideOffset={8} className="min-w-40">
+              <DropdownItem onSelect={() => onOpenWorkflowDetails?.()}>
+                <Pencil className="h-3.5 w-3.5" />
+                <span>Edit details</span>
+              </DropdownItem>
+              <DropdownItem
+                disabled={!canDeleteWorkflow}
+                onSelect={() => onDeleteWorkflow?.()}
+                className="text-red-600"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Delete</span>
+              </DropdownItem>
+            </DropdownContent>
+          </Dropdown>
           <LiquidTextButton onClick={onUseWorkflow}>
             <Check className="h-3.5 w-3.5" />
             Use

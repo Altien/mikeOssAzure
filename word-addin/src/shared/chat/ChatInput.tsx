@@ -20,6 +20,12 @@ interface ChatInputProps {
     /** Workflow and document pills rendered inside the glass composer. */
     attachments?: React.ReactNode;
     className?: string;
+    onKeyDown?: React.KeyboardEventHandler<HTMLTextAreaElement>;
+    combobox?: {
+        controls?: string;
+        expanded: boolean;
+        activeDescendant?: string;
+    };
 }
 
 /**
@@ -42,6 +48,8 @@ export function ChatInput({
     rightSlot,
     attachments,
     className,
+    onKeyDown,
+    combobox,
 }: ChatInputProps) {
     const textareaRef = React.useRef<HTMLTextAreaElement>(null);
     const inputAreaRef = React.useRef<HTMLDivElement>(null);
@@ -91,6 +99,8 @@ export function ChatInput({
     const handleKeyDown = (
         e: React.KeyboardEvent<HTMLTextAreaElement>,
     ): void => {
+        onKeyDown?.(e);
+        if (e.defaultPrevented) return;
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             if (value.trim() && !isLoading && !disabled) onSubmit();
@@ -119,6 +129,11 @@ export function ChatInput({
                     value={value}
                     onChange={(e) => onValueChange(e.target.value)}
                     onKeyDown={handleKeyDown}
+                    role={combobox ? "combobox" : undefined}
+                    aria-autocomplete={combobox ? "list" : undefined}
+                    aria-controls={combobox?.controls}
+                    aria-expanded={combobox?.expanded}
+                    aria-activedescendant={combobox?.activeDescendant}
                     placeholder={placeholder}
                     disabled={disabled}
                     className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-sm leading-6 text-gray-900 outline-none placeholder:text-gray-400 disabled:opacity-60"

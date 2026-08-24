@@ -1,23 +1,8 @@
+import { PRACTICE_AREA_OPTIONS } from "@/app/onboarding/options";
+
 export const PRACTICE_OPTIONS = [
     "General Transactions",
-    "Corporate",
-    "Finance",
-    "Litigation",
-    "Real Estate",
-    "Tax",
-    "Employment",
-    "IP",
-    "Competition",
-    "Tech Transactions",
-    "Project Finance",
-    "EC/VC",
-    "Private Equity",
-    "Private Credit",
-    "ECM",
-    "DCM",
-    "Lev Fin",
-    "Arbitration",
-    "Other",
+    ...PRACTICE_AREA_OPTIONS,
 ] as const;
 
 export type Practice = (typeof PRACTICE_OPTIONS)[number];
