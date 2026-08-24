@@ -32,6 +32,7 @@ import {
     deleteWorkflowReferenceFile,
     deleteWorkflowShare,
     downloadDocumentsZip,
+    downloadUserExport,
     exportAccountData,
     exportAuditHistory,
     exportChatData,
@@ -42,6 +43,7 @@ import {
     getChat,
     getAuditHistory,
     getPanelDocument,
+    getDocument,
     getDocumentUrl,
     getLibrary,
     getLibraryLevels,
@@ -61,6 +63,7 @@ import {
     getTabularChats,
     getTabularReview,
     getTabularReviewPeople,
+    getUserExportStatus,
     getUserProfile,
     getWorkflow,
     getWorkflowAddon,
@@ -115,6 +118,7 @@ import {
     setMcpToolEnabled,
     shareWorkflow,
     startMcpConnectorOAuth,
+    startUserExport,
     streamChat,
     streamProjectChat,
     streamTabularChat,
@@ -2217,11 +2221,47 @@ describe("thin endpoint wrappers", () => {
             method: "PATCH",
             body: { filename: "renamed.docx" },
         },
+        // Async (durable) exports. `params` is optional: the filtered exports
+        // send it, the whole-account ones must omit the key entirely so the
+        // backend's discriminated payload stays valid.
+        {
+            name: "startUserExport (with params)",
+            call: () =>
+                startUserExport("audit-csv", {
+                    q: "agreement",
+                    sort_dir: "desc",
+                }),
+            url: "/user/exports",
+            method: "POST",
+            body: {
+                type: "audit-csv",
+                params: { q: "agreement", sort_dir: "desc" },
+            },
+        },
+        {
+            name: "startUserExport (params omitted)",
+            call: () => startUserExport("account"),
+            url: "/user/exports",
+            method: "POST",
+            body: { type: "account" },
+        },
+        {
+            // Export ids come back from the API, so encode them the same way
+            // every other path segment is encoded.
+            name: "getUserExportStatus",
+            call: () => getUserExportStatus("exp/1"),
+            url: "/user/exports/exp%2F1",
+        },
         // Standalone documents & versions
         {
             name: "listStandaloneDocuments",
             call: () => listStandaloneDocuments(),
             url: "/single-documents",
+        },
+        {
+            name: "getDocument",
+            call: () => getDocument("d1"),
+            url: "/single-documents/d1",
         },
         {
             name: "deleteDocument",
@@ -2628,5 +2668,23 @@ describe("unwrapping and blob wrappers", () => {
 
         await exportTabularReviewsData();
         expect(lastFetchCall().url).toBe("/api/user/tabular-reviews/export");
+    });
+
+    it("downloadUserExport streams the finished artifact by encoded id", async () => {
+        fetchMock.mockResolvedValue(
+            new Response("csv-bytes", {
+                status: 200,
+                headers: {
+                    "content-disposition":
+                        'attachment; filename="history.csv"',
+                },
+            }),
+        );
+
+        const { blob, filename } = await downloadUserExport("exp/1");
+
+        expect(lastFetchCall().url).toBe("/api/user/exports/exp%2F1/download");
+        expect(filename).toBe("history.csv");
+        expect(await blob.text()).toBe("csv-bytes");
     });
 });
