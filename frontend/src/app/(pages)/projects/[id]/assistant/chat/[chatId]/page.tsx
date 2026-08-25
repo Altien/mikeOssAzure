@@ -25,7 +25,7 @@ import {
     deleteDocument,
     getChat,
     getProject,
-    uploadProjectDocument,
+    uploadProjectDocuments,
     createProjectFolder,
     renameProjectFolder,
     deleteProjectFolder,
@@ -705,8 +705,14 @@ export default function ProjectAssistantChatPage() {
         if (!files.length) return;
         setUploading(true);
         try {
-            const uploaded = await Promise.all(
-                files.map((f) => uploadProjectDocument(projectId, f)),
+            const outcomes = await uploadProjectDocuments(
+                projectId,
+                files.map((file) => ({ file })),
+            );
+            const uploaded = outcomes.flatMap((outcome) =>
+                outcome.status === "completed" && outcome.result
+                    ? [outcome.result]
+                    : [],
             );
             setProject((prev) => {
                 if (!prev) return prev;
@@ -820,11 +826,7 @@ export default function ProjectAssistantChatPage() {
                 },
             });
         },
-        [
-            clearFolderDeleteDismissTimer,
-            folderDeleteImpact,
-            project?.folders,
-        ],
+        [clearFolderDeleteDismissTimer, folderDeleteImpact, project?.folders],
     );
 
     const confirmDeletePendingFolder = async () => {
@@ -856,10 +858,7 @@ export default function ProjectAssistantChatPage() {
                     : currentProject,
             );
             setTabs((currentTabs) =>
-                removeDeletedDocumentTabs(
-                    currentTabs,
-                    deletedDocumentIds,
-                ),
+                removeDeletedDocumentTabs(currentTabs, deletedDocumentIds),
             );
             setActiveTabId((currentId) =>
                 clearDeletedDocumentId(currentId, deletedDocumentIds),
@@ -868,10 +867,7 @@ export default function ProjectAssistantChatPage() {
                 clearDeletedDocumentId(currentId, deletedDocumentIds),
             );
             setEditScrollTarget((currentTarget) =>
-                clearDeletedDocumentTarget(
-                    currentTarget,
-                    deletedDocumentIds,
-                ),
+                clearDeletedDocumentTarget(currentTarget, deletedDocumentIds),
             );
             dispatchFolderDeleteDialog({
                 type: "complete",
@@ -1025,16 +1021,14 @@ export default function ProjectAssistantChatPage() {
                                     {
                                         label: "Rename",
                                         icon: Pencil,
-                                        onSelect: () =>
-                                            void handleRenameChat(),
+                                        onSelect: () => void handleRenameChat(),
                                     },
                                     {
                                         label: deletingChat
                                             ? "Deleting..."
                                             : "Delete",
                                         icon: Trash2,
-                                        onSelect: () =>
-                                            void handleDeleteChat(),
+                                        onSelect: () => void handleDeleteChat(),
                                         disabled: deletingChat,
                                         variant: "danger",
                                     },
@@ -1220,9 +1214,7 @@ export default function ProjectAssistantChatPage() {
                                     project?.documents ?? []
                                 ).find((d) => d.id === tab.documentId)
                                     ?.latest_version_number as
-                                    | number
-                                    | null
-                                    | undefined;
+                                    number | null | undefined;
                                 const showVersionBadge =
                                     typeof versionNumber === "number" &&
                                     Number.isFinite(versionNumber) &&
@@ -1423,8 +1415,7 @@ export default function ProjectAssistantChatPage() {
                                                     handleOpenDocument({
                                                         documentId:
                                                             file.document_id,
-                                                        filename:
-                                                            file.filename,
+                                                        filename: file.filename,
                                                         versionId: null,
                                                         versionNumber: null,
                                                     });
@@ -1441,9 +1432,7 @@ export default function ProjectAssistantChatPage() {
                                             }
                                             isError={!!msg.error}
                                             citations={msg.citations}
-                                            citationStatus={
-                                                msg.citationStatus
-                                            }
+                                            citationStatus={msg.citationStatus}
                                             onCitationClick={
                                                 handleCitationClick
                                             }

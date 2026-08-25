@@ -122,7 +122,6 @@ import {
     renameProjectDocument,
     renameProjectFolder,
     renameTabularChat,
-    replaceDocumentVersionFile,
     resolveLibraryFolderPath,
     resolveProjectFolderPath,
     resolveDocumentEdit,
@@ -158,13 +157,6 @@ import {
     deleteQuickAction,
     importWorkflowAddon,
     listQuickActions,
-    replaceWorkflowReferenceFile,
-    uploadWorkflowReferenceFile,
-    uploadDocumentVersion,
-    uploadLibraryDocument,
-    uploadProjectDocument,
-    uploadReviewDocument,
-    uploadStandaloneDocument,
 } from "./mikeApi";
 // Dev-only exports (OSS-6 §2.3 items 2, 6, 7) — see "dev divergences" below.
 import {

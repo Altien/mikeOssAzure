@@ -21,6 +21,7 @@ import {
 } from "./lib/dbq/handlers";
 import { enqueueDbJob } from "./lib/dbq/enqueue";
 import { runStaleWorkSweep } from "./lib/maintenance/staleWork";
+import { startUploadProcessingWorker } from "./lib/uploadProcessing";
 import { createServerSupabase } from "./lib/supabase";
 import { initServerSessionKeys } from "./lib/serverSession";
 import { initDownloadSigningSecret } from "./lib/downloadTokens";
@@ -46,6 +47,7 @@ const MCP_REFRESH_MAX_EXPIRED_AGE_MS = 24 * 60 * 60 * 1000;
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
 let initialSweep: ReturnType<typeof setTimeout> | null = null;
 let mcpRefreshTimer: ReturnType<typeof setInterval> | null = null;
+let stopUploadWorker: (() => void) | null = null;
 
 /**
  * Queue a refresh for every MCP OAuth token expiring inside the handler's
@@ -115,6 +117,10 @@ export async function startAllWorkers(): Promise<void> {
     // up, poll-driven otherwise) — see lib/dbq/runner.ts.
     startDbJobRunner(DB_JOB_HANDLERS);
 
+    // Upload-session processing: lease-based claims over Postgres, so any
+    // number of runtimes can poll concurrently without double-processing.
+    stopUploadWorker = startUploadProcessingWorker();
+
     // Stale-work reaper: a crash between "status = processing/generating"
     // and the finalizing write strands rows in a transient state forever —
     // nothing else owns them. Sweep shortly after boot (crash recovery) and
@@ -151,6 +157,10 @@ export async function stopAllWorkers(): Promise<void> {
     initialSweep = null;
     sweepTimer = null;
     mcpRefreshTimer = null;
+    if (stopUploadWorker) {
+        stopUploadWorker();
+        stopUploadWorker = null;
+    }
     await stopWorkers();
     await stopDbJobRunner();
     started = false;

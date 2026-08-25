@@ -19,6 +19,16 @@ import {
 import { isPanelDocument } from "@/app/components/shared/types";
 import { authenticatedFetch } from "@/app/lib/authEvents";
 const apiFetch = authenticatedFetch;
+import {
+    UploadBatchError,
+    failedUploadMessage,
+    uploadFilesWithSessionCore,
+    type UploadOutcome,
+    type UploadProgress,
+    type UploadProgressStatus,
+    type UploadSessionInput,
+    type UploadSessionPurpose,
+} from "@/shared/api/uploadSessionClient";
 import type {
     AskInputResponseItem,
     AssistantEvent,
@@ -43,6 +53,15 @@ import type {
     TabularReviewDetailOut,
 } from "@/app/components/shared/types";
 import type { ChatDetailSkillBinding } from "@/altien/skillRuntime/api";
+
+export { UploadBatchError };
+export { failedUploadMessage };
+export type {
+    UploadOutcome,
+    UploadProgress,
+    UploadProgressStatus,
+    UploadSessionInput,
+};
 
 type AskInputsResponsePayload = {
     responses: AskInputResponseItem[];
@@ -156,6 +175,33 @@ export async function apiRequest<T>(
     }
 
     return (await response.json()) as T;
+}
+
+export async function uploadFilesWithSession<T>(args: {
+    purpose: UploadSessionPurpose;
+    destination: Record<string, unknown>;
+    files: UploadSessionInput[];
+    signal?: AbortSignal;
+    onProgress?: (progress: UploadProgress<T>) => void;
+}): Promise<UploadOutcome<T>[]> {
+    return uploadFilesWithSessionCore<T>({
+        ...args,
+        transport: {
+            apiRequest,
+            fetchStorage: (...fetchArgs) => fetch(...fetchArgs),
+            isUploadIncomplete: (error) =>
+                error instanceof MikeApiError &&
+                error.code === "upload_incomplete",
+        },
+    });
+}
+
+function firstUploadResult<T>(outcomes: UploadOutcome<T>[]): T {
+    const first = outcomes[0];
+    if (!first || first.status !== "completed" || !first.result) {
+        throw new UploadBatchError("The file could not be processed.", outcomes);
+    }
+    return first.result;
 }
 
 async function apiBlobRequest(path: string): Promise<{
@@ -1188,16 +1234,25 @@ export async function uploadLibraryDocument(
     file: File,
     folderId?: string | null,
 ): Promise<Document> {
-    const form = new FormData();
-    form.append("file", file);
-    if (folderId) form.append("folder_id", folderId);
-    const response = await apiFetch(`${API_BASE}/library/${kind}/documents`, {
-        method: "POST",
-        body: form,
+    return firstUploadResult(
+        await uploadLibraryDocuments(kind, [{ file, folderId }]),
+    );
+}
+
+export async function uploadLibraryDocuments(
+    kind: LibraryKind,
+    files: UploadSessionInput[],
+    options?: { onProgress?: (progress: UploadProgress<Document>) => void },
+): Promise<UploadOutcome<Document>[]> {
+    return uploadFilesWithSession<Document>({
+        purpose: "document_create",
+        destination: {
+            scope: "library",
+            library_kind: kind === "files" ? "file" : "template",
+        },
+        files,
+        onProgress: options?.onProgress,
     });
-    bounceIfUnauthorized(response);
-    if (!response.ok) throw await toApiError(response, `/library/${kind}/documents`);
-    return response.json() as Promise<Document>;
 }
 
 export async function createLibraryFolder(
@@ -1330,19 +1385,13 @@ export async function uploadDocumentVersion(
     file: File,
     filename?: string,
 ): Promise<DocumentVersion> {
-    const form = new FormData();
-    form.append("file", file);
-    if (filename) form.append("filename", filename);
-    const response = await apiFetch(
-        `${API_BASE}/single-documents/${documentId}/versions`,
-        {
-            method: "POST",
-            body: form,
-        },
+    return firstUploadResult(
+        await uploadFilesWithSession<DocumentVersion>({
+            purpose: "document_version_create",
+            destination: { document_id: documentId, filename },
+            files: [{ file }],
+        }),
     );
-    bounceIfUnauthorized(response);
-    if (!response.ok) throw await toApiError(response, `/single-documents/${documentId}/versions`);
-    return response.json() as Promise<DocumentVersion>;
 }
 
 export async function replaceDocumentVersionFile(
@@ -1351,19 +1400,19 @@ export async function replaceDocumentVersionFile(
     file: File,
     filename?: string,
 ): Promise<DocumentVersion> {
-    const form = new FormData();
-    form.append("file", file);
-    if (filename) form.append("filename", filename);
-    const response = await apiFetch(
-        `${API_BASE}/single-documents/${documentId}/versions/${versionId}/file`,
-        {
-            method: "PUT",
-            body: form,
-        },
+    const uploadedFile = filename
+        ? new File([file], filename, {
+              type: file.type,
+              lastModified: file.lastModified,
+          })
+        : file;
+    return firstUploadResult(
+        await uploadFilesWithSession<DocumentVersion>({
+            purpose: "document_version_replace",
+            destination: { document_id: documentId, version_id: versionId },
+            files: [{ file: uploadedFile }],
+        }),
     );
-    bounceIfUnauthorized(response);
-    if (!response.ok) throw await toApiError(response, `/single-documents/${documentId}/versions/${versionId}/file`);
-    return response.json() as Promise<DocumentVersion>;
 }
 
 export async function copyDocumentVersionFromDocument(
@@ -1416,30 +1465,38 @@ export async function uploadProjectDocument(
     file: File,
     folderId?: string | null,
 ): Promise<Document> {
-    const form = new FormData();
-    form.append("file", file);
-    if (folderId) form.append("folder_id", folderId);
-    const response = await apiFetch(
-        `${API_BASE}/projects/${projectId}/documents`,
-        {
-            method: "POST",
-            body: form,
-  });
-    bounceIfUnauthorized(response);
-    if (!response.ok) throw await toApiError(response, `/projects/${projectId}/documents`);
-    return response.json() as Promise<Document>;
+    return firstUploadResult(
+        await uploadProjectDocuments(projectId, [{ file, folderId }]),
+    );
+}
+
+export async function uploadProjectDocuments(
+    projectId: string,
+    files: UploadSessionInput[],
+    options?: { onProgress?: (progress: UploadProgress<Document>) => void },
+): Promise<UploadOutcome<Document>[]> {
+    return uploadFilesWithSession<Document>({
+        purpose: "document_create",
+        destination: { scope: "project", project_id: projectId },
+        files,
+        onProgress: options?.onProgress,
+    });
 }
 
 export async function uploadStandaloneDocument(file: File): Promise<Document> {
-    const form = new FormData();
-    form.append("file", file);
-    const response = await apiFetch(`${API_BASE}/single-documents`, {
-        method: "POST",
-        body: form,
+    return firstUploadResult(await uploadStandaloneDocuments([{ file }]));
+}
+
+export async function uploadStandaloneDocuments(
+    files: UploadSessionInput[],
+    options?: { onProgress?: (progress: UploadProgress<Document>) => void },
+): Promise<UploadOutcome<Document>[]> {
+    return uploadFilesWithSession<Document>({
+        purpose: "document_create",
+        destination: { scope: "standalone" },
+        files,
+        onProgress: options?.onProgress,
     });
-    bounceIfUnauthorized(response);
-    if (!response.ok) throw await toApiError(response, "/single-documents");
-    return response.json() as Promise<Document>;
 }
 
 export async function listStandaloneDocuments(): Promise<Document[]> {
@@ -2443,15 +2500,20 @@ export async function uploadWorkflowReferenceFile(
     workflowId: string,
     file: File,
 ): Promise<WorkflowReferenceDocument> {
-    const form = new FormData();
-    form.append("file", file);
-    const response = await apiFetch(
-        `${API_BASE}/workflows/${workflowId}/reference-files`,
-        { method: "POST", body: form },
+    return firstUploadResult(
+        await uploadWorkflowReferenceFiles(workflowId, [{ file }]),
     );
-    bounceIfUnauthorized(response);
-    if (!response.ok) throw await toApiError(response, "/workflows/reference-files");
-    return response.json() as Promise<WorkflowReferenceDocument>;
+}
+
+export async function uploadWorkflowReferenceFiles(
+    workflowId: string,
+    files: UploadSessionInput[],
+): Promise<UploadOutcome<WorkflowReferenceDocument>[]> {
+    return uploadFilesWithSession<WorkflowReferenceDocument>({
+        purpose: "workflow_reference_create",
+        destination: { workflow_id: workflowId },
+        files,
+    });
 }
 
 export async function replaceWorkflowReferenceFile(
@@ -2459,16 +2521,16 @@ export async function replaceWorkflowReferenceFile(
     referenceId: string,
     file: File,
 ): Promise<WorkflowReferenceDocument> {
-    const form = new FormData();
-    form.append("file", file);
-    const path = `/workflows/${workflowId}/reference-files/${referenceId}`;
-    const response = await apiFetch(`${API_BASE}${path}`, {
-        method: "PUT",
-        body: form,
-    });
-    bounceIfUnauthorized(response);
-    if (!response.ok) throw await toApiError(response, path);
-    return response.json() as Promise<WorkflowReferenceDocument>;
+    return firstUploadResult(
+        await uploadFilesWithSession<WorkflowReferenceDocument>({
+            purpose: "workflow_reference_replace",
+            destination: {
+                workflow_id: workflowId,
+                reference_id: referenceId,
+            },
+            files: [{ file }],
+        }),
+    );
 }
 
 export async function getWorkflowReferenceUrl(

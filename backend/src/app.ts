@@ -30,6 +30,7 @@ import { configRouter } from "./routes/config";
 import { sourceDocumentsRouter } from "./routes/sourceDocuments";
 import { helpRouter } from "./routes/help";
 import { diagRouter } from "./routes/diag";
+import { uploadSessionsRouter } from "./routes/uploadSessions";
 import { manifestPublicKey } from "./lib/manifestSigning";
 import { safeErrorLog } from "./lib/safeError";
 import { authorityTraceRouter } from "./altien/authorityTrace/router";
@@ -40,8 +41,8 @@ import { configuredAllowedOrigins as configuredOrigins } from "./lib/origins";
 
 // ── Rate-limit configuration (from upstream ba6f771) ───────────────────────
 
-// Ceiling for JSON API requests. File uploads use multipart handling and
-// are governed by separate upload limits.
+// Ceiling for JSON API requests. File bytes upload directly to object storage;
+// only small upload-session manifests and control requests reach Express.
 const JSON_BODY_LIMIT = "50mb";
 const TOOL_RESULT_PATH = "/api/word-chat/tool-result";
 
@@ -124,7 +125,7 @@ export function buildApp(): express.Express {
   const generalLimiter = makeLimiter({
     windowMs: minutes(envInt("RATE_LIMIT_GENERAL_WINDOW_MINUTES", 15)),
     max: envInt("RATE_LIMIT_GENERAL_MAX", 300),
-    skip: (req) => req.path === TOOL_RESULT_PATH,
+    skip: (req) => req.path === TOOL_RESULT_PATH || req.path.startsWith("/api/upload-sessions"),
   });
 
   const toolResultLimiter = makeLimiter({
@@ -319,6 +320,7 @@ export function buildApp(): express.Express {
     uploadLimiter,
   );
   app.post("/api/projects/:projectId/documents", uploadLimiter);
+  app.post("/api/upload-sessions", uploadLimiter);
   app.get("/api/projects/:projectId/export", exportLimiter);
   app.get("/api/audit/export", exportLimiter);
   app.post("/api/altien/skills/imports/zip", uploadLimiter);
@@ -352,6 +354,7 @@ export function buildApp(): express.Express {
   app.use("/api/download", downloadsRouter);
   app.use("/api/documents", sourceDocumentsRouter);
   app.use("/api/help", helpRouter);
+  app.use("/api/upload-sessions", uploadSessionsRouter);
   app.use("/api/authority-trace", authorityTraceRouter);
   app.use("/api/altien/skills", skillsRouter);
   app.use("/api/audit", auditRouter);
