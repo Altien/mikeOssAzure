@@ -123,7 +123,9 @@ jobs:
       - name: Start local Supabase
         uses: supabase/setup-cli@v1
         with:
-          version: latest
+          # Keep CI reproducible and avoid the GitHub API call needed to resolve
+          # `latest`, which can fail when the shared runner hits its rate limit.
+          version: 2.108.0
       - name: Init + start Supabase, load fresh schema
         run: |
           supabase init --force --with-vscode-settings=false || supabase init --force
