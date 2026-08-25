@@ -341,6 +341,28 @@ describe("POST /chat — streaming endpoint", () => {
         );
     });
 
+    it("surfaces an empty upstream completion as a visible retry error", async () => {
+        // Some providers end the stream cleanly but produce no content.
+        // Silence reads as a hung composer, so the route emits an explicit,
+        // safe-to-display error event before closing the stream.
+        runLLMStream.mockResolvedValue({
+            fullText: "",
+            events: [],
+            citations: [],
+        });
+
+        const res = await request(app)
+            .post("/chat")
+            .set("Authorization", "Bearer test")
+            .send(VALID_BODY);
+
+        expect(res.status).toBe(200);
+        expect(res.text).toContain('"type":"error"');
+        expect(res.text).toContain("empty response");
+        expect(res.text).toContain('"safe_to_display":true');
+        expect(res.text).toContain("[DONE]");
+    });
+
     it("stores cloud Word chats only in the document-scoped Word tables", async () => {
         const chatLib = await import("../../lib/chat");
         const res = await request(app)
