@@ -9,7 +9,7 @@ test("a failed sign-in request names the request instead of only 'Load failed'",
   addin,
   page,
 }) => {
-  await page.route("**/auth/v1/token**", (route) => route.abort("failed"));
+  await page.route("**/auth/login", (route) => route.abort("failed"));
   await addin.gotoTaskpane();
 
   await page
@@ -22,7 +22,7 @@ test("a failed sign-in request names the request instead of only 'Load failed'",
   await expect(alert).toBeVisible();
   const text = await alert.innerText();
   expect(text).toContain("Couldn’t reach POST");
-  expect(text).toContain("/auth/v1/token");
+  expect(text).toContain("/api/auth/login");
   // The host's own message is kept rather than swallowed.
   expect(text).toMatch(/Failed to fetch|Load failed|NetworkError/);
   expect(text).toContain("running and reachable from Word");
@@ -32,15 +32,13 @@ test("a rejected sign-in shows what the server said, not a generic failure", asy
   addin,
   page,
 }) => {
-  // Real GoTrue reports the reason in `msg`, not `error_description`.
-  await page.route("**/auth/v1/token**", (route) =>
+  await page.route("**/auth/login", (route) =>
     route.fulfill({
       status: 400,
       contentType: "application/json",
       body: JSON.stringify({
-        code: 400,
-        error_code: "invalid_credentials",
-        msg: "Invalid login credentials",
+        code: "invalid_credentials",
+        detail: "Invalid login credentials",
       }),
     })
   );

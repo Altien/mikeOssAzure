@@ -3,9 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SignupPage from "./page";
 
-const { signUp, signInWithOAuth, replace, push } = vi.hoisted(() => ({
-    signUp: vi.fn(),
-    signInWithOAuth: vi.fn(),
+const { signup, startGoogleOAuth, refreshSession, replace, push } = vi.hoisted(() => ({
+    signup: vi.fn(),
+    startGoogleOAuth: vi.fn(),
+    refreshSession: vi.fn(),
     replace: vi.fn(),
     push: vi.fn(),
 }));
@@ -15,12 +16,17 @@ vi.mock("next/navigation", () => ({
     useSearchParams: () => new URLSearchParams(),
 }));
 
-vi.mock("@/app/lib/supabase", () => ({
-    supabase: { auth: { signUp, signInWithOAuth } },
+vi.mock("@/app/lib/authApi", () => ({
+    signup,
+    startGoogleOAuth,
 }));
 
 vi.mock("@/app/contexts/AuthContext", () => ({
-    useAuth: () => ({ isAuthenticated: false, authLoading: false }),
+    useAuth: () => ({
+        isAuthenticated: false,
+        authLoading: false,
+        refreshSession,
+    }),
 }));
 
 vi.mock("@/app/components/site-logo", () => ({
@@ -29,16 +35,17 @@ vi.mock("@/app/components/site-logo", () => ({
 
 describe("SignupPage", () => {
     beforeEach(() => {
-        signUp.mockReset();
-        signInWithOAuth.mockReset();
+        signup.mockReset();
+        startGoogleOAuth.mockReset();
+        refreshSession.mockReset();
         replace.mockReset();
         push.mockReset();
     });
 
     it("creates credentials and waits for email confirmation", async () => {
-        signUp.mockResolvedValue({
-            data: { session: null, user: { id: "user-1" } },
-            error: null,
+        signup.mockResolvedValue({
+            user: { id: "user-1" },
+            requiresEmailConfirmation: true,
         });
         const user = userEvent.setup();
         render(<SignupPage />);
@@ -59,14 +66,11 @@ describe("SignupPage", () => {
         );
         await user.click(screen.getByRole("button", { name: "Sign up" }));
 
-        expect(signUp).toHaveBeenCalledWith({
-            email: "alex@example.com",
-            password: "secret1234",
-            options: {
-                emailRedirectTo:
-                    "http://localhost:3000/auth/callback?next=%2Fonboarding%2Fprofile",
-            },
-        });
+        expect(signup).toHaveBeenCalledWith(
+            "alex@example.com",
+            "secret1234",
+            "/onboarding/profile",
+        );
         expect(push).toHaveBeenCalledWith("/signup/check-email");
     });
 

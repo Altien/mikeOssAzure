@@ -1,9 +1,9 @@
 /// <reference types="office-js" />
 /**
  * Configured API barrel for the Word add-in — the single place the typed client
- * is wired to the add-in's Office session. Mirrors
- * frontend/src/app/lib/mikeApi.ts, but its auth comes from ../auth/session
- * (OfficeRuntime.storage-backed) instead of Supabase's browser SDK.
+ * is wired to the add-in's backend-managed cookie session. Mirrors
+ * frontend/src/app/lib/mikeApi.ts, with auth state synchronized by
+ * ../auth/session.
  *
  * Components import API functions FROM THIS MODULE (not from the base client
  * directly) so that importing any of them runs the side-effecting
@@ -11,7 +11,7 @@
  */
 import { configureMikeApiClient } from "./client";
 import type { Chat, Document, Message, WordDocumentEdit } from "../types";
-import { getFreshAccessToken, refreshSession } from "../auth/session";
+import { refreshSession } from "../auth/session";
 import {
   assistantContentFromEvents,
   normalizeStoredAssistantEvents,
@@ -23,24 +23,20 @@ import type { PersistedWordEditPatch } from "../lib/wordChatTypes";
 // guard is false at runtime and silently selects the fallback below — which is
 // plain HTTP, and Word's HTTPS pane blocks it as mixed content ("Load failed").
 // Node tooling that imports this outside webpack has a real `process` anyway.
-const BASE_URL: string =
-  process.env.REACT_APP_API_BASE_URL || "http://localhost:3001";
+const BASE_URL: string = process.env.REACT_APP_API_BASE_URL || "/api";
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
-  const token = await getFreshAccessToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return {};
 }
 
-// Centralized reactive 401 recovery: refresh the session once, then replay the
-// rejected request with the new token.
+// The backend refreshes HttpOnly sessions before API handlers run. A 401 means
+// the session can no longer be refreshed; synchronize the login gate and leave
+// the original response intact for the caller.
 const fetchWithRefresh: typeof fetch = async (input, init) => {
-  const res = await fetch(input, init);
+  const res = await fetch(input, { ...init, credentials: "include" });
   if (res.status !== 401) return res;
-  const refreshed = await refreshSession();
-  if (!refreshed) return res; // refresh failed → session cleared → surfaces 401
-  const headers = new Headers(init?.headers as HeadersInit | undefined);
-  headers.set("Authorization", `Bearer ${refreshed}`);
-  return fetch(input, { ...init, headers });
+  await refreshSession().catch(() => null);
+  return res;
 };
 
 configureMikeApiClient({

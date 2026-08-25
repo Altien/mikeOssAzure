@@ -13,7 +13,7 @@ const state = vi.hoisted(() => ({
     passwordSet: false,
     setPassword: vi.fn(),
     syncPasswordSet: vi.fn(),
-    resetPasswordForEmail: vi.fn(),
+    requestPasswordReset: vi.fn(),
 }));
 
 vi.mock("@/app/contexts/AuthContext", () => ({
@@ -27,10 +27,8 @@ vi.mock("@/app/contexts/UserProfileContext", () => ({
     }),
 }));
 
-vi.mock("@/app/lib/supabase", () => ({
-    supabase: {
-        auth: { resetPasswordForEmail: state.resetPasswordForEmail },
-    },
+vi.mock("@/app/lib/authApi", () => ({
+    requestPasswordReset: state.requestPasswordReset,
 }));
 
 describe("PasswordSettingsSection", () => {
@@ -44,8 +42,8 @@ describe("PasswordSettingsSection", () => {
             state.passwordSet = true;
             return true;
         });
-        state.resetPasswordForEmail.mockReset();
-        state.resetPasswordForEmail.mockResolvedValue({ error: null });
+        state.requestPasswordReset.mockReset();
+        state.requestPasswordReset.mockResolvedValue(undefined);
     });
 
     it("lets a Google-created account add its first password", async () => {
@@ -90,11 +88,8 @@ describe("PasswordSettingsSection", () => {
         );
 
         await waitFor(() =>
-            expect(state.resetPasswordForEmail).toHaveBeenCalledWith(
+            expect(state.requestPasswordReset).toHaveBeenCalledWith(
                 "alex@example.com",
-                expect.objectContaining({
-                    redirectTo: expect.stringContaining("reset-password"),
-                }),
             ),
         );
     });

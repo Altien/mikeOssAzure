@@ -7,7 +7,7 @@
 
   <Id>a1b2c3d4-e5f6-7890-abcd-ef1234567890</Id>
   <Version>1.0.0.1</Version>
-  <ProviderName>Mike Legal AI</ProviderName>
+  <ProviderName>MikeOSS</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Mike" />
   <Description DefaultValue="AI-powered legal assistant for Word" />
@@ -44,7 +44,7 @@
 
           <ExtensionPoint xsi:type="PrimaryCommandSurface">
             <OfficeTab id="TabHome">
-              <Group id="MikeLegalAI.Group">
+              <Group id="MikeOSS.Group">
                 <Label resid="GroupLabel" />
                 <Icon>
                   <bt:Image size="16" resid="Icon.16x16" />
@@ -52,7 +52,7 @@
                   <bt:Image size="80" resid="Icon.80x80" />
                 </Icon>
 
-                <Control xsi:type="Button" id="MikeLegalAI.OpenMike">
+                <Control xsi:type="Button" id="MikeOSS.OpenMike">
                   <Label resid="TaskpaneButton.Label" />
                   <Supertip>
                     <Title resid="TaskpaneButton.Label" />

@@ -9,7 +9,7 @@
  *   import { test, expect } from "./support/fixtures";
  *
  *   test("...", async ({ addin, page }) => {
- *     addin.seedToken("jwt");                 // (optional) start logged in
+ *     addin.seedToken("session");             // (optional) mock a cookie session
  *     await addin.mockApiJson("GET", "**\/projects", [{ id: "1", name: "X" }]);
  *     await addin.gotoTaskpane({ documentText: "Hello" });
  *     ...
@@ -36,14 +36,14 @@ const OFFICE_JS_GLOB = "https://appsforoffice.microsoft.com/**";
 
 // Route globs for every endpoint the add-in calls. Host-agnostic on purpose so
 // they match regardless of REACT_APP_* build values.
-const AUTH_GLOB = "**/auth/v1/token**";
+const AUTH_GLOB = "**/auth/login";
 const CHAT_GLOB = "**/word-chat";
 
 type HttpMethod = "GET" | "POST" | "DELETE" | "PUT" | "PATCH";
 
 interface MockLoginOk {
   ok: true;
-  /** access_token returned to the client; defaults to "test-access-token". */
+  /** Opaque marker for the mocked server session; never returned to the client. */
   accessToken?: string;
 }
 interface MockLoginError {
@@ -91,9 +91,9 @@ export interface Addin {
   page: Page;
 
   // ----- seeding (call BEFORE gotoTaskpane) -----
-  /** Start the session logged in by pre-seeding the `mike_token` storage key. */
+  /** Start with a mocked server-side cookie session. */
   seedToken(token: string): void;
-  /** Pre-seed the `mike_refresh_token` so an expired access token can refresh. */
+  /** Pre-seed legacy refresh-token storage to test migration cleanup. */
   seedRefreshToken(token: string): void;
 
   // ----- navigation -----
@@ -108,9 +108,9 @@ export interface Addin {
   expectAuthedShell(): Promise<void>;
 
   // ----- reads -----
-  /** Read the current `mike_token` from Office storage (null if logged out). */
+  /** Read legacy `mike_token` storage (must remain null after initialization). */
   getToken(): Promise<string | null>;
-  /** Read the current `mike_refresh_token` from Office storage (null if absent). */
+  /** Read legacy refresh-token storage (must remain null after initialization). */
   getRefreshToken(): Promise<string | null>;
   /** Read the recorded write-side Word calls for assertions. */
   wordCalls(): Promise<WordCalls>;
@@ -133,7 +133,7 @@ export interface Addin {
   ): Promise<boolean>;
 
   // ----- network mocks -----
-  /** Mock the Supabase password grant: success ({ ok }) or failure ({ error }). */
+  /** Mock the backend login endpoint: success ({ ok }) or failure ({ error }). */
   mockLogin(arg: MockLoginArg): Promise<void>;
   /**
    * Mock the `/word-chat` SSE stream. Emits one `content_delta` per chunk, then
@@ -162,6 +162,8 @@ export interface Addin {
 
 export const test = base.extend<{ addin: Addin }>({
   addin: async ({ page }, use) => {
+    let seed: OfficeSeed = {};
+
     // Neutralise the CDN Office.js so only the shim defines the globals.
     await page.route(OFFICE_JS_GLOB, (route) =>
       route.fulfill({
@@ -186,6 +188,69 @@ export const test = base.extend<{ addin: Addin }>({
         return route.fallback();
       }
       return route.abort("blockedbyclient");
+    });
+
+    await page.route("**/auth/session", (route, request) => {
+      if (request.method() !== "GET") return route.fallback();
+      if (!seed.token) {
+        return route.fulfill({
+          status: 401,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Invalid or expired session" }),
+        });
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          user: {
+            id: "test-user-id",
+            email: "e2e@mike.local",
+            pendingEmail: null,
+            createdWithGoogle: false,
+          },
+        }),
+      });
+    });
+
+    await page.route("**/auth/logout", (route, request) => {
+      if (request.method() !== "POST") return route.fallback();
+      seed.token = undefined;
+      seed.refreshToken = undefined;
+      return route.fulfill({ status: 204, body: "" });
+    });
+
+    await page.route("**/auth/handoff", async (route, request) => {
+      if (request.method() !== "POST") return route.fallback();
+      const body = request.postDataJSON() as {
+        ticket?: unknown;
+        requestId?: unknown;
+      };
+      if (
+        typeof body.ticket !== "string" ||
+        !/^[A-Za-z0-9_-]{32,256}$/.test(body.ticket) ||
+        typeof body.requestId !== "string" ||
+        body.requestId.length < 16
+      ) {
+        return route.fulfill({
+          status: 400,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Invalid authentication handoff" }),
+        });
+      }
+      seed.token = "google-cookie-session";
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          user: {
+            id: "test-user-id",
+            email: "e2e@mike.local",
+            pendingEmail: null,
+            createdWithGoogle: true,
+          },
+        }),
+      });
     });
 
     // Default the API-key status probe (fired on every authed mount by
@@ -356,8 +421,6 @@ export const test = base.extend<{ addin: Addin }>({
       });
     });
 
-    let seed: OfficeSeed = {};
-
     /** Add a method-scoped JSON route; falls through to other routes on mismatch. */
     const routeJson = async (
       method: HttpMethod,
@@ -524,15 +587,17 @@ export const test = base.extend<{ addin: Addin }>({
       async mockLogin(arg) {
         await page.route(AUTH_GLOB, (route) => {
           if ("ok" in arg && arg.ok) {
+            seed.token = arg.accessToken ?? "authenticated";
             return route.fulfill({
               status: 200,
               contentType: "application/json",
               body: JSON.stringify({
-                access_token: arg.accessToken ?? "test-access-token",
-                token_type: "bearer",
-                expires_in: 3600,
-                refresh_token: "test-refresh-token",
-                user: { id: "test-user-id", email: "e2e@mike.local" },
+                user: {
+                  id: "test-user-id",
+                  email: "e2e@mike.local",
+                  pendingEmail: null,
+                  createdWithGoogle: false,
+                },
               }),
             });
           }
@@ -541,8 +606,8 @@ export const test = base.extend<{ addin: Addin }>({
             status: err.status ?? 400,
             contentType: "application/json",
             body: JSON.stringify({
-              error: "invalid_grant",
-              error_description: err.error,
+              code: "invalid_credentials",
+              detail: err.error,
             }),
           });
         });

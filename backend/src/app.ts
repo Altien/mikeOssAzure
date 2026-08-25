@@ -1,9 +1,9 @@
 import "dotenv/config";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { chatRouter } from "./routes/chat";
 import { wordChatRouter } from "./routes/wordChat";
 import { projectsRouter } from "./routes/projects";
@@ -19,11 +19,13 @@ import { modelsRouter } from "./routes/models";
 import { downloadsRouter } from "./routes/downloads";
 import { sourceDocumentsRouter } from "./routes/sourceDocuments";
 import { auditRouter } from "./routes/audit";
+import { authRouter } from "./routes/auth";
 import { manifestPublicKey } from "./lib/manifestSigning";
 import {
   handleUnhandledError,
   protectInternalErrorResponses,
 } from "./middleware/internalErrorResponse";
+import { configuredAllowedOrigins } from "./lib/origins";
 
 export const app = express();
 const isProduction = process.env.NODE_ENV === "production";
@@ -52,6 +54,8 @@ function makeLimiter(options: {
   max: number;
   message?: string;
   skip?: (req: express.Request) => boolean;
+  keyGenerator?: (req: express.Request) => string;
+  skipSuccessfulRequests?: boolean;
 }) {
   return rateLimit({
     windowMs: options.windowMs,
@@ -59,6 +63,8 @@ function makeLimiter(options: {
     standardHeaders: true,
     legacyHeaders: false,
     skip: (req) => req.method === "OPTIONS" || options.skip?.(req) === true,
+    keyGenerator: options.keyGenerator,
+    skipSuccessfulRequests: options.skipSuccessfulRequests,
     message: {
       detail: options.message ?? "Too many requests. Please try again later.",
     },
@@ -112,6 +118,50 @@ const dataDeleteLimiter = makeLimiter({
   message: "Too many data deletion requests. Please try again later.",
 });
 
+const authLoginIpLimiter = makeLimiter({
+  windowMs: minutes(envInt("RATE_LIMIT_AUTH_LOGIN_WINDOW_MINUTES", 15)),
+  max: envInt("RATE_LIMIT_AUTH_LOGIN_MAX", 30),
+  message: "Too many login attempts. Please try again later.",
+  skipSuccessfulRequests: true,
+});
+
+const authLoginAccountLimiter = makeLimiter({
+  windowMs: minutes(envInt("RATE_LIMIT_AUTH_ACCOUNT_WINDOW_MINUTES", 15)),
+  max: envInt("RATE_LIMIT_AUTH_ACCOUNT_MAX", 10),
+  message: "Too many login attempts. Please try again later.",
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => {
+    const email =
+      typeof req.body?.email === "string"
+        ? req.body.email.trim().toLowerCase()
+        : "";
+    if (!email) {
+      return `ip:${ipKeyGenerator(
+        req.ip ?? req.socket.remoteAddress ?? "unknown",
+      )}`;
+    }
+    return `email:${createHash("sha256").update(email).digest("hex")}`;
+  },
+});
+
+const authEmailLimiter = makeLimiter({
+  windowMs: hours(envInt("RATE_LIMIT_AUTH_EMAIL_WINDOW_HOURS", 1)),
+  max: envInt("RATE_LIMIT_AUTH_EMAIL_MAX", 10),
+  message: "Too many authentication requests. Please try again later.",
+});
+
+const authFlowLimiter = makeLimiter({
+  windowMs: minutes(envInt("RATE_LIMIT_AUTH_FLOW_WINDOW_MINUTES", 15)),
+  max: envInt("RATE_LIMIT_AUTH_FLOW_MAX", 30),
+  message: "Too many authentication requests. Please try again later.",
+});
+
+const authMfaLimiter = makeLimiter({
+  windowMs: minutes(envInt("RATE_LIMIT_AUTH_MFA_WINDOW_MINUTES", 15)),
+  max: envInt("RATE_LIMIT_AUTH_MFA_MAX", 20),
+  message: "Too many verification attempts. Please try again later.",
+});
+
 app.disable("x-powered-by");
 app.set("trust proxy", envInt("TRUST_PROXY_HOPS", 1));
 app.use((_req, res, next) => {
@@ -142,19 +192,7 @@ app.use(
   }),
 );
 
-export function configuredAllowedOrigins(
-  env: NodeJS.ProcessEnv = process.env,
-): Set<string> {
-  return new Set(
-    [
-      env.FRONTEND_URL ?? "http://localhost:3000",
-      env.WORD_ADDIN_URL,
-      ...(env.ALLOWED_ORIGINS ?? "").split(","),
-    ]
-      .map((origin) => origin?.trim())
-      .filter((origin): origin is string => !!origin),
-  );
-}
+export { configuredAllowedOrigins } from "./lib/origins";
 
 const allowedOrigins = configuredAllowedOrigins();
 
@@ -178,6 +216,14 @@ app.use(
 
 app.use(generalLimiter);
 
+app.post("/auth/login", authLoginIpLimiter);
+app.post(["/auth/signup", "/auth/password-reset"], authEmailLimiter);
+app.post(["/auth/oauth", "/auth/exchange", "/auth/handoff"], authFlowLimiter);
+app.post(
+  ["/auth/mfa/verify", "/auth/mfa/challenge-and-verify"],
+  authMfaLimiter,
+);
+
 app.post("/chat", chatLimiter);
 app.post("/word-chat", chatLimiter);
 // Own limiter lane plus a tight body cap: the largest legitimate payload is
@@ -197,10 +243,7 @@ app.post("/library/:kind/documents", uploadLimiter);
 app.post("/single-documents/:documentId/versions", uploadLimiter);
 app.post("/workflows/:workflowId/reference-files", uploadLimiter);
 app.post("/workflow-addons/:addonId/import", uploadLimiter);
-app.put(
-  "/workflows/:workflowId/reference-files/:referenceId",
-  uploadLimiter,
-);
+app.put("/workflows/:workflowId/reference-files/:referenceId", uploadLimiter);
 app.put(
   "/single-documents/:documentId/versions/:versionId/file",
   uploadLimiter,
@@ -218,6 +261,11 @@ app.delete("/user/tabular-reviews", dataDeleteLimiter);
 
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
+// Body-aware account throttling complements the per-IP login limiter. The key
+// is a one-way digest, so email addresses never enter the limiter store.
+app.post("/auth/login", authLoginAccountLimiter);
+
+app.use("/auth", authRouter);
 app.use("/chat", chatRouter);
 app.use("/word-chat", wordChatRouter);
 app.use("/models", modelsRouter);

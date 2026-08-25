@@ -11,8 +11,7 @@ import { Input } from "@/app/components/ui/input";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
-import { browserAuthCallbackUrl } from "@/app/lib/authRedirects";
-import { supabase } from "@/app/lib/supabase";
+import { requestPasswordReset } from "@/app/lib/authApi";
 import { SettingsSection } from "@/app/(pages)/settings/SettingsSection";
 import { FieldLabel } from "@/app/components/ui/form-field";
 
@@ -72,12 +71,7 @@ export function PasswordSettingsSection() {
         setPasswordResetSending(true);
         setPasswordStatus(null);
         try {
-            const redirectTo = browserAuthCallbackUrl("/reset-password");
-            const { error } = await supabase.auth.resetPasswordForEmail(
-                user.email,
-                redirectTo ? { redirectTo } : undefined,
-            );
-            if (error) throw error;
+            await requestPasswordReset(user.email);
             setPasswordStatus(
                 `Password-reset instructions sent to ${user.email}.`,
             );

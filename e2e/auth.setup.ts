@@ -86,10 +86,8 @@ setup("authenticate", async ({ page }) => {
     const password = process.env.E2E_PASSWORD ?? "E2eTestPass1!";
 
     /* Bootstrap the shared user plus a dedicated user for destructive auth
-       tests (logout / account deletion). The logout test calls Supabase
-       signOut() which uses GLOBAL scope and revokes the user's session
-       server-side; running it against the shared user would 401 every other
-       parallel worker. Isolating it onto its own user keeps the suite stable. */
+       tests such as account deletion. Isolating destructive flows from the
+       shared cookie session keeps parallel workers stable. */
     await ensureUser(email, password);
     await ensureUser(
         process.env.E2E_LOGOUT_EMAIL ?? "e2e-logout@mike.local",

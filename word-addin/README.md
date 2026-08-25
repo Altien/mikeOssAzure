@@ -3,9 +3,9 @@
 The Mike Word add-in brings document-aware chat, workflows, quick actions, and
 tracked-edit review into a Word task pane.
 
-It uses the same Mike account, API, Supabase project, model providers, and
-workflow library as the web app. Word conversations are stored separately from
-the web assistant's chat history.
+It uses the same backend-managed HttpOnly cookie session, Mike API, model
+providers, and workflow library as the web app. Word conversations are stored
+separately from the web assistant's chat history.
 
 ## Prerequisites
 
@@ -18,15 +18,14 @@ the web assistant's chat history.
 
 ## Quick start
 
-With the backend running and `frontend/.env.local` configured, run from the
-repository root:
+With the backend running and configured, run from the repository root:
 
 ```bash
 bash word-addin/scripts/dev.sh
 ```
 
 The script installs dependencies, creates `word-addin/.env`, installs the local
-HTTPS certificate, verifies Mike and Supabase, and launches the add-in in Word
+HTTPS certificate, verifies Mike, and launches the add-in in Word
 unless automatic sideloading is disabled. It is safe to run repeatedly.
 
 The first certificate installation may request your keychain or administrator
@@ -43,15 +42,17 @@ FORCE=1 bash word-addin/scripts/dev.sh
 `--setup-only` prepares the environment without launching Word. `FORCE=1`
 launches even when the backend health check fails.
 
-To run the development server without opening a new Word document, set the
-following in `word-addin/.env` (persistent) or before a single command:
+For normal development, start webpack directly in the foreground without
+opening or sideloading Word:
 
 ```bash
-WORD_ADDIN_SIDELOAD=0 bun dev
+bun dev
+# or
+npm run dev
 ```
 
-The same switch applies to `npm run dev`, `npm start`, and `scripts/dev.sh`.
-Set it back to `1` when you want automatic sideloading.
+Use `npm start` when you explicitly want automatic sideloading. The
+`WORD_ADDIN_SIDELOAD` switch applies only to `npm start` and `scripts/dev.sh`.
 
 ## What it supports
 
@@ -69,15 +70,17 @@ The add-in requires `WordApi 1.6` for tracked-change review.
 
 Run commands from `word-addin/` unless noted otherwise.
 
-| Command | Purpose |
-| --- | --- |
-| `npm start` | Start the HTTPS dev server; sideload unless `WORD_ADDIN_SIDELOAD=0` |
-| `npm run stop` | Stop the sideloaded development session |
-| `npm run dev:server` | Start webpack without launching Word |
-| `npm run typecheck` | Check application and E2E TypeScript |
-| `npm run build:e2e` | Build with the hermetic test environment |
-| `npm run test:e2e` | Run the mocked Office.js Playwright suite |
-| `npm run build` | Create a production bundle and rewritten manifest |
+| Command                    | Purpose                                                             |
+| -------------------------- | ------------------------------------------------------------------- |
+| `npm run dev` / `bun dev`  | Start webpack in the foreground without sideloading Word            |
+| `npm start`                | Start the HTTPS dev server; sideload unless `WORD_ADDIN_SIDELOAD=0` |
+| `npm run stop`             | Stop the sideloaded development session                             |
+| `npm run dev:server`       | Internal alias for starting webpack without launching Word          |
+| `npm run typecheck`        | Check application and E2E TypeScript                                |
+| `npm run build:e2e`        | Build with the hermetic test environment                            |
+| `npm run test:e2e`         | Run the mocked Office.js Playwright suite                           |
+| `npm run build`            | Create a production bundle and rewritten manifest                   |
+| `npm run start:production` | Serve `dist/` and proxy `/api` using `WORD_ADDIN_BACKEND_ORIGIN`    |
 
 ## Manual sideloading
 

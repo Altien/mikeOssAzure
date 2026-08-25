@@ -21,13 +21,6 @@ export default defineConfig({
         globals: true,
         environment: "jsdom",
         setupFiles: ["./vitest.setup.ts"],
-        // app/lib/supabase.ts creates its client at module load, so any
-        // component whose import graph reaches it needs these set. Dummy
-        // values — unit tests never talk to Supabase.
-        env: {
-            NEXT_PUBLIC_SUPABASE_URL: "http://localhost:54321",
-            NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY: "test-anon-key",
-        },
         // jsdom 27's CSS-color parser (@asamuzakjp/css-color) is CJS but
         // require()s the ESM-only @csstools/css-calc. That require() happens
         // in the worker process while the jsdom environment boots — before
@@ -49,7 +42,7 @@ export default defineConfig({
             // suites but not floor-gated (their coverage is UI-shaped and
             // noisy). src/app/lib/** is the client library: mikeApi (the
             // frontend half of the SSE contract), upload validation, model
-            // availability, utils, and the supabase wrapper.
+            // availability, utils, and the cookie-session auth wrapper.
             include: ["src/app/lib/**"],
             exclude: ["src/app/lib/**/*.test.*"],
             // No-regression RATCHET floor, not a target. The lib layer is

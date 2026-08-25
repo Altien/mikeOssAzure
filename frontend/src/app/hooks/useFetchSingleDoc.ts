@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { supabase } from "@/app/lib/supabase";
+import { API_BASE } from "@/app/lib/mikeApi";
+import { authenticatedFetch } from "@/app/lib/authEvents";
 
 /**
  * /display returns PDF bytes (when the active version has a PDF rendition),
@@ -46,31 +47,18 @@ export function useFetchSingleDoc(
 
         (async () => {
             try {
-                const {
-                    data: { session },
-                } = await supabase.auth.getSession();
-                const token = session?.access_token;
                 if (cancelled) return;
-
-                const apiBase =
-                    process.env.NEXT_PUBLIC_API_BASE_URL ??
-                    "http://localhost:3001";
                 const qs = versionId
                     ? `?version_id=${encodeURIComponent(versionId)}`
                     : "";
-                const response = await fetch(
-                    `${apiBase}/single-documents/${documentId}/display${qs}`,
-                    {
-                        headers: token
-                            ? { Authorization: `Bearer ${token}` }
-                            : {},
-                    },
+                const response = await authenticatedFetch(
+                    `${API_BASE}/single-documents/${documentId}/display${qs}`,
+                    { credentials: "include" },
                 );
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 if (cancelled) return;
 
-                const contentType =
-                    response.headers.get("content-type") ?? "";
+                const contentType = response.headers.get("content-type") ?? "";
                 if (contentType.includes("application/pdf")) {
                     const buffer = await response.arrayBuffer();
                     if (!cancelled) setResult({ type: "pdf", buffer });

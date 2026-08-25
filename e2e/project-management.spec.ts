@@ -267,7 +267,8 @@ test("file upload type validation — .txt file is rejected", async ({ page }) =
      *   (b) Server: the upload endpoint must still 400 unsupported extensions
      *       (defense in depth for API/SDK callers that bypass the web UI).
      *       The UI never emits that request anymore, so we exercise the
-     *       endpoint directly with the browser session's bearer token.
+     *       endpoint directly through the same-origin gateway and cookie
+     *       session.
      */
 
     /* Open the Add Documents modal. The "Add Documents" button only renders
@@ -279,35 +280,24 @@ test("file upload type validation — .txt file is rejected", async ({ page }) =
        removed from the upload handler. */
     const projectId = page.url().match(/\/projects\/([0-9a-f-]{36})/)?.[1];
     expect(projectId, "expected to be on a /projects/<id> page").toBeTruthy();
-    const accessToken = await page.evaluate(() => {
-        const item = Object.entries(localStorage).find(([k]) =>
-            k.includes("auth-token"),
+    const uploadStatus = await page.evaluate(async (id) => {
+        const body = new FormData();
+        body.append(
+            "file",
+            new Blob(
+                ["This is a plain text file that should be rejected."],
+                { type: "text/plain" },
+            ),
+            "test.txt",
         );
-        if (!item) return null;
-        try {
-            return JSON.parse(item[1]).access_token ?? null;
-        } catch {
-            return null;
-        }
-    });
-    expect(accessToken, "expected a Supabase session in localStorage").toBeTruthy();
-    const apiBase = process.env.MIKE_API_BASE_URL ?? "http://localhost:3001";
-    const uploadResponse = await page.request.post(
-        `${apiBase}/projects/${projectId}/documents`,
-        {
-            headers: { Authorization: `Bearer ${accessToken}` },
-            multipart: {
-                file: {
-                    name: "test.txt",
-                    mimeType: "text/plain",
-                    buffer: Buffer.from(
-                        "This is a plain text file that should be rejected.",
-                    ),
-                },
-            },
-        },
-    );
-    expect(uploadResponse.status()).toBe(400);
+        const response = await fetch(`/api/projects/${id}/documents`, {
+            method: "POST",
+            credentials: "include",
+            body,
+        });
+        return response.status;
+    }, projectId);
+    expect(uploadStatus).toBe(400);
 
     /* (a) UI-side filtering with a visible warning. */
     await addDocsBtn.click();

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/app/lib/supabase";
+import { login } from "@/app/lib/authApi";
 import { Input } from "@/app/components/ui/input";
 import { PillButton } from "@/app/components/ui/pill-button";
 import Link from "next/link";
@@ -25,7 +25,13 @@ const LOGIN_ERROR_MESSAGES = {
 
 export default function LoginPage() {
     const router = useRouter();
-    const { isAuthenticated, authLoading } = useAuth();
+    const {
+        isAuthenticated,
+        authLoading,
+        authError,
+        refreshSession,
+        retrySession,
+    } = useAuth();
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [loading, setLoading] = useState(false);
@@ -43,13 +49,8 @@ export default function LoginPage() {
         setError(null);
 
         try {
-            const { error } = await supabase.auth.signInWithPassword({
-                email,
-                password,
-            });
-
-            if (error) throw error;
-
+            await login(email, password);
+            await refreshSession();
             router.push("/onboarding/profile");
         } catch (error: unknown) {
             setError(
@@ -77,9 +78,7 @@ export default function LoginPage() {
                     </h2>
                     <form onSubmit={handleLogin} className="space-y-4">
                         <div>
-                            <FieldLabel htmlFor="email">
-                                Email
-                            </FieldLabel>
+                            <FieldLabel htmlFor="email">Email</FieldLabel>
                             <Input
                                 id="email"
                                 type="email"
@@ -112,9 +111,20 @@ export default function LoginPage() {
                             />
                         </div>
 
-                        {error && (
+                        {(error || authError) && (
                             <div className="text-red-600 text-sm bg-red-50 p-3 rounded">
-                                {error}
+                                {error ?? authError}
+                                {!error && authError && (
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            void retrySession().catch(() => {})
+                                        }
+                                        className="ml-2 underline underline-offset-2"
+                                    >
+                                        Retry
+                                    </button>
+                                )}
                             </div>
                         )}
 

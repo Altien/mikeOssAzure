@@ -44,6 +44,7 @@ import {
     userExportFilename,
 } from "../lib/userDataExport";
 import { findProfileUserByEmail } from "../lib/userLookup";
+import { configuredApiPublicUrl } from "../lib/runtimeConfig";
 import {
     getAllUserRouterModels,
     replaceUserRouterModels,
@@ -101,11 +102,14 @@ function backendPublicUrl(req: {
     protocol: string;
     get(name: string): string | undefined;
 }) {
-    return (
-        process.env.API_PUBLIC_URL ||
-        process.env.BACKEND_URL ||
-        `${req.protocol}://${req.get("host")}`
-    ).replace(/\/+$/, "");
+    const configured = configuredApiPublicUrl();
+    if (configured) return configured;
+    if (process.env.NODE_ENV === "production") {
+        throw new Error("API_PUBLIC_URL is required for connector OAuth");
+    }
+    const host = req.get("host");
+    if (!host) throw new Error("Request host is required for connector OAuth");
+    return new URL(`${req.protocol}://${host}`).origin;
 }
 
 function frontendUrl(path = "/settings/connectors") {
@@ -1389,7 +1393,10 @@ userRouter.post(
                 redirectUri,
                 db,
             );
-            res.json(result);
+            res.json({
+                ...result,
+                callbackOrigin: new URL(redirectUri).origin,
+            });
         } catch (err) {
             const detail = errorMessage(err);
             console.error("[user/mcp-connectors] oauth start failed", {

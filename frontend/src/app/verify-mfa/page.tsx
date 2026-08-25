@@ -6,7 +6,7 @@ import { Loader2 } from "lucide-react";
 import { SiteLogo } from "@/app/components/site-logo";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { useAuth } from "@/app/contexts/AuthContext";
-import { supabase } from "@/app/lib/supabase";
+import { challengeAndVerifyMfa, listMfaFactors } from "@/app/lib/authApi";
 import { authGlassCardClassName } from "@/app/components/auth/authStyles";
 import {
     needsMfaVerification,
@@ -77,10 +77,8 @@ export default function VerifyMfaPage() {
                     return;
                 }
 
-                const { data, error: factorError } =
-                    await supabase.auth.mfa.listFactors();
+                const data = await listMfaFactors();
                 if (cancelled) return;
-                if (factorError) throw factorError;
 
                 const verified = (data.totp ?? []) as MfaFactor[];
                 setFactors(verified);
@@ -110,26 +108,28 @@ export default function VerifyMfaPage() {
 
         setVerifying(true);
         setError(null);
-        const { error: verifyError } =
-            await supabase.auth.mfa.challengeAndVerify({
-                factorId: displayedFactorId,
-                code: code.trim(),
-            });
-        setVerifying(false);
-
-        if (verifyError) {
+        try {
+            await challengeAndVerifyMfa(displayedFactorId, code.trim());
+        } catch {
+            setVerifying(false);
             setError("The verification code is invalid or expired.");
             return;
         }
 
+        setVerifying(false);
         setCode("");
         markMfaVerifiedForGate();
         router.replace(nextPath);
     }
 
     async function cancel() {
-        await signOut();
-        router.replace("/login");
+        setError(null);
+        try {
+            await signOut();
+            router.replace("/login");
+        } catch {
+            setError("Unable to sign out. Please try again.");
+        }
     }
 
     return (

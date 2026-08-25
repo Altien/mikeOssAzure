@@ -1,10 +1,10 @@
 /**
- * Mike API client — all requests to the Node.js backend.
- * Attaches the Supabase auth token for user authentication.
+ * Mike API client — all browser requests use the same-origin `/api` gateway.
+ * Authentication is carried only by the backend-managed HttpOnly cookie.
  */
 
-import { supabase } from "@/app/lib/supabase";
 import { isPanelDocument } from "@/app/components/shared/types";
+import { authenticatedFetch } from "@/app/lib/authEvents";
 import type {
     AskInputResponseItem,
     AssistantEvent,
@@ -49,8 +49,8 @@ interface ServerChatDetailOut {
     messages: ServerMessage[];
 }
 
-const API_BASE =
-    process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+export const API_BASE = "/api";
+const apiFetch: typeof fetch = authenticatedFetch;
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
     if (isDev) console.log(...args);
@@ -75,8 +75,7 @@ export class MikeApiError extends Error {
     }
 }
 
-export const INTERNAL_ERROR_MESSAGE =
-    "Something went wrong. Please try again.";
+export const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
 export const MALFORMED_ERROR_RESPONSE_MESSAGE =
     "The request could not be completed. Please try again.";
 
@@ -88,23 +87,13 @@ export function isMfaRequiredError(error: unknown) {
     );
 }
 
-async function getAuthHeader(): Promise<Record<string, string>> {
-    const {
-        data: { session },
-    } = await supabase.auth.getSession();
-    if (!session?.access_token) return {};
-    return { Authorization: `Bearer ${session.access_token}` };
-}
-
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-    const authHeaders = await getAuthHeader();
     const { headers: initHeaders, ...restInit } = init ?? {};
-    const response = await fetch(`${API_BASE}${path}`, {
+    const response = await apiFetch(`${API_BASE}${path}`, {
         cache: "no-store",
         ...restInit,
         headers: {
             Accept: "application/json",
-            ...authHeaders,
             ...(initHeaders as Record<string, string> | undefined),
         },
     });
@@ -127,12 +116,10 @@ async function apiBlobRequest(path: string): Promise<{
     blob: Blob;
     filename: string | null;
 }> {
-    const authHeaders = await getAuthHeader();
-    const response = await fetch(`${API_BASE}${path}`, {
+    const response = await apiFetch(`${API_BASE}${path}`, {
         cache: "no-store",
         headers: {
             Accept: "application/json",
-            ...authHeaders,
         },
     });
 
@@ -174,8 +161,8 @@ async function toApiError(response: Response, path: string) {
                 response.status >= 500
                     ? INTERNAL_ERROR_MESSAGE
                     : typeof parsed.detail === "string" && parsed.detail
-                    ? parsed.detail
-                    : `API error: ${response.status}`,
+                      ? parsed.detail
+                      : `API error: ${response.status}`,
         });
     } catch {
         devLog("[mike-api] non-ok non-json response", {
@@ -746,12 +733,15 @@ export async function refreshMcpConnectorTools(
     );
 }
 
-export async function startMcpConnectorOAuth(
-    connectorId: string,
-): Promise<{ authorizationUrl: string | null; alreadyAuthorized: boolean }> {
+export async function startMcpConnectorOAuth(connectorId: string): Promise<{
+    authorizationUrl: string | null;
+    alreadyAuthorized: boolean;
+    callbackOrigin: string;
+}> {
     return apiRequest<{
         authorizationUrl: string | null;
         alreadyAuthorized: boolean;
+        callbackOrigin: string;
     }>(`/user/mcp-connectors/${connectorId}/oauth/start`, { method: "POST" });
 }
 
@@ -1072,13 +1062,11 @@ export async function uploadLibraryDocument(
     file: File,
     folderId?: string | null,
 ): Promise<Document> {
-    const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
     if (folderId) form.append("folder_id", folderId);
-    const response = await fetch(`${API_BASE}/library/${kind}/documents`, {
+    const response = await apiFetch(`${API_BASE}/library/${kind}/documents`, {
         method: "POST",
-        headers: { ...authHeaders },
         body: form,
     });
     if (!response.ok)
@@ -1216,15 +1204,13 @@ export async function uploadDocumentVersion(
     file: File,
     filename?: string,
 ): Promise<DocumentVersion> {
-    const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
     if (filename) form.append("filename", filename);
-    const response = await fetch(
+    const response = await apiFetch(
         `${API_BASE}/single-documents/${documentId}/versions`,
         {
             method: "POST",
-            headers: { ...authHeaders },
             body: form,
         },
     );
@@ -1242,15 +1228,13 @@ export async function replaceDocumentVersionFile(
     file: File,
     filename?: string,
 ): Promise<DocumentVersion> {
-    const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
     if (filename) form.append("filename", filename);
-    const response = await fetch(
+    const response = await apiFetch(
         `${API_BASE}/single-documents/${documentId}/versions/${versionId}/file`,
         {
             method: "PUT",
-            headers: { ...authHeaders },
             body: form,
         },
     );
@@ -1312,15 +1296,13 @@ export async function uploadProjectDocument(
     file: File,
     folderId?: string | null,
 ): Promise<Document> {
-    const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
     if (folderId) form.append("folder_id", folderId);
-    const response = await fetch(
+    const response = await apiFetch(
         `${API_BASE}/projects/${projectId}/documents`,
         {
             method: "POST",
-            headers: { ...authHeaders },
             body: form,
         },
     );
@@ -1330,16 +1312,13 @@ export async function uploadProjectDocument(
 }
 
 export async function uploadStandaloneDocument(file: File): Promise<Document> {
-    const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
-    const response = await fetch(`${API_BASE}/single-documents`, {
+    const response = await apiFetch(`${API_BASE}/single-documents`, {
         method: "POST",
-        headers: { ...authHeaders },
         body: form,
     });
-    if (!response.ok)
-        throw await toApiError(response, "/single-documents");
+    if (!response.ok) throw await toApiError(response, "/single-documents");
     return response.json() as Promise<Document>;
 }
 
@@ -1382,16 +1361,17 @@ export async function getDocumentUrl(
 export async function downloadDocumentsZip(
     documentIds: string[],
 ): Promise<Blob> {
-    const authHeaders = await getAuthHeader();
-    const response = await fetch(`${API_BASE}/single-documents/download-zip`, {
-        method: "POST",
-        cache: "no-store",
-        headers: {
-            "Content-Type": "application/json",
-            ...authHeaders,
+    const response = await apiFetch(
+        `${API_BASE}/single-documents/download-zip`,
+        {
+            method: "POST",
+            cache: "no-store",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ document_ids: documentIds }),
         },
-        body: JSON.stringify({ document_ids: documentIds }),
-    });
+    );
     if (!response.ok) {
         throw await toApiError(response, "/single-documents/download-zip");
     }
@@ -1516,13 +1496,11 @@ export async function streamChat(payload: {
     signal?: AbortSignal;
 }): Promise<Response> {
     const { signal, ...body } = payload;
-    const authHeaders = await getAuthHeader();
-    return fetch(`${API_BASE}/chat`, {
+    return apiFetch(`${API_BASE}/chat`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
             Accept: "text/event-stream",
-            ...authHeaders,
         },
         body: JSON.stringify(body),
         signal,
@@ -1547,13 +1525,11 @@ export async function streamProjectChat(payload: {
     signal?: AbortSignal;
 }): Promise<Response> {
     const { projectId, signal, ...body } = payload;
-    const authHeaders = await getAuthHeader();
-    return fetch(`${API_BASE}/projects/${projectId}/chat`, {
+    return apiFetch(`${API_BASE}/projects/${projectId}/chat`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
             Accept: "text/event-stream",
-            ...authHeaders,
         },
         body: JSON.stringify(body),
         signal,
@@ -1708,10 +1684,9 @@ export async function streamTabularGeneration(
     expectedUpdatedAt: string,
     signal?: AbortSignal,
 ): Promise<Response> {
-    const authHeaders = await getAuthHeader();
-    return fetch(`${API_BASE}/tabular-review/${reviewId}/generate`, {
+    return apiFetch(`${API_BASE}/tabular-review/${reviewId}/generate`, {
         method: "POST",
-        headers: { ...authHeaders, "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ expected_updated_at: expectedUpdatedAt }),
         signal,
     });
@@ -1724,10 +1699,9 @@ export async function streamTabularChat(
     signal?: AbortSignal,
     context?: { reviewTitle?: string | null; projectName?: string | null },
 ): Promise<Response> {
-    const authHeaders = await getAuthHeader();
-    return fetch(`${API_BASE}/tabular-review/${reviewId}/chat`, {
+    return apiFetch(`${API_BASE}/tabular-review/${reviewId}/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
             messages,
             chat_id: chat_id ?? undefined,
@@ -2161,12 +2135,11 @@ export async function uploadWorkflowReferenceFile(
     workflowId: string,
     file: File,
 ): Promise<WorkflowReferenceDocument> {
-    const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
-    const response = await fetch(
+    const response = await apiFetch(
         `${API_BASE}/workflows/${workflowId}/reference-files`,
-        { method: "POST", headers: { ...authHeaders }, body: form },
+        { method: "POST", body: form },
     );
     if (!response.ok)
         throw await toApiError(response, "/workflows/reference-files");
@@ -2178,13 +2151,11 @@ export async function replaceWorkflowReferenceFile(
     referenceId: string,
     file: File,
 ): Promise<WorkflowReferenceDocument> {
-    const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
     const path = `/workflows/${workflowId}/reference-files/${referenceId}`;
-    const response = await fetch(`${API_BASE}${path}`, {
+    const response = await apiFetch(`${API_BASE}${path}`, {
         method: "PUT",
-        headers: { ...authHeaders },
         body: form,
     });
     if (!response.ok) throw await toApiError(response, path);

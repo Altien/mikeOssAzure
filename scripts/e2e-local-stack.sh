@@ -87,6 +87,7 @@ set_kv() {
 [ -f .env ] || cp .env.example .env
 [ -f .env.hosted.bak ] || cp .env .env.hosted.bak
 set_kv .env SUPABASE_URL "$API_URL"
+set_kv .env SUPABASE_PUBLISHABLE_KEY "$ANON_KEY"
 set_kv .env SUPABASE_SECRET_KEY "$SERVICE_KEY"
 # The suite fires well over the backend's default 300-requests/15-min general
 # cap in one run; once tripped every call 429s and profile/list waits time out.
@@ -100,9 +101,7 @@ set_kv .env RATE_LIMIT_DATA_DELETE_MAX 100000
 
 touch "$FRONTEND/.env.local"
 [ -f "$FRONTEND/.env.local.hosted.bak" ] || cp "$FRONTEND/.env.local" "$FRONTEND/.env.local.hosted.bak"
-set_kv "$FRONTEND/.env.local" NEXT_PUBLIC_SUPABASE_URL "$API_URL"
-set_kv "$FRONTEND/.env.local" NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY "$ANON_KEY"
-set_kv "$FRONTEND/.env.local" NEXT_PUBLIC_API_BASE_URL "http://localhost:3001"
+set_kv "$FRONTEND/.env.local" API_BASE_URL "http://localhost:3001"
 
 echo "Local stack ready: $API_URL (db: ${DB_URL%%\?*})"
 

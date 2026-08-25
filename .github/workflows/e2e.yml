@@ -123,7 +123,9 @@ jobs:
       - name: Start local Supabase
         uses: supabase/setup-cli@v1
         with:
-          version: latest
+          # Keep CI reproducible and avoid the GitHub API call needed to resolve
+          # `latest`, which can fail when the shared runner hits its rate limit.
+          version: 2.108.0
       - name: Init + start Supabase, load fresh schema
         run: |
           supabase init --force --with-vscode-settings=false || supabase init --force
@@ -154,7 +156,9 @@ jobs:
           {
             echo "PORT=3001"
             echo "FRONTEND_URL=http://localhost:3000"
+            echo "API_PUBLIC_URL=http://localhost:3000/api"
             echo "SUPABASE_URL=$API_URL"
+            echo "SUPABASE_PUBLISHABLE_KEY=$ANON_KEY"
             echo "SUPABASE_SECRET_KEY=$SERVICE_KEY"
             # Both secrets are consumed lazily by download-token signing and API-key
             # encryption; supply CI dummies well over any length floor.
@@ -170,6 +174,11 @@ jobs:
             echo "RATE_LIMIT_UPLOAD_MAX=100000"
             echo "RATE_LIMIT_EXPORT_MAX=100000"
             echo "RATE_LIMIT_DATA_DELETE_MAX=100000"
+            echo "RATE_LIMIT_AUTH_LOGIN_MAX=100000"
+            echo "RATE_LIMIT_AUTH_ACCOUNT_MAX=100000"
+            echo "RATE_LIMIT_AUTH_EMAIL_MAX=100000"
+            echo "RATE_LIMIT_AUTH_FLOW_MAX=100000"
+            echo "RATE_LIMIT_AUTH_MFA_MAX=100000"
             # Point the S3-compatible storage adapter at the MinIO container above.
             echo "R2_ENDPOINT_URL=http://localhost:9000"
             echo "R2_ACCESS_KEY_ID=minioadmin"
@@ -180,13 +189,9 @@ jobs:
             echo "MIKE_WORKFLOWS_REF=ce62e6a2d3f47e1d3567a4f2edc61898cfe9e78a"
             echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}"
           } >> backend/.env
-          # next build inlines NEXT_PUBLIC_* at build time, so these must be set
-          # before the "Build web" step below.
-          {
-            echo "NEXT_PUBLIC_SUPABASE_URL=$API_URL"
-            echo "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=$ANON_KEY"
-            echo "NEXT_PUBLIC_API_BASE_URL=http://localhost:3001"
-          } > frontend/.env.local
+          # The web client talks to its own /api gateway. Only the Next server
+          # needs the upstream backend origin.
+          echo "API_BASE_URL=http://localhost:3001" > frontend/.env.local
 
       # Production runs this as a release job after migrations and before the
       # backend starts. E2E must exercise the same ordering so defaults exist.

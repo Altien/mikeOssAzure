@@ -115,7 +115,7 @@ test("uses the frontend assistant spacer while a new answer grows", async ({
           window.location.href,
         );
         const method = (init?.method ?? request?.method ?? "GET").toUpperCase();
-        if (url.pathname !== "/word-chat" || method !== "POST") {
+        if (url.pathname !== "/api/word-chat" || method !== "POST") {
           return nativeFetch(input, init);
         }
 
@@ -380,7 +380,7 @@ test("keeps the submitted turn at 80px while Working becomes Completed", async (
       const request = input instanceof Request ? input : null;
       const url = new URL(request?.url ?? String(input), window.location.href);
       const method = (init?.method ?? request?.method ?? "GET").toUpperCase();
-      if (url.pathname !== "/word-chat" || method !== "POST") {
+      if (url.pathname !== "/api/word-chat" || method !== "POST") {
         return nativeFetch(input, init);
       }
 
@@ -553,7 +553,7 @@ test("keeps the pinned turn steady when a tall activity strip completes", async 
       const request = input instanceof Request ? input : null;
       const url = new URL(request?.url ?? String(input), window.location.href);
       const method = (init?.method ?? request?.method ?? "GET").toUpperCase();
-      if (url.pathname !== "/word-chat" || method !== "POST") {
+      if (url.pathname !== "/api/word-chat" || method !== "POST") {
         return nativeFetch(input, init);
       }
 
@@ -733,7 +733,7 @@ test("jumps straight to the current bottom and does not follow later stream grow
       const request = input instanceof Request ? input : null;
       const url = new URL(request?.url ?? String(input), window.location.href);
       const method = (init?.method ?? request?.method ?? "GET").toUpperCase();
-      if (url.pathname !== "/word-chat" || method !== "POST") {
+      if (url.pathname !== "/api/word-chat" || method !== "POST") {
         return nativeFetch(input, init);
       }
 

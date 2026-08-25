@@ -15,7 +15,7 @@ import {
     MIN_PASSWORD_LENGTH,
     minimumPasswordMessage,
 } from "@/app/components/auth/passwordPolicy";
-import { supabase } from "@/app/lib/supabase";
+import { getAuthSession, updateAuthPassword } from "@/app/lib/authApi";
 import { FieldLabel } from "@/app/components/ui/form-field";
 
 function ResetPasswordContent() {
@@ -44,15 +44,19 @@ function ResetPasswordContent() {
         if (isVerifyingPreview || isUnavailablePreview) return;
 
         let cancelled = false;
-        void supabase.auth
-            .getSession()
-            .then(({ data, error: sessionError }) => {
+        void getAuthSession()
+            .then((session) => {
                 if (cancelled) return;
-                if (sessionError || !data.session) {
+                if (!session) {
                     setError(
                         "This password-reset link is invalid or has expired.",
                     );
                 }
+                setReady(true);
+            })
+            .catch(() => {
+                if (cancelled) return;
+                setError("This password-reset link is invalid or has expired.");
                 setReady(true);
             });
         return () => {
@@ -74,11 +78,7 @@ function ResetPasswordContent() {
 
         setLoading(true);
         try {
-            const { error: updateError } = await supabase.auth.updateUser({
-                password,
-            });
-            if (updateError) throw updateError;
-            await supabase.auth.signOut({ scope: "global" });
+            await updateAuthPassword(password, true);
             setSuccess(true);
         } catch {
             setError("Unable to update your password. Please try again.");

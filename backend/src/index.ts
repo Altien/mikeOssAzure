@@ -1,5 +1,6 @@
 import { app } from "./app";
 import { manifestPublicKey } from "./lib/manifestSigning";
+import { validateRuntimeConfiguration } from "./lib/runtimeConfig";
 
 const PORT = process.env.PORT ?? 3001;
 
@@ -8,6 +9,7 @@ const PORT = process.env.PORT ?? 3001;
 // unsigned; malformed is a misconfiguration, so stop rather than serve a
 // deployment whose exports will fail later.
 try {
+  validateRuntimeConfiguration();
   const signingKey = manifestPublicKey();
   if (signingKey) {
     console.log(`Export manifests signed with key ${signingKey.key_id}`);

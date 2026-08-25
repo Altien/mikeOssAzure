@@ -1,0 +1,161 @@
+import { NextRequest } from "next/server";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { GET, POST } from "./route";
+
+const fetchMock = vi.fn();
+const context = (path: string[]) => ({ params: Promise.resolve({ path }) });
+
+async function readBody(response: Response) {
+    return new TextDecoder().decode(
+        await new Response(response.body).arrayBuffer(),
+    );
+}
+
+describe("same-origin API gateway", () => {
+    beforeEach(() => {
+        fetchMock.mockReset();
+        vi.stubGlobal("fetch", fetchMock);
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.unstubAllEnvs();
+        vi.restoreAllMocks();
+    });
+
+    it("forwards cookies, origin, query parameters, and encoded path segments", async () => {
+        const upstreamHeaders = new Headers({
+            "content-type": "application/json",
+        });
+        upstreamHeaders.append(
+            "set-cookie",
+            "__Host-mike-session=one; Path=/; Secure; HttpOnly",
+        );
+        upstreamHeaders.append(
+            "set-cookie",
+            "__Host-mike-session.1=two; Path=/; Secure; HttpOnly",
+        );
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({ ok: true }), {
+                status: 200,
+                headers: upstreamHeaders,
+            }),
+        );
+        const request = new NextRequest(
+            "https://app.example.test/api/projects/a%2Fb?view=full",
+            {
+                headers: {
+                    cookie: "__Host-mike-session=incoming",
+                    origin: "https://app.example.test",
+                },
+            },
+        );
+
+        const response = await GET(request, context(["projects", "a/b"]));
+
+        const [upstreamUrl, init] = fetchMock.mock.calls[0] as [
+            URL,
+            RequestInit,
+        ];
+        expect(upstreamUrl.toString()).toBe(
+            "http://localhost:3001/projects/a%2Fb?view=full",
+        );
+        const forwardedHeaders = new Headers(init.headers);
+        expect(forwardedHeaders.get("cookie")).toBe(
+            "__Host-mike-session=incoming",
+        );
+        expect(forwardedHeaders.get("origin")).toBe("https://app.example.test");
+        expect(forwardedHeaders.get("host")).toBeNull();
+        expect(forwardedHeaders.get("x-forwarded-host")).toBe(
+            "app.example.test",
+        );
+        expect(response.headers.get("set-cookie")).toContain(
+            "__Host-mike-session=one",
+        );
+        expect(response.headers.get("set-cookie")).toContain(
+            "__Host-mike-session.1=two",
+        );
+    });
+
+    it("streams request and SSE response bodies without buffering", async () => {
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(encoder.encode("data: first\n\n"));
+                controller.enqueue(encoder.encode("data: second\n\n"));
+                controller.close();
+            },
+        });
+        fetchMock.mockResolvedValue(
+            new Response(stream, {
+                headers: { "content-type": "text/event-stream" },
+            }),
+        );
+        const request = new NextRequest("https://app.example.test/api/chat", {
+            method: "POST",
+            body: JSON.stringify({ message: "hello" }),
+            headers: { "content-type": "application/json" },
+        });
+
+        const response = await POST(request, context(["chat"]));
+
+        const init = fetchMock.mock.calls[0][1] as RequestInit & {
+            duplex?: string;
+        };
+        expect(init.body).toBe(request.body);
+        expect(init.duplex).toBe("half");
+        expect(response.headers.get("content-type")).toBe("text/event-stream");
+        await expect(readBody(response)).resolves.toBe(
+            "data: first\n\ndata: second\n\n",
+        );
+    });
+
+    it("returns a sanitized 502 when the backend is unavailable", async () => {
+        fetchMock.mockRejectedValue(new Error("connect ECONNREFUSED backend"));
+        const request = new NextRequest("https://app.example.test/api/health");
+
+        const response = await GET(request, context(["health"]));
+
+        expect(response.status).toBe(502);
+        await expect(response.json()).resolves.toEqual({
+            detail: "The API is temporarily unavailable.",
+        });
+    });
+
+    it("reads API_BASE_URL when the gateway handles the request", async () => {
+        vi.stubEnv("API_BASE_URL", "https://backend.example.test/base");
+        fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+        const request = new NextRequest(
+            "https://app.example.test/api/health?full=true",
+        );
+
+        const response = await GET(request, context(["health"]));
+
+        const [upstreamUrl] = fetchMock.mock.calls[0] as [URL, RequestInit];
+        expect(upstreamUrl.toString()).toBe(
+            "https://backend.example.test/base/health?full=true",
+        );
+        expect(response.status).toBe(204);
+    });
+
+    it("fails safely when production runtime configuration is missing", async () => {
+        vi.stubEnv("NODE_ENV", "production");
+        vi.stubEnv("API_BASE_URL", "");
+        const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+        const request = new NextRequest("https://app.example.test/api/health");
+
+        const response = await GET(request, context(["health"]));
+
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(response.status).toBe(502);
+        await expect(response.json()).resolves.toEqual({
+            detail: "The API is temporarily unavailable.",
+        });
+        expect(errorSpy).toHaveBeenCalledWith(
+            "[api-gateway] upstream request failed",
+            expect.objectContaining({
+                error: "API_BASE_URL is required at runtime.",
+            }),
+        );
+    });
+});

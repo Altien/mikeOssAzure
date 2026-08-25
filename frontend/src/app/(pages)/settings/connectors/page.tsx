@@ -83,10 +83,6 @@ type McpOAuthPopupMessage = {
     detail?: string;
 };
 
-const mcpOAuthMessageOrigin = new URL(
-    process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001",
-).origin;
-
 function parseCustomHeaders(raw: string): Record<string, string> | undefined {
     const text = raw.trim();
     if (!text) return undefined;
@@ -284,7 +280,7 @@ export default function ConnectorsPage() {
             "mike_mcp_oauth",
             "popup,width=560,height=720,menubar=no,toolbar=no,location=no,status=no",
         );
-        const { authorizationUrl, alreadyAuthorized } =
+        const { authorizationUrl, alreadyAuthorized, callbackOrigin } =
             await startMcpConnectorOAuth(connectorId);
         if (alreadyAuthorized) {
             popup?.close();
@@ -296,6 +292,7 @@ export default function ConnectorsPage() {
             popup?.close();
             throw new Error("OAuth authorization URL was not returned.");
         }
+        const expectedCallbackOrigin = new URL(callbackOrigin).origin;
         if (!popup) {
             window.location.assign(authorizationUrl);
             return null;
@@ -319,7 +316,7 @@ export default function ConnectorsPage() {
                 window.removeEventListener("message", onMessage);
             };
             const onMessage = (event: MessageEvent<McpOAuthPopupMessage>) => {
-                if (event.origin !== mcpOAuthMessageOrigin) return;
+                if (event.origin !== expectedCallbackOrigin) return;
                 if (event.data?.type !== "mcp_oauth_result") return;
                 if (
                     event.data.connectorId &&

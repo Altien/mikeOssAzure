@@ -27,15 +27,18 @@ module.exports = async (_env, options) => {
 
   if (!isDev) {
     const required = [
-      "REACT_APP_API_BASE_URL",
-      "REACT_APP_SUPABASE_URL",
-      "REACT_APP_SUPABASE_ANON_KEY",
       "REACT_APP_WEB_APP_URL",
     ];
     const missing = required.filter((name) => !process.env[name]?.trim());
     if (missing.length > 0) {
       throw new Error(
         `Production Word build is missing: ${missing.join(", ")}`,
+      );
+    }
+    const apiBase = process.env.REACT_APP_API_BASE_URL || "/api";
+    if (!apiBase.startsWith("/")) {
+      throw new Error(
+        "Production REACT_APP_API_BASE_URL must be same-origin (for example /api) so HttpOnly auth cookies work in every Word host.",
       );
     }
   }
@@ -85,22 +88,11 @@ module.exports = async (_env, options) => {
     }
 
     // Word loads the task pane over HTTPS, and its WebView blocks "mixed content"
-    // (HTTP requests from an HTTPS page). The Mike API and local Supabase only
-    // serve HTTP, so calling them directly fails with "Load failed". Proxy them
-    // through this HTTPS dev server instead, so the pane makes only same-origin
-    // calls (`/auth/...` and `/api/...`) that webpack forwards to the local HTTP
-    // backends server-side. Targets are overridable so the proxy tracks whatever
-    // ports the backend is actually on.
-    const supaTarget =
-      process.env.SUPABASE_PROXY_TARGET || "http://127.0.0.1:54321";
+    // (HTTP requests from an HTTPS page). Proxy the local Mike API through this
+    // HTTPS dev server so authentication and API calls stay same-origin and the
+    // HttpOnly session cookie works consistently across Word hosts.
     const apiTarget = process.env.API_PROXY_TARGET || "http://localhost:3001";
     devServerConfig.proxy = [
-      {
-        context: ["/auth", "/rest", "/storage"],
-        target: supaTarget,
-        changeOrigin: true,
-        secure: false,
-      },
       {
         context: ["/api"],
         target: apiTarget,
@@ -214,17 +206,10 @@ module.exports = async (_env, options) => {
       new webpack.EnvironmentPlugin({
         // Development defaults stay on the HTTPS dev-server origin, whose
         // proxies reach the HTTP backends without mixed-content failures.
-        REACT_APP_API_BASE_URL: isDev
-          ? process.env.REACT_APP_API_BASE_URL || "/api"
-          : undefined,
-        REACT_APP_SUPABASE_URL: isDev
-          ? process.env.REACT_APP_SUPABASE_URL || ""
-          : undefined,
-        // Keep the key sourced by scripts/dev.sh; only the URL is made
-        // same-origin so authentication also travels through the HTTPS proxy.
-        REACT_APP_SUPABASE_ANON_KEY: isDev
-          ? process.env.REACT_APP_SUPABASE_ANON_KEY || ""
-          : undefined,
+        // Production hosting must reverse-proxy this same-origin path to the
+        // Mike backend so HttpOnly auth cookies are never third-party cookies.
+        REACT_APP_API_BASE_URL:
+          process.env.REACT_APP_API_BASE_URL || "/api",
         REACT_APP_DEFAULT_MODEL: "gemini-3-flash-preview",
         // The Mike web app origin — the task pane links here (e.g. the
         // account/api-keys page); it never fetches from it.
