@@ -7,6 +7,7 @@ import { resolveVercelApiKey, getUserApiKeys } from "../lib/userApiKeys";
 import { resolveSecret, resolveProviderSecret } from "../lib/envSecrets";
 import { recordAudit } from "../lib/audit";
 import { sendInternalError } from "../lib/httpError";
+import { getConfig } from "../lib/config";
 import { DEFAULT_TABULAR_MODEL, resolveModel } from "../lib/llm/models";
 import {
   completeUserMcpConnectorOAuth,
@@ -755,15 +756,20 @@ userRouter.put("/api-keys/:provider", requireAuth, async (req, res) => {
 // user.ts (they have no Supabase-auth coupling).
 // ---------------------------------------------------------------------------
 
-function backendPublicUrl(req: {
+async function backendPublicUrl(req: {
     protocol: string;
     get(name: string): string | undefined;
 }) {
-    return (
-        process.env.API_PUBLIC_URL ||
-        process.env.BACKEND_URL ||
-        `${req.protocol}://${req.get("host")}`
-    ).replace(/\/+$/, "");
+    const configured = process.env.API_PUBLIC_URL || await getConfig("backend-public-url").catch(() => "");
+    if (configured) {
+        const url = new URL(configured);
+        if (url.protocol !== "https:" && process.env.NODE_ENV === "production") throw new Error("Invalid backend public URL");
+        return url.origin;
+    }
+    if (process.env.NODE_ENV === "production") throw new Error("Backend public URL is required for connector OAuth");
+    const host = req.get("host");
+    if (!host) throw new Error("Request host is required for connector OAuth");
+    return new URL(`${req.protocol}://${host}`).origin;
 }
 
 function frontendUrl(path = "/settings/connectors") {
@@ -1135,7 +1141,7 @@ userRouter.post(
             // /api/user/mcp-connectors/oauth/callback. Without /api the
             // provider redirects to a path that misses the API router, falls
             // through to the SPA catch-all, and bounces to /login.
-            const redirectUri = `${backendPublicUrl(req)}/api/user/mcp-connectors/oauth/callback`;
+            const redirectUri = `${await backendPublicUrl(req)}/api/user/mcp-connectors/oauth/callback`;
             const result = await startUserMcpConnectorOAuth(
                 userId,
                 req.params.connectorId,

@@ -123,15 +123,17 @@ describe("AuthProvider", () => {
         );
         await screen.findByText(user.email);
 
-        window.dispatchEvent(
-            new StorageEvent("storage", {
-                key: "mike-auth-state-change",
-                newValue: JSON.stringify({
+        const event = new Event("storage") as StorageEvent;
+        Object.defineProperties(event, {
+            key: { value: "mike-auth-state-change" },
+            newValue: {
+                value: JSON.stringify({
                     state: "signed-out",
                     nonce: "another-tab",
                 }),
-            }),
-        );
+            },
+        });
+        window.dispatchEvent(event);
 
         await waitFor(() =>
             expect(screen.getByTestId("user")).toHaveTextContent("signed-out"),
