@@ -16,6 +16,7 @@ export type AuthProvider = "supabase" | "local" | "entra";
 
 export interface RuntimeConfig {
   authProvider: AuthProvider;
+  backendOrigin: string;
   entra: {
     tenantId: string;
     clientId: string;
@@ -50,6 +51,7 @@ export function loadRuntimeConfig(): Promise<RuntimeConfig> {
     if (!res.ok) throw new Error(`GET /config failed (${res.status})`);
     const body = (await res.json()) as {
       authProvider?: unknown;
+      backendOrigin?: unknown;
       entra?: { tenantId?: unknown; clientId?: unknown; apiScope?: unknown };
     };
     const provider = asString(body.authProvider);
@@ -57,6 +59,7 @@ export function loadRuntimeConfig(): Promise<RuntimeConfig> {
       provider === "entra" || provider === "local" ? provider : "supabase";
     return {
       authProvider,
+      backendOrigin: asString(body.backendOrigin),
       entra: {
         tenantId: asString(body.entra?.tenantId),
         clientId: asString(body.entra?.clientId),

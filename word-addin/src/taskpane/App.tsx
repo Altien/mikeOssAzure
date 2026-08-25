@@ -22,29 +22,9 @@ import {
 import { useWordDocumentIdentity } from "./lib/wordDocumentIdentity";
 import { clearLocalWordChats } from "./lib/localWordChats";
 
-function getWordChatOwnerId(token: string): string {
-  try {
-    const encoded = token.split(".")[1];
-    if (encoded) {
-      const normalized = encoded.replace(/-/g, "+").replace(/_/g, "/");
-      const payload = JSON.parse(atob(normalized)) as { sub?: unknown };
-      if (typeof payload.sub === "string" && payload.sub) return payload.sub;
-    }
-  } catch {
-    // Tests and non-Supabase development auth can use opaque tokens. Hash the
-    // value so the token itself is never written to IndexedDB.
-  }
-  let hash = 2166136261;
-  for (let index = 0; index < token.length; index += 1) {
-    hash ^= token.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return `opaque-${(hash >>> 0).toString(16)}`;
-}
-
 export default function App(): React.ReactElement {
-  const { token, loading, logout } = useAuth();
-  const pendingOwnerId = token ? getWordChatOwnerId(token) : null;
+  const { user, loading, error, logout } = useAuth();
+  const pendingOwnerId = user?.id ?? null;
   const wordChatStorage = useWordChatStoragePreference(pendingOwnerId);
   const editApply = useWordEditApplyMode();
   const wordDocument = useWordDocumentIdentity();
@@ -80,7 +60,7 @@ export default function App(): React.ReactElement {
     );
   }
 
-  if (!token) {
+  if (!user) {
     return <LoginPage />;
   }
 
@@ -227,6 +207,14 @@ export default function App(): React.ReactElement {
       />
 
       <div className="absolute inset-x-3 top-14 z-30">
+        {error && (
+          <div
+            className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 shadow-sm"
+            role="alert"
+          >
+            {error}
+          </div>
+        )}
         <ApiKeyBanner />
       </div>
 

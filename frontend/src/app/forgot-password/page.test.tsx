@@ -3,13 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ForgotPasswordPage from "./page";
 
-const { resetPasswordForEmail, runtime } = vi.hoisted(() => ({
-    resetPasswordForEmail: vi.fn(),
-    runtime: { authProvider: "supabase", loading: false },
+const { requestPasswordReset } = vi.hoisted(() => ({
+    requestPasswordReset: vi.fn(),
 }));
 
-vi.mock("@/app/lib/supabase", () => ({
-    getSupabaseClient: () => ({ auth: { resetPasswordForEmail } }),
+vi.mock("@/app/lib/authApi", () => ({
+    requestPasswordReset,
 }));
 
 vi.mock("@/app/components/site-logo", () => ({
@@ -18,28 +17,11 @@ vi.mock("@/app/components/site-logo", () => ({
 
 describe("ForgotPasswordPage", () => {
     beforeEach(() => {
-        resetPasswordForEmail.mockReset();
-        runtime.authProvider = "supabase";
-        runtime.loading = false;
-    });
-
-    it.each(["entra", "local"])("keeps recovery with the %s provider", (provider) => {
-        runtime.authProvider = provider;
-        render(<ForgotPasswordPage />);
-        expect(screen.getByRole("link", { name: "Return to login" })).toBeInTheDocument();
-        expect(screen.queryByRole("textbox", { name: "Email" })).not.toBeInTheDocument();
-        expect(resetPasswordForEmail).not.toHaveBeenCalled();
-    });
-
-    it("waits for runtime configuration before mounting recovery", () => {
-        runtime.loading = true;
-        render(<ForgotPasswordPage />);
-        expect(screen.queryByRole("textbox", { name: "Email" })).not.toBeInTheDocument();
-        expect(resetPasswordForEmail).not.toHaveBeenCalled();
+        requestPasswordReset.mockReset();
     });
 
     it("sends recovery through the shared callback", async () => {
-        resetPasswordForEmail.mockResolvedValue({ error: null });
+        requestPasswordReset.mockResolvedValue(undefined);
         const user = userEvent.setup();
         render(<ForgotPasswordPage />);
 
@@ -51,20 +33,14 @@ describe("ForgotPasswordPage", () => {
             screen.getByRole("button", { name: "Send reset link" }),
         );
 
-        expect(resetPasswordForEmail).toHaveBeenCalledWith(
-            "person@example.com",
-            {
-                redirectTo:
-                    "http://localhost:3000/auth/callback?next=%2Freset-password",
-            },
-        );
+        expect(requestPasswordReset).toHaveBeenCalledWith("person@example.com");
         expect(
             await screen.findByRole("heading", { name: "Check your email" }),
         ).toBeInTheDocument();
     });
 
     it("uses the same response when the request fails", async () => {
-        resetPasswordForEmail.mockRejectedValue(new Error("not found"));
+        requestPasswordReset.mockRejectedValue(new Error("not found"));
         const user = userEvent.setup();
         render(<ForgotPasswordPage />);
 
@@ -82,5 +58,3 @@ describe("ForgotPasswordPage", () => {
         expect(screen.getByText(/If an account exists/)).toBeInTheDocument();
     });
 });
-
-vi.mock("@/app/contexts/ConfigContext", () => ({ useConfig: () => runtime, useConfigLoading: () => runtime.loading }));

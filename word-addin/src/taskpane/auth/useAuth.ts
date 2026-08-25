@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import type { AuthProvider } from "./runtimeConfig";
 import {
   getSessionState,
   initialize,
@@ -6,22 +7,20 @@ import {
   signInWithGoogle,
   signOut,
   subscribe,
-  type AuthMode,
+  type AddinAuthUser,
 } from "./session";
 
 // ---------------------------------------------------------------------------
 // Thin React binding over the shared session store (auth/session.ts). All token
-// state — including silent renewal — lives in that module so the bare API
-// client can share it; this hook just subscribes mounted components to it.
+// state — including refresh-token handling — lives in that module so the bare
+// API client can share it; this hook just subscribes mounted components to it.
 // ---------------------------------------------------------------------------
 
 interface AuthState {
-  token: string | null;
+  user: AddinAuthUser | null;
   loading: boolean;
   error: string | null;
-  /** Backend auth mode from GET /config; null until known. */
-  mode: AuthMode | null;
-  /** Entra: Microsoft sign-in (no args). Local dev mode: pass the email. */
+  mode: AuthProvider | null;
   login: (email?: string, password?: string) => Promise<void>;
   loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
@@ -38,10 +37,13 @@ export function useAuth(): AuthState {
     return unsubscribe;
   }, []);
 
-  const login = useCallback((email?: string, password?: string) => signIn(email, password), []);
+  const login = useCallback(
+    (email?: string, password?: string) => signIn(email, password),
+    []
+  );
   const loginWithGoogle = useCallback(() => signInWithGoogle(), []);
   const logout = useCallback(() => signOut(), []);
 
-  const { token, loading, error, mode } = getSessionState();
-  return { token, loading, error, mode, login, loginWithGoogle, logout };
+  const { user, loading, error, mode } = getSessionState();
+  return { user, loading, error, mode, login, loginWithGoogle, logout };
 }

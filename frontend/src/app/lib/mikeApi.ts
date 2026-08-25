@@ -17,6 +17,8 @@ import {
     bounceIfUnauthorized,
 } from "@/app/lib/auth-token";
 import { isPanelDocument } from "@/app/components/shared/types";
+import { authenticatedFetch } from "@/app/lib/authEvents";
+const apiFetch = authenticatedFetch;
 import type {
     AskInputResponseItem,
     AssistantEvent,
@@ -95,8 +97,7 @@ export class MikeApiError extends Error {
     }
 }
 
-export const INTERNAL_ERROR_MESSAGE =
-    "Something went wrong. Please try again.";
+export const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
 export const MALFORMED_ERROR_RESPONSE_MESSAGE =
     "The request could not be completed. Please try again.";
 
@@ -132,12 +133,11 @@ export async function apiRequest<T>(
         throw new Error("Account changed before the request was sent");
     }
     const { headers: initHeaders, ...restInit } = init ?? {};
-    const response = await fetch(`${API_BASE}${path}`, {
+    const response = await apiFetch(`${API_BASE}${path}`, {
         cache: "no-store",
         ...restInit,
         headers: {
             Accept: "application/json",
-            ...authHeaders,
             ...(initHeaders as Record<string, string> | undefined),
         },
     });
@@ -162,12 +162,10 @@ async function apiBlobRequest(path: string): Promise<{
     blob: Blob;
     filename: string | null;
 }> {
-    const authHeaders = await getAuthHeader();
-    const response = await fetch(`${API_BASE}${path}`, {
+    const response = await apiFetch(`${API_BASE}${path}`, {
         cache: "no-store",
         headers: {
             Accept: "application/json",
-            ...authHeaders,
         },
     });
 
@@ -211,8 +209,8 @@ async function toApiError(response: Response, path: string) {
                 response.status >= 500
                     ? INTERNAL_ERROR_MESSAGE
                     : typeof parsed.detail === "string" && parsed.detail
-                    ? parsed.detail
-                    : `API error: ${response.status}`,
+                      ? parsed.detail
+                      : `API error: ${response.status}`,
         });
     } catch {
         devLog("[mike-api] non-ok non-json response", {
@@ -807,12 +805,15 @@ export async function refreshMcpConnectorTools(
     );
 }
 
-export async function startMcpConnectorOAuth(
-    connectorId: string,
-): Promise<{ authorizationUrl: string | null; alreadyAuthorized: boolean }> {
+export async function startMcpConnectorOAuth(connectorId: string): Promise<{
+    authorizationUrl: string | null;
+    alreadyAuthorized: boolean;
+    callbackOrigin: string;
+}> {
     return apiRequest<{
         authorizationUrl: string | null;
         alreadyAuthorized: boolean;
+        callbackOrigin: string;
     }>(`/user/mcp-connectors/${connectorId}/oauth/start`, { method: "POST" });
 }
 
@@ -1133,13 +1134,11 @@ export async function uploadLibraryDocument(
     file: File,
     folderId?: string | null,
 ): Promise<Document> {
-    const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
     if (folderId) form.append("folder_id", folderId);
-    const response = await fetch(`${API_BASE}/library/${kind}/documents`, {
+    const response = await apiFetch(`${API_BASE}/library/${kind}/documents`, {
         method: "POST",
-        headers: { ...authHeaders },
         body: form,
     });
     bounceIfUnauthorized(response);
@@ -1277,15 +1276,13 @@ export async function uploadDocumentVersion(
     file: File,
     filename?: string,
 ): Promise<DocumentVersion> {
-    const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
     if (filename) form.append("filename", filename);
-    const response = await fetch(
+    const response = await apiFetch(
         `${API_BASE}/single-documents/${documentId}/versions`,
         {
             method: "POST",
-            headers: { ...authHeaders },
             body: form,
         },
     );
@@ -1300,15 +1297,13 @@ export async function replaceDocumentVersionFile(
     file: File,
     filename?: string,
 ): Promise<DocumentVersion> {
-    const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
     if (filename) form.append("filename", filename);
-    const response = await fetch(
+    const response = await apiFetch(
         `${API_BASE}/single-documents/${documentId}/versions/${versionId}/file`,
         {
             method: "PUT",
-            headers: { ...authHeaders },
             body: form,
         },
     );
@@ -1367,15 +1362,13 @@ export async function uploadProjectDocument(
     file: File,
     folderId?: string | null,
 ): Promise<Document> {
-    const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
     if (folderId) form.append("folder_id", folderId);
-    const response = await fetch(
+    const response = await apiFetch(
         `${API_BASE}/projects/${projectId}/documents`,
         {
             method: "POST",
-            headers: { ...authHeaders },
             body: form,
   });
     bounceIfUnauthorized(response);
@@ -1384,12 +1377,10 @@ export async function uploadProjectDocument(
 }
 
 export async function uploadStandaloneDocument(file: File): Promise<Document> {
-    const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
-    const response = await fetch(`${API_BASE}/single-documents`, {
+    const response = await apiFetch(`${API_BASE}/single-documents`, {
         method: "POST",
-        headers: { ...authHeaders },
         body: form,
     });
     bounceIfUnauthorized(response);
@@ -1464,7 +1455,7 @@ export async function downloadResolvedDocument(
 
     // Relative backend proxy (Azure): authenticate and download the bytes.
     const authHeaders = await getAuthHeader();
-    const response = await fetch(`${API_BASE}${url}`, { headers: authHeaders });
+    const response = await fetch(`${API_BASE}${url}`, { headers: authHeaders, credentials: "include" });
     bounceIfUnauthorized(response);
     if (!response.ok) throw new Error(`Download failed: ${response.status}`);
     const blob = await response.blob();
@@ -1479,16 +1470,17 @@ export async function downloadResolvedDocument(
 export async function downloadDocumentsZip(
     documentIds: string[],
 ): Promise<Blob> {
-    const authHeaders = await getAuthHeader();
-    const response = await fetch(`${API_BASE}/single-documents/download-zip`, {
-        method: "POST",
-        cache: "no-store",
-        headers: {
-            "Content-Type": "application/json",
-            ...authHeaders,
-        },
-        body: JSON.stringify({ document_ids: documentIds }),
-    });
+    const response = await apiFetch(
+        `${API_BASE}/single-documents/download-zip`,
+        {
+            method: "POST",
+            cache: "no-store",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ document_ids: documentIds }),
+        }
+    );
     bounceIfUnauthorized(response);
     if (!response.ok) {
         throw await toApiError(response, "/single-documents/download-zip");
@@ -1626,7 +1618,6 @@ export async function streamChat(payload: {
         headers: {
             "Content-Type": "application/json",
             Accept: "text/event-stream",
-            ...authHeaders,
         },
         body: JSON.stringify(body),
         signal,
@@ -1659,7 +1650,6 @@ export async function streamProjectChat(payload: {
         headers: {
             "Content-Type": "application/json",
             Accept: "text/event-stream",
-            ...authHeaders,
         },
         body: JSON.stringify(body),
         signal,
@@ -2279,12 +2269,11 @@ export async function uploadWorkflowReferenceFile(
     workflowId: string,
     file: File,
 ): Promise<WorkflowReferenceDocument> {
-    const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
-    const response = await fetch(
+    const response = await apiFetch(
         `${API_BASE}/workflows/${workflowId}/reference-files`,
-        { method: "POST", headers: { ...authHeaders }, body: form },
+        { method: "POST", body: form },
     );
     bounceIfUnauthorized(response);
     if (!response.ok) throw await toApiError(response, "/workflows/reference-files");
@@ -2296,13 +2285,11 @@ export async function replaceWorkflowReferenceFile(
     referenceId: string,
     file: File,
 ): Promise<WorkflowReferenceDocument> {
-    const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
     const path = `/workflows/${workflowId}/reference-files/${referenceId}`;
-    const response = await fetch(`${API_BASE}${path}`, {
+    const response = await apiFetch(`${API_BASE}${path}`, {
         method: "PUT",
-        headers: { ...authHeaders },
         body: form,
     });
     bounceIfUnauthorized(response);

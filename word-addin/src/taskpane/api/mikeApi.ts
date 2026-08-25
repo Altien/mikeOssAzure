@@ -11,7 +11,7 @@
  */
 import { configureMikeApiClient } from "./client";
 import type { Chat, Document, Message, WordDocumentEdit } from "../types";
-import { getFreshAccessToken, refreshSession } from "../auth/session";
+import { refreshSession } from "../auth/session";
 import { API_BASE_URL } from "../auth/runtimeConfig";
 import {
   assistantContentFromEvents,
@@ -24,20 +24,17 @@ import type { PersistedWordEditPatch } from "../lib/wordChatTypes";
 const BASE_URL: string = API_BASE_URL;
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
-  const token = await getFreshAccessToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return {};
 }
 
-// Centralized reactive 401 recovery: refresh the session once, then replay the
-// rejected request with the new token.
+// The backend refreshes HttpOnly sessions before API handlers run. A 401 means
+// the session can no longer be refreshed; synchronize the login gate and leave
+// the original response intact for the caller.
 const fetchWithRefresh: typeof fetch = async (input, init) => {
-  const res = await fetch(input, init);
+  const res = await fetch(input, { ...init, credentials: "include" });
   if (res.status !== 401) return res;
-  const refreshed = await refreshSession();
-  if (!refreshed) return res; // refresh failed → session cleared → surfaces 401
-  const headers = new Headers(init?.headers as HeadersInit | undefined);
-  headers.set("Authorization", `Bearer ${refreshed}`);
-  return fetch(input, { ...init, headers });
+  await refreshSession().catch(() => null);
+  return res;
 };
 
 configureMikeApiClient({

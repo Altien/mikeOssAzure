@@ -3,21 +3,21 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GoogleAuthButton } from "./GoogleAuthButton";
 
-const { signInWithOAuth } = vi.hoisted(() => ({
-    signInWithOAuth: vi.fn(),
+const { startGoogleOAuth } = vi.hoisted(() => ({
+    startGoogleOAuth: vi.fn(),
 }));
 
-vi.mock("@/app/lib/supabase", () => ({
-    supabase: { auth: { signInWithOAuth } },
+vi.mock("@/app/lib/authApi", () => ({
+    startGoogleOAuth,
 }));
 
 describe("GoogleAuthButton", () => {
     beforeEach(() => {
-        signInWithOAuth.mockReset();
+        startGoogleOAuth.mockReset();
     });
 
     it("starts Google OAuth with the shared auth callback", async () => {
-        signInWithOAuth.mockResolvedValue({ error: null });
+        startGoogleOAuth.mockResolvedValue({ url: "https://accounts.example.test" });
         const onError = vi.fn();
         const user = userEvent.setup();
         render(<GoogleAuthButton onError={onError} />);
@@ -26,13 +26,7 @@ describe("GoogleAuthButton", () => {
             screen.getByRole("button", { name: "Continue with Google" }),
         );
 
-        expect(signInWithOAuth).toHaveBeenCalledWith({
-            provider: "google",
-            options: {
-                redirectTo:
-                    "http://localhost:3000/auth/callback?next=%2Fonboarding%2Fprofile",
-            },
-        });
+        expect(startGoogleOAuth).toHaveBeenCalledWith("/onboarding/profile");
         expect(onError).toHaveBeenCalledWith("");
         expect(
             screen.getByRole("button", { name: "Continuing…" }),
@@ -40,9 +34,9 @@ describe("GoogleAuthButton", () => {
     });
 
     it("surfaces provider startup errors and re-enables the button", async () => {
-        signInWithOAuth.mockResolvedValue({
-            error: new Error("Google provider is unavailable"),
-        });
+        startGoogleOAuth.mockRejectedValue(
+            new Error("Google provider is unavailable"),
+        );
         const onError = vi.fn();
         const user = userEvent.setup();
         render(<GoogleAuthButton onError={onError} />);

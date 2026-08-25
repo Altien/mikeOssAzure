@@ -1,226 +1,264 @@
 "use client";
-import { browserAuthCallbackUrl } from "@/app/lib/authRedirects";
 
-import React, { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import type { User as SupabaseUser } from "@supabase/supabase-js";
-import { getSupabaseClient } from "@/app/lib/supabase";
-import { syncUserPasswordSet } from "@/app/lib/mikeApi";
-import { useConfig, useConfigLoading } from "@/app/contexts/ConfigContext";
+import React, {
+    createContext,
+    useContext,
+    useCallback,
+    useEffect,
+    useRef,
+    useState,
+    ReactNode,
+} from "react";
 import {
-  ENTRA_TOKEN_KEY,
-  ENTRA_USER_KEY,
-  LOCAL_TOKEN_KEY,
-  LOCAL_USER_KEY,
-  getBrowserAccessToken,
-} from "@/app/lib/auth-token";
+    clearLegacyBrowserAuthStorage,
+    getAuthSession,
+    loginLocal,
+    logout,
+    updateAuthEmail,
+    updateAuthPassword,
+    type AuthUser,
+} from "@/app/lib/authApi";
+import { AUTH_SESSION_INVALIDATED_EVENT } from "@/app/lib/authEvents";
 
-interface User {
-  id: string; email: string; pendingEmail?: string | null;
-  createdWithGoogle?: boolean;
-  // Identity metadata cannot prove whether a password is set.
-  hasPassword?: boolean | null;
-}
+type User = AuthUser;
+
 interface AuthContextType {
-  user: User | null; isAuthenticated: boolean; authLoading: boolean;
-  signInLocal: (email: string) => Promise<void>;
-  signOut: () => Promise<void>; getAccessToken: () => Promise<string | null>;
-  // Upstream's account page changes email through Supabase Auth. Only the
-  // supabase mode can do that; in entra/local modes the identity provider
-  // owns the address, so updateEmail rejects with an explanatory error.
-  updateEmail: (email: string) => Promise<User>;
-  setPassword: (password: string, nonce?: string) => Promise<void>;
+    user: User | null;
+    isAuthenticated: boolean;
+    authLoading: boolean;
+    authError: string | null;
+    signOut: () => Promise<void>;
+    signInLocal: (email: string) => Promise<void>;
+    getAccessToken: () => Promise<string | null>;
+    updateEmail: (email: string) => Promise<User>;
+    setPassword: (password: string, nonce?: string) => Promise<void>;
+    refreshSession: () => Promise<User | null>;
+    retrySession: () => Promise<User | null>;
 }
-// Exported for the test harness (src/test/render.tsx) to inject auth state.
+
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const AUTH_SYNC_CHANNEL = "mike-auth-state";
+const AUTH_SYNC_STORAGE_KEY = "mike-auth-state-change";
+const SESSION_ERROR_MESSAGE =
+    "We could not check your session. Please try again.";
+const EXPIRED_SESSION_MESSAGE = "Your session expired. Please log in again.";
 
-function toSupabaseUser(user: SupabaseUser): User {
-  return {
-    id: user.id, email: user.email || "", pendingEmail: user.new_email ?? null,
-    ...authMethodState(user),
-  };
-}
-
-export function authMethodState(user: Pick<SupabaseUser, "app_metadata" | "identities">) {
-  return {
-    createdWithGoogle: user.app_metadata?.provider === "google",
-    // Linked identity metadata does not prove a password operation.
-    hasPassword: null as boolean | null,
-  };
-}
-
-function decodeJwtUser(token: string): User {
-  const payload = token.split(".")[1];
-  if (!payload) return { id: "entra-user", email: "" };
-
-  try {
-    const padded = payload + "=".repeat((4 - (payload.length % 4)) % 4);
-    const claims = JSON.parse(atob(padded.replace(/-/g, "+").replace(/_/g, "/"))) as {
-      oid?: unknown;
-      sub?: unknown;
-      preferred_username?: unknown;
-      email?: unknown;
-      upn?: unknown;
-    };
-    const id = typeof claims.oid === "string"
-      ? claims.oid
-      : typeof claims.sub === "string"
-        ? claims.sub
-        : "entra-user";
-    const email = typeof claims.preferred_username === "string"
-      ? claims.preferred_username
-      : typeof claims.email === "string"
-        ? claims.email
-        : typeof claims.upn === "string"
-          ? claims.upn
-          : "";
-    return { id, email: email.toLowerCase() };
-  } catch {
-    return { id: "entra-user", email: "" };
-  }
-}
+type AuthSyncMessage = {
+    state: "signed-in" | "signed-out";
+    nonce: string;
+};
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const config = useConfig();
-  const configLoading = useConfigLoading();
-  const [user, setUser] = useState<User | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
+    const [user, setUser] = useState<User | null>(null);
+    const [authLoading, setAuthLoading] = useState(true);
+    const [authError, setAuthError] = useState<string | null>(null);
+    const channelRef = useRef<BroadcastChannel | null>(null);
+    const authGeneration = useRef(0);
+    const sessionRequestRef = useRef<{ generation: number; promise: Promise<User | null> } | null>(null);
 
-  useEffect(() => {
-    // Wait for /config to resolve before deciding which auth flow to
-    // run.  Until then we stay in `authLoading=true`, which gates the
-    // login page redirect / authenticated-route guards downstream.
-    if (configLoading) return;
-
-    const provider = config.authProvider;
-
-    if (provider === "supabase") {
-      const supabase = getSupabaseClient();
-      const checkUser = async () => {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) setUser(toSupabaseUser(session.user));
-        setAuthLoading(false);
-      };
-      checkUser();
-      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_e, session) => {
-        setUser(session?.user ? toSupabaseUser(session.user) : null);
-        setAuthLoading(false);
-      });
-      return () => subscription.unsubscribe();
-    }
-
-    if (provider === "local") {
-      const storedUser = localStorage.getItem(LOCAL_USER_KEY);
-      if (storedUser) {
-        try {
-          setUser(JSON.parse(storedUser));
-        } catch {
-          localStorage.removeItem(LOCAL_USER_KEY);
-          localStorage.removeItem(LOCAL_TOKEN_KEY);
-        }
-      }
-      setAuthLoading(false);
-      return;
-    }
-
-    // entra
-    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-    const token = hash.get("access_token");
-    if (token) {
-      localStorage.setItem(ENTRA_TOKEN_KEY, token);
-      const tokenUser = decodeJwtUser(token);
-      localStorage.setItem(ENTRA_USER_KEY, JSON.stringify(tokenUser));
-      setUser(tokenUser);
-      window.history.replaceState(null, "", window.location.pathname + window.location.search);
-    } else {
-      const storedUser = localStorage.getItem(ENTRA_USER_KEY);
-      if (storedUser) {
-        try {
-          setUser(JSON.parse(storedUser));
-        } catch {
-          localStorage.removeItem(ENTRA_USER_KEY);
-          localStorage.removeItem(ENTRA_TOKEN_KEY);
-        }
-      }
-    }
-    setAuthLoading(false);
-  }, [config, configLoading]);
-
-  const getAccessToken = async (): Promise<string | null> => {
-    return getBrowserAccessToken();
-  };
-
-  const signInLocal = async (email: string): Promise<void> => {
-    const apiBase = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") + "/api";
-    const response = await fetch(`${apiBase}/auth/local-login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email }),
-    });
-    if (!response.ok) throw new Error(await response.text());
-    const payload = await response.json() as { token: string; user: User };
-    localStorage.setItem(LOCAL_TOKEN_KEY, payload.token);
-    localStorage.setItem(LOCAL_USER_KEY, JSON.stringify(payload.user));
-    setUser(payload.user);
-  };
-
-  const signOut = async () => {
-    const provider = config.authProvider;
-
-    if (provider === "local") {
-      localStorage.removeItem(LOCAL_TOKEN_KEY);
-      localStorage.removeItem(LOCAL_USER_KEY);
-      setUser(null);
-      return;
-    }
-
-    if (provider === "supabase") {
-      const supabase = getSupabaseClient();
-      await supabase.auth.signOut();
-      setUser(null);
-      return;
-    }
-
-    // entra — clear local state and let the backend redirect through
-    // Microsoft's logout endpoint so the IdP session is also cleared.
-    localStorage.removeItem(ENTRA_TOKEN_KEY);
-    localStorage.removeItem(ENTRA_USER_KEY);
-    setUser(null);
-    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
-    // Router is mounted at /api/auth (app.ts); the bare /auth path fell
-    // through to the SPA shell and never signed out.
-    window.location.href = `${apiBase}/api/auth/logout`;
-  };
-
-  const updateEmail = async (email: string): Promise<User> => {
-    if (config.authProvider !== "supabase") {
-      throw new Error(
-        "Your email address is managed by your organisation's sign-in provider and cannot be changed here.",
-      );
-    }
-    const supabase = getSupabaseClient();
-    const redirectTo = typeof window === "undefined" ? undefined : browserAuthCallbackUrl("/settings?emailChange=processed");
-    const { data, error } = await supabase.auth.updateUser(
-      { email },
-      redirectTo ? { emailRedirectTo: redirectTo } : undefined,
+    const broadcastAuthState = useCallback(
+        (state: AuthSyncMessage["state"]) => {
+            const message: AuthSyncMessage = {
+                state,
+                nonce:
+                    typeof crypto.randomUUID === "function"
+                        ? crypto.randomUUID()
+                        : `${Date.now()}-${Math.random()}`,
+            };
+            channelRef.current?.postMessage(message);
+            try {
+                window.localStorage.setItem(
+                    AUTH_SYNC_STORAGE_KEY,
+                    JSON.stringify(message),
+                );
+            } catch {
+                // Cross-tab sync is best-effort when storage is unavailable.
+            }
+        },
+        [],
     );
-    if (error) throw error;
-    if (!data.user) throw new Error("Unable to update email");
-    const nextUser = toSupabaseUser(data.user);
-    setUser(nextUser);
-    return nextUser;
-  };
 
-  const setPassword = async (password: string, nonce?: string): Promise<void> => {
-    if (config.authProvider !== "supabase") throw new Error("Password changes are available only with Supabase sign-in.");
-    await syncUserPasswordSet(password, nonce);
-    setUser((current) => current ? { ...current, hasPassword: true } : null);
-  };
+    const fetchAndApplySession = useCallback(async () => {
+        const generation = authGeneration.current;
+        if (!sessionRequestRef.current || sessionRequestRef.current.generation !== generation) {
+            const promise = getAuthSession().finally(() => {
+                if (sessionRequestRef.current?.generation === generation) sessionRequestRef.current = null;
+            });
+            sessionRequestRef.current = { generation, promise };
+        }
+        const nextUser = await sessionRequestRef.current.promise;
+        if (generation !== authGeneration.current) return null;
+        setUser(nextUser);
+        setAuthError(null);
+        return nextUser;
+    }, []);
 
-  return <AuthContext.Provider value={{ user, isAuthenticated: !!user, authLoading: authLoading || configLoading, signInLocal, signOut, getAccessToken, updateEmail, setPassword }}>{children}</AuthContext.Provider>;
+    useEffect(() => {
+        clearLegacyBrowserAuthStorage();
+
+        const channel =
+            typeof BroadcastChannel === "undefined"
+                ? null
+                : new BroadcastChannel(AUTH_SYNC_CHANNEL);
+        channelRef.current = channel;
+
+        const applySyncMessage = (message: AuthSyncMessage) => {
+            if (message.state === "signed-out") {
+                authGeneration.current += 1;
+                setUser(null);
+                setAuthError(null);
+                setAuthLoading(false);
+                return;
+            }
+
+            void fetchAndApplySession().catch(() => {
+                setAuthError(SESSION_ERROR_MESSAGE);
+            });
+        };
+
+        const onChannelMessage = (event: MessageEvent<AuthSyncMessage>) => {
+            if (
+                event.data?.state === "signed-in" ||
+                event.data?.state === "signed-out"
+            ) {
+                applySyncMessage(event.data);
+            }
+        };
+        const onStorage = (event: StorageEvent) => {
+            if (event.key !== AUTH_SYNC_STORAGE_KEY || !event.newValue) return;
+            try {
+                const message = JSON.parse(event.newValue) as AuthSyncMessage;
+                if (
+                    message.state === "signed-in" ||
+                    message.state === "signed-out"
+                ) {
+                    applySyncMessage(message);
+                }
+            } catch {
+                // Ignore unrelated or malformed storage values.
+            }
+        };
+        const onInvalidated = () => {
+            authGeneration.current += 1;
+            setUser(null);
+            setAuthError(EXPIRED_SESSION_MESSAGE);
+            setAuthLoading(false);
+            broadcastAuthState("signed-out");
+        };
+        const onVisibilityChange = () => {
+            if (document.visibilityState !== "visible") return;
+            void fetchAndApplySession().catch(() => {
+                setAuthError(SESSION_ERROR_MESSAGE);
+            });
+        };
+        const onFocus = () => {
+            void fetchAndApplySession().catch(() => {
+                setAuthError(SESSION_ERROR_MESSAGE);
+            });
+        };
+
+        channel?.addEventListener("message", onChannelMessage);
+        window.addEventListener("storage", onStorage);
+        window.addEventListener(AUTH_SESSION_INVALIDATED_EVENT, onInvalidated);
+        window.addEventListener("focus", onFocus);
+        document.addEventListener("visibilitychange", onVisibilityChange);
+
+        void fetchAndApplySession()
+            .catch(() => {
+                setAuthError(SESSION_ERROR_MESSAGE);
+            })
+            .finally(() => setAuthLoading(false));
+
+        return () => {
+            channel?.removeEventListener("message", onChannelMessage);
+            channel?.close();
+            channelRef.current = null;
+            window.removeEventListener("storage", onStorage);
+            window.removeEventListener(
+                AUTH_SESSION_INVALIDATED_EVENT,
+                onInvalidated,
+            );
+            window.removeEventListener("focus", onFocus);
+            document.removeEventListener(
+                "visibilitychange",
+                onVisibilityChange,
+            );
+        };
+    }, [broadcastAuthState, fetchAndApplySession]);
+
+    const refreshSession = useCallback(async () => {
+        try {
+            const nextUser = await fetchAndApplySession();
+            setAuthLoading(false);
+            broadcastAuthState(nextUser ? "signed-in" : "signed-out");
+            return nextUser;
+        } catch (error) {
+            setAuthError(SESSION_ERROR_MESSAGE);
+            setAuthLoading(false);
+            throw error;
+        }
+    }, [broadcastAuthState, fetchAndApplySession]);
+
+    const signOut = async () => {
+        try {
+            const result = await logout("local");
+            authGeneration.current += 1;
+            setUser(null);
+            setAuthError(null);
+            broadcastAuthState("signed-out");
+            if (result.logoutUrl) window.location.assign(result.logoutUrl);
+        } catch (error) {
+            setAuthError("Unable to sign out. Please try again.");
+            throw error;
+        }
+    };
+
+    const signInLocal = async (email: string) => {
+        await loginLocal(email);
+        authGeneration.current += 1;
+        await fetchAndApplySession();
+        broadcastAuthState("signed-in");
+    };
+
+    const updateEmail = async (email: string) => {
+        const { user: nextUser } = await updateAuthEmail(
+            email,
+            "/settings?emailChange=processed",
+        );
+        setUser(nextUser);
+        return nextUser;
+    };
+
+    const setPassword = async (password: string, nonce?: string) => {
+        const { user: nextUser } = await updateAuthPassword(password, false, nonce);
+        setUser(nextUser);
+    };
+
+    return (
+        <AuthContext.Provider
+            value={{
+                user,
+                isAuthenticated: !!user,
+                authLoading,
+                authError,
+                signOut,
+                signInLocal,
+                getAccessToken: async () => null,
+                updateEmail,
+                setPassword,
+                refreshSession,
+                retrySession: refreshSession,
+            }}
+        >
+            {children}
+        </AuthContext.Provider>
+    );
 }
 
 export function useAuth() {
-  const context = useContext(AuthContext);
-  if (context === undefined) throw new Error("useAuth must be used within an AuthProvider");
-  return context;
+    const context = useContext(AuthContext);
+    if (context === undefined) {
+        throw new Error("useAuth must be used within an AuthProvider");
+    }
+    return context;
 }

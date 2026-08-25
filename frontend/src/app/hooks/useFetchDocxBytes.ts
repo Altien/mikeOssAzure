@@ -108,7 +108,9 @@ export function useFetchDocxBytes(
             })
             .catch(() => {
                 if (cancelled) return;
-                setError("This document could not be loaded. Please try again.");
+                setError(
+                    "This document could not be loaded. Please try again.",
+                );
             })
             .finally(() => {
                 inFlight.delete(key);

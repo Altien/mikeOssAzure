@@ -77,7 +77,7 @@ export function LoginPage(): React.ReactElement {
                 type="submit"
                 tone="black"
                 size="normal"
-                disabled={loading || mode === "unsupported" || ((mode === "local" || mode === "supabase") && !email.trim())}
+                disabled={loading || ((mode === "local" || mode === "supabase") && !email.trim())}
               >
                 {loading ? "Signing in..." : mode === "entra" ? "Sign in with Microsoft" : mode === "local" ? "Sign in" : mode === "supabase" ? "Log in" : "Retry"}
               </PillButton>

@@ -36,6 +36,7 @@ import { authorityTraceRouter } from "./altien/authorityTrace/router";
 import { skillsRouter } from "./altien/skills/router";
 import { auditRouter } from "./routes/audit";
 import { handleUnhandledError, protectInternalErrorResponses } from "./middleware/internalErrorResponse";
+import { configuredAllowedOrigins as configuredOrigins } from "./lib/origins";
 
 // ── Rate-limit configuration (from upstream ba6f771) ───────────────────────
 
@@ -80,6 +81,8 @@ function makeLimiter(options: {
   max: number;
   message?: string;
   skip?: (req: express.Request) => boolean;
+  keyGenerator?: (req: express.Request) => string;
+  skipSuccessfulRequests?: boolean;
 }) {
   return rateLimit({
     windowMs: options.windowMs,
@@ -87,6 +90,8 @@ function makeLimiter(options: {
     standardHeaders: true,
     legacyHeaders: false,
     skip: (req) => req.method === "OPTIONS" || options.skip?.(req) === true,
+    keyGenerator: options.keyGenerator,
+    skipSuccessfulRequests: options.skipSuccessfulRequests,
     message: {
       detail: options.message ?? "Too many requests. Please try again later.",
     },
@@ -109,7 +114,7 @@ function makeLimiter(options: {
  * mutate env between cases see fresh values.
  */
 export function configuredAllowedOrigins(env: NodeJS.ProcessEnv = process.env): Set<string> {
-  return new Set([env.FRONTEND_URL ?? "http://localhost:3000", env.WORD_ADDIN_URL, ...(env.ALLOWED_ORIGINS ?? "").split(",")].map(origin => origin?.trim()).filter((origin): origin is string => !!origin));
+  return configuredOrigins(env);
 }
 
 export function buildApp(): express.Express {

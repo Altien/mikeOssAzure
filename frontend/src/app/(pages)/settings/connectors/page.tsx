@@ -280,7 +280,7 @@ export default function ConnectorsPage() {
             "mike_mcp_oauth",
             "popup,width=560,height=720,menubar=no,toolbar=no,location=no,status=no",
         );
-        const { authorizationUrl, alreadyAuthorized } =
+        const { authorizationUrl, alreadyAuthorized, callbackOrigin } =
             await startMcpConnectorOAuth(connectorId);
         if (alreadyAuthorized) {
             popup.close();

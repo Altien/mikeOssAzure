@@ -153,6 +153,8 @@ export class EntraAuth {
     private readonly scopes: string[]
   ) {}
 
+  get supportsNestedAuthentication(): boolean { return this.nested; }
+
   static async create(cfg: RuntimeConfig): Promise<EntraAuth> {
     const scopes = [cfg.entra.apiScope];
     if (naaSupported()) {

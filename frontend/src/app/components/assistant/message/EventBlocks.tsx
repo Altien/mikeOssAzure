@@ -108,8 +108,7 @@ export function ReasoningBlock({
         if (!nextOverflowing) setIsExpanded(false);
     }, [isContentOpen, isStreaming, text, userToggledContent]);
 
-    const showContent =
-        isContentOpen || (!userToggledContent && !hasMeasured);
+    const showContent = isContentOpen || (!userToggledContent && !hasMeasured);
     const isCollapsed = isContentOpen && isOverflowing && !isExpanded;
 
     return (
@@ -216,10 +215,7 @@ export function DocReadBlock({
             filename={filename}
             fileIcon={
                 showFileIcon ? (
-                    <FileTypeIcon
-                        fileType={filename}
-                        className="h-3.5 w-3.5"
-                    />
+                    <FileTypeIcon fileType={filename} className="h-3.5 w-3.5" />
                 ) : undefined
             }
             onClick={onClick}
@@ -279,7 +275,10 @@ export function DocCreatedBlock({
                 </span>
                 {isStreaming || !onClick ? (
                     <span className="flex min-w-0 items-center gap-1.5">
-                        <FileTypeIcon fileType={filename} className="h-3.5 w-3.5" />
+                        <FileTypeIcon
+                            fileType={filename}
+                            className="h-3.5 w-3.5"
+                        />
                         <span className="truncate">
                             {isStreaming ? `${filename}...` : filename}
                         </span>
@@ -290,7 +289,10 @@ export function DocCreatedBlock({
                         onClick={onClick}
                         className="flex min-w-0 cursor-pointer items-center gap-1.5 text-left transition-colors hover:text-gray-700"
                     >
-                        <FileTypeIcon fileType={filename} className="h-3.5 w-3.5" />
+                        <FileTypeIcon
+                            fileType={filename}
+                            className="h-3.5 w-3.5"
+                        />
                         <span className="truncate">{filename}</span>
                     </button>
                 )}

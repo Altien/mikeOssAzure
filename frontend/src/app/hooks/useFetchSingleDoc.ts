@@ -5,6 +5,7 @@ import {
     getBrowserAccessToken,
     bounceIfUnauthorized,
 } from "@/app/lib/auth-token";
+import { authenticatedFetch } from "@/app/lib/authEvents";
 
 /**
  * /display returns PDF bytes (when the active version has a PDF rendition),
@@ -61,20 +62,15 @@ export function useFetchSingleDoc(
                 const qs = versionId
                     ? `?version_id=${encodeURIComponent(versionId)}`
                     : "";
-                const response = await fetch(
+                const response = await authenticatedFetch(
                     `${apiBase}/single-documents/${documentId}/display${qs}`,
-                    {
-                        headers: token
-                            ? { Authorization: `Bearer ${token}` }
-                            : {},
-                    },
+                    { credentials: "include" },
                 );
                 bounceIfUnauthorized(response);
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 if (cancelled) return;
 
-                const contentType =
-                    response.headers.get("content-type") ?? "";
+                const contentType = response.headers.get("content-type") ?? "";
                 if (contentType.includes("application/pdf")) {
                     const buffer = await response.arrayBuffer();
                     if (!cancelled) setResult({ type: "pdf", buffer });

@@ -212,7 +212,6 @@ const lastFetchCall = () => {
 
 beforeEach(() => {
     vi.stubGlobal("fetch", fetchMock);
-    withSession("token-123");
 });
 
 afterEach(() => {
@@ -277,7 +276,7 @@ describe("MikeApiError / isMfaRequiredError", () => {
 });
 
 describe("apiRequest plumbing (via thin wrappers)", () => {
-    it("attaches the Supabase bearer token and JSON accept header", async () => {
+    it("uses the cookie-authenticated gateway and JSON accept header", async () => {
         fetchMock.mockResolvedValue(jsonResponse({ tier: "free" }));
 
         const profile = await getUserProfile();
@@ -288,12 +287,11 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         expect(init.cache).toBe("no-store");
         expect(init.headers).toMatchObject({
             Accept: "application/json",
-            Authorization: "Bearer token-123",
         });
+        expect(init.credentials).toBe("include");
     });
 
-    it("omits the Authorization header when there is no session", async () => {
-        withSession(null);
+    it("never attaches an Authorization header", async () => {
         fetchMock.mockResolvedValue(jsonResponse([]));
 
         await listProjects();
@@ -302,6 +300,7 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         expect(
             (init.headers as Record<string, string>).Authorization,
         ).toBeUndefined();
+        expect(init.credentials).toBe("include");
     });
 
     it("appends ?include=documents when requested", async () => {
@@ -785,7 +784,6 @@ describe("streamChat", () => {
         expect(init.headers).toMatchObject({
             "Content-Type": "application/json",
             Accept: "text/event-stream",
-            Authorization: "Bearer token-123",
         });
         expect(init.signal).toBe(controller.signal);
         // The abort signal must not leak into the JSON payload.
@@ -870,7 +868,6 @@ describe("streamTabularGeneration", () => {
         expect(url).toBe("http://localhost:3001/api/tabular-review/r1/generate");
         expect(init.method).toBe("POST");
         expect(init.headers).toEqual({
-            Authorization: "Bearer token-123",
             "Content-Type": "application/json",
         });
         expect(JSON.parse(init.body as string)).toEqual({
@@ -1630,7 +1627,8 @@ describe("multipart upload endpoints", () => {
         expect(init.body).toBeInstanceOf(FormData);
         expect((init.body as FormData).get("file")).toBeInstanceOf(File);
         // Setting Content-Type manually would break the multipart boundary.
-        expect(init.headers).toEqual({ Authorization: "Bearer token-123" });
+        expect(init.headers).toBeUndefined();
+        expect(init.credentials).toBe("include");
     });
 
     it("includes the destination folder in project and library uploads", async () => {
@@ -1731,7 +1729,8 @@ describe("multipart upload endpoints", () => {
             "http://localhost:3001/api/workflows/w1/reference-files",
         );
         expect(init.method).toBe("POST");
-        expect(init.headers).toEqual({ Authorization: "Bearer token-123" });
+        expect(init.headers).toBeUndefined();
+        expect(init.credentials).toBe("include");
         expect(init.body).toBeInstanceOf(FormData);
         expect((init.body as FormData).get("file")).toBeInstanceOf(File);
 
@@ -1755,7 +1754,8 @@ describe("multipart upload endpoints", () => {
             "http://localhost:3001/api/workflows/w1/reference-files/ref-1",
         );
         expect(init.method).toBe("PUT");
-        expect(init.headers).toEqual({ Authorization: "Bearer token-123" });
+        expect(init.headers).toBeUndefined();
+        expect(init.credentials).toBe("include");
         expect(init.body).toBeInstanceOf(FormData);
         expect((init.body as FormData).get("file")).toBeInstanceOf(File);
 
@@ -2525,7 +2525,7 @@ describe("unwrapping and blob wrappers", () => {
         fetchMock.mockResolvedValue(jsonResponse({ models }));
 
         await expect(load()).resolves.toEqual(models);
-        expect(lastFetchCall().url).toBe(`http://localhost:3001${path}`);
+        expect(lastFetchCall().url).toBe(`/api${path}`);
     });
 
     it("getPanelDocument fetches a normalized document by opaque ID", async () => {

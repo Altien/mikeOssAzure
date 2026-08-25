@@ -1,15 +1,13 @@
 "use client";
-import { SupabaseAuthGate } from "@/app/components/auth/SupabaseAuthGate";
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { getSupabaseClient } from "@/app/lib/supabase";
+import { signup } from "@/app/lib/authApi";
 import { Input } from "@/app/components/ui/input";
 import { PillButton } from "@/app/components/ui/pill-button";
 import Link from "next/link";
 import { SiteLogo } from "@/app/components/site-logo";
 import { useAuth } from "@/app/contexts/AuthContext";
-import { browserAuthCallbackUrl } from "@/app/lib/authRedirects";
 import { cn } from "@/app/lib/utils";
 import {
     authGlassCardClassName,
@@ -35,7 +33,7 @@ import { FieldLabel } from "@/app/components/ui/form-field";
 function SignupContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const { isAuthenticated, authLoading } = useAuth();
+    const { isAuthenticated, authLoading, refreshSession } = useAuth();
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
@@ -80,20 +78,14 @@ function SignupContent() {
 
         try {
             const trimmedEmail = email.trim();
-            const emailRedirectTo = browserAuthCallbackUrl(
+            const result = await signup(
+                trimmedEmail,
+                password,
                 "/onboarding/profile",
             );
-            const { data, error } = await getSupabaseClient().auth.signUp({
-                email: trimmedEmail,
-                password,
-                options: {
-                    ...(emailRedirectTo ? { emailRedirectTo } : {}),
-                },
-            });
 
-            if (error) throw error;
-
-            if (data.session) {
+            if (!result.requiresEmailConfirmation) {
+                await refreshSession();
                 setSuccess(true);
                 setTimeout(() => {
                     router.push("/onboarding/profile");
@@ -263,7 +255,7 @@ function SignupContent() {
 export default function SignupPage() {
     return (
         <Suspense fallback={null}>
-            <SupabaseAuthGate><SignupContent /></SupabaseAuthGate>
+            <SignupContent />
         </Suspense>
     );
 }

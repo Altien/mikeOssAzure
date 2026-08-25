@@ -4,6 +4,11 @@ import { validateLocalToken } from "../lib/auth/providers/local.js";
 import { validateEntraToken } from "../lib/auth/providers/entra.js";
 import { tenantAccess } from "./tenantAccess.js";
 import { upsertUserProfile } from "../lib/userSettings.js";
+import { getConfig } from "../lib/config.js";
+import { createRequestSupabase } from "../lib/authSession.js";
+import { readServerSession, refreshServerSession } from "../lib/serverSession.js";
+import { requestOriginIsTrusted } from "../lib/origins.js";
+import { renewEntraCredential } from "../lib/auth/providers/entraRefresh.js";
 
 // Upstream divergence (sync-log: 3a10943): upstream added app-level MFA
 // enforcement here (enforceLoginMfaIfEnabled / requireMfaIfEnrolled) built
@@ -22,13 +27,62 @@ export async function requireAuth(
   next: NextFunction,
 ): Promise<void> {
   const auth = req.headers.authorization ?? "";
-  if (!auth.startsWith("Bearer ")) {
-    res.status(401).json({ detail: "Missing or invalid Authorization header" });
+  const provider = (await getConfig("auth-provider").catch(() => process.env.AUTH_PROVIDER)) ?? "supabase";
+  let token = "";
+  let cookieSession = false;
+  let sessionUserId: string | null = null;
+
+  // An explicit credential has precedence. Invalid or malformed bearer
+  // headers never fall back to a different identity in a browser cookie.
+  if (auth) {
+    if (!auth.startsWith("Bearer ") || !auth.slice(7).trim()) {
+      res.status(401).json({ detail: "Invalid Authorization header" });
+      return;
+    }
+    token = auth.slice(7).trim();
+  } else {
+    // Cookie-authenticated writes need a browser Origin. Bearer API clients
+    // remain callable without an Origin header.
+    if (!["GET", "HEAD", "OPTIONS"].includes(req.method) && !requestOriginIsTrusted(req.get("origin"))) {
+      res.status(403).json({ code: "untrusted_origin", detail: "The request origin is not allowed." });
+      return;
+    }
+    cookieSession = true;
+    if (provider === "supabase") {
+      try {
+        const client = createRequestSupabase(req, res);
+        const { data, error } = await client.auth.getSession();
+        if (!error) token = data.session?.access_token ?? "";
+        res.locals.authClient = client;
+      } catch {
+        res.status(503).json({ detail: "Auth session is unavailable" });
+        return;
+      }
+    } else {
+      let session;
+      try { session = await readServerSession(req); }
+      catch { res.status(503).json({ detail: "Auth session is unavailable" }); return; }
+      if (session?.credential.provider === provider) {
+        if (Date.parse(session.row.token_expires_at) <= Date.now() + 60_000) {
+          if (provider !== "entra" || !session.credential.refreshToken) {
+            res.status(401).json({ detail: "Invalid or expired session" });
+            return;
+          }
+          try {
+            const renewed = await refreshServerSession(session, renewEntraCredential);
+            session = renewed ? await readServerSession(req) : null;
+          } catch { session = null; }
+        }
+        token = session?.credential.accessToken ?? "";
+        sessionUserId = session?.credential.userId ?? null;
+      }
+    }
+  }
+
+  if (!token) {
+    res.status(401).json({ detail: "Invalid or expired session" });
     return;
   }
-  const token = auth.slice(7).trim();
-
-  const provider = process.env.AUTH_PROVIDER ?? "supabase";
 
   let result;
   if (provider === "supabase") {
@@ -46,11 +100,16 @@ export async function requireAuth(
     res.status(result.status).json({ detail: result.detail });
     return;
   }
+  if (sessionUserId && result.principal.userId !== sessionUserId) {
+    res.status(401).json({ detail: "Invalid or expired session" });
+    return;
+  }
 
   res.locals.userId = result.principal.userId;
   res.locals.userEmail = result.principal.email;
   res.locals.token = token;
   res.locals.principal = result.principal;
+  res.locals.authSource = cookieSession ? "cookie" : "bearer";
 
   try {
     await upsertUserProfile(

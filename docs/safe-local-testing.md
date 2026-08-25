@@ -18,21 +18,20 @@ keys, or real client documents for initial testing.
 
 ## Keep Secrets Out of the Frontend
 
-Only variables prefixed with `NEXT_PUBLIC_` should be assumed safe to expose to
-the browser. Service-role keys and model-provider keys should stay server-side.
+The browser does not need Supabase configuration. Session handling and all
+Supabase keys stay server-side.
 
 For frontend testing, `frontend/.env.local` should normally contain only:
 
 ```env
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=your-supabase-anon-key
-NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
+API_BASE_URL=http://localhost:3001
 ```
 
 Keep the Supabase service-role key in `backend/.env` only:
 
 ```env
 SUPABASE_SECRET_KEY=your-supabase-service-role-key
+SUPABASE_PUBLISHABLE_KEY=your-supabase-anon-key
 ```
 
 Model-provider keys such as `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and

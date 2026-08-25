@@ -33,7 +33,6 @@ SETUP_ONLY=0
 
 cd "$(dirname "$0")/.."          # -> word-addin
 ADDIN_DIR="$(pwd)"
-ROOT_DIR="$(cd .. && pwd)"       # -> repo root (word-addin lives at the root)
 
 step() { printf "\n\033[1;34m==> %s\033[0m\n" "$1"; }
 ok()   { printf "    \033[1;32m✔\033[0m %s\n" "$1"; }

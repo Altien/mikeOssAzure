@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, ExternalLink, Loader2 } from "lucide-react";
 import { getBrowserAccessToken, bounceIfUnauthorized } from "@/app/lib/auth-token";
+import { authenticatedFetch } from "@/app/lib/authEvents";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { PdfView } from "../shared/views/PdfView";
 import { DocxView } from "../shared/views/DocxView";
@@ -473,11 +474,8 @@ function DownloadButton({
             const qs = versionId
                 ? `?version_id=${encodeURIComponent(versionId)}`
                 : "";
-            const resp = await fetch(
+            const resp = await authenticatedFetch(
                 `${apiBase}/single-documents/${documentId}/docx${qs}`,
-                {
-                    headers: token ? { Authorization: `Bearer ${token}` } : {},
-                },
             );
             bounceIfUnauthorized(resp);
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);

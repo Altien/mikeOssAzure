@@ -4,6 +4,7 @@ import net from "net";
 import { getConfig } from "../config";
 import { Agent } from "undici";
 import { isBlockedIp } from "../privateIp";
+import { configuredApiPublicUrl } from "../runtimeConfig";
 import {
     BLOCKED_METADATA_HOSTS,
     HEADER_NAME_RE,
@@ -73,11 +74,12 @@ export function flushMcpEncryptionKey(): void {
 }
 
 export function mcpOAuthCallbackUrl() {
-    const base = (
-        process.env.API_PUBLIC_URL ||
-        process.env.BACKEND_URL ||
-        `http://localhost:${process.env.PORT ?? "3001"}`
-    ).replace(/\/+$/, "");
+    const configured = configuredApiPublicUrl();
+    if (!configured && process.env.NODE_ENV === "production") {
+        throw new Error("API_PUBLIC_URL is required for connector OAuth");
+    }
+    const base =
+        configured || `http://localhost:${process.env.PORT ?? "3001"}`;
     return `${base}/user/mcp-connectors/oauth/callback`;
 }
 

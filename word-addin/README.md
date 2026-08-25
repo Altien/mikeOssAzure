@@ -20,8 +20,7 @@ Sign-in uses Entra/MSAL (NAA or an Office dialog) and runtime `GET /config`; loc
 
 ## Quick start
 
-With the backend running and `frontend/.env.local` configured, run from the
-repository root:
+With the backend running and configured, run from the repository root:
 
 ```bash
 bash word-addin/scripts/dev.sh
@@ -45,15 +44,17 @@ FORCE=1 bash word-addin/scripts/dev.sh
 `--setup-only` prepares the environment without launching Word. `FORCE=1`
 launches even when the backend health check fails.
 
-To run the development server without opening a new Word document, set the
-following in `word-addin/.env` (persistent) or before a single command:
+For normal development, start webpack directly in the foreground without
+opening or sideloading Word:
 
 ```bash
-WORD_ADDIN_SIDELOAD=0 bun dev
+bun dev
+# or
+npm run dev
 ```
 
-The same switch applies to `npm run dev`, `npm start`, and `scripts/dev.sh`.
-Set it back to `1` when you want automatic sideloading.
+Use `npm start` when you explicitly want automatic sideloading. The
+`WORD_ADDIN_SIDELOAD` switch applies only to `npm start` and `scripts/dev.sh`.
 
 ## What it supports
 

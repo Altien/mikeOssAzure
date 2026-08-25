@@ -45,9 +45,10 @@ export function renderWithProviders(ui: ReactElement, opts: Opts = {}) {
     };
 
     const auth = {
-        user,
+        user: user ? { ...user, pendingEmail: null, createdWithGoogle: false } : null,
         isAuthenticated: user !== null,
         authLoading,
+        authError: null,
         signInLocal,
         signOut,
         getAccessToken:
@@ -56,8 +57,11 @@ export function renderWithProviders(ui: ReactElement, opts: Opts = {}) {
             id: user?.id ?? "test-user",
             email,
             pendingEmail: null,
+            createdWithGoogle: false,
         }),
         setPassword: async () => {},
+        refreshSession: async () => user ? { ...user, pendingEmail: null, createdWithGoogle: false } : null,
+        retrySession: async () => user ? { ...user, pendingEmail: null, createdWithGoogle: false } : null,
     };
 
     function Wrapper({ children }: { children: ReactNode }) {

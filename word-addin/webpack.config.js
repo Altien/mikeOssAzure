@@ -35,6 +35,12 @@ module.exports = async (_env, options) => {
         `Production Word build is missing: ${missing.join(", ")}`,
       );
     }
+    const apiBase = process.env.REACT_APP_API_BASE_URL || "/api";
+    if (!apiBase.startsWith("/")) {
+      throw new Error(
+        "Production REACT_APP_API_BASE_URL must be same-origin (for example /api) so HttpOnly auth cookies work in every Word host.",
+      );
+    }
   }
 
   /** @type {import('webpack-dev-server').Configuration} */

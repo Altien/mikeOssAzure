@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Loader2 } from "lucide-react";
 import { useFetchDocxBytes } from "@/app/hooks/useFetchDocxBytes";
+import { authenticatedFetch } from "@/app/lib/authEvents";
 import {
     getBrowserAccessToken,
     bounceIfUnauthorized,
@@ -158,9 +159,8 @@ async function tagWIdsOnRenderedDom(
         const qs = versionId
             ? `?version_id=${encodeURIComponent(versionId)}`
             : "";
-        const resp = await fetch(
+        const resp = await authenticatedFetch(
             `${apiBase}/single-documents/${documentId}/tracked-change-ids${qs}`,
-            { headers: token ? { Authorization: `Bearer ${token}` } : {} },
         );
         bounceIfUnauthorized(resp);
         if (!resp.ok) {

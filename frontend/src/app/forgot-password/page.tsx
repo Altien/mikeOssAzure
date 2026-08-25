@@ -1,20 +1,18 @@
 "use client";
-import { SupabaseAuthGate } from "@/app/components/auth/SupabaseAuthGate";
 
 import { useState } from "react";
 import Link from "next/link";
 import { Input } from "@/app/components/ui/input";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { SiteLogo } from "@/app/components/site-logo";
-import { FieldLabel } from "@/app/components/ui/form-field";
 import {
     authGlassCardClassName,
     authInputClassName,
 } from "@/app/components/auth/authStyles";
-import { browserAuthCallbackUrl } from "@/app/lib/authRedirects";
-import { getSupabaseClient } from "@/app/lib/supabase";
+import { requestPasswordReset } from "@/app/lib/authApi";
+import { FieldLabel } from "@/app/components/ui/form-field";
 
-function ForgotPasswordContent() {
+export default function ForgotPasswordPage() {
     const [email, setEmail] = useState("");
     const [loading, setLoading] = useState(false);
     const [submitted, setSubmitted] = useState(false);
@@ -23,11 +21,7 @@ function ForgotPasswordContent() {
         event.preventDefault();
         setLoading(true);
         try {
-            const redirectTo = browserAuthCallbackUrl("/reset-password");
-            await getSupabaseClient().auth.resetPasswordForEmail(
-                email.trim(),
-                redirectTo ? { redirectTo } : undefined,
-            );
+            await requestPasswordReset(email.trim());
         } catch {
             // Keep the response indistinguishable from a successful request.
         } finally {
@@ -126,5 +120,3 @@ function ForgotPasswordContent() {
         </div>
     );
 }
-
-export default function ForgotPasswordPage() { return <SupabaseAuthGate><ForgotPasswordContent /></SupabaseAuthGate>; }

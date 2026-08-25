@@ -13,8 +13,8 @@ const state = vi.hoisted(() => ({
     passwordSet: false,
     setPassword: vi.fn(),
     syncPasswordSet: vi.fn(),
-    resetPasswordForEmail: vi.fn(),
-    reauthenticate: vi.fn(),
+    requestPasswordReset: vi.fn(),
+    requestReauthentication: vi.fn(),
 }));
 
 vi.mock("@/app/contexts/AuthContext", () => ({
@@ -28,11 +28,9 @@ vi.mock("@/app/contexts/UserProfileContext", () => ({
     }),
 }));
 
-vi.mock("@/app/lib/supabase", () => ({
-    getSupabaseClient: () => ({ auth: {
-        resetPasswordForEmail: state.resetPasswordForEmail,
-        reauthenticate: state.reauthenticate,
-    } }),
+vi.mock("@/app/lib/authApi", () => ({
+    requestPasswordReset: state.requestPasswordReset,
+    requestReauthentication: state.requestReauthentication,
 }));
 
 describe("PasswordSettingsSection", () => {
@@ -46,8 +44,8 @@ describe("PasswordSettingsSection", () => {
             state.passwordSet = true;
             return true;
         });
-        state.resetPasswordForEmail.mockReset();
-        state.resetPasswordForEmail.mockResolvedValue({ error: null });
+        state.requestPasswordReset.mockReset();
+        state.requestPasswordReset.mockResolvedValue(undefined);
     });
 
     it("lets a Google-created account add its first password", async () => {
@@ -91,8 +89,8 @@ describe("PasswordSettingsSection", () => {
             screen.getByRole("button", { name: "Send reset email" }),
         );
 
-        await waitFor(() => expect(state.resetPasswordForEmail).toHaveBeenCalledWith(
-            "alex@example.com", expect.anything(),
+        await waitFor(() => expect(state.requestPasswordReset).toHaveBeenCalledWith(
+            "alex@example.com",
         ));
     });
 });

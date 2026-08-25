@@ -5,8 +5,7 @@ export type GoogleOAuthDialogMessage =
       type: typeof GOOGLE_OAUTH_MESSAGE_TYPE;
       requestId: string;
       status: "success";
-      accessToken: string;
-      refreshToken: string;
+      handoffTicket: string;
     }
   | {
       type: typeof GOOGLE_OAUTH_MESSAGE_TYPE;
@@ -16,7 +15,7 @@ export type GoogleOAuthDialogMessage =
     };
 
 export function parseGoogleOAuthDialogMessage(
-  value: string
+  value: string,
 ): GoogleOAuthDialogMessage | null {
   try {
     const parsed = JSON.parse(value) as Record<string, unknown>;
@@ -29,17 +28,14 @@ export function parseGoogleOAuthDialogMessage(
 
     if (
       parsed.status === "success" &&
-      typeof parsed.accessToken === "string" &&
-      parsed.accessToken.length > 0 &&
-      typeof parsed.refreshToken === "string" &&
-      parsed.refreshToken.length > 0
+      typeof parsed.handoffTicket === "string" &&
+      /^[A-Za-z0-9_-]{32,256}$/.test(parsed.handoffTicket)
     ) {
       return {
         type: GOOGLE_OAUTH_MESSAGE_TYPE,
         requestId: parsed.requestId,
         status: "success",
-        accessToken: parsed.accessToken,
-        refreshToken: parsed.refreshToken,
+        handoffTicket: parsed.handoffTicket,
       };
     }
 

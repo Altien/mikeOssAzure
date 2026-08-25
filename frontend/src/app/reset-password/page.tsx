@@ -1,5 +1,4 @@
 "use client";
-import { SupabaseAuthGate } from "@/app/components/auth/SupabaseAuthGate";
 
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
@@ -8,7 +7,6 @@ import { Loader2 } from "lucide-react";
 import { Input } from "@/app/components/ui/input";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { SiteLogo } from "@/app/components/site-logo";
-import { FieldLabel } from "@/app/components/ui/form-field";
 import {
     authGlassCardClassName,
     authInputClassName,
@@ -17,7 +15,8 @@ import {
     MIN_PASSWORD_LENGTH,
     minimumPasswordMessage,
 } from "@/app/components/auth/passwordPolicy";
-import { getSupabaseClient } from "@/app/lib/supabase";
+import { getAuthSession, updateAuthPassword } from "@/app/lib/authApi";
+import { FieldLabel } from "@/app/components/ui/form-field";
 
 function ResetPasswordContent() {
     const searchParams = useSearchParams();
@@ -45,15 +44,19 @@ function ResetPasswordContent() {
         if (isVerifyingPreview || isUnavailablePreview) return;
 
         let cancelled = false;
-        void getSupabaseClient().auth
-            .getSession()
-            .then(({ data, error: sessionError }) => {
+        void getAuthSession()
+            .then((session) => {
                 if (cancelled) return;
-                if (sessionError || !data.session) {
+                if (!session) {
                     setError(
                         "This password-reset link is invalid or has expired.",
                     );
                 }
+                setReady(true);
+            })
+            .catch(() => {
+                if (cancelled) return;
+                setError("This password-reset link is invalid or has expired.");
                 setReady(true);
             });
         return () => {
@@ -75,11 +78,7 @@ function ResetPasswordContent() {
 
         setLoading(true);
         try {
-            const { error: updateError } = await getSupabaseClient().auth.updateUser({
-                password,
-            });
-            if (updateError) throw updateError;
-            await getSupabaseClient().auth.signOut({ scope: "global" });
+            await updateAuthPassword(password, true);
             setSuccess(true);
         } catch {
             setError("Unable to update your password. Please try again.");
@@ -224,7 +223,7 @@ function ResetPasswordContent() {
 export default function ResetPasswordPage() {
     return (
         <Suspense fallback={null}>
-            <SupabaseAuthGate><ResetPasswordContent /></SupabaseAuthGate>
+            <ResetPasswordContent />
         </Suspense>
     );
 }

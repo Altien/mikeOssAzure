@@ -1,4 +1,6 @@
 import { DefaultAzureCredential } from "@azure/identity";
+import { SecretClient } from "@azure/keyvault-secrets";
+import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { Client } from "pg";
 import { createServerSupabase } from "../lib/supabase";
@@ -197,6 +199,49 @@ async function ensureAuthenticatorRole(databaseUrl: string): Promise<void> {
   }
 }
 
+/** One direct PostgreSQL session serializes all cooperating migration jobs. */
+async function provisionAuthSecrets(databaseUrl: string): Promise<void> {
+  const mode = process.env.AUTH_SECRET_PROVISIONING_MODE;
+  if (mode === "local") return;
+  if (mode !== "keyvault" || !process.env.KEY_VAULT_NAME || !process.env.AZURE_CLIENT_ID) {
+    throw new Error("Auth secret provisioning requires explicit Key Vault mode, vault and managed identity");
+  }
+  const vault = new SecretClient(
+    `https://${process.env.KEY_VAULT_NAME}.vault.azure.net/`,
+    new DefaultAzureCredential({ managedIdentityClientId: process.env.AZURE_CLIENT_ID }),
+  );
+  const client = new Client({ connectionString: databaseUrl, ssl: { rejectUnauthorized: false } });
+  await client.connect();
+  const lockKey = "mike-auth-secret-provision-v1";
+  try {
+    await client.query("select pg_advisory_lock(hashtextextended($1, 0))", [lockKey]);
+    for (const name of [
+      "auth-state-secret", "auth-session-encryption-secret", "auth-handoff-encryption-secret",
+    ]) {
+      let existing: string | undefined;
+      try { existing = (await vault.getSecret(name)).value; }
+      catch (error) {
+        if ((error as { statusCode?: number }).statusCode !== 404) throw error;
+      }
+      if (!existing) {
+        const created = randomBytes(32).toString("base64url");
+        await vault.setSecret(name, created);
+        console.log(`[migrate] auth secret created: ${name}`);
+      } else {
+        console.log(`[migrate] auth secret retained: ${name}`);
+      }
+      const confirmed = (await vault.getSecret(name)).value;
+      if (!confirmed || confirmed === "__unset__") throw new Error(`Auth secret is unusable: ${name}`);
+      if (name !== "auth-state-secret" && Buffer.from(confirmed, "base64url").length !== 32) {
+        throw new Error(`Auth encryption secret has invalid length: ${name}`);
+      }
+    }
+  } finally {
+    await client.query("select pg_advisory_unlock(hashtextextended($1, 0))", [lockKey]).catch(() => {});
+    await client.end().catch(() => {});
+  }
+}
+
 async function main() {
   const databaseUrl = await getDatabaseUrl();
   const exitCode = await runNodePgMigrate(databaseUrl);
@@ -206,6 +251,7 @@ async function main() {
   }
 
   await ensureAuthenticatorRole(databaseUrl);
+  await provisionAuthSecrets(databaseUrl);
   await reloadPostgrestSchemaCache(databaseUrl);
   // The same deployment job publishes the catalogue after its tables/RPCs
   // exist and before the backend revision is activated. Reference bytes are

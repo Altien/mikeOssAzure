@@ -19,6 +19,7 @@ import { buildApp } from "./app";
 import { initDownloadSigningSecret } from "./lib/downloadTokens";
 import { initManifestSigningKey, manifestPublicKey } from "./lib/manifestSigning";
 import { checkSchemaVersion } from "./lib/schemaCheck";
+import { initServerSessionKeys } from "./lib/serverSession";
 
 const PORT = process.env.PORT ?? 3001;
 
@@ -27,10 +28,14 @@ const PORT = process.env.PORT ?? 3001;
 // and the sync signing path needs it in process.env. resolveSecret never
 // rejects; .finally() is belt-and-braces so a bug there can't stop listen.
 // Same for the (optional) export-manifest signing key.
-Promise.all([
-  initDownloadSigningSecret(),
-  initManifestSigningKey().catch(() => {}),
-]).finally(() => {
+async function start(): Promise<void> {
+  // Required auth material and the session schema must exist before ingress
+  // can reach this revision. Optional export warmups remain best effort.
+  await initServerSessionKeys();
+  await Promise.all([
+    initDownloadSigningSecret(),
+    initManifestSigningKey().catch(() => {}),
+  ]);
   // Surface a malformed MANIFEST_SIGNING_KEY at boot rather than when
   // someone's first export fails. Unset is valid (manifests export unsigned);
   // malformed is a misconfiguration, so stop rather than serve a deployment
@@ -51,4 +56,9 @@ Promise.all([
     // prevent serving traffic. Migrations stay a deliberate manual step.
     void checkSchemaVersion().catch(() => {});
   });
+}
+
+void start().catch((error) => {
+  console.error("Required backend initialization failed", error instanceof Error ? error.message : String(error));
+  process.exit(1);
 });

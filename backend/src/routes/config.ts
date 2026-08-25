@@ -59,6 +59,9 @@ configRouter.get("/", async (_req, res) => {
     const apiScope = backendClientId
         ? `api://${backendClientId}/access_as_user`
         : "";
+    const backendPublicUrl = authProvider === "entra" ? await configValue("backend-public-url") : "";
+    let backendOrigin = "";
+    try { backendOrigin = new URL(backendPublicUrl).origin; } catch { /* Missing public URL is surfaced by the Word login path. */ }
 
     res.set("Cache-Control", "public, max-age=60");
     res.json({
@@ -71,5 +74,6 @@ configRouter.get("/", async (_req, res) => {
         workflowContributionsEnabled:
             process.env.WORKFLOW_CONTRIBUTIONS_ENABLED === "true",
         entra: { tenantId, clientId, apiScope },
+        backendOrigin,
     });
 });
