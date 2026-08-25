@@ -5,6 +5,7 @@ import request from "supertest";
 // request time (not import time), so setting them here is early enough even
 // though imported modules evaluate before this assignment runs.
 process.env.SUPABASE_URL = "http://supabase.test.local";
+process.env.SUPABASE_PUBLISHABLE_KEY = "test-publishable-key";
 process.env.SUPABASE_SECRET_KEY = "test-service-key";
 
 // Mock the supabase-js client factory so the real requireAuth middleware never

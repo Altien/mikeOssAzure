@@ -73,8 +73,8 @@ export function verifyDownload(
 }
 
 /**
- * Returns a relative download URL (e.g. "/download/abc.def"). The frontend
- * prefixes it with NEXT_PUBLIC_API_BASE_URL when rendering `<a href=…>`.
+ * Returns a relative download URL (e.g. "/download/abc.def"). Browser clients
+ * prefix it with their same-origin `/api` gateway.
  */
 export function buildDownloadUrl(path: string, filename: string): string {
     return `/download/${signDownload(path, filename)}`;

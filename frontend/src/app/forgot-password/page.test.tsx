@@ -3,14 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ForgotPasswordPage from "./page";
 
-const { resetPasswordForEmail } = vi.hoisted(() => ({
-    resetPasswordForEmail: vi.fn(),
+const { requestPasswordReset } = vi.hoisted(() => ({
+    requestPasswordReset: vi.fn(),
 }));
 
-vi.mock("@/app/lib/supabase", () => ({
-    supabase: {
-        auth: { resetPasswordForEmail },
-    },
+vi.mock("@/app/lib/authApi", () => ({
+    requestPasswordReset,
 }));
 
 vi.mock("@/app/components/site-logo", () => ({
@@ -19,11 +17,11 @@ vi.mock("@/app/components/site-logo", () => ({
 
 describe("ForgotPasswordPage", () => {
     beforeEach(() => {
-        resetPasswordForEmail.mockReset();
+        requestPasswordReset.mockReset();
     });
 
     it("sends recovery through the shared callback", async () => {
-        resetPasswordForEmail.mockResolvedValue({ error: null });
+        requestPasswordReset.mockResolvedValue(undefined);
         const user = userEvent.setup();
         render(<ForgotPasswordPage />);
 
@@ -35,20 +33,14 @@ describe("ForgotPasswordPage", () => {
             screen.getByRole("button", { name: "Send reset link" }),
         );
 
-        expect(resetPasswordForEmail).toHaveBeenCalledWith(
-            "person@example.com",
-            {
-                redirectTo:
-                    "http://localhost:3000/auth/callback?next=%2Freset-password",
-            },
-        );
+        expect(requestPasswordReset).toHaveBeenCalledWith("person@example.com");
         expect(
             await screen.findByRole("heading", { name: "Check your email" }),
         ).toBeInTheDocument();
     });
 
     it("uses the same response when the request fails", async () => {
-        resetPasswordForEmail.mockRejectedValue(new Error("not found"));
+        requestPasswordReset.mockRejectedValue(new Error("not found"));
         const user = userEvent.setup();
         render(<ForgotPasswordPage />);
 

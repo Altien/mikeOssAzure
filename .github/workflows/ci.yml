@@ -78,14 +78,10 @@ jobs:
       # (0 errors; warnings do not fail the step), so any new error fails CI.
       - run: npm run lint
 
-      # Production build. NEXT_PUBLIC_* values are inlined at build time and
-      # only need to be well-formed here — nothing is contacted during build.
+      # Production build. Runtime-only server configuration is intentionally
+      # not required for this compile-time check.
       # This catches type errors (next build runs tsc) and broken routes/imports.
       - run: npm run build
-        env:
-          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
-          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY: sb_publishable_placeholder
-          NEXT_PUBLIC_API_BASE_URL: http://localhost:3001
 
   # -----------------------------------------------------------------------
   # Offline eval harness: deterministic scorecard for citation accuracy,

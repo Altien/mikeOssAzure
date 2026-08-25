@@ -1,6 +1,6 @@
 /**
  * Best-effort `office-addin-debugging stop` before an automatically sideloaded
- * `npm start` or `bun dev` (wired as the "prestart" and "predev" hooks).
+ * `npm start` (wired as its "prestart" hook).
  *
  * Why: office-addin-debugging registers the add-in by hard-linking
  * manifest.xml into Word's sideload folder. If a previous run exited

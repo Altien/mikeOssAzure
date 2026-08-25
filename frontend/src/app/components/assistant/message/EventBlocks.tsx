@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ChevronDown, Download, Loader2 } from "lucide-react";
-import { supabase } from "@/app/lib/supabase";
+import { API_BASE } from "@/app/lib/mikeApi";
+import { authenticatedFetch } from "@/app/lib/authEvents";
 import type { AssistantEvent } from "../../shared/types";
 import { FileTypeIcon } from "../../shared/FileTypeIcon";
 import {
@@ -105,8 +106,7 @@ export function ReasoningBlock({
         if (!nextOverflowing) setIsExpanded(false);
     }, [isContentOpen, isStreaming, text, userToggledContent]);
 
-    const showContent =
-        isContentOpen || (!userToggledContent && !hasMeasured);
+    const showContent = isContentOpen || (!userToggledContent && !hasMeasured);
     const isCollapsed = isContentOpen && isOverflowing && !isExpanded;
 
     return (
@@ -213,10 +213,7 @@ export function DocReadBlock({
             filename={filename}
             fileIcon={
                 showFileIcon ? (
-                    <FileTypeIcon
-                        fileType={filename}
-                        className="h-3.5 w-3.5"
-                    />
+                    <FileTypeIcon fileType={filename} className="h-3.5 w-3.5" />
                 ) : undefined
             }
             onClick={onClick}
@@ -276,7 +273,10 @@ export function DocCreatedBlock({
                 </span>
                 {isStreaming || !onClick ? (
                     <span className="flex min-w-0 items-center gap-1.5">
-                        <FileTypeIcon fileType={filename} className="h-3.5 w-3.5" />
+                        <FileTypeIcon
+                            fileType={filename}
+                            className="h-3.5 w-3.5"
+                        />
                         <span className="truncate">
                             {isStreaming ? `${filename}...` : filename}
                         </span>
@@ -287,7 +287,10 @@ export function DocCreatedBlock({
                         onClick={onClick}
                         className="flex min-w-0 cursor-pointer items-center gap-1.5 text-left transition-colors hover:text-gray-700"
                     >
-                        <FileTypeIcon fileType={filename} className="h-3.5 w-3.5" />
+                        <FileTypeIcon
+                            fileType={filename}
+                            className="h-3.5 w-3.5"
+                        />
                         <span className="truncate">{filename}</span>
                     </button>
                 )}
@@ -393,11 +396,8 @@ export function DocDownloadBlock({
     // older saved download filenames — the version is surfaced as a
     // separate tag now.
     const basename = rawBasename.replace(/\s*\[Edited V\d+\]\s*$/, "").trim();
-    // Only backend-relative URLs are accepted. The download fetch carries
-    // the user's bearer token, so any absolute URL from tool output is
-    // refused to keep the token from leaking off-origin.
-    const API_BASE =
-        process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+    // Only backend-relative URLs are accepted. Downloads stay on the
+    // same-origin gateway so HttpOnly auth cookies are never sent elsewhere.
     const isSafeHref = download_url.startsWith("/");
     const href = isSafeHref ? `${API_BASE}${download_url}` : null;
     const [busy, setBusy] = useState(false);
@@ -411,13 +411,7 @@ export function DocDownloadBlock({
         if (busy || isReloading || !href) return;
         setBusy(true);
         try {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-            const token = session?.access_token;
-            const resp = await fetch(href, {
-                headers: token ? { Authorization: `Bearer ${token}` } : {},
-            });
+            const resp = await authenticatedFetch(href);
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const blob = await resp.blob();
             const blobUrl = URL.createObjectURL(blob);

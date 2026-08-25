@@ -9,8 +9,7 @@ import {
     authGlassCardClassName,
     authInputClassName,
 } from "@/app/components/auth/authStyles";
-import { browserAuthCallbackUrl } from "@/app/lib/authRedirects";
-import { supabase } from "@/app/lib/supabase";
+import { requestPasswordReset } from "@/app/lib/authApi";
 import { FieldLabel } from "@/app/components/ui/form-field";
 
 export default function ForgotPasswordPage() {
@@ -22,11 +21,7 @@ export default function ForgotPasswordPage() {
         event.preventDefault();
         setLoading(true);
         try {
-            const redirectTo = browserAuthCallbackUrl("/reset-password");
-            await supabase.auth.resetPasswordForEmail(
-                email.trim(),
-                redirectTo ? { redirectTo } : undefined,
-            );
+            await requestPasswordReset(email.trim());
         } catch {
             // Keep the response indistinguishable from a successful request.
         } finally {

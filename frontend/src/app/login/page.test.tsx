@@ -3,10 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LoginPage from "./page";
 
-const { signInWithPassword, signInWithOAuth, replace, push } = vi.hoisted(
+const { login, startGoogleOAuth, refreshSession, replace, push } = vi.hoisted(
     () => ({
-        signInWithPassword: vi.fn(),
-        signInWithOAuth: vi.fn(),
+        login: vi.fn(),
+        startGoogleOAuth: vi.fn(),
+        refreshSession: vi.fn(),
         replace: vi.fn(),
         push: vi.fn(),
     }),
@@ -16,12 +17,17 @@ vi.mock("next/navigation", () => ({
     useRouter: () => ({ replace, push }),
 }));
 
-vi.mock("@/app/lib/supabase", () => ({
-    supabase: { auth: { signInWithPassword, signInWithOAuth } },
+vi.mock("@/app/lib/authApi", () => ({
+    login,
+    startGoogleOAuth,
 }));
 
 vi.mock("@/app/contexts/AuthContext", () => ({
-    useAuth: () => ({ isAuthenticated: false, authLoading: false }),
+    useAuth: () => ({
+        isAuthenticated: false,
+        authLoading: false,
+        refreshSession,
+    }),
 }));
 
 vi.mock("@/app/components/site-logo", () => ({
@@ -30,14 +36,16 @@ vi.mock("@/app/components/site-logo", () => ({
 
 describe("LoginPage", () => {
     beforeEach(() => {
-        signInWithPassword.mockReset();
-        signInWithOAuth.mockReset();
+        login.mockReset();
+        startGoogleOAuth.mockReset();
+        refreshSession.mockReset();
+        refreshSession.mockResolvedValue(null);
         replace.mockReset();
         push.mockReset();
     });
 
     it("allows an existing account to submit a password shorter than the new minimum", async () => {
-        signInWithPassword.mockResolvedValue({ error: null });
+        login.mockResolvedValue({ user: { id: "user-1" } });
         const user = userEvent.setup();
         render(<LoginPage />);
 
@@ -52,10 +60,7 @@ describe("LoginPage", () => {
         await user.type(screen.getByLabelText("Password"), "oldpass");
         await user.click(screen.getByRole("button", { name: "Log in" }));
 
-        expect(signInWithPassword).toHaveBeenCalledWith({
-            email: "existing@example.com",
-            password: "oldpass",
-        });
+        expect(login).toHaveBeenCalledWith("existing@example.com", "oldpass");
         expect(push).toHaveBeenCalledWith("/onboarding/profile");
     });
 

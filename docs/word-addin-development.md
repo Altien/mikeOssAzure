@@ -5,19 +5,22 @@ reference for the [Mike Word add-in](../word-addin/README.md).
 
 ## Architecture
 
-The add-in uses the same Supabase project and Mike API as the web app:
+The add-in uses the same backend-managed session and Mike API as the web app:
 
-- Sign-in goes directly to Supabase Auth.
+- Password, Google, refresh, and logout operations go through the Mike backend.
 - Chat, workflows, uploads, profiles, and model discovery use the Mike API.
 - Word conversations use dedicated `word_*` tables and do not appear in the
   web assistant's normal chat history.
-- The task pane requires HTTPS, so local development proxies Mike and Supabase
+- The task pane requires HTTPS, so local development proxies `/api` to Mike
   through `https://localhost:3200`.
 
-Password and Google sign-in both produce the same Supabase session. Google
-sign-in uses a non-iframe Office Dialog that starts and finishes at
+Password and Google sign-in both produce the same HttpOnly cookie session.
+Google sign-in uses a non-iframe Office Dialog that starts and finishes at
 `https://localhost:3200/oauth-dialog.html`; the intermediate Supabase and
-Google pages run outside the task pane.
+Google pages run outside the task pane. No access or refresh token is available
+to task-pane JavaScript or OfficeRuntime storage. The dialog returns only a
+request-bound, single-use handoff ticket; the task pane redeems it and receives
+its own HttpOnly cookie.
 
 The add-in requires `WordApi 1.6` for tracked-change inspection, acceptance,
 and rejection.
@@ -43,20 +46,14 @@ steps manually:
    Local development uses these values:
 
    ```env
-   REACT_APP_SUPABASE_URL=https://localhost:3200
-   REACT_APP_SUPABASE_ANON_KEY=<your Supabase publishable key>
    REACT_APP_API_BASE_URL=https://localhost:3200/api
    REACT_APP_WEB_APP_URL=https://app.mikeoss.com
-   SUPABASE_PROXY_TARGET=https://your-project.supabase.co
    API_PROXY_TARGET=http://localhost:3001
    ```
 
-   `REACT_APP_SUPABASE_ANON_KEY` should match the frontend configuration. The
-   browser-facing URLs remain on the HTTPS dev server; the proxy targets point
-   to the real services. Shell variables override `.env` for CI and deployment.
-   For a local Supabase CLI stack, use
-   `SUPABASE_PROXY_TARGET=http://127.0.0.1:54321` and follow the Google provider
-   setup in [Local development](local-development.md#local-google-authentication).
+   The browser-facing API URL remains on the HTTPS dev server; the proxy target
+   points to the backend, whose `.env` contains the Supabase configuration.
+   Shell variables override `.env` for CI and deployment.
 
 3. Install the trusted development certificate:
 
@@ -78,18 +75,18 @@ steps manually:
    npm start
    ```
 
-   To start only webpack without opening a new Word document, set
-   `WORD_ADDIN_SIDELOAD=0` in `word-addin/.env`, or use it for one command:
+   To start only webpack in the foreground without opening or sideloading Word:
 
    ```bash
-   WORD_ADDIN_SIDELOAD=0 bun dev
+   bun dev
+   # or
+   npm run dev
    ```
 
-   The toggle also applies to `npm run dev`, `npm start`, and the setup helper.
+   `WORD_ADDIN_SIDELOAD` applies only to `npm start` and the setup helper.
 
-The task pane appears under **Home → Mike Legal AI → Mike**. Use
-`npm run dev:server` only when you want webpack without automatic Word
-sideloading.
+The task pane appears under **Home → Mike Legal AI → Mike**. `npm run
+dev:server` is retained as an internal alias for the direct webpack command.
 
 ## Manual sideloading
 
@@ -124,9 +121,7 @@ Production builds require explicit service endpoints and a public add-in URL:
 
 ```bash
 cd word-addin
-REACT_APP_API_BASE_URL=https://api.example.com \
-REACT_APP_SUPABASE_URL=https://example.supabase.co \
-REACT_APP_SUPABASE_ANON_KEY=... \
+REACT_APP_API_BASE_URL=/api \
 REACT_APP_WEB_APP_URL=https://app.example.com \
 WORD_ADDIN_PUBLIC_URL=https://word.example.com \
 npm run build
@@ -135,9 +130,29 @@ npm run build
 The build writes task-pane assets and a URL-rewritten manifest to `dist/`.
 The checked-in `manifest.xml` remains configured for localhost.
 
-Allow the deployed task-pane origin in the backend with
-`WORD_ADDIN_URL=https://word.example.com` or include it in `ALLOWED_ORIGINS`.
-Without that entry, browser CORS checks block production requests.
+The add-in host must reverse-proxy `https://word.example.com/api/*` to the Mike
+backend while preserving `Cookie`, `Origin`, response `Set-Cookie` headers, and
+streaming bodies. Keeping `/api` on the task-pane origin avoids third-party
+cookie restrictions across Word desktop and Word on the web.
+
+The included production host implements this contract:
+
+```bash
+npm run build
+WORD_ADDIN_BACKEND_ORIGIN=http://localhost:3001 npm run start:production
+```
+
+The Dockerfile packages the same host. It expects TLS to terminate at the
+deployment ingress and requires `WORD_ADDIN_BACKEND_ORIGIN` only at runtime.
+
+Identify and allow the deployed task-pane origin in the backend with
+`WORD_ADDIN_URL=https://word.example.com`. `ALLOWED_ORIGINS` alone is not
+sufficient: the explicit Word setting also selects the partitioned cookie
+policy and enables the OAuth handoff. Without it, the backend rejects the
+handoff and Word on the web cannot retain its embedded session.
+Set `AUTH_HANDOFF_ENCRYPTION_SECRET` and apply
+`backend/migrations/20260825_01_auth_handoff_tickets.sql` before enabling Google
+sign-in. The backend rejects missing or weak handoff configuration at startup.
 
 For Google sign-in, add
 `https://word.example.com/oauth-dialog.html` to the Supabase Auth redirect

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { supabase } from "@/app/lib/supabase";
+import { API_BASE } from "@/app/lib/mikeApi";
+import { authenticatedFetch } from "@/app/lib/authEvents";
 
 export interface FetchDocxResult {
     bytes: ArrayBuffer | null;
@@ -56,12 +57,10 @@ export function useFetchDocxBytes(
         }
 
         const key = cacheKey(documentId, versionId, refetchKey);
-        const apiBase =
-            process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
         const qs = versionId
             ? `?version_id=${encodeURIComponent(versionId)}`
             : "";
-        const url = `${apiBase}/single-documents/${documentId}/docx${qs}`;
+        const url = `${API_BASE}/single-documents/${documentId}/docx${qs}`;
 
         // Cache hit: reuse bytes synchronously, no network, no spinner.
         const cached = bytesCache.get(key);
@@ -80,15 +79,9 @@ export function useFetchDocxBytes(
         const pending =
             inFlight.get(key) ??
             (async () => {
-                const {
-                    data: { session },
-                } = await supabase.auth.getSession();
-                const token = session?.access_token;
                 // Stream bytes through the backend (avoids CORS on R2
                 // signed URLs).
-                const bin = await fetch(url, {
-                    headers: token ? { Authorization: `Bearer ${token}` } : {},
-                });
+                const bin = await authenticatedFetch(url);
                 if (!bin.ok) throw new Error(`HTTP ${bin.status}`);
                 const buf = await bin.arrayBuffer();
                 bytesCache.set(key, buf);
@@ -104,7 +97,9 @@ export function useFetchDocxBytes(
             })
             .catch(() => {
                 if (cancelled) return;
-                setError("This document could not be loaded. Please try again.");
+                setError(
+                    "This document could not be loaded. Please try again.",
+                );
             })
             .finally(() => {
                 inFlight.delete(key);

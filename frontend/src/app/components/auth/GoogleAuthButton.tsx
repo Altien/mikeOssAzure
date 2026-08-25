@@ -4,8 +4,7 @@ import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { GoogleIconUI } from "@/shared/ui/GoogleIconUI";
 import { PillButton } from "@/app/components/ui/pill-button";
-import { browserAuthCallbackUrl } from "@/app/lib/authRedirects";
-import { supabase } from "@/app/lib/supabase";
+import { startGoogleOAuth } from "@/app/lib/authApi";
 
 interface GoogleAuthButtonProps {
     onError: (message: string) => void;
@@ -26,13 +25,8 @@ export function GoogleAuthButton({
         onError("");
 
         try {
-            const redirectTo = browserAuthCallbackUrl("/onboarding/profile");
-            const { error } = await supabase.auth.signInWithOAuth({
-                provider: "google",
-                options: redirectTo ? { redirectTo } : undefined,
-            });
-
-            if (error) throw error;
+            const { url } = await startGoogleOAuth("/onboarding/profile");
+            window.location.assign(url);
         } catch (error: unknown) {
             onError(
                 error instanceof Error

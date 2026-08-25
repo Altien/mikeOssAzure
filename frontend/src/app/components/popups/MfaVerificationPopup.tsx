@@ -8,7 +8,11 @@ import {
     type KeyboardEvent,
 } from "react";
 import { Loader2 } from "lucide-react";
-import { supabase } from "@/app/lib/supabase";
+import {
+    challengeAndVerifyMfa,
+    getMfaAssurance,
+    listMfaFactors,
+} from "@/app/lib/authApi";
 import { Modal } from "../modals/Modal";
 
 type MfaFactor = {
@@ -23,9 +27,7 @@ const devLog = (...args: Parameters<typeof console.log>) => {
 };
 
 export async function needsMfaVerification() {
-    const { data, error } =
-        await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-    if (error) throw error;
+    const data = await getMfaAssurance();
     return data.nextLevel === "aal2" && data.currentLevel !== "aal2";
 }
 
@@ -65,17 +67,9 @@ export function MfaVerificationPopup({
             setLoading(true);
             setError(null);
             setCode("");
-            const { data, error: listError } =
-                await supabase.auth.mfa.listFactors();
-            if (cancelled) return;
-            if (listError) {
-                devLog("[mfa-popup] list factors failed", {
-                    error: listError.message,
-                });
-                setError("Authenticator verification could not be loaded.");
-                setFactors([]);
-                setSelectedFactorId("");
-            } else {
+            try {
+                const data = await listMfaFactors();
+                if (cancelled) return;
                 const verified = (data.totp ?? []) as MfaFactor[];
                 devLog("[mfa-popup] factors loaded", {
                     totpCount: verified.length,
@@ -83,6 +77,17 @@ export function MfaVerificationPopup({
                 });
                 setFactors(verified);
                 setSelectedFactorId(verified[0]?.id ?? "");
+            } catch (listError) {
+                if (cancelled) return;
+                devLog("[mfa-popup] list factors failed", {
+                    error:
+                        listError instanceof Error
+                            ? listError.message
+                            : String(listError),
+                });
+                setError("Authenticator verification could not be loaded.");
+                setFactors([]);
+                setSelectedFactorId("");
             }
             setLoading(false);
         }
@@ -99,21 +104,21 @@ export function MfaVerificationPopup({
         setVerifying(true);
         setError(null);
         devLog("[mfa-popup] verifying code", { factorId: selectedFactorId });
-        const { error: verifyError } =
-            await supabase.auth.mfa.challengeAndVerify({
-                factorId: selectedFactorId,
-                code: code.trim(),
-            });
-        setVerifying(false);
-
-        if (verifyError) {
+        try {
+            await challengeAndVerifyMfa(selectedFactorId, code.trim());
+        } catch (verifyError) {
+            setVerifying(false);
             devLog("[mfa-popup] verification failed", {
-                error: verifyError.message,
+                error:
+                    verifyError instanceof Error
+                        ? verifyError.message
+                        : String(verifyError),
             });
             setError("The verification code is invalid or expired.");
             return;
         }
 
+        setVerifying(false);
         devLog("[mfa-popup] verification succeeded");
         setCode("");
         onVerified();

@@ -8,11 +8,13 @@ import { SiteLogo } from "@/app/components/site-logo";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { authGlassCardClassName } from "@/app/components/auth/authStyles";
 import { authErrorDescription, safeAuthNext } from "@/app/lib/authRedirects";
-import { supabase } from "@/app/lib/supabase";
+import { exchangeAuthCode, getAuthSession } from "@/app/lib/authApi";
+import { useAuth } from "@/app/contexts/AuthContext";
 
 function AuthCallbackContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
+    const { refreshSession } = useAuth();
     const [error, setError] = useState<string | null>(null);
     const isErrorPreview =
         process.env.NODE_ENV !== "production" &&
@@ -38,20 +40,22 @@ function AuthCallbackContent() {
 
             const code = searchParams.get("code");
             if (code) {
-                const { error: exchangeError } =
-                    await supabase.auth.exchangeCodeForSession(code);
-                if (exchangeError) {
+                try {
+                    await exchangeAuthCode(code);
+                    await refreshSession();
+                } catch {
                     setError("This confirmation link is invalid or has expired.");
                     return;
                 }
             } else {
-                const { data, error: sessionError } =
-                    await supabase.auth.getSession();
-                if (sessionError) {
+                let session;
+                try {
+                    session = await getAuthSession();
+                } catch {
                     setError("Authentication could not be completed. Please try again.");
                     return;
                 }
-                if (!data.session) {
+                if (!session) {
                     setError(
                         "This confirmation link is invalid or has expired.",
                     );
@@ -68,7 +72,7 @@ function AuthCallbackContent() {
         return () => {
             cancelled = true;
         };
-    }, [isErrorPreview, router, searchParams]);
+    }, [isErrorPreview, refreshSession, router, searchParams]);
 
     return (
         <div className="relative flex min-h-dvh items-center justify-center bg-gray-50/80 px-6 py-10">

@@ -8,7 +8,15 @@ import {
     type KeyboardEvent,
 } from "react";
 import { Copy, Loader2 } from "lucide-react";
-import { supabase } from "@/app/lib/supabase";
+import {
+    AuthApiError,
+    challengeMfa,
+    enrollMfa,
+    getMfaAssurance,
+    listMfaFactors,
+    unenrollMfa,
+    verifyMfa,
+} from "@/app/lib/authApi";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { PasswordSettingsSection } from "@/app/components/settings/PasswordSettingsSection";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
@@ -194,42 +202,33 @@ export default function SecurityPage() {
         setLoading(true);
         setStatus(null);
         traceMfa("[security/mfa] refreshing state");
-        const [factorResult, aalResult] = await Promise.all([
-            supabase.auth.mfa.listFactors(),
-            supabase.auth.mfa.getAuthenticatorAssuranceLevel(),
-        ]);
-
-        if (factorResult.error) {
-            traceMfa("[security/mfa] list factors failed", {
-                error: factorResult.error.message,
-            });
-            setStatus("MFA settings could not be loaded. Please try again.");
-            setFactors([]);
-        } else {
-            const verifiedTotp = (factorResult.data.totp ?? []) as MfaFactor[];
-            const allFactors = (factorResult.data.all ?? []) as MfaFactor[];
+        try {
+            const [factorResult, aalResult] = await Promise.all([
+                listMfaFactors(),
+                getMfaAssurance(),
+            ]);
+            const verifiedTotp = (factorResult.totp ?? []) as MfaFactor[];
+            const allFactors = (factorResult.all ?? []) as MfaFactor[];
             traceMfa("[security/mfa] factors loaded", {
                 allCount: allFactors.length,
                 verifiedTotpCount: verifiedTotp.length,
                 all: summarizeFactors(allFactors),
             });
             setFactors(verifiedTotp);
-        }
-
-        if (aalResult.error) {
-            traceMfa("[security/mfa] assurance lookup failed", {
-                error: aalResult.error.message,
+            traceMfa("[security/mfa] assurance level", {
+                currentLevel: aalResult.currentLevel,
+                nextLevel: aalResult.nextLevel,
+            });
+            setCurrentLevel(aalResult.currentLevel);
+            setNextLevel(aalResult.nextLevel);
+        } catch (error) {
+            traceMfa("[security/mfa] state load failed", {
+                error: error instanceof Error ? error.message : String(error),
             });
             setStatus("MFA settings could not be loaded. Please try again.");
+            setFactors([]);
             setCurrentLevel(null);
             setNextLevel(null);
-        } else {
-            traceMfa("[security/mfa] assurance level", {
-                currentLevel: aalResult.data.currentLevel,
-                nextLevel: aalResult.data.nextLevel,
-            });
-            setCurrentLevel(aalResult.data.currentLevel);
-            setNextLevel(aalResult.data.nextLevel);
         }
         setLoading(false);
     }
@@ -255,39 +254,29 @@ export default function SecurityPage() {
         try {
             traceMfa("[security/mfa] enrollment requested");
 
-            let { data, error } = await supabase.auth.mfa.enroll({
-                factorType: "totp",
-                friendlyName: "Mike",
-            });
-            if (error && isDuplicateFriendlyNameError(error)) {
+            let data;
+            try {
+                data = await enrollMfa("Mike");
+            } catch (error) {
+                if (!isDuplicateFriendlyNameError(error)) throw error;
                 traceMfa("[security/mfa] retrying enrollment with unique name", {
-                    error: error.message,
+                    error: error instanceof Error ? error.message : String(error),
                 });
-                const retry = await supabase.auth.mfa.enroll({
-                    factorType: "totp",
-                    friendlyName: `Mike ${Date.now()}`,
-                });
-                data = retry.data;
-                error = retry.error;
+                data = await enrollMfa(`Mike ${Date.now()}`);
             }
-            if (error) throw error;
-            if (!data) throw new Error("Failed to start MFA setup.");
             traceMfa("[security/mfa] enrollment created", {
                 factorId: data.id,
             });
 
-            const challenge = await supabase.auth.mfa.challenge({
-                factorId: data.id,
-            });
-            if (challenge.error) throw challenge.error;
+            const challenge = await challengeMfa(data.id);
             traceMfa("[security/mfa] enrollment challenge created", {
                 factorId: data.id,
-                challengeId: challenge.data.id,
+                challengeId: challenge.id,
             });
 
             setEnrollment({
                 factorId: data.id,
-                challengeId: challenge.data.id,
+                challengeId: challenge.id,
                 qrCode: data.totp.qr_code,
                 secret: data.totp.secret,
             });
@@ -329,12 +318,11 @@ export default function SecurityPage() {
                 factorId: enrollment.factorId,
                 challengeId: enrollment.challengeId,
             });
-            const { error } = await supabase.auth.mfa.verify({
-                factorId: enrollment.factorId,
-                challengeId: enrollment.challengeId,
-                code: verificationCode.trim(),
-            });
-            if (error) throw error;
+            await verifyMfa(
+                enrollment.factorId,
+                enrollment.challengeId,
+                verificationCode.trim(),
+            );
             traceMfa("[security/mfa] enrollment verified", {
                 factorId: enrollment.factorId,
             });
@@ -364,7 +352,7 @@ export default function SecurityPage() {
         setVerificationCode("");
         setSetupKeyCopied(false);
         if (factorId) {
-            await supabase.auth.mfa.unenroll({ factorId }).catch(() => null);
+            await unenrollMfa(factorId).catch(() => null);
         }
         await refreshMfaState();
     }
@@ -378,11 +366,12 @@ export default function SecurityPage() {
 
     async function requestUnenroll(factorId: string) {
         setStatus(null);
-        const { data, error } =
-            await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-        if (error) {
+        let data;
+        try {
+            data = await getMfaAssurance();
+        } catch (error) {
             traceMfa("[security/mfa] state verification failed", {
-                errorType: error.name,
+                errorType: error instanceof Error ? error.name : typeof error,
             });
             setStatus("MFA settings could not be verified. Please try again.");
             return;
@@ -399,23 +388,26 @@ export default function SecurityPage() {
     async function unenrollFactor(factorId: string) {
         setBusy(true);
         setStatus(null);
-        const { error } = await supabase.auth.mfa.unenroll({ factorId });
-        setBusy(false);
-
-        if (error) {
+        try {
+            await unenrollMfa(factorId);
+        } catch (error) {
+            setBusy(false);
             if (
-                error.message.toLowerCase().includes("aal") ||
-                error.code === "insufficient_aal"
+                (error instanceof Error &&
+                    error.message.toLowerCase().includes("aal")) ||
+                (error instanceof AuthApiError &&
+                    error.code === "insufficient_aal")
             ) {
                 setPendingUnenrollFactorId(factorId);
                 return;
             }
             traceMfa("[security/mfa] disable failed", {
-                errorType: error.name,
+                errorType: error instanceof Error ? error.name : typeof error,
             });
             setStatus("MFA could not be disabled. Please try again.");
             return;
         }
+        setBusy(false);
 
         setStatus("MFA disabled.");
         if (profile?.mfaOnLogin) {

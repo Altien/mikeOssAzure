@@ -5,6 +5,7 @@ import { Send, CheckCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { FieldLabel } from "@/app/components/ui/form-field";
+import { authenticatedFetch } from "@/app/lib/authEvents";
 
 type FeedbackType = "bug" | "feature" | "question" | "other";
 
@@ -58,7 +59,7 @@ export default function SupportPage() {
         setIsSubmitting(true);
 
         try {
-            const response = await fetch("/api/support", {
+            const response = await authenticatedFetch("/api/support", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({

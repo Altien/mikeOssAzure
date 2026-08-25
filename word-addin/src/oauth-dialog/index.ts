@@ -1,13 +1,13 @@
 /// <reference types="office-js" />
-import { createClient } from "@supabase/supabase-js";
 import {
   GOOGLE_OAUTH_MESSAGE_TYPE,
   type GoogleOAuthDialogMessage,
 } from "../taskpane/auth/oauthProtocol";
 
-const SUPABASE_URL = process.env.REACT_APP_SUPABASE_URL ?? "";
-const SUPABASE_ANON_KEY = process.env.REACT_APP_SUPABASE_ANON_KEY ?? "";
-const STORAGE_KEY = "mike-word-google-oauth";
+const API_BASE = (process.env.REACT_APP_API_BASE_URL || "/api").replace(
+  /\/+$/,
+  "",
+);
 const REQUEST_STORAGE_KEY = "mike-word-google-oauth-request";
 
 function setStatus(message: string): void {
@@ -27,7 +27,7 @@ function send(message: GoogleOAuthDialogMessage): boolean {
     return true;
   } catch {
     setStatus(
-      "Could not hand the session back to Word. Close this window and try signing in again."
+      "Could not notify Word that sign-in completed. Close this window and try again.",
     );
     return false;
   }
@@ -44,13 +44,21 @@ function sendError(requestId: string, message: string): void {
 }
 
 function clearTemporaryAuthStorage(): void {
-  // localStorage is included only to sweep up sessions persisted there by
-  // earlier builds of this dialog; the client now writes sessionStorage.
+  // Sweep up PKCE/session keys left by older browser-Supabase builds.
   for (const storage of [window.sessionStorage, window.localStorage]) {
-    storage.removeItem(STORAGE_KEY);
-    storage.removeItem(`${STORAGE_KEY}-code-verifier`);
+    storage.removeItem("mike-word-google-oauth");
+    storage.removeItem("mike-word-google-oauth-code-verifier");
   }
   window.sessionStorage.removeItem(REQUEST_STORAGE_KEY);
+}
+
+async function responseError(response: Response): Promise<string> {
+  const body = (await response.json().catch(() => ({}))) as {
+    detail?: unknown;
+  };
+  return typeof body.detail === "string" && body.detail
+    ? body.detail
+    : `Google sign-in failed (HTTP ${response.status}).`;
 }
 
 async function runGoogleOAuth(): Promise<void> {
@@ -62,12 +70,9 @@ async function runGoogleOAuth(): Promise<void> {
   const requestId =
     requestedId ?? window.sessionStorage.getItem(REQUEST_STORAGE_KEY) ?? "";
   if (!requestId) {
-    setStatus("This sign-in request is invalid. Close this window and try again.");
-    return;
-  }
-
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    sendError(requestId, "Google sign-in is not configured for this add-in.");
+    setStatus(
+      "This sign-in request is invalid. Close this window and try again.",
+    );
     return;
   }
 
@@ -80,33 +85,29 @@ async function runGoogleOAuth(): Promise<void> {
     return;
   }
 
-  // This client exists only to run the PKCE round trip. Its persistence has
-  // to survive exactly one same-tab redirect (to Google and back), so it
-  // lives in sessionStorage — never localStorage, where a crash between the
-  // code exchange and cleanup would leave a full session readable on disk.
-  // The task pane's real session storage is OfficeRuntime.storage; browser
-  // storage must never hold long-lived credentials (see office-mock.ts).
-  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    auth: {
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-      flowType: "pkce",
-      persistSession: true,
-      storage: window.sessionStorage,
-      storageKey: STORAGE_KEY,
-    },
-  });
-
   const code = currentUrl.searchParams.get("code");
   if (code) {
     setStatus("Completing sign-in…");
-    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
-    if (error || !data.session?.access_token || !data.session.refresh_token) {
+    const response = await fetch(`${API_BASE}/auth/exchange`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, handoffRequestId: requestId }),
+    });
+    if (!response.ok) {
+      const message = await responseError(response);
       clearTemporaryAuthStorage();
-      sendError(
-        requestId,
-        error?.message ?? "Google did not return a complete Supabase session."
-      );
+      sendError(requestId, message);
+      return;
+    }
+
+    const data = (await response.json()) as { handoffTicket?: unknown };
+    if (
+      typeof data.handoffTicket !== "string" ||
+      !/^[A-Za-z0-9_-]{32,256}$/.test(data.handoffTicket)
+    ) {
+      clearTemporaryAuthStorage();
+      sendError(requestId, "Google sign-in did not produce a valid handoff.");
       return;
     }
 
@@ -114,14 +115,8 @@ async function runGoogleOAuth(): Promise<void> {
       type: GOOGLE_OAUTH_MESSAGE_TYPE,
       requestId,
       status: "success",
-      accessToken: data.session.access_token,
-      refreshToken: data.session.refresh_token,
+      handoffTicket: data.handoffTicket,
     };
-    // Deliberately NO supabase.auth.signOut() here: even scope "local"
-    // POSTs /logout with the session JWT, and GoTrue revokes that session's
-    // refresh token server-side — the very token being handed to the task
-    // pane below. Removing the persisted storage keys (next line) plus
-    // autoRefreshToken:false is the complete local cleanup.
     clearTemporaryAuthStorage();
     if (send(message)) {
       setStatus("Signed in. You can return to Word.");
@@ -129,19 +124,26 @@ async function runGoogleOAuth(): Promise<void> {
     return;
   }
 
-  const redirectUrl = new URL("/oauth-dialog.html", window.location.origin);
-
-  const { data, error } = await supabase.auth.signInWithOAuth({
-    provider: "google",
-    options: {
-      redirectTo: redirectUrl.toString(),
-      skipBrowserRedirect: true,
-    },
+  const response = await fetch(`${API_BASE}/auth/oauth`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      provider: "google",
+      callbackPath: "/oauth-dialog.html",
+      next: "/assistant",
+    }),
   });
-
-  if (error || !data.url) {
+  if (!response.ok) {
+    const message = await responseError(response);
     clearTemporaryAuthStorage();
-    sendError(requestId, error?.message ?? "Unable to open Google sign-in.");
+    sendError(requestId, message);
+    return;
+  }
+  const data = (await response.json()) as { url?: string };
+  if (!data.url) {
+    clearTemporaryAuthStorage();
+    sendError(requestId, "Unable to open Google sign-in.");
     return;
   }
 
@@ -154,7 +156,9 @@ Office.onReady(() => {
       new URL(window.location.href).searchParams.get("requestId") ??
       window.sessionStorage.getItem(REQUEST_STORAGE_KEY);
     const message =
-      error instanceof Error ? error.message : "Unable to complete Google sign-in.";
+      error instanceof Error
+        ? error.message
+        : "Unable to complete Google sign-in.";
     if (requestId) {
       sendError(requestId, message);
     } else {

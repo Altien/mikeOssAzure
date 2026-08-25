@@ -19,12 +19,8 @@ import {
 } from "vitest";
 import type { Message } from "@/app/components/shared/types";
 
-const { getSessionMock, updateChatTitleMock } = vi.hoisted(() => ({
-    getSessionMock: vi.fn(),
+const { updateChatTitleMock } = vi.hoisted(() => ({
     updateChatTitleMock: vi.fn(),
-}));
-vi.mock("@/app/lib/supabase", () => ({
-    supabase: { auth: { getSession: getSessionMock } },
 }));
 vi.mock("next/navigation", () => ({
     useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
@@ -80,9 +76,6 @@ const sendAndGetAssistant = async (chunks: string[]) => {
 
 beforeEach(() => {
     vi.stubGlobal("fetch", fetchMock);
-    getSessionMock.mockResolvedValue({
-        data: { session: { access_token: "t" } },
-    });
 });
 
 afterEach(() => {

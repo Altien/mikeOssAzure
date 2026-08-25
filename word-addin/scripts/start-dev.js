@@ -1,9 +1,9 @@
 /**
- * Start Word add-in development with optional automatic sideloading.
+ * Start Word add-in development with optional automatic sideloading. This is
+ * the `npm start` launcher; `npm run dev` and `bun dev` run webpack directly.
  *
  * Set WORD_ADDIN_SIDELOAD=0 (also accepts false, no, or off) to run only the
- * webpack development server. This keeps `npm start`, `npm run dev`, and
- * `bun dev` useful without opening a fresh Word document on every restart.
+ * webpack development server when using the setup helper or `npm start`.
  */
 const { existsSync } = require("fs");
 const { spawn } = require("child_process");

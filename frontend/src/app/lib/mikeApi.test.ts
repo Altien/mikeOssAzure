@@ -1,15 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssistantEvent, Chat } from "@/app/components/shared/types";
 
-// mikeApi resolves the auth header through the module-level Supabase client,
-// so swap it for a controllable session before the module under test loads.
-const { getSessionMock } = vi.hoisted(() => ({
-    getSessionMock: vi.fn(),
-}));
-vi.mock("@/app/lib/supabase", () => ({
-    supabase: { auth: { getSession: getSessionMock } },
-}));
-
 import {
     MikeApiError,
     addDocumentToProject,
@@ -151,14 +142,6 @@ import {
 
 const fetchMock = vi.fn();
 
-const withSession = (token: string | null) => {
-    getSessionMock.mockResolvedValue({
-        data: {
-            session: token ? { access_token: token } : null,
-        },
-    });
-};
-
 const jsonResponse = (body: unknown, init?: ResponseInit) =>
     new Response(JSON.stringify(body), {
         status: 200,
@@ -203,7 +186,6 @@ const lastFetchCall = () => {
 
 beforeEach(() => {
     vi.stubGlobal("fetch", fetchMock);
-    withSession("token-123");
 });
 
 afterEach(() => {
@@ -255,23 +237,22 @@ describe("MikeApiError / isMfaRequiredError", () => {
 });
 
 describe("apiRequest plumbing (via thin wrappers)", () => {
-    it("attaches the Supabase bearer token and JSON accept header", async () => {
+    it("uses the cookie-authenticated gateway and JSON accept header", async () => {
         fetchMock.mockResolvedValue(jsonResponse({ tier: "free" }));
 
         const profile = await getUserProfile();
 
         expect(profile).toEqual({ tier: "free" });
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/user/profile");
+        expect(url).toBe("/api/user/profile");
         expect(init.cache).toBe("no-store");
         expect(init.headers).toMatchObject({
             Accept: "application/json",
-            Authorization: "Bearer token-123",
         });
+        expect(init.credentials).toBe("include");
     });
 
-    it("omits the Authorization header when there is no session", async () => {
-        withSession(null);
+    it("never attaches an Authorization header", async () => {
         fetchMock.mockResolvedValue(jsonResponse([]));
 
         await listProjects();
@@ -280,6 +261,7 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         expect(
             (init.headers as Record<string, string>).Authorization,
         ).toBeUndefined();
+        expect(init.credentials).toBe("include");
     });
 
     it("appends ?include=documents when requested", async () => {
@@ -287,9 +269,7 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
 
         await listProjects({ includeDocuments: true });
 
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/projects?include=documents",
-        );
+        expect(lastFetchCall().url).toBe("/api/projects?include=documents");
     });
 
     // Regression guard: legacy tabular-review project pickers call
@@ -304,7 +284,7 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
 
         await listProjects();
 
-        expect(lastFetchCall().url).toBe("http://localhost:3001/projects");
+        expect(lastFetchCall().url).toBe("/api/projects");
     });
 
     it("returns undefined for 204 responses", async () => {
@@ -399,14 +379,12 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         fetchMock.mockResolvedValue(jsonResponse({ exists: false }));
         await lookupUserByEmail("a+b@example.com");
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/user/lookup?email=a%2Bb%40example.com",
+            "/api/user/lookup?email=a%2Bb%40example.com",
         );
 
         fetchMock.mockResolvedValue(jsonResponse([]));
         await listChats({ limit: 5, offset: 10 });
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/chat?limit=5&offset=10",
-        );
+        expect(lastFetchCall().url).toBe("/api/chat?limit=5&offset=10");
     });
 });
 
@@ -478,7 +456,7 @@ describe("audit history", () => {
 
         const { url, init } = lastFetchCall();
         expect(url).toBe(
-            "http://localhost:3001/audit?q=agreement&action=document.edited&status=completed&surface=project&from=2026-08-01&to=2026-08-12&sort_by=title&sort_dir=asc&page=3",
+            "/api/audit?q=agreement&action=document.edited&status=completed&surface=project&from=2026-08-01&to=2026-08-12&sort_by=title&sort_dir=asc&page=3",
         );
         expect(init.signal).toBe(controller.signal);
     });
@@ -505,7 +483,7 @@ describe("audit history", () => {
         });
 
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/audit/export?q=agreement&action=document.edited&status=failed&surface=assistant&from=2026-07-01&to=2026-07-31&sort_by=created_at&sort_dir=desc",
+            "/api/audit/export?q=agreement&action=document.edited&status=failed&surface=assistant&from=2026-07-01&to=2026-07-31&sort_by=created_at&sort_dir=desc",
         );
         expect(result.filename).toBe("history.csv");
         expect(await result.blob.text()).toBe("history");
@@ -517,14 +495,14 @@ describe("audit history", () => {
         );
 
         await getAuditHistory({});
-        expect(lastFetchCall().url).toBe("http://localhost:3001/audit?");
+        expect(lastFetchCall().url).toBe("/api/audit?");
 
         fetchMock.mockResolvedValueOnce(
             new Response("history", { status: 200 }),
         );
 
         await exportAuditHistory({});
-        expect(lastFetchCall().url).toBe("http://localhost:3001/audit/export?");
+        expect(lastFetchCall().url).toBe("/api/audit/export?");
     });
 });
 
@@ -536,7 +514,7 @@ describe("downloadDocumentsZip", () => {
 
         expect(await blob.text()).toBe("zip");
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/single-documents/download-zip");
+        expect(url).toBe("/api/single-documents/download-zip");
         expect(JSON.parse(init.body as string)).toEqual({
             document_ids: ["d1", "d2"],
         });
@@ -758,12 +736,11 @@ describe("streamChat", () => {
         });
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/chat");
+        expect(url).toBe("/api/chat");
         expect(init.method).toBe("POST");
         expect(init.headers).toMatchObject({
             "Content-Type": "application/json",
             Accept: "text/event-stream",
-            Authorization: "Bearer token-123",
         });
         expect(init.signal).toBe(controller.signal);
         // The abort signal must not leak into the JSON payload.
@@ -803,7 +780,7 @@ describe("streamProjectChat", () => {
         });
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/projects/p1/chat");
+        expect(url).toBe("/api/projects/p1/chat");
         expect(init.signal).toBe(controller.signal);
         expect(JSON.parse(init.body as string)).toEqual({
             messages: [{ role: "user", content: "hi" }],
@@ -825,7 +802,7 @@ describe("streamTabularChat", () => {
         );
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/tabular-review/r1/chat");
+        expect(url).toBe("/api/tabular-review/r1/chat");
         expect(JSON.parse(init.body as string)).toEqual({
             messages: [{ role: "user", content: "summarize" }],
             review_title: "Leases",
@@ -845,10 +822,9 @@ describe("streamTabularGeneration", () => {
         );
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/tabular-review/r1/generate");
+        expect(url).toBe("/api/tabular-review/r1/generate");
         expect(init.method).toBe("POST");
         expect(init.headers).toEqual({
-            Authorization: "Bearer token-123",
             "Content-Type": "application/json",
         });
         expect(JSON.parse(init.body as string)).toEqual({
@@ -874,7 +850,7 @@ describe("listTabularReviews", () => {
         const { url, init } = lastFetchCall();
         // No stray "?" — the backend treats /tabular-review and
         // /tabular-review? the same, but the cache key would differ.
-        expect(url).toBe("http://localhost:3001/tabular-review");
+        expect(url).toBe("/api/tabular-review");
         expect(init.signal).toBeUndefined();
     });
 
@@ -894,7 +870,7 @@ describe("listTabularReviews", () => {
 
         const { url, init } = lastFetchCall();
         expect(url).toBe(
-            "http://localhost:3001/tabular-review" +
+            "/api/tabular-review" +
                 "?project_id=p1&limit=25&offset=50&search=lease+agreements" +
                 "&sort_key=updated_at&sort_direction=desc&scope=standalone",
         );
@@ -908,9 +884,7 @@ describe("listTabularReviews", () => {
 
         await listTabularReviews(undefined, { scope: "all", limit: 10 });
 
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/tabular-review?limit=10",
-        );
+        expect(lastFetchCall().url).toBe("/api/tabular-review?limit=10");
     });
 });
 
@@ -920,9 +894,7 @@ describe("listTabularReviewIds", () => {
 
         await listTabularReviewIds();
 
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/tabular-review/ids",
-        );
+        expect(lastFetchCall().url).toBe("/api/tabular-review/ids");
     });
 
     it("scopes ids by project, search, and scope so select-all matches the visible filter", async () => {
@@ -942,7 +914,7 @@ describe("listTabularReviewIds", () => {
         // Select-all-then-delete deletes whatever this returns; if the query
         // here is broader than the list query, users delete unseen reviews.
         expect(url).toBe(
-            "http://localhost:3001/tabular-review/ids?project_id=p1&search=nda&scope=in-project",
+            "/api/tabular-review/ids?project_id=p1&search=nda&scope=in-project",
         );
         expect(init.signal).toBe(controller.signal);
     });
@@ -952,9 +924,7 @@ describe("listTabularReviewIds", () => {
 
         await listTabularReviewIds(undefined, { scope: "all" });
 
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/tabular-review/ids",
-        );
+        expect(lastFetchCall().url).toBe("/api/tabular-review/ids");
     });
 });
 
@@ -965,7 +935,7 @@ describe("listProjectsPage", () => {
         await listProjectsPage();
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/projects");
+        expect(url).toBe("/api/projects");
         expect(init.signal).toBeUndefined();
     });
 
@@ -987,7 +957,7 @@ describe("listProjectsPage", () => {
 
         const { url, init } = lastFetchCall();
         expect(url).toBe(
-            "http://localhost:3001/projects" +
+            "/api/projects" +
                 "?limit=30&offset=60&search=acquisitions" +
                 "&sort_key=files&sort_direction=desc&scope=mine" +
                 "&practice=Litigation&owner_user_id=user-2",
@@ -1000,9 +970,7 @@ describe("listProjectsPage", () => {
 
         await listProjectsPage({ scope: "all", limit: 10 });
 
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/projects?limit=10",
-        );
+        expect(lastFetchCall().url).toBe("/api/projects?limit=10");
     });
 });
 
@@ -1013,7 +981,7 @@ describe("listProjectSummaries", () => {
         await listProjectSummaries({ limit: 11, offset: 10 });
 
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/projects?limit=11&offset=10&view=summary",
+            "/api/projects?limit=11&offset=10&view=summary",
         );
     });
 });
@@ -1032,7 +1000,7 @@ describe("searchProjectDirectory", () => {
 
         const { url, init } = lastFetchCall();
         expect(url).toBe(
-            "http://localhost:3001/projects?view=directory-search&search=agreement&limit=51&offset=10",
+            "/api/projects?view=directory-search&search=agreement&limit=51&offset=10",
         );
         expect(init.signal).toBe(controller.signal);
     });
@@ -1058,7 +1026,7 @@ describe("getProjectDirectoryLevel", () => {
 
         const { url, init } = lastFetchCall();
         expect(url).toBe(
-            "http://localhost:3001/projects/p1/directory?parent_folder_id=folder-1&limit=50&offset=100",
+            "/api/projects/p1/directory?parent_folder_id=folder-1&limit=50&offset=100",
         );
         expect(init.signal).toBe(controller.signal);
     });
@@ -1074,9 +1042,7 @@ describe("getProjectDirectoryLevel", () => {
 
         await getProjectDirectoryLevel("p1");
 
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/projects/p1/directory",
-        );
+        expect(lastFetchCall().url).toBe("/api/projects/p1/directory");
     });
 });
 
@@ -1086,7 +1052,7 @@ describe("listProjectIds", () => {
 
         await listProjectIds();
 
-        expect(lastFetchCall().url).toBe("http://localhost:3001/projects/ids");
+        expect(lastFetchCall().url).toBe("/api/projects/ids");
     });
 
     it("scopes ids by search, scope, practice, and owner so select-all matches the visible filter", async () => {
@@ -1108,7 +1074,7 @@ describe("listProjectIds", () => {
         // Select-all-then-delete deletes whatever this returns; if the query
         // here is broader than the list query, users delete unseen projects.
         expect(url).toBe(
-            "http://localhost:3001/projects/ids?search=nda&scope=mine" +
+            "/api/projects/ids?search=nda&scope=mine" +
                 "&practice=Litigation&owner_user_id=user-2",
         );
         expect(init.signal).toBe(controller.signal);
@@ -1119,7 +1085,7 @@ describe("listProjectIds", () => {
 
         await listProjectIds({ scope: "all" });
 
-        expect(lastFetchCall().url).toBe("http://localhost:3001/projects/ids");
+        expect(lastFetchCall().url).toBe("/api/projects/ids");
     });
 });
 
@@ -1133,7 +1099,7 @@ describe("getProjectFilterOptions", () => {
         await getProjectFilterOptions(controller.signal);
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/projects/filter-options");
+        expect(url).toBe("/api/projects/filter-options");
         expect(init.signal).toBe(controller.signal);
     });
 });
@@ -1144,9 +1110,7 @@ describe("listWorkflows", () => {
 
         await listWorkflows("assistant");
 
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/workflows?type=assistant",
-        );
+        expect(lastFetchCall().url).toBe("/api/workflows?type=assistant");
     });
 });
 
@@ -1157,7 +1121,7 @@ describe("listWorkflowsPage", () => {
         await listWorkflowsPage();
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/workflows");
+        expect(url).toBe("/api/workflows");
         expect(init.signal).toBeUndefined();
     });
 
@@ -1181,7 +1145,7 @@ describe("listWorkflowsPage", () => {
 
         const { url, init } = lastFetchCall();
         expect(url).toBe(
-            "http://localhost:3001/workflows" +
+            "/api/workflows" +
                 "?type=assistant&limit=30&offset=60&search=nda" +
                 "&sort_key=name&sort_direction=desc&scope=owned" +
                 "&practice=Litigation&language=English&jurisdiction=NSW",
@@ -1194,9 +1158,7 @@ describe("listWorkflowsPage", () => {
 
         await listWorkflowsPage({ scope: "all", limit: 10 });
 
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/workflows?limit=10",
-        );
+        expect(lastFetchCall().url).toBe("/api/workflows?limit=10");
     });
 });
 
@@ -1206,7 +1168,7 @@ describe("listWorkflowIds", () => {
 
         await listWorkflowIds();
 
-        expect(lastFetchCall().url).toBe("http://localhost:3001/workflows/ids");
+        expect(lastFetchCall().url).toBe("/api/workflows/ids");
     });
 
     it("scopes ids by every active filter so select-all matches the visible list", async () => {
@@ -1225,7 +1187,7 @@ describe("listWorkflowIds", () => {
 
         expect(ids).toEqual([{ id: "w1", user_id: "u1" }]);
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/workflows/ids?type=tabular&search=nda" +
+            "/api/workflows/ids?type=tabular&search=nda" +
                 "&scope=owned&practice=Litigation&language=English&jurisdiction=NSW",
         );
     });
@@ -1237,9 +1199,7 @@ describe("listSystemWorkflows", () => {
 
         await listSystemWorkflows();
 
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/workflows/system",
-        );
+        expect(lastFetchCall().url).toBe("/api/workflows/system");
     });
 
     it("appends the type filter when given", async () => {
@@ -1247,9 +1207,7 @@ describe("listSystemWorkflows", () => {
 
         await listSystemWorkflows("tabular");
 
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/workflows/system?type=tabular",
-        );
+        expect(lastFetchCall().url).toBe("/api/workflows/system?type=tabular");
     });
 });
 
@@ -1268,7 +1226,7 @@ describe("getWorkflowFilterOptions", () => {
 
         const { url, init } = lastFetchCall();
         expect(url).toBe(
-            "http://localhost:3001/workflows/filter-options?type=assistant&scope=shared",
+            "/api/workflows/filter-options?type=assistant&scope=shared",
         );
         expect(init.signal).toBe(controller.signal);
     });
@@ -1294,7 +1252,7 @@ describe("Library search", () => {
         expect(result.documentsHasMore).toBe(true);
         const { url, init } = lastFetchCall();
         expect(url).toBe(
-            "http://localhost:3001/library/templates?view=search&limit=50&offset=100" +
+            "/api/library/templates?view=search&limit=50&offset=100" +
                 "&search=agreement&file_type=docx&sort_key=updated&sort_direction=desc",
         );
         expect(init.signal).toBe(controller.signal);
@@ -1307,9 +1265,7 @@ describe("Library search", () => {
 
         await searchLibraryDocuments("files", {});
 
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/library/files?view=search",
-        );
+        expect(lastFetchCall().url).toBe("/api/library/files?view=search");
     });
 
     it("loads multiple open directory levels in one request", async () => {
@@ -1321,7 +1277,7 @@ describe("Library search", () => {
         ]);
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/library/templates/levels");
+        expect(url).toBe("/api/library/templates/levels");
         expect(init.method).toBe("POST");
         expect(JSON.parse(init.body as string)).toEqual({
             levels: [
@@ -1343,7 +1299,7 @@ describe("Library search", () => {
         await getLibraryFolderChildren("files", "folder-1", { offset: 50 });
 
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/library/files?parent_folder_id=folder-1&offset=50",
+            "/api/library/files?parent_folder_id=folder-1&offset=50",
         );
     });
 
@@ -1359,7 +1315,7 @@ describe("Library search", () => {
 
         const { url, init } = lastFetchCall();
         expect(url).toBe(
-            "http://localhost:3001/library/templates/ids?search=agreement&file_type=docx",
+            "/api/library/templates/ids?search=agreement&file_type=docx",
         );
         expect(init.signal).toBe(controller.signal);
     });
@@ -1369,9 +1325,7 @@ describe("Library search", () => {
 
         await listLibraryDocumentIds("files");
 
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/library/files/ids",
-        );
+        expect(lastFetchCall().url).toBe("/api/library/files/ids");
     });
 
     it("bulk deletes Library documents", async () => {
@@ -1381,9 +1335,7 @@ describe("Library search", () => {
 
         const { url, init } = lastFetchCall();
         expect(result).toEqual({ deletedIds: ["d1", "d2"] });
-        expect(url).toBe(
-            "http://localhost:3001/library/files/documents/bulk-delete",
-        );
+        expect(url).toBe("/api/library/files/documents/bulk-delete");
         expect(init.method).toBe("POST");
         expect(JSON.parse(init.body as string)).toEqual({ ids: ["d1", "d2"] });
     });
@@ -1395,9 +1347,7 @@ describe("Library search", () => {
 
         await getLibraryFilterOptions("files");
 
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/library/files/filter-options",
-        );
+        expect(lastFetchCall().url).toBe("/api/library/files/filter-options");
     });
 });
 
@@ -1414,7 +1364,7 @@ describe("tabular review CRUD", () => {
         });
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/tabular-review");
+        expect(url).toBe("/api/tabular-review");
         expect(init.method).toBe("POST");
         expect(JSON.parse(init.body as string)).toEqual({
             title: "Leases",
@@ -1431,7 +1381,7 @@ describe("tabular review CRUD", () => {
         await updateTabularReview("r1", { document_grouping: "document" });
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/tabular-review/r1");
+        expect(url).toBe("/api/tabular-review/r1");
         expect(init.method).toBe("PATCH");
         expect(JSON.parse(init.body as string)).toEqual({
             document_grouping: "document",
@@ -1444,7 +1394,7 @@ describe("tabular review CRUD", () => {
         await deleteTabularReview("r1");
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/tabular-review/r1");
+        expect(url).toBe("/api/tabular-review/r1");
         expect(init.method).toBe("DELETE");
     });
 
@@ -1461,7 +1411,7 @@ describe("tabular review CRUD", () => {
 
         expect(result.source).toBe("preset");
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/tabular-review/prompt");
+        expect(url).toBe("/api/tabular-review/prompt");
         expect(JSON.parse(init.body as string)).toEqual({
             title: "Termination",
             format: "date",
@@ -1486,11 +1436,9 @@ describe("uploadReviewDocument", () => {
 
         expect(uploaded).toEqual({ id: "new-doc" });
         const [uploadCall, patchCall] = fetchMock.mock.calls;
-        expect(uploadCall[0]).toBe(
-            "http://localhost:3001/projects/p1/documents",
-        );
+        expect(uploadCall[0]).toBe("/api/projects/p1/documents");
         expect((uploadCall[1] as RequestInit).body).toBeInstanceOf(FormData);
-        expect(patchCall[0]).toBe("http://localhost:3001/tabular-review/r1");
+        expect(patchCall[0]).toBe("/api/tabular-review/r1");
         // Existing ids must be preserved — the review would otherwise shrink
         // to just the newly uploaded document.
         expect(
@@ -1509,7 +1457,7 @@ describe("uploadReviewDocument", () => {
         await uploadReviewDocument("r1", new File(["x"], "a.pdf"));
 
         const [uploadCall, patchCall] = fetchMock.mock.calls;
-        expect(uploadCall[0]).toBe("http://localhost:3001/single-documents");
+        expect(uploadCall[0]).toBe("/api/single-documents");
         // With no prior ids the review ends up with exactly the new document.
         expect(
             JSON.parse((patchCall[1] as RequestInit).body as string),
@@ -1524,13 +1472,11 @@ describe("tabular review chats", () => {
         fetchMock.mockImplementation(() => Promise.resolve(jsonResponse([])));
 
         await getTabularChats("r1");
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/tabular-review/r1/chats",
-        );
+        expect(lastFetchCall().url).toBe("/api/tabular-review/r1/chats");
 
         await getTabularChatMessages("r1", "c1");
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/tabular-review/r1/chats/c1/messages",
+            "/api/tabular-review/r1/chats/c1/messages",
         );
     });
 
@@ -1539,13 +1485,13 @@ describe("tabular review chats", () => {
 
         await renameTabularChat("r1", "c1", "New title");
         let { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/tabular-review/r1/chats/c1");
+        expect(url).toBe("/api/tabular-review/r1/chats/c1");
         expect(init.method).toBe("PATCH");
         expect(JSON.parse(init.body as string)).toEqual({ title: "New title" });
 
         await deleteTabularChat("r1", "c1");
         ({ url, init } = lastFetchCall());
-        expect(url).toBe("http://localhost:3001/tabular-review/r1/chats/c1");
+        expect(url).toBe("/api/tabular-review/r1/chats/c1");
         expect(init.method).toBe("DELETE");
     });
 
@@ -1571,9 +1517,7 @@ describe("tabular cell operations", () => {
 
         expect(cell.flag).toBe("green");
         const { url, init } = lastFetchCall();
-        expect(url).toBe(
-            "http://localhost:3001/tabular-review/r1/regenerate-cell",
-        );
+        expect(url).toBe("/api/tabular-review/r1/regenerate-cell");
         expect(JSON.parse(init.body as string)).toEqual({
             row_id: "row-1",
             column_index: 2,
@@ -1586,7 +1530,7 @@ describe("tabular cell operations", () => {
         await clearTabularCells("r1", ["row-1", "row-2"]);
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/tabular-review/r1/clear-cells");
+        expect(url).toBe("/api/tabular-review/r1/clear-cells");
         expect(JSON.parse(init.body as string)).toEqual({
             row_ids: ["row-1", "row-2"],
         });
@@ -1609,12 +1553,13 @@ describe("multipart upload endpoints", () => {
 
         expect(doc).toEqual({ id: "d1" });
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/library/templates/documents");
+        expect(url).toBe("/api/library/templates/documents");
         expect(init.method).toBe("POST");
         expect(init.body).toBeInstanceOf(FormData);
         expect((init.body as FormData).get("file")).toBeInstanceOf(File);
         // Setting Content-Type manually would break the multipart boundary.
-        expect(init.headers).toEqual({ Authorization: "Bearer token-123" });
+        expect(init.headers).toBeUndefined();
+        expect(init.credentials).toBe("include");
     });
 
     it("includes the destination folder in project and library uploads", async () => {
@@ -1661,9 +1606,7 @@ describe("multipart upload endpoints", () => {
 
         await uploadDocumentVersion("d1", file, "renamed.pdf");
         let body = lastFetchCall().init.body as FormData;
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/single-documents/d1/versions",
-        );
+        expect(lastFetchCall().url).toBe("/api/single-documents/d1/versions");
         expect(body.get("filename")).toBe("renamed.pdf");
 
         await uploadDocumentVersion("d1", file);
@@ -1688,9 +1631,7 @@ describe("multipart upload endpoints", () => {
         await replaceDocumentVersionFile("d1", "v1", file, "renamed.pdf");
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe(
-            "http://localhost:3001/single-documents/d1/versions/v1/file",
-        );
+        expect(url).toBe("/api/single-documents/d1/versions/v1/file");
         expect(init.method).toBe("PUT");
         expect((init.body as FormData).get("filename")).toBe("renamed.pdf");
 
@@ -1710,9 +1651,10 @@ describe("multipart upload endpoints", () => {
         });
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/workflows/w1/reference-files");
+        expect(url).toBe("/api/workflows/w1/reference-files");
         expect(init.method).toBe("POST");
-        expect(init.headers).toEqual({ Authorization: "Bearer token-123" });
+        expect(init.headers).toBeUndefined();
+        expect(init.credentials).toBe("include");
         expect(init.body).toBeInstanceOf(FormData);
         expect((init.body as FormData).get("file")).toBeInstanceOf(File);
 
@@ -1732,11 +1674,10 @@ describe("multipart upload endpoints", () => {
         ).resolves.toEqual({ id: "ref-1" });
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe(
-            "http://localhost:3001/workflows/w1/reference-files/ref-1",
-        );
+        expect(url).toBe("/api/workflows/w1/reference-files/ref-1");
         expect(init.method).toBe("PUT");
-        expect(init.headers).toEqual({ Authorization: "Bearer token-123" });
+        expect(init.headers).toBeUndefined();
+        expect(init.credentials).toBe("include");
         expect(init.body).toBeInstanceOf(FormData);
         expect((init.body as FormData).get("file")).toBeInstanceOf(File);
 
@@ -1758,13 +1699,11 @@ describe("query and payload defaults", () => {
         );
 
         await getDocumentUrl("d1");
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/single-documents/d1/url",
-        );
+        expect(lastFetchCall().url).toBe("/api/single-documents/d1/url");
 
         await getDocumentUrl("d1", "v 1");
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/single-documents/d1/url?version_id=v%201",
+            "/api/single-documents/d1/url?version_id=v%201",
         );
     });
 
@@ -1786,7 +1725,7 @@ describe("query and payload defaults", () => {
 
         await listChats();
 
-        expect(lastFetchCall().url).toBe("http://localhost:3001/chat");
+        expect(lastFetchCall().url).toBe("/api/chat");
     });
 
     it("folder creation defaults parent_folder_id to null, not undefined", async () => {
@@ -1823,9 +1762,7 @@ describe("query and payload defaults", () => {
 
         await resolveProjectFolderPath("p1", ["NDAs"], null, "rename");
         let call = lastFetchCall();
-        expect(call.url).toBe(
-            "http://localhost:3001/projects/p1/folder-paths/resolve",
-        );
+        expect(call.url).toBe("/api/projects/p1/folder-paths/resolve");
         expect(JSON.parse(call.init.body as string)).toEqual({
             segments: ["NDAs"],
             base_folder_id: null,
@@ -1839,9 +1776,7 @@ describe("query and payload defaults", () => {
             "reuse",
         );
         call = lastFetchCall();
-        expect(call.url).toBe(
-            "http://localhost:3001/library/templates/folder-paths/resolve",
-        );
+        expect(call.url).toBe("/api/library/templates/folder-paths/resolve");
         expect(JSON.parse(call.init.body as string)).toEqual({
             segments: ["Executed", "2026"],
             base_folder_id: "parent-1",
@@ -1883,9 +1818,7 @@ describe("workflow endpoints", () => {
 
         await listWorkflows("assistant");
 
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/workflows?type=assistant",
-        );
+        expect(lastFetchCall().url).toBe("/api/workflows?type=assistant");
     });
 
     it("hide/unhide/list use the hidden-workflows routes with matching methods", async () => {
@@ -1893,20 +1826,18 @@ describe("workflow endpoints", () => {
 
         await hideWorkflow("w1");
         let { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/workflows/hidden");
+        expect(url).toBe("/api/workflows/hidden");
         expect(init.method).toBe("POST");
         expect(JSON.parse(init.body as string)).toEqual({ workflow_id: "w1" });
 
         await unhideWorkflow("w1");
         ({ url, init } = lastFetchCall());
-        expect(url).toBe("http://localhost:3001/workflows/hidden/w1");
+        expect(url).toBe("/api/workflows/hidden/w1");
         expect(init.method).toBe("DELETE");
 
         fetchMock.mockResolvedValue(jsonResponse(["w2"]));
         await expect(listHiddenWorkflows()).resolves.toEqual(["w2"]);
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/workflows/hidden",
-        );
+        expect(lastFetchCall().url).toBe("/api/workflows/hidden");
     });
 });
 
@@ -2470,7 +2401,7 @@ describe("thin endpoint wrappers", () => {
             await call();
 
             const { url: actualUrl, init } = lastFetchCall();
-            expect(actualUrl).toBe(`http://localhost:3001${url}`);
+            expect(actualUrl).toBe(`/api${url}`);
             expect(init.method ?? "GET").toBe(method ?? "GET");
             if (body !== undefined) {
                 expect(JSON.parse(init.body as string)).toEqual(body);
@@ -2480,9 +2411,7 @@ describe("thin endpoint wrappers", () => {
             } else {
                 expect(init.body).toBeUndefined();
             }
-            expect(init.headers).toMatchObject({
-                Authorization: "Bearer token-123",
-            });
+            expect(init.credentials).toBe("include");
         },
     );
 });
@@ -2500,7 +2429,7 @@ describe("unwrapping and blob wrappers", () => {
         fetchMock.mockResolvedValue(jsonResponse({ models }));
 
         await expect(getOllamaModels()).resolves.toEqual(models);
-        expect(lastFetchCall().url).toBe("http://localhost:3001/models/ollama");
+        expect(lastFetchCall().url).toBe("/api/models/ollama");
     });
 
     it.each([
@@ -2512,7 +2441,7 @@ describe("unwrapping and blob wrappers", () => {
         fetchMock.mockResolvedValue(jsonResponse({ models }));
 
         await expect(load()).resolves.toEqual(models);
-        expect(lastFetchCall().url).toBe(`http://localhost:3001${path}`);
+        expect(lastFetchCall().url).toBe(`/api${path}`);
     });
 
     it("getPanelDocument fetches a normalized document by opaque ID", async () => {
@@ -2527,7 +2456,7 @@ describe("unwrapping and blob wrappers", () => {
 
         await expect(getPanelDocument("case:123")).resolves.toEqual(document);
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/documents/case%3A123");
+        expect(url).toBe("/api/documents/case%3A123");
         expect(init.method).toBeUndefined();
     });
 
@@ -2595,15 +2524,11 @@ describe("unwrapping and blob wrappers", () => {
         );
 
         const chats = await exportChatData();
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/user/chats/export",
-        );
+        expect(lastFetchCall().url).toBe("/api/user/chats/export");
         expect(chats.filename).toBe("x.zip");
         expect(await chats.blob.text()).toBe("bytes");
 
         await exportTabularReviewsData();
-        expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/user/tabular-reviews/export",
-        );
+        expect(lastFetchCall().url).toBe("/api/user/tabular-reviews/export");
     });
 });

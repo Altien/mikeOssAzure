@@ -626,9 +626,13 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                     <button
                                         onClick={() => {
                                             setIsDropdownOpen(false);
-                                            void signOut().then(() =>
-                                                router.push("/"),
-                                            );
+                                            void signOut()
+                                                .then(() => router.push("/"))
+                                                .catch(() => {
+                                                    window.alert(
+                                                        "Unable to sign out. Please try again.",
+                                                    );
+                                                });
                                         }}
                                         className={cn(
                                             "flex w-full items-center gap-2 rounded-md px-4 py-2 text-left text-sm text-gray-700",

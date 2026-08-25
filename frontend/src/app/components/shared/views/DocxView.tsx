@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Loader2 } from "lucide-react";
 import { useFetchDocxBytes } from "@/app/hooks/useFetchDocxBytes";
-import { supabase } from "@/app/lib/supabase";
+import { API_BASE } from "@/app/lib/mikeApi";
+import { authenticatedFetch } from "@/app/lib/authEvents";
 import {
     clearDocxQuoteHighlights,
     highlightDocxQuote,
@@ -145,18 +146,11 @@ async function tagWIdsOnRenderedDom(
     versionId: string | null | undefined,
 ): Promise<void> {
     try {
-        const {
-            data: { session },
-        } = await supabase.auth.getSession();
-        const token = session?.access_token;
-        const apiBase =
-            process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
         const qs = versionId
             ? `?version_id=${encodeURIComponent(versionId)}`
             : "";
-        const resp = await fetch(
-            `${apiBase}/single-documents/${documentId}/tracked-change-ids${qs}`,
-            { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+        const resp = await authenticatedFetch(
+            `${API_BASE}/single-documents/${documentId}/tracked-change-ids${qs}`,
         );
         if (!resp.ok) {
             console.warn(

@@ -22,7 +22,7 @@ shape.
 For an existing deployment, do not run the complete schema over production
 data. Back up the database first, identify the last migration already applied,
 then apply each newer file in `backend/migrations/` in filename order.
-Migration filenames follow `YYYYMMDD_<name>.sql`.
+Migration filenames follow `YYYYMMDD_NN_<name>.sql`.
 
 Keep the last applied migration filename with your deployment records. Do not
 blindly replay the directory against production: migrations are written for an
@@ -56,24 +56,45 @@ cp backend/.env.example backend/.env
 cp frontend/.env.local.example frontend/.env.local
 ```
 
-Edit both files with the credentials and URLs for your deployment. Their inline
-comments describe every required and optional value.
-
-The `NEXT_PUBLIC_*` variables are required when building the frontend. Next.js
-embeds them in the browser bundle at build time, so providing them only when an
-already-built application starts is too late. Production builds fail when
-required public values are missing.
+Edit both files with the credentials and URLs for your deployment. At runtime,
+the frontend server needs only `API_BASE_URL`; browsers call the same-origin
+`/api` gateway and receive no Supabase URL, key, or session token. The variable
+is not needed while building the frontend.
 
 Use:
 
-- the Supabase project URL for `SUPABASE_URL` and
-  `NEXT_PUBLIC_SUPABASE_URL`;
+- `NODE_ENV=production` so startup enforces HTTPS and secure-cookie invariants;
+- the Supabase project URL for backend `SUPABASE_URL`;
+- the anon/publishable key for backend `SUPABASE_PUBLISHABLE_KEY`;
 - the service-role key for backend `SUPABASE_SECRET_KEY`; and
-- the anon/public key for
-  `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`.
+- the internal Mike backend origin for frontend `API_BASE_URL`.
 
-Never expose the service-role key, model-provider keys, or storage secrets in
-the frontend environment.
+Set backend `API_PUBLIC_URL` to the browser-reachable frontend gateway, including
+its `/api` prefix (for example, `https://app.example.com/api`). OAuth providers,
+including MCP connectors, must return through that public gateway; never use an
+internal container hostname such as `http://backend:3001` for callbacks.
+
+Never expose Supabase session tokens, the service-role key, model-provider
+keys, or storage secrets in frontend JavaScript.
+
+Production web auth cookies are `Secure`, `HttpOnly`, `SameSite=Lax`, path `/`,
+and use the `__Host-` prefix. Word task-pane cookies additionally use
+`SameSite=None` and `Partitioned` so an HTTPS pane embedded in Word on the web
+can authenticate without exposing tokens to JavaScript. The add-in serves and
+proxies `/api` from one origin; the backend still validates the original
+`Origin` header. Terminate TLS at both public origins, and set `FRONTEND_URL`
+plus `WORD_ADDIN_URL` to their exact values.
+
+When `WORD_ADDIN_URL` is configured, also set a dedicated, high-entropy
+`AUTH_HANDOFF_ENCRYPTION_SECRET`. Google OAuth transfers from its Office dialog
+to the task pane using a request-bound, encrypted, single-use database ticket
+that expires after two minutes. Apply
+`20260825_01_auth_handoff_tickets.sql` before enabling this flow.
+
+The first deployment intentionally signs out sessions created by older builds:
+the web app deletes legacy Supabase local/session-storage entries and the Word
+add-in deletes legacy OfficeRuntime access/refresh tokens. Users authenticate
+once to establish the new cookie; tokens are not copied through JavaScript.
 
 Model-provider keys and the CourtListener token can be configured globally in
 `backend/.env` or per user under **Settings > API Keys**. When a key is
@@ -126,9 +147,12 @@ https://your-mike.example/auth/callback
 https://your-word-addin.example/oauth-dialog.html
 ```
 
-The Word add-in completes authentication in an Office Dialog and returns the
-Supabase session to its existing token store. It does not retain Google's
-provider access token or request Google Drive or Gmail access.
+The Word add-in completes authentication in an Office Dialog. The dialog gives
+the task pane only an opaque, short-lived, single-use handoff ticket. The task
+pane redeems it through the same-origin add-in proxy, and the backend writes its
+HttpOnly cookie. No Supabase access or refresh token enters add-in JavaScript or
+OfficeRuntime storage. The add-in also does not retain Google's provider access
+token or request Google Drive or Gmail access.
 
 ## Install and run
 
@@ -158,7 +182,23 @@ npm run build --prefix backend
 npm run build --prefix frontend
 ```
 
-The repository also includes Dockerfiles for both applications.
+The repository includes Dockerfiles for the backend, frontend, and Word add-in.
+Build and run the production add-in host with its public URLs baked into the
+static bundle and its private backend origin supplied only at runtime:
+
+```bash
+docker build -t mike-word-addin \
+  --build-arg REACT_APP_WEB_APP_URL=https://app.example.com \
+  --build-arg WORD_ADDIN_PUBLIC_URL=https://word.example.com \
+  word-addin
+docker run --rm -p 3200:3200 \
+  -e WORD_ADDIN_BACKEND_ORIGIN=http://backend:3001 \
+  mike-word-addin
+```
+
+Put an HTTPS ingress or reverse proxy in front of port 3200. The included host
+serves `dist/` and streams `/api/*` to the backend while preserving cookies,
+`Set-Cookie`, `Origin`, request bodies, and SSE responses.
 
 ## Deployment safety
 
