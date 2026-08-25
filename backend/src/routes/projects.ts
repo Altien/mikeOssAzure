@@ -1,9 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth, requireMfaIfEnrolled } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
-import { recordAudit } from "../lib/audit";
-import { enqueueDbJob, enqueueStorageCleanup } from "../lib/dbq/enqueue";
-import { enqueueConversion } from "../lib/queue/conversionQueue";
+import { enqueueStorageCleanup } from "../lib/dbq/enqueue";
 import { createClient } from "@supabase/supabase-js";
 import {
   attachActiveVersionPaths,
@@ -21,17 +19,10 @@ import {
   uploadFile,
   storageKey,
 } from "../lib/storage";
-import { docxToPdf, convertedPdfKey } from "../lib/convert";
+import { convertedPdfKey } from "../lib/convert";
 import { checkProjectAccess } from "../lib/access";
-import { singleFileUpload } from "../lib/upload";
 import { deleteUserProjects } from "../lib/userDataCleanup";
-import {
-  ALLOWED_DOCUMENT_TYPES,
-  ALLOWED_DOCUMENT_TYPES_LABEL,
-  contentTypeForDocumentType,
-  requiresLibreOfficeTextExtraction,
-  shouldConvertToPdf,
-} from "../lib/documentTypes";
+import { contentTypeForDocumentType } from "../lib/documentTypes";
 import {
   findMissingUserEmails,
   loadProfileUsersByEmail,
@@ -1119,35 +1110,6 @@ projectsRouter.patch(
   },
 );
 
-// POST /projects/:projectId/documents
-projectsRouter.post(
-  "/:projectId/documents",
-  requireAuth,
-  singleFileUpload("file"),
-  async (req, res) => {
-    const userId = res.locals.userId as string;
-    const userEmail = res.locals.userEmail as string | undefined;
-    const { projectId } = req.params;
-    const db = createServerSupabase();
-
-    const access = await checkProjectAccess(projectId, userId, userEmail, db);
-    if (!access.ok)
-      return void res.status(404).json({ detail: "Project not found" });
-
-    const folderId =
-      typeof req.body?.folder_id === "string" && req.body.folder_id.trim()
-        ? req.body.folder_id.trim()
-        : null;
-    if (folderId) {
-      const folder = await loadProjectFolder(db, projectId, folderId);
-      if (!folder)
-        return void res.status(404).json({ detail: "Folder not found" });
-    }
-
-    await handleDocumentUpload(req, res, userId, projectId, db, folderId);
-  },
-);
-
 // GET /projects/:projectId/chats — every assistant chat under this project
 // (any author with project access). Used by the project page's chat tab so
 // it doesn't have to filter the global GET /chat list — and so collaborators
@@ -1473,212 +1435,4 @@ async function loadProjectFolder(
   return (
     (data as { id: string; parent_folder_id: string | null } | null) ?? null
   );
-}
-
-export async function handleDocumentUpload(
-  req: import("express").Request,
-  res: import("express").Response,
-  userId: string,
-  projectId: string | null,
-  db: ReturnType<typeof createServerSupabase>,
-  folderId: string | null = null,
-) {
-  const file = req.file;
-  if (!file) return void res.status(400).json({ detail: "file is required" });
-
-  const filename = file.originalname;
-  const suffix = filename.includes(".")
-    ? filename.split(".").pop()!.toLowerCase()
-    : "";
-  if (!ALLOWED_DOCUMENT_TYPES.has(suffix))
-    return void res.status(400).json({
-        detail: `Unsupported file type: ${suffix}. Allowed: ${ALLOWED_DOCUMENT_TYPES_LABEL}`,
-      });
-
-  const content = file.buffer;
-  const { data: doc, error: insertErr } = await db
-    .from("documents")
-    .insert({
-      project_id: projectId,
-      user_id: userId,
-      status: "processing",
-      folder_id: folderId,
-    })
-    .select("*")
-    .single();
-
-  if (insertErr || !doc)
-    return void res
-      .status(500)
-      .json({ detail: "Failed to create document record" });
-
-  try {
-    const docId = doc.id as string;
-    const key = storageKey(userId, docId, filename);
-    const contentType = contentTypeForDocumentType(suffix);
-    await uploadFile(
-      key,
-      content.buffer.slice(
-        content.byteOffset,
-        content.byteOffset + content.byteLength,
-      ) as ArrayBuffer,
-      contentType,
-    );
-
-    const rawBuf = content.buffer.slice(
-      content.byteOffset,
-      content.byteOffset + content.byteLength,
-    ) as ArrayBuffer;
-    const pageCount = suffix === "pdf" ? await countPdfPages(rawBuf) : null;
-
-    // When the job queue is enabled, defer Office → PDF conversion to the
-    // BullMQ worker instead of blocking the upload request on LibreOffice —
-    // the same deferral the single-document upload path makes.
-    const deferConversion =
-      shouldConvertToPdf(suffix) &&
-      process.env.ASYNC_DOCUMENT_CONVERSION === "true";
-
-    // Convert Office files → PDF for display. PDFs are their own rendition.
-    let pdfStoragePath: string | null = null;
-    if (!deferConversion && shouldConvertToPdf(suffix)) {
-      try {
-        const pdfBuf = await docxToPdf(content);
-        const pdfKey = convertedPdfKey(userId, docId);
-        await uploadFile(
-          pdfKey,
-          pdfBuf.buffer.slice(
-            pdfBuf.byteOffset,
-            pdfBuf.byteOffset + pdfBuf.byteLength,
-          ) as ArrayBuffer,
-          "application/pdf",
-        );
-        pdfStoragePath = pdfKey;
-      } catch (err) {
-        console.error(
-          `[upload] Office→PDF conversion failed for ${filename}:`,
-          err,
-        );
-      }
-    } else if (suffix === "pdf") {
-      pdfStoragePath = key;
-    }
-
-    // Storage paths live on document_versions — create the V1 row and
-    // point documents.current_version_id at it.
-    const { data: versionRow, error: verErr } = await db
-      .from("document_versions")
-      .insert({
-        document_id: docId,
-        storage_path: key,
-        pdf_storage_path: pdfStoragePath,
-        source: "upload",
-        version_number: 1,
-        filename,
-        file_type: suffix,
-        size_bytes: content.byteLength,
-        page_count: pageCount,
-        content_sha256: contentSha256(content),
-      })
-      .select("id")
-      .single();
-    if (verErr || !versionRow) {
-      throw new Error(
-        `Failed to record upload version: ${verErr?.message ?? "unknown"}`,
-      );
-    }
-
-    await db
-      .from("documents")
-      .update({
-        current_version_id: versionRow.id,
-        // Deferred conversion leaves the doc "processing" until the worker
-        // produces the PDF and flips it to "ready".
-        status: deferConversion ? "processing" : "ready",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", docId);
-
-    if (deferConversion) {
-      await enqueueConversion({
-        documentId: docId,
-        versionId: versionRow.id as string,
-        userId,
-        storagePath: key,
-        fileType: suffix,
-      });
-    }
-
-    // Same precompute as the single-document upload path (documents.ts):
-    // .doc/.ppt are the only types read_document can read without an
-    // in-process parser, so their text is extracted once here rather than
-    // inside the first chat tool call. Best-effort — the read path re-queues.
-    if (requiresLibreOfficeTextExtraction(suffix)) {
-      try {
-        await enqueueDbJob(db, {
-          kind: "document.precompute_text",
-          payload: {
-            versionId: versionRow.id as string,
-            storagePath: key,
-            fileType: suffix,
-            userId,
-          },
-          dedupeKey: `precompute:${versionRow.id as string}`,
-          maxAttempts: 3,
-        });
-      } catch (err) {
-        console.error("[upload] precompute-text enqueue failed", err);
-      }
-    }
-
-    const { data: updated } = await db
-      .from("documents")
-      .select("*")
-      .eq("id", docId)
-      .single();
-    const responseDoc = updated
-        ? {
-            ...updated,
-            filename,
-            storage_path: key,
-            pdf_storage_path: pdfStoragePath,
-            file_type: suffix,
-            size_bytes: content.byteLength,
-            page_count: pageCount,
-            active_version_number: 1,
-        }
-      : updated;
-    // Audit the project upload. The library/assistant upload path
-    // (documents.ts) records this too; this handler is the project-scoped
-    // duplicate and was previously uninstrumented, so project uploads never
-    // appeared in history.
-    void recordAudit(db, {
-      userId,
-      userEmail: res.locals.userEmail as string | undefined,
-      action: "document.uploaded",
-      title: filename,
-      surface: projectId ? "project" : "assistant",
-      projectId,
-      documentId: (updated as { id?: string } | null)?.id ?? null,
-    });
-    return void res.status(201).json(responseDoc);
-  } catch (e) {
-    await db.from("documents").update({ status: "error" }).eq("id", doc.id);
-    return void sendInternalError(res, e);
-  }
-}
-
-async function countPdfPages(buf: ArrayBuffer): Promise<number | null> {
-  try {
-    const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs" as string);
-    const pdf = await (
-      pdfjsLib as unknown as {
-        getDocument: (opts: unknown) => {
-          promise: Promise<{ numPages: number }>;
-        };
-      }
-    ).getDocument({ data: new Uint8Array(buf) }).promise;
-    return pdf.numPages;
-  } catch {
-    return null;
-  }
 }
