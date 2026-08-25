@@ -94,3 +94,16 @@ test("streams the API while preserving auth headers and cookies", async () => {
     "__Host-mike-session.1=two; Path=/; Secure; HttpOnly",
   ]);
 });
+
+test("rejects backend configuration that is not an origin", () => {
+  for (const backendOrigin of [
+    "https://backend.example.test/path",
+    "https://backend.example.test?target=other",
+    "https://user:password@backend.example.test",
+  ]) {
+    assert.throws(
+      () => createWordAddinServer({ distRoot: staticRoot, backendOrigin }),
+      /must be an http\(s\) origin/,
+    );
+  }
+});

@@ -94,13 +94,12 @@ test("cold-load: direct URL to a chat triggers the getChat history load", async 
     const chatId = "00000000-0000-4000-8000-000000000000";
 
     // ── Step 1: the cold-load getChat(id) call must issue GET <api>/chat/<id> ─────
-    // Scope to the API origin (port 3001) so we match the getChat() API call and
-    // NOT the Next.js page/RSC navigation request, whose URL also contains the
-    // path "/assistant/chat/<id>".
+    // Scope to the same-origin API gateway path so we match the getChat() API
+    // call and NOT the Next.js page/RSC navigation request, whose URL also
+    // contains the path "/assistant/chat/<id>".
     const getChatRequest = page.waitForResponse(
         (r) =>
-            /:3001\/chat\//.test(r.url()) &&
-            r.url().includes(`/chat/${chatId}`) &&
+            new URL(r.url()).pathname === `/api/chat/${chatId}` &&
             r.request().method() === "GET",
         { timeout: 20_000 },
     );
@@ -143,7 +142,9 @@ test("rename chat: sidebar rename interaction updates the title", async ({ page 
     const titleGenerated = page
         .waitForResponse(
             (r) =>
-                /:3001\/chat\/.+\/generate-title$/.test(r.url()) &&
+                /^\/api\/chat\/[^/]+\/generate-title$/.test(
+                    new URL(r.url()).pathname,
+                ) &&
                 r.request().method() === "POST",
             { timeout: 30_000 },
         )
@@ -234,7 +235,9 @@ test("delete chat: sidebar delete action removes the chat from history", async (
     const titleGenerated = page
         .waitForResponse(
             (r) =>
-                /:3001\/chat\/.+\/generate-title$/.test(r.url()) &&
+                /^\/api\/chat\/[^/]+\/generate-title$/.test(
+                    new URL(r.url()).pathname,
+                ) &&
                 r.request().method() === "POST",
             { timeout: 30_000 },
         )

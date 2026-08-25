@@ -15,14 +15,21 @@ function configuredBackend(input) {
   if (
     !["http:", "https:"].includes(backend.protocol) ||
     backend.username ||
-    backend.password
+    backend.password ||
+    backend.pathname !== "/" ||
+    backend.search ||
+    backend.hash
   ) {
     throw new Error(
-      "WORD_ADDIN_BACKEND_ORIGIN must be an http(s) origin without credentials",
+      "WORD_ADDIN_BACKEND_ORIGIN must be an http(s) origin without credentials, path, query, or fragment",
     );
   }
-  backend.pathname = `${backend.pathname.replace(/\/+$/, "")}/`;
-  return backend;
+  return Object.freeze({
+    protocol: backend.protocol,
+    hostname: backend.hostname,
+    port: backend.port || undefined,
+    host: backend.host,
+  });
 }
 
 const MIME_TYPES = new Map([
@@ -59,20 +66,31 @@ function publicProtocol(req) {
 
 function proxyApi(req, res, backend) {
   const incoming = new URL(req.url ?? "/", "http://word-addin.invalid");
-  const strippedPath = incoming.pathname.replace(/^\/api(?:\/|$)/, "");
-  const upstreamUrl = new URL(strippedPath, backend);
-  upstreamUrl.search = incoming.search;
+  if (
+    incoming.pathname !== "/api" &&
+    !incoming.pathname.startsWith("/api/")
+  ) {
+    res.writeHead(400).end();
+    return;
+  }
+  const upstreamPath = incoming.pathname.slice("/api".length) || "/";
 
   const headers = { ...req.headers };
   for (const name of HOP_BY_HOP) delete headers[name];
-  headers.host = upstreamUrl.host;
+  headers.host = backend.host;
   headers["x-forwarded-host"] = req.headers.host ?? "";
   headers["x-forwarded-proto"] = publicProtocol(req);
 
-  const transport = upstreamUrl.protocol === "https:" ? https : http;
+  const transport = backend.protocol === "https:" ? https : http;
   const upstream = transport.request(
-    upstreamUrl,
-    { method: req.method, headers },
+    {
+      protocol: backend.protocol,
+      hostname: backend.hostname,
+      port: backend.port,
+      path: `${upstreamPath}${incoming.search}`,
+      method: req.method,
+      headers,
+    },
     (upstreamResponse) => {
       const responseHeaders = { ...upstreamResponse.headers };
       for (const name of HOP_BY_HOP) delete responseHeaders[name];
@@ -83,7 +101,7 @@ function proxyApi(req, res, backend) {
 
   upstream.on("error", (error) => {
     console.error("[word-addin/proxy] upstream request failed", {
-      path: upstreamUrl.pathname,
+      path: upstreamPath,
       error: error instanceof Error ? error.message : String(error),
     });
     if (res.headersSent) {

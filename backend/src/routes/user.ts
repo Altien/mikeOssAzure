@@ -107,7 +107,9 @@ function backendPublicUrl(req: {
     if (process.env.NODE_ENV === "production") {
         throw new Error("API_PUBLIC_URL is required for connector OAuth");
     }
-    return `${req.protocol}://${req.get("host")}`.replace(/\/+$/, "");
+    const host = req.get("host");
+    if (!host) throw new Error("Request host is required for connector OAuth");
+    return new URL(`${req.protocol}://${host}`).origin;
 }
 
 function frontendUrl(path = "/settings/connectors") {
