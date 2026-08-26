@@ -6,7 +6,7 @@ import { PageTitle } from "../primitives/PageTitle";
 import type { WordChatStorageMode } from "../../lib/wordChatSettings";
 
 interface ChatHistoryPageProps {
-  onSelect: (chatId: string, messages: Message[]) => void;
+  onSelect: (chatId: string, messages: Message[], model: string | null) => void;
   documentId: string;
   storageMode: WordChatStorageMode;
   ownerId: string;

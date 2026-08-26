@@ -45,18 +45,16 @@ export const STATIC_MODELS: readonly ModelOption[] = [
   { id: "gpt-5.4", label: "GPT-5.4", group: "OpenAI" },
 ];
 
-export const DEFAULT_MODEL_ID = "gemini-3-flash-preview";
+export const DEFAULT_MODEL_ID = "";
 export const ALLOWED_MODEL_IDS = new Set(
   STATIC_MODELS.map((model) => model.id),
 );
 
 /**
- * Renamed/retired static ids → their current equivalents. The pane stores its
- * selection under the same "mike.selectedModel" key the web app uses, so a
- * value written before a catalog rename must resolve the same way in both
- * clients. Kept in sync with backend/src/lib/llm/models.ts LEGACY_MODEL_IDS
- * and frontend ModelToggle.tsx — the drift guard in
- * frontend/src/wordAddin/catalogParity.test.ts pins it.
+ * Renamed/retired static ids → their current equivalents. Persisted chat and
+ * profile values can outlive a catalog rename, so both clients canonicalize
+ * them identically. Kept in sync with backend/src/lib/llm/models.ts and the
+ * web ModelToggle; the frontend drift guard pins this mapping.
  */
 export const LEGACY_MODEL_IDS: Record<string, string> = {
   "gemini-3.1-flash-lite-preview": "gemini-3.5-flash-lite",

@@ -48,6 +48,8 @@ export interface ModelToggleUIProps {
   selectedAvailable?: boolean;
   loading?: boolean;
   compact?: boolean;
+  emptyLabel?: string;
+  onEmptyClick?: () => void;
 }
 
 const itemClassName =
@@ -65,6 +67,8 @@ export function ModelToggleUI({
   selectedAvailable = true,
   loading = false,
   compact = false,
+  emptyLabel = "No Models",
+  onEmptyClick,
 }: ModelToggleUIProps) {
   const [open, setOpen] = React.useState(false);
   const selected = models.find((model) => model.id === value);
@@ -77,7 +81,7 @@ export function ModelToggleUI({
   const label =
     selectedLabel ??
     selected?.label ??
-    (models.length > 0 ? "Select model" : "No API Key");
+    (models.length > 0 ? "Select model" : emptyLabel);
 
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen);
@@ -85,6 +89,21 @@ export function ModelToggleUI({
       setExpandedGroup(selected?.group ?? availableGroups[0]?.group ?? null);
     }
   };
+
+  if (!loading && models.length === 0) {
+    return (
+      <button
+        type="button"
+        aria-label="No models available"
+        title="Configure models"
+        onClick={onEmptyClick}
+        disabled={!onEmptyClick}
+        className="flex h-8 shrink-0 items-center rounded-lg px-2 text-sm text-gray-400 transition-colors enabled:cursor-pointer enabled:hover:text-gray-700 disabled:cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2"
+      >
+        <span className="max-w-[200px] truncate">{emptyLabel}</span>
+      </button>
+    );
+  }
 
   return (
     <Dropdown open={open} onOpenChange={handleOpenChange}>
@@ -101,8 +120,8 @@ export function ModelToggleUI({
                   ? `Choose model — ${label}`
                   : "API key missing for selected model"
           }
-          disabled={loading || models.length === 0}
-          className={`flex h-8 shrink-0 items-center rounded-lg text-sm text-gray-400 transition-colors enabled:cursor-pointer enabled:hover:text-gray-700 disabled:cursor-default disabled:hover:text-gray-400 ${compact ? "w-8 justify-center px-0" : "gap-1.5 px-2"} ${open ? "text-gray-700" : ""}`}
+          disabled={loading}
+          className={`flex h-8 shrink-0 items-center rounded-lg text-sm text-gray-400 transition-colors enabled:cursor-pointer enabled:hover:text-gray-700 disabled:cursor-default disabled:hover:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 ${compact ? "w-8 justify-center px-0" : "gap-1.5 px-2"} ${open ? "text-gray-700" : ""}`}
         >
           {compact ? (
             loading ? (

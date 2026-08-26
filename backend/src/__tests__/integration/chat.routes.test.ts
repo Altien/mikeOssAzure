@@ -230,7 +230,8 @@ vi.mock("../../lib/userSettings", () => ({
         legal_research_us: false,
         title_model: "test-model",
         tabular_model: "test-model",
-        api_keys: {},
+        last_used_chat_model: null,
+        api_keys: { gemini: "test-key" },
         personalisation: {
             displayName: "Ada",
             organisation: "Acme LLP",
@@ -240,12 +241,16 @@ vi.mock("../../lib/userSettings", () => ({
             practiceAreas: ["Litigation"],
         },
     })),
+    persistLastUsedChatModel: vi.fn(async () => null),
     getUserApiKeys: vi.fn(async () => ({})),
 }));
 
 import { app } from "../../app";
 
-const VALID_BODY = { messages: [{ role: "user", content: "hello" }] };
+const VALID_BODY = {
+    messages: [{ role: "user", content: "hello" }],
+    model: "gemini-3-flash-preview",
+};
 
 function findAssistantReservation() {
     return dbInserts.find(
@@ -341,6 +346,50 @@ describe("POST /chat — streaming endpoint", () => {
         );
     });
 
+    it("rejects a chat without an explicit model before streaming", async () => {
+        const res = await request(app)
+            .post("/chat")
+            .set("Authorization", "Bearer test")
+            .send({ messages: VALID_BODY.messages });
+
+        expect(res.status).toBe(400);
+        expect(res.body).toEqual({
+            code: "model_required",
+            detail: "Select a model before sending a message.",
+        });
+        expect(runLLMStream).not.toHaveBeenCalled();
+    });
+
+    it("uses the profile last-used model when a new chat omits model", async () => {
+        const userSettings = await import("../../lib/userSettings");
+        vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
+            legal_research_us: false,
+            title_model: null,
+            tabular_model: null,
+            last_used_chat_model: "gpt-5.6-luna",
+            api_keys: { openai: "test-key" },
+        });
+
+        const res = await request(app)
+            .post("/chat")
+            .set("Authorization", "Bearer test")
+            .send({ messages: VALID_BODY.messages });
+
+        expect(res.status).toBe(200);
+        expect(runLLMStream).toHaveBeenCalledWith(
+            expect.objectContaining({ model: "gpt-5.6-luna" }),
+        );
+        expect(dbInserts).toContainEqual({
+            table: "chats",
+            value: expect.objectContaining({ model: "gpt-5.6-luna" }),
+        });
+        expect(userSettings.persistLastUsedChatModel).toHaveBeenCalledWith(
+            "u1",
+            "gpt-5.6-luna",
+            expect.anything(),
+        );
+    });
+
     it("surfaces an empty upstream completion as a visible retry error", async () => {
         // Some providers end the stream cleanly but produce no content.
         // Silence reads as a hung composer, so the route emits an explicit,
@@ -374,6 +423,7 @@ describe("POST /chat — streaming endpoint", () => {
                 document_name: "Contract.docx",
                 storage: "cloud",
                 document_context: "GOVERNED BY DELAWARE LAW",
+                model: "gemini-3-flash-preview",
             });
 
         expect(res.status).toBe(200);
@@ -485,6 +535,47 @@ describe("POST /chat — streaming endpoint", () => {
             expect(dbInserts).toEqual([]);
         },
     );
+
+    it("rejects a Word chat without an explicit model before creating storage", async () => {
+        const res = await request(app)
+            .post("/word-chat")
+            .set("Authorization", "Bearer test")
+            .send({
+                messages: VALID_BODY.messages,
+                document_id: "6f783e59-35c4-4ddc-896a-94aa4d05a767",
+                storage: "cloud",
+            });
+
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe("model_required");
+        expect(dbInserts).toEqual([]);
+        expect(runLLMStream).not.toHaveBeenCalled();
+    });
+
+    it("uses the shared last-used model for a local Word chat", async () => {
+        const userSettings = await import("../../lib/userSettings");
+        vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
+            legal_research_us: false,
+            title_model: null,
+            tabular_model: null,
+            last_used_chat_model: "gpt-5.6-luna",
+            api_keys: { openai: "test-key" },
+        });
+
+        const res = await request(app)
+            .post("/word-chat")
+            .set("Authorization", "Bearer test")
+            .send({
+                messages: VALID_BODY.messages,
+                storage: "local",
+                document_id: "6f783e59-35c4-4ddc-896a-94aa4d05a767",
+            });
+
+        expect(res.status).toBe(200);
+        expect(runLLMStream).toHaveBeenCalledWith(
+            expect.objectContaining({ model: "gpt-5.6-luna" }),
+        );
+    });
 
     it("rejects a resumed Word chat outside the scoped document and user", async () => {
         dbControl.wordChatMissing = true;
@@ -943,8 +1034,12 @@ describe("POST /chat — streaming endpoint", () => {
         vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
             title_model: "test-model",
             tabular_model: "test-model",
+            last_used_chat_model: null,
             legal_research_us: true,
-            api_keys: { courtlistener: "configured-but-unused" },
+            api_keys: {
+                gemini: "test-key",
+                courtlistener: "configured-but-unused",
+            },
         });
 
         const res = await request(app)

@@ -1361,6 +1361,7 @@ describe("tabular review CRUD", () => {
             columns_config: [{ index: 0, name: "Term", prompt: "Find term" }],
             project_id: "p1",
             document_grouping: "folder",
+            model: "gpt-5.6-terra",
         });
 
         const { url, init } = lastFetchCall();
@@ -1372,6 +1373,7 @@ describe("tabular review CRUD", () => {
             columns_config: [{ index: 0, name: "Term", prompt: "Find term" }],
             project_id: "p1",
             document_grouping: "folder",
+            model: "gpt-5.6-terra",
         });
     });
 
@@ -2209,10 +2211,11 @@ describe("thin endpoint wrappers", () => {
         },
         {
             name: "generateChatTitle",
-            call: () => generateChatTitle("c1", "first message"),
+            call: () =>
+                generateChatTitle("c1", "first message", "gpt-5.6-terra"),
             url: "/chat/c1/generate-title",
             method: "POST",
-            body: { message: "first message" },
+            body: { message: "first message", model: "gpt-5.6-terra" },
         },
         // Tabular review
         {

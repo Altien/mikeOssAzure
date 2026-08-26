@@ -256,10 +256,11 @@ export function ProjectWorkspaceProvider({
 
     async function handleCreateReview(
         title: string,
-        _projectId?: string,
-        documentIds?: string[],
-        columnsConfig?: ColumnConfig[] | null,
-        documentGrouping?: "document" | "folder",
+        _projectId: string | undefined,
+        documentIds: string[] | undefined,
+        columnsConfig: ColumnConfig[] | null | undefined,
+        documentGrouping: "document" | "folder" | undefined,
+        model: string,
     ) {
         setCreatingReview(true);
         try {
@@ -270,6 +271,7 @@ export function ProjectWorkspaceProvider({
                 document_ids: documentIds ?? readyDocs.map((d) => d.id),
                 columns_config: columnsConfig ?? [],
                 document_grouping: documentGrouping,
+                model,
                 project_id: projectId,
             });
             router.push(`/projects/${projectId}/tabular-reviews/${review.id}`);

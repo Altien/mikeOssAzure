@@ -49,6 +49,7 @@ import { OwnerOnlyPopup } from "../popups/OwnerOnlyPopup";
 import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
 import { ConfirmPopup } from "../popups/ConfirmPopup";
 import { WarningPopup } from "../popups/WarningPopup";
+import { NoModelsWarningPopup } from "../popups/NoModelsWarningPopup";
 import { HeaderActionsMenu } from "../shared/HeaderActionsMenu";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
@@ -68,6 +69,10 @@ import { PageHeader } from "../shared/PageHeader";
 import { TableToolbar } from "../shared/TableToolbar";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 import { LIQUID_GLASS_FLOAT_CLASS } from "@/shared/ui/LiquidGlassUI";
+import {
+    ModelToggle,
+    type NoModelsReason,
+} from "../assistant/ModelToggle";
 
 interface Props {
     reviewId: string;
@@ -140,6 +145,9 @@ export function TRView({ reviewId, projectId }: Props) {
     } | null>(null);
     const [apiKeyModalProvider, setApiKeyModalProvider] =
         useState<ModelProvider | null>(null);
+    const [noModelsWarning, setNoModelsWarning] =
+        useState<NoModelsReason | null>(null);
+    const [modelRequiredWarning, setModelRequiredWarning] = useState(false);
     const actionsRef = useRef<HTMLDivElement>(null);
     const tableRef = useRef<TRTableHandle>(null);
     const generationAbortRef = useRef<AbortController | null>(null);
@@ -152,11 +160,15 @@ export function TRView({ reviewId, projectId }: Props) {
         [],
     );
     const router = useRouter();
-    const { profile, apiKeysDegraded } = useUserProfile();
+    const {
+        profile,
+        loading: profileLoading,
+        apiKeysDegraded,
+    } = useUserProfile();
     // Unknown key state fails open; the submit gates below already skip when
     // apiKeys is undefined.
     const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
-    const tabularModel = profile?.tabularModel ?? "gemini-3-flash-preview";
+    const tabularModel = review?.model ?? "";
     const cellMutationsBlocked =
         generating || stoppingGeneration || review?.is_running === true;
 
@@ -284,6 +296,10 @@ export function TRView({ reviewId, projectId }: Props) {
             setGenerationGuard("running");
             return;
         }
+        if (!tabularModel) {
+            setModelRequiredWarning(true);
+            return;
+        }
         if (apiKeys && !isModelAvailable(tabularModel, apiKeys)) {
             setApiKeyModalProvider(getModelProvider(tabularModel));
             return;
@@ -361,6 +377,11 @@ export function TRView({ reviewId, projectId }: Props) {
 
         if (review.is_running) {
             setGenerationGuard("running");
+            return;
+        }
+
+        if (!tabularModel) {
+            setModelRequiredWarning(true);
             return;
         }
 
@@ -499,6 +520,18 @@ export function TRView({ reviewId, projectId }: Props) {
                 setStoppingGeneration(false);
             }
         }
+    }
+
+    async function handleReviewModelChange(model: string) {
+        if (!review) return;
+        if (review.is_owner === false) {
+            setOwnerOnlyAction("change the tabular review model");
+            return;
+        }
+        const updated = await updateTabularReview(reviewId, { model });
+        setReview((current) =>
+            current ? { ...current, model: updated.model } : current,
+        );
     }
 
     async function loadLatestReview() {
@@ -986,6 +1019,33 @@ export function TRView({ reviewId, projectId }: Props) {
                         {
                             actions: [
                                 {
+                                    type: "custom",
+                                    render: (
+                                        <ModelToggle
+                                            value={tabularModel}
+                                            onChange={(model) =>
+                                                void handleReviewModelChange(
+                                                    model,
+                                                )
+                                            }
+                                            apiKeys={apiKeys}
+                                            apiKeysLoading={
+                                                profileLoading && !profile
+                                            }
+                                            openRouterModels={
+                                                profile?.openRouterModels
+                                            }
+                                            vercelModels={
+                                                profile?.vercelModels
+                                            }
+                                            openCodeGoModels={
+                                                profile?.openCodeGoModels
+                                            }
+                                            onNoModelsClick={setNoModelsWarning}
+                                        />
+                                    ),
+                                },
+                                {
                                     onClick: () => setAddDocsOpen(true),
                                     disabled: loading || savingColumnsConfig,
                                     title: "Add documents",
@@ -1231,6 +1291,10 @@ export function TRView({ reviewId, projectId }: Props) {
                     {chatOpen && (
                         <TRChatPanel
                             reviewId={reviewId}
+                            model={tabularModel}
+                            onModelChange={(model) =>
+                                void handleReviewModelChange(model)
+                            }
                             reviewTitle={review?.title ?? null}
                             projectName={project?.name ?? null}
                             onCitationClick={handleTabularCitationClick}
@@ -1465,6 +1529,18 @@ export function TRView({ reviewId, projectId }: Props) {
                 open={apiKeyModalProvider !== null}
                 provider={apiKeyModalProvider}
                 onClose={() => setApiKeyModalProvider(null)}
+            />
+
+            <NoModelsWarningPopup
+                reason={noModelsWarning}
+                onClose={() => setNoModelsWarning(null)}
+            />
+
+            <WarningPopup
+                open={modelRequiredWarning}
+                title="Select a model"
+                message="Select a model for this tabular review before running it."
+                onClose={() => setModelRequiredWarning(false)}
             />
 
             <WarningPopup

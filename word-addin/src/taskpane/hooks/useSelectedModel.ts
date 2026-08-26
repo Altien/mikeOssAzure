@@ -1,43 +1,82 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { ApiKeyStatus } from "../api/client";
 import {
-  DEFAULT_MODEL_ID,
+  ROUTER_SLUGS,
   canonicalModelId,
   isAllowedModelId,
+  isModelAvailable,
 } from "../lib/modelCatalog";
 
-const STORAGE_KEY = "mike.selectedModel";
-// Substituted at bundle time; a `typeof process` guard is false in the browser
-// and would silently pin the fallback instead of the configured model.
-const CONFIGURED_DEFAULT_MODEL = process.env.REACT_APP_DEFAULT_MODEL || "";
-const DEFAULT_MODEL = isAllowedModelId(CONFIGURED_DEFAULT_MODEL)
-  ? CONFIGURED_DEFAULT_MODEL
-  : DEFAULT_MODEL_ID;
-
-function readStoredModel(): string {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    // Map renamed static ids to their current equivalents before validating,
-    // so a selection stored before a catalog rename keeps working — matching
-    // the web composer, which reads the same storage key.
-    const stored = raw ? canonicalModelId(raw) : null;
-    return stored && isAllowedModelId(stored) ? stored : DEFAULT_MODEL;
-  } catch {
-    return DEFAULT_MODEL;
-  }
+interface SelectedModelSources {
+  sessionKey: number;
+  chatModel?: string | null;
+  lastUsedModel?: string | null;
+  routerSelections?: {
+    openRouterModels: string[];
+    vercelModels: string[];
+    openCodeGoModels: string[];
+  } | null;
+  /** Null means the key-status request failed and availability fails open. */
+  apiKeyStatus: ApiKeyStatus | null;
 }
 
-export function useSelectedModel(): [string, (model: string) => void] {
-  const [model, setModelState] = useState(readStoredModel);
+function usableStoredModel(
+  value: string | null | undefined,
+  sources: SelectedModelSources,
+): string | null {
+  if (!value) return null;
+  const model = canonicalModelId(value);
+  if (!isAllowedModelId(model)) return null;
+  const router = ROUTER_SLUGS.find((slug) => model.startsWith(`${slug}/`));
+  if (router && sources.routerSelections) {
+    const selections = {
+      openrouter: sources.routerSelections.openRouterModels,
+      vercel: sources.routerSelections.vercelModels,
+      "opencode-go": sources.routerSelections.openCodeGoModels,
+    };
+    if (!selections[router].includes(model.slice(router.length + 1))) {
+      return null;
+    }
+  }
+  return isModelAvailable(model, sources.apiKeyStatus) ? model : null;
+}
+
+/** Resolve the saved chat model first, then the profile's shared last-used. */
+export function useSelectedModel(
+  sources: SelectedModelSources,
+): [string, (model: string) => void] {
+  const [model, setModelState] = useState("");
+  const manualSelection = useRef(false);
+  const previousSessionKey = useRef(sources.sessionKey);
+  const openRouterModels = sources.routerSelections?.openRouterModels;
+  const vercelModels = sources.routerSelections?.vercelModels;
+  const openCodeGoModels = sources.routerSelections?.openCodeGoModels;
+
+  useEffect(() => {
+    if (previousSessionKey.current !== sources.sessionKey) {
+      previousSessionKey.current = sources.sessionKey;
+      manualSelection.current = false;
+    }
+    if (manualSelection.current) return;
+    const next =
+      usableStoredModel(sources.chatModel, sources) ??
+      usableStoredModel(sources.lastUsedModel, sources) ??
+      "";
+    setModelState(next);
+  }, [
+    sources.sessionKey,
+    sources.chatModel,
+    sources.lastUsedModel,
+    sources.apiKeyStatus,
+    openRouterModels,
+    vercelModels,
+    openCodeGoModels,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const setModel = useCallback((raw: string): void => {
     const next = canonicalModelId(raw);
-    const validated = isAllowedModelId(next) ? next : DEFAULT_MODEL;
-    setModelState(validated);
-    try {
-      window.localStorage.setItem(STORAGE_KEY, validated);
-    } catch {
-      // A private/locked-down Office webview can reject localStorage writes;
-      // the selection still applies for the current pane session.
-    }
+    manualSelection.current = true;
+    setModelState(isAllowedModelId(next) ? next : "");
   }, []);
   return [model, setModel];
 }

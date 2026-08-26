@@ -1,6 +1,6 @@
 import {
   streamChatWithTools,
-  DEFAULT_MAIN_MODEL,
+  resolveModel,
   type LlmMessage,
   type OpenAIToolSchema,
 } from "../llm";
@@ -441,12 +441,19 @@ export async function runLLMStream(params: {
     // takes the same path as any other mid-stream failure.
     //
     // "throw" (not silent fallback) because `model` here is what the caller
-    // asked for in THIS request. Tabular's stored preference has already been
-    // normalized by getUserModelSettings, so what arrives here is either an
-    // in-selection router model or a first-party id.
+    // asked for in THIS request. Stored task models are validated by their
+    // route before they arrive here, but this guard keeps every caller safe.
+    const requestedModel = resolveModel(model, "");
+    if (!requestedModel) {
+      throw new UserFacingError(
+        model
+          ? `Model "${model}" is not available. Select another model.`
+          : "Select a model before sending a message.",
+      );
+    }
     const selectedModel = await resolveRequestedModel(
-      model,
-      DEFAULT_MAIN_MODEL,
+      requestedModel,
+      "",
       userId,
       db,
       "throw",

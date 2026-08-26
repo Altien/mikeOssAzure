@@ -15,7 +15,7 @@ interface ChatHistoryListProps {
   pageSize: number;
   active?: boolean;
   search?: string;
-  onSelect: (chatId: string, messages: Message[]) => void;
+  onSelect: (chatId: string, messages: Message[], model: string | null) => void;
   className?: string;
   titleClassName?: string;
   documentId: string;
@@ -148,7 +148,7 @@ export function ChatHistoryListView({
           ? await getCloudWordChat(documentId, chatId)
           : await getLocalWordChat(documentId, ownerId, chatId);
       if (!requestIsCurrent()) return;
-      onSelect(chatId, detail.messages);
+      onSelect(chatId, detail.messages, detail.chat.model ?? null);
     } catch (reason) {
       if (!requestIsCurrent()) return;
       setOpenError(

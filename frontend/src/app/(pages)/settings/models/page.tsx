@@ -67,7 +67,7 @@ export default function ModelPreferencesPage() {
         setOptimisticValues((current) => ({ ...current, [field]: id }));
         setSavedField(null);
         setSavingField(field);
-        const ok = await updateModelPreference(field, id);
+        const ok = await updateModelPreference(field, id || null);
         setSavingField((current) => (current === field ? null : current));
         if (ok) {
             setSavedField(field);
@@ -96,13 +96,14 @@ export default function ModelPreferencesPage() {
                     <div className="px-4 py-5">
                         <FieldLabel>Title generation model</FieldLabel>
                         <p className="text-xs text-gray-400 mb-2">
-                            Used for naming chats and other lightweight titles.
+                            By default, titles use the cheapest model from the
+                            chat provider. Choose a model here to override that.
                         </p>
                         <ModelPreferenceDropdown
                             value={canonicalModelId(
                                 optimisticValues.titleModel ??
                                     profile?.titleModel ??
-                                    "gemini-3.5-flash-lite",
+                                    "",
                             )}
                             options={[
                                 ...SETTINGS_MODELS,
@@ -114,6 +115,7 @@ export default function ModelPreferencesPage() {
                             apiKeys={profile?.apiKeys}
                             isSaving={savingField === "titleModel"}
                             isSaved={savedField === "titleModel"}
+                            emptyOptionLabel="Automatic — same provider as chat"
                             onChange={(id) =>
                                 handleModelChange("titleModel", id)
                             }
@@ -122,14 +124,14 @@ export default function ModelPreferencesPage() {
                     <div className="px-4 py-5">
                         <FieldLabel>Tabular review model</FieldLabel>
                         <p className="text-xs text-gray-400 mb-2">
-                            We recommend using a smaller model for tabular
-                            reviews to reduce token costs.
+                            Preselected when creating a review. Each review
+                            stores its own model and can be changed separately.
                         </p>
                         <ModelPreferenceDropdown
                             value={canonicalModelId(
                                 optimisticValues.tabularModel ??
                                     profile?.tabularModel ??
-                                    "gemini-3-flash-preview",
+                                    "",
                             )}
                             options={[
                                 ...MODELS,
@@ -141,6 +143,7 @@ export default function ModelPreferencesPage() {
                             apiKeys={profile?.apiKeys}
                             isSaving={savingField === "tabularModel"}
                             isSaved={savedField === "tabularModel"}
+                            emptyOptionLabel="No default model"
                             onChange={(id) =>
                                 handleModelChange("tabularModel", id)
                             }
@@ -159,6 +162,7 @@ function ModelPreferenceDropdown({
     options,
     isSaving,
     isSaved,
+    emptyOptionLabel,
 }: {
     value: string;
     onChange: (id: string) => void;
@@ -166,6 +170,7 @@ function ModelPreferenceDropdown({
     options: ModelOption[];
     isSaving?: boolean;
     isSaved?: boolean;
+    emptyOptionLabel: string;
 }) {
     const [isOpen, setIsOpen] = useState(false);
     const availableOptions = options.filter((model) => {
@@ -183,15 +188,14 @@ function ModelPreferenceDropdown({
             <DropdownMenuTrigger asChild>
                 <button
                     type="button"
-                    disabled={isSaving || availableOptions.length === 0}
+                    disabled={isSaving}
                     className={`flex h-9 items-center justify-between gap-2 hover:bg-gray-200/70 ${SETTINGS_CONTROL_CLASS}`}
                 >
                     <span className="flex items-center gap-2 min-w-0">
                         <span className="truncate text-gray-900">
-                            {selected?.label ??
-                                (availableOptions.length
-                                    ? "Select a model"
-                                    : "No available models")}
+                            {!value
+                                ? emptyOptionLabel
+                                : (selected?.label ?? "Select a model")}
                         </span>
                     </span>
                     {isSaving ? (
@@ -210,6 +214,16 @@ function ModelPreferenceDropdown({
                 style={{ width: "var(--radix-dropdown-menu-trigger-width)" }}
                 align="start"
             >
+                <LiquidDropdownItem
+                    className="cursor-pointer"
+                    onSelect={() => onChange("")}
+                >
+                    <span className="flex-1">{emptyOptionLabel}</span>
+                    {!value && (
+                        <Check className="h-3.5 w-3.5 text-gray-600 ml-1" />
+                    )}
+                </LiquidDropdownItem>
+                {availableGroups.length > 0 && <DropdownMenuSeparator />}
                 {availableGroups.map(({ group, items }, groupIndex) => {
                     return (
                         <div key={group}>

@@ -12,7 +12,7 @@ import { usePaginatedChats } from "../../hooks/usePaginatedChats";
 import type { WordChatStorageMode } from "../../lib/wordChatSettings";
 
 interface ChatHistoryDropdownProps {
-  onSelect: (chatId: string, messages: Message[]) => void;
+  onSelect: (chatId: string, messages: Message[], model: string | null) => void;
   documentId: string;
   storageMode: WordChatStorageMode;
   ownerId: string;
@@ -65,9 +65,9 @@ export function ChatHistoryDropdown({
           pagination={pagination}
           search={search}
           dateStyle="relative"
-          onSelect={(chatId, messages) => {
+          onSelect={(chatId, messages, model) => {
             setOpen(false);
-            onSelect(chatId, messages);
+            onSelect(chatId, messages, model);
           }}
           className="mt-1 flex-1"
           titleClassName="font-normal"

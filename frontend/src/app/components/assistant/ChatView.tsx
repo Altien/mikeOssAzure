@@ -35,6 +35,7 @@ import { LIQUID_GLASS_TRANSLUCENT_ACTION_CLASS } from "@/app/components/ui/liqui
 
 interface Props {
     chatId?: string | null;
+    chatModel?: string | null;
     messages: Message[];
     isResponseLoading: boolean;
     handleChat: (
@@ -65,6 +66,7 @@ function isSmallScreen() {
 
 export function ChatView({
     chatId,
+    chatModel,
     messages,
     isResponseLoading,
     handleChat,
@@ -838,6 +840,8 @@ export function ChatView({
                                     onSubmit={handleChat}
                                     onCancel={cancel}
                                     isLoading={isResponseLoading}
+                                    chatKey={chatId}
+                                    chatModel={chatModel}
                                     onDocumentClick={(document) =>
                                         openDocument({
                                             documentId: document.id,

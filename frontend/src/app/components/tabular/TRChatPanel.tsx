@@ -27,8 +27,13 @@ import {
     type TRCitationAnnotation,
 } from "@/app/lib/mikeApi";
 import { isPanelDocument, type AssistantEvent } from "../shared/types";
-import { ModelToggle } from "../assistant/ModelToggle";
+import {
+    ModelToggle,
+    type NoModelsReason,
+} from "../assistant/ModelToggle";
 import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
+import { NoModelsWarningPopup } from "../popups/NoModelsWarningPopup";
+import { WarningPopup } from "../popups/WarningPopup";
 import { PreResponseWrapper } from "../assistant/PreResponseWrapper";
 import {
     DocReadBlock,
@@ -122,6 +127,8 @@ function parseCourtlistenerCaseSearches(value: unknown) {
 
 interface Props {
     reviewId: string;
+    model: string;
+    onModelChange: (model: string) => void;
     reviewTitle?: string | null;
     projectName?: string | null;
     onCitationClick: (colIdx: number, rowIdx: number) => void;
@@ -442,6 +449,7 @@ function TRChatInput({
     openRouterModels,
     vercelModels,
     openCodeGoModels,
+    onNoModelsClick,
     onHeightChange,
 }: {
     isLoading: boolean;
@@ -454,6 +462,7 @@ function TRChatInput({
     openRouterModels?: string[];
     vercelModels?: string[];
     openCodeGoModels?: string[];
+    onNoModelsClick?: (reason: NoModelsReason) => void;
     onHeightChange: (height: number) => void;
 }) {
     const [value, setValue] = useState("");
@@ -543,6 +552,7 @@ function TRChatInput({
                         openRouterModels={openRouterModels}
                         vercelModels={vercelModels}
                         openCodeGoModels={openCodeGoModels}
+                        onNoModelsClick={onNoModelsClick}
                     />
                     <button
                         type="button"
@@ -763,6 +773,8 @@ const HEADER_PILL_BUTTON_CLASS = `flex h-5 w-5 shrink-0 items-center justify-cen
 
 export function TRChatPanel({
     reviewId,
+    model,
+    onModelChange,
     reviewTitle,
     projectName,
     onCitationClick,
@@ -774,15 +786,17 @@ export function TRChatPanel({
         profile,
         loading: profileLoading,
         apiKeysDegraded,
-        updateModelPreference,
     } = useUserProfile();
     // Unknown key state (still loading, or degraded after a failed profile
     // fetch) fails open — see ModelToggle.
     const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
     const apiKeysLoading = profileLoading && !profile;
-    const currentModel = profile?.tabularModel ?? "gemini-3-flash-preview";
+    const currentModel = model;
     const [apiKeyModalProvider, setApiKeyModalProvider] =
         useState<ModelProvider | null>(null);
+    const [noModelsWarning, setNoModelsWarning] =
+        useState<NoModelsReason | null>(null);
+    const [modelRequiredWarning, setModelRequiredWarning] = useState(false);
     const [chats, setChats] = useState<TRChat[]>([]);
     const [currentChatId, setCurrentChatId] = useState<string | null>(
         initialChatId ?? null,
@@ -1148,6 +1162,10 @@ export function TRChatPanel({
 
     async function handleSubmit(trimmed: string) {
         if (!trimmed || isLoading) return;
+        if (!currentModel) {
+            setModelRequiredWarning(true);
+            return;
+        }
         if (apiKeys && !isModelAvailable(currentModel, apiKeys)) {
             setApiKeyModalProvider(getModelProvider(currentModel));
             return;
@@ -1925,14 +1943,13 @@ export function TRChatPanel({
                 onSubmit={handleSubmit}
                 onCancel={handleCancel}
                 model={currentModel}
-                onModelChange={(id) =>
-                    updateModelPreference("tabularModel", id)
-                }
+                onModelChange={onModelChange}
                 apiKeys={apiKeys}
                 apiKeysLoading={apiKeysLoading}
                 openRouterModels={profile?.openRouterModels}
                 vercelModels={profile?.vercelModels}
                 openCodeGoModels={profile?.openCodeGoModels}
+                onNoModelsClick={setNoModelsWarning}
                 onHeightChange={setInputHeight}
             />
 
@@ -1940,6 +1957,16 @@ export function TRChatPanel({
                 open={apiKeyModalProvider !== null}
                 provider={apiKeyModalProvider}
                 onClose={() => setApiKeyModalProvider(null)}
+            />
+            <NoModelsWarningPopup
+                reason={noModelsWarning}
+                onClose={() => setNoModelsWarning(null)}
+            />
+            <WarningPopup
+                open={modelRequiredWarning}
+                title="Select a model"
+                message="Select a model for this tabular review before using its chat."
+                onClose={() => setModelRequiredWarning(false)}
             />
         </div>
     );

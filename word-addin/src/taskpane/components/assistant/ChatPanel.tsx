@@ -20,11 +20,14 @@ import type { WorkflowAttachment } from "../../lib/wordChatTypes";
 interface ChatPanelProps {
   sessionKey: number;
   chatId: string | null;
+  chatModel: string | null;
+  lastUsedModel: string | null;
   initialMessages: SavedMessage[];
   selectedWorkflow: WorkflowAttachment | null;
   onSelectedWorkflowChange: (workflow: WorkflowAttachment | null) => void;
   onChatIdChange: (chatId: string) => void;
   onChatStarted: () => void;
+  onModelUsed: (model: string) => void;
   wordDocumentId: string;
   wordChatStorage: WordChatStorageMode;
   wordChatOwnerId: string;
@@ -40,11 +43,14 @@ interface ChatPanelProps {
 export function ChatPanel({
   sessionKey,
   chatId,
+  chatModel,
+  lastUsedModel,
   initialMessages,
   selectedWorkflow,
   onSelectedWorkflowChange,
   onChatIdChange,
   onChatStarted,
+  onModelUsed,
   wordDocumentId,
   wordChatStorage,
   wordChatOwnerId,
@@ -124,6 +130,7 @@ export function ChatPanel({
     initialMessages,
     onChatIdChange,
     onChatStarted,
+    onModelUsed,
     wordDocumentId,
     wordChatStorage,
     wordChatOwnerId,
@@ -138,6 +145,8 @@ export function ChatPanel({
       {...chat}
       {...trackedEdits}
       sessionKey={sessionKey}
+      chatModel={chatModel}
+      lastUsedModel={lastUsedModel}
       selectedWorkflow={selectedWorkflow}
       onSelectedWorkflowChange={onSelectedWorkflowChange}
       editApplyMode={editApplyMode}

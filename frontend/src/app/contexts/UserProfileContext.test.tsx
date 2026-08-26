@@ -34,6 +34,7 @@ function apiProfile(darkMode: boolean) {
         tier: "Free",
         titleModel: "gemini-3.1-flash-lite-preview",
         tabularModel: "gemini-3-flash-preview",
+        lastUsedChatModel: null,
         mfaOnLogin: false,
         legalResearchUs: true,
         emailIntegrationEnabled: false,
@@ -61,6 +62,11 @@ function ThemeControls() {
             <button onClick={() => void updateDarkMode(true)}>Dark</button>
         </>
     );
+}
+
+function LastUsedModel() {
+    const { profile } = useUserProfile();
+    return <span>{profile?.lastUsedChatModel ?? "none"}</span>;
 }
 
 beforeEach(() => {
@@ -132,5 +138,24 @@ describe("UserProfileProvider dark mode", () => {
 
         fireEvent.click(screen.getByRole("button", { name: "Light" }));
         await waitFor(() => expect(document.documentElement).toHaveClass("dark"));
+    });
+
+    it("updates last-used chat model from a completed stream event", async () => {
+        render(
+            <UserProfileProvider>
+                <LastUsedModel />
+            </UserProfileProvider>,
+        );
+        await waitFor(() => expect(screen.getByText("none")).toBeVisible());
+
+        window.dispatchEvent(
+            new CustomEvent("mike:last-used-chat-model", {
+                detail: "gpt-5.6-luna",
+            }),
+        );
+
+        await waitFor(() =>
+            expect(screen.getByText("gpt-5.6-luna")).toBeVisible(),
+        );
     });
 });

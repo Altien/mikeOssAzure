@@ -48,7 +48,20 @@ function resetSupabaseState() {
 resetSupabaseState();
 
 function resultForTable(table: string): QueryResult {
-    return supabaseState.tables[table] ?? { data: null, error: null };
+    const result = supabaseState.tables[table] ?? { data: null, error: null };
+    if (
+        table === "tabular_reviews" &&
+        result.data &&
+        typeof result.data === "object" &&
+        !Array.isArray(result.data) &&
+        !("model" in result.data)
+    ) {
+        return {
+            ...result,
+            data: { ...result.data, model: "claude-sonnet-5" },
+        };
+    }
+    return result;
 }
 
 function makeQuery(table: string) {
@@ -166,7 +179,7 @@ describe("tabular.routes", () => {
         );
         getUserModelSettings.mockResolvedValue({
             title_model: "claude-haiku-4-5",
-            tabular_model: "claude-sonnet-4-5",
+            tabular_model: "claude-sonnet-5",
             legal_research_us: false,
             api_keys: { claude: "sk-test" },
         });
@@ -202,6 +215,21 @@ describe("tabular.routes", () => {
 
     // ── POST /tabular-review (create) ─────────────────────────────────────
     describe("POST /tabular-review", () => {
+        it("rejects creation without an explicit model", async () => {
+            const res = await request(app)
+                .post("/tabular-review")
+                .set(...AUTH)
+                .send({ document_ids: [], columns_config: [] });
+
+            expect(res.status).toBe(400);
+            expect(res.body.code).toBe("model_required");
+            expect(
+                supabaseState.inserts.some(
+                    (insert) => insert.table === "tabular_reviews",
+                ),
+            ).toBe(false);
+        });
+
         it("creates a review (201) and only persists accessible documents", async () => {
             supabaseState.tables.tabular_reviews = {
                 data: { id: "r9", title: "Gamma", document_ids: ["d1"] },
@@ -242,6 +270,7 @@ describe("tabular.routes", () => {
                     title: "Gamma",
                     document_ids: ["d1", "d2"],
                     columns_config: [{ index: 0, name: "Col", prompt: "p" }],
+                    model: "claude-sonnet-5",
                 });
 
             expect(res.status).toBe(201);
@@ -338,6 +367,7 @@ describe("tabular.routes", () => {
                     document_ids: ["d1", "d2", "d3"],
                     document_grouping: "folder",
                     columns_config: [{ index: 0, name: "Col", prompt: "p" }],
+                    model: "claude-sonnet-5",
                 });
 
             expect(res.status).toBe(201);
@@ -457,6 +487,7 @@ describe("tabular.routes", () => {
                     document_ids: ["d1", "d2"],
                     document_grouping: "folder",
                     columns_config: [{ index: 0, name: "Col", prompt: "p" }],
+                    model: "claude-sonnet-5",
                 });
 
             expect(res.status).toBe(201);
@@ -503,6 +534,7 @@ describe("tabular.routes", () => {
                     project_id: "p-nope",
                     document_ids: [],
                     columns_config: [],
+                    model: "claude-sonnet-5",
                 });
 
             expect(res.status).toBe(404);
@@ -518,7 +550,11 @@ describe("tabular.routes", () => {
             const res = await request(app)
                 .post("/tabular-review")
                 .set(...AUTH)
-                .send({ document_ids: [], columns_config: [] });
+                .send({
+                    document_ids: [],
+                    columns_config: [],
+                    model: "claude-sonnet-5",
+                });
 
             expect(res.status).toBe(500);
             expect(res.body.detail).toBe("Something went wrong. Please try again.");
@@ -976,7 +1012,7 @@ describe("tabular.routes", () => {
             };
             getUserModelSettings.mockResolvedValue({
                 title_model: "claude-haiku-4-5",
-                tabular_model: "claude-sonnet-4-5",
+                tabular_model: "claude-sonnet-5",
                 legal_research_us: false,
                 api_keys: {},
             });
@@ -1020,6 +1056,28 @@ describe("tabular.routes", () => {
             expect(res.body.detail).toBe("Review not found");
         });
 
+        it("blocks a run when the review has no selected model", async () => {
+            supabaseState.tables.tabular_reviews = {
+                data: {
+                    id: "r1",
+                    user_id: "u1",
+                    project_id: null,
+                    columns_config: [{ index: 0, name: "Col", prompt: "p" }],
+                    model: null,
+                },
+                error: null,
+            };
+
+            const res = await request(app)
+                .post("/tabular-review/r1/generate")
+                .set(...AUTH)
+                .send({ expected_updated_at: new Date().toISOString() });
+
+            expect(res.status).toBe(409);
+            expect(res.body.code).toBe("model_required");
+            expect(supabaseState.rpcCalls).toHaveLength(0);
+        });
+
         it("returns 400 when no columns are configured", async () => {
             supabaseState.tables.tabular_reviews = {
                 data: {
@@ -1052,7 +1110,7 @@ describe("tabular.routes", () => {
             supabaseState.tables.tabular_cells = { data: [], error: null };
             getUserModelSettings.mockResolvedValue({
                 title_model: "claude-haiku-4-5",
-                tabular_model: "claude-sonnet-4-5",
+                tabular_model: "claude-sonnet-5",
                 legal_research_us: false,
                 api_keys: {},
             });
@@ -1231,7 +1289,7 @@ describe("tabular.routes", () => {
             supabaseState.tables.tabular_cells = { data: [], error: null };
             getUserModelSettings.mockResolvedValue({
                 title_model: "claude-haiku-4-5",
-                tabular_model: "claude-sonnet-4-5",
+                tabular_model: "claude-sonnet-5",
                 legal_research_us: false,
                 api_keys: {},
             });

@@ -31,6 +31,10 @@ export default function App(): React.ReactElement {
   const [selectedSection, setSelectedSection] = useState<AddinSection>("chat");
   const [chatSessionKey, setChatSessionKey] = useState(0);
   const [chatId, setChatId] = useState<string | null>(null);
+  const [chatModel, setChatModel] = useState<string | null>(null);
+  const [lastUsedChatModel, setLastUsedChatModel] = useState<string | null>(
+    null,
+  );
   const [chatInSession, setChatInSession] = useState(false);
   const [initialMessages, setInitialMessages] = useState<Message[]>([]);
   const [workflowPageSelection, setWorkflowPageSelection] =
@@ -118,6 +122,7 @@ export default function App(): React.ReactElement {
             onStorageModeChange={async (mode) => {
               await wordChatStorage.setMode(mode);
               setChatId(null);
+              setChatModel(null);
               setChatInSession(false);
               setInitialMessages([]);
               setChatSessionKey((current) => current + 1);
@@ -128,13 +133,18 @@ export default function App(): React.ReactElement {
     }
   };
 
-  function openSelectedChat(selectedChatId: string, messages: Message[]): void {
+  function openSelectedChat(
+    selectedChatId: string,
+    messages: Message[],
+    model: string | null,
+  ): void {
     setSelectedSection("chat");
     setWorkflowPageSelection(null);
     setWorkflowDetailsOpen(false);
     setWorkflowDeleteConfirmOpen(false);
     setChatWorkflow(null);
     setChatId(selectedChatId);
+    setChatModel(model);
     setChatInSession(true);
     setInitialMessages(messages);
     setChatSessionKey((current) => current + 1);
@@ -157,6 +167,7 @@ export default function App(): React.ReactElement {
     setWorkflowDeleteConfirmOpen(false);
     setChatWorkflow(null);
     setChatId(null);
+    setChatModel(null);
     setChatInSession(false);
     setInitialMessages([]);
     setChatSessionKey((current) => current + 1);
@@ -230,11 +241,17 @@ export default function App(): React.ReactElement {
           <ChatPanel
             sessionKey={chatSessionKey}
             chatId={chatId}
+            chatModel={chatModel}
+            lastUsedModel={lastUsedChatModel}
             initialMessages={initialMessages}
             selectedWorkflow={chatWorkflow}
             onSelectedWorkflowChange={setChatWorkflow}
             onChatIdChange={handleChatIdChange}
             onChatStarted={markChatStarted}
+            onModelUsed={(model) => {
+              setChatModel(model);
+              setLastUsedChatModel(model);
+            }}
             wordDocumentId={wordDocumentId}
             editApplyMode={editApply.mode}
             onEditApplyModeChange={editApply.setMode}

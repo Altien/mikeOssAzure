@@ -121,6 +121,7 @@ export interface Chat {
     creator_display_name?: string | null;
     project_name?: string | null;
     title: string | null;
+    model?: string | null;
     created_at: string;
 }
 
@@ -710,6 +711,8 @@ export interface TabularReview {
     project_id: string | null;
     user_id: string;
     title: string | null;
+    /** Model pinned to this review. Null only for legacy/unconfigured rows. */
+    model?: string | null;
     columns_config: ColumnConfig[] | null;
     document_ids?: string[] | null;
     document_grouping?: "document" | "folder";

@@ -20,17 +20,19 @@ export function ModelToggle({
   vercelModels,
   openCodeGoModels,
   compact = false,
+  onNoModelsClick,
 }: {
   value: string;
   onChange: (model: string) => void;
   keyStatus: ApiKeyStatus | null;
   /** True while the key-status preflight is in flight: render a neutral
-   *  disabled trigger instead of flashing "No API Key". */
+   *  disabled trigger instead of flashing "No Models". */
   keyStatusLoading?: boolean;
   openRouterModels: string[];
   vercelModels: string[];
   openCodeGoModels: string[];
   compact?: boolean;
+  onNoModelsClick?: () => void;
 }): React.ReactElement {
   const [ollamaModels, setOllamaModels] = useState<ModelOption[]>([]);
 
@@ -82,11 +84,13 @@ export function ModelToggle({
         keyStatusLoading
           ? (selected?.label ?? "Select model")
           : (selected?.label ??
-            (models.length > 0 ? "Select model" : "No API Key"))
+            (models.length > 0 ? "Select model" : "No Models"))
       }
       selectedAvailable={selected !== undefined}
       loading={keyStatusLoading}
       compact={compact}
+      emptyLabel="No Models"
+      onEmptyClick={onNoModelsClick}
     />
   );
 }

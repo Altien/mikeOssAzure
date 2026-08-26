@@ -209,6 +209,7 @@ export async function saveLocalWordMessage(args: {
   chatId: string;
   message: Message;
   title?: string;
+  model?: string;
 }): Promise<void> {
   const messageId = args.message.id;
   if (!messageId) {
@@ -247,6 +248,7 @@ export async function saveLocalWordMessage(args: {
       project_id: null,
       user_id: "local",
       title: existing?.title ?? args.title ?? null,
+      model: args.model ?? existing?.model ?? null,
       created_at: existing?.created_at ?? now,
       updated_at: now,
     } satisfies LocalChatRow);

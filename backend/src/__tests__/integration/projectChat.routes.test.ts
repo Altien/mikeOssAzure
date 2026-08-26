@@ -79,7 +79,8 @@ vi.mock("../../lib/userSettings", () => ({
         legal_research_us: false,
         title_model: "test-model",
         tabular_model: "test-model",
-        api_keys: {},
+        last_used_chat_model: null,
+        api_keys: { gemini: "test-key" },
         personalisation: {
             displayName: "Ada",
             organisation: "Acme LLP",
@@ -89,6 +90,7 @@ vi.mock("../../lib/userSettings", () => ({
             practiceAreas: ["Litigation"],
         },
     })),
+    persistLastUsedChatModel: vi.fn(async () => null),
     getUserApiKeys: vi.fn(async () => ({})),
 }));
 
@@ -104,7 +106,10 @@ import { app } from "../../app";
 import { spotlight } from "../../lib/chat";
 import { createServerSupabase } from "../../lib/supabase";
 
-const VALID_BODY = { messages: [{ role: "user", content: "hello" }] };
+const VALID_BODY = {
+    messages: [{ role: "user", content: "hello" }],
+    model: "gemini-3-flash-preview",
+};
 
 describe("POST /projects/:projectId/chat", () => {
     beforeEach(() => {
@@ -160,6 +165,27 @@ describe("POST /projects/:projectId/chat", () => {
         expect(systemPromptExtra).toContain('"organisation": "Acme LLP"');
     });
 
+    it("uses the shared last-used model when a new project chat omits model", async () => {
+        const userSettings = await import("../../lib/userSettings");
+        vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
+            legal_research_us: false,
+            title_model: null,
+            tabular_model: null,
+            last_used_chat_model: "gpt-5.6-luna",
+            api_keys: { openai: "test-key" },
+        });
+
+        const res = await request(app)
+            .post("/projects/p1/chat")
+            .set("Authorization", "Bearer test")
+            .send({ messages: VALID_BODY.messages });
+
+        expect(res.status).toBe(200);
+        expect(runLLMStream).toHaveBeenCalledWith(
+            expect.objectContaining({ model: "gpt-5.6-luna" }),
+        );
+    });
+
     it("normalizes validated request fields before using them", async () => {
         const res = await request(app)
             .post("/projects/p1/chat")
@@ -181,7 +207,7 @@ describe("POST /projects/:projectId/chat", () => {
                         },
                     },
                 ],
-                model: " custom-model ",
+                model: " gemini-3-flash-preview ",
                 displayed_doc: {
                     filename: " displayed.pdf ",
                     document_id: " displayed-document ",
@@ -219,7 +245,7 @@ describe("POST /projects/:projectId/chat", () => {
         expect(messages[0].content).toContain("displayed-document");
         expect(systemPromptExtra).toContain("attached.pdf");
         expect(runLLMStream.mock.calls[0][0]).toMatchObject({
-            model: "custom-model",
+            model: "gemini-3-flash-preview",
         });
     });
 

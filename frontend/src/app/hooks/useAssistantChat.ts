@@ -416,6 +416,15 @@ export function useAssistantChat({
               continue;
             }
 
+            if (data.type === "model_used" && typeof data.model === "string") {
+              window.dispatchEvent(
+                new CustomEvent("mike:last-used-chat-model", {
+                  detail: data.model,
+                }),
+              );
+              continue;
+            }
+
             if (
               data.type === "chat_title" &&
               typeof data.chatId === "string" &&

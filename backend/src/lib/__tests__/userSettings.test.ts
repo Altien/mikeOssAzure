@@ -90,8 +90,7 @@ describe("getUserModelSettings router-model allowlist", () => {
         expect(settings.tabular_model).toBe("openrouter/allowed/model");
     });
 
-    it("falls back when a stored router preference is outside the saved selection", async () => {
-        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    it("clears stored router preferences outside the saved selection", async () => {
         const settings = await getUserModelSettings(
             "user-1",
             profileDb({
@@ -101,11 +100,8 @@ describe("getUserModelSettings router-model allowlist", () => {
             }),
         );
 
-        // Gemini env key present → cheap default title model; tabular default.
-        expect(settings.title_model).toBe("gemini-3.5-flash-lite");
-        expect(settings.tabular_model).toBe("gemini-3-flash-preview");
-        expect(warn).toHaveBeenCalled();
-        warn.mockRestore();
+        expect(settings.title_model).toBeNull();
+        expect(settings.tabular_model).toBeNull();
     });
 
     it("keeps first-party preferences untouched", async () => {
@@ -173,7 +169,7 @@ describe("getUserModelSettings on an un-migrated database", () => {
         });
     });
 
-    it("falls back to defaults when the retry also fails", async () => {
+    it("returns empty optional preferences when the retry also fails", async () => {
         const settings = await getUserModelSettings(
             "user-1",
             retryingProfileDb(
@@ -193,6 +189,7 @@ describe("getUserModelSettings on an un-migrated database", () => {
         );
 
         expect(settings.legal_research_us).toBe(true);
-        expect(settings.title_model).toBeTruthy();
+        expect(settings.title_model).toBeNull();
+        expect(settings.tabular_model).toBeNull();
     });
 });
