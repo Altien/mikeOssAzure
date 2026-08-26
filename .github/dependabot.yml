@@ -75,6 +75,25 @@ updates:
         applies-to: version-updates
         dependency-type: "production"
 
+  # Word add-in — its own lockfile, its own CI job (.github/workflows/
+  # word-addin.yml), and its own advisory surface
+  - package-ecosystem: "npm"
+    directory: "/word-addin"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    groups:
+      security-fixes:
+        applies-to: security-updates
+        patterns: ["*"]
+      dev-dependencies:
+        applies-to: version-updates
+        dependency-type: "development"
+      production-dependencies:
+        applies-to: version-updates
+        dependency-type: "production"
+
   # Keep the actions used by the security workflow pinned and current
   - package-ecosystem: "github-actions"
     directory: "/"

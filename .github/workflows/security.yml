@@ -26,8 +26,12 @@ jobs:
     strategy:
       matrix:
         # Every directory with its own package-lock.json gets a gate —
-        # including the repo root (Playwright e2e tooling), which is just as
-        # much shipped-to-developers code as the workspaces.
+        # including the repo root (Playwright e2e tooling) and word-addin,
+        # which are just as much shipped-to-developers code as the two
+        # server/web workspaces. `find . -name package-lock.json -not -path
+        # '*/node_modules/*'` must return exactly these four; a fifth tree
+        # arriving without a row here is the failure mode this comment
+        # exists to prevent.
         include:
           - workspace: root
             dir: "."
@@ -35,6 +39,8 @@ jobs:
             dir: backend
           - workspace: frontend
             dir: frontend
+          - workspace: word-addin
+            dir: word-addin
     name: dependency-audit (${{ matrix.workspace }})
     defaults:
       run:
