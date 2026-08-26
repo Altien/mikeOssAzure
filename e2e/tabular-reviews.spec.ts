@@ -91,8 +91,11 @@ async function createReview(
     // model exposed by the configured providers for this environment.
     await page.getByRole("button", { name: "Choose model" }).click();
     const modelMenu = page.getByRole("menu");
-    await modelMenu.getByRole("menuitem").first().click();
-    await modelMenu.getByRole("menuitem").nth(1).click();
+    const firstModel = modelMenu
+        .locator('[role="menuitem"]:not([aria-expanded])')
+        .first();
+    await expect(firstModel).toBeVisible();
+    await firstModel.click();
 
     // NewTRModal is a two-step wizard ("Details" → "Add Documents"); the
     // "Create" submit button only exists on the second step, and "Next" only
