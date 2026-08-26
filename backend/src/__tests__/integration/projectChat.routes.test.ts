@@ -79,7 +79,7 @@ vi.mock("../../lib/userSettings", () => ({
         legal_research_us: false,
         title_model: "test-model",
         tabular_model: "test-model",
-        last_used_chat_model: null,
+        last_selected_chat_model: null,
         api_keys: { gemini: "test-key" },
         personalisation: {
             displayName: "Ada",
@@ -90,7 +90,7 @@ vi.mock("../../lib/userSettings", () => ({
             practiceAreas: ["Litigation"],
         },
     })),
-    persistLastUsedChatModel: vi.fn(async () => null),
+    persistLastSelectedChatModel: vi.fn(async () => null),
     getUserApiKeys: vi.fn(async () => ({})),
 }));
 
@@ -165,13 +165,13 @@ describe("POST /projects/:projectId/chat", () => {
         expect(systemPromptExtra).toContain('"organisation": "Acme LLP"');
     });
 
-    it("uses the shared last-used model when a new project chat omits model", async () => {
+    it("uses the shared last-selected model when a new project chat omits model", async () => {
         const userSettings = await import("../../lib/userSettings");
         vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
             legal_research_us: false,
             title_model: null,
             tabular_model: null,
-            last_used_chat_model: "gpt-5.6-luna",
+            last_selected_chat_model: "gpt-5.6-luna",
             api_keys: { openai: "test-key" },
         });
 

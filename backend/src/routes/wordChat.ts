@@ -20,6 +20,7 @@ import {
   parseOptionalChatId,
   parseOptionalDocumentContext,
   parseOptionalModel,
+  parseOptionalReasoning,
   createReservedAssistantMessageUpdater,
   createWordClientToolsAdapter,
   openAssistantSse,
@@ -31,9 +32,13 @@ import {
 } from "../lib/chat";
 import {
   getUserModelSettings,
-  persistLastUsedChatModel,
+  persistLastSelectedChatModel,
+  persistLastSelectedReasoningLevel,
 } from "../lib/userSettings";
-import { resolveEffectiveChatModel } from "../lib/modelSelection";
+import {
+  resolveEffectiveChatModel,
+  resolveEffectiveReasoningLevel,
+} from "../lib/modelSelection";
 import {
   persistWordDocumentEdits,
   WORD_EDIT_FORMATS,
@@ -308,7 +313,7 @@ wordChatRouter.get("/", requireAuth, async (req, res) => {
 
   let query = db
     .from("word_chats")
-    .select("id, user_id, title, model, created_at, updated_at")
+    .select("id, user_id, title, model, reasoning_level, created_at, updated_at")
     .eq("word_document_id", wordDocumentRowId)
     .eq("user_id", userId)
     .order("updated_at", { ascending: false });
@@ -410,6 +415,147 @@ wordChatRouter.get("/:chatId", requireAuth, async (req, res) => {
         ? { edits: editsByMessage.get(message.id) }
         : {}),
     })),
+  });
+});
+
+// PATCH /word-chat/:chatId/model?document_id=<embedded document UUID>
+// Selection-time persistence for an existing cloud Word chat.
+wordChatRouter.patch("/:chatId/model", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as string;
+  const parsedDocumentId = parseDocumentId(req.query.document_id);
+  if (!parsedDocumentId.ok) {
+    return void res.status(400).json({ detail: parsedDocumentId.detail });
+  }
+  if (!isUuid(req.params.chatId)) {
+    return void res.status(404).json({ detail: "Chat not found" });
+  }
+  const parsedModel = parseOptionalModel(req.body?.model);
+  if (!parsedModel.ok || !parsedModel.value) {
+    return void res.status(400).json({
+      detail: parsedModel.ok ? "model is required" : parsedModel.detail,
+    });
+  }
+
+  const db = createServerSupabase();
+  const documentLookup = await getWordDocumentRowId(
+    parsedDocumentId.value,
+    userId,
+    db,
+  );
+  if (!documentLookup.ok) {
+    console.error(
+      "[word-chat] failed to resolve model-selection document",
+      documentLookup.detail,
+    );
+    return void res.status(500).json({ detail: "Failed to save chat model" });
+  }
+  if (!documentLookup.value) {
+    return void res.status(404).json({ detail: "Chat not found" });
+  }
+  const chatLookup = await getAccessibleWordChat(
+    req.params.chatId,
+    documentLookup.value,
+    userId,
+    db,
+  );
+  if (!chatLookup.ok) {
+    console.error("[word-chat] failed to load model-selection chat", chatLookup.detail);
+    return void res.status(500).json({ detail: "Failed to save chat model" });
+  }
+  if (!chatLookup.value) {
+    return void res.status(404).json({ detail: "Chat not found" });
+  }
+
+  const settings = await getUserModelSettings(userId, db);
+  const resolution = await resolveEffectiveChatModel({
+    requested: parsedModel.value,
+    chatModel: chatLookup.value.model as string | null,
+    lastSelectedModel: settings.last_selected_chat_model,
+    apiKeys: settings.api_keys,
+    userId,
+    db,
+  });
+  if (!resolution.ok) {
+    return void res.status(resolution.status).json({
+      code: resolution.code,
+      detail: resolution.detail,
+    });
+  }
+
+  const { error } = await db
+    .from("word_chats")
+    .update({ model: resolution.model, updated_at: new Date().toISOString() })
+    .eq("id", req.params.chatId)
+    .eq("user_id", userId);
+  if (error) {
+    console.error("[word-chat] failed to save selected chat model", error);
+    return void res.status(500).json({ detail: "Failed to save chat model" });
+  }
+  const profileError = await persistLastSelectedChatModel(
+    userId,
+    resolution.model,
+    db,
+  );
+  if (profileError) {
+    console.error("[word-chat] failed to save last-selected model", profileError);
+    return void res.status(500).json({ detail: "Failed to save chat model" });
+  }
+  res.json({ id: req.params.chatId, model: resolution.model });
+});
+
+// PATCH /word-chat/:chatId/reasoning?document_id=<embedded document UUID>
+wordChatRouter.patch("/:chatId/reasoning", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as string;
+  const parsedDocumentId = parseDocumentId(req.query.document_id);
+  if (!parsedDocumentId.ok) {
+    return void res.status(400).json({ detail: parsedDocumentId.detail });
+  }
+  const parsedReasoning = parseOptionalReasoning(req.body?.reasoningLevel);
+  if (!isUuid(req.params.chatId) || !parsedReasoning.ok || !parsedReasoning.value) {
+    return void res.status(400).json({
+      detail: parsedReasoning.ok
+        ? "reasoningLevel is required"
+        : parsedReasoning.detail,
+    });
+  }
+  const db = createServerSupabase();
+  const documentLookup = await getWordDocumentRowId(
+    parsedDocumentId.value,
+    userId,
+    db,
+  );
+  if (!documentLookup.ok || !documentLookup.value) {
+    return void res.status(404).json({ detail: "Chat not found" });
+  }
+  const chatLookup = await getAccessibleWordChat(
+    req.params.chatId,
+    documentLookup.value,
+    userId,
+    db,
+  );
+  if (!chatLookup.ok || !chatLookup.value) {
+    return void res.status(404).json({ detail: "Chat not found" });
+  }
+  const { error } = await db
+    .from("word_chats")
+    .update({
+      reasoning_level: parsedReasoning.value,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", req.params.chatId)
+    .eq("user_id", userId);
+  if (error) return void res.status(500).json({ detail: "Failed to save reasoning" });
+  const profileError = await persistLastSelectedReasoningLevel(
+    userId,
+    parsedReasoning.value,
+    db,
+  );
+  if (profileError) {
+    return void res.status(500).json({ detail: "Failed to save reasoning" });
+  }
+  res.json({
+    id: req.params.chatId,
+    reasoning_level: parsedReasoning.value,
   });
 });
 
@@ -653,6 +799,10 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
   if (!parsedModel.ok) {
     return void res.status(400).json({ detail: parsedModel.detail });
   }
+  const parsedReasoning = parseOptionalReasoning(body.reasoning);
+  if (!parsedReasoning.ok) {
+    return void res.status(400).json({ detail: parsedReasoning.detail });
+  }
   const parsedDocumentContext = parseOptionalDocumentContext(
     body.document_context,
   );
@@ -689,6 +839,7 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
   let chatId = parsedChatId.value;
   let chatTitle: string | null = null;
   let chatModel: string | null = null;
+  let chatReasoningLevel: string | null = null;
   let wordDocumentRowId: string | null = null;
 
   if (persistChat) {
@@ -726,13 +877,17 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
     }
     chatTitle = typeof existing.title === "string" ? existing.title : null;
     chatModel = typeof existing.model === "string" ? existing.model : null;
+    chatReasoningLevel =
+      typeof existing.reasoning_level === "string"
+        ? existing.reasoning_level
+        : null;
   }
 
   const modelSettings = await getUserModelSettings(userId, db);
   const modelResolution = await resolveEffectiveChatModel({
     requested: parsedModel.value,
     chatModel,
-    lastUsedModel: modelSettings.last_used_chat_model,
+    lastSelectedModel: modelSettings.last_selected_chat_model,
     apiKeys: modelSettings.api_keys,
     userId,
     db,
@@ -744,11 +899,24 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
     });
   }
   const selectedModel = modelResolution.model;
+  const selectedReasoningLevel = resolveEffectiveReasoningLevel({
+    requested: parsedReasoning.value,
+    chatReasoningLevel,
+    lastSelectedReasoningLevel: modelSettings.last_selected_reasoning_level,
+  });
 
-  if (chatId && persistChat && chatModel !== selectedModel) {
+  if (
+    chatId &&
+    persistChat &&
+    (chatModel !== selectedModel ||
+      chatReasoningLevel !== selectedReasoningLevel)
+  ) {
     const { error } = await db
       .from("word_chats")
-      .update({ model: selectedModel })
+      .update({
+        model: selectedModel,
+        reasoning_level: selectedReasoningLevel,
+      })
       .eq("id", chatId)
       .eq("user_id", userId);
     if (error) {
@@ -763,6 +931,7 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
         user_id: userId,
         word_document_id: wordDocumentRowId,
         model: selectedModel,
+        reasoning_level: selectedReasoningLevel,
       })
       .select("id, title")
       .single();
@@ -956,6 +1125,7 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
           }
         : {}),
       model: selectedModel,
+      reasoning: selectedReasoningLevel,
       apiKeys,
       signal: stream.signal,
       nonce,
@@ -981,20 +1151,6 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
       write("data: [DONE]\n\n");
       return;
     }
-    const lastUsedError = await persistLastUsedChatModel(
-      userId,
-      selectedModel,
-      db,
-    );
-    if (lastUsedError) {
-      console.error(
-        "[word-chat] failed to save last-used model",
-        lastUsedError,
-      );
-    }
-    write(
-      `data: ${JSON.stringify({ type: "model_used", model: selectedModel })}\n\n`,
-    );
     write("data: [DONE]\n\n");
   } catch (error) {
     if (isAbortError(error)) {

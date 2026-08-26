@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { useSelectedModel } from "./useSelectedModel";
+import { useSelectedModel, useSelectedReasoning } from "./useSelectedModel";
 import { canonicalModelId } from "../components/assistant/ModelToggle";
 import type { ApiKeyState } from "../lib/mikeApi";
 
@@ -26,22 +26,22 @@ describe("useSelectedModel", () => {
         expect(result.current[0]).toBe("");
     });
 
-    it("uses the saved chat model before the shared last-used model", () => {
+    it("uses the saved chat model before the shared last-selected model", () => {
         const { result } = renderHook(() =>
             useSelectedModel({
                 chatModel: "claude-fable-5",
-                lastUsedModel: "gpt-5.6-luna",
+                lastSelectedModel: "gpt-5.6-luna",
                 apiKeys: keys,
             }),
         );
         expect(result.current[0]).toBe("claude-fable-5");
     });
 
-    it("falls back to last-used when the chat model has no current key", () => {
+    it("falls back to last-selected when the chat model has no current key", () => {
         const { result } = renderHook(() =>
             useSelectedModel({
                 chatModel: "gemini-3.7-flash",
-                lastUsedModel: "gpt-5.6-luna",
+                lastSelectedModel: "gpt-5.6-luna",
                 apiKeys: keys,
             }),
         );
@@ -60,7 +60,7 @@ describe("useSelectedModel", () => {
         const { result } = renderHook(() =>
             useSelectedModel({
                 chatModel: "openrouter/openai/gpt-5.4",
-                lastUsedModel: "gpt-5.6-luna",
+                lastSelectedModel: "gpt-5.6-luna",
                 routerSelections,
                 apiKeys: keys,
             }),
@@ -72,12 +72,47 @@ describe("useSelectedModel", () => {
         const { result } = renderHook(() =>
             useSelectedModel({
                 chatModel: "openrouter/pricy/frontier",
-                lastUsedModel: "gpt-5.6-luna",
+                lastSelectedModel: "gpt-5.6-luna",
                 routerSelections,
                 apiKeys: keys,
             }),
         );
         expect(result.current[0]).toBe("gpt-5.6-luna");
+    });
+
+    it("does not flash the profile model while an existing chat loads", () => {
+        const { result, rerender } = renderHook(
+            ({ chatModel }: { chatModel: string | null | undefined }) =>
+                useSelectedModel({
+                    selectionKey: "chat-1",
+                    chatModel,
+                    lastSelectedModel: "gpt-5.6-luna",
+                    apiKeys: keys,
+                }),
+            { initialProps: { chatModel: undefined } },
+        );
+
+        expect(result.current[0]).toBe("");
+        rerender({ chatModel: "claude-fable-5" });
+        expect(result.current[0]).toBe("claude-fable-5");
+    });
+});
+
+describe("useSelectedReasoning", () => {
+    it("loads the chat level before the profile fallback", () => {
+        const { result } = renderHook(() =>
+            useSelectedReasoning({
+                selectionKey: "chat-1",
+                chatReasoningLevel: "low",
+                lastSelectedReasoningLevel: "xhigh",
+            }),
+        );
+        expect(result.current[0]).toBe("low");
+    });
+
+    it("defaults a new user to high", () => {
+        const { result } = renderHook(() => useSelectedReasoning({}));
+        expect(result.current[0]).toBe("high");
     });
 });
 

@@ -48,9 +48,9 @@ export default function ByokPage() {
                     API Keys
                 </h2>
                 <p className="text-sm text-gray-500">
-                    Bring your own model-provider keys, or add them to the .env
-                    file when running your own Mike instance. User keys are
-                    encrypted in storage.
+                    A personal API key saved here means all future requests for
+                    the relevant provider will automatically be routed through
+                    your API key and charged to your own API platform account.
                 </p>
                 <SettingsSection>
                     {MODEL_API_KEY_FIELDS.map((field) => (
@@ -59,8 +59,8 @@ export default function ByokPage() {
                                 label={field.label}
                                 placeholder={field.placeholder}
                                 hasSavedKey={
-                                    !!profile?.apiKeys[field.provider]
-                                        .configured
+                                    profile?.apiKeys[field.provider].source ===
+                                    "user"
                                 }
                                 isServerConfigured={
                                     profile?.apiKeys[field.provider].source ===

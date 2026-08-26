@@ -281,9 +281,7 @@ export async function streamAiSdk(
       reasoning:
         config.supportsReasoning === false
           ? undefined
-          : params.enableThinking
-            ? "high"
-            : "none",
+          : (params.reasoning ?? "none"),
       include: { rawChunks: true },
       ...(config.courtlistenerCitationReminder
         ? {

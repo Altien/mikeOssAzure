@@ -23,6 +23,7 @@ import {
     parseOptionalAskInputsResponse,
     parseOptionalChatId,
     parseOptionalModel,
+    parseOptionalReasoning,
     parseOptionalProjectId,
     createReservedAssistantMessageUpdater,
     openAssistantSse,
@@ -31,13 +32,15 @@ import {
 } from "../lib/chat";
 import {
     getUserModelSettings,
-    persistLastUsedChatModel,
+    persistLastSelectedChatModel,
+    persistLastSelectedReasoningLevel,
 } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
 import { generateAssistantChatTitle } from "../lib/chatTitle";
 import { sendInternalError } from "../lib/httpError";
 import {
     resolveEffectiveChatModel,
+    resolveEffectiveReasoningLevel,
     titleModelForChat,
 } from "../lib/modelSelection";
 
@@ -55,6 +58,7 @@ type AccessibleChat = {
     user_id: string;
     project_id: string | null;
     model: string | null;
+    reasoning_level: string | null;
 } & Record<string, unknown>;
 
 async function validateAccessibleProjectId(
@@ -297,22 +301,108 @@ async function hydrateEditStatuses(
 // PATCH /chat/:chatId
 chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
     const { chatId } = req.params;
-    const title = (req.body.title ?? "").trim();
-    if (!title)
+    const body =
+        req.body && typeof req.body === "object" && !Array.isArray(req.body)
+            ? (req.body as Record<string, unknown>)
+            : {};
+    const invalidField = Object.keys(body).find(
+        (field) =>
+            field !== "title" &&
+            field !== "model" &&
+            field !== "reasoningLevel",
+    );
+    if (invalidField) {
+        return void res
+            .status(400)
+            .json({ detail: `Unsupported chat field: ${invalidField}` });
+    }
+    const hasTitle = Object.hasOwn(body, "title");
+    const hasModel = Object.hasOwn(body, "model");
+    const hasReasoning = Object.hasOwn(body, "reasoningLevel");
+    if (!hasTitle && !hasModel && !hasReasoning) {
+        return void res
+            .status(400)
+            .json({ detail: "title, model, or reasoningLevel is required" });
+    }
+
+    const title = typeof body.title === "string" ? body.title.trim() : "";
+    if (hasTitle && !title) {
         return void res.status(400).json({ detail: "title is required" });
+    }
+    const parsedModel = parseOptionalModel(body.model);
+    if (hasModel && !parsedModel.ok) {
+        return void res.status(400).json({ detail: parsedModel.detail });
+    }
+    const parsedReasoning = parseOptionalReasoning(body.reasoningLevel);
+    if (hasReasoning && !parsedReasoning.ok) {
+        return void res.status(400).json({ detail: parsedReasoning.detail });
+    }
 
     const db = createServerSupabase();
+    const chat = await getAccessibleChat(chatId, userId, userEmail, db);
+    if (!chat || (hasTitle && chat.user_id !== userId)) {
+        return void res.status(404).json({ detail: "Chat not found" });
+    }
+
+    let selectedModel: string | undefined;
+    const selectedReasoningLevel =
+        hasReasoning && parsedReasoning.ok
+            ? parsedReasoning.value
+            : undefined;
+    if (hasModel) {
+        const settings = await getUserModelSettings(userId, db);
+        const resolution = await resolveEffectiveChatModel({
+            requested: parsedModel.ok ? parsedModel.value : undefined,
+            chatModel: chat.model,
+            lastSelectedModel: settings.last_selected_chat_model,
+            apiKeys: settings.api_keys,
+            userId,
+            db,
+        });
+        if (!resolution.ok) {
+            return void res.status(resolution.status).json({
+                code: resolution.code,
+                detail: resolution.detail,
+            });
+        }
+        selectedModel = resolution.model;
+    }
+
+    const update = {
+        ...(hasTitle ? { title } : {}),
+        ...(selectedModel ? { model: selectedModel } : {}),
+        ...(selectedReasoningLevel
+            ? { reasoning_level: selectedReasoningLevel }
+            : {}),
+    };
     const { data, error } = await db
         .from("chats")
-        .update({ title })
+        .update(update)
         .eq("id", chatId)
-        .eq("user_id", userId)
-        .select("id, title")
+        .select("id, title, model, reasoning_level")
         .single();
 
     if (error || !data)
         return void res.status(404).json({ detail: "Chat not found" });
+
+    if (selectedModel) {
+        const profileError = await persistLastSelectedChatModel(
+            userId,
+            selectedModel,
+            db,
+        );
+        if (profileError) return void sendInternalError(res, profileError);
+    }
+    if (selectedReasoningLevel) {
+        const profileError = await persistLastSelectedReasoningLevel(
+            userId,
+            selectedReasoningLevel,
+            db,
+        );
+        if (profileError) return void sendInternalError(res, profileError);
+    }
     res.json(data);
 });
 
@@ -351,7 +441,7 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
         const resolution = await resolveEffectiveChatModel({
             requested: requestedModel,
             chatModel: chat.model,
-            lastUsedModel: settings.last_used_chat_model,
+            lastSelectedModel: settings.last_selected_chat_model,
             apiKeys: settings.api_keys,
             userId,
             db,
@@ -400,6 +490,10 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     if (!parsedModel.ok) {
         return void res.status(400).json({ detail: parsedModel.detail });
     }
+    const parsedReasoning = parseOptionalReasoning(body.reasoning);
+    if (!parsedReasoning.ok) {
+        return void res.status(400).json({ detail: parsedReasoning.detail });
+    }
     const parsedAskInputsResponse = parseOptionalAskInputsResponse(
         body.ask_inputs_response,
     );
@@ -430,6 +524,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     let chatId = chat_id ?? null;
     let chatTitle: string | null = null;
     let chatModel: string | null = null;
+    let chatReasoningLevel: string | null = null;
     let resolvedProjectId: string | null = parsedProjectId.value.projectId;
 
     if (chatId) {
@@ -449,13 +544,14 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         resolvedProjectId = existingProjectId;
         chatTitle = existing.title;
         chatModel = existing.model;
+        chatReasoningLevel = existing.reasoning_level;
     }
 
     const modelSettings = await getUserModelSettings(userId, db);
     const modelResolution = await resolveEffectiveChatModel({
         requested: model,
         chatModel,
-        lastUsedModel: modelSettings.last_used_chat_model,
+        lastSelectedModel: modelSettings.last_selected_chat_model,
         apiKeys: modelSettings.api_keys,
         userId,
         db,
@@ -467,11 +563,24 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         });
     }
     const selectedModel = modelResolution.model;
+    const selectedReasoningLevel = resolveEffectiveReasoningLevel({
+        requested: parsedReasoning.value,
+        chatReasoningLevel,
+        lastSelectedReasoningLevel:
+            modelSettings.last_selected_reasoning_level,
+    });
 
-    if (chatId && chatModel !== selectedModel) {
+    if (
+        chatId &&
+        (chatModel !== selectedModel ||
+            chatReasoningLevel !== selectedReasoningLevel)
+    ) {
         const { error } = await db
             .from("chats")
-            .update({ model: selectedModel })
+            .update({
+                model: selectedModel,
+                reasoning_level: selectedReasoningLevel,
+            })
             .eq("id", chatId);
         if (error) return void sendInternalError(res, error);
     }
@@ -496,6 +605,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                 user_id: userId,
                 project_id: resolvedProjectId,
                 model: selectedModel,
+                reasoning_level: selectedReasoningLevel,
             })
             .select("id, title")
             .single();
@@ -675,6 +785,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             workflowStore,
             includeResearchTools: legalResearchUs,
             model: selectedModel,
+            reasoning: selectedReasoningLevel,
             apiKeys,
             signal: stream.signal,
             projectId: resolvedProjectId,
@@ -754,20 +865,6 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                 );
             }
         }
-        const lastUsedError = await persistLastUsedChatModel(
-            userId,
-            selectedModel,
-            db,
-        );
-        if (lastUsedError) {
-            console.error(
-                "[chat/stream] failed to save last-used model",
-                lastUsedError,
-            );
-        }
-        write(
-            `data: ${JSON.stringify({ type: "model_used", model: selectedModel })}\n\n`,
-        );
         void recordChatTurn(
             db,
             {

@@ -5,6 +5,8 @@ import {
     providerForModel,
     resolveModel,
     type UserApiKeys,
+    REASONING_LEVELS,
+    type ReasoningLevel,
 } from "./llm";
 import {
     isRouterModelSelected,
@@ -19,6 +21,31 @@ export const MODEL_REQUIRED_DETAIL =
 
 export const TABULAR_MODEL_REQUIRED_DETAIL =
     "Select a model for this tabular review before running it.";
+
+export const DEFAULT_REASONING_LEVEL: ReasoningLevel = "high";
+
+export function normalizeReasoningLevel(
+    value: unknown,
+): ReasoningLevel | null {
+    return typeof value === "string" &&
+        (REASONING_LEVELS as readonly string[]).includes(value)
+        ? (value as ReasoningLevel)
+        : null;
+}
+
+/** Resolve request → chat → profile, defaulting a never-selected user to High. */
+export function resolveEffectiveReasoningLevel(args: {
+    requested?: unknown;
+    chatReasoningLevel?: unknown;
+    lastSelectedReasoningLevel?: unknown;
+}): ReasoningLevel {
+    return (
+        normalizeReasoningLevel(args.requested) ??
+        normalizeReasoningLevel(args.chatReasoningLevel) ??
+        normalizeReasoningLevel(args.lastSelectedReasoningLevel) ??
+        DEFAULT_REASONING_LEVEL
+    );
+}
 
 /**
  * Normalize a stored optional preference without inventing a fallback.
@@ -44,7 +71,11 @@ export function hasApiKeyForModel(
 }
 
 type EffectiveChatModelResult =
-    | { ok: true; model: string; source: "request" | "chat" | "last_used" }
+    | {
+          ok: true;
+          model: string;
+          source: "request" | "chat" | "last_selected";
+      }
     | {
           ok: false;
           status: 400 | 422;
@@ -55,12 +86,12 @@ type EffectiveChatModelResult =
 /**
  * Resolve a chat turn without inventing a product default. An explicit
  * request is authoritative. Otherwise the chat's saved model wins, with the
- * one profile-level last-used model as the only fallback.
+ * one profile-level last-selected model as the only fallback.
  */
 export async function resolveEffectiveChatModel(args: {
     requested?: string | null;
     chatModel?: string | null;
-    lastUsedModel?: string | null;
+    lastSelectedModel?: string | null;
     apiKeys: UserApiKeys;
     userId: string;
     db: ReturnType<typeof createServerSupabase>;
@@ -108,7 +139,7 @@ export async function resolveEffectiveChatModel(args: {
 
     const storedCandidates = [
         { value: args.chatModel, source: "chat" as const },
-        { value: args.lastUsedModel, source: "last_used" as const },
+        { value: args.lastSelectedModel, source: "last_selected" as const },
     ];
     for (const candidate of storedCandidates) {
         const resolved = resolveModel(candidate.value, "");

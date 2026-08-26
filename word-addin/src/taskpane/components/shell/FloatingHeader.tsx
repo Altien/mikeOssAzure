@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import type { Message } from "../../types";
+import type { ReasoningLevel } from "../../lib/wordChatTypes";
 import {
   Check,
   ChevronLeft,
@@ -51,6 +52,7 @@ interface FloatingHeaderProps {
     chatId: string,
     messages: Message[],
     model: string | null,
+    reasoningLevel: ReasoningLevel | null,
   ) => void;
   workflowDetailOpen?: boolean;
   onWorkflowBack?: () => void;

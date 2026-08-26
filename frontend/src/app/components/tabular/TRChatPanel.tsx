@@ -30,6 +30,7 @@ import { isPanelDocument, type AssistantEvent } from "../shared/types";
 import {
     ModelToggle,
     type NoModelsReason,
+    type ReasoningLevel,
 } from "../assistant/ModelToggle";
 import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
 import { NoModelsWarningPopup } from "../popups/NoModelsWarningPopup";
@@ -450,6 +451,8 @@ function TRChatInput({
     vercelModels,
     openCodeGoModels,
     onNoModelsClick,
+    reasoningLevel,
+    onReasoningChange,
     onHeightChange,
 }: {
     isLoading: boolean;
@@ -463,6 +466,8 @@ function TRChatInput({
     vercelModels?: string[];
     openCodeGoModels?: string[];
     onNoModelsClick?: (reason: NoModelsReason) => void;
+    reasoningLevel: ReasoningLevel;
+    onReasoningChange: (level: ReasoningLevel) => void;
     onHeightChange: (height: number) => void;
 }) {
     const [value, setValue] = useState("");
@@ -553,6 +558,8 @@ function TRChatInput({
                         vercelModels={vercelModels}
                         openCodeGoModels={openCodeGoModels}
                         onNoModelsClick={onNoModelsClick}
+                        reasoningLevel={reasoningLevel}
+                        onReasoningChange={onReasoningChange}
                     />
                     <button
                         type="button"
@@ -797,6 +804,8 @@ export function TRChatPanel({
     const [noModelsWarning, setNoModelsWarning] =
         useState<NoModelsReason | null>(null);
     const [modelRequiredWarning, setModelRequiredWarning] = useState(false);
+    const [reasoningLevel, setReasoningLevel] =
+        useState<ReasoningLevel>("high");
     const [chats, setChats] = useState<TRChat[]>([]);
     const [currentChatId, setCurrentChatId] = useState<string | null>(
         initialChatId ?? null,
@@ -1217,6 +1226,7 @@ export function TRChatPanel({
                 currentChatId,
                 controller.signal,
                 { reviewTitle, projectName },
+                reasoningLevel,
             );
             if (!response.body) throw new Error("No response body");
 
@@ -1950,6 +1960,8 @@ export function TRChatPanel({
                 vercelModels={profile?.vercelModels}
                 openCodeGoModels={profile?.openCodeGoModels}
                 onNoModelsClick={setNoModelsWarning}
+                reasoningLevel={reasoningLevel}
+                onReasoningChange={setReasoningLevel}
                 onHeightChange={setInputHeight}
             />
 

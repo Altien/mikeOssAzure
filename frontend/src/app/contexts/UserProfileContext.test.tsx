@@ -1,9 +1,16 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getUserProfile, updateUserProfile } = vi.hoisted(() => ({
+const {
+    getUserProfile,
+    updateUserProfile,
+    updateChatModel,
+    updateLastSelectedChatSettings,
+} = vi.hoisted(() => ({
     getUserProfile: vi.fn(),
     updateUserProfile: vi.fn(),
+    updateChatModel: vi.fn(),
+    updateLastSelectedChatSettings: vi.fn(),
 }));
 
 vi.mock("@/app/contexts/AuthContext", () => ({
@@ -17,6 +24,9 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
     ...(await importOriginal<typeof import("@/app/lib/mikeApi")>()),
     getUserProfile: (...args: unknown[]) => getUserProfile(...args),
     updateUserProfile: (...args: unknown[]) => updateUserProfile(...args),
+    updateChatModel: (...args: unknown[]) => updateChatModel(...args),
+    updateLastSelectedChatSettings: (...args: unknown[]) =>
+        updateLastSelectedChatSettings(...args),
 }));
 
 import {
@@ -34,7 +44,8 @@ function apiProfile(darkMode: boolean) {
         tier: "Free",
         titleModel: "gemini-3.1-flash-lite-preview",
         tabularModel: "gemini-3-flash-preview",
-        lastUsedChatModel: null,
+        lastSelectedChatModel: null,
+        lastSelectedReasoningLevel: "high",
         mfaOnLogin: false,
         legalResearchUs: true,
         emailIntegrationEnabled: false,
@@ -64,9 +75,20 @@ function ThemeControls() {
     );
 }
 
-function LastUsedModel() {
-    const { profile } = useUserProfile();
-    return <span>{profile?.lastUsedChatModel ?? "none"}</span>;
+function LastSelectedModel() {
+    const { profile, persistChatModelSelection } = useUserProfile();
+    return (
+        <>
+            <span>{profile?.lastSelectedChatModel ?? "none"}</span>
+            <button
+                onClick={() =>
+                    void persistChatModelSelection("gpt-5.6-luna")
+                }
+            >
+                Select model
+            </button>
+        </>
+    );
 }
 
 beforeEach(() => {
@@ -74,6 +96,7 @@ beforeEach(() => {
     updateUserProfile.mockImplementation(({ darkMode }: { darkMode: boolean }) =>
         Promise.resolve(apiProfile(darkMode)),
     );
+    updateLastSelectedChatSettings.mockResolvedValue(apiProfile(true));
 });
 
 afterEach(() => {
@@ -140,22 +163,21 @@ describe("UserProfileProvider dark mode", () => {
         await waitFor(() => expect(document.documentElement).toHaveClass("dark"));
     });
 
-    it("updates last-used chat model from a completed stream event", async () => {
+    it("persists and updates the last-selected model immediately", async () => {
         render(
             <UserProfileProvider>
-                <LastUsedModel />
+                <LastSelectedModel />
             </UserProfileProvider>,
         );
         await waitFor(() => expect(screen.getByText("none")).toBeVisible());
 
-        window.dispatchEvent(
-            new CustomEvent("mike:last-used-chat-model", {
-                detail: "gpt-5.6-luna",
-            }),
-        );
+        fireEvent.click(screen.getByRole("button", { name: "Select model" }));
 
         await waitFor(() =>
             expect(screen.getByText("gpt-5.6-luna")).toBeVisible(),
         );
+        expect(updateLastSelectedChatSettings).toHaveBeenCalledWith({
+            lastSelectedChatModel: "gpt-5.6-luna",
+        });
     });
 });

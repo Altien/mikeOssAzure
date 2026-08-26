@@ -1,10 +1,14 @@
 import { createServerSupabase } from "./supabase";
 import { type UserApiKeys } from "./llm";
+import { type ReasoningLevel } from "./llm";
 import { getUserApiKeys as getStoredUserApiKeys } from "./userApiKeys";
 import {
     getAllUserRouterModels,
 } from "./routerModels";
-import { normalizeOptionalModelPreference } from "./modelSelection";
+import {
+    normalizeOptionalModelPreference,
+    normalizeReasoningLevel,
+} from "./modelSelection";
 
 export type UserModelSettings = {
     /** Explicit override; null means derive the title model from the chat. */
@@ -12,7 +16,9 @@ export type UserModelSettings = {
     /** Default for new reviews only; each review stores its own model. */
     tabular_model: string | null;
     /** Cross-surface fallback used only when a chat has no usable model. */
-    last_used_chat_model: string | null;
+    last_selected_chat_model: string | null;
+    /** Cross-surface fallback used only when a chat has no saved level. */
+    last_selected_reasoning_level: ReasoningLevel | null;
     legal_research_us: boolean;
     api_keys: UserApiKeys;
     personalisation?: {
@@ -34,7 +40,7 @@ export async function getUserModelSettings(
         client
             .from("user_profiles")
             .select(
-                "title_model, tabular_model, last_used_chat_model, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas",
+                "title_model, tabular_model, last_selected_chat_model, last_selected_reasoning_level, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas",
             )
             .eq("user_id", userId)
             .single(),
@@ -49,19 +55,19 @@ export async function getUserModelSettings(
     // who turned it off. Retry with the pre-migration column set so saved
     // settings keep working; personalisation simply stays empty.
     if (profileResult.error?.code === "42703") {
-        const withoutLastUsed = await client
+        const withoutLastSelected = await client
             .from("user_profiles")
             .select(
-                "title_model, tabular_model, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas",
+                "title_model, tabular_model, last_selected_chat_model, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas",
             )
             .eq("user_id", userId)
             .single();
-        if (!withoutLastUsed.error) {
+        if (!withoutLastSelected.error) {
             data = {
-                ...withoutLastUsed.data,
-                last_used_chat_model: null,
+                ...withoutLastSelected.data,
+                last_selected_reasoning_level: null,
             } as typeof data;
-        } else if (withoutLastUsed.error.code === "42703") {
+        } else if (withoutLastSelected.error.code === "42703") {
             const legacy = await client
                 .from("user_profiles")
                 .select("title_model, tabular_model, legal_research_us")
@@ -73,7 +79,8 @@ export async function getUserModelSettings(
                 ? null
                 : ({
                       ...legacy.data,
-                      last_used_chat_model: null,
+                      last_selected_chat_model: null,
+                      last_selected_reasoning_level: null,
                   } as typeof data);
         } else {
             data = null;
@@ -89,9 +96,12 @@ export async function getUserModelSettings(
             data?.tabular_model,
             routerModels,
         ),
-        last_used_chat_model: normalizeOptionalModelPreference(
-            data?.last_used_chat_model,
+        last_selected_chat_model: normalizeOptionalModelPreference(
+            data?.last_selected_chat_model,
             routerModels,
+        ),
+        last_selected_reasoning_level: normalizeReasoningLevel(
+            data?.last_selected_reasoning_level,
         ),
         legal_research_us:
             (data as { legal_research_us?: boolean | null } | null)
@@ -127,8 +137,24 @@ export async function getUserModelSettings(
     };
 }
 
-/** Save the effective model only after a chat turn has completed. */
-export async function persistLastUsedChatModel(
+/** Save a reasoning level when the user explicitly selects it in a picker. */
+export async function persistLastSelectedReasoningLevel(
+    userId: string,
+    reasoningLevel: ReasoningLevel,
+    db: ReturnType<typeof createServerSupabase>,
+): Promise<unknown | null> {
+    const { error } = await db
+        .from("user_profiles")
+        .update({
+            last_selected_reasoning_level: reasoningLevel,
+            updated_at: new Date().toISOString(),
+        })
+        .eq("user_id", userId);
+    return error ?? null;
+}
+
+/** Save a model when the user explicitly selects it in a chat picker. */
+export async function persistLastSelectedChatModel(
     userId: string,
     model: string,
     db: ReturnType<typeof createServerSupabase>,
@@ -136,7 +162,7 @@ export async function persistLastUsedChatModel(
     const { error } = await db
         .from("user_profiles")
         .update({
-            last_used_chat_model: model,
+            last_selected_chat_model: model,
             updated_at: new Date().toISOString(),
         })
         .eq("user_id", userId);

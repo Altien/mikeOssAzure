@@ -24,6 +24,7 @@ import {
     TABULAR_TOOLS,
     type ChatMessage,
     type TabularCellStore,
+    parseOptionalReasoning,
 } from "../lib/chat";
 import {
     completeText,
@@ -2031,12 +2032,19 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
         chat_id: existingChatId,
         review_title: clientReviewTitle,
         project_name: clientProjectName,
+        reasoning: rawReasoning,
     } = req.body as {
         messages: ChatMessage[];
         chat_id?: string;
         review_title?: string;
         project_name?: string;
+        reasoning?: unknown;
     };
+
+    const parsedReasoning = parseOptionalReasoning(rawReasoning);
+    if (!parsedReasoning.ok) {
+        return void res.status(400).json({ detail: parsedReasoning.detail });
+    }
 
     const lastUser = [...(messages ?? [])]
         .reverse()
@@ -2180,6 +2188,7 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
             buildCitations: (text) =>
                 extractTabularAnnotations(text, tabularStore),
             model: tabular_model,
+            reasoning: parsedReasoning.value,
             apiKeys: api_keys,
             signal: streamAbort.signal,
         });

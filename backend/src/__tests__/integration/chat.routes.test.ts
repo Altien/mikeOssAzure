@@ -230,7 +230,8 @@ vi.mock("../../lib/userSettings", () => ({
         legal_research_us: false,
         title_model: "test-model",
         tabular_model: "test-model",
-        last_used_chat_model: null,
+        last_selected_chat_model: null,
+        last_selected_reasoning_level: null,
         api_keys: { gemini: "test-key" },
         personalisation: {
             displayName: "Ada",
@@ -241,7 +242,8 @@ vi.mock("../../lib/userSettings", () => ({
             practiceAreas: ["Litigation"],
         },
     })),
-    persistLastUsedChatModel: vi.fn(async () => null),
+    persistLastSelectedChatModel: vi.fn(async () => null),
+    persistLastSelectedReasoningLevel: vi.fn(async () => null),
     getUserApiKeys: vi.fn(async () => ({})),
 }));
 
@@ -360,13 +362,13 @@ describe("POST /chat — streaming endpoint", () => {
         expect(runLLMStream).not.toHaveBeenCalled();
     });
 
-    it("uses the profile last-used model when a new chat omits model", async () => {
+    it("uses the profile last-selected model when a new chat omits model", async () => {
         const userSettings = await import("../../lib/userSettings");
         vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
             legal_research_us: false,
             title_model: null,
             tabular_model: null,
-            last_used_chat_model: "gpt-5.6-luna",
+            last_selected_chat_model: "gpt-5.6-luna",
             api_keys: { openai: "test-key" },
         });
 
@@ -383,11 +385,9 @@ describe("POST /chat — streaming endpoint", () => {
             table: "chats",
             value: expect.objectContaining({ model: "gpt-5.6-luna" }),
         });
-        expect(userSettings.persistLastUsedChatModel).toHaveBeenCalledWith(
-            "u1",
-            "gpt-5.6-luna",
-            expect.anything(),
-        );
+        expect(
+            userSettings.persistLastSelectedChatModel,
+        ).not.toHaveBeenCalled();
     });
 
     it("surfaces an empty upstream completion as a visible retry error", async () => {
@@ -552,13 +552,13 @@ describe("POST /chat — streaming endpoint", () => {
         expect(runLLMStream).not.toHaveBeenCalled();
     });
 
-    it("uses the shared last-used model for a local Word chat", async () => {
+    it("uses the shared last-selected model for a local Word chat", async () => {
         const userSettings = await import("../../lib/userSettings");
         vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
             legal_research_us: false,
             title_model: null,
             tabular_model: null,
-            last_used_chat_model: "gpt-5.6-luna",
+            last_selected_chat_model: "gpt-5.6-luna",
             api_keys: { openai: "test-key" },
         });
 
@@ -1034,7 +1034,7 @@ describe("POST /chat — streaming endpoint", () => {
         vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
             title_model: "test-model",
             tabular_model: "test-model",
-            last_used_chat_model: null,
+            last_selected_chat_model: null,
             legal_research_us: true,
             api_keys: {
                 gemini: "test-key",
@@ -1067,13 +1067,94 @@ describe("POST /chat — streaming endpoint", () => {
 });
 
 describe("PATCH /chat/:chatId", () => {
-    it("returns 400 when title is missing", async () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        dbUpdates.length = 0;
+    });
+
+    it("returns 400 when no supported update is provided", async () => {
         const res = await request(app)
             .patch("/chat/chat-1")
             .set("Authorization", "Bearer test")
             .send({});
 
         expect(res.status).toBe(400);
-        expect(res.body.detail).toBe("title is required");
+        expect(res.body.detail).toBe(
+            "title, model, or reasoningLevel is required",
+        );
+    });
+
+    it("updates the chat and profile when a model is selected", async () => {
+        const userSettings = await import("../../lib/userSettings");
+        const res = await request(app)
+            .patch("/chat/chat-1")
+            .set("Authorization", "Bearer test")
+            .send({ model: "gemini-3-flash-preview" });
+
+        expect(res.status).toBe(200);
+        expect(dbUpdates).toContainEqual({
+            table: "chats",
+            value: { model: "gemini-3-flash-preview" },
+            filters: [{ column: "id", value: "chat-1" }],
+        });
+        expect(userSettings.persistLastSelectedChatModel).toHaveBeenCalledWith(
+            "u1",
+            "gemini-3-flash-preview",
+            expect.anything(),
+        );
+    });
+
+    it("updates the chat and profile when reasoning is selected", async () => {
+        const userSettings = await import("../../lib/userSettings");
+        const res = await request(app)
+            .patch("/chat/chat-1")
+            .set("Authorization", "Bearer test")
+            .send({ reasoningLevel: "xhigh" });
+
+        expect(res.status).toBe(200);
+        expect(dbUpdates).toContainEqual({
+            table: "chats",
+            value: { reasoning_level: "xhigh" },
+            filters: [{ column: "id", value: "chat-1" }],
+        });
+        expect(
+            userSettings.persistLastSelectedReasoningLevel,
+        ).toHaveBeenCalledWith("u1", "xhigh", expect.anything());
+    });
+});
+
+describe("PATCH /word-chat/:chatId/model", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        dbUpdates.length = 0;
+        dbControl.wordChatMissing = false;
+    });
+
+    it("updates a cloud Word chat and the profile on selection", async () => {
+        const userSettings = await import("../../lib/userSettings");
+        const chatId = "6f783e59-35c4-4ddc-896a-94aa4d05a768";
+        const documentId = "6f783e59-35c4-4ddc-896a-94aa4d05a767";
+        const res = await request(app)
+            .patch(`/word-chat/${chatId}/model`)
+            .query({ document_id: documentId })
+            .set("Authorization", "Bearer test")
+            .send({ model: "gemini-3-flash-preview" });
+
+        expect(res.status).toBe(200);
+        expect(dbUpdates).toContainEqual({
+            table: "word_chats",
+            value: expect.objectContaining({
+                model: "gemini-3-flash-preview",
+            }),
+            filters: [
+                { column: "id", value: chatId },
+                { column: "user_id", value: "u1" },
+            ],
+        });
+        expect(userSettings.persistLastSelectedChatModel).toHaveBeenCalledWith(
+            "u1",
+            "gemini-3-flash-preview",
+            expect.anything(),
+        );
     });
 });

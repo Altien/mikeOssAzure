@@ -107,7 +107,6 @@ interface UseWordAssistantChatOptions {
   initialMessages: SavedMessage[];
   onChatIdChange: (chatId: string) => void;
   onChatStarted: () => void;
-  onModelUsed: (model: string) => void;
   wordDocumentId: string;
   wordChatStorage: WordChatStorageMode;
   wordChatOwnerId: string;
@@ -121,7 +120,6 @@ export function useWordAssistantChat({
   initialMessages,
   onChatIdChange,
   onChatStarted,
-  onModelUsed,
   wordDocumentId,
   wordChatStorage,
   wordChatOwnerId,
@@ -544,6 +542,7 @@ export function useWordAssistantChat({
               message: userMessage,
               title: text.slice(0, 120),
               model: submission.model,
+              reasoningLevel: submission.reasoning,
             });
           }
 
@@ -560,6 +559,7 @@ export function useWordAssistantChat({
               })),
               documentContext,
               model: submission.model,
+              reasoning: submission.reasoning,
               chatId: requestChatId,
               wordDocumentId,
               documentName: readCurrentDocumentName(),
@@ -571,7 +571,6 @@ export function useWordAssistantChat({
                 if (metadata.chatId) {
                   onChatIdChange(metadata.chatId);
                 }
-                if (metadata.model) onModelUsed(metadata.model);
                 if (
                   metadata.assistantMessageId &&
                   streamedContent.length === 0
@@ -784,7 +783,6 @@ export function useWordAssistantChat({
       editApplyMode,
       onChatIdChange,
       onChatStarted,
-      onModelUsed,
       readDocumentMarkdown,
       wordChatOwnerId,
       wordChatStorage,

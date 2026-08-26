@@ -275,8 +275,17 @@ export default function ProjectAssistantChatPage({ params }: Props) {
         renameChat: renameChatInHistory,
     } = useChatHistoryContext();
     const [initialMessages] = useState<Message[]>(newChatMessages ?? []);
-    const [chatModel, setChatModel] = useState<string | null>(
-        initialMessages[0]?.model ?? null,
+    const [chatModel, setChatModel] = useState<string | null | undefined>(
+        initialMessages.length > 0
+            ? (initialMessages[0]?.model ?? null)
+            : undefined,
+    );
+    const [chatReasoningLevel, setChatReasoningLevel] = useState<
+        NonNullable<Message["reasoning"]> | null | undefined
+    >(
+        initialMessages.length > 0
+            ? (initialMessages[0]?.reasoning ?? null)
+            : undefined,
     );
     const { messages, isResponseLoading, handleChat, setMessages, cancel } =
         useAssistantChat({ initialMessages, chatId, projectId });
@@ -379,6 +388,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                 setChatTitle(chat.title);
                 setChatOwnerId(chat.user_id ?? null);
                 setChatModel(chat.model ?? null);
+                setChatReasoningLevel(chat.reasoning_level ?? null);
                 if (loaded.length > 0) setMessages(loaded);
             })
             .catch(() => router.replace(`/projects/${projectId}/assistant`))
@@ -1420,6 +1430,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                                 isLoading={isResponseLoading}
                                 chatKey={chatId}
                                 chatModel={chatModel}
+                                chatReasoningLevel={chatReasoningLevel}
                                 hideAddDocButton
                                 projectId={projectId}
                                 onDocumentClick={handleDocClick}

@@ -410,7 +410,8 @@ export interface UserProfile {
     tier: string;
     titleModel: string | null;
     tabularModel: string | null;
-    lastUsedChatModel: string | null;
+    lastSelectedChatModel: string | null;
+    lastSelectedReasoningLevel: NonNullable<Message["reasoning"]>;
     mfaOnLogin: boolean;
     legalResearchUs: boolean;
     quickActionsVisible: boolean;
@@ -523,6 +524,8 @@ export async function updateUserProfile(payload: {
     practiceAreas?: string[];
     titleModel?: string | null;
     tabularModel?: string | null;
+    lastSelectedChatModel?: string | null;
+    lastSelectedReasoningLevel?: NonNullable<Message["reasoning"]>;
     legalResearchUs?: boolean;
     quickActionsVisible?: boolean;
     darkMode?: boolean;
@@ -1446,6 +1449,47 @@ export async function renameChat(chatId: string, title: string): Promise<void> {
     });
 }
 
+export async function updateChatModel(
+    chatId: string,
+    model: string,
+): Promise<{ id: string; title: string | null; model: string }> {
+    return apiRequest(`/chat/${chatId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model }),
+        keepalive: true,
+    });
+}
+
+export async function updateChatReasoningLevel(
+    chatId: string,
+    reasoningLevel: NonNullable<Message["reasoning"]>,
+): Promise<{
+    id: string;
+    title: string | null;
+    model: string;
+    reasoning_level: NonNullable<Message["reasoning"]>;
+}> {
+    return apiRequest(`/chat/${chatId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reasoningLevel }),
+        keepalive: true,
+    });
+}
+
+export async function updateLastSelectedChatSettings(payload: {
+    lastSelectedChatModel?: string;
+    lastSelectedReasoningLevel?: NonNullable<Message["reasoning"]>;
+}): Promise<UserProfile> {
+    return apiRequest<UserProfile>("/user/profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        keepalive: true,
+    });
+}
+
 export async function deleteChat(chatId: string): Promise<void> {
     await apiRequest(`/chat/${chatId}`, { method: "DELETE" });
 }
@@ -1494,6 +1538,7 @@ export async function streamChat(payload: {
     chat_id?: string;
     project_id?: string;
     model?: string;
+    reasoning?: Message["reasoning"];
     ask_inputs_response?: AskInputsResponsePayload;
     signal?: AbortSignal;
 }): Promise<Response> {
@@ -1521,6 +1566,7 @@ export async function streamProjectChat(payload: {
     messages: StreamChatMessage[];
     chat_id?: string;
     model?: string;
+    reasoning?: Message["reasoning"];
     displayed_doc?: { filename: string; document_id: string };
     attached_documents?: { filename: string; document_id: string }[];
     ask_inputs_response?: AskInputsResponsePayload;
@@ -1702,6 +1748,7 @@ export async function streamTabularChat(
     chat_id?: string | null,
     signal?: AbortSignal,
     context?: { reviewTitle?: string | null; projectName?: string | null },
+    reasoning?: Message["reasoning"],
 ): Promise<Response> {
     return apiFetch(`${API_BASE}/tabular-review/${reviewId}/chat`, {
         method: "POST",
@@ -1711,6 +1758,7 @@ export async function streamTabularChat(
             chat_id: chat_id ?? undefined,
             review_title: context?.reviewTitle ?? undefined,
             project_name: context?.projectName ?? undefined,
+            reasoning,
         }),
         signal: signal ?? undefined,
     });

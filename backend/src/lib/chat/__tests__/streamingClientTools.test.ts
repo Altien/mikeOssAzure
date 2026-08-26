@@ -41,6 +41,22 @@ beforeEach(() => {
 });
 
 describe("runLLMStream client-tool dispatch", () => {
+  it("forwards the request's reasoning choice to the provider", async () => {
+    await runLLMStream({ ...baseParams(), reasoning: "xhigh" });
+
+    expect(streamChatWithTools).toHaveBeenCalledWith(
+      expect.objectContaining({ reasoning: "xhigh" }),
+    );
+  });
+
+  it("keeps reasoning enabled for clients that omit the new setting", async () => {
+    await runLLMStream(baseParams());
+
+    expect(streamChatWithTools).toHaveBeenCalledWith(
+      expect.objectContaining({ reasoning: "high" }),
+    );
+  });
+
   it("advertises client tool schemas alongside server tools", async () => {
     const adapter: ClientToolsAdapter = {
       schemas: [

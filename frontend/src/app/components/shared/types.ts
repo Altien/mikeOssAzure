@@ -122,6 +122,7 @@ export interface Chat {
     project_name?: string | null;
     title: string | null;
     model?: string | null;
+    reasoning_level?: Message["reasoning"] | null;
     created_at: string;
 }
 
@@ -319,6 +320,13 @@ export interface Message {
     files?: MessageFile[];
     workflow?: { id: string; title: string };
     model?: string;
+    reasoning?:
+        | "none"
+        | "minimal"
+        | "low"
+        | "medium"
+        | "high"
+        | "xhigh";
     citations?: Citation[];
     citationStatus?: "started" | "partial" | "final";
     events?: AssistantEvent[];

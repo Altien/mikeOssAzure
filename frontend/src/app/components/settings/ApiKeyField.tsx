@@ -114,22 +114,20 @@ export function ApiKeyField({
                             value={value}
                             onChange={(event) => setValue(event.target.value)}
                             placeholder={
-                                isServerConfigured
-                                    ? "Server .env key configured"
-                                    : hasSavedKey
+                                hasSavedKey
                                       ? "Saved key hidden"
+                                      : isServerConfigured
+                                        ? "Server .env key configured — add yours to override"
                                       : placeholder
                             }
                             className="pr-10"
                             autoComplete="off"
                             spellCheck={false}
-                            disabled={isServerConfigured}
                         />
                         {dirty && (
                             <button
                                 type="button"
                                 onClick={() => setReveal((current) => !current)}
-                                disabled={isServerConfigured}
                                 className={`absolute inset-y-1 right-1.5 flex items-center ${settingsGlassIconButtonClassName}`}
                                 aria-label={reveal ? "Hide key" : "Show key"}
                             >
@@ -146,7 +144,6 @@ export function ApiKeyField({
                             type="button"
                             onClick={handleSave}
                             disabled={
-                                isServerConfigured ||
                                 isSaving ||
                                 !dirty ||
                                 saved
@@ -161,7 +158,7 @@ export function ApiKeyField({
                                 "Save"
                             )}
                         </button>
-                        {hasSavedKey && !isServerConfigured && (
+                        {hasSavedKey && (
                             <button
                                 type="button"
                                 onClick={handleRemove}

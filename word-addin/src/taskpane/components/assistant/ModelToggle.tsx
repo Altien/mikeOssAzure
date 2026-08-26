@@ -1,5 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ModelToggleUI } from "@mike/model-toggle-ui";
+import {
+  ModelToggleUI,
+  type ReasoningLevel,
+} from "@mike/model-toggle-ui";
 import { getOllamaModels, type ApiKeyStatus } from "../../api/mikeApi";
 import {
   isModelAvailable,
@@ -21,6 +24,8 @@ export function ModelToggle({
   openCodeGoModels,
   compact = false,
   onNoModelsClick,
+  reasoningLevel,
+  onReasoningChange,
 }: {
   value: string;
   onChange: (model: string) => void;
@@ -33,6 +38,8 @@ export function ModelToggle({
   openCodeGoModels: string[];
   compact?: boolean;
   onNoModelsClick?: () => void;
+  reasoningLevel?: ReasoningLevel;
+  onReasoningChange?: (level: ReasoningLevel) => void;
 }): React.ReactElement {
   const [ollamaModels, setOllamaModels] = useState<ModelOption[]>([]);
 
@@ -55,6 +62,7 @@ export function ModelToggle({
     const localOptions = ollamaModels.map((model) => ({
       ...model,
       label: modelDisplayName(model.id),
+      source: "Local",
     }));
     return [
       ...STATIC_MODELS,
@@ -91,6 +99,8 @@ export function ModelToggle({
       compact={compact}
       emptyLabel="No Models"
       onEmptyClick={onNoModelsClick}
+      reasoningLevel={reasoningLevel}
+      onReasoningChange={onReasoningChange}
     />
   );
 }

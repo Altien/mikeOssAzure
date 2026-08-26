@@ -33,6 +33,8 @@ export default function AssistantPage() {
     return (
         <ChatView
             chatId={chatId}
+            chatModel={messages[0]?.model ?? null}
+            chatReasoningLevel={messages[0]?.reasoning ?? null}
             messages={messages}
             isResponseLoading={isResponseLoading}
             handleChat={handleChat}

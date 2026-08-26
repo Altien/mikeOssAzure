@@ -6,9 +6,13 @@ import { recordAudit } from "../lib/audit";
 import { sendInternalError } from "../lib/httpError";
 import {
     isSupportedOpenCodeGoModel,
+    REASONING_LEVELS,
     resolveModel,
 } from "../lib/llm";
-import { normalizeOptionalModelPreference } from "../lib/modelSelection";
+import {
+    normalizeOptionalModelPreference,
+    normalizeReasoningLevel,
+} from "../lib/modelSelection";
 import {
     type ApiKeyStatus,
     getUserApiKeyStatus,
@@ -68,7 +72,8 @@ type UserProfileRow = {
     tier: string;
     title_model: string | null;
     tabular_model: string | null;
-    last_used_chat_model?: string | null;
+    last_selected_chat_model?: string | null;
+    last_selected_reasoning_level?: string | null;
     mfa_on_login: boolean | null;
     legal_research_us: boolean | null;
     quick_actions_visible: boolean | null;
@@ -183,8 +188,10 @@ function mcpOAuthPopupCsp(nonce: string) {
     ].join("; ");
 }
 
-const PROFILE_SELECT_WITH_LAST_USED_CHAT_MODEL =
-    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, last_used_chat_model, mfa_on_login, legal_research_us, quick_actions_visible, dark_mode";
+const PROFILE_SELECT_WITH_CHAT_SELECTIONS =
+    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, last_selected_chat_model, last_selected_reasoning_level, mfa_on_login, legal_research_us, quick_actions_visible, dark_mode";
+const PROFILE_SELECT_WITH_LAST_SELECTED_CHAT_MODEL =
+    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, last_selected_chat_model, mfa_on_login, legal_research_us, quick_actions_visible, dark_mode";
 const PROFILE_SELECT =
     "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, quick_actions_visible, dark_mode";
 // Deploy-before-migrate tolerance is per column: a database that already has
@@ -237,7 +244,7 @@ async function selectProfile(
 ) {
     const newestQuery = db
         .from("user_profiles")
-        .select(PROFILE_SELECT_WITH_LAST_USED_CHAT_MODEL)
+        .select(PROFILE_SELECT_WITH_CHAT_SELECTIONS)
         .eq("user_id", userId);
     const newest =
         mode === "single"
@@ -246,7 +253,27 @@ async function selectProfile(
     if (!newest.error) return newest;
     let cascadeError: unknown = newest.error;
 
-    if (isMissingProfileColumn(cascadeError, "last_used_chat_model")) {
+    if (isMissingProfileColumn(cascadeError, "last_selected_reasoning_level")) {
+        const modelOnlyQuery = db
+            .from("user_profiles")
+            .select(PROFILE_SELECT_WITH_LAST_SELECTED_CHAT_MODEL)
+            .eq("user_id", userId);
+        const modelOnly =
+            mode === "single"
+                ? await modelOnlyQuery.single()
+                : await modelOnlyQuery.maybeSingle();
+        if (!modelOnly.error) {
+            if (modelOnly.data && typeof modelOnly.data === "object") {
+                Object.assign(modelOnly.data as Record<string, unknown>, {
+                    last_selected_reasoning_level: null,
+                });
+            }
+            return modelOnly;
+        }
+        cascadeError = modelOnly.error;
+    }
+
+    if (isMissingProfileColumn(cascadeError, "last_selected_chat_model")) {
         const fullQuery = db
             .from("user_profiles")
             .select(PROFILE_SELECT)
@@ -258,7 +285,8 @@ async function selectProfile(
         if (!full.error) {
             if (full.data && typeof full.data === "object") {
                 Object.assign(full.data as Record<string, unknown>, {
-                    last_used_chat_model: null,
+                    last_selected_chat_model: null,
+                    last_selected_reasoning_level: null,
                 });
             }
             return full;
@@ -528,10 +556,13 @@ function serializeProfile(
             row.tabular_model,
             routerModels,
         ),
-        lastUsedChatModel: normalizeOptionalModelPreference(
-            row.last_used_chat_model,
+        lastSelectedChatModel: normalizeOptionalModelPreference(
+            row.last_selected_chat_model,
             routerModels,
         ),
+        lastSelectedReasoningLevel:
+            normalizeReasoningLevel(row.last_selected_reasoning_level) ??
+            "high",
         mfaOnLogin: row.mfa_on_login === true,
         legalResearchUs: row.legal_research_us !== false,
         quickActionsVisible: row.quick_actions_visible !== false,
@@ -691,6 +722,8 @@ function validateProfilePayload(body: unknown):
               practice_areas?: string[];
               title_model?: string | null;
               tabular_model?: string | null;
+              last_selected_chat_model?: string | null;
+              last_selected_reasoning_level?: string | null;
               legal_research_us?: boolean;
               quick_actions_visible?: boolean;
               updated_at: string;
@@ -712,6 +745,8 @@ function validateProfilePayload(body: unknown):
         "practiceAreas",
         "titleModel",
         "tabularModel",
+        "lastSelectedChatModel",
+        "lastSelectedReasoningLevel",
         "legalResearchUs",
         "quickActionsVisible",
         "darkMode",
@@ -736,6 +771,8 @@ function validateProfilePayload(body: unknown):
         practice_areas?: string[];
         title_model?: string | null;
         tabular_model?: string | null;
+        last_selected_chat_model?: string | null;
+        last_selected_reasoning_level?: string | null;
         legal_research_us?: boolean;
         quick_actions_visible?: boolean;
         dark_mode?: boolean;
@@ -809,6 +846,48 @@ function validateProfilePayload(body: unknown):
             }
             update.title_model = resolved;
         }
+    }
+
+    if ("lastSelectedChatModel" in raw) {
+        if (
+            raw.lastSelectedChatModel === null ||
+            raw.lastSelectedChatModel === ""
+        ) {
+            update.last_selected_chat_model = null;
+        } else if (typeof raw.lastSelectedChatModel !== "string") {
+            return {
+                ok: false,
+                detail: "lastSelectedChatModel must be a string or null",
+            };
+        } else {
+            const resolved = resolveModel(raw.lastSelectedChatModel, "");
+            if (!resolved) {
+                return {
+                    ok: false,
+                    detail: "Unsupported lastSelectedChatModel",
+                };
+            }
+            update.last_selected_chat_model = resolved;
+        }
+    }
+
+    if ("lastSelectedReasoningLevel" in raw) {
+        if (typeof raw.lastSelectedReasoningLevel !== "string") {
+            return {
+                ok: false,
+                detail: "lastSelectedReasoningLevel must be a string",
+            };
+        }
+        if (!(REASONING_LEVELS as readonly string[]).includes(
+            raw.lastSelectedReasoningLevel,
+        )) {
+            return {
+                ok: false,
+                detail: "Unsupported lastSelectedReasoningLevel",
+            };
+        }
+        update.last_selected_reasoning_level =
+            raw.lastSelectedReasoningLevel;
     }
 
     for (const slug of ROUTER_SLUGS) {

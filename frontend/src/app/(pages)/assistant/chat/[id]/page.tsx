@@ -21,8 +21,17 @@ export default function AssistantChatPage() {
 
     const hasAutoSent = useRef(false);
     const hasLoaded = useRef(false);
-    const [chatModel, setChatModel] = useState<string | null>(
-        initialMessages[0]?.model ?? null,
+    const [chatModel, setChatModel] = useState<string | null | undefined>(
+        initialMessages.length > 0
+            ? (initialMessages[0]?.model ?? null)
+            : undefined,
+    );
+    const [chatReasoningLevel, setChatReasoningLevel] = useState<
+        NonNullable<(typeof initialMessages)[number]["reasoning"]> | null | undefined
+    >(
+        initialMessages.length > 0
+            ? (initialMessages[0]?.reasoning ?? null)
+            : undefined,
     );
 
     useEffect(() => {
@@ -40,6 +49,7 @@ export default function AssistantChatPage() {
         getChat(id)
             .then(({ chat, messages: loaded }) => {
                 setChatModel(chat.model ?? null);
+                setChatReasoningLevel(chat.reasoning_level ?? null);
                 if (loaded.length > 0) {
                     setMessages(loaded);
                 } else {
@@ -67,6 +77,7 @@ export default function AssistantChatPage() {
         <ChatView
             chatId={id}
             chatModel={chatModel}
+            chatReasoningLevel={chatReasoningLevel}
             messages={messages}
             isResponseLoading={isResponseLoading}
             handleChat={handleChat}
