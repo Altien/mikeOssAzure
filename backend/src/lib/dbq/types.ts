@@ -2,7 +2,7 @@ import type { createServerSupabase } from "../supabase";
 
 export type Db = ReturnType<typeof createServerSupabase>;
 
-/** One row of public.db_jobs (see the 20260824_01_db_jobs migration). */
+/** One row of public.db_jobs (see the 20260826_01_db_jobs migration). */
 export interface DbJob {
     id: string;
     kind: string;

@@ -3041,7 +3041,7 @@ alter table public.audit_events enable row level security;
 -- at-least-once execution for audit trails, account deletion, storage
 -- cleanup and export generation — workloads that must be durable in every
 -- deployment, using the database every deployment already has. See the
--- 20260824_01_db_jobs migration header for the full design notes.
+-- 20260826_01_db_jobs migration header for the full design notes.
 create table if not exists public.db_jobs (
   id uuid primary key default gen_random_uuid(),
   kind text not null,
