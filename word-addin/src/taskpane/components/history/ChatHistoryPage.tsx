@@ -4,9 +4,15 @@ import type { Message } from "../../types";
 import { ChatHistoryList } from "./ChatHistoryList";
 import { PageTitle } from "../primitives/PageTitle";
 import type { WordChatStorageMode } from "../../lib/wordChatSettings";
+import type { ReasoningLevel } from "../../lib/wordChatTypes";
 
 interface ChatHistoryPageProps {
-  onSelect: (chatId: string, messages: Message[]) => void;
+  onSelect: (
+    chatId: string,
+    messages: Message[],
+    model: string | null,
+    reasoningLevel: ReasoningLevel | null,
+  ) => void;
   documentId: string;
   storageMode: WordChatStorageMode;
   ownerId: string;

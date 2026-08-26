@@ -218,7 +218,7 @@ describe("OpenRouter LLM adapter", () => {
                 },
             ],
             apiKeys: { openrouter: "or-user-key" },
-            enableThinking: true,
+            reasoning: "high",
             callbacks: {
                 onReasoningDelta,
                 onReasoningBlockEnd,
@@ -579,7 +579,7 @@ describe("OpenCode Go LLM adapter", () => {
             systemPrompt: "Be concise",
             messages: [{ role: "user", content: "Hello" }],
             apiKeys: { "opencode-go": "oc-user-key" },
-            enableThinking: true,
+            reasoning: "high",
             callbacks: { onContentDelta: (delta) => deltas.push(delta) },
         });
 

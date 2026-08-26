@@ -120,9 +120,16 @@ import {
     streamTabularChat,
     streamTabularGeneration,
     syncUserPasswordSet,
+    tabularChatSelectionKey,
+    parseTabularChatSelectionKey,
     unhideWorkflow,
     updateMcpConnector,
     updateProject,
+    updateChatModel,
+    updateChatReasoningLevel,
+    updateLastSelectedChatSettings,
+    updateTabularChatModel,
+    updateTabularChatReasoningLevel,
     updateTabularReview,
     updateUserMfaOnLogin,
     updateUserProfile,
@@ -790,7 +797,7 @@ describe("streamProjectChat", () => {
 });
 
 describe("streamTabularChat", () => {
-    it("maps context fields into the payload and drops null chat_id", async () => {
+    it("maps independent chat settings and context into the payload", async () => {
         fetchMock.mockResolvedValue(streamResponse([]));
 
         await streamTabularChat(
@@ -799,6 +806,8 @@ describe("streamTabularChat", () => {
             null,
             undefined,
             { reviewTitle: "Leases", projectName: null },
+            "openai-gpt-5.2",
+            "low",
         );
 
         const { url, init } = lastFetchCall();
@@ -806,6 +815,8 @@ describe("streamTabularChat", () => {
         expect(JSON.parse(init.body as string)).toEqual({
             messages: [{ role: "user", content: "summarize" }],
             review_title: "Leases",
+            model: "openai-gpt-5.2",
+            reasoning: "low",
         });
     });
 });
@@ -1361,6 +1372,7 @@ describe("tabular review CRUD", () => {
             columns_config: [{ index: 0, name: "Term", prompt: "Find term" }],
             project_id: "p1",
             document_grouping: "folder",
+            model: "gpt-5.6-terra",
         });
 
         const { url, init } = lastFetchCall();
@@ -1372,6 +1384,7 @@ describe("tabular review CRUD", () => {
             columns_config: [{ index: 0, name: "Term", prompt: "Find term" }],
             project_id: "p1",
             document_grouping: "folder",
+            model: "gpt-5.6-terra",
         });
     });
 
@@ -1468,6 +1481,15 @@ describe("uploadReviewDocument", () => {
 });
 
 describe("tabular review chats", () => {
+    it("round-trips tabular chat selection keys", () => {
+        const key = tabularChatSelectionKey("r1", "c1");
+        expect(parseTabularChatSelectionKey(key)).toEqual({
+            reviewId: "r1",
+            chatId: "c1",
+        });
+        expect(parseTabularChatSelectionKey("ordinary-chat-id")).toBeNull();
+    });
+
     it("lists chats and fetches messages from the nested routes", async () => {
         fetchMock.mockImplementation(() => Promise.resolve(jsonResponse([])));
 
@@ -1493,6 +1515,35 @@ describe("tabular review chats", () => {
         ({ url, init } = lastFetchCall());
         expect(url).toBe("/api/tabular-review/r1/chats/c1");
         expect(init.method).toBe("DELETE");
+    });
+
+    it("persists tabular chat model and reasoning selections", async () => {
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(
+                jsonResponse({
+                    id: "c1",
+                    title: null,
+                    model: "openai-gpt-5.2",
+                    reasoning_level: "medium",
+                }),
+            ),
+        );
+
+        await updateTabularChatModel("r1", "c1", "openai-gpt-5.2");
+        let { url, init } = lastFetchCall();
+        expect(url).toBe("/api/tabular-review/r1/chats/c1");
+        expect(init.keepalive).toBe(true);
+        expect(JSON.parse(init.body as string)).toEqual({
+            model: "openai-gpt-5.2",
+        });
+
+        await updateTabularChatReasoningLevel("r1", "c1", "medium");
+        ({ url, init } = lastFetchCall());
+        expect(url).toBe("/api/tabular-review/r1/chats/c1");
+        expect(init.keepalive).toBe(true);
+        expect(JSON.parse(init.body as string)).toEqual({
+            reasoningLevel: "medium",
+        });
     });
 
     it("includes chat_id but omits absent context in streamTabularChat", async () => {
@@ -2202,6 +2253,34 @@ describe("thin endpoint wrappers", () => {
             body: { title: "New title" },
         },
         {
+            name: "updateChatModel",
+            call: () => updateChatModel("c1", "gpt-5.6-sol"),
+            url: "/chat/c1",
+            method: "PATCH",
+            body: { model: "gpt-5.6-sol" },
+        },
+        {
+            name: "updateChatReasoningLevel",
+            call: () => updateChatReasoningLevel("c1", "xhigh"),
+            url: "/chat/c1",
+            method: "PATCH",
+            body: { reasoningLevel: "xhigh" },
+        },
+        {
+            name: "updateLastSelectedChatSettings",
+            call: () =>
+                updateLastSelectedChatSettings({
+                    lastSelectedChatModel: "gpt-5.6-sol",
+                    lastSelectedReasoningLevel: "high",
+                }),
+            url: "/user/profile",
+            method: "PATCH",
+            body: {
+                lastSelectedChatModel: "gpt-5.6-sol",
+                lastSelectedReasoningLevel: "high",
+            },
+        },
+        {
             name: "deleteChat",
             call: () => deleteChat("c1"),
             url: "/chat/c1",
@@ -2209,10 +2288,11 @@ describe("thin endpoint wrappers", () => {
         },
         {
             name: "generateChatTitle",
-            call: () => generateChatTitle("c1", "first message"),
+            call: () =>
+                generateChatTitle("c1", "first message", "gpt-5.6-terra"),
             url: "/chat/c1/generate-title",
             method: "POST",
-            body: { message: "first message" },
+            body: { message: "first message", model: "gpt-5.6-terra" },
         },
         // Tabular review
         {

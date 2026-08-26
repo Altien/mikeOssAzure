@@ -299,7 +299,14 @@ export const test = base.extend<{ addin: Addin }>({
       return route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ displayName: "Test User" }),
+        body: JSON.stringify({
+          displayName: "Test User",
+          lastSelectedChatModel: "gemini-3-flash-preview",
+          lastSelectedReasoningLevel: "high",
+          openRouterModels: [],
+          vercelModels: [],
+          openCodeGoModels: [],
+        }),
       });
     });
 

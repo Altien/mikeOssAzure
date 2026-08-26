@@ -26,13 +26,17 @@ import {
     parseOptionalChatId,
     parseOptionalDisplayedDoc,
     parseOptionalModel,
+    parseOptionalReasoning,
     type ChatMessage,
 } from "../lib/chat";
-import {
-    getUserModelSettings,
-} from "../lib/userSettings";
+import { getUserModelSettings } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
 import { generateAssistantChatTitle } from "../lib/chatTitle";
+import {
+    resolveEffectiveChatModel,
+    resolveEffectiveReasoningLevel,
+    titleModelForChat,
+} from "../lib/modelSelection";
 
 const PROJECT_SYSTEM_PROMPT_EXTRA = `PROJECT CONTEXT:
 You are operating within a project folder that contains a collection of legal documents the user has organised for a single matter. The user's questions will usually refer to one or more documents in this project — your job is to find the relevant files to work on. Use list_documents to see what is available and fetch_documents / read_document to pull in any documents you need before answering.
@@ -65,6 +69,10 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     if (!parsedModel.ok) {
         return void res.status(400).json({ detail: parsedModel.detail });
     }
+    const parsedReasoning = parseOptionalReasoning(body.reasoning);
+    if (!parsedReasoning.ok) {
+        return void res.status(400).json({ detail: parsedReasoning.detail });
+    }
     const parsedDisplayedDoc = parseOptionalDisplayedDoc(body.displayed_doc);
     if (!parsedDisplayedDoc.ok) {
         return void res.status(400).json({ detail: parsedDisplayedDoc.detail });
@@ -94,7 +102,6 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     const askInputsResponse = parsedAskInputsResponse.value;
 
     const db = createServerSupabase();
-
     // Verify the user has access to the project (owner or shared member).
     const projectAccess = await checkProjectAccess(
         projectId,
@@ -107,22 +114,76 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
 
     let chatId = chat_id ?? null;
     let chatTitle: string | null = null;
+    let chatModel: string | null = null;
+    let chatReasoningLevel: string | null = null;
 
     if (chatId) {
         const { data: existing } = await db
             .from("chats")
-            .select("id, title, project_id")
+            .select("id, title, model, reasoning_level, project_id")
             .eq("id", chatId)
             .single();
         const canUse = !!existing && existing.project_id === projectId;
         if (!canUse) chatId = null;
-        else chatTitle = existing!.title;
+        else {
+            chatTitle = existing!.title;
+            chatModel = (existing!.model as string | null) ?? null;
+            chatReasoningLevel =
+                (existing!.reasoning_level as string | null) ?? null;
+        }
+    }
+
+    const modelSettings = await getUserModelSettings(userId, db);
+    const modelResolution = await resolveEffectiveChatModel({
+        requested: model,
+        chatModel,
+        lastSelectedModel: modelSettings.last_selected_chat_model,
+        apiKeys: modelSettings.api_keys,
+        userId,
+        db,
+    });
+    if (!modelResolution.ok) {
+        return void res.status(modelResolution.status).json({
+            code: modelResolution.code,
+            detail: modelResolution.detail,
+        });
+    }
+    const selectedModel = modelResolution.model;
+    const selectedReasoningLevel = resolveEffectiveReasoningLevel({
+        model: selectedModel,
+        requested: parsedReasoning.value,
+        chatReasoningLevel,
+        lastSelectedReasoningLevel: modelSettings.last_selected_reasoning_level,
+    });
+
+    if (
+        chatId &&
+        (chatModel !== selectedModel ||
+            chatReasoningLevel !== selectedReasoningLevel)
+    ) {
+        const { error } = await db
+            .from("chats")
+            .update({
+                model: selectedModel,
+                reasoning_level: selectedReasoningLevel,
+            })
+            .eq("id", chatId);
+        if (error) {
+            return void res
+                .status(500)
+                .json({ detail: "Failed to save chat model" });
+        }
     }
 
     if (!chatId) {
         const { data: newChat, error } = await db
             .from("chats")
-            .insert({ user_id: userId, project_id: projectId })
+            .insert({
+                user_id: userId,
+                project_id: projectId,
+                model: selectedModel,
+                reasoning_level: selectedReasoningLevel,
+            })
             .select("id, title")
             .single();
         if (error || !newChat)
@@ -161,18 +222,18 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         folder_path: folderPaths.get(doc_id),
     }));
     const documentsById = new Map(
-        Object.entries(docIndex).map(([slug, document]) => [
-            document.document_id,
-            { slug, filename: document.filename },
-        ] as const),
+        Object.entries(docIndex).map(
+            ([slug, document]) =>
+                [
+                    document.document_id,
+                    { slug, filename: document.filename },
+                ] as const,
+        ),
     );
     // Generate the nonce before adding request metadata or prior events so
     // every document filename is fenced wherever it enters the prompt.
     const nonce = generateSpotlightNonce();
-    const documentPromptRef = (
-        documentId: string,
-        requestFilename: string,
-    ) => {
+    const documentPromptRef = (documentId: string, requestFilename: string) => {
         const document = documentsById.get(documentId);
         return {
             slug: document?.slug,
@@ -226,7 +287,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         legal_research_us: legalResearchUs,
         title_model: titleModel,
         personalisation,
-    } = await getUserModelSettings(userId, db);
+    } = modelSettings;
     const personalisationPrompt = buildUserPersonalisationPrompt(
         personalisation,
         nonce,
@@ -278,7 +339,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             : "";
         const titlePromise = shouldGenerateTitle
             ? generateAssistantChatTitle({
-                  model: titleModel,
+                  model: titleModelForChat(selectedModel, titleModel),
                   message: titleMessage,
                   apiKeys,
               })
@@ -313,7 +374,8 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             extraTools: PROJECT_EXTRA_TOOLS,
             workflowStore,
             includeResearchTools: legalResearchUs,
-            model,
+            model: selectedModel,
+            reasoning: selectedReasoningLevel,
             apiKeys,
             signal: streamAbort.signal,
             projectId,
@@ -342,10 +404,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
 
         if (!chatTitle && lastUser?.content) {
             const title = lastUser.content.slice(0, 120);
-            await db
-                .from("chats")
-                .update({ title })
-                .eq("id", chatId);
+            await db.from("chats").update({ title }).eq("id", chatId);
             chatTitle = title;
             if (shouldGenerateTitle && !streamAbort.signal.aborted) {
                 write(
@@ -362,7 +421,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
                 chatId,
                 projectId,
                 title: chatTitle ?? lastUser?.content?.slice(0, 120) ?? null,
-                model,
+                model: selectedModel,
             },
             persistedEvents,
         );
@@ -412,9 +471,10 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         }
         console.error("[project-chat/stream] error:", err);
         const message = ASSISTANT_ERROR_MESSAGE;
-        const errorEvents = err instanceof AssistantStreamError
-            ? stripTransientAssistantEvents(err.events)
-            : [{ type: "error" as const, message }];
+        const errorEvents =
+            err instanceof AssistantStreamError
+                ? stripTransientAssistantEvents(err.events)
+                : [{ type: "error" as const, message }];
         const errorFullText =
             err instanceof AssistantStreamError ? err.fullText : "";
         try {
@@ -438,14 +498,18 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
                 );
             }
             if (saveError)
-                console.error("[project-chat/stream] failed to save error", saveError);
+                console.error(
+                    "[project-chat/stream] failed to save error",
+                    saveError,
+                );
         } catch (saveErr) {
-            console.error("[project-chat/stream] failed to save error", saveErr);
+            console.error(
+                "[project-chat/stream] failed to save error",
+                saveErr,
+            );
         }
         try {
-            write(
-                `data: ${JSON.stringify({ type: "error", message })}\n\n`,
-            );
+            write(`data: ${JSON.stringify({ type: "error", message })}\n\n`);
             write("data: [DONE]\n\n");
         } catch {
             /* ignore */

@@ -1,9 +1,20 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getUserProfile, updateUserProfile } = vi.hoisted(() => ({
+const {
+    getUserProfile,
+    updateUserProfile,
+    updateChatModel,
+    updateTabularChatModel,
+    updateTabularChatReasoningLevel,
+    updateLastSelectedChatSettings,
+} = vi.hoisted(() => ({
     getUserProfile: vi.fn(),
     updateUserProfile: vi.fn(),
+    updateChatModel: vi.fn(),
+    updateTabularChatModel: vi.fn(),
+    updateTabularChatReasoningLevel: vi.fn(),
+    updateLastSelectedChatSettings: vi.fn(),
 }));
 
 vi.mock("@/app/contexts/AuthContext", () => ({
@@ -17,12 +28,17 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
     ...(await importOriginal<typeof import("@/app/lib/mikeApi")>()),
     getUserProfile: (...args: unknown[]) => getUserProfile(...args),
     updateUserProfile: (...args: unknown[]) => updateUserProfile(...args),
+    updateChatModel: (...args: unknown[]) => updateChatModel(...args),
+    updateTabularChatModel: (...args: unknown[]) =>
+        updateTabularChatModel(...args),
+    updateTabularChatReasoningLevel: (...args: unknown[]) =>
+        updateTabularChatReasoningLevel(...args),
+    updateLastSelectedChatSettings: (...args: unknown[]) =>
+        updateLastSelectedChatSettings(...args),
 }));
 
-import {
-    UserProfileProvider,
-    useUserProfile,
-} from "./UserProfileContext";
+import { UserProfileProvider, useUserProfile } from "./UserProfileContext";
+import { subscribeToTabularChatSettingsUpdates } from "@/app/lib/tabularChatSettingsEvents";
 
 function apiProfile(darkMode: boolean) {
     return {
@@ -34,6 +50,8 @@ function apiProfile(darkMode: boolean) {
         tier: "Free",
         titleModel: "gemini-3.1-flash-lite-preview",
         tabularModel: "gemini-3-flash-preview",
+        lastSelectedChatModel: null,
+        lastSelectedReasoningLevel: "high",
         mfaOnLogin: false,
         legalResearchUs: true,
         emailIntegrationEnabled: false,
@@ -56,18 +74,62 @@ function ThemeControls() {
     const { profile, updateDarkMode } = useUserProfile();
     return (
         <>
-            <span data-testid="mode">{profile?.darkMode ? "dark" : "light"}</span>
+            <span data-testid="mode">
+                {profile?.darkMode ? "dark" : "light"}
+            </span>
             <button onClick={() => void updateDarkMode(false)}>Light</button>
             <button onClick={() => void updateDarkMode(true)}>Dark</button>
         </>
     );
 }
 
+function LastSelectedModel() {
+    const { profile, persistChatModelSelection } = useUserProfile();
+    return (
+        <>
+            <span>{profile?.lastSelectedChatModel ?? "none"}</span>
+            <button
+                onClick={() => void persistChatModelSelection("gpt-5.6-luna")}
+            >
+                Select model
+            </button>
+        </>
+    );
+}
+
+function TabularChatSettings() {
+    const { persistChatModelSelection, persistChatReasoningSelection } =
+        useUserProfile();
+    const selectionKey = "tabular-review-chat:r1:c1";
+    return (
+        <>
+            <button
+                onClick={() =>
+                    void persistChatModelSelection("gpt-5.6-luna", selectionKey)
+                }
+            >
+                Select tabular model
+            </button>
+            <button
+                onClick={() =>
+                    void persistChatReasoningSelection("low", selectionKey)
+                }
+            >
+                Select tabular reasoning
+            </button>
+        </>
+    );
+}
+
 beforeEach(() => {
     getUserProfile.mockResolvedValue(apiProfile(true));
-    updateUserProfile.mockImplementation(({ darkMode }: { darkMode: boolean }) =>
-        Promise.resolve(apiProfile(darkMode)),
+    updateUserProfile.mockImplementation(
+        ({ darkMode }: { darkMode: boolean }) =>
+            Promise.resolve(apiProfile(darkMode)),
     );
+    updateLastSelectedChatSettings.mockResolvedValue(apiProfile(true));
+    updateTabularChatModel.mockResolvedValue({});
+    updateTabularChatReasoningLevel.mockResolvedValue({});
 });
 
 afterEach(() => {
@@ -128,9 +190,75 @@ describe("UserProfileProvider dark mode", () => {
                 <FailingControl />
             </UserProfileProvider>,
         );
-        await waitFor(() => expect(document.documentElement).toHaveClass("dark"));
+        await waitFor(() =>
+            expect(document.documentElement).toHaveClass("dark"),
+        );
 
         fireEvent.click(screen.getByRole("button", { name: "Light" }));
-        await waitFor(() => expect(document.documentElement).toHaveClass("dark"));
+        await waitFor(() =>
+            expect(document.documentElement).toHaveClass("dark"),
+        );
+    });
+
+    it("persists and updates the last-selected model immediately", async () => {
+        render(
+            <UserProfileProvider>
+                <LastSelectedModel />
+            </UserProfileProvider>,
+        );
+        await waitFor(() => expect(screen.getByText("none")).toBeVisible());
+
+        fireEvent.click(screen.getByRole("button", { name: "Select model" }));
+
+        await waitFor(() =>
+            expect(screen.getByText("gpt-5.6-luna")).toBeVisible(),
+        );
+        expect(updateLastSelectedChatSettings).toHaveBeenCalledWith({
+            lastSelectedChatModel: "gpt-5.6-luna",
+        });
+    });
+
+    it("routes tabular chat selections to the nested chat resource", async () => {
+        const settingsListener = vi.fn();
+        const unsubscribe =
+            subscribeToTabularChatSettingsUpdates(settingsListener);
+        render(
+            <UserProfileProvider>
+                <TabularChatSettings />
+            </UserProfileProvider>,
+        );
+        await waitFor(() => expect(getUserProfile).toHaveBeenCalled());
+
+        fireEvent.click(
+            screen.getByRole("button", { name: "Select tabular model" }),
+        );
+        fireEvent.click(
+            screen.getByRole("button", { name: "Select tabular reasoning" }),
+        );
+
+        await waitFor(() => {
+            expect(updateTabularChatModel).toHaveBeenCalledWith(
+                "r1",
+                "c1",
+                "gpt-5.6-luna",
+            );
+            expect(updateTabularChatReasoningLevel).toHaveBeenCalledWith(
+                "r1",
+                "c1",
+                "low",
+            );
+        });
+        expect(updateChatModel).not.toHaveBeenCalled();
+        expect(settingsListener).toHaveBeenCalledWith({
+            reviewId: "r1",
+            chatId: "c1",
+            model: "gpt-5.6-luna",
+        });
+        expect(settingsListener).toHaveBeenCalledWith({
+            reviewId: "r1",
+            chatId: "c1",
+            reasoningLevel: "low",
+        });
+        unsubscribe();
     });
 });

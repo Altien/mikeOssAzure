@@ -30,8 +30,17 @@ import {
     workflowSlashCommand,
 } from "./workflowSlashCommands";
 import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
-import { ModelToggle } from "./ModelToggle";
-import { useSelectedModel } from "@/app/hooks/useSelectedModel";
+import {
+    ModelToggle,
+    type NoModelsReason,
+    type ReasoningLevel,
+} from "./ModelToggle";
+import { NoModelsWarningPopup } from "../popups/NoModelsWarningPopup";
+import { WarningPopup } from "../popups/WarningPopup";
+import {
+    useSelectedModel,
+    useSelectedReasoning,
+} from "@/app/hooks/useSelectedModel";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import {
     getModelProvider,
@@ -79,6 +88,9 @@ interface Props {
     projectId?: string;
     onDocumentsUploaded?: (documents: Document[]) => void;
     onDocumentClick?: (document: Document) => void;
+    chatModel?: string | null;
+    chatReasoningLevel?: ReasoningLevel | null;
+    chatKey?: string | null;
 }
 
 export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
@@ -93,6 +105,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         projectId,
         onDocumentsUploaded,
         onDocumentClick,
+        chatModel,
+        chatReasoningLevel,
+        chatKey,
     }: Props,
     ref,
 ) {
@@ -106,21 +121,28 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         profile,
         loading: profileLoading,
         apiKeysDegraded,
+        persistChatModelSelection,
+        persistChatReasoningSelection,
     } = useUserProfile();
     // A degraded profile is the local fallback, whose router lists are empty
     // because the truth is UNKNOWN. Passing them on would let one dropped
     // /user/profile request rewrite the saved composer selection to the
     // default — permanently. null means "not loaded", which the hook leaves
     // the stored selection alone for.
-    const [model, setModel] = useSelectedModel(
-        profile && !apiKeysDegraded
-            ? {
+    const [model, setModel] = useSelectedModel({
+        selectionKey: chatKey,
+        chatModel,
+        lastSelectedModel: profile?.lastSelectedChatModel,
+        routerSelections:
+            profile && !apiKeysDegraded
+                ? {
                   openRouterModels: profile.openRouterModels,
                   vercelModels: profile.vercelModels,
                   openCodeGoModels: profile.openCodeGoModels,
-              }
-            : null,
-    );
+                  }
+                : null,
+        apiKeys: apiKeysDegraded ? undefined : profile?.apiKeys,
+    });
     // Degraded profile → key availability is UNKNOWN; undefined here makes
     // every key gate (submit check + model toggle) fail open instead of
     // treating "we couldn't ask" as "no keys configured".
@@ -134,6 +156,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     const [workflowModalOpen, setWorkflowModalOpen] = useState(false);
     const [apiKeyModalProvider, setApiKeyModalProvider] =
         useState<ModelProvider | null>(null);
+    const [noModelsWarning, setNoModelsWarning] =
+        useState<NoModelsReason | null>(null);
+    const [modelRequiredWarning, setModelRequiredWarning] = useState(false);
+    const [reasoningLevel, setReasoningLevel] = useSelectedReasoning({
+        selectionKey: chatKey,
+        chatReasoningLevel,
+        lastSelectedReasoningLevel: profile?.lastSelectedReasoningLevel,
+    });
     const [isDraggingFiles, setIsDraggingFiles] = useState(false);
     const [uploadingFilenames, setUploadingFilenames] = useState<string[]>([]);
     const [uploadWarning, setUploadWarning] = useState<string | null>(null);
@@ -144,6 +174,38 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     const [activeSlashIndex, setActiveSlashIndex] = useState(0);
     const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
     const dragDepthRef = useRef(0);
+    const settingsSaveRef = useRef<Promise<boolean>>(Promise.resolve(true));
+
+    const handleModelChange = useCallback(
+        (nextModel: string) => {
+            setModel(nextModel);
+            // Keep rapid picker changes ordered so the final database value
+            // always matches the final visible selection.
+            settingsSaveRef.current = settingsSaveRef.current
+                .catch(() => false)
+                .then(() => persistChatModelSelection(nextModel, chatKey));
+        },
+        [chatKey, persistChatModelSelection, setModel],
+    );
+
+    const handleReasoningChange = useCallback(
+        (nextLevel: ReasoningLevel) => {
+            setReasoningLevel(nextLevel);
+            settingsSaveRef.current = settingsSaveRef.current
+                .catch(() => false)
+                .then(() =>
+                    persistChatReasoningSelection(nextLevel, chatKey),
+                );
+        }, [
+            chatKey,
+            persistChatReasoningSelection,
+            setReasoningLevel,
+        ],
+    );
+
+    const chatSettingsLoading =
+        !!chatKey &&
+        (chatModel === undefined || chatReasoningLevel === undefined);
 
     const slashQuery = slashCommandQuery(value);
     const matchingWorkflows = matchingSlashWorkflows(
@@ -340,6 +402,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         workflow: { id: string; title: string } | null,
     ) => {
         if (!query || isLoading) return;
+        if (!model) {
+            setModelRequiredWarning(true);
+            return;
+        }
         if (apiKeys && !isModelAvailable(model, apiKeys)) {
             setApiKeyModalProvider(getModelProvider(model));
             return;
@@ -368,6 +434,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             files: files.length > 0 ? files : undefined,
             workflow: workflow ?? undefined,
             model,
+            reasoning: reasoningLevel,
         });
     };
 
@@ -618,16 +685,23 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                         </div>
 
                         <div className="flex items-center gap-1">
-                            <ModelToggle
-                                value={model}
-                                onChange={setModel}
-                                apiKeys={apiKeys}
-                                apiKeysLoading={profileLoading && !profile}
-                                openRouterModels={profile?.openRouterModels}
-                                vercelModels={profile?.vercelModels}
-                                openCodeGoModels={profile?.openCodeGoModels}
-                                compact={compactControls}
-                            />
+                            {!chatSettingsLoading && (
+                                <ModelToggle
+                                    value={model}
+                                    onChange={handleModelChange}
+                                    apiKeys={apiKeys}
+                                    apiKeysLoading={
+                                        profileLoading && !profile
+                                    }
+                                    openRouterModels={profile?.openRouterModels}
+                                    vercelModels={profile?.vercelModels}
+                                    openCodeGoModels={profile?.openCodeGoModels}
+                                    compact={compactControls}
+                                    onNoModelsClick={setNoModelsWarning}
+                                    reasoningLevel={reasoningLevel}
+                                    onReasoningChange={handleReasoningChange}
+                                />
+                            )}
                             <button
                                 type="button"
                                 aria-label={
@@ -690,6 +764,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                 open={apiKeyModalProvider !== null}
                 provider={apiKeyModalProvider}
                 onClose={() => setApiKeyModalProvider(null)}
+            />
+            <NoModelsWarningPopup
+                reason={noModelsWarning}
+                onClose={() => setNoModelsWarning(null)}
+            />
+            <WarningPopup
+                open={modelRequiredWarning}
+                onClose={() => setModelRequiredWarning(false)}
+                title="Select a model"
+                message="Choose a model before sending your message."
             />
             <UploadOverlay
                 open={isDraggingFiles}

@@ -541,6 +541,8 @@ export function useWordAssistantChat({
               chatId: requestChatId,
               message: userMessage,
               title: text.slice(0, 120),
+              model: submission.model,
+              reasoningLevel: submission.reasoning,
             });
           }
 
@@ -557,6 +559,7 @@ export function useWordAssistantChat({
               })),
               documentContext,
               model: submission.model,
+              reasoning: submission.reasoning,
               chatId: requestChatId,
               wordDocumentId,
               documentName: readCurrentDocumentName(),

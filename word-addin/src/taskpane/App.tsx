@@ -21,6 +21,7 @@ import {
 } from "./lib/wordChatSettings";
 import { useWordDocumentIdentity } from "./lib/wordDocumentIdentity";
 import { clearLocalWordChats } from "./lib/localWordChats";
+import type { ReasoningLevel } from "./lib/wordChatTypes";
 
 export default function App(): React.ReactElement {
   const { user, loading, error, logout } = useAuth();
@@ -31,6 +32,14 @@ export default function App(): React.ReactElement {
   const [selectedSection, setSelectedSection] = useState<AddinSection>("chat");
   const [chatSessionKey, setChatSessionKey] = useState(0);
   const [chatId, setChatId] = useState<string | null>(null);
+  const [chatModel, setChatModel] = useState<string | null>(null);
+  const [lastSelectedChatModel, setLastSelectedChatModel] = useState<
+    string | null
+  >(null);
+  const [chatReasoningLevel, setChatReasoningLevel] =
+    useState<ReasoningLevel | null>(null);
+  const [lastSelectedReasoningLevel, setLastSelectedReasoningLevel] =
+    useState<ReasoningLevel>("high");
   const [chatInSession, setChatInSession] = useState(false);
   const [initialMessages, setInitialMessages] = useState<Message[]>([]);
   const [workflowPageSelection, setWorkflowPageSelection] =
@@ -118,6 +127,8 @@ export default function App(): React.ReactElement {
             onStorageModeChange={async (mode) => {
               await wordChatStorage.setMode(mode);
               setChatId(null);
+              setChatModel(null);
+              setChatReasoningLevel(null);
               setChatInSession(false);
               setInitialMessages([]);
               setChatSessionKey((current) => current + 1);
@@ -128,13 +139,20 @@ export default function App(): React.ReactElement {
     }
   };
 
-  function openSelectedChat(selectedChatId: string, messages: Message[]): void {
+  function openSelectedChat(
+    selectedChatId: string,
+    messages: Message[],
+    model: string | null,
+    reasoningLevel: ReasoningLevel | null,
+  ): void {
     setSelectedSection("chat");
     setWorkflowPageSelection(null);
     setWorkflowDetailsOpen(false);
     setWorkflowDeleteConfirmOpen(false);
     setChatWorkflow(null);
     setChatId(selectedChatId);
+    setChatModel(model);
+    setChatReasoningLevel(reasoningLevel);
     setChatInSession(true);
     setInitialMessages(messages);
     setChatSessionKey((current) => current + 1);
@@ -157,6 +175,8 @@ export default function App(): React.ReactElement {
     setWorkflowDeleteConfirmOpen(false);
     setChatWorkflow(null);
     setChatId(null);
+    setChatModel(null);
+    setChatReasoningLevel(null);
     setChatInSession(false);
     setInitialMessages([]);
     setChatSessionKey((current) => current + 1);
@@ -230,11 +250,23 @@ export default function App(): React.ReactElement {
           <ChatPanel
             sessionKey={chatSessionKey}
             chatId={chatId}
+            chatModel={chatModel}
+            lastSelectedModel={lastSelectedChatModel}
+            chatReasoningLevel={chatReasoningLevel}
+            lastSelectedReasoningLevel={lastSelectedReasoningLevel}
             initialMessages={initialMessages}
             selectedWorkflow={chatWorkflow}
             onSelectedWorkflowChange={setChatWorkflow}
             onChatIdChange={handleChatIdChange}
             onChatStarted={markChatStarted}
+            onModelSelected={(model) => {
+              setChatModel(model);
+              setLastSelectedChatModel(model);
+            }}
+            onReasoningSelected={(level) => {
+              setChatReasoningLevel(level);
+              setLastSelectedReasoningLevel(level);
+            }}
             wordDocumentId={wordDocumentId}
             editApplyMode={editApply.mode}
             onEditApplyModeChange={editApply.setMode}

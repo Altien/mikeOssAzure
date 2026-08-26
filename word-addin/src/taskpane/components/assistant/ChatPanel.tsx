@@ -4,10 +4,16 @@ import { useWordTrackedEdits } from "../../hooks/useWordTrackedEdits";
 import type { Message as SavedMessage } from "../../types";
 import {
   createCloudWordDocumentEdit,
+  updateCloudWordChatModel,
+  updateCloudWordChatReasoning,
+  updateLastSelectedChatModel,
+  updateLastSelectedReasoningLevel,
   updateCloudWordDocumentEdit,
 } from "../../api/mikeApi";
 import {
   createLocalWordDocumentEdit,
+  updateLocalWordChatModel,
+  updateLocalWordChatReasoning,
   updateLocalWordDocumentEdit,
 } from "../../lib/localWordChats";
 import type {
@@ -15,16 +21,25 @@ import type {
   WordEditApplyMode,
 } from "../../lib/wordChatSettings";
 import { ChatView } from "./ChatView";
-import type { WorkflowAttachment } from "../../lib/wordChatTypes";
+import type {
+  ReasoningLevel,
+  WorkflowAttachment,
+} from "../../lib/wordChatTypes";
 
 interface ChatPanelProps {
   sessionKey: number;
   chatId: string | null;
+  chatModel: string | null;
+  lastSelectedModel: string | null;
+  chatReasoningLevel: ReasoningLevel | null;
+  lastSelectedReasoningLevel: ReasoningLevel;
   initialMessages: SavedMessage[];
   selectedWorkflow: WorkflowAttachment | null;
   onSelectedWorkflowChange: (workflow: WorkflowAttachment | null) => void;
   onChatIdChange: (chatId: string) => void;
   onChatStarted: () => void;
+  onModelSelected: (model: string) => void;
+  onReasoningSelected: (level: ReasoningLevel) => void;
   wordDocumentId: string;
   wordChatStorage: WordChatStorageMode;
   wordChatOwnerId: string;
@@ -40,11 +55,17 @@ interface ChatPanelProps {
 export function ChatPanel({
   sessionKey,
   chatId,
+  chatModel,
+  lastSelectedModel,
+  chatReasoningLevel,
+  lastSelectedReasoningLevel,
   initialMessages,
   selectedWorkflow,
   onSelectedWorkflowChange,
   onChatIdChange,
   onChatStarted,
+  onModelSelected,
+  onReasoningSelected,
   wordDocumentId,
   wordChatStorage,
   wordChatOwnerId,
@@ -133,11 +154,76 @@ export function ChatPanel({
     editController: trackedEdits.streamController,
   });
 
+  const persistModelSelection = useCallback(
+    async (model: string): Promise<void> => {
+      if (!chatId) {
+        await updateLastSelectedChatModel(model);
+      } else if (wordChatStorage === "cloud") {
+        await updateCloudWordChatModel(wordDocumentId, chatId, model);
+      } else {
+        await Promise.all([
+          updateLocalWordChatModel({
+            documentId: wordDocumentId,
+            ownerId: wordChatOwnerId,
+            chatId,
+            model,
+          }),
+          updateLastSelectedChatModel(model),
+        ]);
+      }
+      onModelSelected(model);
+    },
+    [
+      chatId,
+      onModelSelected,
+      wordChatOwnerId,
+      wordChatStorage,
+      wordDocumentId,
+    ],
+  );
+
+  const persistReasoningSelection = useCallback(
+    async (reasoningLevel: ReasoningLevel): Promise<void> => {
+      if (!chatId) {
+        await updateLastSelectedReasoningLevel(reasoningLevel);
+      } else if (wordChatStorage === "cloud") {
+        await updateCloudWordChatReasoning(
+          wordDocumentId,
+          chatId,
+          reasoningLevel,
+        );
+      } else {
+        await Promise.all([
+          updateLocalWordChatReasoning({
+            documentId: wordDocumentId,
+            ownerId: wordChatOwnerId,
+            chatId,
+            reasoningLevel,
+          }),
+          updateLastSelectedReasoningLevel(reasoningLevel),
+        ]);
+      }
+      onReasoningSelected(reasoningLevel);
+    }, [
+      chatId,
+      onReasoningSelected,
+      wordChatOwnerId,
+      wordChatStorage,
+      wordDocumentId,
+    ],
+  );
+
   return (
     <ChatView
       {...chat}
       {...trackedEdits}
       sessionKey={sessionKey}
+      chatModel={chatModel}
+      lastSelectedModel={lastSelectedModel}
+      chatReasoningLevel={chatReasoningLevel}
+      lastSelectedReasoningLevel={lastSelectedReasoningLevel}
+      onModelSelected={persistModelSelection}
+      onReasoningSelected={persistReasoningSelection}
       selectedWorkflow={selectedWorkflow}
       onSelectedWorkflowChange={onSelectedWorkflowChange}
       editApplyMode={editApplyMode}

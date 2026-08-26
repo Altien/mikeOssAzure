@@ -10,12 +10,18 @@ import {
   type PaginatedChatsState,
 } from "../../hooks/usePaginatedChats";
 import { cn } from "../../../shared/lib/utils";
+import type { ReasoningLevel } from "../../lib/wordChatTypes";
 
 interface ChatHistoryListProps {
   pageSize: number;
   active?: boolean;
   search?: string;
-  onSelect: (chatId: string, messages: Message[]) => void;
+  onSelect: (
+    chatId: string,
+    messages: Message[],
+    model: string | null,
+    reasoningLevel: ReasoningLevel | null,
+  ) => void;
   className?: string;
   titleClassName?: string;
   documentId: string;
@@ -148,7 +154,12 @@ export function ChatHistoryListView({
           ? await getCloudWordChat(documentId, chatId)
           : await getLocalWordChat(documentId, ownerId, chatId);
       if (!requestIsCurrent()) return;
-      onSelect(chatId, detail.messages);
+      onSelect(
+        chatId,
+        detail.messages,
+        detail.chat.model ?? null,
+        detail.chat.reasoning_level ?? null,
+      );
     } catch (reason) {
       if (!requestIsCurrent()) return;
       setOpenError(

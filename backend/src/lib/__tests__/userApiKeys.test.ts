@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { normalizeApiKeyProvider, hasEnvApiKey } from "../userApiKeys";
+import {
+    normalizeApiKeyProvider,
+    hasEnvApiKey,
+    getUserApiKeys,
+    getUserApiKeyStatus,
+    saveUserApiKey,
+} from "../userApiKeys";
 
 describe("normalizeApiKeyProvider", () => {
     it('returns "claude" for "claude"', () => {
@@ -38,6 +44,7 @@ describe("hasEnvApiKey", () => {
         "AI_GATEWAY_API_KEY",
         "VERCEL_AI_GATEWAY_API_KEY",
         "OPENCODE_API_KEY",
+        "USER_API_KEYS_ENCRYPTION_SECRET",
     ];
 
     // Clear before AND after each test so keys exported in the developer's
@@ -94,5 +101,42 @@ describe("hasEnvApiKey", () => {
     it("ignores whitespace-only env values", () => {
         process.env.ANTHROPIC_API_KEY = "   ";
         expect(hasEnvApiKey("claude")).toBe(false);
+    });
+});
+
+describe("user API key precedence", () => {
+    it("uses a saved user key before an environment key", async () => {
+        process.env.OPENAI_API_KEY = "environment-key";
+        process.env.USER_API_KEYS_ENCRYPTION_SECRET = "test-secret";
+        let savedRow: Record<string, unknown> | null = null;
+        const db = {
+            from: () => ({
+                upsert: async (row: Record<string, unknown>) => {
+                    savedRow = { ...row, provider: "openai" };
+                    return { error: null };
+                },
+                select: () => ({
+                    eq: async () => ({
+                        data: savedRow ? [savedRow] : [],
+                        error: null,
+                    }),
+                }),
+            }),
+        };
+
+        await saveUserApiKey("user-1", "openai", "personal-key", db as never);
+
+        await expect(getUserApiKeys("user-1", db as never)).resolves.toMatchObject({
+            openai: "personal-key",
+        });
+        await expect(
+            getUserApiKeyStatus("user-1", db as never),
+        ).resolves.toMatchObject({
+            openai: true,
+            sources: { openai: "user" },
+        });
+
+        delete process.env.OPENAI_API_KEY;
+        delete process.env.USER_API_KEYS_ENCRYPTION_SECRET;
     });
 });

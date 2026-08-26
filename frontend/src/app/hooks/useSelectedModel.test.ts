@@ -1,102 +1,129 @@
 import { act, renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
-import { useSelectedModel } from "./useSelectedModel";
+import { describe, expect, it } from "vitest";
+import { useSelectedModel, useSelectedReasoning } from "./useSelectedModel";
 import { canonicalModelId } from "../components/assistant/ModelToggle";
+import type { ApiKeyState } from "../lib/mikeApi";
 
-const STORAGE_KEY = "mike.selectedModel";
+const keys: ApiKeyState = {
+    claude: { configured: true, source: "user" },
+    gemini: { configured: false, source: null },
+    openai: { configured: true, source: "user" },
+    openrouter: { configured: true, source: "user" },
+    vercel: { configured: false, source: null },
+    "opencode-go": { configured: false, source: null },
+    courtlistener: { configured: false, source: null },
+};
 
-beforeEach(() => {
-    window.localStorage.clear();
-});
+const routerSelections = {
+    openRouterModels: ["openai/gpt-5.4"],
+    vercelModels: [],
+    openCodeGoModels: [],
+};
 
 describe("useSelectedModel", () => {
-    it("canonicalizes stored ids before validating them", () => {
-        // The current LEGACY_MODEL_IDS targets are settings-tier models, so
-        // after mapping they still resolve to the composer default here — the
-        // mapping's user-visible effect lives on the settings page. This
-        // pins that reads go through canonicalModelId (a future rename of a
-        // composer-tier model is then handled for free).
-        window.localStorage.setItem(STORAGE_KEY, "gpt-5.4-lite");
-
+    it("has no invented default when neither saved source is usable", () => {
         const { result } = renderHook(() => useSelectedModel());
-
-        expect(result.current[0]).toBe("gemini-3-flash-preview");
+        expect(result.current[0]).toBe("");
     });
 
-    it("persists a valid explicit selection", () => {
+    it("uses the saved chat model before the shared last-selected model", () => {
+        const { result } = renderHook(() =>
+            useSelectedModel({
+                chatModel: "claude-fable-5",
+                lastSelectedModel: "gpt-5.6-luna",
+                apiKeys: keys,
+            }),
+        );
+        expect(result.current[0]).toBe("claude-fable-5");
+    });
+
+    it("falls back to last-selected when the chat model has no current key", () => {
+        const { result } = renderHook(() =>
+            useSelectedModel({
+                chatModel: "gemini-3.7-flash",
+                lastSelectedModel: "gpt-5.6-luna",
+                apiKeys: keys,
+            }),
+        );
+        expect(result.current[0]).toBe("gpt-5.6-luna");
+    });
+
+    it("keeps an explicit selection in component state only", () => {
         const { result } = renderHook(() => useSelectedModel());
 
         act(() => result.current[1]("claude-fable-5"));
 
         expect(result.current[0]).toBe("claude-fable-5");
-        expect(window.localStorage.getItem(STORAGE_KEY)).toBe("claude-fable-5");
     });
 
-    it("keeps a router selection that is in the loaded saved lists", () => {
-        window.localStorage.setItem(STORAGE_KEY, "openrouter/openai/gpt-5.4");
-
+    it("uses a chat router model while it remains in the saved list", () => {
         const { result } = renderHook(() =>
             useSelectedModel({
-                openRouterModels: ["openai/gpt-5.4"],
-                vercelModels: [],
-                openCodeGoModels: [],
+                chatModel: "openrouter/openai/gpt-5.4",
+                lastSelectedModel: "gpt-5.6-luna",
+                routerSelections,
+                apiKeys: keys,
             }),
         );
-
         expect(result.current[0]).toBe("openrouter/openai/gpt-5.4");
     });
 
-    it("resets a router selection missing from the loaded saved lists", () => {
-        window.localStorage.setItem(STORAGE_KEY, "openrouter/pricy/frontier");
-
+    it("falls back when the chat router model is no longer saved", () => {
         const { result } = renderHook(() =>
             useSelectedModel({
-                openRouterModels: ["openai/gpt-5.4"],
-                vercelModels: [],
-                openCodeGoModels: [],
+                chatModel: "openrouter/pricy/frontier",
+                lastSelectedModel: "gpt-5.6-luna",
+                routerSelections,
+                apiKeys: keys,
             }),
         );
-
-        expect(result.current[0]).toBe("gemini-3-flash-preview");
-        expect(window.localStorage.getItem(STORAGE_KEY)).toBe(
-            "gemini-3-flash-preview",
-        );
+        expect(result.current[0]).toBe("gpt-5.6-luna");
     });
 
-    it("keeps an OpenCode Go selection that is in the loaded saved lists", () => {
-        window.localStorage.setItem(STORAGE_KEY, "opencode-go/glm-5");
+    it("does not flash the profile model while an existing chat loads", () => {
+        const { result, rerender } = renderHook(
+            ({ chatModel }: { chatModel: string | null | undefined }) =>
+                useSelectedModel({
+                    selectionKey: "chat-1",
+                    chatModel,
+                    lastSelectedModel: "gpt-5.6-luna",
+                    apiKeys: keys,
+                }),
+            {
+                initialProps: {
+                    chatModel: undefined as string | null | undefined,
+                },
+            },
+        );
 
+        expect(result.current[0]).toBe("");
+        rerender({ chatModel: "claude-fable-5" });
+        expect(result.current[0]).toBe("claude-fable-5");
+    });
+});
+
+describe("useSelectedReasoning", () => {
+    it("loads the chat level before the profile fallback", () => {
         const { result } = renderHook(() =>
-            useSelectedModel({
-                openRouterModels: [],
-                vercelModels: [],
-                openCodeGoModels: ["glm-5"],
+            useSelectedReasoning({
+                selectionKey: "chat-1",
+                chatReasoningLevel: "low",
+                lastSelectedReasoningLevel: "xhigh",
             }),
         );
-
-        expect(result.current[0]).toBe("opencode-go/glm-5");
+        expect(result.current[0]).toBe("low");
     });
 
-    it("resets an OpenCode Go selection the user no longer has saved", () => {
-        window.localStorage.setItem(STORAGE_KEY, "opencode-go/kimi-k3");
+    it("defaults a new user to high", () => {
+        const { result } = renderHook(() => useSelectedReasoning({}));
+        expect(result.current[0]).toBe("high");
+    });
 
+    it("uses the profile reasoning level on surfaces without chat settings", () => {
         const { result } = renderHook(() =>
-            useSelectedModel({
-                openRouterModels: [],
-                vercelModels: [],
-                openCodeGoModels: ["glm-5"],
-            }),
+            useSelectedReasoning({ lastSelectedReasoningLevel: "low" }),
         );
-
-        expect(result.current[0]).toBe("gemini-3-flash-preview");
-    });
-
-    it("leaves a router selection alone while the lists are still loading", () => {
-        window.localStorage.setItem(STORAGE_KEY, "openrouter/openai/gpt-5.4");
-
-        const { result } = renderHook(() => useSelectedModel(null));
-
-        expect(result.current[0]).toBe("openrouter/openai/gpt-5.4");
+        expect(result.current[0]).toBe("low");
     });
 });
 

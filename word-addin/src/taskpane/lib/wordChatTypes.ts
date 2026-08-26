@@ -6,6 +6,13 @@ import type {
 import type { RedlineEdit } from "./redline";
 
 export type WorkflowAttachment = { id: string; title: string };
+export type ReasoningLevel =
+  | "none"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max";
 export type EditDecision = "accept" | "reject";
 export type EditBusyAction =
   | "view"
@@ -80,6 +87,7 @@ export interface WordChatSubmission {
   files?: { filename: string; document_id?: string }[];
   workflow?: WorkflowAttachment;
   model: string;
+  reasoning: ReasoningLevel;
 }
 
 export interface WordChatSubmitOptions {

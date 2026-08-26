@@ -215,6 +215,7 @@ function profileRow(overrides: Record<string, unknown> = {}) {
         tier: "Pro",
         title_model: null,
         tabular_model: "gemini-3-flash-preview",
+        last_selected_chat_model: null,
         mfa_on_login: false,
         legal_research_us: true,
         quick_actions_visible: true,
@@ -562,6 +563,28 @@ describe("user.routes", () => {
     });
 
     describe("PATCH /user/profile", () => {
+        it("persists the last-selected model from the initial chat view", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow({
+                    last_selected_chat_model: "gpt-5.6-sol",
+                }),
+                error: null,
+            };
+
+            const res = await request(app)
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({ lastSelectedChatModel: "gpt-5.6-sol" });
+
+            expect(res.status).toBe(200);
+            expect(supabaseState.updates.user_profiles).toContainEqual(
+                expect.objectContaining({
+                    last_selected_chat_model: "gpt-5.6-sol",
+                }),
+            );
+            expect(res.body.lastSelectedChatModel).toBe("gpt-5.6-sol");
+        });
+
         it("persists OpenRouter selections through the router-neutral table function", async () => {
             supabaseState.tables.user_profiles = {
                 data: profileRow(),

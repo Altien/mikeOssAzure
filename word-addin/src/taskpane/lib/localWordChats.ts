@@ -209,6 +209,8 @@ export async function saveLocalWordMessage(args: {
   chatId: string;
   message: Message;
   title?: string;
+  model?: string;
+  reasoningLevel?: import("./wordChatTypes").ReasoningLevel;
 }): Promise<void> {
   const messageId = args.message.id;
   if (!messageId) {
@@ -247,6 +249,9 @@ export async function saveLocalWordMessage(args: {
       project_id: null,
       user_id: "local",
       title: existing?.title ?? args.title ?? null,
+      model: args.model ?? existing?.model ?? null,
+      reasoning_level:
+        args.reasoningLevel ?? existing?.reasoning_level ?? null,
       created_at: existing?.created_at ?? now,
       updated_at: now,
     } satisfies LocalChatRow);
@@ -257,6 +262,72 @@ export async function saveLocalWordMessage(args: {
       created_at: now,
       sequence: existingMessage?.sequence ?? nextSequence,
     } satisfies LocalMessageRow);
+    await transactionDone(transaction);
+    notifyWordChatHistoryChanged();
+  } finally {
+    database.close();
+  }
+}
+
+export async function updateLocalWordChatModel(args: {
+  documentId: string;
+  ownerId: string;
+  chatId: string;
+  model: string;
+}): Promise<void> {
+  const database = await openDatabase();
+  try {
+    const transaction = database.transaction(CHAT_STORE, "readwrite");
+    const chats = transaction.objectStore(CHAT_STORE);
+    const existing = (await requestResult(chats.get(args.chatId))) as
+      | LocalChatRow
+      | undefined;
+    if (
+      !existing ||
+      existing.document_id !== args.documentId ||
+      existing.owner_id !== args.ownerId
+    ) {
+      transaction.abort();
+      throw new Error("Local Word chat is not available for this document.");
+    }
+    chats.put({
+      ...existing,
+      model: args.model,
+      updated_at: new Date().toISOString(),
+    } satisfies LocalChatRow);
+    await transactionDone(transaction);
+    notifyWordChatHistoryChanged();
+  } finally {
+    database.close();
+  }
+}
+
+export async function updateLocalWordChatReasoning(args: {
+  documentId: string;
+  ownerId: string;
+  chatId: string;
+  reasoningLevel: import("./wordChatTypes").ReasoningLevel;
+}): Promise<void> {
+  const database = await openDatabase();
+  try {
+    const transaction = database.transaction(CHAT_STORE, "readwrite");
+    const chats = transaction.objectStore(CHAT_STORE);
+    const existing = (await requestResult(chats.get(args.chatId))) as
+      | LocalChatRow
+      | undefined;
+    if (
+      !existing ||
+      existing.document_id !== args.documentId ||
+      existing.owner_id !== args.ownerId
+    ) {
+      transaction.abort();
+      throw new Error("Local Word chat is not available for this document.");
+    }
+    chats.put({
+      ...existing,
+      reasoning_level: args.reasoningLevel,
+      updated_at: new Date().toISOString(),
+    } satisfies LocalChatRow);
     await transactionDone(transaction);
     notifyWordChatHistoryChanged();
   } finally {

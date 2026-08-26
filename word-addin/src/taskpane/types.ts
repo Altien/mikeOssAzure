@@ -40,6 +40,8 @@ export interface Chat {
   project_id: string | null;
   user_id: string;
   title: string | null;
+  model?: string | null;
+  reasoning_level?: import("./lib/wordChatTypes").ReasoningLevel | null;
   created_at: string;
 }
 

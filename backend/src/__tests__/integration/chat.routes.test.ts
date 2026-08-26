@@ -230,7 +230,9 @@ vi.mock("../../lib/userSettings", () => ({
         legal_research_us: false,
         title_model: "test-model",
         tabular_model: "test-model",
-        api_keys: {},
+        last_selected_chat_model: null,
+        last_selected_reasoning_level: null,
+        api_keys: { gemini: "test-key" },
         personalisation: {
             displayName: "Ada",
             organisation: "Acme LLP",
@@ -240,12 +242,17 @@ vi.mock("../../lib/userSettings", () => ({
             practiceAreas: ["Litigation"],
         },
     })),
+    persistLastSelectedChatModel: vi.fn(async () => null),
+    persistLastSelectedReasoningLevel: vi.fn(async () => null),
     getUserApiKeys: vi.fn(async () => ({})),
 }));
 
 import { app } from "../../app";
 
-const VALID_BODY = { messages: [{ role: "user", content: "hello" }] };
+const VALID_BODY = {
+    messages: [{ role: "user", content: "hello" }],
+    model: "gemini-3-flash-preview",
+};
 
 function findAssistantReservation() {
     return dbInserts.find(
@@ -341,6 +348,48 @@ describe("POST /chat — streaming endpoint", () => {
         );
     });
 
+    it("rejects a chat without an explicit model before streaming", async () => {
+        const res = await request(app)
+            .post("/chat")
+            .set("Authorization", "Bearer test")
+            .send({ messages: VALID_BODY.messages });
+
+        expect(res.status).toBe(400);
+        expect(res.body).toEqual({
+            code: "model_required",
+            detail: "Select a model before sending a message.",
+        });
+        expect(runLLMStream).not.toHaveBeenCalled();
+    });
+
+    it("uses the profile last-selected model when a new chat omits model", async () => {
+        const userSettings = await import("../../lib/userSettings");
+        vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
+            legal_research_us: false,
+            title_model: null,
+            tabular_model: null,
+            last_selected_chat_model: "gpt-5.6-luna",
+            api_keys: { openai: "test-key" },
+        });
+
+        const res = await request(app)
+            .post("/chat")
+            .set("Authorization", "Bearer test")
+            .send({ messages: VALID_BODY.messages });
+
+        expect(res.status).toBe(200);
+        expect(runLLMStream).toHaveBeenCalledWith(
+            expect.objectContaining({ model: "gpt-5.6-luna" }),
+        );
+        expect(dbInserts).toContainEqual({
+            table: "chats",
+            value: expect.objectContaining({ model: "gpt-5.6-luna" }),
+        });
+        expect(
+            userSettings.persistLastSelectedChatModel,
+        ).not.toHaveBeenCalled();
+    });
+
     it("surfaces an empty upstream completion as a visible retry error", async () => {
         // Some providers end the stream cleanly but produce no content.
         // Silence reads as a hung composer, so the route emits an explicit,
@@ -374,6 +423,7 @@ describe("POST /chat — streaming endpoint", () => {
                 document_name: "Contract.docx",
                 storage: "cloud",
                 document_context: "GOVERNED BY DELAWARE LAW",
+                model: "gemini-3-flash-preview",
             });
 
         expect(res.status).toBe(200);
@@ -485,6 +535,47 @@ describe("POST /chat — streaming endpoint", () => {
             expect(dbInserts).toEqual([]);
         },
     );
+
+    it("rejects a Word chat without an explicit model before creating storage", async () => {
+        const res = await request(app)
+            .post("/word-chat")
+            .set("Authorization", "Bearer test")
+            .send({
+                messages: VALID_BODY.messages,
+                document_id: "6f783e59-35c4-4ddc-896a-94aa4d05a767",
+                storage: "cloud",
+            });
+
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe("model_required");
+        expect(dbInserts).toEqual([]);
+        expect(runLLMStream).not.toHaveBeenCalled();
+    });
+
+    it("uses the shared last-selected model for a local Word chat", async () => {
+        const userSettings = await import("../../lib/userSettings");
+        vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
+            legal_research_us: false,
+            title_model: null,
+            tabular_model: null,
+            last_selected_chat_model: "gpt-5.6-luna",
+            api_keys: { openai: "test-key" },
+        });
+
+        const res = await request(app)
+            .post("/word-chat")
+            .set("Authorization", "Bearer test")
+            .send({
+                messages: VALID_BODY.messages,
+                storage: "local",
+                document_id: "6f783e59-35c4-4ddc-896a-94aa4d05a767",
+            });
+
+        expect(res.status).toBe(200);
+        expect(runLLMStream).toHaveBeenCalledWith(
+            expect.objectContaining({ model: "gpt-5.6-luna" }),
+        );
+    });
 
     it("rejects a resumed Word chat outside the scoped document and user", async () => {
         dbControl.wordChatMissing = true;
@@ -943,8 +1034,12 @@ describe("POST /chat — streaming endpoint", () => {
         vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
             title_model: "test-model",
             tabular_model: "test-model",
+            last_selected_chat_model: null,
             legal_research_us: true,
-            api_keys: { courtlistener: "configured-but-unused" },
+            api_keys: {
+                gemini: "test-key",
+                courtlistener: "configured-but-unused",
+            },
         });
 
         const res = await request(app)
@@ -972,13 +1067,94 @@ describe("POST /chat — streaming endpoint", () => {
 });
 
 describe("PATCH /chat/:chatId", () => {
-    it("returns 400 when title is missing", async () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        dbUpdates.length = 0;
+    });
+
+    it("returns 400 when no supported update is provided", async () => {
         const res = await request(app)
             .patch("/chat/chat-1")
             .set("Authorization", "Bearer test")
             .send({});
 
         expect(res.status).toBe(400);
-        expect(res.body.detail).toBe("title is required");
+        expect(res.body.detail).toBe(
+            "title, model, or reasoningLevel is required",
+        );
+    });
+
+    it("updates the chat and profile when a model is selected", async () => {
+        const userSettings = await import("../../lib/userSettings");
+        const res = await request(app)
+            .patch("/chat/chat-1")
+            .set("Authorization", "Bearer test")
+            .send({ model: "gemini-3-flash-preview" });
+
+        expect(res.status).toBe(200);
+        expect(dbUpdates).toContainEqual({
+            table: "chats",
+            value: { model: "gemini-3-flash-preview" },
+            filters: [{ column: "id", value: "chat-1" }],
+        });
+        expect(userSettings.persistLastSelectedChatModel).toHaveBeenCalledWith(
+            "u1",
+            "gemini-3-flash-preview",
+            expect.anything(),
+        );
+    });
+
+    it("updates the chat and profile when reasoning is selected", async () => {
+        const userSettings = await import("../../lib/userSettings");
+        const res = await request(app)
+            .patch("/chat/chat-1")
+            .set("Authorization", "Bearer test")
+            .send({ reasoningLevel: "xhigh" });
+
+        expect(res.status).toBe(200);
+        expect(dbUpdates).toContainEqual({
+            table: "chats",
+            value: { reasoning_level: "xhigh" },
+            filters: [{ column: "id", value: "chat-1" }],
+        });
+        expect(
+            userSettings.persistLastSelectedReasoningLevel,
+        ).toHaveBeenCalledWith("u1", "xhigh", expect.anything());
+    });
+});
+
+describe("PATCH /word-chat/:chatId/model", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        dbUpdates.length = 0;
+        dbControl.wordChatMissing = false;
+    });
+
+    it("updates a cloud Word chat and the profile on selection", async () => {
+        const userSettings = await import("../../lib/userSettings");
+        const chatId = "6f783e59-35c4-4ddc-896a-94aa4d05a768";
+        const documentId = "6f783e59-35c4-4ddc-896a-94aa4d05a767";
+        const res = await request(app)
+            .patch(`/word-chat/${chatId}/model`)
+            .query({ document_id: documentId })
+            .set("Authorization", "Bearer test")
+            .send({ model: "gemini-3-flash-preview" });
+
+        expect(res.status).toBe(200);
+        expect(dbUpdates).toContainEqual({
+            table: "word_chats",
+            value: expect.objectContaining({
+                model: "gemini-3-flash-preview",
+            }),
+            filters: [
+                { column: "id", value: chatId },
+                { column: "user_id", value: "u1" },
+            ],
+        });
+        expect(userSettings.persistLastSelectedChatModel).toHaveBeenCalledWith(
+            "u1",
+            "gemini-3-flash-preview",
+            expect.anything(),
+        );
     });
 });

@@ -1,7 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { ModelToggle } from "./ModelToggle";
+import { ModelToggle, underlyingProviderGroup } from "./ModelToggle";
 import type { ApiKeyState } from "@/app/lib/mikeApi";
 
 vi.mock("@/app/hooks/useOllamaModels", () => ({
@@ -30,6 +30,110 @@ function keys(configured: Partial<Record<keyof ApiKeyState, boolean>>) {
 }
 
 describe("ModelToggle responsive trigger", () => {
+    it("offers every supported reasoning level through a discrete slider", async () => {
+        const user = userEvent.setup();
+        const onReasoningChange = vi.fn();
+        render(
+            <ModelToggle
+                value="gemini-3-flash-preview"
+                onChange={vi.fn()}
+                apiKeys={keys({ gemini: true })}
+                reasoningLevel="high"
+                onReasoningChange={onReasoningChange}
+            />,
+        );
+
+        await user.click(screen.getByRole("button", { name: "Choose model" }));
+        const reasoning = screen.getByRole("slider", {
+            name: "Reasoning level",
+        });
+        expect(reasoning).toHaveAttribute("min", "0");
+        expect(reasoning).toHaveAttribute("max", "4");
+        expect(reasoning).toHaveValue("3");
+        expect(reasoning).toHaveAttribute("aria-valuetext", "High");
+
+        fireEvent.change(reasoning, { target: { value: "4" } });
+
+        expect(onReasoningChange).toHaveBeenLastCalledWith("xhigh");
+        expect(
+            screen.getByRole("slider", { name: "Reasoning level" }),
+        ).toBeInTheDocument();
+    });
+
+    it("offers Max for GPT-5.6 without offering Minimal", async () => {
+        const onReasoningChange = vi.fn();
+        render(
+            <ModelToggle
+                value="gpt-5.6-terra"
+                onChange={vi.fn()}
+                apiKeys={keys({ openai: true })}
+                reasoningLevel="low"
+                onReasoningChange={onReasoningChange}
+            />,
+        );
+
+        await userEvent.click(
+            screen.getByRole("button", { name: "Choose model" }),
+        );
+        const reasoning = screen.getByRole("slider", {
+            name: "Reasoning level",
+        });
+        expect(reasoning).toHaveAttribute("max", "5");
+        expect(reasoning).toHaveValue("1");
+        expect(screen.queryByText("Minimal")).not.toBeInTheDocument();
+
+        fireEvent.change(reasoning, { target: { value: "5" } });
+        expect(onReasoningChange).toHaveBeenLastCalledWith("max");
+    });
+
+    it("uses the provider-supported GPT-5.5 levels", async () => {
+        const onReasoningChange = vi.fn();
+        render(
+            <ModelToggle
+                value="gpt-5.5"
+                onChange={vi.fn()}
+                apiKeys={keys({ openai: true })}
+                reasoningLevel="low"
+                onReasoningChange={onReasoningChange}
+            />,
+        );
+
+        await userEvent.click(
+            screen.getByRole("button", { name: "Choose model" }),
+        );
+        const reasoning = screen.getByRole("slider", {
+            name: "Reasoning level",
+        });
+        expect(reasoning).toHaveAttribute("max", "4");
+        expect(reasoning).toHaveValue("1");
+        expect(screen.queryByText("Minimal")).not.toBeInTheDocument();
+    });
+
+    it("reaches and changes reasoning with Radix keyboard navigation", async () => {
+        const user = userEvent.setup();
+        const onReasoningChange = vi.fn();
+        render(
+            <ModelToggle
+                value="gemini-3-flash-preview"
+                onChange={vi.fn()}
+                apiKeys={keys({ gemini: true })}
+                reasoningLevel="high"
+                onReasoningChange={onReasoningChange}
+            />,
+        );
+
+        await user.click(screen.getByRole("button", { name: "Choose model" }));
+        await user.keyboard("{End}");
+
+        const reasoning = screen.getByRole("slider", {
+            name: "Reasoning level",
+        });
+        expect(reasoning).toHaveFocus();
+
+        await user.keyboard("{ArrowRight}");
+        expect(onReasoningChange).toHaveBeenLastCalledWith("xhigh");
+    });
+
     it("uses the Settings2 icon in a compact chat input", () => {
         render(
             <ModelToggle
@@ -101,10 +205,7 @@ describe("ModelToggle availability states", () => {
 
     it("fails open when key state is unknown after a failed load", () => {
         render(
-            <ModelToggle
-                value="gemini-3-flash-preview"
-                onChange={vi.fn()}
-            />,
+            <ModelToggle value="gemini-3-flash-preview" onChange={vi.fn()} />,
         );
 
         const trigger = screen.getByRole("button", { name: "Choose model" });
@@ -113,18 +214,45 @@ describe("ModelToggle availability states", () => {
         expect(trigger).toHaveTextContent("Gemini 3 Flash");
     });
 
-    it("still reports No API Key when a LOADED state has no keys", () => {
+    it("shows No Models and invokes the API-key warning when no providers are configured", async () => {
+        const user = userEvent.setup();
+        const onNoModelsClick = vi.fn();
         render(
             <ModelToggle
                 value="gemini-3-flash-preview"
                 onChange={vi.fn()}
                 apiKeys={keys({})}
+                onNoModelsClick={onNoModelsClick}
             />,
         );
 
-        const trigger = screen.getByRole("button", { name: "Choose model" });
-        expect(trigger).toBeDisabled();
-        expect(trigger).toHaveTextContent("No API Key");
+        const trigger = screen.getByRole("button", {
+            name: "No models available",
+        });
+        expect(trigger).toBeEnabled();
+        expect(trigger).toHaveTextContent("No Models");
+        expect(trigger.querySelector("svg")).not.toBeInTheDocument();
+        await user.click(trigger);
+        expect(onNoModelsClick).toHaveBeenCalledWith("api-keys");
+    });
+
+    it("invokes the router warning when a configured router has no saved models", async () => {
+        const user = userEvent.setup();
+        const onNoModelsClick = vi.fn();
+        render(
+            <ModelToggle
+                value=""
+                onChange={vi.fn()}
+                apiKeys={keys({ openrouter: true })}
+                openRouterModels={[]}
+                onNoModelsClick={onNoModelsClick}
+            />,
+        );
+
+        await user.click(
+            screen.getByRole("button", { name: "No models available" }),
+        );
+        expect(onNoModelsClick).toHaveBeenCalledWith("router-models");
     });
 
     it("filters to configured providers when keys are loaded", () => {
@@ -144,7 +272,16 @@ describe("ModelToggle availability states", () => {
     });
 });
 
-describe("ModelToggle OpenCode Go group", () => {
+describe("ModelToggle provider grouping", () => {
+    it("maps router catalog IDs to their underlying model providers", () => {
+        expect(
+            underlyingProviderGroup("anthropic/claude-fable-5", "openrouter"),
+        ).toBe("Anthropic");
+        expect(underlyingProviderGroup("kimi-k3", "opencode-go")).toBe(
+            "Moonshot AI",
+        );
+    });
+
     it("offers the user's saved OpenCode Go models once the key is configured", async () => {
         const user = userEvent.setup();
         render(
@@ -157,9 +294,10 @@ describe("ModelToggle OpenCode Go group", () => {
         );
 
         await user.click(screen.getByRole("button", { name: "Choose model" }));
-        await user.click(await screen.findByText("OpenCode Go"));
+        await user.click(await screen.findByText("Zhipu AI"));
 
         expect(await screen.findByText("Glm 5")).toBeInTheDocument();
+        expect(screen.queryByText("OpenCode Go")).not.toBeInTheDocument();
     });
 
     it("hides the group when the OpenCode Go key is missing", async () => {
@@ -176,5 +314,22 @@ describe("ModelToggle OpenCode Go group", () => {
         await user.click(screen.getByRole("button", { name: "Choose model" }));
 
         expect(screen.queryByText("OpenCode Go")).not.toBeInTheDocument();
+    });
+
+    it("shows route labels only when the same provider model has duplicates", async () => {
+        const user = userEvent.setup();
+        render(
+            <ModelToggle
+                value="claude-fable-5"
+                onChange={vi.fn()}
+                apiKeys={keys({ claude: true, openrouter: true })}
+                openRouterModels={["anthropic/claude-fable-5"]}
+            />,
+        );
+
+        await user.click(screen.getByRole("button", { name: "Choose model" }));
+
+        expect(screen.getByText("Direct")).toBeInTheDocument();
+        expect(screen.getByText("OpenRouter")).toBeInTheDocument();
     });
 });

@@ -1,4 +1,4 @@
-import type { Provider } from "./types";
+import { REASONING_LEVELS, type Provider, type ReasoningLevel } from "./types";
 
 // ---------------------------------------------------------------------------
 // Canonical model IDs
@@ -54,6 +54,41 @@ export const OPENAI_LOW_MODELS = ["gpt-5.6-luna", "gpt-5.4-mini"] as const;
 export const DEFAULT_MAIN_MODEL = "gemini-3-flash-preview";
 export const DEFAULT_TITLE_MODEL = "gemini-3.5-flash-lite";
 export const DEFAULT_TABULAR_MODEL = "gemini-3-flash-preview";
+
+const STANDARD_REASONING_LEVELS: readonly ReasoningLevel[] =
+    REASONING_LEVELS.filter((level) => level !== "max");
+const GPT_56_REASONING_LEVELS: readonly ReasoningLevel[] = REASONING_LEVELS;
+
+/** Explicit AI SDK reasoning levels supported by the selected model family. */
+export function reasoningLevelsForModel(
+    model: string,
+): readonly ReasoningLevel[] {
+    const catalogId = model.replace(/^(?:openrouter|vercel)\//, "");
+    if (/(?:^|\/)gpt-5\.6(?:-|$)/.test(catalogId)) {
+        return GPT_56_REASONING_LEVELS;
+    }
+    return STANDARD_REASONING_LEVELS;
+}
+
+/** Move a stale saved level to the nearest level supported by the model. */
+export function normalizeReasoningLevelForModel(
+    model: string,
+    reasoning: ReasoningLevel | undefined,
+): ReasoningLevel | undefined {
+    if (!reasoning) return undefined;
+    const supported = reasoningLevelsForModel(model);
+    if (supported.includes(reasoning)) return reasoning;
+    const requestedIndex = REASONING_LEVELS.indexOf(reasoning);
+    return supported.reduce((nearest, candidate) => {
+        const nearestDistance = Math.abs(
+            REASONING_LEVELS.indexOf(nearest) - requestedIndex,
+        );
+        const candidateDistance = Math.abs(
+            REASONING_LEVELS.indexOf(candidate) - requestedIndex,
+        );
+        return candidateDistance <= nearestDistance ? candidate : nearest;
+    }, supported[0] ?? "high");
+}
 
 // OpenCode Go publishes one catalog across three incompatible wire protocols:
 // OpenAI Responses, Anthropic Messages, and OpenAI Chat Completions. The live

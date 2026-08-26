@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { ChatInput } from "./ChatInput";
@@ -23,7 +23,22 @@ vi.mock("@/app/lib/modelAvailability", () => ({
 // exercises the real hook.
 vi.mock("./ModelToggle", async (importOriginal) => ({
     ...(await importOriginal<typeof import("./ModelToggle")>()),
-    ModelToggle: () => null,
+    ModelToggle: ({
+        onChange,
+        onReasoningChange,
+    }: {
+        onChange: (model: string) => void;
+        onReasoningChange?: (reasoning: "xhigh") => void;
+    }) => (
+        <>
+            <button type="button" onClick={() => onChange("gpt-5.6-sol")}>
+                Select test model
+            </button>
+            <button type="button" onClick={() => onReasoningChange?.("xhigh")}>
+                Select test reasoning
+            </button>
+        </>
+    ),
 }));
 
 vi.mock("./AddDocButton", () => ({ AddDocButton: () => null }));
@@ -39,8 +54,9 @@ vi.mock("../popups/ApiKeyMissingPopup", () => ({
     ApiKeyMissingPopup: () => null,
 }));
 
-const STORAGE_KEY = "mike.selectedModel";
 const STORED = "openrouter/pricy/frontier";
+const persistChatModelSelection = vi.fn(async () => true);
+const persistChatReasoningSelection = vi.fn(async () => true);
 
 class ResizeObserverMock {
     observe() {}
@@ -64,30 +80,128 @@ function mockProfile(apiKeysDegraded: boolean) {
             openRouterModels: [],
             vercelModels: [],
             openCodeGoModels: [],
+            lastSelectedChatModel: "gpt-5.6-luna",
+            lastSelectedReasoningLevel: "high",
             apiKeys: emptyApiKeys(),
         },
         loading: false,
         apiKeysDegraded,
+        persistChatModelSelection,
+        persistChatReasoningSelection,
     } as unknown as ReturnType<typeof useUserProfile>);
 }
 
 describe("ChatInput model selection vs. a degraded profile", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        window.localStorage.clear();
         vi.stubGlobal("ResizeObserver", ResizeObserverMock);
     });
 
-    it("keeps the stored router selection when the profile is degraded", async () => {
-        // A dropped /user/profile request answers with the local fallback,
-        // whose router lists are empty because the truth is UNKNOWN — not
-        // because the user deselected everything. Resetting on that would
-        // permanently rewrite localStorage from one failed request.
-        window.localStorage.setItem(STORAGE_KEY, STORED);
-        mockProfile(true);
-
+    it("persists reasoning immediately for an existing chat", async () => {
+        mockProfile(false);
         render(
             <ChatInput
+                chatKey="chat-1"
+                chatModel="gpt-5.6-luna"
+                chatReasoningLevel="high"
+                onSubmit={vi.fn()}
+                onCancel={vi.fn()}
+                isLoading={false}
+            />,
+        );
+
+        fireEvent.click(
+            screen.getByRole("button", { name: "Select test reasoning" }),
+        );
+
+        await waitFor(() =>
+            expect(persistChatReasoningSelection).toHaveBeenCalledWith(
+                "xhigh",
+                "chat-1",
+            ),
+        );
+    });
+
+    it("persists an initial-view selection to the profile immediately", async () => {
+        mockProfile(false);
+        render(
+            <ChatInput
+                onSubmit={vi.fn()}
+                onCancel={vi.fn()}
+                isLoading={false}
+            />,
+        );
+
+        fireEvent.click(
+            screen.getByRole("button", { name: "Select test model" }),
+        );
+
+        await waitFor(() =>
+            expect(persistChatModelSelection).toHaveBeenCalledWith(
+                "gpt-5.6-sol",
+                undefined,
+            ),
+        );
+    });
+
+    it("persists an existing-chat selection to the chat and profile immediately", async () => {
+        mockProfile(false);
+        render(
+            <ChatInput
+                chatKey="chat-1"
+                chatModel="gpt-5.6-luna"
+                chatReasoningLevel="high"
+                onSubmit={vi.fn()}
+                onCancel={vi.fn()}
+                isLoading={false}
+            />,
+        );
+
+        fireEvent.click(
+            screen.getByRole("button", { name: "Select test model" }),
+        );
+
+        await waitFor(() =>
+            expect(persistChatModelSelection).toHaveBeenCalledWith(
+                "gpt-5.6-sol",
+                "chat-1",
+            ),
+        );
+    });
+
+    it("passes the tabular chat selection key through on toggle changes", async () => {
+        mockProfile(false);
+        const tabularChatKey = "tabular-review-chat:review-1:chat-1";
+        render(
+            <ChatInput
+                chatKey={tabularChatKey}
+                chatModel="gpt-5.6-luna"
+                chatReasoningLevel="high"
+                onSubmit={vi.fn()}
+                onCancel={vi.fn()}
+                isLoading={false}
+            />,
+        );
+
+        fireEvent.click(
+            screen.getByRole("button", { name: "Select test model" }),
+        );
+
+        await waitFor(() =>
+            expect(persistChatModelSelection).toHaveBeenCalledWith(
+                "gpt-5.6-sol",
+                tabularChatKey,
+            ),
+        );
+    });
+
+    it("hides the model toggle until existing-chat settings load", () => {
+        mockProfile(false);
+        const { rerender } = render(
+            <ChatInput
+                chatKey="chat-1"
+                chatModel={undefined}
+                chatReasoningLevel={undefined}
                 onSubmit={vi.fn()}
                 onCancel={vi.fn()}
                 isLoading={false}
@@ -95,32 +209,69 @@ describe("ChatInput model selection vs. a degraded profile", () => {
         );
 
         expect(
-            screen.getByRole("combobox").closest(".liquid-glass-translucent"),
-        ).not.toBeNull();
+            screen.queryByRole("button", { name: "Select test model" }),
+        ).not.toBeInTheDocument();
 
-        await waitFor(() =>
-            expect(window.localStorage.getItem(STORAGE_KEY)).toBe(STORED),
-        );
-        expect(window.localStorage.getItem(STORAGE_KEY)).toBe(STORED);
-    });
-
-    it("still resets a stale router selection on a healthy empty profile", async () => {
-        // A real profile that reports no saved router models is authoritative:
-        // the stale selection must reset, exactly as before.
-        window.localStorage.setItem(STORAGE_KEY, STORED);
-        mockProfile(false);
-
-        render(
+        rerender(
             <ChatInput
+                chatKey="chat-1"
+                chatModel="gpt-5.6-luna"
+                chatReasoningLevel="high"
                 onSubmit={vi.fn()}
                 onCancel={vi.fn()}
                 isLoading={false}
             />,
         );
 
+        expect(
+            screen.getByRole("button", { name: "Select test model" }),
+        ).toBeInTheDocument();
+    });
+
+    it("keeps the chat model when router availability is unknown", async () => {
+        mockProfile(true);
+        const onSubmit = vi.fn();
+
+        render(
+            <ChatInput
+                chatModel={STORED}
+                onSubmit={onSubmit}
+                onCancel={vi.fn()}
+                isLoading={false}
+            />,
+        );
+
+        fireEvent.change(screen.getByRole("combobox"), {
+            target: { value: "hello" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: "Send message" }));
         await waitFor(() =>
-            expect(window.localStorage.getItem(STORAGE_KEY)).toBe(
-                "gemini-3-flash-preview",
+            expect(onSubmit).toHaveBeenCalledWith(
+                expect.objectContaining({ model: STORED }),
+            ),
+        );
+    });
+
+    it("falls back to profile last-selected when the chat router model is stale", async () => {
+        mockProfile(false);
+        const onSubmit = vi.fn();
+
+        render(
+            <ChatInput
+                chatModel={STORED}
+                onSubmit={onSubmit}
+                onCancel={vi.fn()}
+                isLoading={false}
+            />,
+        );
+
+        fireEvent.change(screen.getByRole("combobox"), {
+            target: { value: "hello" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+        await waitFor(() =>
+            expect(onSubmit).toHaveBeenCalledWith(
+                expect.objectContaining({ model: "gpt-5.6-luna" }),
             ),
         );
     });

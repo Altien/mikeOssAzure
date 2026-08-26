@@ -16,7 +16,6 @@ export function ApiKeyField({
     description,
     placeholder,
     hasSavedKey,
-    isServerConfigured,
     onSave,
     onRemove,
 }: {
@@ -24,7 +23,6 @@ export function ApiKeyField({
     description?: string;
     placeholder: string;
     hasSavedKey: boolean;
-    isServerConfigured: boolean;
     onSave: (value: string) => Promise<boolean>;
     onRemove: () => Promise<boolean>;
 }) {
@@ -114,22 +112,16 @@ export function ApiKeyField({
                             value={value}
                             onChange={(event) => setValue(event.target.value)}
                             placeholder={
-                                isServerConfigured
-                                    ? "Server .env key configured"
-                                    : hasSavedKey
-                                      ? "Saved key hidden"
-                                      : placeholder
+                                hasSavedKey ? "Saved key hidden" : placeholder
                             }
                             className="pr-10"
                             autoComplete="off"
                             spellCheck={false}
-                            disabled={isServerConfigured}
                         />
                         {dirty && (
                             <button
                                 type="button"
                                 onClick={() => setReveal((current) => !current)}
-                                disabled={isServerConfigured}
                                 className={`absolute inset-y-1 right-1.5 flex items-center ${settingsGlassIconButtonClassName}`}
                                 aria-label={reveal ? "Hide key" : "Show key"}
                             >
@@ -146,7 +138,6 @@ export function ApiKeyField({
                             type="button"
                             onClick={handleSave}
                             disabled={
-                                isServerConfigured ||
                                 isSaving ||
                                 !dirty ||
                                 saved
@@ -161,7 +152,7 @@ export function ApiKeyField({
                                 "Save"
                             )}
                         </button>
-                        {hasSavedKey && !isServerConfigured && (
+                        {hasSavedKey && (
                             <button
                                 type="button"
                                 onClick={handleRemove}

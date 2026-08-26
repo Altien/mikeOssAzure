@@ -61,8 +61,8 @@ vi.mock("../../lib/userApiKeys", () => ({
     normalizeApiKeyProvider: vi.fn(),
     saveUserApiKey: vi.fn(),
 }));
-vi.mock("../../lib/routerModels", () => ({
-    ROUTER_SLUGS: ["openrouter", "vercel", "opencode-go"],
+vi.mock("../../lib/routerModels", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../lib/routerModels")>()),
     getAllUserRouterModels: (...args: unknown[]) =>
         getAllUserRouterModels(...args),
     replaceUserRouterModels: (...args: unknown[]) =>

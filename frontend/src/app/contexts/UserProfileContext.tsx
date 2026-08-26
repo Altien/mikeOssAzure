@@ -23,8 +23,16 @@ import {
     syncUserPasswordSet,
     updateUserMfaOnLogin,
     updateUserProfile,
+    updateChatModel,
+    updateChatReasoningLevel,
+    updateTabularChatModel,
+    updateTabularChatReasoningLevel,
+    updateLastSelectedChatSettings,
+    parseTabularChatSelectionKey,
 } from "@/app/lib/mikeApi";
+import type { Message } from "@/app/components/shared/types";
 import { applyDarkMode } from "@/app/lib/theme";
+import { publishTabularChatSettingsUpdate } from "@/app/lib/tabularChatSettingsEvents";
 
 interface UserProfile {
     displayName: string | null;
@@ -40,8 +48,10 @@ interface UserProfile {
     creditsResetDate: string;
     creditsRemaining: number;
     tier: string;
-    titleModel: string;
-    tabularModel: string;
+    titleModel: string | null;
+    tabularModel: string | null;
+    lastSelectedChatModel: string | null;
+    lastSelectedReasoningLevel: NonNullable<Message["reasoning"]>;
     mfaOnLogin: boolean;
     legalResearchUs: boolean;
     quickActionsVisible: boolean;
@@ -67,16 +77,22 @@ interface UserProfileContextType {
     apiKeysDegraded: boolean;
     updateDisplayName: (name: string) => Promise<boolean>;
     updateOrganisation: (organisation: string) => Promise<boolean>;
-    completeOnboarding: (
-        details?: PersonalisationDetails,
-    ) => Promise<boolean>;
+    completeOnboarding: (details?: PersonalisationDetails) => Promise<boolean>;
     updatePersonalisation: (
         details: PersonalisationDetails,
     ) => Promise<boolean>;
     syncPasswordSet: () => Promise<boolean>;
     updateModelPreference: (
         field: "titleModel" | "tabularModel",
-        value: string,
+        value: string | null,
+    ) => Promise<boolean>;
+    persistChatModelSelection: (
+        model: string,
+        chatId?: string | null,
+    ) => Promise<boolean>;
+    persistChatReasoningSelection: (
+        reasoningLevel: NonNullable<Message["reasoning"]>,
+        chatId?: string | null,
     ) => Promise<boolean>;
     updateMfaOnLogin: (enabled: boolean) => Promise<boolean>;
     updateLegalResearchUs: (enabled: boolean) => Promise<boolean>;
@@ -142,6 +158,9 @@ function toProfile(data: ApiUserProfile): UserProfile {
         onboardingVersion: profile.onboardingVersion ?? null,
         onboardingComplete: profile.onboardingComplete !== false,
         passwordSet: profile.passwordSet === true,
+        lastSelectedChatModel: profile.lastSelectedChatModel ?? null,
+        lastSelectedReasoningLevel:
+            profile.lastSelectedReasoningLevel ?? "high",
         mfaOnLogin: profile.mfaOnLogin === true,
         openRouterModels: Array.isArray(profile.openRouterModels)
             ? profile.openRouterModels
@@ -201,8 +220,10 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 creditsResetDate: futureResetDate.toISOString(),
                 creditsRemaining: 999999, // temporarily unlimited
                 tier: "Free",
-                titleModel: "gemini-3.5-flash-lite",
-                tabularModel: "gemini-3-flash-preview",
+                titleModel: null,
+                tabularModel: null,
+                lastSelectedChatModel: null,
+                lastSelectedReasoningLevel: "high",
                 mfaOnLogin: false,
                 legalResearchUs: true,
                 quickActionsVisible: true,
@@ -309,7 +330,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     const updateModelPreference = useCallback(
         async (
             field: "titleModel" | "tabularModel",
-            value: string,
+            value: string | null,
         ): Promise<boolean> => {
             if (!user) return false;
             try {
@@ -318,6 +339,88 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 });
                 setProfile((prev) =>
                     prev ? { ...prev, ...toProfile(updated) } : null,
+                );
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [user],
+    );
+
+    const persistChatModelSelection = useCallback(
+        async (model: string, chatId?: string | null): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                if (chatId) {
+                    const tabularChat = parseTabularChatSelectionKey(chatId);
+                    if (tabularChat) {
+                        await updateTabularChatModel(
+                            tabularChat.reviewId,
+                            tabularChat.chatId,
+                            model,
+                        );
+                        publishTabularChatSettingsUpdate({
+                            reviewId: tabularChat.reviewId,
+                            chatId: tabularChat.chatId,
+                            model,
+                        });
+                    } else {
+                        await updateChatModel(chatId, model);
+                    }
+                } else {
+                    await updateLastSelectedChatSettings({
+                        lastSelectedChatModel: model,
+                    });
+                }
+                setProfile((current) =>
+                    current
+                        ? { ...current, lastSelectedChatModel: model }
+                        : current,
+                );
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [user],
+    );
+
+    const persistChatReasoningSelection = useCallback(
+        async (
+            reasoningLevel: NonNullable<Message["reasoning"]>,
+            chatId?: string | null,
+        ): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                if (chatId) {
+                    const tabularChat = parseTabularChatSelectionKey(chatId);
+                    if (tabularChat) {
+                        await updateTabularChatReasoningLevel(
+                            tabularChat.reviewId,
+                            tabularChat.chatId,
+                            reasoningLevel,
+                        );
+                        publishTabularChatSettingsUpdate({
+                            reviewId: tabularChat.reviewId,
+                            chatId: tabularChat.chatId,
+                            reasoningLevel,
+                        });
+                    } else {
+                        await updateChatReasoningLevel(chatId, reasoningLevel);
+                    }
+                } else {
+                    await updateLastSelectedChatSettings({
+                        lastSelectedReasoningLevel: reasoningLevel,
+                    });
+                }
+                setProfile((current) =>
+                    current
+                        ? {
+                              ...current,
+                              lastSelectedReasoningLevel: reasoningLevel,
+                          }
+                        : current,
                 );
                 return true;
             } catch {
@@ -437,9 +540,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 const updated = await updateUserProfile({ darkMode: enabled });
                 const normalized = toProfile(updated);
                 setProfile((prev) =>
-                    prev
-                        ? { ...prev, ...normalized, darkMode: enabled }
-                        : null,
+                    prev ? { ...prev, ...normalized, darkMode: enabled } : null,
                 );
             } catch (error) {
                 applyDarkMode(previous);
@@ -457,7 +558,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             if (!user) return false;
             const normalized = value?.trim() ? value.trim() : null;
             try {
-                await saveApiKey(provider, normalized);
+                const status = await saveApiKey(provider, normalized);
                 setProfile((prev) =>
                     prev
                         ? {
@@ -465,8 +566,9 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                               apiKeys: {
                                   ...prev.apiKeys,
                                   [provider]: {
-                                      configured: !!normalized,
-                                      source: normalized ? "user" : null,
+                                      configured: status[provider],
+                                      source:
+                                          status.sources?.[provider] ?? null,
                                   },
                               },
                           }
@@ -512,6 +614,8 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 updatePersonalisation,
                 syncPasswordSet,
                 updateModelPreference,
+                persistChatModelSelection,
+                persistChatReasoningSelection,
                 updateMfaOnLogin,
                 updateLegalResearchUs,
                 updateQuickActionsVisible,

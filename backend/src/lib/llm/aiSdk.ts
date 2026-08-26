@@ -281,9 +281,13 @@ export async function streamAiSdk(
       reasoning:
         config.supportsReasoning === false
           ? undefined
-          : params.enableThinking
-            ? "high"
-            : "none",
+          : // The OpenAI adapter and API support `max`, while AI SDK Core 7's
+            // shared call-options type still omits it. Preserve the runtime
+            // value across that temporary upstream type mismatch.
+            ((params.reasoning ?? "none") as
+              | "provider-default"
+              | Exclude<NonNullable<StreamChatParams["reasoning"]>, "max">
+              | undefined),
       include: { rawChunks: true },
       ...(config.courtlistenerCitationReminder
         ? {

@@ -44,7 +44,9 @@ create table if not exists public.user_profiles (
   message_credits_used integer not null default 0,
   credits_reset_date timestamptz not null default (now() + interval '30 days'),
   title_model text,
-  tabular_model text not null default 'gemini-3-flash-preview',
+  tabular_model text,
+  last_selected_chat_model text,
+  last_selected_reasoning_level text check (last_selected_reasoning_level in ('none', 'low', 'medium', 'high', 'xhigh', 'max')),
   quote_model text,
   mfa_on_login boolean not null default false,
   legal_research_us boolean not null default true,
@@ -1265,6 +1267,8 @@ create table if not exists public.chats (
   project_id uuid references public.projects(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
   title text,
+  model text,
+  reasoning_level text check (reasoning_level in ('none', 'low', 'medium', 'high', 'xhigh', 'max')),
   created_at timestamptz not null default now()
 );
 
@@ -1287,6 +1291,7 @@ returns table (
   project_id uuid,
   user_id text,
   title text,
+  model text,
   created_at timestamptz,
   project_name text
 )
@@ -1298,6 +1303,7 @@ as $$
     c.project_id,
     c.user_id::text as user_id,
     c.title,
+    c.model,
     c.created_at,
     p.name as project_name
   from public.chats c
@@ -1353,6 +1359,8 @@ create table if not exists public.word_chats (
     references public.word_documents(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
   title text,
+  model text,
+  reasoning_level text check (reasoning_level in ('none', 'low', 'medium', 'high', 'xhigh', 'max')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -1444,6 +1452,7 @@ create table if not exists public.tabular_reviews (
   project_id uuid references public.projects(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
   title text,
+  model text,
   columns_config jsonb,
   document_ids jsonb,
   workflow_id uuid references public.workflows(id) on delete set null,
@@ -1959,6 +1968,8 @@ create table if not exists public.tabular_review_chats (
   review_id uuid not null references public.tabular_reviews(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
   title text,
+  model text,
+  reasoning_level text check (reasoning_level in ('none', 'low', 'medium', 'high', 'xhigh', 'max')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

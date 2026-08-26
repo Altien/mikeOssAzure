@@ -11,6 +11,17 @@ export type Provider =
     | "opencode-go"
     | "ollama";
 
+export const REASONING_LEVELS = [
+    "none",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+] as const;
+
+export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
+
 export type OpenAIToolSchema = {
     type: "function";
     function: {
@@ -63,12 +74,11 @@ export type StreamChatParams = {
     runTools?: (calls: NormalizedToolCall[]) => Promise<NormalizedToolResult[]>;
     apiKeys?: UserApiKeys;
     /**
-     * Enable provider-side reasoning/thinking. Off by default — should only
-     * be turned on for interactive chat surfaces where the user actually
-     * benefits from seeing the thought stream. Bulk extraction jobs and
-     * one-shot completions should leave this off to save tokens and latency.
+     * AI SDK reasoning effort. Bulk extraction jobs should leave this unset;
+     * the SDK adapter maps an omitted level to "none" to save tokens and
+     * latency.
      */
-    enableThinking?: boolean;
+    reasoning?: ReasoningLevel;
     abortSignal?: AbortSignal;
 };
 

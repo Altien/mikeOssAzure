@@ -4,6 +4,10 @@ import {
   type AskInputsResponseRequest,
   type ChatMessage,
 } from "./types";
+import {
+  REASONING_LEVELS,
+  type ReasoningLevel,
+} from "../llm/types";
 
 type ValidationResult<T> =
   | { ok: true; value: T }
@@ -62,6 +66,19 @@ export function parseOptionalModel(
 ): ValidationResult<string | undefined> {
   if (value === undefined) return { ok: true, value: undefined };
   return parseNonEmptyString(value, "model must be a non-empty string");
+}
+
+export function parseOptionalReasoning(
+  value: unknown,
+): ValidationResult<ReasoningLevel | undefined> {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (!REASONING_LEVELS.includes(value as ReasoningLevel)) {
+    return {
+      ok: false,
+      detail: `reasoning must be one of: ${REASONING_LEVELS.join(", ")}`,
+    };
+  }
+  return { ok: true, value: value as ReasoningLevel };
 }
 
 function parseMessageFiles(

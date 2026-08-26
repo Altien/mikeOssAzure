@@ -7,6 +7,7 @@
  * in the local HTTP client's readSSE.
  */
 import { streamWordChat, readSSE } from "./mikeApi";
+import type { ReasoningLevel } from "../lib/wordChatTypes";
 
 export interface WordChatDocumentReadEvent {
   type: "doc_read_start" | "doc_read";
@@ -37,6 +38,7 @@ export async function streamAssistant(
     }[];
     documentContext?: string;
     model: string;
+    reasoning?: ReasoningLevel;
     chatId?: string;
     wordDocumentId: string;
     documentName: string;
@@ -71,6 +73,7 @@ export async function streamAssistant(
   const res = await streamWordChat({
     messages: params.messages,
     model: params.model,
+    reasoning: params.reasoning,
     chat_id: params.chatId,
     document_context: params.documentContext,
     document_id: params.wordDocumentId,

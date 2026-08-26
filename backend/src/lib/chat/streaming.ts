@@ -1,6 +1,6 @@
 import {
   streamChatWithTools,
-  DEFAULT_MAIN_MODEL,
+  resolveModel,
   type LlmMessage,
   type OpenAIToolSchema,
 } from "../llm";
@@ -235,6 +235,8 @@ export async function runLLMStream(params: {
   maxIterations?: number;
   buildCitations?: (fullText: string) => unknown[];
   model?: string;
+  /** AI SDK reasoning effort for this interactive request. */
+  reasoning?: import("../llm").ReasoningLevel;
   apiKeys?: import("../llm").UserApiKeys;
   signal?: AbortSignal;
   /** Let a route persist the completed turn before it signals stream success. */
@@ -441,12 +443,19 @@ export async function runLLMStream(params: {
     // takes the same path as any other mid-stream failure.
     //
     // "throw" (not silent fallback) because `model` here is what the caller
-    // asked for in THIS request. Tabular's stored preference has already been
-    // normalized by getUserModelSettings, so what arrives here is either an
-    // in-selection router model or a first-party id.
+    // asked for in THIS request. Stored task models are validated by their
+    // route before they arrive here, but this guard keeps every caller safe.
+    const requestedModel = resolveModel(model, "");
+    if (!requestedModel) {
+      throw new UserFacingError(
+        model
+          ? `Model "${model}" is not available. Select another model.`
+          : "Select a model before sending a message.",
+      );
+    }
     const selectedModel = await resolveRequestedModel(
-      model,
-      DEFAULT_MAIN_MODEL,
+      requestedModel,
+      "",
       userId,
       db,
       "throw",
@@ -458,7 +467,7 @@ export async function runLLMStream(params: {
       tools: activeTools as OpenAIToolSchema[],
       maxIterations: params.maxIterations ?? 10,
       apiKeys,
-      enableThinking: true,
+      reasoning: params.reasoning ?? "high",
       abortSignal: signal,
       callbacks: {
         onContentDelta: (delta) => {

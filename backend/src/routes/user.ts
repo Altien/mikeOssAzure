@@ -5,13 +5,14 @@ import { createServerSupabase } from "../lib/supabase";
 import { recordAudit } from "../lib/audit";
 import { sendInternalError } from "../lib/httpError";
 import {
-    DEFAULT_TABULAR_MODEL,
-    DEFAULT_TITLE_MODEL,
-    CLAUDE_LOW_MODELS,
     isSupportedOpenCodeGoModel,
-    OPENAI_LOW_MODELS,
+    REASONING_LEVELS,
     resolveModel,
 } from "../lib/llm";
+import {
+    normalizeOptionalModelPreference,
+    normalizeReasoningLevel,
+} from "../lib/modelSelection";
 import {
     type ApiKeyStatus,
     getUserApiKeyStatus,
@@ -70,7 +71,9 @@ type UserProfileRow = {
     credits_reset_date: string;
     tier: string;
     title_model: string | null;
-    tabular_model: string;
+    tabular_model: string | null;
+    last_selected_chat_model?: string | null;
+    last_selected_reasoning_level?: string | null;
     mfa_on_login: boolean | null;
     legal_research_us: boolean | null;
     quick_actions_visible: boolean | null;
@@ -185,6 +188,10 @@ function mcpOAuthPopupCsp(nonce: string) {
     ].join("; ");
 }
 
+const PROFILE_SELECT_WITH_CHAT_SELECTIONS =
+    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, last_selected_chat_model, last_selected_reasoning_level, mfa_on_login, legal_research_us, quick_actions_visible, dark_mode";
+const PROFILE_SELECT_WITH_LAST_SELECTED_CHAT_MODEL =
+    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, last_selected_chat_model, mfa_on_login, legal_research_us, quick_actions_visible, dark_mode";
 const PROFILE_SELECT =
     "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, quick_actions_visible, dark_mode";
 // Deploy-before-migrate tolerance is per column: a database that already has
@@ -235,16 +242,57 @@ async function selectProfile(
     userId: string,
     mode: "maybe" | "single",
 ) {
-    const fullQuery = db
+    const newestQuery = db
         .from("user_profiles")
-        .select(PROFILE_SELECT)
+        .select(PROFILE_SELECT_WITH_CHAT_SELECTIONS)
         .eq("user_id", userId);
-    const full =
+    const newest =
         mode === "single"
-            ? await fullQuery.single()
-            : await fullQuery.maybeSingle();
-    if (!full.error) return full;
-    let cascadeError: unknown = full.error;
+            ? await newestQuery.single()
+            : await newestQuery.maybeSingle();
+    if (!newest.error) return newest;
+    let cascadeError: unknown = newest.error;
+
+    if (isMissingProfileColumn(cascadeError, "last_selected_reasoning_level")) {
+        const modelOnlyQuery = db
+            .from("user_profiles")
+            .select(PROFILE_SELECT_WITH_LAST_SELECTED_CHAT_MODEL)
+            .eq("user_id", userId);
+        const modelOnly =
+            mode === "single"
+                ? await modelOnlyQuery.single()
+                : await modelOnlyQuery.maybeSingle();
+        if (!modelOnly.error) {
+            if (modelOnly.data && typeof modelOnly.data === "object") {
+                Object.assign(modelOnly.data as Record<string, unknown>, {
+                    last_selected_reasoning_level: null,
+                });
+            }
+            return modelOnly;
+        }
+        cascadeError = modelOnly.error;
+    }
+
+    if (isMissingProfileColumn(cascadeError, "last_selected_chat_model")) {
+        const fullQuery = db
+            .from("user_profiles")
+            .select(PROFILE_SELECT)
+            .eq("user_id", userId);
+        const full =
+            mode === "single"
+                ? await fullQuery.single()
+                : await fullQuery.maybeSingle();
+        if (!full.error) {
+            if (full.data && typeof full.data === "object") {
+                Object.assign(full.data as Record<string, unknown>, {
+                    last_selected_chat_model: null,
+                    last_selected_reasoning_level: null,
+                });
+            }
+            return full;
+        }
+        cascadeError = full.error;
+    }
 
     // dark_mode is the newest column, so its retry tier sits above the
     // 20260821 tiers: a database missing only dark_mode keeps its live
@@ -470,31 +518,12 @@ export function normalizeRouterModels(
     return models;
 }
 
-function routerTitleFallback(
-    routerModels: RouterModelSelections,
-    apiKeyStatus?: ApiKeyStatus,
-): string | null {
-    for (const slug of ROUTER_SLUGS) {
-        const first = routerModels[slug][0];
-        if (apiKeyStatus?.[slug] && first) return `${slug}/${first}`;
-    }
-    return null;
-}
-
 function serializeProfile(
     routerModels: RouterModelSelections,
     row: UserProfileRow,
     apiKeyStatus?: ApiKeyStatus,
 ) {
     const creditsUsed = row.message_credits_used ?? 0;
-    const titleFallback = apiKeyStatus?.gemini
-        ? DEFAULT_TITLE_MODEL
-        : apiKeyStatus?.openai
-          ? OPENAI_LOW_MODELS[0]
-          : apiKeyStatus?.claude
-            ? CLAUDE_LOW_MODELS[0]
-            : (routerTitleFallback(routerModels, apiKeyStatus) ??
-              DEFAULT_TITLE_MODEL);
     return {
         displayName: row.display_name,
         organisation: row.organisation,
@@ -519,8 +548,21 @@ function serializeProfile(
         creditsResetDate: row.credits_reset_date,
         creditsRemaining: Math.max(MONTHLY_CREDIT_LIMIT - creditsUsed, 0),
         tier: row.tier || "Free",
-        titleModel: resolveModel(row.title_model, titleFallback),
-        tabularModel: resolveModel(row.tabular_model, DEFAULT_TABULAR_MODEL),
+        titleModel: normalizeOptionalModelPreference(
+            row.title_model,
+            routerModels,
+        ),
+        tabularModel: normalizeOptionalModelPreference(
+            row.tabular_model,
+            routerModels,
+        ),
+        lastSelectedChatModel: normalizeOptionalModelPreference(
+            row.last_selected_chat_model,
+            routerModels,
+        ),
+        lastSelectedReasoningLevel:
+            normalizeReasoningLevel(row.last_selected_reasoning_level) ??
+            "high",
         mfaOnLogin: row.mfa_on_login === true,
         legalResearchUs: row.legal_research_us !== false,
         quickActionsVisible: row.quick_actions_visible !== false,
@@ -678,8 +720,10 @@ function validateProfilePayload(body: unknown):
               practice_setting?: string | null;
               professional_title?: string | null;
               practice_areas?: string[];
-              title_model?: string;
-              tabular_model?: string;
+              title_model?: string | null;
+              tabular_model?: string | null;
+              last_selected_chat_model?: string | null;
+              last_selected_reasoning_level?: string | null;
               legal_research_us?: boolean;
               quick_actions_visible?: boolean;
               updated_at: string;
@@ -701,6 +745,8 @@ function validateProfilePayload(body: unknown):
         "practiceAreas",
         "titleModel",
         "tabularModel",
+        "lastSelectedChatModel",
+        "lastSelectedReasoningLevel",
         "legalResearchUs",
         "quickActionsVisible",
         "darkMode",
@@ -723,8 +769,10 @@ function validateProfilePayload(body: unknown):
         practice_setting?: string | null;
         professional_title?: string | null;
         practice_areas?: string[];
-        title_model?: string;
-        tabular_model?: string;
+        title_model?: string | null;
+        tabular_model?: string | null;
+        last_selected_chat_model?: string | null;
+        last_selected_reasoning_level?: string | null;
         legal_research_us?: boolean;
         quick_actions_visible?: boolean;
         dark_mode?: boolean;
@@ -767,25 +815,79 @@ function validateProfilePayload(body: unknown):
     }
 
     if ("tabularModel" in raw) {
-        if (typeof raw.tabularModel !== "string") {
-            return { ok: false, detail: "tabularModel must be a string" };
+        if (raw.tabularModel === null || raw.tabularModel === "") {
+            update.tabular_model = null;
+        } else if (typeof raw.tabularModel !== "string") {
+            return {
+                ok: false,
+                detail: "tabularModel must be a string or null",
+            };
+        } else {
+            const resolved = resolveModel(raw.tabularModel, "");
+            if (!resolved) {
+                return { ok: false, detail: "Unsupported tabularModel" };
+            }
+            update.tabular_model = resolved;
         }
-        const resolved = resolveModel(raw.tabularModel, "");
-        if (!resolved) {
-            return { ok: false, detail: "Unsupported tabularModel" };
-        }
-        update.tabular_model = resolved;
     }
 
     if ("titleModel" in raw) {
-        if (typeof raw.titleModel !== "string") {
-            return { ok: false, detail: "titleModel must be a string" };
+        if (raw.titleModel === null || raw.titleModel === "") {
+            update.title_model = null;
+        } else if (typeof raw.titleModel !== "string") {
+            return {
+                ok: false,
+                detail: "titleModel must be a string or null",
+            };
+        } else {
+            const resolved = resolveModel(raw.titleModel, "");
+            if (!resolved) {
+                return { ok: false, detail: "Unsupported titleModel" };
+            }
+            update.title_model = resolved;
         }
-        const resolved = resolveModel(raw.titleModel, "");
-        if (!resolved) {
-            return { ok: false, detail: "Unsupported titleModel" };
+    }
+
+    if ("lastSelectedChatModel" in raw) {
+        if (
+            raw.lastSelectedChatModel === null ||
+            raw.lastSelectedChatModel === ""
+        ) {
+            update.last_selected_chat_model = null;
+        } else if (typeof raw.lastSelectedChatModel !== "string") {
+            return {
+                ok: false,
+                detail: "lastSelectedChatModel must be a string or null",
+            };
+        } else {
+            const resolved = resolveModel(raw.lastSelectedChatModel, "");
+            if (!resolved) {
+                return {
+                    ok: false,
+                    detail: "Unsupported lastSelectedChatModel",
+                };
+            }
+            update.last_selected_chat_model = resolved;
         }
-        update.title_model = resolved;
+    }
+
+    if ("lastSelectedReasoningLevel" in raw) {
+        if (typeof raw.lastSelectedReasoningLevel !== "string") {
+            return {
+                ok: false,
+                detail: "lastSelectedReasoningLevel must be a string",
+            };
+        }
+        if (!(REASONING_LEVELS as readonly string[]).includes(
+            raw.lastSelectedReasoningLevel,
+        )) {
+            return {
+                ok: false,
+                detail: "Unsupported lastSelectedReasoningLevel",
+            };
+        }
+        update.last_selected_reasoning_level =
+            raw.lastSelectedReasoningLevel;
     }
 
     for (const slug of ROUTER_SLUGS) {

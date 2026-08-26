@@ -1,15 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ALLOWED_MODEL_IDS,
-    DEFAULT_MODEL_ID,
     canonicalModelId,
     ROUTER_SLUGS,
     type RouterSlug,
+    type ReasoningLevel,
 } from "../components/assistant/ModelToggle";
-
-const STORAGE_KEY = "mike.selectedModel";
+import { isModelAvailable } from "../lib/modelAvailability";
+import type { ApiKeyState } from "../lib/mikeApi";
 
 /**
  * The composer's accepted-id surface. Exported so the Word add-in drift guard
@@ -24,75 +24,155 @@ export function isAllowedModelId(id: string): boolean {
     );
 }
 
-function readStored(): string {
-    if (typeof window === "undefined") return DEFAULT_MODEL_ID;
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    // Map renamed static ids to their current equivalents before validating,
-    // so a selection stored before a catalog rename keeps working.
-    const canonical = raw ? canonicalModelId(raw) : null;
-    if (canonical && isAllowedModelId(canonical)) return canonical;
-    return DEFAULT_MODEL_ID;
-}
-
-function persist(id: string) {
-    if (typeof window !== "undefined") {
-        window.localStorage.setItem(STORAGE_KEY, id);
-    }
-}
-
-/**
- * @param routerSelections The user's saved router model lists once the
- * profile is loaded, or null/undefined while it is not. When loaded, a stored
- * router selection (`openrouter/*`, `vercel/*`, `opencode-go/*`) that is no
- * longer in the saved lists resets to the default model — mirroring how an
- * unavailable first-party id is replaced on read — instead of being silently
- * sent to the backend (which would reject it and degrade the request to the
- * default anyway).
- */
-export function useSelectedModel(
+export interface SelectedModelSources {
+    selectionKey?: string | null;
+    chatModel?: string | null;
+    lastSelectedModel?: string | null;
     routerSelections?: {
         openRouterModels: string[];
         vercelModels: string[];
         openCodeGoModels: string[];
-    } | null,
-): [string, (id: string) => void] {
-    const [model, setModelState] = useState<string>(DEFAULT_MODEL_ID);
-    const openRouterModels = routerSelections?.openRouterModels;
-    const vercelModels = routerSelections?.vercelModels;
-    const openCodeGoModels = routerSelections?.openCodeGoModels;
+    } | null;
+    /** Undefined means availability is unknown and must fail open. */
+    apiKeys?: ApiKeyState;
+}
 
-    useEffect(() => {
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- hydration-safe localStorage read; SSR must render the default model
-        setModelState(readStored());
-    }, []);
+function usableStoredModel(
+    value: string | null | undefined,
+    sources: SelectedModelSources,
+): string | null {
+    if (!value) return null;
+    const canonical = canonicalModelId(value);
+    if (!isAllowedModelId(canonical)) return null;
 
-    useEffect(() => {
-        if (!openRouterModels || !vercelModels || !openCodeGoModels) return;
+    const router = ROUTER_SLUGS.find((slug) =>
+        canonical.startsWith(`${slug}/`),
+    );
+    if (router && sources.routerSelections) {
         const selections: Record<RouterSlug, string[]> = {
-            openrouter: openRouterModels,
-            vercel: vercelModels,
-            "opencode-go": openCodeGoModels,
+            openrouter: sources.routerSelections.openRouterModels,
+            vercel: sources.routerSelections.vercelModels,
+            "opencode-go": sources.routerSelections.openCodeGoModels,
         };
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- reconciles state with data that arrives asynchronously (the loaded router lists); the functional update is a no-op unless the stored selection is genuinely stale, so it cannot cascade
-        setModelState((current) => {
-            const router = ROUTER_SLUGS.find((slug) =>
-                current.startsWith(`${slug}/`),
-            );
-            if (!router) return current;
-            if (selections[router].includes(current.slice(router.length + 1))) {
-                return current;
-            }
-            persist(DEFAULT_MODEL_ID);
-            return DEFAULT_MODEL_ID;
-        });
-    }, [openRouterModels, vercelModels, openCodeGoModels]);
+        if (!selections[router].includes(canonical.slice(router.length + 1))) {
+            return null;
+        }
+    }
+    if (sources.apiKeys && !isModelAvailable(canonical, sources.apiKeys)) {
+        return null;
+    }
+    return canonical;
+}
+
+/** Resolve chat model → profile last-selected model, without a product default. */
+export function useSelectedModel(
+    sources: SelectedModelSources = {},
+): [string, (id: string) => void] {
+    const [model, setModelState] = useState("");
+    const manuallySelected = useRef(false);
+    const previousSelectionKey = useRef(sources.selectionKey);
+    const openRouterModels = sources.routerSelections?.openRouterModels;
+    const vercelModels = sources.routerSelections?.vercelModels;
+    const openCodeGoModels = sources.routerSelections?.openCodeGoModels;
+    const hasRouterSelections = sources.routerSelections != null;
+    const selectionSources = useMemo<SelectedModelSources>(
+        () => ({
+            selectionKey: sources.selectionKey,
+            chatModel: sources.chatModel,
+            lastSelectedModel: sources.lastSelectedModel,
+            routerSelections: hasRouterSelections
+                ? {
+                      openRouterModels: openRouterModels ?? [],
+                      vercelModels: vercelModels ?? [],
+                      openCodeGoModels: openCodeGoModels ?? [],
+                  }
+                : null,
+            apiKeys: sources.apiKeys,
+        }),
+        [
+            sources.selectionKey,
+            sources.chatModel,
+            sources.lastSelectedModel,
+            hasRouterSelections,
+            openRouterModels,
+            vercelModels,
+            openCodeGoModels,
+            sources.apiKeys,
+        ],
+    );
+
+    /* eslint-disable react-hooks/set-state-in-effect -- persisted profile/chat settings arrive asynchronously and initialize controlled composer state */
+    useEffect(() => {
+        if (previousSelectionKey.current !== selectionSources.selectionKey) {
+            previousSelectionKey.current = selectionSources.selectionKey;
+            manuallySelected.current = false;
+        }
+        if (manuallySelected.current) return;
+        if (
+            selectionSources.selectionKey &&
+            selectionSources.chatModel === undefined
+        ) {
+            // Existing chat settings have not loaded yet. Do not flash the
+            // profile fallback before the chat's own selection arrives.
+            setModelState("");
+            return;
+        }
+        const next =
+            usableStoredModel(selectionSources.chatModel, selectionSources) ??
+            usableStoredModel(
+                selectionSources.lastSelectedModel,
+                selectionSources,
+            ) ??
+            "";
+        setModelState(next);
+    }, [selectionSources]);
+    /* eslint-enable react-hooks/set-state-in-effect */
 
     const setModel = useCallback((id: string) => {
         const canonical = canonicalModelId(id);
-        const next = isAllowedModelId(canonical) ? canonical : DEFAULT_MODEL_ID;
+        const next = isAllowedModelId(canonical) ? canonical : "";
+        manuallySelected.current = true;
         setModelState(next);
-        persist(next);
     }, []);
 
     return [model, setModel];
+}
+
+export function useSelectedReasoning(sources: {
+    selectionKey?: string | null;
+    chatReasoningLevel?: ReasoningLevel | null;
+    lastSelectedReasoningLevel?: ReasoningLevel | null;
+}): [ReasoningLevel, (level: ReasoningLevel) => void] {
+    const [level, setLevelState] = useState<ReasoningLevel>("high");
+    const manuallySelected = useRef(false);
+    const previousSelectionKey = useRef(sources.selectionKey);
+
+    /* eslint-disable react-hooks/set-state-in-effect -- persisted profile/chat settings arrive asynchronously and initialize controlled composer state */
+    useEffect(() => {
+        if (previousSelectionKey.current !== sources.selectionKey) {
+            previousSelectionKey.current = sources.selectionKey;
+            manuallySelected.current = false;
+        }
+        if (manuallySelected.current) return;
+        if (sources.selectionKey && sources.chatReasoningLevel === undefined) {
+            return;
+        }
+        setLevelState(
+            sources.chatReasoningLevel ??
+                sources.lastSelectedReasoningLevel ??
+                "high",
+        );
+    }, [
+        sources.selectionKey,
+        sources.chatReasoningLevel,
+        sources.lastSelectedReasoningLevel,
+    ]);
+    /* eslint-enable react-hooks/set-state-in-effect */
+
+    const setLevel = useCallback((next: ReasoningLevel) => {
+        manuallySelected.current = true;
+        setLevelState(next);
+    }, []);
+
+    return [level, setLevel];
 }

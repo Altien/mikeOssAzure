@@ -373,9 +373,7 @@ export async function exportTabularReviewsData(): Promise<{
 }
 
 export type PracticeSetting =
-    | "private_practice"
-    | "in_house"
-    | "not_practising";
+    "private_practice" | "in_house" | "not_practising";
 
 export type ProfessionalTitle =
     | "Partner"
@@ -408,8 +406,10 @@ export interface UserProfile {
     creditsResetDate: string;
     creditsRemaining: number;
     tier: string;
-    titleModel: string;
-    tabularModel: string;
+    titleModel: string | null;
+    tabularModel: string | null;
+    lastSelectedChatModel: string | null;
+    lastSelectedReasoningLevel: NonNullable<Message["reasoning"]>;
     mfaOnLogin: boolean;
     legalResearchUs: boolean;
     quickActionsVisible: boolean;
@@ -520,8 +520,10 @@ export async function updateUserProfile(payload: {
     practiceSetting?: PracticeSetting | null;
     professionalTitle?: ProfessionalTitle | null;
     practiceAreas?: string[];
-    titleModel?: string;
-    tabularModel?: string;
+    titleModel?: string | null;
+    tabularModel?: string | null;
+    lastSelectedChatModel?: string | null;
+    lastSelectedReasoningLevel?: NonNullable<Message["reasoning"]>;
     legalResearchUs?: boolean;
     quickActionsVisible?: boolean;
     darkMode?: boolean;
@@ -1445,6 +1447,47 @@ export async function renameChat(chatId: string, title: string): Promise<void> {
     });
 }
 
+export async function updateChatModel(
+    chatId: string,
+    model: string,
+): Promise<{ id: string; title: string | null; model: string }> {
+    return apiRequest(`/chat/${chatId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model }),
+        keepalive: true,
+    });
+}
+
+export async function updateChatReasoningLevel(
+    chatId: string,
+    reasoningLevel: NonNullable<Message["reasoning"]>,
+): Promise<{
+    id: string;
+    title: string | null;
+    model: string;
+    reasoning_level: NonNullable<Message["reasoning"]>;
+}> {
+    return apiRequest(`/chat/${chatId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reasoningLevel }),
+        keepalive: true,
+    });
+}
+
+export async function updateLastSelectedChatSettings(payload: {
+    lastSelectedChatModel?: string;
+    lastSelectedReasoningLevel?: NonNullable<Message["reasoning"]>;
+}): Promise<UserProfile> {
+    return apiRequest<UserProfile>("/user/profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        keepalive: true,
+    });
+}
+
 export async function deleteChat(chatId: string): Promise<void> {
     await apiRequest(`/chat/${chatId}`, { method: "DELETE" });
 }
@@ -1452,11 +1495,12 @@ export async function deleteChat(chatId: string): Promise<void> {
 export async function generateChatTitle(
     chatId: string,
     message: string,
+    model: string,
 ): Promise<{ title: string }> {
     return apiRequest<{ title: string }>(`/chat/${chatId}/generate-title`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, model }),
     });
 }
 
@@ -1492,6 +1536,7 @@ export async function streamChat(payload: {
     chat_id?: string;
     project_id?: string;
     model?: string;
+    reasoning?: Message["reasoning"];
     ask_inputs_response?: AskInputsResponsePayload;
     signal?: AbortSignal;
 }): Promise<Response> {
@@ -1519,6 +1564,7 @@ export async function streamProjectChat(payload: {
     messages: StreamChatMessage[];
     chat_id?: string;
     model?: string;
+    reasoning?: Message["reasoning"];
     displayed_doc?: { filename: string; document_id: string };
     attached_documents?: { filename: string; document_id: string }[];
     ask_inputs_response?: AskInputsResponsePayload;
@@ -1597,6 +1643,7 @@ export async function createTabularReview(payload: {
     workflow_id?: string;
     project_id?: string;
     document_grouping?: "document" | "folder";
+    model: string;
 }): Promise<TabularReview> {
     return apiRequest<TabularReview>("/tabular-review", {
         method: "POST",
@@ -1619,6 +1666,7 @@ export async function updateTabularReview(
         document_ids?: string[];
         project_id?: string | null;
         document_grouping?: "document" | "folder";
+        model?: string;
         shared_with?: string[];
     },
 ): Promise<TabularReview> {
@@ -1698,6 +1746,8 @@ export async function streamTabularChat(
     chat_id?: string | null,
     signal?: AbortSignal,
     context?: { reviewTitle?: string | null; projectName?: string | null },
+    model?: Message["model"],
+    reasoning?: Message["reasoning"],
 ): Promise<Response> {
     return apiFetch(`${API_BASE}/tabular-review/${reviewId}/chat`, {
         method: "POST",
@@ -1707,6 +1757,8 @@ export async function streamTabularChat(
             chat_id: chat_id ?? undefined,
             review_title: context?.reviewTitle ?? undefined,
             project_name: context?.projectName ?? undefined,
+            model,
+            reasoning,
         }),
         signal: signal ?? undefined,
     });
@@ -1741,8 +1793,32 @@ export interface TRDisplayMessage {
 export interface TRChat {
     id: string;
     title: string | null;
+    model: string | null;
+    reasoning_level: NonNullable<Message["reasoning"]> | null;
     created_at: string;
     updated_at: string;
+}
+
+const TABULAR_CHAT_SELECTION_PREFIX = "tabular-review-chat:";
+
+export function tabularChatSelectionKey(
+    reviewId: string,
+    chatId: string,
+): string {
+    return `${TABULAR_CHAT_SELECTION_PREFIX}${reviewId}:${chatId}`;
+}
+
+export function parseTabularChatSelectionKey(
+    selectionKey: string,
+): { reviewId: string; chatId: string } | null {
+    if (!selectionKey.startsWith(TABULAR_CHAT_SELECTION_PREFIX)) return null;
+    const value = selectionKey.slice(TABULAR_CHAT_SELECTION_PREFIX.length);
+    const separatorIndex = value.indexOf(":");
+    if (separatorIndex <= 0 || separatorIndex === value.length - 1) return null;
+    return {
+        reviewId: value.slice(0, separatorIndex),
+        chatId: value.slice(separatorIndex + 1),
+    };
 }
 
 export function mapTRMessages(raw: RawTRMessage[]): TRDisplayMessage[] {
@@ -1801,6 +1877,32 @@ export async function renameTabularChat(
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title }),
+    });
+}
+
+export async function updateTabularChatModel(
+    reviewId: string,
+    chatId: string,
+    model: string,
+): Promise<TRChat> {
+    return apiRequest(`/tabular-review/${reviewId}/chats/${chatId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model }),
+        keepalive: true,
+    });
+}
+
+export async function updateTabularChatReasoningLevel(
+    reviewId: string,
+    chatId: string,
+    reasoningLevel: NonNullable<Message["reasoning"]>,
+): Promise<TRChat> {
+    return apiRequest(`/tabular-review/${reviewId}/chats/${chatId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reasoningLevel }),
+        keepalive: true,
     });
 }
 

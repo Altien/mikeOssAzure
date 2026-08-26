@@ -1,14 +1,19 @@
 "use client";
 
+import { useEffect } from "react";
 import {
   ModelToggleUI,
+  nearestReasoningLevelForModel,
+  reasoningLevelsForModel,
   type ModelToggleOption,
+  type ReasoningLevel,
 } from "@/shared/ui/ModelToggleUI";
 import { isModelAvailable } from "@/app/lib/modelAvailability";
 import type { ApiKeyState } from "@/app/lib/mikeApi";
 import { useOllamaModels } from "@/app/hooks/useOllamaModels";
 
 export type ModelOption = ModelToggleOption;
+export type { ReasoningLevel };
 
 export const MODELS: ModelOption[] = [
   { id: "claude-fable-5", label: "Claude Fable 5", group: "Anthropic" },
@@ -46,7 +51,10 @@ export const SETTINGS_MODELS: ModelOption[] = [
   { id: "gpt-5.4-mini", label: "GPT-5.4 Mini", group: "OpenAI" },
 ];
 
-export const DEFAULT_MODEL_ID = "gemini-3-flash-preview";
+for (const model of MODELS) model.source = "Direct";
+for (const model of SETTINGS_MODELS) model.source ??= "Direct";
+
+export const DEFAULT_MODEL_ID = "";
 
 export const ALLOWED_MODEL_IDS = new Set(MODELS.map((m) => m.id));
 
@@ -105,6 +113,58 @@ export function modelDisplayName(modelId: string): string {
 export const ROUTER_SLUGS = ["openrouter", "vercel", "opencode-go"] as const;
 export type RouterSlug = (typeof ROUTER_SLUGS)[number];
 
+const ROUTER_VENDOR_GROUPS: Record<string, string> = {
+  anthropic: "Anthropic",
+  claude: "Anthropic",
+  google: "Google",
+  gemini: "Google",
+  openai: "OpenAI",
+  gpt: "OpenAI",
+  moonshot: "Moonshot AI",
+  moonshotai: "Moonshot AI",
+  kimi: "Moonshot AI",
+  zhipu: "Zhipu AI",
+  zhipuai: "Zhipu AI",
+  zai: "Zhipu AI",
+  minimax: "MiniMax",
+  qwen: "Alibaba",
+  alibaba: "Alibaba",
+  deepseek: "DeepSeek",
+  xiaomi: "Xiaomi",
+  mimo: "Xiaomi",
+  mistral: "Mistral AI",
+  mistralai: "Mistral AI",
+};
+
+/** Model maker used for grouping; the router remains a separate source. */
+export function underlyingProviderGroup(
+  catalogModelId: string,
+  router: RouterSlug,
+): string {
+  const vendor = catalogModelId.includes("/")
+    ? catalogModelId.split("/", 1)[0]!.toLowerCase()
+    : catalogModelId.toLowerCase().split(/[-_.]/, 1)[0]!;
+  const mapped = ROUTER_VENDOR_GROUPS[vendor];
+  if (mapped) return mapped;
+  if (catalogModelId.includes("/")) {
+    return vendor
+      .split(/[-_]/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+  }
+
+  if (router === "opencode-go") {
+    if (/^glm-/i.test(catalogModelId)) return "Zhipu AI";
+    if (/^kimi-/i.test(catalogModelId)) return "Moonshot AI";
+    if (/^minimax-/i.test(catalogModelId)) return "MiniMax";
+    if (/^qwen/i.test(catalogModelId)) return "Alibaba";
+    if (/^deepseek-/i.test(catalogModelId)) return "DeepSeek";
+    if (/^mimo-/i.test(catalogModelId)) return "Xiaomi";
+  }
+  return "Other providers";
+}
+
 interface Props {
   value: string;
   onChange: (id: string) => void;
@@ -115,19 +175,39 @@ interface Props {
    */
   apiKeys?: ApiKeyState;
   /** True while the profile is still loading: render a neutral disabled
-   *  trigger instead of flashing "No API Key" on every page load. */
+   *  trigger instead of flashing "No Models" on every page load. */
   apiKeysLoading?: boolean;
   openRouterModels?: string[];
   vercelModels?: string[];
   openCodeGoModels?: string[];
   compact?: boolean;
+  /** Render as a full-width liquid-glass control inside a modal form. */
+  modalInput?: boolean;
+  onNoModelsClick?: (reason: NoModelsReason) => void;
+  reasoningLevel?: ReasoningLevel;
+  onReasoningChange?: (level: ReasoningLevel) => void;
+}
+
+export type NoModelsReason = "api-keys" | "router-models";
+
+export function noModelsReason(
+  apiKeys: ApiKeyState | undefined,
+  routerModels: Partial<Record<RouterSlug, string[]>>,
+): NoModelsReason {
+  const configuredRouterWithoutModels = ROUTER_SLUGS.some(
+    (slug) =>
+      apiKeys?.[slug]?.configured === true &&
+      (routerModels[slug]?.length ?? 0) === 0,
+  );
+  return configuredRouterWithoutModels ? "router-models" : "api-keys";
 }
 
 export function openRouterModelOptions(models: string[]): ModelOption[] {
   return models.map((model) => ({
     id: `openrouter/${model}`,
     label: modelDisplayName(model),
-    group: "OpenRouter",
+    group: underlyingProviderGroup(model, "openrouter"),
+    source: "OpenRouter",
   }));
 }
 
@@ -135,7 +215,8 @@ export function vercelModelOptions(models: string[]): ModelOption[] {
   return models.map((model) => ({
     id: `vercel/${model}`,
     label: modelDisplayName(model),
-    group: "Vercel AI Gateway",
+    group: underlyingProviderGroup(model, "vercel"),
+    source: "Vercel AI Gateway",
   }));
 }
 
@@ -143,7 +224,8 @@ export function openCodeGoModelOptions(models: string[]): ModelOption[] {
   return models.map((model) => ({
     id: `opencode-go/${model}`,
     label: modelDisplayName(model),
-    group: "OpenCode Go",
+    group: underlyingProviderGroup(model, "opencode-go"),
+    source: "OpenCode Go",
   }));
 }
 
@@ -156,6 +238,10 @@ export function ModelToggle({
   vercelModels = [],
   openCodeGoModels = [],
   compact = false,
+  modalInput = false,
+  onNoModelsClick,
+  reasoningLevel,
+  onReasoningChange,
 }: Props) {
   const ollamaModels = useOllamaModels();
   const models = [
@@ -166,6 +252,7 @@ export function ModelToggle({
     ...ollamaModels.map((model) => ({
       ...model,
       label: modelDisplayName(model.id),
+      source: "Local",
     })),
   ];
   const availableModels = models.filter((model) => {
@@ -175,10 +262,29 @@ export function ModelToggle({
     return isModelAvailable(model.id, apiKeys);
   });
   const selected = availableModels.find((model) => model.id === value);
+  const supportedReasoningLevels = reasoningLevelsForModel(value);
+  const normalizedReasoningLevel = reasoningLevel
+    ? nearestReasoningLevelForModel(value, reasoningLevel)
+    : undefined;
+  useEffect(() => {
+    if (
+      reasoningLevel &&
+      normalizedReasoningLevel &&
+      normalizedReasoningLevel !== reasoningLevel &&
+      onReasoningChange
+    ) {
+      onReasoningChange(normalizedReasoningLevel);
+    }
+  }, [normalizedReasoningLevel, onReasoningChange, reasoningLevel]);
   const selectedLabel = apiKeysLoading
     ? (models.find((model) => model.id === value)?.label ?? "Select model")
     : (selected?.label ??
-      (availableModels.length > 0 ? "Select model" : "No API Key"));
+      (availableModels.length > 0 ? "Select model" : "No Models"));
+  const emptyReason = noModelsReason(apiKeys, {
+    openrouter: openRouterModels,
+    vercel: vercelModels,
+    "opencode-go": openCodeGoModels,
+  });
   return (
     <ModelToggleUI
       value={value}
@@ -188,6 +294,14 @@ export function ModelToggle({
       selectedAvailable={selected !== undefined}
       loading={apiKeysLoading}
       compact={compact}
+      modalInput={modalInput}
+      emptyLabel="No Models"
+      onEmptyClick={
+        onNoModelsClick ? () => onNoModelsClick(emptyReason) : undefined
+      }
+      reasoningLevel={normalizedReasoningLevel}
+      onReasoningChange={onReasoningChange}
+      reasoningLevels={supportedReasoningLevels}
     />
   );
 }

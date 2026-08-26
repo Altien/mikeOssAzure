@@ -64,6 +64,8 @@ export {
   readSSE,
   replaceWorkflowReferenceFile,
   streamWordChat,
+  updateLastSelectedChatModel,
+  updateLastSelectedReasoningLevel,
   updateWorkflow,
   updateQuickAction,
   uploadWorkflowReferenceFile,
@@ -270,6 +272,52 @@ export async function getCloudWordChat(
       };
     }),
   };
+}
+
+export async function updateCloudWordChatModel(
+  documentId: string,
+  chatId: string,
+  model: string,
+): Promise<void> {
+  const params = new URLSearchParams({ document_id: documentId });
+  const res = await fetchWithRefresh(
+    `${BASE_URL}/word-chat/${encodeURIComponent(chatId)}/model?${params}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...(await getAuthHeaders()),
+      },
+      body: JSON.stringify({ model }),
+      keepalive: true,
+    },
+  );
+  if (!res.ok) {
+    await throwWordChatResponseError(res, "Failed to save Word chat model");
+  }
+}
+
+export async function updateCloudWordChatReasoning(
+  documentId: string,
+  chatId: string,
+  reasoningLevel: import("../lib/wordChatTypes").ReasoningLevel,
+): Promise<void> {
+  const params = new URLSearchParams({ document_id: documentId });
+  const res = await fetchWithRefresh(
+    `${BASE_URL}/word-chat/${encodeURIComponent(chatId)}/reasoning?${params}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...(await getAuthHeaders()),
+      },
+      body: JSON.stringify({ reasoningLevel }),
+      keepalive: true,
+    },
+  );
+  if (!res.ok) {
+    await throwWordChatResponseError(res, "Failed to save reasoning level");
+  }
 }
 
 export async function createCloudWordDocumentEdit(args: {

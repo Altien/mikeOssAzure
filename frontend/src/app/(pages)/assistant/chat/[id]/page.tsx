@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAssistantChat } from "@/app/hooks/useAssistantChat";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
@@ -21,6 +21,18 @@ export default function AssistantChatPage() {
 
     const hasAutoSent = useRef(false);
     const hasLoaded = useRef(false);
+    const [chatModel, setChatModel] = useState<string | null | undefined>(
+        initialMessages.length > 0
+            ? (initialMessages[0]?.model ?? null)
+            : undefined,
+    );
+    const [chatReasoningLevel, setChatReasoningLevel] = useState<
+        NonNullable<(typeof initialMessages)[number]["reasoning"]> | null | undefined
+    >(
+        initialMessages.length > 0
+            ? (initialMessages[0]?.reasoning ?? null)
+            : undefined,
+    );
 
     useEffect(() => {
         setCurrentChatId(id);
@@ -35,7 +47,9 @@ export default function AssistantChatPage() {
         hasLoaded.current = true;
 
         getChat(id)
-            .then(({ messages: loaded }) => {
+            .then(({ chat, messages: loaded }) => {
+                setChatModel(chat.model ?? null);
+                setChatReasoningLevel(chat.reasoning_level ?? null);
                 if (loaded.length > 0) {
                     setMessages(loaded);
                 } else {
@@ -62,6 +76,8 @@ export default function AssistantChatPage() {
     return (
         <ChatView
             chatId={id}
+            chatModel={chatModel}
+            chatReasoningLevel={chatReasoningLevel}
             messages={messages}
             isResponseLoading={isResponseLoading}
             handleChat={handleChat}

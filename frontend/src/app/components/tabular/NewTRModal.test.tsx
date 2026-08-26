@@ -14,6 +14,36 @@ vi.mock("@/app/lib/mikeApi", () => ({
     uploadStandaloneDocument: vi.fn(),
 }));
 
+vi.mock("@/app/contexts/UserProfileContext", () => ({
+    useUserProfile: () => ({
+        profile: {
+            tabularModel: "gemini-3-flash-preview",
+            apiKeys: {
+                claude: { configured: false, source: null },
+                gemini: { configured: true, source: "user" },
+                openai: { configured: false, source: null },
+                openrouter: { configured: false, source: null },
+                vercel: { configured: false, source: null },
+                "opencode-go": { configured: false, source: null },
+                courtlistener: { configured: false, source: null },
+            },
+            openRouterModels: [],
+            vercelModels: [],
+            openCodeGoModels: [],
+        },
+        loading: false,
+        apiKeysDegraded: false,
+    }),
+}));
+
+vi.mock("@/app/hooks/useOllamaModels", () => ({
+    useOllamaModels: () => [],
+}));
+
+vi.mock("next/navigation", () => ({
+    useRouter: () => ({ push: vi.fn() }),
+}));
+
 vi.mock("../shared/FileDirectory", () => ({
     FileDirectory: ({ tabs }: { tabs?: string[] }) => (
         <div>
@@ -45,7 +75,22 @@ describe("NewTRModal", () => {
             ),
         ).toBeInTheDocument();
 
-        fireEvent.change(screen.getByLabelText("Review name"), {
+        const reviewNameInput = screen.getByLabelText("Review name");
+        const modelSelect = screen.getByRole("button", {
+            name: "Choose model",
+        });
+        expect(
+            reviewNameInput.compareDocumentPosition(modelSelect) &
+                Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
+        expect(modelSelect).toHaveClass(
+            "h-10",
+            "w-full",
+            "rounded-xl",
+            "liquid-glass-subtle",
+        );
+
+        fireEvent.change(reviewNameInput, {
             target: { value: "Closing review" },
         });
         const groupingSwitch = screen.getByRole("switch", {
@@ -69,6 +114,7 @@ describe("NewTRModal", () => {
             undefined,
             undefined,
             "folder",
+            "gemini-3-flash-preview",
         );
     });
 
