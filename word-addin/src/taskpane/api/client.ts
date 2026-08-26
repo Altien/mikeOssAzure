@@ -174,8 +174,9 @@ interface UserProfile {
   creditsResetDate: string;
   creditsRemaining: number;
   tier: string;
-  titleModel: string;
-  tabularModel: string;
+  titleModel: string | null;
+  tabularModel: string | null;
+  lastUsedChatModel: string | null;
   mfaOnLogin: boolean;
   legalResearchUs: boolean;
   openRouterModels: string[];

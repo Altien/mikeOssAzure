@@ -70,6 +70,8 @@ describe("TRChatPanel Azure OpenAI deployment validation", () => {
         render(
             <TRChatPanel
                 reviewId="review-1"
+                model="aoai:stale-deployment"
+                onModelChange={vi.fn()}
                 onCitationClick={vi.fn()}
                 onClose={vi.fn()}
             />,

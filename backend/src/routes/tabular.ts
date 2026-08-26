@@ -29,6 +29,7 @@ import {
 import {
     completeText,
     providerForModel,
+    resolveModel,
     streamChatWithTools,
     type Provider,
     type UserApiKeys,
@@ -36,6 +37,12 @@ import {
 import { getUserModelSettings } from "../lib/userSettings";
 import { resolveSecret } from "../lib/envSecrets";
 import { asyncRoute } from "../lib/asyncRoute";
+import { resolveRequestedModel } from "../lib/routerModels";
+import {
+    TABULAR_MODEL_REQUIRED_DETAIL,
+    titleModelForChat,
+} from "../lib/modelSelection";
+import { UserFacingError } from "../lib/safeError";
 import {
     checkProjectAccess,
     ensureReviewAccess,
@@ -545,9 +552,8 @@ const SERVER_KEY_SECRETS: Record<Exclude<Provider, "azureOpenai">, string> = {
 async function missingModelApiKey(model: string, apiKeys: UserApiKeys) {
     const provider = providerForModel(model);
     if (provider === "azureOpenai") {
-        // Compound settings + the Managed Identity fallback are validated
-        // in the AOAI adapter itself; a missing user entry is not an error.
-        return null;
+        if (apiKeys.azureOpenai?.endpoint?.trim() && apiKeys.azureOpenai?.apiKey?.trim() && apiKeys.azureOpenai?.deployment?.trim()) return null;
+        return { provider, model, detail: "Azure OpenAI is not configured for this organisation. Ask an administrator to configure its endpoint, API key and deployment on /install." };
     }
     if (apiKeys[provider]?.trim()) return null;
     if ((await resolveSecret(SERVER_KEY_SECRETS[provider])).length > 0) {
@@ -561,6 +567,71 @@ async function missingModelApiKey(model: string, apiKeys: UserApiKeys) {
             `Ask an administrator to open /install and set the ${SERVER_KEY_SECRETS[provider]} ` +
             "Key Vault secret, or select a different tabular review model.",
     };
+}
+
+async function validateSelectedModel(
+    model: unknown,
+    userId: string,
+    db: ReturnType<typeof createServerSupabase>,
+): Promise<
+    | { ok: true; model: string; apiKeys: UserApiKeys }
+    | {
+          ok: false;
+          status: 400 | 409 | 422;
+          body: Record<string, unknown>;
+      }
+> {
+    const requested = resolveModel(
+        typeof model === "string" ? model.trim() : "",
+        "",
+    );
+    if (!requested) {
+        return {
+            ok: false,
+            status: typeof model === "string" && model.trim() ? 400 : 409,
+            body: {
+                code:
+                    typeof model === "string" && model.trim()
+                        ? "model_unavailable"
+                        : "model_required",
+                detail:
+                    typeof model === "string" && model.trim()
+                        ? `Model "${model}" is not available. Select another model.`
+                        : TABULAR_MODEL_REQUIRED_DETAIL,
+            },
+        };
+    }
+
+    let selected: string;
+    try {
+        selected = await resolveRequestedModel(
+            requested,
+            "",
+            userId,
+            db,
+            "throw",
+        );
+    } catch (error) {
+        if (error instanceof UserFacingError) {
+            return {
+                ok: false,
+                status: 400,
+                body: { code: "model_unavailable", detail: error.message },
+            };
+        }
+        throw error;
+    }
+
+    const { api_keys: apiKeys } = await getUserModelSettings(userId, db);
+    const missingKey = missingModelApiKey(selected, apiKeys);
+    if (missingKey) {
+        return {
+            ok: false,
+            status: 422,
+            body: { code: "missing_api_key", ...missingKey },
+        };
+    }
+    return { ok: true, model: selected, apiKeys };
 }
 
 // GET /tabular-review
@@ -656,6 +727,7 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
         workflow_id,
         project_id,
         document_grouping,
+        model,
     } = req.body as {
         title?: string;
         document_ids: string[];
@@ -663,9 +735,23 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
         workflow_id?: string;
         project_id?: string;
         document_grouping?: DocumentGrouping;
+        model?: string;
     };
 
+    if (typeof model !== "string" || !model.trim()) {
+        return void res.status(400).json({
+            code: "model_required",
+            detail: TABULAR_MODEL_REQUIRED_DETAIL,
+        });
+    }
+
     const db = createServerSupabase();
+    const selectedModel = await validateSelectedModel(model, userId, db);
+    if (!selectedModel.ok) {
+        return void res
+            .status(selectedModel.status)
+            .json(selectedModel.body);
+    }
     if (project_id) {
         const access = await checkProjectAccess(
             project_id,
@@ -689,6 +775,7 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
         .insert({
             user_id: userId,
             title: title ?? null,
+            model: selectedModel.model,
             columns_config,
             document_ids: allowedDocumentIds,
             project_id: project_id ?? null,
@@ -730,6 +817,7 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
         surface: "tabular",
         projectId: project_id ?? null,
         reviewId: (review as { id: string }).id,
+        model: selectedModel.model,
     });
     res.status(201).json(review);
 });
@@ -780,9 +868,17 @@ tabularRouter.post("/prompt", requireAuth, async (req, res) => {
         `format handling is applied separately and must not be duplicated inside the prompt text.`;
 
     try {
-        const { fast_model, api_keys } = await getUserModelSettings(userId);
+        const { tabular_model: promptModel, api_keys } =
+            await getUserModelSettings(userId);
+        if (!promptModel) {
+            return void res.status(409).json({
+                code: "model_required",
+                detail:
+                    "Select a default tabular review model in Settings → Model Preferences before generating a column prompt.",
+            });
+        }
         const raw = await completeText({
-            model: fast_model,
+            model: promptModel,
             systemPrompt:
                 'You write high-quality column prompts for legal tabular review workflows. Return only valid JSON with a single field: {"prompt": string}. The prompt you write must focus solely on what to extract — never on how to format the response.',
             user: userMessage,
@@ -944,6 +1040,7 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
     const { reviewId } = req.params;
     const updates: Record<string, unknown> = {};
     if (req.body.title != null) updates.title = req.body.title;
+    const modelUpdateProvided = req.body.model !== undefined;
     const projectIdUpdateProvided = req.body.project_id !== undefined;
     const projectIdUpdate =
         req.body.project_id === null
@@ -999,12 +1096,26 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
     if (
         (req.body.title != null ||
             req.body.document_ids != null ||
-            req.body.document_grouping != null) &&
+            req.body.document_grouping != null ||
+            modelUpdateProvided) &&
         !access.isOwner
     ) {
         return void res.status(403).json({
             detail: "Only the review owner can change review settings",
         });
+    }
+    if (modelUpdateProvided) {
+        const selectedModel = await validateSelectedModel(
+            req.body.model,
+            userId,
+            db,
+        );
+        if (!selectedModel.ok) {
+            return void res
+                .status(selectedModel.status)
+                .json(selectedModel.body);
+        }
+        updates.model = selectedModel.model;
     }
     if (req.body.columns_config != null) {
         if (!access.isOwner) {
@@ -1289,17 +1400,18 @@ tabularRouter.post(
                 .status(404)
                 .json({ detail: "Review row not found" });
 
-        const { tabular_model, api_keys } = await getUserModelSettings(
+        const selectedModel = await validateSelectedModel(
+            review.model,
             userId,
             db,
         );
-        const missingKey = await missingModelApiKey(tabular_model, api_keys);
-        if (missingKey) {
-            return void res.status(422).json({
-                code: "missing_api_key",
-                ...missingKey,
-            });
+        if (!selectedModel.ok) {
+            return void res
+                .status(selectedModel.status)
+                .json(selectedModel.body);
         }
+        const tabular_model = selectedModel.model;
+        const api_keys = selectedModel.apiKeys;
 
         const generationId = randomUUID();
         const { data: startResult, error: startError } = await db.rpc(
@@ -1499,14 +1611,18 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     if (columns.length === 0)
         return void res.status(400).json({ detail: "No columns configured" });
 
-    const { tabular_model, api_keys } = await getUserModelSettings(userId, db);
-    const missingKey = await missingModelApiKey(tabular_model, api_keys);
-    if (missingKey) {
-        return void res.status(422).json({
-            code: "missing_api_key",
-            ...missingKey,
-        });
+    const selectedModel = await validateSelectedModel(
+        review.model,
+        userId,
+        db,
+    );
+    if (!selectedModel.ok) {
+        return void res
+            .status(selectedModel.status)
+            .json(selectedModel.body);
     }
+    const tabular_model = selectedModel.model;
+    const api_keys = selectedModel.apiKeys;
 
     const expectedUpdatedAt = req.body?.expected_updated_at;
     if (
@@ -1757,6 +1873,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                 action: "tabular.generated",
                 surface: "tabular",
                 reviewId,
+                model: tabular_model,
             });
             write("data: [DONE]\n\n");
         }
@@ -2081,14 +2198,18 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
         ),
     };
 
-    const { tabular_model, api_keys } = await getUserModelSettings(userId, db);
-    const missingKey = await missingModelApiKey(tabular_model, api_keys);
-    if (missingKey) {
-        return void res.status(422).json({
-            code: "missing_api_key",
-            ...missingKey,
-        });
+    const selectedModel = await validateSelectedModel(
+        review.model,
+        userId,
+        db,
+    );
+    if (!selectedModel.ok) {
+        return void res
+            .status(selectedModel.status)
+            .json(selectedModel.body);
     }
+    const tabular_model = selectedModel.model;
+    const api_keys = selectedModel.apiKeys;
 
     // Create or verify chat record
     let chatId = existingChatId ?? null;
@@ -2190,9 +2311,9 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
 
         // Generate title on first exchange
         if (chatId && isFirstExchange && !chatTitle && lastUser.content) {
-            const { fast_model } = await getUserModelSettings(userId, db);
+            const { title_model } = await getUserModelSettings(userId, db);
             const title = await generateChatTitle(
-                fast_model,
+                titleModelForChat(tabular_model, title_model),
                 lastUser.content,
                 {
                     reviewTitle: clientReviewTitle ?? review.title ?? null,

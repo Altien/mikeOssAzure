@@ -224,12 +224,14 @@ export default function TabularReviewsPage() {
 
     const handleNewReview = async (
         title: string,
-        projectId?: string,
-        documentIds?: string[],
-        columnsConfig?:
+        projectId: string | undefined,
+        documentIds: string[] | undefined,
+        columnsConfig:
             | import("@/app/components/shared/types").ColumnConfig[]
-            | null,
-        documentGrouping?: "document" | "folder",
+            | null
+            | undefined,
+        documentGrouping: "document" | "folder" | undefined,
+        model: string,
     ) => {
         setCreating(true);
         try {
@@ -238,6 +240,7 @@ export default function TabularReviewsPage() {
                 document_ids: documentIds ?? [],
                 columns_config: columnsConfig ?? [],
                 document_grouping: documentGrouping,
+                model,
                 ...(projectId && { project_id: projectId }),
             });
             router.push(

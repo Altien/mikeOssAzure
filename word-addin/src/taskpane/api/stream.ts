@@ -46,6 +46,7 @@ export async function streamAssistant(
     onMetadata?: (metadata: {
       chatId?: string;
       assistantMessageId?: string;
+      model?: string;
     }) => void;
     /** Streams the model's user-visible reasoning summary in arrival order. */
     onReasoningDelta?: (text: string) => void;
@@ -110,6 +111,8 @@ export async function streamAssistant(
         if (chatId || assistantMessageId) {
           params.onMetadata?.({ chatId, assistantMessageId });
         }
+      } else if (d.type === "model_used" && typeof d.model === "string") {
+        params.onMetadata?.({ model: d.model });
       } else if (
         d.type === "client_tool_call" &&
         typeof d.tool_call_id === "string" &&

@@ -30,6 +30,7 @@ import {
 } from "../lib/chat";
 import {
     getUserModelSettings,
+    persistLastUsedChatModel,
 } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
 import { safeErrorLog } from "../lib/safeError";
@@ -47,6 +48,10 @@ import {
     parseSkillInvocationCandidates,
     upgradeChatSkillBinding,
 } from "../altien/skills/invocation";
+import {
+    resolveEffectiveChatModel,
+    titleModelForChat,
+} from "../lib/modelSelection";
 
 const PROJECT_SYSTEM_PROMPT_EXTRA = `PROJECT CONTEXT:
 You are operating within a project folder that contains a collection of legal documents the user has organised for a single matter. The user's questions will usually refer to one or more documents in this project — your job is to find the relevant files to work on. Use list_documents to see what is available and fetch_documents / read_document to pull in any documents you need before answering.
@@ -200,7 +205,6 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     const skill_document_ids = body.skill_document_ids;
 
     const db = createServerSupabase();
-
     // Verify the user has access to the project (owner or shared member).
     const projectAccess = await checkProjectAccess(
         projectId,
@@ -213,22 +217,59 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
 
     let chatId = chat_id ?? null;
     let chatTitle: string | null = null;
+    let chatModel: string | null = null;
 
     if (chatId) {
         const { data: existing } = await db
             .from("chats")
-            .select("id, title, project_id")
+            .select("id, title, model, project_id")
             .eq("id", chatId)
             .single();
         const canUse = !!existing && existing.project_id === projectId;
         if (!canUse) chatId = null;
-        else chatTitle = existing!.title;
+        else {
+            chatTitle = existing!.title;
+            chatModel = (existing!.model as string | null) ?? null;
+        }
+    }
+
+    const modelSettings = await getUserModelSettings(userId, db);
+    const modelResolution = await resolveEffectiveChatModel({
+        requested: model,
+        chatModel,
+        lastUsedModel: modelSettings.last_used_chat_model,
+        apiKeys: modelSettings.api_keys,
+        userId,
+        db,
+    });
+    if (!modelResolution.ok) {
+        return void res.status(modelResolution.status).json({
+            code: modelResolution.code,
+            detail: modelResolution.detail,
+        });
+    }
+    const selectedModel = modelResolution.model;
+
+    if (chatId && chatModel !== selectedModel) {
+        const { error } = await db
+            .from("chats")
+            .update({ model: selectedModel })
+            .eq("id", chatId);
+        if (error) {
+            return void res
+                .status(500)
+                .json({ detail: "Failed to save chat model" });
+        }
     }
 
     if (!chatId) {
         const { data: newChat, error } = await db
             .from("chats")
-            .insert({ user_id: userId, project_id: projectId })
+            .insert({
+                user_id: userId,
+                project_id: projectId,
+                model: selectedModel,
+            })
             .select("id, title")
             .single();
         if (error || !newChat)
@@ -426,10 +467,10 @@ without pretending to have the skill's instructions or resources.`;
 
     const {
         api_keys: apiKeys,
-        fast_model: fastModel,
+        title_model: titleModel,
         legal_research_us: legalResearchUs,
         personalisation,
-    } = await getUserModelSettings(userId, db);
+    } = modelSettings;
     const personalisationPrompt = buildUserPersonalisationPrompt(
         personalisation,
         nonce,
@@ -481,7 +522,7 @@ without pretending to have the skill's instructions or resources.`;
             : "";
         const titlePromise = shouldGenerateTitle
             ? generateAssistantChatTitle({
-                  model: fastModel,
+                  model: titleModelForChat(selectedModel, titleModel),
                   message: titleMessage,
                   apiKeys,
               })
@@ -520,8 +561,7 @@ without pretending to have the skill's instructions or resources.`;
             skillResourceStore: skillRuntime?.resourceStore,
             workflowStore,
             includeResearchTools: legalResearchUs,
-            model,
-            fastModel,
+            model: selectedModel,
             apiKeys,
             signal: streamAbort.signal,
             projectId,
@@ -562,6 +602,21 @@ without pretending to have the skill's instructions or resources.`;
             }
         }
 
+        const lastUsedError = await persistLastUsedChatModel(
+            userId,
+            selectedModel,
+            db,
+        );
+        if (lastUsedError) {
+            console.error(
+                "[project-chat/stream] failed to save last-used model",
+                lastUsedError,
+            );
+        }
+        write(
+            `data: ${JSON.stringify({ type: "model_used", model: selectedModel })}\n\n`,
+        );
+
         void recordChatTurn(
             db,
             {
@@ -570,7 +625,7 @@ without pretending to have the skill's instructions or resources.`;
                 chatId,
                 projectId,
                 title: chatTitle ?? lastUser?.content?.slice(0, 120) ?? null,
-                model,
+                model: selectedModel,
             },
             persistedEvents,
         );

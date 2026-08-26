@@ -47,7 +47,11 @@ interface FloatingHeaderProps {
   onSectionChange: (section: AddinSection) => void;
   onNewChat: () => void;
   hasActiveChat: boolean;
-  onSelectHistoryChat: (chatId: string, messages: Message[]) => void;
+  onSelectHistoryChat: (
+    chatId: string,
+    messages: Message[],
+    model: string | null,
+  ) => void;
   workflowDetailOpen?: boolean;
   onWorkflowBack?: () => void;
   onOpenWorkflowDetails?: () => void;

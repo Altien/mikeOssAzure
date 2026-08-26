@@ -14,6 +14,14 @@ import { ModalSelect } from "../modals/ModalSelect";
 import { ModalTextarea } from "../modals/ModalTextarea";
 import { WorkflowPickerContent } from "./WorkflowPickerContent";
 import { workflowDetailPath } from "./workflowRoutes";
+import {
+    ModelToggle,
+    type NoModelsReason,
+    type RouterSlug,
+} from "../assistant/ModelToggle";
+import { NoModelsWarningPopup } from "../popups/NoModelsWarningPopup";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import { isModelAvailable } from "@/app/lib/modelAvailability";
 
 interface Props {
     workflow: Workflow | null;
@@ -73,6 +81,12 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
     const [selectedDocuments, setSelectedDocuments] = useState<Document[]>([]);
     const [assistantPrompt, setAssistantPrompt] = useState("");
     const [saving, setSaving] = useState(false);
+    const [selectedModel, setSelectedModel] = useState("");
+    const [noModelsWarning, setNoModelsWarning] =
+        useState<NoModelsReason | null>(null);
+    const { profile, loading: profileLoading, apiKeysDegraded } =
+        useUserProfile();
+    const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
 
     const router = useRouter();
     const { saveChat, setNewChatMessages } = useChatHistoryContext();
@@ -100,6 +114,37 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [workflow?.id]);
 
+    useEffect(() => {
+        const activeWorkflow = selected ?? workflow;
+        if (
+            screen !== "details" ||
+            activeWorkflow?.metadata.type !== "tabular" ||
+            !profile?.tabularModel
+        ) {
+            return;
+        }
+        const defaultModel = profile.tabularModel;
+        const router = (["openrouter", "vercel", "opencode-go"] as const).find(
+            (slug) => defaultModel.startsWith(`${slug}/`),
+        );
+        const routerSelections: Record<RouterSlug, string[]> = {
+            openrouter: profile.openRouterModels,
+            vercel: profile.vercelModels,
+            "opencode-go": profile.openCodeGoModels,
+        };
+        const routerSelectionValid =
+            !router ||
+            routerSelections[router].includes(
+                defaultModel.slice(router.length + 1),
+            );
+        if (
+            routerSelectionValid &&
+            (!apiKeys || isModelAvailable(defaultModel, apiKeys))
+        ) {
+            setSelectedModel((current) => current || defaultModel);
+        }
+    }, [apiKeys, profile, screen, selected, workflow]);
+
     // Reset configure state on back
     useEffect(() => {
         if (screen === "select") {
@@ -112,6 +157,8 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
         setSelectedProjectId(null);
         setSelectedDocuments([]);
         setAssistantPrompt("");
+        setSelectedModel("");
+        setNoModelsWarning(null);
     }
 
     function handleClose() {
@@ -162,6 +209,7 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
     }
 
     async function handleCreateReview() {
+        if (!selectedModel) return;
         const docIds = selectedDocuments.map((document) => document.id);
         const projectId = inProject ? selectedProjectId! : undefined;
 
@@ -173,6 +221,7 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
                 columns_config: wf.columns_config || [],
                 workflow_id: wf.is_system ? undefined : wf.id,
                 project_id: projectId,
+                model: selectedModel,
             });
             handleClose();
             router.push(
@@ -265,6 +314,8 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
                             onClick: () => setScreen("documents"),
                             disabled:
                                 saving ||
+                                (wf.metadata.type === "tabular" &&
+                                    !selectedModel) ||
                                 (inProject &&
                                     (!selectedProjectId ||
                                         !loadedProjectLevels.has(`${selectedProjectId}:root`) ||
@@ -279,7 +330,11 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
                         : {
                               label: saving ? "Creating…" : "Create Review",
                               onClick: handleCreateReview,
-                              disabled: saving || selectedDocuments.length === 0 || (inProject && !selectedProjectId),
+                              disabled:
+                                  saving ||
+                                  !selectedModel ||
+                                  selectedDocuments.length === 0 ||
+                                  (inProject && !selectedProjectId),
                           }
             }
             cancelAction={false}
@@ -357,6 +412,26 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
                                     onChange={(e) => setAssistantPrompt(e.target.value)}
                                     placeholder="Add any additional instructions..."
                                     rows={4}
+                                />
+                            </div>
+                        )}
+
+                        {wf.metadata.type === "tabular" && (
+                            <div>
+                                <FieldLabel as="p">Model</FieldLabel>
+                                <ModelToggle
+                                    value={selectedModel}
+                                    onChange={setSelectedModel}
+                                    apiKeys={apiKeys}
+                                    apiKeysLoading={profileLoading && !profile}
+                                    openRouterModels={
+                                        profile?.openRouterModels
+                                    }
+                                    vercelModels={profile?.vercelModels}
+                                    openCodeGoModels={
+                                        profile?.openCodeGoModels
+                                    }
+                                    onNoModelsClick={setNoModelsWarning}
                                 />
                             </div>
                         )}
@@ -446,6 +521,10 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
                     </div>
                 </div>
             )}
+            <NoModelsWarningPopup
+                reason={noModelsWarning}
+                onClose={() => setNoModelsWarning(null)}
+            />
         </Modal>
     );
 }

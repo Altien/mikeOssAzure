@@ -113,18 +113,45 @@ describe("ModelToggle availability states", () => {
         expect(trigger).toHaveTextContent("Gemini 3 Flash");
     });
 
-    it("still reports No API Key when a LOADED state has no keys", () => {
+    it("shows No Models and invokes the API-key warning when no providers are configured", async () => {
+        const user = userEvent.setup();
+        const onNoModelsClick = vi.fn();
         render(
             <ModelToggle
                 value="gemini-3-flash-preview"
                 onChange={vi.fn()}
                 apiKeys={keys({})}
+                onNoModelsClick={onNoModelsClick}
             />,
         );
 
-        const trigger = screen.getByRole("button", { name: "Choose model" });
-        expect(trigger).toBeDisabled();
-        expect(trigger).toHaveTextContent("No API Key");
+        const trigger = screen.getByRole("button", {
+            name: "No models available",
+        });
+        expect(trigger).toBeEnabled();
+        expect(trigger).toHaveTextContent("No Models");
+        expect(trigger.querySelector("svg")).not.toBeInTheDocument();
+        await user.click(trigger);
+        expect(onNoModelsClick).toHaveBeenCalledWith("api-keys");
+    });
+
+    it("invokes the router warning when a configured router has no saved models", async () => {
+        const user = userEvent.setup();
+        const onNoModelsClick = vi.fn();
+        render(
+            <ModelToggle
+                value=""
+                onChange={vi.fn()}
+                apiKeys={keys({ openrouter: true })}
+                openRouterModels={[]}
+                onNoModelsClick={onNoModelsClick}
+            />,
+        );
+
+        await user.click(
+            screen.getByRole("button", { name: "No models available" }),
+        );
+        expect(onNoModelsClick).toHaveBeenCalledWith("router-models");
     });
 
     it("filters to configured providers when keys are loaded", () => {

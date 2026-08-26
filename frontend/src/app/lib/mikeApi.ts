@@ -482,8 +482,9 @@ export interface UserProfile {
     creditsResetDate: string;
     creditsRemaining: number;
     tier: string;
-    titleModel: string;
-    tabularModel: string;
+    titleModel: string | null;
+    tabularModel: string | null;
+    lastUsedChatModel: string | null;
     mfaOnLogin: boolean;
     legalResearchUs: boolean;
     quickActionsVisible: boolean;
@@ -594,8 +595,8 @@ export async function updateUserProfile(payload: {
     practiceSetting?: PracticeSetting | null;
     professionalTitle?: ProfessionalTitle | null;
     practiceAreas?: string[];
-    titleModel?: string;
-    tabularModel?: string;
+    titleModel?: string | null;
+    tabularModel?: string | null;
     legalResearchUs?: boolean;
     quickActionsVisible?: boolean;
     darkMode?: boolean;
@@ -1568,11 +1569,12 @@ export async function deleteChat(chatId: string): Promise<void> {
 export async function generateChatTitle(
     chatId: string,
     message: string,
+    model: string,
 ): Promise<{ title: string }> {
     return apiRequest<{ title: string }>(`/chat/${chatId}/generate-title`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, model }),
     });
 }
 
@@ -1721,6 +1723,7 @@ export async function createTabularReview(payload: {
     workflow_id?: string;
     project_id?: string;
     document_grouping?: "document" | "folder";
+    model: string;
 }): Promise<TabularReview> {
     return apiRequest<TabularReview>("/tabular-review", {
         method: "POST",
@@ -1743,6 +1746,7 @@ export async function updateTabularReview(
         document_ids?: string[];
         project_id?: string | null;
         document_grouping?: "document" | "folder";
+        model?: string;
         shared_with?: string[];
     },
 ): Promise<TabularReview> {

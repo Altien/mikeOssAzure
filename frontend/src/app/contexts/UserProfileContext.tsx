@@ -40,8 +40,9 @@ interface UserProfile {
     creditsResetDate: string;
     creditsRemaining: number;
     tier: string;
-    titleModel: string;
-    tabularModel: string;
+    titleModel: string | null;
+    tabularModel: string | null;
+    lastUsedChatModel: string | null;
     mfaOnLogin: boolean;
     legalResearchUs: boolean;
     quickActionsVisible: boolean;
@@ -76,7 +77,7 @@ interface UserProfileContextType {
     syncPasswordSet: () => Promise<boolean>;
     updateModelPreference: (
         field: "titleModel" | "tabularModel",
-        value: string,
+        value: string | null,
     ) => Promise<boolean>;
     updateMfaOnLogin: (enabled: boolean) => Promise<boolean>;
     updateLegalResearchUs: (enabled: boolean) => Promise<boolean>;
@@ -150,6 +151,7 @@ function toProfile(data: ApiUserProfile): UserProfile {
         onboardingComplete: profile.onboardingComplete !== false,
         passwordSet: profile.passwordSet === true ? true : null,
         darkMode: profile.darkMode === true,
+        lastUsedChatModel: profile.lastUsedChatModel ?? null,
         mfaOnLogin: profile.mfaOnLogin === true,
         openRouterModels: Array.isArray(profile.openRouterModels)
             ? profile.openRouterModels
@@ -234,8 +236,9 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 creditsResetDate: futureResetDate.toISOString(),
                 creditsRemaining: 999999, // temporarily unlimited
                 tier: "Free",
-                titleModel: "gemini-3.5-flash-lite",
-                tabularModel: "gemini-3-flash-preview",
+                titleModel: null,
+                tabularModel: null,
+                lastUsedChatModel: null,
                 mfaOnLogin: false,
                 legalResearchUs: true,
                 quickActionsVisible: true,
@@ -264,6 +267,19 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         applyDarkMode(profile?.darkMode === true);
     }, [profile?.darkMode]);
+
+    useEffect(() => {
+        const remember = (event: Event) => {
+            const model = (event as CustomEvent<unknown>).detail;
+            if (typeof model !== "string" || !model) return;
+            setProfile((current) =>
+                current ? { ...current, lastUsedChatModel: model } : current,
+            );
+        };
+        window.addEventListener("mike:last-used-chat-model", remember);
+        return () =>
+            window.removeEventListener("mike:last-used-chat-model", remember);
+    }, []);
 
     const updateDisplayName = useCallback(
         async (displayName: string): Promise<boolean> => {
@@ -359,7 +375,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     const updateModelPreference = useCallback(
         async (
             field: "titleModel" | "tabularModel",
-            value: string,
+            value: string | null,
         ): Promise<boolean> => {
             if (!user) return false;
             try {

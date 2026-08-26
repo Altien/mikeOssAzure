@@ -47,7 +47,7 @@ export const SETTINGS_MODELS: ModelOption[] = [
   { id: "gpt-5.4-mini", label: "GPT-5.4 Mini", group: "OpenAI" },
 ];
 
-export const DEFAULT_MODEL_ID = "gemini-3-flash-preview";
+export const DEFAULT_MODEL_ID = "";
 
 export const ALLOWED_MODEL_IDS = new Set(MODELS.map((m) => m.id));
 
@@ -116,12 +116,27 @@ interface Props {
    */
   apiKeys?: ApiKeyState;
   /** True while the profile is still loading: render a neutral disabled
-   *  trigger instead of flashing "No API Key" on every page load. */
+   *  trigger instead of flashing "No Models" on every page load. */
   apiKeysLoading?: boolean;
   openRouterModels?: string[];
   vercelModels?: string[];
   openCodeGoModels?: string[];
   compact?: boolean;
+  onNoModelsClick?: (reason: NoModelsReason) => void;
+}
+
+export type NoModelsReason = "api-keys" | "router-models";
+
+export function noModelsReason(
+  apiKeys: ApiKeyState | undefined,
+  routerModels: Partial<Record<RouterSlug, string[]>>,
+): NoModelsReason {
+  const configuredRouterWithoutModels = ROUTER_SLUGS.some(
+    (slug) =>
+      apiKeys?.[slug]?.configured === true &&
+      (routerModels[slug]?.length ?? 0) === 0,
+  );
+  return configuredRouterWithoutModels ? "router-models" : "api-keys";
 }
 
 export function openRouterModelOptions(models: string[]): ModelOption[] {
@@ -157,6 +172,7 @@ export function ModelToggle({
   vercelModels = [],
   openCodeGoModels = [],
   compact = false,
+  onNoModelsClick,
 }: Props) {
   const { modelOptions: extraModels } = useAoaiDeployments();
   const models = [
@@ -179,7 +195,12 @@ export function ModelToggle({
   const selectedLabel = apiKeysLoading
     ? (models.find((model) => model.id === value)?.label ?? "Select model")
     : (selected?.label ??
-      (availableModels.length > 0 ? "Select model" : "No API Key"));
+      (availableModels.length > 0 ? "Select model" : "No Models"));
+  const emptyReason = noModelsReason(apiKeys, {
+    openrouter: openRouterModels,
+    vercel: vercelModels,
+    "opencode-go": openCodeGoModels,
+  });
   return (
     <ModelToggleUI
       value={value}
@@ -189,6 +210,10 @@ export function ModelToggle({
       selectedAvailable={selected !== undefined}
       loading={apiKeysLoading}
       compact={compact}
+      emptyLabel="No Models"
+      onEmptyClick={
+        onNoModelsClick ? () => onNoModelsClick(emptyReason) : undefined
+      }
     />
   );
 }

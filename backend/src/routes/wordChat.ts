@@ -29,8 +29,12 @@ import {
   submitClientToolResult,
   withoutEmptyAssistantReservations,
 } from "../lib/chat";
-import { getUserModelSettings } from "../lib/userSettings";
 import { safeErrorLog } from "../lib/safeError";
+import {
+  getUserModelSettings,
+  persistLastUsedChatModel,
+} from "../lib/userSettings";
+import { resolveEffectiveChatModel, titleModelForChat } from "../lib/modelSelection";
 import {
   persistWordDocumentEdits,
   WORD_EDIT_FORMATS,
@@ -317,7 +321,7 @@ wordChatRouter.get("/", requireAuth, wordHandler(async (req, res) => {
 
   let query = db
     .from("word_chats")
-    .select("id, user_id, title, created_at, updated_at")
+    .select("id, user_id, title, model, created_at, updated_at")
     .eq("word_document_id", wordDocumentRowId)
     .eq("user_id", userId)
     .order("updated_at", { ascending: false });
@@ -690,7 +694,6 @@ wordChatRouter.post("/", requireAuth, wordHandler(async (req, res) => {
   const clientToolsEnabled = body.client_tools === true;
 
   const messages = parsedMessages.value;
-  const model = parsedModel.value;
   const clientDocumentId = parsedDocumentId.value;
   const activeDocumentName = parsedDocumentName.value;
   const persistChat = parsedStorage.value === "cloud";
@@ -698,6 +701,7 @@ wordChatRouter.post("/", requireAuth, wordHandler(async (req, res) => {
   const db = createServerSupabase();
   let chatId = parsedChatId.value;
   let chatTitle: string | null = null;
+  let chatModel: string | null = null;
   let wordDocumentRowId: string | null = null;
 
   if (persistChat) {
@@ -734,12 +738,45 @@ wordChatRouter.post("/", requireAuth, wordHandler(async (req, res) => {
       return void res.status(404).json({ detail: "Chat not found" });
     }
     chatTitle = typeof existing.title === "string" ? existing.title : null;
+    chatModel = typeof existing.model === "string" ? existing.model : null;
+  }
+
+  const modelSettings = await getUserModelSettings(userId, db);
+  const modelResolution = await resolveEffectiveChatModel({
+    requested: parsedModel.value,
+    chatModel,
+    lastUsedModel: modelSettings.last_used_chat_model,
+    apiKeys: modelSettings.api_keys,
+    userId,
+    db,
+  });
+  if (!modelResolution.ok) {
+    return void res.status(modelResolution.status).json({
+      code: modelResolution.code,
+      detail: modelResolution.detail,
+    });
+  }
+  const selectedModel = modelResolution.model;
+
+  if (chatId && persistChat && chatModel !== selectedModel) {
+    const { error } = await db
+      .from("word_chats")
+      .update({ model: selectedModel })
+      .eq("id", chatId)
+      .eq("user_id", userId);
+    if (error) {
+      return void res.status(500).json({ detail: "Failed to save chat model" });
+    }
   }
 
   if (!chatId && persistChat) {
     const { data, error } = await db
       .from("word_chats")
-      .insert({ user_id: userId, word_document_id: wordDocumentRowId })
+      .insert({
+        user_id: userId,
+        word_document_id: wordDocumentRowId,
+        model: selectedModel,
+      })
       .select("id, title")
       .single();
     if (error || !data) {
@@ -813,10 +850,7 @@ wordChatRouter.post("/", requireAuth, wordHandler(async (req, res) => {
     nonce,
     "word_chat_messages",
   );
-  const { api_keys: configuredApiKeys, fast_model: fastModel, personalisation } = await getUserModelSettings(
-    userId,
-    db,
-  );
+  const { api_keys: configuredApiKeys, personalisation } = modelSettings;
   const apiKeys = { ...configuredApiKeys };
   delete apiKeys.courtlistener;
   const personalisationPrompt = buildUserPersonalisationPrompt(
@@ -934,9 +968,9 @@ wordChatRouter.post("/", requireAuth, wordHandler(async (req, res) => {
             maxIterations: 16,
           }
         : {}),
-      model,
+      model: selectedModel,
       apiKeys,
-      fastModel,
+      fastModel: titleModelForChat(selectedModel, modelSettings.title_model),
       signal: stream.signal,
       nonce,
       emitDone: false,
@@ -961,6 +995,20 @@ wordChatRouter.post("/", requireAuth, wordHandler(async (req, res) => {
       write("data: [DONE]\n\n");
       return;
     }
+    const lastUsedError = await persistLastUsedChatModel(
+      userId,
+      selectedModel,
+      db,
+    );
+    if (lastUsedError) {
+      console.error(
+        "[word-chat] failed to save last-used model",
+        lastUsedError,
+      );
+    }
+    write(
+      `data: ${JSON.stringify({ type: "model_used", model: selectedModel })}\n\n`,
+    );
     write("data: [DONE]\n\n");
   } catch (error) {
     if (isAbortError(error)) {

@@ -30,10 +30,10 @@ describe("useGenerateChatTitle: happy path", () => {
         const { result } = renderHook(() => useGenerateChatTitle());
 
         await act(async () => {
-            await result.current.generate("chat-1", "user message");
+            await result.current.generate("chat-1", "user message", "gpt-5.4");
         });
 
-        expect(mockGenerateChatTitle).toHaveBeenCalledWith("chat-1", "user message");
+        expect(mockGenerateChatTitle).toHaveBeenCalledWith("chat-1", "user message", "gpt-5.4");
         expect(mockRenameChat).toHaveBeenCalledWith("chat-1", "Fresh title");
     });
 });
@@ -47,7 +47,7 @@ describe("useGenerateChatTitle: best-effort error swallow", () => {
 
         await act(async () => {
             await expect(
-                result.current.generate("chat-x", "hello"),
+                result.current.generate("chat-x", "hello", "gpt-5.4"),
             ).resolves.toBeUndefined();
         });
 
@@ -63,7 +63,7 @@ describe("useGenerateChatTitle: best-effort error swallow", () => {
 
         await act(async () => {
             await expect(
-                result.current.generate("chat-y", "hello"),
+                result.current.generate("chat-y", "hello", "gpt-5.4"),
             ).resolves.toBeUndefined();
         });
 

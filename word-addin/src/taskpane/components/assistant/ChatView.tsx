@@ -39,6 +39,8 @@ interface ChatViewProps
             | "acceptAndApplyEdit"
         > {
     sessionKey: number;
+    chatModel?: string | null;
+    lastUsedModel?: string | null;
     selectedWorkflow: WorkflowAttachment | null;
     onSelectedWorkflowChange: (workflow: WorkflowAttachment | null) => void;
     editApplyMode: WordEditApplyMode;
@@ -132,6 +134,8 @@ function animateScrollTo(
 
 export function ChatView({
     sessionKey,
+    chatModel,
+    lastUsedModel,
     messages,
     isResponseLoading,
     requestError,
@@ -782,6 +786,8 @@ export function ChatView({
                 ref={chatInputRef}
                 containerRef={composerRef}
                 sessionKey={sessionKey}
+                chatModel={chatModel}
+                lastUsedModel={lastUsedModel}
                 isResponseLoading={isResponseLoading}
                 requestError={requestError}
                 selectedWorkflow={selectedWorkflow}

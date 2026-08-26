@@ -47,6 +47,8 @@ export interface ChatInputHandle {
 
 interface ChatInputProps {
   sessionKey: number;
+  chatModel?: string | null;
+  lastUsedModel?: string | null;
   isResponseLoading: boolean;
   requestError: string | null;
   selectedWorkflow: WorkflowAttachment | null;
@@ -67,6 +69,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
   function ChatInput(
     {
       sessionKey,
+      chatModel,
+      lastUsedModel,
       isResponseLoading,
       requestError,
       selectedWorkflow,
@@ -89,12 +93,24 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
     const [documentUploadError, setDocumentUploadError] = useState<
       string | null
     >(null);
-    const [model, setModel] = useSelectedModel();
     const [keyStatus, setKeyStatus] = useState<ApiKeyStatus | null>(null);
     const [keyStatusLoading, setKeyStatusLoading] = useState(true);
     const [openRouterModels, setOpenRouterModels] = useState<string[]>([]);
     const [vercelModels, setVercelModels] = useState<string[]>([]);
     const [openCodeGoModels, setOpenCodeGoModels] = useState<string[]>([]);
+    const [profileLastUsedModel, setProfileLastUsedModel] = useState<
+      string | null
+    >(null);
+    const [profileLoaded, setProfileLoaded] = useState(false);
+    const [model, setModel] = useSelectedModel({
+      sessionKey,
+      chatModel,
+      lastUsedModel: lastUsedModel ?? profileLastUsedModel,
+      routerSelections: profileLoaded
+        ? { openRouterModels, vercelModels, openCodeGoModels }
+        : null,
+      apiKeyStatus: keyStatus,
+    });
     const [modelError, setModelError] = useState<string | null>(null);
     const [slashWorkflows, setSlashWorkflows] = useState<Workflow[] | null>(
       null,
@@ -172,7 +188,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
     useEffect(() => {
       let cancelled = false;
       // Three-state preflight: while it runs the model toggle stays neutral
-      // (no "No API Key"); each request retries once with backoff; after a
+      // (no premature "No Models"); each request retries once with backoff; after a
       // final failure keyStatus stays null and availability FAILS OPEN (the
       // backend still authoritatively rejects models it cannot serve).
       void Promise.all([
@@ -197,6 +213,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
           setOpenRouterModels(profile.openRouterModels ?? []);
           setVercelModels(profile.vercelModels ?? []);
           setOpenCodeGoModels(profile.openCodeGoModels ?? []);
+          setProfileLastUsedModel(profile.lastUsedChatModel ?? null);
+          setProfileLoaded(true);
         }
         setKeyStatusLoading(false);
       });
@@ -288,6 +306,10 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         return;
       }
       if (!content || isResponseLoading) return;
+      if (!model) {
+        setModelError("Select a model before sending your message.");
+        return;
+      }
       if (!isModelAvailable(model, keyStatus)) {
         setModelError(
           `Add a ${missingModelProvider(model)} API key before using this model.`,
@@ -495,6 +517,18 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
                   vercelModels={vercelModels}
                   openCodeGoModels={openCodeGoModels}
                   compact={compactControls}
+                  onNoModelsClick={() => {
+                    const routerHasNoModels =
+                      (keyStatus?.openrouter && openRouterModels.length === 0) ||
+                      (keyStatus?.vercel && vercelModels.length === 0) ||
+                      (keyStatus?.["opencode-go"] &&
+                        openCodeGoModels.length === 0);
+                    setModelError(
+                      routerHasNoModels
+                        ? "Your router is connected, but it has no saved models. Add one in Bring Your Own Keys → Routers."
+                        : "Add an API key in Bring Your Own Keys before selecting a model.",
+                    );
+                  }}
                 />
               }
             />

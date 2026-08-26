@@ -9,6 +9,7 @@ import { recordAudit } from "../lib/audit";
 import { sendInternalError } from "../lib/httpError";
 import { getConfig } from "../lib/config";
 import { DEFAULT_TABULAR_MODEL, resolveModel } from "../lib/llm/models";
+import { normalizeOptionalModelPreference } from "../lib/modelSelection";
 import {
   completeUserMcpConnectorOAuth,
   createUserMcpConnector,
@@ -171,6 +172,8 @@ userRouter.get("/lookup", requireAuth, async (req, res) => {
 
 const MONTHLY_CREDIT_LIMIT = 999999;
 
+const PROFILE_SELECT_WITH_LAST_USED_CHAT_MODEL =
+    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, fast_model, tabular_model, last_used_chat_model, legal_research_us, quick_actions_visible, dark_mode";
 const PROFILE_SELECT =
   "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us, quick_actions_visible, dark_mode";
 const PROFILE_SELECT_NO_DARK_MODE =
@@ -207,6 +210,7 @@ type UserProfileRow = {
   tier: string | null;
   tabular_model: string | null;
   fast_model: string | null;
+  last_used_chat_model?: string | null;
   legal_research_us: boolean | null;
   quick_actions_visible: boolean | null;
   dark_mode?: boolean | null;
@@ -318,9 +322,7 @@ function serializeProfile(
   apiKeyStatus: ProfileApiKeyStatus,
   routerModels: RouterModelSelections,
 ) {
-  const titleModel = row.fast_model?.trim()
-    ? resolveModel(row.fast_model.trim(), "")
-    : "";
+  const titleModel = normalizeOptionalModelPreference(row.fast_model, routerModels) ?? "";
   return {
     displayName: row.display_name,
     organisation: row.organisation,
@@ -336,7 +338,8 @@ function serializeProfile(
     creditsRemaining: Math.max(MONTHLY_CREDIT_LIMIT - credits.used, 0),
     tier: row.tier || "Free",
     titleModel,
-    tabularModel: resolveModel(row.tabular_model, DEFAULT_TABULAR_MODEL),
+    tabularModel: normalizeOptionalModelPreference(row.tabular_model, routerModels),
+    lastUsedChatModel: normalizeOptionalModelPreference(row.last_used_chat_model, routerModels),
     mfaOnLogin: false,
     // Features > Legal Research > Jurisdiction > US toggle (upstream
     // 1fa0554); defaults to enabled.
@@ -357,6 +360,9 @@ async function loadProfile(
 > {
   const [profileResult, apiKeyStatus] = await Promise.all([
     (async () => {
+      const withLastUsed = await db.from("user_profiles").select(PROFILE_SELECT_WITH_LAST_USED_CHAT_MODEL).eq("user_id", userId).single();
+      if (!withLastUsed.error) return withLastUsed;
+      if (withLastUsed.error.code !== "42703" && withLastUsed.error.code !== "PGRST204") return { data: null, error: withLastUsed.error };
       const current = await db.from("user_profiles").select(PROFILE_SELECT).eq("user_id", userId).single();
       if (!current.error) return current;
       let cascadeError = current.error;
@@ -429,7 +435,7 @@ type ProfileUpdate = {
   professional_title?: string | null;
   practice_areas?: string[];
   fast_model?: string | null;
-  tabular_model?: string;
+  tabular_model?: string | null;
   legal_research_us?: boolean;
   quick_actions_visible?: boolean;
   dark_mode?: boolean;
@@ -522,19 +528,20 @@ function validateProfilePayload(
   }
 
   if ("tabularModel" in raw) {
-    if (typeof raw.tabularModel !== "string") {
-      return { ok: false, detail: "tabularModel must be a string" };
+    if (raw.tabularModel === null || raw.tabularModel === "") update.tabular_model = null;
+    else if (typeof raw.tabularModel !== "string") return { ok: false, detail: "tabularModel must be a string or null" };
+    else {
+      const resolved = resolveModel(raw.tabularModel, "");
+      if (!resolved) return { ok: false, detail: "Unsupported tabularModel" };
+      update.tabular_model = resolved;
     }
-    const resolved = resolveModel(raw.tabularModel, "");
-    if (!resolved) return { ok: false, detail: "Unsupported tabularModel" };
-    update.tabular_model = resolved;
   }
 
   if ("titleModel" in raw) {
-    if (typeof raw.titleModel !== "string") {
-      return { ok: false, detail: "titleModel must be a string" };
+    if (raw.titleModel !== null && typeof raw.titleModel !== "string") {
+      return { ok: false, detail: "titleModel must be a string or null" };
     }
-    if (!raw.titleModel.trim()) {
+    if (!raw.titleModel?.trim()) {
       update.fast_model = null;
     } else {
       const resolved = resolveModel(raw.titleModel.trim(), "");

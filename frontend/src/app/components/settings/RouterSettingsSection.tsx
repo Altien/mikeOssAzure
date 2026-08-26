@@ -134,7 +134,7 @@ export function RouterSettingsSection() {
     }
 
     return (
-        <section className="space-y-3">
+        <section id="routers" className="scroll-mt-6 space-y-3">
             <h2 className="text-2xl font-medium font-serif text-gray-900">
                 Routers
             </h2>

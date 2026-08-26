@@ -14,6 +14,36 @@ vi.mock("@/app/lib/mikeApi", () => ({
     uploadStandaloneDocument: vi.fn(),
 }));
 
+vi.mock("@/app/contexts/UserProfileContext", () => ({
+    useUserProfile: () => ({
+        profile: {
+            tabularModel: "gemini-3-flash-preview",
+            apiKeys: {
+                claude: { configured: false, source: null },
+                gemini: { configured: true, source: "user" },
+                openai: { configured: false, source: null },
+                openrouter: { configured: false, source: null },
+                vercel: { configured: false, source: null },
+                "opencode-go": { configured: false, source: null },
+                courtlistener: { configured: false, source: null },
+            },
+            openRouterModels: [],
+            vercelModels: [],
+            openCodeGoModels: [],
+        },
+        loading: false,
+        apiKeysDegraded: false,
+    }),
+}));
+
+vi.mock("@/app/hooks/useOllamaModels", () => ({
+    useOllamaModels: () => [],
+}));
+
+vi.mock("next/navigation", () => ({
+    useRouter: () => ({ push: vi.fn() }),
+}));
+
 vi.mock("../shared/FileDirectory", () => ({
     FileDirectory: ({ tabs }: { tabs?: string[] }) => (
         <div>
@@ -69,6 +99,7 @@ describe("NewTRModal", () => {
             undefined,
             undefined,
             "folder",
+            "gemini-3-flash-preview",
         );
     });
 

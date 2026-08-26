@@ -84,6 +84,22 @@ afterEach(() => {
 });
 
 describe("useAssistantChat SSE parsing", () => {
+    it("publishes the effective model after a successful stream", async () => {
+        const listener = vi.fn();
+        window.addEventListener("mike:last-used-chat-model", listener);
+
+        await sendAndGetAssistant([
+            'data: {"type":"model_used","model":"gpt-5.6-luna"}\n\n',
+            "data: [DONE]\n\n",
+        ]);
+
+        expect(listener).toHaveBeenCalledTimes(1);
+        expect((listener.mock.calls[0][0] as CustomEvent).detail).toBe(
+            "gpt-5.6-luna",
+        );
+        window.removeEventListener("mike:last-used-chat-model", listener);
+    });
+
     it("reassembles an event split across chunk boundaries", async () => {
         const { assistant, result } = await sendAndGetAssistant([
             'data: {"type":"content_delta","te',

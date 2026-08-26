@@ -30,7 +30,9 @@ import {
     workflowSlashCommand,
 } from "./workflowSlashCommands";
 import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
-import { ModelToggle } from "./ModelToggle";
+import { ModelToggle, type NoModelsReason } from "./ModelToggle";
+import { NoModelsWarningPopup } from "../popups/NoModelsWarningPopup";
+import { WarningPopup } from "../popups/WarningPopup";
 import { useSelectedModel } from "@/app/hooks/useSelectedModel";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import {
@@ -79,6 +81,8 @@ interface Props {
     projectId?: string;
     onDocumentsUploaded?: (documents: Document[]) => void;
     onDocumentClick?: (document: Document) => void;
+    chatModel?: string | null;
+    chatKey?: string | null;
 }
 
 export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
@@ -93,6 +97,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         projectId,
         onDocumentsUploaded,
         onDocumentClick,
+        chatModel,
+        chatKey,
     }: Props,
     ref,
 ) {
@@ -112,15 +118,20 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     // /user/profile request rewrite the saved composer selection to the
     // default — permanently. null means "not loaded", which the hook leaves
     // the stored selection alone for.
-    const [model, setModel] = useSelectedModel(
-        profile && !apiKeysDegraded
-            ? {
+    const [model, setModel] = useSelectedModel({
+        selectionKey: chatKey,
+        chatModel,
+        lastUsedModel: profile?.lastUsedChatModel,
+        routerSelections:
+            profile && !apiKeysDegraded
+                ? {
                   openRouterModels: profile.openRouterModels,
                   vercelModels: profile.vercelModels,
                   openCodeGoModels: profile.openCodeGoModels,
-              }
-            : null,
-    );
+                  }
+                : null,
+        apiKeys: apiKeysDegraded ? undefined : profile?.apiKeys,
+    });
     // Degraded profile → key availability is UNKNOWN; undefined here makes
     // every key gate (submit check + model toggle) fail open instead of
     // treating "we couldn't ask" as "no keys configured".
@@ -134,6 +145,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     const [workflowModalOpen, setWorkflowModalOpen] = useState(false);
     const [apiKeyModalProvider, setApiKeyModalProvider] =
         useState<ModelProvider | null>(null);
+    const [noModelsWarning, setNoModelsWarning] =
+        useState<NoModelsReason | null>(null);
+    const [modelRequiredWarning, setModelRequiredWarning] = useState(false);
     const [isDraggingFiles, setIsDraggingFiles] = useState(false);
     const [uploadingFilenames, setUploadingFilenames] = useState<string[]>([]);
     const [uploadWarning, setUploadWarning] = useState<string | null>(null);
@@ -340,6 +354,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         workflow: { id: string; title: string } | null,
     ) => {
         if (!query || isLoading) return;
+        if (!model) {
+            setModelRequiredWarning(true);
+            return;
+        }
         if (apiKeys && !isModelAvailable(model, apiKeys)) {
             setApiKeyModalProvider(getModelProvider(model));
             return;
@@ -627,6 +645,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                 vercelModels={profile?.vercelModels}
                                 openCodeGoModels={profile?.openCodeGoModels}
                                 compact={compactControls}
+                                onNoModelsClick={setNoModelsWarning}
                             />
                             <button
                                 type="button"
@@ -690,6 +709,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                 open={apiKeyModalProvider !== null}
                 provider={apiKeyModalProvider}
                 onClose={() => setApiKeyModalProvider(null)}
+            />
+            <NoModelsWarningPopup
+                reason={noModelsWarning}
+                onClose={() => setNoModelsWarning(null)}
+            />
+            <WarningPopup
+                open={modelRequiredWarning}
+                onClose={() => setModelRequiredWarning(false)}
+                title="Select a model"
+                message="Choose a model before sending your message."
             />
             <UploadOverlay
                 open={isDraggingFiles}

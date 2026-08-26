@@ -54,7 +54,7 @@ describe("word add-in catalog parity", () => {
     it("maps the same retired ids to the same current ids", () => {
         // A rename is only survivable if BOTH clients map the old id. The web
         // app maps it and the add-in did not, so the same localStorage value
-        // ("mike.selectedModel" is shared by key name) resolved differently
+        // (chat/profile selections are shared by API contract) resolved differently
         // depending on which client read it.
         expect(ADDIN_LEGACY_MODEL_IDS).toEqual(LEGACY_MODEL_IDS);
         for (const id of [

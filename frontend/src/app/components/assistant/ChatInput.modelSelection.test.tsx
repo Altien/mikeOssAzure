@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { ChatInput } from "./ChatInput";
@@ -39,7 +39,6 @@ vi.mock("../popups/ApiKeyMissingPopup", () => ({
     ApiKeyMissingPopup: () => null,
 }));
 
-const STORAGE_KEY = "mike.selectedModel";
 const STORED = "openrouter/pricy/frontier";
 
 class ResizeObserverMock {
@@ -64,6 +63,7 @@ function mockProfile(apiKeysDegraded: boolean) {
             openRouterModels: [],
             vercelModels: [],
             openCodeGoModels: [],
+            lastUsedChatModel: "gpt-5.6-luna",
             apiKeys: emptyApiKeys(),
         },
         loading: false,
@@ -74,53 +74,53 @@ function mockProfile(apiKeysDegraded: boolean) {
 describe("ChatInput model selection vs. a degraded profile", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        window.localStorage.clear();
         vi.stubGlobal("ResizeObserver", ResizeObserverMock);
     });
 
-    it("keeps the stored router selection when the profile is degraded", async () => {
-        // A dropped /user/profile request answers with the local fallback,
-        // whose router lists are empty because the truth is UNKNOWN — not
-        // because the user deselected everything. Resetting on that would
-        // permanently rewrite localStorage from one failed request.
-        window.localStorage.setItem(STORAGE_KEY, STORED);
+    it("keeps the chat model when router availability is unknown", async () => {
         mockProfile(true);
+        const onSubmit = vi.fn();
 
         render(
             <ChatInput
-                onSubmit={vi.fn()}
+                chatModel={STORED}
+                onSubmit={onSubmit}
                 onCancel={vi.fn()}
                 isLoading={false}
             />,
         );
 
-        expect(
-            screen.getByRole("combobox").closest(".liquid-glass-translucent"),
-        ).not.toBeNull();
-
+        fireEvent.change(screen.getByRole("combobox"), {
+            target: { value: "hello" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: "Send message" }));
         await waitFor(() =>
-            expect(window.localStorage.getItem(STORAGE_KEY)).toBe(STORED),
+            expect(onSubmit).toHaveBeenCalledWith(
+                expect.objectContaining({ model: STORED }),
+            ),
         );
-        expect(window.localStorage.getItem(STORAGE_KEY)).toBe(STORED);
     });
 
-    it("still resets a stale router selection on a healthy empty profile", async () => {
-        // A real profile that reports no saved router models is authoritative:
-        // the stale selection must reset, exactly as before.
-        window.localStorage.setItem(STORAGE_KEY, STORED);
+    it("falls back to profile last-used when the chat router model is stale", async () => {
         mockProfile(false);
+        const onSubmit = vi.fn();
 
         render(
             <ChatInput
-                onSubmit={vi.fn()}
+                chatModel={STORED}
+                onSubmit={onSubmit}
                 onCancel={vi.fn()}
                 isLoading={false}
             />,
         );
 
+        fireEvent.change(screen.getByRole("combobox"), {
+            target: { value: "hello" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: "Send message" }));
         await waitFor(() =>
-            expect(window.localStorage.getItem(STORAGE_KEY)).toBe(
-                "gemini-3-flash-preview",
+            expect(onSubmit).toHaveBeenCalledWith(
+                expect.objectContaining({ model: "gpt-5.6-luna" }),
             ),
         );
     });

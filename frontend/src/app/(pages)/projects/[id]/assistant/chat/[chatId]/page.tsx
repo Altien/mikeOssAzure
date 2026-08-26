@@ -305,6 +305,9 @@ export default function ProjectAssistantChatPage() {
         renameChat: renameChatInHistory,
     } = useChatHistoryContext();
     const [initialMessages] = useState<Message[]>(newChatMessages ?? []);
+    const [chatModel, setChatModel] = useState<string | null>(
+        initialMessages[0]?.model ?? null,
+    );
     const { messages, isResponseLoading, handleChat, setMessages, cancel } =
         useAssistantChat({ initialMessages, chatId, projectId });
     const pendingInitialUserMessageRef = useRef<Message | null>(
@@ -406,6 +409,7 @@ export default function ProjectAssistantChatPage() {
                 setChatTitle(chat.title);
                 setChatOwnerId(chat.user_id ?? null);
                 skillRuntime.setBinding(skillBinding ?? null); // Dev (OSS-6)
+                setChatModel(chat.model ?? null);
                 if (loaded.length > 0) setMessages(loaded);
             })
             .catch(() => router.replace(`/projects/${projectId}/assistant`))
@@ -1467,6 +1471,8 @@ export default function ProjectAssistantChatPage() {
                                 onSubmit={handleSubmit}
                                 onCancel={cancel}
                                 isLoading={isResponseLoading}
+                                chatKey={chatId}
+                                chatModel={chatModel}
                                 hideAddDocButton
                                 projectId={projectId}
                                 onDocumentClick={handleDocClick}

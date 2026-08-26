@@ -29,12 +29,19 @@ import {
     reserveAssistantMessage,
     withoutEmptyAssistantReservations,
 } from "../lib/chat";
-import { getUserModelSettings } from "../lib/userSettings";
+import {
+    getUserModelSettings,
+    persistLastUsedChatModel,
+} from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
 import { getSkillChatBindingMetadata } from "../altien/skills/runtime";
 import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
 import { generateAssistantChatTitle } from "../lib/chatTitle";
 import { sendInternalError } from "../lib/httpError";
+import {
+    resolveEffectiveChatModel,
+    titleModelForChat,
+} from "../lib/modelSelection";
 
 export const chatRouter = Router();
 
@@ -50,6 +57,7 @@ const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
     if (isDev) console.log(...args);
 };
+
 
 // GET /chat
 // Visible chats = the user's own chats + every chat under a project the
@@ -292,14 +300,16 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { chatId } = req.params;
-    const message: string = (req.body.message ?? "").trim();
+    const message =
+        typeof req.body?.message === "string" ? req.body.message.trim() : "";
+    const requestedModel =
+        typeof req.body?.model === "string" ? req.body.model.trim() : null;
     if (!message)
         return void res.status(400).json({ detail: "message is required" });
-
     const db = createServerSupabase();
     const { data: chat, error } = await db
         .from("chats")
-        .select("id, user_id, project_id")
+        .select("id, user_id, project_id, model")
         .eq("id", chatId)
         .single();
 
@@ -325,15 +335,20 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
     // logged so a misconfiguration is still visible in the backend.
     let title = message.slice(0, 60);
     try {
-        const { fast_model, api_keys } = await getUserModelSettings(
+        const settings = await getUserModelSettings(userId, db);
+        const resolution = await resolveEffectiveChatModel({
+            requested: requestedModel,
+            chatModel: chat.model,
+            lastUsedModel: settings.last_used_chat_model,
+            apiKeys: settings.api_keys,
             userId,
             db,
-        );
+        });
+        if (!resolution.ok) return void res.status(resolution.status).json({ code: resolution.code, detail: resolution.detail });
         title = await generateAssistantChatTitle({
-            // Dev routes title generation through fast_model.
-            model: fast_model,
+            model: titleModelForChat(resolution.model, settings.title_model),
             message,
-            apiKeys: api_keys,
+            apiKeys: settings.api_keys,
         });
     } catch (err) {
         // Upstream divergence (sync-log: 3a10943): upstream returns 500 when
@@ -422,12 +437,14 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     const db = createServerSupabase();
     let chatId = chat_id ?? null;
     let chatTitle: string | null = null;
+    let chatModel: string | null = null;
+    let resolvedProjectId: string | null = parsedProjectId.value.projectId;
 
     if (chatId) {
         // Either chat owner OR a member of the chat's project can post.
         const { data: existing } = await db
             .from("chats")
-            .select("id, title, user_id, project_id")
+            .select("id, title, user_id, project_id, model")
             .eq("id", chatId)
             .single();
         let canUse = !!existing && existing.user_id === userId;
@@ -441,7 +458,29 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             canUse = access.ok;
         }
         if (!canUse || !existing) chatId = null;
-        else chatTitle = existing.title;
+        else {
+            resolvedProjectId = existing.project_id;
+            chatTitle = existing.title;
+            chatModel = existing.model;
+        }
+    }
+
+    const modelSettings = await getUserModelSettings(userId, db);
+    const modelResolution = await resolveEffectiveChatModel({
+        requested: model,
+        chatModel,
+        lastUsedModel: modelSettings.last_used_chat_model,
+        apiKeys: modelSettings.api_keys,
+        userId,
+        db,
+    });
+    if (!modelResolution.ok) {
+        return void res.status(modelResolution.status).json({ code: modelResolution.code, detail: modelResolution.detail });
+    }
+    const selectedModel = modelResolution.model;
+    if (chatId && chatModel !== selectedModel) {
+        const { error } = await db.from("chats").update({ model: selectedModel }).eq("id", chatId);
+        if (error) return void sendInternalError(res, error);
     }
 
     if (!chatId) {
@@ -461,7 +500,11 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         }
         const { data: newChat, error } = await db
             .from("chats")
-            .insert({ user_id: userId, project_id: project_id ?? null })
+            .insert({
+                user_id: userId,
+                project_id: resolvedProjectId,
+                model: selectedModel,
+            })
             .select("id, title")
             .single();
         if (error || !newChat) {
@@ -528,10 +571,10 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     );
     const {
         api_keys: apiKeys,
-        fast_model: fastModel,
+        title_model: titleModel,
         legal_research_us: legalResearchUs,
         personalisation,
-    } = await getUserModelSettings(userId, db);
+    } = modelSettings;
     const personalisationPrompt = buildUserPersonalisationPrompt(
         personalisation,
         nonce,
@@ -612,7 +655,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             : "";
         const titlePromise = shouldGenerateTitle
             ? generateAssistantChatTitle({
-                  model: fastModel,
+                  model: titleModelForChat(selectedModel, titleModel),
                   message: titleMessage,
                   apiKeys,
               })
@@ -646,8 +689,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             write,
             workflowStore,
             includeResearchTools: legalResearchUs,
-            model,
-            fastModel,
+            model: selectedModel,
             apiKeys,
             signal: stream.signal,
             projectId: project_id ?? null,
@@ -727,6 +769,20 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                 );
             }
         }
+        const lastUsedError = await persistLastUsedChatModel(
+            userId,
+            selectedModel,
+            db,
+        );
+        if (lastUsedError) {
+            console.error(
+                "[chat/stream] failed to save last-used model",
+                lastUsedError,
+            );
+        }
+        write(
+            `data: ${JSON.stringify({ type: "model_used", model: selectedModel })}\n\n`,
+        );
         void recordChatTurn(
             db,
             {
@@ -735,7 +791,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                 chatId,
                 projectId: project_id ?? null,
                 title: chatTitle ?? lastUser?.content?.slice(0, 120) ?? null,
-                model,
+                model: selectedModel,
             },
             persistedEvents,
         );
@@ -751,7 +807,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                     chatId,
                     projectId: project_id ?? null,
                     title: chatTitle,
-                    model,
+                    model: selectedModel,
                     status: "cancelled",
                 },
                 null,
