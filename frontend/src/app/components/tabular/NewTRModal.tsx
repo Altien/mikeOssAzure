@@ -381,20 +381,6 @@ export function NewTRModal({
                 {step === "details" ? (
                     <div className="space-y-6">
                         <div>
-                            <FieldLabel as="p">Model</FieldLabel>
-                            <ModelToggle
-                                value={selectedModel}
-                                onChange={setSelectedModel}
-                                apiKeys={apiKeys}
-                                apiKeysLoading={profileLoading && !profile}
-                                openRouterModels={profile?.openRouterModels}
-                                vercelModels={profile?.vercelModels}
-                                openCodeGoModels={profile?.openCodeGoModels}
-                                onNoModelsClick={setNoModelsWarning}
-                            />
-                        </div>
-
-                        <div>
                             <FieldLabel htmlFor="new-tr-title">
                                 Review name
                             </FieldLabel>
@@ -407,6 +393,21 @@ export function NewTRModal({
                                 variant="minimal"
                                 className="placeholder:text-gray-400"
                                 autoFocus
+                            />
+                        </div>
+
+                        <div>
+                            <FieldLabel as="p">Model</FieldLabel>
+                            <ModelToggle
+                                value={selectedModel}
+                                onChange={setSelectedModel}
+                                apiKeys={apiKeys}
+                                apiKeysLoading={profileLoading && !profile}
+                                openRouterModels={profile?.openRouterModels}
+                                vercelModels={profile?.vercelModels}
+                                openCodeGoModels={profile?.openCodeGoModels}
+                                onNoModelsClick={setNoModelsWarning}
+                                modalInput
                             />
                         </div>
 

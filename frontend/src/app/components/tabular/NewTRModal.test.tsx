@@ -75,7 +75,22 @@ describe("NewTRModal", () => {
             ),
         ).toBeInTheDocument();
 
-        fireEvent.change(screen.getByLabelText("Review name"), {
+        const reviewNameInput = screen.getByLabelText("Review name");
+        const modelSelect = screen.getByRole("button", {
+            name: "Choose model",
+        });
+        expect(
+            reviewNameInput.compareDocumentPosition(modelSelect) &
+                Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
+        expect(modelSelect).toHaveClass(
+            "h-10",
+            "w-full",
+            "rounded-xl",
+            "liquid-glass-subtle",
+        );
+
+        fireEvent.change(reviewNameInput, {
             target: { value: "Closing review" },
         });
         const groupingSwitch = screen.getByRole("switch", {

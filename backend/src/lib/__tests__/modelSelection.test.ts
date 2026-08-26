@@ -63,7 +63,7 @@ describe("resolveEffectiveChatModel", () => {
             resolveEffectiveChatModel({
                 requested: "gpt-5.6-luna",
                 chatModel: "claude-fable-5",
-                lastUsedModel: "gemini-3.7-flash",
+                lastSelectedModel: "gemini-3.7-flash",
                 apiKeys: { openai: "key", claude: "key", gemini: "key" },
                 userId: "user-1",
                 db,
@@ -75,11 +75,11 @@ describe("resolveEffectiveChatModel", () => {
         });
     });
 
-    it("falls back to last-used when the saved chat model has no key", async () => {
+    it("falls back to last-selected when the saved chat model has no key", async () => {
         await expect(
             resolveEffectiveChatModel({
                 chatModel: "gemini-3.7-flash",
-                lastUsedModel: "gpt-5.6-luna",
+                lastSelectedModel: "gpt-5.6-luna",
                 apiKeys: { openai: "key" },
                 userId: "user-1",
                 db,
@@ -87,7 +87,7 @@ describe("resolveEffectiveChatModel", () => {
         ).resolves.toMatchObject({
             ok: true,
             model: "gpt-5.6-luna",
-            source: "last_used",
+            source: "last_selected",
         });
     });
 

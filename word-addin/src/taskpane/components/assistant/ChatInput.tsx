@@ -29,6 +29,7 @@ import { DocumentSourceMenu } from "../documents/DocumentSourceMenu";
 import { ModelToggle } from "./ModelToggle";
 import type {
   WorkflowAttachment,
+  ReasoningLevel,
   WordChatSubmission,
   WordChatSubmitOptions,
 } from "../../lib/wordChatTypes";
@@ -48,7 +49,11 @@ export interface ChatInputHandle {
 interface ChatInputProps {
   sessionKey: number;
   chatModel?: string | null;
-  lastUsedModel?: string | null;
+  lastSelectedModel?: string | null;
+  chatReasoningLevel?: ReasoningLevel | null;
+  lastSelectedReasoningLevel: ReasoningLevel;
+  onModelSelected: (model: string) => Promise<void>;
+  onReasoningSelected: (level: ReasoningLevel) => Promise<void>;
   isResponseLoading: boolean;
   requestError: string | null;
   selectedWorkflow: WorkflowAttachment | null;
@@ -70,7 +75,11 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
     {
       sessionKey,
       chatModel,
-      lastUsedModel,
+      lastSelectedModel,
+      chatReasoningLevel,
+      lastSelectedReasoningLevel,
+      onModelSelected,
+      onReasoningSelected,
       isResponseLoading,
       requestError,
       selectedWorkflow,
@@ -98,20 +107,25 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
     const [openRouterModels, setOpenRouterModels] = useState<string[]>([]);
     const [vercelModels, setVercelModels] = useState<string[]>([]);
     const [openCodeGoModels, setOpenCodeGoModels] = useState<string[]>([]);
-    const [profileLastUsedModel, setProfileLastUsedModel] = useState<
+    const [profileLastSelectedModel, setProfileLastSelectedModel] = useState<
       string | null
     >(null);
     const [profileLoaded, setProfileLoaded] = useState(false);
     const [model, setModel] = useSelectedModel({
       sessionKey,
       chatModel,
-      lastUsedModel: lastUsedModel ?? profileLastUsedModel,
+      lastSelectedModel: lastSelectedModel ?? profileLastSelectedModel,
       routerSelections: profileLoaded
         ? { openRouterModels, vercelModels, openCodeGoModels }
         : null,
       apiKeyStatus: keyStatus,
     });
     const [modelError, setModelError] = useState<string | null>(null);
+    const [profileLastSelectedReasoningLevel, setProfileLastSelectedReasoningLevel] =
+      useState<ReasoningLevel>(lastSelectedReasoningLevel);
+    const [reasoningLevel, setReasoningLevel] = useState<ReasoningLevel>(
+      chatReasoningLevel ?? lastSelectedReasoningLevel ?? "high",
+    );
     const [slashWorkflows, setSlashWorkflows] = useState<Workflow[] | null>(
       null,
     );
@@ -122,6 +136,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
     const [compactControls, setCompactControls] = useState(false);
     const mountedRef = useRef(true);
     const uploadGenerationRef = useRef(0);
+    const modelSelectionSaveRef = useRef<Promise<void>>(Promise.resolve());
+    const reasoningManuallySelectedRef = useRef(false);
 
     const slashQuery = (() => {
       const trimmed = input.trim();
@@ -213,7 +229,10 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
           setOpenRouterModels(profile.openRouterModels ?? []);
           setVercelModels(profile.vercelModels ?? []);
           setOpenCodeGoModels(profile.openCodeGoModels ?? []);
-          setProfileLastUsedModel(profile.lastUsedChatModel ?? null);
+          setProfileLastSelectedModel(profile.lastSelectedChatModel ?? null);
+          setProfileLastSelectedReasoningLevel(
+            profile.lastSelectedReasoningLevel ?? "high",
+          );
           setProfileLoaded(true);
         }
         setKeyStatusLoading(false);
@@ -232,7 +251,28 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       setUploadingLocalFiles(false);
       setDocumentUploadError(null);
       setModelError(null);
+      reasoningManuallySelectedRef.current = false;
+      setReasoningLevel(
+        chatReasoningLevel ??
+          lastSelectedReasoningLevel ??
+          profileLastSelectedReasoningLevel ??
+          "high",
+      );
     }, [sessionKey]);
+
+    useEffect(() => {
+      if (reasoningManuallySelectedRef.current) return;
+      setReasoningLevel(
+        chatReasoningLevel ??
+          lastSelectedReasoningLevel ??
+          profileLastSelectedReasoningLevel ??
+          "high",
+      );
+    }, [
+      chatReasoningLevel,
+      lastSelectedReasoningLevel,
+      profileLastSelectedReasoningLevel,
+    ]);
 
     const handleLocalFiles = async (
       event: React.ChangeEvent<HTMLInputElement>,
@@ -327,6 +367,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
           files: files.length > 0 ? files : undefined,
           workflow: selectedWorkflow ?? undefined,
           model,
+          reasoning: reasoningLevel,
         },
         {
           onAccepted: () => {
@@ -510,6 +551,10 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
                   onChange={(next) => {
                     setModelError(null);
                     setModel(next);
+                    modelSelectionSaveRef.current =
+                      modelSelectionSaveRef.current
+                        .catch(() => undefined)
+                        .then(() => onModelSelected(next));
                   }}
                   keyStatus={keyStatus}
                   keyStatusLoading={keyStatusLoading}
@@ -517,6 +562,15 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
                   vercelModels={vercelModels}
                   openCodeGoModels={openCodeGoModels}
                   compact={compactControls}
+                  reasoningLevel={reasoningLevel}
+                  onReasoningChange={(next) => {
+                    reasoningManuallySelectedRef.current = true;
+                    setReasoningLevel(next);
+                    modelSelectionSaveRef.current =
+                      modelSelectionSaveRef.current
+                        .catch(() => undefined)
+                        .then(() => onReasoningSelected(next));
+                  }}
                   onNoModelsClick={() => {
                     const routerHasNoModels =
                       (keyStatus?.openrouter && openRouterModels.length === 0) ||

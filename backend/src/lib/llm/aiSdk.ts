@@ -289,9 +289,7 @@ export async function streamAiSdk(
       reasoning:
         config.provider === "kimi" || config.supportsReasoning === false
           ? undefined
-          : params.enableThinking
-            ? "high"
-            : "none",
+          : (params.reasoning ?? "none"),
       include: { rawChunks: true },
       prepareStep: ({ steps }: { steps: Array<{ toolCalls: Array<{ toolName: string }> }> }) => ({
         ...(steps.length >= Math.max(0, params.maxIterations ?? 10)

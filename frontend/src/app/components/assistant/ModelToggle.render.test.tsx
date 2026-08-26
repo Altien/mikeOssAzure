@@ -1,7 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { ModelToggle } from "./ModelToggle";
+import { ModelToggle, underlyingProviderGroup } from "./ModelToggle";
 import type { ApiKeyState } from "@/app/lib/mikeApi";
 
 vi.mock("@/app/hooks/useOllamaModels", () => ({
@@ -30,6 +30,36 @@ function keys(configured: Partial<Record<keyof ApiKeyState, boolean>>) {
 }
 
 describe("ModelToggle responsive trigger", () => {
+    it("offers every AI SDK reasoning level through a discrete slider", async () => {
+        const user = userEvent.setup();
+        const onReasoningChange = vi.fn();
+        render(
+            <ModelToggle
+                value="gemini-3-flash-preview"
+                onChange={vi.fn()}
+                apiKeys={keys({ gemini: true })}
+                reasoningLevel="high"
+                onReasoningChange={onReasoningChange}
+            />,
+        );
+
+        await user.click(screen.getByRole("button", { name: "Choose model" }));
+        const reasoning = screen.getByRole("slider", {
+            name: "Reasoning level",
+        });
+        expect(reasoning).toHaveAttribute("min", "0");
+        expect(reasoning).toHaveAttribute("max", "5");
+        expect(reasoning).toHaveValue("4");
+        expect(reasoning).toHaveAttribute("aria-valuetext", "High");
+
+        fireEvent.change(reasoning, { target: { value: "5" } });
+
+        expect(onReasoningChange).toHaveBeenLastCalledWith("xhigh");
+        expect(
+            screen.getByRole("slider", { name: "Reasoning level" }),
+        ).toBeInTheDocument();
+    });
+
     it("uses the Settings2 icon in a compact chat input", () => {
         render(
             <ModelToggle
@@ -80,6 +110,7 @@ describe("ModelToggle responsive trigger", () => {
         expect(selectedRow).toHaveAttribute("data-selected", "true");
         expect(selectedRow?.className).not.toContain("shadow-[inset_");
     });
+
 });
 
 describe("ModelToggle availability states", () => {
@@ -171,7 +202,16 @@ describe("ModelToggle availability states", () => {
     });
 });
 
-describe("ModelToggle OpenCode Go group", () => {
+describe("ModelToggle provider grouping", () => {
+    it("maps router catalog IDs to their underlying model providers", () => {
+        expect(
+            underlyingProviderGroup("anthropic/claude-fable-5", "openrouter"),
+        ).toBe("Anthropic");
+        expect(underlyingProviderGroup("kimi-k3", "opencode-go")).toBe(
+            "Moonshot AI",
+        );
+    });
+
     it("offers the user's saved OpenCode Go models once the key is configured", async () => {
         const user = userEvent.setup();
         render(
@@ -184,9 +224,10 @@ describe("ModelToggle OpenCode Go group", () => {
         );
 
         await user.click(screen.getByRole("button", { name: "Choose model" }));
-        await user.click(await screen.findByText("OpenCode Go"));
+        await user.click(await screen.findByText("Zhipu AI"));
 
         expect(await screen.findByText("Glm 5")).toBeInTheDocument();
+        expect(screen.queryByText("OpenCode Go")).not.toBeInTheDocument();
     });
 
     it("hides the group when the OpenCode Go key is missing", async () => {
@@ -203,5 +244,22 @@ describe("ModelToggle OpenCode Go group", () => {
         await user.click(screen.getByRole("button", { name: "Choose model" }));
 
         expect(screen.queryByText("OpenCode Go")).not.toBeInTheDocument();
+    });
+
+    it("shows route labels only when the same provider model has duplicates", async () => {
+        const user = userEvent.setup();
+        render(
+            <ModelToggle
+                value="claude-fable-5"
+                onChange={vi.fn()}
+                apiKeys={keys({ claude: true, openrouter: true })}
+                openRouterModels={["anthropic/claude-fable-5"]}
+            />,
+        );
+
+        await user.click(screen.getByRole("button", { name: "Choose model" }));
+
+        expect(screen.getByText("Direct")).toBeInTheDocument();
+        expect(screen.getByText("OpenRouter")).toBeInTheDocument();
     });
 });

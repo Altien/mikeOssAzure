@@ -6,6 +6,7 @@ import {
     canonicalModelId,
     ROUTER_SLUGS,
     type RouterSlug,
+    type ReasoningLevel,
 } from "../components/assistant/ModelToggle";
 import { isModelAvailable } from "../lib/modelAvailability";
 import type { ApiKeyState } from "../lib/mikeApi";
@@ -26,7 +27,7 @@ export function isAllowedModelId(id: string): boolean {
 export interface SelectedModelSources {
     selectionKey?: string | null;
     chatModel?: string | null;
-    lastUsedModel?: string | null;
+    lastSelectedModel?: string | null;
     routerSelections?: {
         openRouterModels: string[];
         vercelModels: string[];
@@ -63,7 +64,7 @@ function usableStoredModel(
     return canonical;
 }
 
-/** Resolve chat model → profile last-used model, without a product default. */
+/** Resolve chat model → profile last-selected model, without a product default. */
 export function useSelectedModel(
     sources: SelectedModelSources = {},
 ): [string, (id: string) => void] {
@@ -78,7 +79,7 @@ export function useSelectedModel(
         () => ({
             selectionKey: sources.selectionKey,
             chatModel: sources.chatModel,
-            lastUsedModel: sources.lastUsedModel,
+            lastSelectedModel: sources.lastSelectedModel,
             routerSelections: hasRouterSelections
                 ? {
                       openRouterModels: openRouterModels ?? [],
@@ -91,7 +92,7 @@ export function useSelectedModel(
         [
             sources.selectionKey,
             sources.chatModel,
-            sources.lastUsedModel,
+            sources.lastSelectedModel,
             hasRouterSelections,
             openRouterModels,
             vercelModels,
@@ -100,22 +101,32 @@ export function useSelectedModel(
         ],
     );
 
+    /* eslint-disable react-hooks/set-state-in-effect -- persisted profile/chat settings arrive asynchronously and initialize controlled composer state */
     useEffect(() => {
         if (previousSelectionKey.current !== selectionSources.selectionKey) {
             previousSelectionKey.current = selectionSources.selectionKey;
             manuallySelected.current = false;
         }
         if (manuallySelected.current) return;
+        if (
+            selectionSources.selectionKey &&
+            selectionSources.chatModel === undefined
+        ) {
+            // Existing chat settings have not loaded yet. Do not flash the
+            // profile fallback before the chat's own selection arrives.
+            setModelState("");
+            return;
+        }
         const next =
             usableStoredModel(selectionSources.chatModel, selectionSources) ??
             usableStoredModel(
-                selectionSources.lastUsedModel,
+                selectionSources.lastSelectedModel,
                 selectionSources,
             ) ??
             "";
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- profile/chat data arrives asynchronously and determines the initial composer selection
         setModelState(next);
     }, [selectionSources]);
+    /* eslint-enable react-hooks/set-state-in-effect */
 
     const setModel = useCallback((id: string) => {
         const canonical = canonicalModelId(id);
@@ -125,4 +136,43 @@ export function useSelectedModel(
     }, []);
 
     return [model, setModel];
+}
+
+export function useSelectedReasoning(sources: {
+    selectionKey?: string | null;
+    chatReasoningLevel?: ReasoningLevel | null;
+    lastSelectedReasoningLevel?: ReasoningLevel | null;
+}): [ReasoningLevel, (level: ReasoningLevel) => void] {
+    const [level, setLevelState] = useState<ReasoningLevel>("high");
+    const manuallySelected = useRef(false);
+    const previousSelectionKey = useRef(sources.selectionKey);
+
+    /* eslint-disable react-hooks/set-state-in-effect -- persisted profile/chat settings arrive asynchronously and initialize controlled composer state */
+    useEffect(() => {
+        if (previousSelectionKey.current !== sources.selectionKey) {
+            previousSelectionKey.current = sources.selectionKey;
+            manuallySelected.current = false;
+        }
+        if (manuallySelected.current) return;
+        if (sources.selectionKey && sources.chatReasoningLevel === undefined) {
+            return;
+        }
+        setLevelState(
+            sources.chatReasoningLevel ??
+                sources.lastSelectedReasoningLevel ??
+                "high",
+        );
+    }, [
+        sources.selectionKey,
+        sources.chatReasoningLevel,
+        sources.lastSelectedReasoningLevel,
+    ]);
+    /* eslint-enable react-hooks/set-state-in-effect */
+
+    const setLevel = useCallback((next: ReasoningLevel) => {
+        manuallySelected.current = true;
+        setLevelState(next);
+    }, []);
+
+    return [level, setLevel];
 }

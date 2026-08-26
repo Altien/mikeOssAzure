@@ -246,6 +246,8 @@ export async function runLLMStream(params: {
   buildCitations?: (fullText: string) => unknown[];
   model?: string;
   fastModel?: string;
+  /** AI SDK reasoning effort for this interactive request. */
+  reasoning?: import("../llm").ReasoningLevel;
   apiKeys?: import("../llm").UserApiKeys;
   signal?: AbortSignal;
   /** Let a route persist the completed turn before it signals stream success. */
@@ -515,7 +517,7 @@ export async function runLLMStream(params: {
       tools: activeTools as OpenAIToolSchema[],
       maxIterations: params.maxIterations ?? 10,
       apiKeys,
-      enableThinking: true,
+      reasoning: params.reasoning ?? "high",
       abortSignal: signal,
       callbacks: {
         onContentDelta: (delta) => {

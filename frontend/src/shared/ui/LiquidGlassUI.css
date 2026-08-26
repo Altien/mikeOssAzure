@@ -1,7 +1,7 @@
 :root {
     --liquid-glass-background-flat: #fdfdfe;
     --liquid-glass-background-subtle: rgba(255, 255, 255, 0.55);
-    --liquid-glass-background-float: rgba(253, 253, 254, 0.92);
+    --liquid-glass-background-float: #fdfdfe;
     --liquid-glass-background-modal: rgba(249, 250, 251, 0.95);
     --liquid-glass-border-flat: rgba(255, 255, 255, 0.7);
     --liquid-glass-border-subtle: rgba(255, 255, 255, 0.7);
@@ -52,7 +52,7 @@
 .dark {
     --liquid-glass-background-flat: #131922;
     --liquid-glass-background-subtle: rgba(19, 25, 34, 0.9);
-    --liquid-glass-background-float: rgba(23, 30, 40, 0.92);
+    --liquid-glass-background-float: #171e28;
     --liquid-glass-background-modal: rgba(15, 20, 28, 0.95);
     --liquid-glass-border-flat: rgba(148, 163, 184, 0.12);
     --liquid-glass-border-subtle: rgba(148, 163, 184, 0.16);

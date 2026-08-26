@@ -158,9 +158,10 @@ The signature surface combines a light fill, hairline border, inset highlight
 shadows, and soft elevation. Each liquid-glass class owns all three material
 properties—background, border, and shadow—through light/dark CSS variables in
 `LiquidGlassUI.css`; components should not repeat a surface border utility. The
-flat tier uses a solid fill so broad surfaces
-and sticky table cells render as one continuous plane; the higher and overlay
-tiers retain their translucency where depth or underlying content matters.
+flat tier uses a solid fill so broad surfaces and sticky table cells render as
+one continuous plane. The float tier is also solid so menus and persistent
+chrome fully obscure content beneath them; subtle and overlay tiers retain
+their translucency where depth or underlying content matters.
 Elevation is centralized in
 `frontend/src/shared/ui/LiquidGlassUI.css`, with class-name constants in
 `LiquidGlassUI.ts`. Do not write a new `shadow-[...]` recipe for a general glass
@@ -172,7 +173,7 @@ Use the lowest tier that communicates the required depth:
 | --- | --- | --- |
 | Flat | `liquid-glass-flat` | Solid-fill assistant response/message surfaces, tables, glass cards, and signup/login/onboarding cards. |
 | Subtle | `liquid-glass-subtle` | Modal inputs, dropdown triggers, tab pills, PageHeader actions, and search/select controls. |
-| Float | `liquid-glass-float` | Open dropdowns/submenus, `AppSidebar`, and persistent app/assistant/document/tabular side panels. Uses the original AppSidebar shadow depth. |
+| Float | `liquid-glass-float` | Solid-fill open dropdowns/submenus, `AppSidebar`, and persistent app/assistant/document/tabular side panels. Uses the original AppSidebar shadow depth. |
 | Modal | `liquid-glass-modal` | The modal frame only; modal contents use the appropriate general tier. |
 | Translucent | `liquid-glass-translucent` | Chat composer, ask-input surfaces, slash menus, and other translucent content overlays. |
 | Translucent action modifier | `liquid-glass-translucent-action` | Compact over-message actions such as scroll-to-bottom; use with `liquid-glass-translucent`. |

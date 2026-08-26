@@ -7,6 +7,7 @@ import {
     parseOptionalDisplayedDoc,
     parseOptionalModel,
     parseOptionalProjectId,
+    parseOptionalReasoning,
 } from "../requestValidation";
 
 describe("chat request validation", () => {
@@ -123,6 +124,31 @@ describe("chat request validation", () => {
         expect(parseOptionalProjectId(undefined)).toEqual({
             ok: true,
             value: { provided: false, projectId: null },
+        });
+    });
+
+    it("accepts every AI SDK reasoning level and rejects other values", () => {
+        expect(parseOptionalReasoning(undefined)).toEqual({
+            ok: true,
+            value: undefined,
+        });
+        for (const level of [
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+        ]) {
+            expect(parseOptionalReasoning(level)).toEqual({
+                ok: true,
+                value: level,
+            });
+        }
+        expect(parseOptionalReasoning(true)).toEqual({
+            ok: false,
+            detail:
+                "reasoning must be one of: none, minimal, low, medium, high, xhigh",
         });
     });
 

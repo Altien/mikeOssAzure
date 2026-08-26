@@ -26,12 +26,10 @@ import {
     parseOptionalChatId,
     parseOptionalDisplayedDoc,
     parseOptionalModel,
+    parseOptionalReasoning,
     type ChatMessage,
 } from "../lib/chat";
-import {
-    getUserModelSettings,
-    persistLastUsedChatModel,
-} from "../lib/userSettings";
+import { getUserModelSettings } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
 import { safeErrorLog } from "../lib/safeError";
 import { generateAssistantChatTitle } from "../lib/chatTitle";
@@ -50,6 +48,7 @@ import {
 } from "../altien/skills/invocation";
 import {
     resolveEffectiveChatModel,
+    resolveEffectiveReasoningLevel,
     titleModelForChat,
 } from "../lib/modelSelection";
 
@@ -170,6 +169,10 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     if (!parsedModel.ok) {
         return void res.status(400).json({ detail: parsedModel.detail });
     }
+    const parsedReasoning = parseOptionalReasoning(body.reasoning);
+    if (!parsedReasoning.ok) {
+        return void res.status(400).json({ detail: parsedReasoning.detail });
+    }
     const parsedDisplayedDoc = parseOptionalDisplayedDoc(body.displayed_doc);
     if (!parsedDisplayedDoc.ok) {
         return void res.status(400).json({ detail: parsedDisplayedDoc.detail });
@@ -218,11 +221,12 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     let chatId = chat_id ?? null;
     let chatTitle: string | null = null;
     let chatModel: string | null = null;
+    let chatReasoningLevel: string | null = null;
 
     if (chatId) {
         const { data: existing } = await db
             .from("chats")
-            .select("id, title, model, project_id")
+            .select("id, title, model, reasoning_level, project_id")
             .eq("id", chatId)
             .single();
         const canUse = !!existing && existing.project_id === projectId;
@@ -230,6 +234,8 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         else {
             chatTitle = existing!.title;
             chatModel = (existing!.model as string | null) ?? null;
+            chatReasoningLevel =
+                (existing!.reasoning_level as string | null) ?? null;
         }
     }
 
@@ -237,7 +243,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     const modelResolution = await resolveEffectiveChatModel({
         requested: model,
         chatModel,
-        lastUsedModel: modelSettings.last_used_chat_model,
+        lastSelectedModel: modelSettings.last_selected_chat_model,
         apiKeys: modelSettings.api_keys,
         userId,
         db,
@@ -249,11 +255,24 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         });
     }
     const selectedModel = modelResolution.model;
+    const selectedReasoningLevel = resolveEffectiveReasoningLevel({
+        requested: parsedReasoning.value,
+        chatReasoningLevel,
+        lastSelectedReasoningLevel:
+            modelSettings.last_selected_reasoning_level,
+    });
 
-    if (chatId && chatModel !== selectedModel) {
+    if (
+        chatId &&
+        (chatModel !== selectedModel ||
+            chatReasoningLevel !== selectedReasoningLevel)
+    ) {
         const { error } = await db
             .from("chats")
-            .update({ model: selectedModel })
+            .update({
+                model: selectedModel,
+                reasoning_level: selectedReasoningLevel,
+            })
             .eq("id", chatId);
         if (error) {
             return void res
@@ -269,6 +288,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
                 user_id: userId,
                 project_id: projectId,
                 model: selectedModel,
+                reasoning_level: selectedReasoningLevel,
             })
             .select("id, title")
             .single();
@@ -562,6 +582,7 @@ without pretending to have the skill's instructions or resources.`;
             workflowStore,
             includeResearchTools: legalResearchUs,
             model: selectedModel,
+            reasoning: selectedReasoningLevel,
             apiKeys,
             signal: streamAbort.signal,
             projectId,
@@ -601,21 +622,6 @@ without pretending to have the skill's instructions or resources.`;
                 );
             }
         }
-
-        const lastUsedError = await persistLastUsedChatModel(
-            userId,
-            selectedModel,
-            db,
-        );
-        if (lastUsedError) {
-            console.error(
-                "[project-chat/stream] failed to save last-used model",
-                lastUsedError,
-            );
-        }
-        write(
-            `data: ${JSON.stringify({ type: "model_used", model: selectedModel })}\n\n`,
-        );
 
         void recordChatTurn(
             db,

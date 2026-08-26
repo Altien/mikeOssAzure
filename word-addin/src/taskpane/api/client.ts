@@ -6,6 +6,7 @@ import type {
   WorkflowReferenceDocument,
 } from "../types";
 import { describeNetworkFailure } from "../lib/networkError";
+import type { ReasoningLevel } from "../lib/wordChatTypes";
 
 type AuthHeaderProvider = () => Promise<Record<string, string>>;
 
@@ -176,7 +177,8 @@ interface UserProfile {
   tier: string;
   titleModel: string | null;
   tabularModel: string | null;
-  lastUsedChatModel: string | null;
+  lastSelectedChatModel: string | null;
+  lastSelectedReasoningLevel: ReasoningLevel;
   mfaOnLogin: boolean;
   legalResearchUs: boolean;
   openRouterModels: string[];
@@ -187,6 +189,28 @@ interface UserProfile {
 
 export async function getUserProfile(): Promise<UserProfile> {
   return apiRequest<UserProfile>("/user/profile");
+}
+
+export async function updateLastSelectedChatModel(
+  model: string,
+): Promise<UserProfile> {
+  return apiRequest<UserProfile>("/user/profile", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ lastSelectedChatModel: model }),
+    keepalive: true,
+  });
+}
+
+export async function updateLastSelectedReasoningLevel(
+  reasoningLevel: ReasoningLevel,
+): Promise<UserProfile> {
+  return apiRequest<UserProfile>("/user/profile", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ lastSelectedReasoningLevel: reasoningLevel }),
+    keepalive: true,
+  });
 }
 
 export interface ApiKeyStatus {
@@ -287,6 +311,7 @@ export async function streamWordChat(payload: {
   }[];
   chat_id?: string;
   model?: string;
+  reasoning?: ReasoningLevel;
   document_context?: string;
   document_id: string;
   document_name: string;

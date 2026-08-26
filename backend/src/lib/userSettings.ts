@@ -1,8 +1,8 @@
 import { createServerSupabase } from "./supabase";
-import { DEFAULT_TITLE_MODEL, OPENAI_LOW_MODELS, type UserApiKeys } from "./llm";
+import { DEFAULT_TITLE_MODEL, OPENAI_LOW_MODELS, type UserApiKeys, type ReasoningLevel } from "./llm";
 import { getOrganisationApiKeys } from "./userApiKeys";
 import { getAllUserRouterModels, ROUTER_SLUGS, type RouterModelSelections } from "./routerModels";
-import { normalizeOptionalModelPreference } from "./modelSelection";
+import { normalizeOptionalModelPreference, normalizeReasoningLevel } from "./modelSelection";
 
 export type UserModelSettings = {
     /** Existing internal title helper for Altien skill paths. */
@@ -10,7 +10,8 @@ export type UserModelSettings = {
     /** Explicit title override stored in Dev's fast_model; null derives from chat model. */
     title_model: string | null;
     tabular_model: string | null;
-    last_used_chat_model: string | null;
+    last_selected_chat_model: string | null;
+    last_selected_reasoning_level: ReasoningLevel | null;
     legal_research_us: boolean;
     api_keys: UserApiKeys;
     personalisation?: {
@@ -43,26 +44,35 @@ export async function getUserModelSettings(
     const client = db ?? createServerSupabase();
     const [profileResult, api_keys, routerModels] = await Promise.all([
         client.from("user_profiles")
-            .select("fast_model, tabular_model, last_used_chat_model, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas")
+            .select("fast_model, tabular_model, last_selected_chat_model, last_selected_reasoning_level, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas")
             .eq("user_id", userId).single(),
         getOrganisationApiKeys(),
         getAllUserRouterModels(userId, client),
     ]);
     let data = profileResult.data;
     if (profileResult.error?.code === "42703") {
+        const withoutReasoning = await client.from("user_profiles")
+            .select("fast_model, tabular_model, last_selected_chat_model, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas")
+            .eq("user_id", userId).single();
+        if (!withoutReasoning.error) {
+            data = { ...withoutReasoning.data, last_selected_reasoning_level: null } as typeof data;
+        } else if (withoutReasoning.error.code === "42703") {
         const withoutLastUsed = await client.from("user_profiles")
             .select("fast_model, tabular_model, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas")
             .eq("user_id", userId).single();
         if (!withoutLastUsed.error) {
-            data = { ...withoutLastUsed.data, last_used_chat_model: null } as typeof data;
+            data = { ...withoutLastUsed.data, last_selected_chat_model: null } as typeof data;
         } else if (withoutLastUsed.error.code === "42703") {
             const legacy = await client.from("user_profiles")
                 .select("fast_model, tabular_model, legal_research_us")
                 .eq("user_id", userId).single();
             if (legacy.error) throw new Error(`Failed to read legacy user model settings: ${legacy.error.message}`);
-            data = { ...legacy.data, last_used_chat_model: null } as typeof data;
+            data = { ...legacy.data, last_selected_chat_model: null } as typeof data;
         } else {
             throw new Error(`Failed to read user model settings: ${withoutLastUsed.error.message}`);
+        }
+        } else {
+            throw new Error(`Failed to read user model settings: ${withoutReasoning.error.message}`);
         }
     } else if (profileResult.error) {
         throw new Error(`Failed to read user model settings: ${profileResult.error.message}`);
@@ -74,7 +84,8 @@ export async function getUserModelSettings(
         fast_model: titleOverride ?? fallbackTitleModel(api_keys, routerModels),
         title_model: titleOverride,
         tabular_model: optional(data?.tabular_model),
-        last_used_chat_model: optional(data?.last_used_chat_model),
+        last_selected_chat_model: optional(data?.last_selected_chat_model),
+        last_selected_reasoning_level: normalizeReasoningLevel(data?.last_selected_reasoning_level),
         legal_research_us: data?.legal_research_us !== false,
         personalisation: {
             displayName: typeof data?.display_name === "string" ? data.display_name : null,
@@ -89,13 +100,25 @@ export async function getUserModelSettings(
 }
 
 /** Save only a completed turn; concurrent identity is bound by the caller. */
-export async function persistLastUsedChatModel(
+export async function persistLastSelectedChatModel(
     userId: string,
     model: string,
     db: ReturnType<typeof createServerSupabase>,
 ): Promise<unknown | null> {
     const { error } = await db.from("user_profiles")
-        .update({ last_used_chat_model: model, updated_at: new Date().toISOString() })
+        .update({ last_selected_chat_model: model, updated_at: new Date().toISOString() })
+        .eq("user_id", userId);
+    return error ?? null;
+}
+
+/** Save an explicit reasoning picker choice for this authenticated profile. */
+export async function persistLastSelectedReasoningLevel(
+    userId: string,
+    reasoningLevel: ReasoningLevel,
+    db: ReturnType<typeof createServerSupabase>,
+): Promise<unknown | null> {
+    const { error } = await db.from("user_profiles")
+        .update({ last_selected_reasoning_level: reasoningLevel, updated_at: new Date().toISOString() })
         .eq("user_id", userId);
     return error ?? null;
 }

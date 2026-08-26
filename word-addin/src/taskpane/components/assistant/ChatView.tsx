@@ -13,6 +13,7 @@ import { InitialView } from "./InitialView";
 import { UserMessage } from "./UserMessage";
 import type {
     EditDecision,
+    ReasoningLevel,
     WordAssistantChatController,
     WordTrackedEditsController,
     WorkflowAttachment,
@@ -40,7 +41,11 @@ interface ChatViewProps
         > {
     sessionKey: number;
     chatModel?: string | null;
-    lastUsedModel?: string | null;
+    lastSelectedModel?: string | null;
+    chatReasoningLevel?: ReasoningLevel | null;
+    lastSelectedReasoningLevel: ReasoningLevel;
+    onModelSelected: (model: string) => Promise<void>;
+    onReasoningSelected: (level: ReasoningLevel) => Promise<void>;
     selectedWorkflow: WorkflowAttachment | null;
     onSelectedWorkflowChange: (workflow: WorkflowAttachment | null) => void;
     editApplyMode: WordEditApplyMode;
@@ -135,7 +140,11 @@ function animateScrollTo(
 export function ChatView({
     sessionKey,
     chatModel,
-    lastUsedModel,
+    lastSelectedModel,
+    chatReasoningLevel,
+    lastSelectedReasoningLevel,
+    onModelSelected,
+    onReasoningSelected,
     messages,
     isResponseLoading,
     requestError,
@@ -787,7 +796,11 @@ export function ChatView({
                 containerRef={composerRef}
                 sessionKey={sessionKey}
                 chatModel={chatModel}
-                lastUsedModel={lastUsedModel}
+                lastSelectedModel={lastSelectedModel}
+                chatReasoningLevel={chatReasoningLevel}
+                lastSelectedReasoningLevel={lastSelectedReasoningLevel}
+                onModelSelected={onModelSelected}
+                onReasoningSelected={onReasoningSelected}
                 isResponseLoading={isResponseLoading}
                 requestError={requestError}
                 selectedWorkflow={selectedWorkflow}

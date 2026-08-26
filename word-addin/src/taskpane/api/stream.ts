@@ -7,6 +7,7 @@
  * in the local HTTP client's readSSE.
  */
 import { streamWordChat, readSSE } from "./mikeApi";
+import type { ReasoningLevel } from "../lib/wordChatTypes";
 
 export interface WordChatDocumentReadEvent {
   type: "doc_read_start" | "doc_read";
@@ -37,6 +38,7 @@ export async function streamAssistant(
     }[];
     documentContext?: string;
     model: string;
+    reasoning?: ReasoningLevel;
     chatId?: string;
     wordDocumentId: string;
     documentName: string;
@@ -46,7 +48,6 @@ export async function streamAssistant(
     onMetadata?: (metadata: {
       chatId?: string;
       assistantMessageId?: string;
-      model?: string;
     }) => void;
     /** Streams the model's user-visible reasoning summary in arrival order. */
     onReasoningDelta?: (text: string) => void;
@@ -72,6 +73,7 @@ export async function streamAssistant(
   const res = await streamWordChat({
     messages: params.messages,
     model: params.model,
+    reasoning: params.reasoning,
     chat_id: params.chatId,
     document_context: params.documentContext,
     document_id: params.wordDocumentId,
@@ -111,8 +113,6 @@ export async function streamAssistant(
         if (chatId || assistantMessageId) {
           params.onMetadata?.({ chatId, assistantMessageId });
         }
-      } else if (d.type === "model_used" && typeof d.model === "string") {
-        params.onMetadata?.({ model: d.model });
       } else if (
         d.type === "client_tool_call" &&
         typeof d.tool_call_id === "string" &&

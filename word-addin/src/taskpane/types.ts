@@ -41,6 +41,7 @@ export interface Chat {
   user_id: string;
   title: string | null;
   model?: string | null;
+  reasoning_level?: import("./lib/wordChatTypes").ReasoningLevel | null;
   created_at: string;
 }
 

@@ -10,7 +10,7 @@ import {
 interface SelectedModelSources {
   sessionKey: number;
   chatModel?: string | null;
-  lastUsedModel?: string | null;
+  lastSelectedModel?: string | null;
   routerSelections?: {
     openRouterModels: string[];
     vercelModels: string[];
@@ -41,7 +41,7 @@ function usableStoredModel(
   return isModelAvailable(model, sources.apiKeyStatus) ? model : null;
 }
 
-/** Resolve the saved chat model first, then the profile's shared last-used. */
+/** Resolve the saved chat model first, then the profile's shared last-selected. */
 export function useSelectedModel(
   sources: SelectedModelSources,
 ): [string, (model: string) => void] {
@@ -60,13 +60,13 @@ export function useSelectedModel(
     if (manualSelection.current) return;
     const next =
       usableStoredModel(sources.chatModel, sources) ??
-      usableStoredModel(sources.lastUsedModel, sources) ??
+      usableStoredModel(sources.lastSelectedModel, sources) ??
       "";
     setModelState(next);
   }, [
     sources.sessionKey,
     sources.chatModel,
-    sources.lastUsedModel,
+    sources.lastSelectedModel,
     sources.apiKeyStatus,
     openRouterModels,
     vercelModels,

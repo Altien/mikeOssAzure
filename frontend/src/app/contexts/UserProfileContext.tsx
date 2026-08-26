@@ -23,7 +23,11 @@ import {
     saveApiKey,
     updateUserMfaOnLogin,
     updateUserProfile,
+    updateChatModel,
+    updateChatReasoningLevel,
+    updateLastSelectedChatSettings,
 } from "@/app/lib/mikeApi";
+import type { Message } from "@/app/components/shared/types";
 import { applyDarkMode } from "@/app/lib/theme";
 
 interface UserProfile {
@@ -42,7 +46,8 @@ interface UserProfile {
     tier: string;
     titleModel: string | null;
     tabularModel: string | null;
-    lastUsedChatModel: string | null;
+    lastSelectedChatModel: string | null;
+    lastSelectedReasoningLevel: NonNullable<Message["reasoning"]>;
     mfaOnLogin: boolean;
     legalResearchUs: boolean;
     quickActionsVisible: boolean;
@@ -78,6 +83,14 @@ interface UserProfileContextType {
     updateModelPreference: (
         field: "titleModel" | "tabularModel",
         value: string | null,
+    ) => Promise<boolean>;
+    persistChatModelSelection: (
+        model: string,
+        chatId?: string | null,
+    ) => Promise<boolean>;
+    persistChatReasoningSelection: (
+        reasoningLevel: NonNullable<Message["reasoning"]>,
+        chatId?: string | null,
     ) => Promise<boolean>;
     updateMfaOnLogin: (enabled: boolean) => Promise<boolean>;
     updateLegalResearchUs: (enabled: boolean) => Promise<boolean>;
@@ -151,7 +164,8 @@ function toProfile(data: ApiUserProfile): UserProfile {
         onboardingComplete: profile.onboardingComplete !== false,
         passwordSet: profile.passwordSet === true ? true : null,
         darkMode: profile.darkMode === true,
-        lastUsedChatModel: profile.lastUsedChatModel ?? null,
+        lastSelectedChatModel: profile.lastSelectedChatModel ?? null,
+        lastSelectedReasoningLevel: profile.lastSelectedReasoningLevel ?? "high",
         mfaOnLogin: profile.mfaOnLogin === true,
         openRouterModels: Array.isArray(profile.openRouterModels)
             ? profile.openRouterModels
@@ -238,7 +252,8 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 tier: "Free",
                 titleModel: null,
                 tabularModel: null,
-                lastUsedChatModel: null,
+                lastSelectedChatModel: null,
+                lastSelectedReasoningLevel: "high",
                 mfaOnLogin: false,
                 legalResearchUs: true,
                 quickActionsVisible: true,
@@ -267,19 +282,6 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         applyDarkMode(profile?.darkMode === true);
     }, [profile?.darkMode]);
-
-    useEffect(() => {
-        const remember = (event: Event) => {
-            const model = (event as CustomEvent<unknown>).detail;
-            if (typeof model !== "string" || !model) return;
-            setProfile((current) =>
-                current ? { ...current, lastUsedChatModel: model } : current,
-            );
-        };
-        window.addEventListener("mike:last-used-chat-model", remember);
-        return () =>
-            window.removeEventListener("mike:last-used-chat-model", remember);
-    }, []);
 
     const updateDisplayName = useCallback(
         async (displayName: string): Promise<boolean> => {
@@ -384,6 +386,60 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 });
                 setProfile((prev) =>
                     prev ? { ...prev, ...toProfile(updated) } : null,
+                );
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [user],
+    );
+
+    const persistChatModelSelection = useCallback(
+        async (model: string, chatId?: string | null): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                if (chatId) {
+                    await updateChatModel(chatId, model);
+                } else {
+                    await updateLastSelectedChatSettings({
+                        lastSelectedChatModel: model,
+                    });
+                }
+                setProfile((current) =>
+                    current
+                        ? { ...current, lastSelectedChatModel: model }
+                        : current,
+                );
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [user],
+    );
+
+    const persistChatReasoningSelection = useCallback(
+        async (
+            reasoningLevel: NonNullable<Message["reasoning"]>,
+            chatId?: string | null,
+        ): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                if (chatId) {
+                    await updateChatReasoningLevel(chatId, reasoningLevel);
+                } else {
+                    await updateLastSelectedChatSettings({
+                        lastSelectedReasoningLevel: reasoningLevel,
+                    });
+                }
+                setProfile((current) =>
+                    current
+                        ? {
+                              ...current,
+                              lastSelectedReasoningLevel: reasoningLevel,
+                          }
+                        : current,
                 );
                 return true;
             } catch {
@@ -525,7 +581,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             if (!user) return false;
             const normalized = value?.trim() ? value.trim() : null;
             try {
-                await saveApiKey(provider, normalized);
+                const status = await saveApiKey(provider, normalized);
                 setProfile((prev) =>
                     prev
                         ? {
@@ -533,8 +589,9 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                               apiKeys: {
                                   ...prev.apiKeys,
                                   [provider]: {
-                                      configured: !!normalized,
-                                      source: normalized ? "user" : null,
+                                      configured: status[provider],
+                                      source:
+                                          status.sources?.[provider] ?? null,
                                   },
                               },
                           }
@@ -580,6 +637,8 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 updatePersonalisation,
                 syncPasswordSet,
                 updateModelPreference,
+                persistChatModelSelection,
+                persistChatReasoningSelection,
                 updateMfaOnLogin,
                 updateLegalResearchUs,
                 updateQuickActionsVisible,

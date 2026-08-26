@@ -8,8 +8,9 @@ import { resolveSecret, resolveProviderSecret } from "../lib/envSecrets";
 import { recordAudit } from "../lib/audit";
 import { sendInternalError } from "../lib/httpError";
 import { getConfig } from "../lib/config";
-import { DEFAULT_TABULAR_MODEL, resolveModel } from "../lib/llm/models";
-import { normalizeOptionalModelPreference } from "../lib/modelSelection";
+import { resolveModel } from "../lib/llm/models";
+import { REASONING_LEVELS } from "../lib/llm";
+import { normalizeOptionalModelPreference, normalizeReasoningLevel } from "../lib/modelSelection";
 import {
   completeUserMcpConnectorOAuth,
   createUserMcpConnector,
@@ -172,8 +173,10 @@ userRouter.get("/lookup", requireAuth, async (req, res) => {
 
 const MONTHLY_CREDIT_LIMIT = 999999;
 
-const PROFILE_SELECT_WITH_LAST_USED_CHAT_MODEL =
-    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, fast_model, tabular_model, last_used_chat_model, legal_research_us, quick_actions_visible, dark_mode";
+const PROFILE_SELECT_WITH_CHAT_SELECTIONS =
+    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, fast_model, tabular_model, last_selected_chat_model, last_selected_reasoning_level, legal_research_us, quick_actions_visible, dark_mode";
+const PROFILE_SELECT_WITH_LAST_SELECTED_CHAT_MODEL =
+    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, fast_model, tabular_model, last_selected_chat_model, legal_research_us, quick_actions_visible, dark_mode";
 const PROFILE_SELECT =
   "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us, quick_actions_visible, dark_mode";
 const PROFILE_SELECT_NO_DARK_MODE =
@@ -210,7 +213,8 @@ type UserProfileRow = {
   tier: string | null;
   tabular_model: string | null;
   fast_model: string | null;
-  last_used_chat_model?: string | null;
+  last_selected_chat_model?: string | null;
+  last_selected_reasoning_level?: string | null;
   legal_research_us: boolean | null;
   quick_actions_visible: boolean | null;
   dark_mode?: boolean | null;
@@ -339,7 +343,8 @@ function serializeProfile(
     tier: row.tier || "Free",
     titleModel,
     tabularModel: normalizeOptionalModelPreference(row.tabular_model, routerModels),
-    lastUsedChatModel: normalizeOptionalModelPreference(row.last_used_chat_model, routerModels),
+    lastSelectedChatModel: normalizeOptionalModelPreference(row.last_selected_chat_model, routerModels),
+    lastSelectedReasoningLevel: normalizeReasoningLevel(row.last_selected_reasoning_level) ?? "high",
     mfaOnLogin: false,
     // Features > Legal Research > Jurisdiction > US toggle (upstream
     // 1fa0554); defaults to enabled.
@@ -360,9 +365,12 @@ async function loadProfile(
 > {
   const [profileResult, apiKeyStatus] = await Promise.all([
     (async () => {
-      const withLastUsed = await db.from("user_profiles").select(PROFILE_SELECT_WITH_LAST_USED_CHAT_MODEL).eq("user_id", userId).single();
-      if (!withLastUsed.error) return withLastUsed;
-      if (withLastUsed.error.code !== "42703" && withLastUsed.error.code !== "PGRST204") return { data: null, error: withLastUsed.error };
+      const withSelections = await db.from("user_profiles").select(PROFILE_SELECT_WITH_CHAT_SELECTIONS).eq("user_id", userId).single();
+      if (!withSelections.error) return withSelections;
+      if (withSelections.error.code !== "42703" && withSelections.error.code !== "PGRST204") return { data: null, error: withSelections.error };
+      const withChatModel = await db.from("user_profiles").select(PROFILE_SELECT_WITH_LAST_SELECTED_CHAT_MODEL).eq("user_id", userId).single();
+      if (!withChatModel.error) return withChatModel;
+      if (withChatModel.error.code !== "42703" && withChatModel.error.code !== "PGRST204") return { data: null, error: withChatModel.error };
       const current = await db.from("user_profiles").select(PROFILE_SELECT).eq("user_id", userId).single();
       if (!current.error) return current;
       let cascadeError = current.error;
@@ -436,6 +444,8 @@ type ProfileUpdate = {
   practice_areas?: string[];
   fast_model?: string | null;
   tabular_model?: string | null;
+  last_selected_chat_model?: string | null;
+  last_selected_reasoning_level?: string | null;
   legal_research_us?: boolean;
   quick_actions_visible?: boolean;
   dark_mode?: boolean;
@@ -478,6 +488,8 @@ function validateProfilePayload(
     "practiceAreas",
     "titleModel",
     "tabularModel",
+    "lastSelectedChatModel",
+    "lastSelectedReasoningLevel",
     "legalResearchUs",
     "quickActionsVisible",
     "darkMode",
@@ -548,6 +560,21 @@ function validateProfilePayload(
       if (!resolved) return { ok: false, detail: "Unsupported titleModel" };
       update.fast_model = resolved;
     }
+  }
+
+  if ("lastSelectedChatModel" in raw) {
+    if (raw.lastSelectedChatModel === null || raw.lastSelectedChatModel === "") update.last_selected_chat_model = null;
+    else if (typeof raw.lastSelectedChatModel !== "string") return { ok: false, detail: "lastSelectedChatModel must be a string or null" };
+    else {
+      const selected = resolveModel(raw.lastSelectedChatModel, "");
+      if (!selected) return { ok: false, detail: "Unsupported lastSelectedChatModel" };
+      update.last_selected_chat_model = selected;
+    }
+  }
+  if ("lastSelectedReasoningLevel" in raw) {
+    const selected = normalizeReasoningLevel(raw.lastSelectedReasoningLevel);
+    if (!selected) return { ok: false, detail: `lastSelectedReasoningLevel must be one of ${REASONING_LEVELS.join(", ")}` };
+    update.last_selected_reasoning_level = selected;
   }
 
   if ("legalResearchUs" in raw) {

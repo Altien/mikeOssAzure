@@ -336,6 +336,7 @@ export function useAssistantChat({
       }));
 
       const model = message.model;
+      const reasoning = message.reasoning;
 
       const displayedDoc = opts?.displayedDoc ?? null;
 
@@ -357,6 +358,7 @@ export function useAssistantChat({
             messages: apiMessages,
             chat_id: chatId,
             model,
+            reasoning,
             displayed_doc: displayedDoc
               ? {
                   filename: displayedDoc.filename,
@@ -372,6 +374,7 @@ export function useAssistantChat({
             messages: apiMessages,
             chat_id: chatId,
             model,
+            reasoning,
             ask_inputs_response: opts?.askInputsResponse,
             signal: controller.signal,
           }));
@@ -414,15 +417,6 @@ export function useAssistantChat({
               streamedChatId = data.chatId;
               setChatId(data.chatId);
               setCurrentChatId(data.chatId);
-              continue;
-            }
-
-            if (data.type === "model_used" && typeof data.model === "string") {
-              window.dispatchEvent(
-                new CustomEvent("mike:last-used-chat-model", {
-                  detail: data.model,
-                }),
-              );
               continue;
             }
 
