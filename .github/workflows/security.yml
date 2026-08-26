@@ -13,8 +13,8 @@ permissions:
   contents: read
 
 jobs:
-  # Blocking for BOTH workspaces: high/critical advisories fail the build
-  # unless their GHSA id is documented (with a reason) in
+  # Blocking for EVERY tree in the matrix below: high/critical advisories
+  # fail the build unless their GHSA id is documented (with a reason) in
   # scripts/audit-allowlist.json — see scripts/audit-gate.mjs. Auditing
   # straight from the lockfile needs no install, so this gate costs seconds.
   # Advisories with no non-breaking fix anywhere in the ecosystem get an
