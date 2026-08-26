@@ -134,11 +134,11 @@ describe("chat request validation", () => {
         });
         for (const level of [
             "none",
-            "minimal",
             "low",
             "medium",
             "high",
             "xhigh",
+            "max",
         ]) {
             expect(parseOptionalReasoning(level)).toEqual({
                 ok: true,
@@ -147,8 +147,11 @@ describe("chat request validation", () => {
         }
         expect(parseOptionalReasoning(true)).toEqual({
             ok: false,
-            detail:
-                "reasoning must be one of: none, minimal, low, medium, high, xhigh",
+            detail: "reasoning must be one of: none, low, medium, high, xhigh, max",
+        });
+        expect(parseOptionalReasoning("minimal")).toEqual({
+            ok: false,
+            detail: "reasoning must be one of: none, low, medium, high, xhigh, max",
         });
     });
 

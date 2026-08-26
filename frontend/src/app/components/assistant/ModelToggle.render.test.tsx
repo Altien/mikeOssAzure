@@ -30,7 +30,7 @@ function keys(configured: Partial<Record<keyof ApiKeyState, boolean>>) {
 }
 
 describe("ModelToggle responsive trigger", () => {
-    it("offers every AI SDK reasoning level through a discrete slider", async () => {
+    it("offers every supported reasoning level through a discrete slider", async () => {
         const user = userEvent.setup();
         const onReasoningChange = vi.fn();
         render(
@@ -48,16 +48,90 @@ describe("ModelToggle responsive trigger", () => {
             name: "Reasoning level",
         });
         expect(reasoning).toHaveAttribute("min", "0");
-        expect(reasoning).toHaveAttribute("max", "5");
-        expect(reasoning).toHaveValue("4");
+        expect(reasoning).toHaveAttribute("max", "4");
+        expect(reasoning).toHaveValue("3");
         expect(reasoning).toHaveAttribute("aria-valuetext", "High");
 
-        fireEvent.change(reasoning, { target: { value: "5" } });
+        fireEvent.change(reasoning, { target: { value: "4" } });
 
         expect(onReasoningChange).toHaveBeenLastCalledWith("xhigh");
         expect(
             screen.getByRole("slider", { name: "Reasoning level" }),
         ).toBeInTheDocument();
+    });
+
+    it("offers Max for GPT-5.6 without offering Minimal", async () => {
+        const onReasoningChange = vi.fn();
+        render(
+            <ModelToggle
+                value="gpt-5.6-terra"
+                onChange={vi.fn()}
+                apiKeys={keys({ openai: true })}
+                reasoningLevel="low"
+                onReasoningChange={onReasoningChange}
+            />,
+        );
+
+        await userEvent.click(
+            screen.getByRole("button", { name: "Choose model" }),
+        );
+        const reasoning = screen.getByRole("slider", {
+            name: "Reasoning level",
+        });
+        expect(reasoning).toHaveAttribute("max", "5");
+        expect(reasoning).toHaveValue("1");
+        expect(screen.queryByText("Minimal")).not.toBeInTheDocument();
+
+        fireEvent.change(reasoning, { target: { value: "5" } });
+        expect(onReasoningChange).toHaveBeenLastCalledWith("max");
+    });
+
+    it("uses the provider-supported GPT-5.5 levels", async () => {
+        const onReasoningChange = vi.fn();
+        render(
+            <ModelToggle
+                value="gpt-5.5"
+                onChange={vi.fn()}
+                apiKeys={keys({ openai: true })}
+                reasoningLevel="low"
+                onReasoningChange={onReasoningChange}
+            />,
+        );
+
+        await userEvent.click(
+            screen.getByRole("button", { name: "Choose model" }),
+        );
+        const reasoning = screen.getByRole("slider", {
+            name: "Reasoning level",
+        });
+        expect(reasoning).toHaveAttribute("max", "4");
+        expect(reasoning).toHaveValue("1");
+        expect(screen.queryByText("Minimal")).not.toBeInTheDocument();
+    });
+
+    it("reaches and changes reasoning with Radix keyboard navigation", async () => {
+        const user = userEvent.setup();
+        const onReasoningChange = vi.fn();
+        render(
+            <ModelToggle
+                value="gemini-3-flash-preview"
+                onChange={vi.fn()}
+                apiKeys={keys({ gemini: true })}
+                reasoningLevel="high"
+                onReasoningChange={onReasoningChange}
+            />,
+        );
+
+        await user.click(screen.getByRole("button", { name: "Choose model" }));
+        await user.keyboard("{End}");
+
+        const reasoning = screen.getByRole("slider", {
+            name: "Reasoning level",
+        });
+        expect(reasoning).toHaveFocus();
+
+        await user.keyboard("{ArrowRight}");
+        expect(onReasoningChange).toHaveBeenLastCalledWith("xhigh");
     });
 
     it("uses the Settings2 icon in a compact chat input", () => {
@@ -110,7 +184,6 @@ describe("ModelToggle responsive trigger", () => {
         expect(selectedRow).toHaveAttribute("data-selected", "true");
         expect(selectedRow?.className).not.toContain("shadow-[inset_");
     });
-
 });
 
 describe("ModelToggle availability states", () => {
@@ -132,10 +205,7 @@ describe("ModelToggle availability states", () => {
 
     it("fails open when key state is unknown after a failed load", () => {
         render(
-            <ModelToggle
-                value="gemini-3-flash-preview"
-                onChange={vi.fn()}
-            />,
+            <ModelToggle value="gemini-3-flash-preview" onChange={vi.fn()} />,
         );
 
         const trigger = screen.getByRole("button", { name: "Choose model" });

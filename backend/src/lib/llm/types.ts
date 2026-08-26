@@ -14,11 +14,11 @@ export type Provider =
 
 export const REASONING_LEVELS = [
     "none",
-    "minimal",
     "low",
     "medium",
     "high",
     "xhigh",
+    "max",
 ] as const;
 
 export type ReasoningLevel = (typeof REASONING_LEVELS)[number];

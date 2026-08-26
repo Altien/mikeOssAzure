@@ -111,7 +111,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       string | null
     >(null);
     const [profileLoaded, setProfileLoaded] = useState(false);
-    const [model, setModel] = useSelectedModel({
+    const [model, setModel, modelSettingsResolved] = useSelectedModel({
       sessionKey,
       chatModel,
       lastSelectedModel: lastSelectedModel ?? profileLastSelectedModel,
@@ -138,6 +138,16 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
     const uploadGenerationRef = useRef(0);
     const modelSelectionSaveRef = useRef<Promise<void>>(Promise.resolve());
     const reasoningManuallySelectedRef = useRef(false);
+    const resolvedReasoningLevel = reasoningManuallySelectedRef.current
+      ? reasoningLevel
+      : (chatReasoningLevel ??
+        lastSelectedReasoningLevel ??
+        profileLastSelectedReasoningLevel ??
+        "high");
+    const chatSettingsLoading =
+      chatModel === undefined ||
+      chatReasoningLevel === undefined ||
+      !modelSettingsResolved;
 
     const slashQuery = (() => {
       const trimmed = input.trim();
@@ -367,7 +377,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
           files: files.length > 0 ? files : undefined,
           workflow: selectedWorkflow ?? undefined,
           model,
-          reasoning: reasoningLevel,
+          reasoning: resolvedReasoningLevel,
         },
         {
           onAccepted: () => {
@@ -546,44 +556,47 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
                 </div>
               }
               rightSlot={
-                <ModelToggle
-                  value={model}
-                  onChange={(next) => {
-                    setModelError(null);
-                    setModel(next);
-                    modelSelectionSaveRef.current =
-                      modelSelectionSaveRef.current
-                        .catch(() => undefined)
-                        .then(() => onModelSelected(next));
-                  }}
-                  keyStatus={keyStatus}
-                  keyStatusLoading={keyStatusLoading}
-                  openRouterModels={openRouterModels}
-                  vercelModels={vercelModels}
-                  openCodeGoModels={openCodeGoModels}
-                  compact={compactControls}
-                  reasoningLevel={reasoningLevel}
-                  onReasoningChange={(next) => {
-                    reasoningManuallySelectedRef.current = true;
-                    setReasoningLevel(next);
-                    modelSelectionSaveRef.current =
-                      modelSelectionSaveRef.current
-                        .catch(() => undefined)
-                        .then(() => onReasoningSelected(next));
-                  }}
-                  onNoModelsClick={() => {
-                    const routerHasNoModels =
-                      (keyStatus?.openrouter && openRouterModels.length === 0) ||
-                      (keyStatus?.vercel && vercelModels.length === 0) ||
-                      (keyStatus?.["opencode-go"] &&
-                        openCodeGoModels.length === 0);
-                    setModelError(
-                      routerHasNoModels
-                        ? "Your router is connected, but it has no saved models. Add one in Bring Your Own Keys → Routers."
-                        : "Add an API key in Bring Your Own Keys before selecting a model.",
-                    );
-                  }}
-                />
+                chatSettingsLoading ? undefined : (
+                  <ModelToggle
+                    value={model}
+                    onChange={(next) => {
+                      setModelError(null);
+                      setModel(next);
+                      modelSelectionSaveRef.current =
+                        modelSelectionSaveRef.current
+                          .catch(() => undefined)
+                          .then(() => onModelSelected(next));
+                    }}
+                    keyStatus={keyStatus}
+                    keyStatusLoading={keyStatusLoading}
+                    openRouterModels={openRouterModels}
+                    vercelModels={vercelModels}
+                    openCodeGoModels={openCodeGoModels}
+                    compact={compactControls}
+                    reasoningLevel={resolvedReasoningLevel}
+                    onReasoningChange={(next) => {
+                      reasoningManuallySelectedRef.current = true;
+                      setReasoningLevel(next);
+                      modelSelectionSaveRef.current =
+                        modelSelectionSaveRef.current
+                          .catch(() => undefined)
+                          .then(() => onReasoningSelected(next));
+                    }}
+                    onNoModelsClick={() => {
+                      const routerHasNoModels =
+                        (keyStatus?.openrouter &&
+                          openRouterModels.length === 0) ||
+                        (keyStatus?.vercel && vercelModels.length === 0) ||
+                        (keyStatus?.["opencode-go"] &&
+                          openCodeGoModels.length === 0);
+                      setModelError(
+                        routerHasNoModels
+                          ? "Your router is connected, but it has no saved models. Add one in Bring Your Own Keys → Routers."
+                          : "Add an API key in Bring Your Own Keys before selecting a model.",
+                      );
+                    }}
+                  />
+                )
               }
             />
           </div>

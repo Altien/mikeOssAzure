@@ -160,6 +160,30 @@ async function waitReady() {
     );
 }
 
+function TabularChatSettings() {
+    const { persistChatModelSelection, persistChatReasoningSelection } =
+        useUserProfile();
+    const selectionKey = "tabular-review-chat:r1:c1";
+    return (
+        <>
+            <button
+                onClick={() =>
+                    void persistChatModelSelection("gpt-5.6-luna", selectionKey)
+                }
+            >
+                Select tabular model
+            </button>
+            <button
+                onClick={() =>
+                    void persistChatReasoningSelection("low", selectionKey)
+                }
+            >
+                Select tabular reasoning
+            </button>
+        </>
+    );
+}
+
 beforeEach(() => {
     mockUseAuth.mockReset();
     delete document.body.dataset.result;

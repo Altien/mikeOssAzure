@@ -169,6 +169,32 @@ describe("ChatInput model selection vs. a degraded profile", () => {
         );
     });
 
+    it("passes the tabular chat selection key through on toggle changes", async () => {
+        mockProfile(false);
+        const tabularChatKey = "tabular-review-chat:review-1:chat-1";
+        render(
+            <ChatInput
+                chatKey={tabularChatKey}
+                chatModel="gpt-5.6-luna"
+                chatReasoningLevel="high"
+                onSubmit={vi.fn()}
+                onCancel={vi.fn()}
+                isLoading={false}
+            />,
+        );
+
+        fireEvent.click(
+            screen.getByRole("button", { name: "Select test model" }),
+        );
+
+        await waitFor(() =>
+            expect(persistChatModelSelection).toHaveBeenCalledWith(
+                "gpt-5.6-sol",
+                tabularChatKey,
+            ),
+        );
+    });
+
     it("hides the model toggle until existing-chat settings load", () => {
         mockProfile(false);
         const { rerender } = render(

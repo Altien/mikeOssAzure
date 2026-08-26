@@ -69,10 +69,7 @@ import { PageHeader } from "../shared/PageHeader";
 import { TableToolbar } from "../shared/TableToolbar";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 import { LIQUID_GLASS_FLOAT_CLASS } from "@/shared/ui/LiquidGlassUI";
-import {
-    ModelToggle,
-    type NoModelsReason,
-} from "../assistant/ModelToggle";
+import { ModelToggle, type NoModelsReason } from "../assistant/ModelToggle";
 
 interface Props {
     reviewId: string;
@@ -112,14 +109,15 @@ export function TRView({ reviewId, projectId }: Props) {
     const { user } = useAuth();
     const [expandedCell, setExpandedCell] = useState<TabularCell | null>(null);
     const [expandedCellCitation, setExpandedCellCitation] = useState<
-        {
-            quote: string;
-            page?: number;
-            sheet?: string;
-            cell?: string;
-            documentId?: string;
-            citationRef: number;
-        } | undefined
+        | {
+              quote: string;
+              page?: number;
+              sheet?: string;
+              cell?: string;
+              documentId?: string;
+              citationRef: number;
+          }
+        | undefined
     >(undefined);
     const [expandedDocumentId, setExpandedDocumentId] = useState<
         string | undefined
@@ -200,13 +198,15 @@ export function TRView({ reviewId, projectId }: Props) {
 
     useEffect(() => {
         const fetches: Promise<unknown>[] = [
-            getTabularReview(reviewId).then(({ review, cells, rows, documents }) => {
-                setReview(review);
-                setCells(cells);
-                setRows(rows);
-                setDocuments(documents);
-                setColumns(review.columns_config || []);
-            }),
+            getTabularReview(reviewId).then(
+                ({ review, cells, rows, documents }) => {
+                    setReview(review);
+                    setCells(cells);
+                    setRows(rows);
+                    setDocuments(documents);
+                    setColumns(review.columns_config || []);
+                },
+            ),
         ];
         if (projectId) {
             fetches.push(
@@ -669,10 +669,7 @@ export function TRView({ reviewId, projectId }: Props) {
         setTimeout(() => setHighlightedCell(null), 3000);
     }
 
-    function handleDocumentOpen(
-        row: TabularReviewRow,
-        document: Document,
-    ) {
+    function handleDocumentOpen(row: TabularReviewRow, document: Document) {
         const firstColumn = [...columns].sort(
             (left, right) => left.index - right.index,
         )[0];
@@ -708,9 +705,7 @@ export function TRView({ reviewId, projectId }: Props) {
             current.filter((row) => !rowIdsToDelete.includes(row.id)),
         );
         setCells((current) =>
-            current.filter(
-                (cell) => !rowIdsToDelete.includes(cell.row_id),
-            ),
+            current.filter((cell) => !rowIdsToDelete.includes(cell.row_id)),
         );
         setSelectedRowIds([]);
         setActionsOpen(false);
@@ -1035,9 +1030,7 @@ export function TRView({ reviewId, projectId }: Props) {
                                             openRouterModels={
                                                 profile?.openRouterModels
                                             }
-                                            vercelModels={
-                                                profile?.vercelModels
-                                            }
+                                            vercelModels={profile?.vercelModels}
                                             openCodeGoModels={
                                                 profile?.openCodeGoModels
                                             }
@@ -1155,7 +1148,9 @@ export function TRView({ reviewId, projectId }: Props) {
                                                     <ChevronDown className="h-3.5 w-3.5" />
                                                 </TabPillButton>
                                                 {actionsOpen && (
-                                                    <div className={`absolute right-0 top-full z-50 mt-1 w-36 overflow-hidden rounded-lg ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-2xl`}>
+                                                    <div
+                                                        className={`absolute right-0 top-full z-50 mt-1 w-36 overflow-hidden rounded-lg ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-2xl`}
+                                                    >
                                                         <button
                                                             onClick={
                                                                 handleClearResults
@@ -1181,9 +1176,7 @@ export function TRView({ reviewId, projectId }: Props) {
                                             {/* Mobile (toolbar dropdown): flattened entries */}
                                             <TabPillButton
                                                 onClick={handleClearResults}
-                                                disabled={
-                                                    cellMutationsBlocked
-                                                }
+                                                disabled={cellMutationsBlocked}
                                                 className="md:hidden"
                                             >
                                                 Clear results
@@ -1291,10 +1284,6 @@ export function TRView({ reviewId, projectId }: Props) {
                     {chatOpen && (
                         <TRChatPanel
                             reviewId={reviewId}
-                            model={tabularModel}
-                            onModelChange={(model) =>
-                                void handleReviewModelChange(model)
-                            }
                             reviewTitle={review?.title ?? null}
                             projectName={project?.name ?? null}
                             onCitationClick={handleTabularCitationClick}
@@ -1410,9 +1399,9 @@ export function TRView({ reviewId, projectId }: Props) {
                     ]}
                     projectId={project.id}
                     projectDocumentsOnly
-                    disabledDocumentIds={new Set(
-                        documents.map((document) => document.id),
-                    )}
+                    disabledDocumentIds={
+                        new Set(documents.map((document) => document.id))
+                    }
                 />
             ) : (
                 <AddDocumentsModal

@@ -116,6 +116,13 @@ describe("useSelectedReasoning", () => {
         const { result } = renderHook(() => useSelectedReasoning({}));
         expect(result.current[0]).toBe("high");
     });
+
+    it("uses the profile reasoning level on surfaces without chat settings", () => {
+        const { result } = renderHook(() =>
+            useSelectedReasoning({ lastSelectedReasoningLevel: "low" }),
+        );
+        expect(result.current[0]).toBe("low");
+    });
 });
 
 describe("canonicalModelId", () => {

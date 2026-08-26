@@ -44,8 +44,11 @@ function usableStoredModel(
 /** Resolve the saved chat model first, then the profile's shared last-selected. */
 export function useSelectedModel(
   sources: SelectedModelSources,
-): [string, (model: string) => void] {
+): [string, (model: string) => void, boolean] {
   const [model, setModelState] = useState("");
+  const [settingsResolved, setSettingsResolved] = useState(
+    sources.chatModel !== undefined,
+  );
   const manualSelection = useRef(false);
   const previousSessionKey = useRef(sources.sessionKey);
   const openRouterModels = sources.routerSelections?.openRouterModels;
@@ -58,11 +61,19 @@ export function useSelectedModel(
       manualSelection.current = false;
     }
     if (manualSelection.current) return;
+    if (sources.chatModel === undefined) {
+      // Existing chat settings have not loaded yet. Do not flash the shared
+      // profile fallback before the chat's own model arrives.
+      setModelState("");
+      setSettingsResolved(false);
+      return;
+    }
     const next =
       usableStoredModel(sources.chatModel, sources) ??
       usableStoredModel(sources.lastSelectedModel, sources) ??
       "";
     setModelState(next);
+    setSettingsResolved(true);
   }, [
     sources.sessionKey,
     sources.chatModel,
@@ -77,6 +88,7 @@ export function useSelectedModel(
     const next = canonicalModelId(raw);
     manualSelection.current = true;
     setModelState(isAllowedModelId(next) ? next : "");
+    setSettingsResolved(true);
   }, []);
-  return [model, setModel];
+  return [model, setModel, settingsResolved];
 }
