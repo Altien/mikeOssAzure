@@ -25,10 +25,14 @@ import {
     updateUserProfile,
     updateChatModel,
     updateChatReasoningLevel,
+    updateTabularChatModel,
+    updateTabularChatReasoningLevel,
     updateLastSelectedChatSettings,
+    parseTabularChatSelectionKey,
 } from "@/app/lib/mikeApi";
 import type { Message } from "@/app/components/shared/types";
 import { applyDarkMode } from "@/app/lib/theme";
+import { publishTabularChatSettingsUpdate } from "@/app/lib/tabularChatSettingsEvents";
 
 interface UserProfile {
     displayName: string | null;
@@ -73,9 +77,7 @@ interface UserProfileContextType {
     apiKeysDegraded: boolean;
     updateDisplayName: (name: string) => Promise<boolean>;
     updateOrganisation: (organisation: string) => Promise<boolean>;
-    completeOnboarding: (
-        details?: PersonalisationDetails,
-    ) => Promise<boolean>;
+    completeOnboarding: (details?: PersonalisationDetails) => Promise<boolean>;
     updatePersonalisation: (
         details: PersonalisationDetails,
     ) => Promise<boolean>;
@@ -351,7 +353,21 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             if (!user) return false;
             try {
                 if (chatId) {
-                    await updateChatModel(chatId, model);
+                    const tabularChat = parseTabularChatSelectionKey(chatId);
+                    if (tabularChat) {
+                        await updateTabularChatModel(
+                            tabularChat.reviewId,
+                            tabularChat.chatId,
+                            model,
+                        );
+                        publishTabularChatSettingsUpdate({
+                            reviewId: tabularChat.reviewId,
+                            chatId: tabularChat.chatId,
+                            model,
+                        });
+                    } else {
+                        await updateChatModel(chatId, model);
+                    }
                 } else {
                     await updateLastSelectedChatSettings({
                         lastSelectedChatModel: model,
@@ -378,7 +394,21 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             if (!user) return false;
             try {
                 if (chatId) {
-                    await updateChatReasoningLevel(chatId, reasoningLevel);
+                    const tabularChat = parseTabularChatSelectionKey(chatId);
+                    if (tabularChat) {
+                        await updateTabularChatReasoningLevel(
+                            tabularChat.reviewId,
+                            tabularChat.chatId,
+                            reasoningLevel,
+                        );
+                        publishTabularChatSettingsUpdate({
+                            reviewId: tabularChat.reviewId,
+                            chatId: tabularChat.chatId,
+                            reasoningLevel,
+                        });
+                    } else {
+                        await updateChatReasoningLevel(chatId, reasoningLevel);
+                    }
                 } else {
                     await updateLastSelectedChatSettings({
                         lastSelectedReasoningLevel: reasoningLevel,
@@ -510,9 +540,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 const updated = await updateUserProfile({ darkMode: enabled });
                 const normalized = toProfile(updated);
                 setProfile((prev) =>
-                    prev
-                        ? { ...prev, ...normalized, darkMode: enabled }
-                        : null,
+                    prev ? { ...prev, ...normalized, darkMode: enabled } : null,
                 );
             } catch (error) {
                 applyDarkMode(previous);

@@ -3,6 +3,7 @@ import {
     GEMINI_LOW_MODELS,
     OPENAI_LOW_MODELS,
     providerForModel,
+    normalizeReasoningLevelForModel,
     resolveModel,
     type UserApiKeys,
     REASONING_LEVELS,
@@ -27,6 +28,9 @@ export const DEFAULT_REASONING_LEVEL: ReasoningLevel = "high";
 export function normalizeReasoningLevel(
     value: unknown,
 ): ReasoningLevel | null {
+    // `minimal` was previously persisted; treat it as Low while migrations
+    // and older clients converge on the current reasoning-level union.
+    if (value === "minimal") return "low";
     return typeof value === "string" &&
         (REASONING_LEVELS as readonly string[]).includes(value)
         ? (value as ReasoningLevel)
@@ -35,14 +39,19 @@ export function normalizeReasoningLevel(
 
 /** Resolve request → chat → profile, defaulting a never-selected user to High. */
 export function resolveEffectiveReasoningLevel(args: {
+    model: string;
     requested?: unknown;
     chatReasoningLevel?: unknown;
     lastSelectedReasoningLevel?: unknown;
 }): ReasoningLevel {
-    return (
+    const selected =
         normalizeReasoningLevel(args.requested) ??
         normalizeReasoningLevel(args.chatReasoningLevel) ??
         normalizeReasoningLevel(args.lastSelectedReasoningLevel) ??
+        DEFAULT_REASONING_LEVEL;
+
+    return (
+        normalizeReasoningLevelForModel(args.model, selected) ??
         DEFAULT_REASONING_LEVEL
     );
 }

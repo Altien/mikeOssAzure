@@ -50,7 +50,8 @@ export const wordChatRouter = Router();
 type Db = ReturnType<typeof createServerSupabase>;
 type WordChatStorageMode = "cloud" | "local";
 type LookupResult<T> =
-  { ok: true; value: T | null } | { ok: false; detail: string };
+  | { ok: true; value: T | null }
+  | { ok: false; detail: string };
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -78,7 +79,10 @@ function parseDocumentName(
   }
   const documentName = value.trim();
   if (documentName.length > 255) {
-    return { ok: false, detail: "document_name must be at most 255 characters" };
+    return {
+      ok: false,
+      detail: "document_name must be at most 255 characters",
+    };
   }
   return { ok: true, value: documentName };
 }
@@ -207,7 +211,10 @@ function parseBlockIndex(
   value: string,
 ): { ok: true; value: number } | { ok: false; detail: string } {
   if (!/^(0|[1-9]\d*)$/.test(value)) {
-    return { ok: false, detail: "blockIndex must be a non-negative integer" };
+    return {
+      ok: false,
+      detail: "blockIndex must be a non-negative integer",
+    };
   }
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed > 10_000) {
@@ -239,7 +246,10 @@ function parseProposedWordEdit(value: unknown):
     return { ok: false, detail: "original_text is required" };
   }
   if (original.length > 200) {
-    return { ok: false, detail: "original_text must be at most 200 characters" };
+    return {
+      ok: false,
+      detail: "original_text must be at most 200 characters",
+    };
   }
   const replacement =
     typeof body.replacement_text === "string" ? body.replacement_text : "";
@@ -313,7 +323,9 @@ wordChatRouter.get("/", requireAuth, async (req, res) => {
 
   let query = db
     .from("word_chats")
-    .select("id, user_id, title, model, reasoning_level, created_at, updated_at")
+    .select(
+      "id, user_id, title, model, reasoning_level, created_at, updated_at",
+    )
     .eq("word_document_id", wordDocumentRowId)
     .eq("user_id", userId)
     .order("updated_at", { ascending: false });
@@ -361,10 +373,7 @@ wordChatRouter.get("/:chatId", requireAuth, async (req, res) => {
     db,
   );
   if (!chatLookup.ok) {
-    console.error(
-      "[word-chat] failed to load chat",
-      chatLookup.detail,
-    );
+    console.error("[word-chat] failed to load chat", chatLookup.detail);
     return void res.status(500).json({ detail: "Failed to load Word chat" });
   }
   const chat = chatLookup.value;
@@ -393,10 +402,7 @@ wordChatRouter.get("/:chatId", requireAuth, async (req, res) => {
       .in("word_chat_message_id", assistantMessageIds)
       .order("block_index", { ascending: true });
     if (editsError) {
-      console.error(
-        "[word-chat] failed to load document edits",
-        editsError,
-      );
+      console.error("[word-chat] failed to load document edits", editsError);
       return void res.status(500).json({ detail: "Failed to load Word chat" });
     }
     for (const edit of (edits ?? []) as Record<string, unknown>[]) {
@@ -459,7 +465,10 @@ wordChatRouter.patch("/:chatId/model", requireAuth, async (req, res) => {
     db,
   );
   if (!chatLookup.ok) {
-    console.error("[word-chat] failed to load model-selection chat", chatLookup.detail);
+    console.error(
+      "[word-chat] failed to load model-selection chat",
+      chatLookup.detail,
+    );
     return void res.status(500).json({ detail: "Failed to save chat model" });
   }
   if (!chatLookup.value) {
@@ -484,7 +493,10 @@ wordChatRouter.patch("/:chatId/model", requireAuth, async (req, res) => {
 
   const { error } = await db
     .from("word_chats")
-    .update({ model: resolution.model, updated_at: new Date().toISOString() })
+    .update({
+      model: resolution.model,
+      updated_at: new Date().toISOString(),
+    })
     .eq("id", req.params.chatId)
     .eq("user_id", userId);
   if (error) {
@@ -497,7 +509,10 @@ wordChatRouter.patch("/:chatId/model", requireAuth, async (req, res) => {
     db,
   );
   if (profileError) {
-    console.error("[word-chat] failed to save last-selected model", profileError);
+    console.error(
+      "[word-chat] failed to save last-selected model",
+      profileError,
+    );
     return void res.status(500).json({ detail: "Failed to save chat model" });
   }
   res.json({ id: req.params.chatId, model: resolution.model });
@@ -511,7 +526,11 @@ wordChatRouter.patch("/:chatId/reasoning", requireAuth, async (req, res) => {
     return void res.status(400).json({ detail: parsedDocumentId.detail });
   }
   const parsedReasoning = parseOptionalReasoning(req.body?.reasoningLevel);
-  if (!isUuid(req.params.chatId) || !parsedReasoning.ok || !parsedReasoning.value) {
+  if (
+    !isUuid(req.params.chatId) ||
+    !parsedReasoning.ok ||
+    !parsedReasoning.value
+  ) {
     return void res.status(400).json({
       detail: parsedReasoning.ok
         ? "reasoningLevel is required"
@@ -544,7 +563,8 @@ wordChatRouter.patch("/:chatId/reasoning", requireAuth, async (req, res) => {
     })
     .eq("id", req.params.chatId)
     .eq("user_id", userId);
-  if (error) return void res.status(500).json({ detail: "Failed to save reasoning" });
+  if (error)
+    return void res.status(500).json({ detail: "Failed to save reasoning" });
   const profileError = await persistLastSelectedReasoningLevel(
     userId,
     parsedReasoning.value,
@@ -615,10 +635,7 @@ wordChatRouter.put(
       )
       .select("id");
     if (insertError) {
-      console.error(
-        "[word-chat] failed to save edit",
-        insertError,
-      );
+      console.error("[word-chat] failed to save edit", insertError);
       return void res.status(500).json({ detail: "Failed to save Word edit" });
     }
     // The first sealed payload is canonical. A retry returns that row without
@@ -770,7 +787,9 @@ wordChatRouter.post("/tool-result", requireAuth, (req, res) => {
     body.result,
   );
   if (!delivered) {
-    return void res.status(404).json({ detail: "Unknown or expired tool call" });
+    return void res
+      .status(404)
+      .json({ detail: "Unknown or expired tool call" });
   }
   res.status(204).end();
 });
@@ -863,10 +882,7 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
       db,
     );
     if (!existingLookup.ok) {
-      console.error(
-        "[word-chat] failed to resume chat",
-        existingLookup.detail,
-      );
+      console.error("[word-chat] failed to resume chat", existingLookup.detail);
       return void res
         .status(500)
         .json({ detail: "Failed to resume Word chat" });
@@ -900,6 +916,7 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
   }
   const selectedModel = modelResolution.model;
   const selectedReasoningLevel = resolveEffectiveReasoningLevel({
+    model: selectedModel,
     requested: parsedReasoning.value,
     chatReasoningLevel,
     lastSelectedReasoningLevel: modelSettings.last_selected_reasoning_level,
@@ -1082,10 +1099,7 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
       .eq("id", chatId)
       .eq("user_id", userId);
     if (error) {
-      console.error(
-        "[word-chat] failed to update chat activity",
-        error,
-      );
+      console.error("[word-chat] failed to update chat activity", error);
     }
   };
 
@@ -1182,11 +1196,7 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
     const errorFullText =
       error instanceof AssistantStreamError ? error.fullText : "";
     try {
-      const citations = extractCitations(
-        errorFullText,
-        docIndex,
-        docStore,
-      );
+      const citations = extractCitations(errorFullText, docIndex, docStore);
       const normalizedErrorEvents = await normalizeAssistantEvents(errorEvents);
       const saveError = await updateAssistantMessage(
         normalizedErrorEvents.length ? normalizedErrorEvents : null,

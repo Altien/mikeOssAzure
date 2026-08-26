@@ -89,7 +89,11 @@ describe("useSelectedModel", () => {
                     lastSelectedModel: "gpt-5.6-luna",
                     apiKeys: keys,
                 }),
-            { initialProps: { chatModel: undefined } },
+            {
+                initialProps: {
+                    chatModel: undefined as string | null | undefined,
+                },
+            },
         );
 
         expect(result.current[0]).toBe("");
@@ -113,6 +117,13 @@ describe("useSelectedReasoning", () => {
     it("defaults a new user to high", () => {
         const { result } = renderHook(() => useSelectedReasoning({}));
         expect(result.current[0]).toBe("high");
+    });
+
+    it("uses the profile reasoning level on surfaces without chat settings", () => {
+        const { result } = renderHook(() =>
+            useSelectedReasoning({ lastSelectedReasoningLevel: "low" }),
+        );
+        expect(result.current[0]).toBe("low");
     });
 });
 

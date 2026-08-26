@@ -24,6 +24,7 @@ import {
     TABULAR_TOOLS,
     type ChatMessage,
     type TabularCellStore,
+    parseOptionalModel,
     parseOptionalReasoning,
 } from "../lib/chat";
 import {
@@ -34,10 +35,16 @@ import {
     type Provider,
     type UserApiKeys,
 } from "../lib/llm";
-import { getUserModelSettings } from "../lib/userSettings";
+import {
+    getUserModelSettings,
+    persistLastSelectedChatModel,
+    persistLastSelectedReasoningLevel,
+} from "../lib/userSettings";
 import { resolveRequestedModel } from "../lib/routerModels";
 import {
     TABULAR_MODEL_REQUIRED_DETAIL,
+    resolveEffectiveChatModel,
+    resolveEffectiveReasoningLevel,
     titleModelForChat,
 } from "../lib/modelSelection";
 import { UserFacingError } from "../lib/userFacingError";
@@ -693,9 +700,7 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
     const db = createServerSupabase();
     const selectedModel = await validateSelectedModel(model, userId, db);
     if (!selectedModel.ok) {
-        return void res
-            .status(selectedModel.status)
-            .json(selectedModel.body);
+        return void res.status(selectedModel.status).json(selectedModel.body);
     }
     if (project_id) {
         const access = await checkProjectAccess(
@@ -814,8 +819,7 @@ tabularRouter.post("/prompt", requireAuth, async (req, res) => {
         if (!promptModel) {
             return void res.status(409).json({
                 code: "model_required",
-                detail:
-                    "Select a default tabular review model in Settings → Model Preferences before generating a column prompt.",
+                detail: "Select a default tabular review model in Settings → Model Preferences before generating a column prompt.",
             });
         }
         const raw = await completeText({
@@ -864,8 +868,7 @@ tabularRouter.get("/:reviewId", requireAuth, async (req, res) => {
         .from("tabular_cells")
         .select("*")
         .eq("review_id", reviewId);
-    if (cellsError)
-        return void sendInternalError(res, cellsError);
+    if (cellsError) return void sendInternalError(res, cellsError);
     const rows = await loadReviewRows(db, reviewId);
     const rowDocIds = rows.flatMap((row) => row.source_document_ids ?? []);
     const docIds = Array.isArray(review.document_ids)
@@ -1446,22 +1449,16 @@ tabularRouter.post(
                 .eq("row_id", row.id)
                 .eq("column_index", column_index)
                 .eq("generation_id", generationId);
-            console.error(
-                "[tabular/regenerate-cell] generation failed",
-                error,
-            );
+            console.error("[tabular/regenerate-cell] generation failed", error);
             if (!res.headersSent) {
                 res.status(500).json({ detail: "Generation failed" });
             }
         } finally {
             clearInterval(leaseHeartbeat);
-            const { error } = await db.rpc(
-                "finish_tabular_review_generation",
-                {
-                    target_review_id: reviewId,
-                    target_generation_id: generationId,
-                },
-            );
+            const { error } = await db.rpc("finish_tabular_review_generation", {
+                target_review_id: reviewId,
+                target_generation_id: generationId,
+            });
             if (error) {
                 console.error(
                     "[tabular/regenerate-cell] failed to release generation lease",
@@ -1505,15 +1502,9 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     if (columns.length === 0)
         return void res.status(400).json({ detail: "No columns configured" });
 
-    const selectedModel = await validateSelectedModel(
-        review.model,
-        userId,
-        db,
-    );
+    const selectedModel = await validateSelectedModel(review.model, userId, db);
     if (!selectedModel.ok) {
-        return void res
-            .status(selectedModel.status)
-            .json(selectedModel.body);
+        return void res.status(selectedModel.status).json(selectedModel.body);
     }
     const tabular_model = selectedModel.model;
     const api_keys = selectedModel.apiKeys;
@@ -1617,12 +1608,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
             ...new Set(rows.flatMap((row) => row.source_document_ids ?? [])),
         ];
         const allowedSourceIds = new Set(
-            await filterAccessibleDocumentIds(
-                sourceIds,
-                userId,
-                userEmail,
-                db,
-            ),
+            await filterAccessibleDocumentIds(sourceIds, userId, userEmail, db),
         );
         rows = rows.filter((row) =>
             (row.source_document_ids ?? []).every((id) =>
@@ -1793,13 +1779,10 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
         streamFinished = true;
         if (leaseHeartbeat) clearInterval(leaseHeartbeat);
         try {
-            const { error } = await db.rpc(
-                "finish_tabular_review_generation",
-                {
-                    target_review_id: reviewId,
-                    target_generation_id: generationId,
-                },
-            );
+            const { error } = await db.rpc("finish_tabular_review_generation", {
+                target_review_id: reviewId,
+                target_generation_id: generationId,
+            });
             if (error) throw error;
         } catch (error) {
             console.error(
@@ -1834,7 +1817,9 @@ tabularRouter.get("/:reviewId/chats", requireAuth, async (req, res) => {
     // the requester's. Per-chat access is gated above by review access.
     const { data: chats } = await db
         .from("tabular_review_chats")
-        .select("id, title, created_at, updated_at, user_id")
+        .select(
+            "id, title, model, reasoning_level, created_at, updated_at, user_id",
+        )
         .eq("review_id", reviewId)
         .order("updated_at", { ascending: false });
 
@@ -1861,26 +1846,124 @@ tabularRouter.delete(
     },
 );
 
-// PATCH /tabular-review/:reviewId/chats/:chatId — rename a chat
+// PATCH /tabular-review/:reviewId/chats/:chatId — update chat settings
 tabularRouter.patch(
     "/:reviewId/chats/:chatId",
     requireAuth,
     async (req, res) => {
         const userId = res.locals.userId as string;
-        const { chatId } = req.params;
-        const title =
-            typeof req.body?.title === "string" ? req.body.title.trim() : "";
-        if (!title)
-            return void res.status(400).json({ detail: "Title is required" });
+        const { reviewId, chatId } = req.params;
+        const body =
+            req.body && typeof req.body === "object" && !Array.isArray(req.body)
+                ? (req.body as Record<string, unknown>)
+                : {};
+        const invalidField = Object.keys(body).find(
+            (field) =>
+                field !== "title" &&
+                field !== "model" &&
+                field !== "reasoningLevel",
+        );
+        if (invalidField) {
+            return void res.status(400).json({
+                detail: `Unsupported chat field: ${invalidField}`,
+            });
+        }
+        const hasTitle = Object.hasOwn(body, "title");
+        const hasModel = Object.hasOwn(body, "model");
+        const hasReasoning = Object.hasOwn(body, "reasoningLevel");
+        if (!hasTitle && !hasModel && !hasReasoning) {
+            return void res.status(400).json({
+                detail: "title, model, or reasoningLevel is required",
+            });
+        }
+
+        const title = typeof body.title === "string" ? body.title.trim() : "";
+        if (hasTitle && !title) {
+            return void res.status(400).json({ detail: "title is required" });
+        }
+        const parsedModel = parseOptionalModel(body.model);
+        if (hasModel && !parsedModel.ok) {
+            return void res.status(400).json({ detail: parsedModel.detail });
+        }
+        const parsedReasoning = parseOptionalReasoning(body.reasoningLevel);
+        if (hasReasoning && !parsedReasoning.ok) {
+            return void res
+                .status(400)
+                .json({ detail: parsedReasoning.detail });
+        }
+
         const db = createServerSupabase();
-        // Owner-only rename — mirrors the delete rule above.
-        const { error } = await db
+        const { data: chat, error: chatError } = await db
             .from("tabular_review_chats")
-            .update({ title: title.slice(0, 200) })
+            .select("id, model")
             .eq("id", chatId)
-            .eq("user_id", userId);
-        if (error) return void sendInternalError(res, error);
-        res.status(204).send();
+            .eq("review_id", reviewId)
+            .eq("user_id", userId)
+            .single();
+        if (chatError || !chat) {
+            return void res.status(404).json({ detail: "Chat not found" });
+        }
+
+        let selectedModel: string | undefined;
+        if (hasModel) {
+            const settings = await getUserModelSettings(userId, db);
+            const resolution = await resolveEffectiveChatModel({
+                requested: parsedModel.ok ? parsedModel.value : undefined,
+                chatModel: chat.model,
+                lastSelectedModel: settings.last_selected_chat_model,
+                apiKeys: settings.api_keys,
+                userId,
+                db,
+            });
+            if (!resolution.ok) {
+                return void res.status(resolution.status).json({
+                    code: resolution.code,
+                    detail: resolution.detail,
+                });
+            }
+            selectedModel = resolution.model;
+        }
+        const selectedReasoningLevel =
+            hasReasoning && parsedReasoning.ok
+                ? parsedReasoning.value
+                : undefined;
+        const update = {
+            ...(hasTitle ? { title: title.slice(0, 200) } : {}),
+            ...(selectedModel ? { model: selectedModel } : {}),
+            ...(selectedReasoningLevel
+                ? { reasoning_level: selectedReasoningLevel }
+                : {}),
+            updated_at: new Date().toISOString(),
+        };
+        const { data, error } = await db
+            .from("tabular_review_chats")
+            .update(update)
+            .eq("id", chatId)
+            .eq("review_id", reviewId)
+            .eq("user_id", userId)
+            .select("id, title, model, reasoning_level")
+            .single();
+        if (error || !data) {
+            return void res.status(404).json({ detail: "Chat not found" });
+        }
+
+        if (selectedModel) {
+            const profileError = await persistLastSelectedChatModel(
+                userId,
+                selectedModel,
+                db,
+            );
+            if (profileError) return void sendInternalError(res, profileError);
+        }
+        if (selectedReasoningLevel) {
+            const profileError = await persistLastSelectedReasoningLevel(
+                userId,
+                selectedReasoningLevel,
+                db,
+            );
+            if (profileError) return void sendInternalError(res, profileError);
+        }
+        res.json(data);
     },
 );
 
@@ -2032,15 +2115,21 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
         chat_id: existingChatId,
         review_title: clientReviewTitle,
         project_name: clientProjectName,
+        model: rawModel,
         reasoning: rawReasoning,
     } = req.body as {
         messages: ChatMessage[];
         chat_id?: string;
         review_title?: string;
         project_name?: string;
+        model?: unknown;
         reasoning?: unknown;
     };
 
+    const parsedModel = parseOptionalModel(rawModel);
+    if (!parsedModel.ok) {
+        return void res.status(400).json({ detail: parsedModel.detail });
+    }
     const parsedReasoning = parseOptionalReasoning(rawReasoning);
     if (!parsedReasoning.ok) {
         return void res.status(400).json({ detail: parsedReasoning.detail });
@@ -2097,22 +2186,11 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
         ),
     };
 
-    const selectedModel = await validateSelectedModel(
-        review.model,
-        userId,
-        db,
-    );
-    if (!selectedModel.ok) {
-        return void res
-            .status(selectedModel.status)
-            .json(selectedModel.body);
-    }
-    const tabular_model = selectedModel.model;
-    const api_keys = selectedModel.apiKeys;
-
     // Create or verify chat record
     let chatId = existingChatId ?? null;
     let chatTitle: string | null = null;
+    let chatModel: string | null = null;
+    let chatReasoningLevel: string | null = null;
     const isFirstExchange =
         messages.filter((m) => m.role === "user").length === 1;
 
@@ -2122,7 +2200,7 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
         // of their chats from a different review in this route.
         const { data: existing } = await db
             .from("tabular_review_chats")
-            .select("id, title, review_id, user_id")
+            .select("id, title, model, reasoning_level, review_id, user_id")
             .eq("id", chatId)
             .single();
         const canUse =
@@ -2130,15 +2208,71 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
             existing.review_id === reviewId &&
             existing.user_id === userId;
         if (!canUse || !existing) chatId = null;
-        else chatTitle = existing.title;
+        else {
+            chatTitle = existing.title;
+            chatModel = existing.model;
+            chatReasoningLevel = existing.reasoning_level;
+        }
+    }
+
+    const modelSettings = await getUserModelSettings(userId, db);
+    const modelResolution = await resolveEffectiveChatModel({
+        requested: parsedModel.value,
+        chatModel,
+        lastSelectedModel: modelSettings.last_selected_chat_model,
+        apiKeys: modelSettings.api_keys,
+        userId,
+        db,
+    });
+    if (!modelResolution.ok) {
+        return void res.status(modelResolution.status).json({
+            code: modelResolution.code,
+            detail: modelResolution.detail,
+        });
+    }
+    const selectedChatModel = modelResolution.model;
+    const selectedReasoningLevel = resolveEffectiveReasoningLevel({
+        model: selectedChatModel,
+        requested: parsedReasoning.value,
+        chatReasoningLevel,
+        lastSelectedReasoningLevel: modelSettings.last_selected_reasoning_level,
+    });
+    const api_keys = modelSettings.api_keys;
+
+    if (
+        chatId &&
+        (chatModel !== selectedChatModel ||
+            chatReasoningLevel !== selectedReasoningLevel)
+    ) {
+        const { error: updateError } = await db
+            .from("tabular_review_chats")
+            .update({
+                model: selectedChatModel,
+                reasoning_level: selectedReasoningLevel,
+                updated_at: new Date().toISOString(),
+            })
+            .eq("id", chatId)
+            .eq("review_id", reviewId)
+            .eq("user_id", userId);
+        if (updateError) return void sendInternalError(res, updateError);
     }
 
     if (!chatId) {
-        const { data: newChat } = await db
+        const { data: newChat, error: newChatError } = await db
             .from("tabular_review_chats")
-            .insert({ review_id: reviewId, user_id: userId })
+            .insert({
+                review_id: reviewId,
+                user_id: userId,
+                model: selectedChatModel,
+                reasoning_level: selectedReasoningLevel,
+            })
             .select("id, title")
             .single();
+        if (newChatError || !newChat) {
+            return void res
+                .status(500)
+                .json({ detail: "Failed to create chat" });
+        }
         chatId = newChat?.id ?? null;
         chatTitle = newChat?.title ?? null;
     }
@@ -2187,8 +2321,8 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
             tabularStore,
             buildCitations: (text) =>
                 extractTabularAnnotations(text, tabularStore),
-            model: tabular_model,
-            reasoning: parsedReasoning.value,
+            model: selectedChatModel,
+            reasoning: selectedReasoningLevel,
             apiKeys: api_keys,
             signal: streamAbort.signal,
         });
@@ -2211,9 +2345,8 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
 
         // Generate title on first exchange
         if (chatId && isFirstExchange && !chatTitle && lastUser.content) {
-            const { title_model } = await getUserModelSettings(userId, db);
             const title = await generateChatTitle(
-                titleModelForChat(tabular_model, title_model),
+                titleModelForChat(selectedChatModel, modelSettings.title_model),
                 lastUser.content,
                 {
                     reviewTitle: clientReviewTitle ?? review.title ?? null,
@@ -2379,10 +2512,7 @@ The "summary" field must contain only the extracted value with inline citations 
             apiKeys,
         });
     } catch (err) {
-        console.error(
-            "[queryTabularCell] completion failed",
-            err,
-        );
+        console.error("[queryTabularCell] completion failed", err);
         return null;
     }
     try {
@@ -2551,10 +2681,7 @@ Rules:
         if (abortSignal?.aborted) {
             abortError = err;
         } else {
-            console.error(
-                "[queryTabularAllColumns] stream failed",
-                err,
-            );
+            console.error("[queryTabularAllColumns] stream failed", err);
         }
     }
 

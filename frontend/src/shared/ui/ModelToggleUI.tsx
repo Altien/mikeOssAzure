@@ -34,23 +34,57 @@ export interface ModelToggleOption {
 
 export const REASONING_LEVELS = [
   "none",
-  "minimal",
   "low",
   "medium",
   "high",
   "xhigh",
+  "max",
 ] as const;
 
 export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
 
 const REASONING_LEVEL_LABELS: Record<ReasoningLevel, string> = {
   none: "None",
-  minimal: "Minimal",
   low: "Low",
   medium: "Medium",
   high: "High",
   xhigh: "XHigh",
+  max: "Max",
 };
+
+const STANDARD_REASONING_LEVELS: readonly ReasoningLevel[] =
+  REASONING_LEVELS.filter((level) => level !== "max");
+const GPT_56_REASONING_LEVELS: readonly ReasoningLevel[] = REASONING_LEVELS;
+
+/** Explicit AI SDK reasoning levels supported by the selected model family. */
+export function reasoningLevelsForModel(
+  modelId: string,
+): readonly ReasoningLevel[] {
+  const catalogId = modelId.replace(/^(?:openrouter|vercel)\//, "");
+  if (/(?:^|\/)gpt-5\.6(?:-|$)/.test(catalogId)) {
+    return GPT_56_REASONING_LEVELS;
+  }
+  return STANDARD_REASONING_LEVELS;
+}
+
+/** Move a stale saved level to the nearest level supported by the model. */
+export function nearestReasoningLevelForModel(
+  modelId: string,
+  level: ReasoningLevel,
+): ReasoningLevel {
+  const supported = reasoningLevelsForModel(modelId);
+  if (supported.includes(level)) return level;
+  const requestedIndex = REASONING_LEVELS.indexOf(level);
+  return supported.reduce((nearest, candidate) => {
+    const nearestDistance = Math.abs(
+      REASONING_LEVELS.indexOf(nearest) - requestedIndex,
+    );
+    const candidateDistance = Math.abs(
+      REASONING_LEVELS.indexOf(candidate) - requestedIndex,
+    );
+    return candidateDistance <= nearestDistance ? candidate : nearest;
+  }, supported[0] ?? "high");
+}
 
 export const MODEL_TOGGLE_GROUPS: readonly ModelToggleGroup[] = [
   "Anthropic",
@@ -88,6 +122,7 @@ export interface ModelToggleUIProps {
   onEmptyClick?: () => void;
   reasoningLevel?: ReasoningLevel;
   onReasoningChange?: (level: ReasoningLevel) => void;
+  reasoningLevels?: readonly ReasoningLevel[];
 }
 
 const itemClassName =
@@ -110,9 +145,10 @@ export function ModelToggleUI({
   onEmptyClick,
   reasoningLevel,
   onReasoningChange,
+  reasoningLevels = REASONING_LEVELS,
 }: ModelToggleUIProps) {
   const [open, setOpen] = React.useState(false);
-  const reasoningLabelId = React.useId();
+  const reasoningInputRef = React.useRef<HTMLInputElement>(null);
   const selected = models.find((model) => model.id === value);
   const [expandedGroup, setExpandedGroup] =
     React.useState<ModelToggleGroup | null>(null);
@@ -130,10 +166,10 @@ export function ModelToggleUI({
     selected?.label ??
     (models.length > 0 ? "Select model" : emptyLabel);
   const reasoningIndex = reasoningLevel
-    ? Math.max(0, REASONING_LEVELS.indexOf(reasoningLevel))
+    ? Math.max(0, reasoningLevels.indexOf(reasoningLevel))
     : 0;
   const reasoningProgress =
-    (reasoningIndex / (REASONING_LEVELS.length - 1)) * 100;
+    (reasoningIndex / Math.max(1, reasoningLevels.length - 1)) * 100;
 
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen);
@@ -241,10 +277,10 @@ export function ModelToggleUI({
                       (routeCounts.get(
                         `${model.group}\u0000${model.label.toLocaleLowerCase()}`,
                       ) ?? 0) > 1 && (
-                      <span className="text-[9px] font-medium text-gray-400">
-                        {model.source}
-                      </span>
-                    )}
+                        <span className="text-[9px] font-medium text-gray-400">
+                          {model.source}
+                        </span>
+                      )}
                     {model.id === value && (
                       <Check className="ml-1 h-3.5 w-3.5 text-gray-600" />
                     )}
@@ -256,54 +292,88 @@ export function ModelToggleUI({
         {reasoningLevel !== undefined && onReasoningChange && (
           <>
             <DropdownSeparator />
-            <div
-              role="group"
-              aria-labelledby={reasoningLabelId}
-              className="rounded-md px-2.5 py-2"
-              onPointerDown={(event) => event.stopPropagation()}
+            <DropdownItem
+              aria-label={`Reasoning level: ${REASONING_LEVEL_LABELS[reasoningLevel]}`}
+              onSelect={(event) => event.preventDefault()}
+              onFocus={(event) => {
+                if (event.target === event.currentTarget) {
+                  reasoningInputRef.current?.focus();
+                }
+              }}
+              className="block cursor-default rounded-md px-2.5 py-2 [&>*]:pointer-events-auto"
             >
-              <div className="mb-1.5 flex items-center gap-2 text-xs text-gray-700">
-                <span id={reasoningLabelId} className="font-medium">
-                  Reasoning
-                </span>
-                <span className="ml-auto text-[10px] text-gray-500">
-                  {REASONING_LEVEL_LABELS[reasoningLevel]}
-                </span>
-              </div>
-              <div className="relative h-4 w-full rounded-full bg-gray-200/80 transition-shadow duration-150 has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-blue-500/40 has-[input:focus-visible]:ring-offset-2">
-                <span aria-hidden="true" className="absolute inset-0">
-                  <span
-                    className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-blue-600/60 via-blue-600 to-blue-700 transition-[width] duration-150 ease-out"
-                    style={{
-                      width: `calc(${reasoningProgress}% + ${1 - reasoningProgress / 100}rem)`,
+              <div>
+                <div className="mb-1.5 flex items-center gap-2 text-xs text-gray-700">
+                  <span className="font-medium">Reasoning</span>
+                  <span className="ml-auto text-[10px] text-gray-500">
+                    {REASONING_LEVEL_LABELS[reasoningLevel]}
+                  </span>
+                </div>
+                <div className="relative h-4 w-full rounded-full bg-gray-200/80 transition-shadow duration-150 has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-blue-500/40 has-[input:focus-visible]:ring-offset-2">
+                  <span aria-hidden="true" className="absolute inset-0">
+                    <span
+                      className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-blue-600/60 via-blue-600 to-blue-700 transition-[width] duration-150 ease-out"
+                      style={{
+                        width: `calc(${reasoningProgress}% + ${1 - reasoningProgress / 100}rem)`,
+                      }}
+                    />
+                    <span
+                      className={`absolute top-1/2 h-3 w-3 rounded-full bg-white transition-[left,transform] duration-150 ease-out ${LIQUID_GLASS_FLOAT_CLASS}`}
+                      style={{
+                        left: `calc(${reasoningProgress}% + ${0.125 - reasoningProgress / 100}rem)`,
+                        transform: "translateY(-50%)",
+                      }}
+                    />
+                  </span>
+                  <input
+                    ref={reasoningInputRef}
+                    type="range"
+                    aria-label="Reasoning level"
+                    aria-valuetext={REASONING_LEVEL_LABELS[reasoningLevel]}
+                    min={0}
+                    max={reasoningLevels.length - 1}
+                    step={1}
+                    value={reasoningIndex}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onKeyDown={(event) => {
+                      const offsets: Partial<Record<string, number>> = {
+                        ArrowLeft: -1,
+                        ArrowDown: -1,
+                        ArrowRight: 1,
+                        ArrowUp: 1,
+                        PageDown: -1,
+                        PageUp: 1,
+                      };
+                      const offset = offsets[event.key];
+                      const nextIndex =
+                        event.key === "Home"
+                          ? 0
+                          : event.key === "End"
+                            ? reasoningLevels.length - 1
+                            : offset
+                              ? Math.min(
+                                  reasoningLevels.length - 1,
+                                  Math.max(0, reasoningIndex + offset),
+                                )
+                              : null;
+                      if (nextIndex === null) return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onReasoningChange(
+                        reasoningLevels[nextIndex] ?? reasoningLevel,
+                      );
                     }}
+                    onChange={(event) =>
+                      onReasoningChange(
+                        reasoningLevels[Number(event.currentTarget.value)] ??
+                          "high",
+                      )
+                    }
+                    className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
                   />
-                  <span
-                    className={`absolute top-1/2 h-3 w-3 rounded-full bg-white transition-[left,transform] duration-150 ease-out ${LIQUID_GLASS_FLOAT_CLASS}`}
-                    style={{
-                      left: `calc(${reasoningProgress}% + ${0.125 - reasoningProgress / 100}rem)`,
-                      transform: "translateY(-50%)",
-                    }}
-                  />
-                </span>
-                <input
-                  type="range"
-                  aria-label="Reasoning level"
-                  aria-valuetext={REASONING_LEVEL_LABELS[reasoningLevel]}
-                  min={0}
-                  max={REASONING_LEVELS.length - 1}
-                  step={1}
-                  value={reasoningIndex}
-                  onChange={(event) =>
-                    onReasoningChange(
-                      REASONING_LEVELS[Number(event.currentTarget.value)] ??
-                        "high",
-                    )
-                  }
-                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                />
+                </div>
               </div>
-            </div>
+            </DropdownItem>
           </>
         )}
       </DropdownContent>

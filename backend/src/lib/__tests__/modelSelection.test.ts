@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
     normalizeOptionalModelPreference,
     resolveEffectiveChatModel,
+    resolveEffectiveReasoningLevel,
     titleModelForChat,
 } from "../modelSelection";
 import type { createServerSupabase } from "../supabase";
@@ -17,9 +18,12 @@ describe("titleModelForChat", () => {
         ["claude-fable-5", "claude-haiku-4-5"],
         ["gemini-3.7-flash", "gemini-3.5-flash-lite"],
         ["gpt-5.6-sol", "gpt-5.6-luna"],
-    ])("uses the cheapest model from the %s provider", (chatModel, expected) => {
-        expect(titleModelForChat(chatModel)).toBe(expected);
-    });
+    ])(
+        "uses the cheapest model from the %s provider",
+        (chatModel, expected) => {
+            expect(titleModelForChat(chatModel)).toBe(expected);
+        },
+    );
 
     it.each([
         "openrouter/anthropic/claude-sonnet-4.5",
@@ -52,6 +56,29 @@ describe("normalizeOptionalModelPreference", () => {
                 routerModels,
             ),
         ).toBeNull();
+    });
+});
+
+describe("resolveEffectiveReasoningLevel", () => {
+    it("normalizes a stale level for the selected model before persistence", () => {
+        expect(
+            resolveEffectiveReasoningLevel({
+                model: "gpt-5.6-terra",
+                requested: "minimal",
+            }),
+        ).toBe("low");
+        expect(
+            resolveEffectiveReasoningLevel({
+                model: "gpt-5.5",
+                requested: "minimal",
+            }),
+        ).toBe("low");
+        expect(
+            resolveEffectiveReasoningLevel({
+                model: "gemini-3.7-flash",
+                requested: "max",
+            }),
+        ).toBe("xhigh");
     });
 });
 

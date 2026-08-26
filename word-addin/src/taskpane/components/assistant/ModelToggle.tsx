@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ModelToggleUI,
+  nearestReasoningLevelForModel,
+  reasoningLevelsForModel,
   type ReasoningLevel,
 } from "@mike/model-toggle-ui";
 import { getOllamaModels, type ApiKeyStatus } from "../../api/mikeApi";
@@ -82,6 +84,21 @@ export function ModelToggle({
     openCodeGoModels,
   ]);
   const selected = models.find((model) => model.id === value);
+  const supportedReasoningLevels = reasoningLevelsForModel(value);
+  const normalizedReasoningLevel = reasoningLevel
+    ? nearestReasoningLevelForModel(value, reasoningLevel)
+    : undefined;
+
+  useEffect(() => {
+    if (
+      reasoningLevel &&
+      normalizedReasoningLevel &&
+      normalizedReasoningLevel !== reasoningLevel &&
+      onReasoningChange
+    ) {
+      onReasoningChange(normalizedReasoningLevel);
+    }
+  }, [normalizedReasoningLevel, onReasoningChange, reasoningLevel]);
 
   return (
     <ModelToggleUI
@@ -99,8 +116,9 @@ export function ModelToggle({
       compact={compact}
       emptyLabel="No Models"
       onEmptyClick={onNoModelsClick}
-      reasoningLevel={reasoningLevel}
+      reasoningLevel={normalizedReasoningLevel}
       onReasoningChange={onReasoningChange}
+      reasoningLevels={supportedReasoningLevels}
     />
   );
 }

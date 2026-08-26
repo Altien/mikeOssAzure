@@ -150,10 +150,10 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     }
     const selectedModel = modelResolution.model;
     const selectedReasoningLevel = resolveEffectiveReasoningLevel({
+        model: selectedModel,
         requested: parsedReasoning.value,
         chatReasoningLevel,
-        lastSelectedReasoningLevel:
-            modelSettings.last_selected_reasoning_level,
+        lastSelectedReasoningLevel: modelSettings.last_selected_reasoning_level,
     });
 
     if (
@@ -222,18 +222,18 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         folder_path: folderPaths.get(doc_id),
     }));
     const documentsById = new Map(
-        Object.entries(docIndex).map(([slug, document]) => [
-            document.document_id,
-            { slug, filename: document.filename },
-        ] as const),
+        Object.entries(docIndex).map(
+            ([slug, document]) =>
+                [
+                    document.document_id,
+                    { slug, filename: document.filename },
+                ] as const,
+        ),
     );
     // Generate the nonce before adding request metadata or prior events so
     // every document filename is fenced wherever it enters the prompt.
     const nonce = generateSpotlightNonce();
-    const documentPromptRef = (
-        documentId: string,
-        requestFilename: string,
-    ) => {
+    const documentPromptRef = (documentId: string, requestFilename: string) => {
         const document = documentsById.get(documentId);
         return {
             slug: document?.slug,
@@ -404,10 +404,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
 
         if (!chatTitle && lastUser?.content) {
             const title = lastUser.content.slice(0, 120);
-            await db
-                .from("chats")
-                .update({ title })
-                .eq("id", chatId);
+            await db.from("chats").update({ title }).eq("id", chatId);
             chatTitle = title;
             if (shouldGenerateTitle && !streamAbort.signal.aborted) {
                 write(
@@ -474,9 +471,10 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         }
         console.error("[project-chat/stream] error:", err);
         const message = ASSISTANT_ERROR_MESSAGE;
-        const errorEvents = err instanceof AssistantStreamError
-            ? stripTransientAssistantEvents(err.events)
-            : [{ type: "error" as const, message }];
+        const errorEvents =
+            err instanceof AssistantStreamError
+                ? stripTransientAssistantEvents(err.events)
+                : [{ type: "error" as const, message }];
         const errorFullText =
             err instanceof AssistantStreamError ? err.fullText : "";
         try {
@@ -500,14 +498,18 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
                 );
             }
             if (saveError)
-                console.error("[project-chat/stream] failed to save error", saveError);
+                console.error(
+                    "[project-chat/stream] failed to save error",
+                    saveError,
+                );
         } catch (saveErr) {
-            console.error("[project-chat/stream] failed to save error", saveErr);
+            console.error(
+                "[project-chat/stream] failed to save error",
+                saveErr,
+            );
         }
         try {
-            write(
-                `data: ${JSON.stringify({ type: "error", message })}\n\n`,
-            );
+            write(`data: ${JSON.stringify({ type: "error", message })}\n\n`);
             write("data: [DONE]\n\n");
         } catch {
             /* ignore */

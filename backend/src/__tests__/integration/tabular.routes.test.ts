@@ -34,6 +34,7 @@ let supabaseState: {
     operations: string[];
     tables: Record<string, QueryResult>;
     inserts: { table: string; payload: unknown }[];
+    updates: { table: string; payload: unknown }[];
 };
 
 function resetSupabaseState() {
@@ -43,6 +44,7 @@ function resetSupabaseState() {
         operations: [],
         tables: {},
         inserts: [],
+        updates: [],
     };
 }
 resetSupabaseState();
@@ -68,7 +70,6 @@ function makeQuery(table: string) {
     const q: Record<string, unknown> = {};
     const chain = [
     "select",
-    "update",
     "delete",
     "upsert",
     "eq",
@@ -90,6 +91,10 @@ function makeQuery(table: string) {
     for (const m of chain) q[m] = vi.fn(() => q);
     q.insert = vi.fn((payload: unknown) => {
         supabaseState.inserts.push({ table, payload });
+        return q;
+    });
+    q.update = vi.fn((payload: unknown) => {
+        supabaseState.updates.push({ table, payload });
         return q;
     });
     q.single = vi.fn(() => Promise.resolve(resultForTable(table)));
@@ -149,6 +154,8 @@ vi.mock("../../lib/access", () => ({
 vi.mock("../../lib/userSettings", () => ({
     getUserModelSettings: (...args: unknown[]) => getUserModelSettings(...args),
     getUserApiKeys: vi.fn(async () => ({})),
+    persistLastSelectedChatModel: vi.fn(async () => null),
+    persistLastSelectedReasoningLevel: vi.fn(async () => null),
 }));
 
 // Version-path enrichment hits the DB in real life; no-op it so route
@@ -180,6 +187,8 @@ describe("tabular.routes", () => {
         getUserModelSettings.mockResolvedValue({
             title_model: "claude-haiku-4-5",
             tabular_model: "claude-sonnet-5",
+            last_selected_chat_model: "claude-sonnet-5",
+            last_selected_reasoning_level: "high",
             legal_research_us: false,
             api_keys: { claude: "sk-test" },
         });
@@ -1297,10 +1306,51 @@ describe("tabular.routes", () => {
             const res = await request(app)
                 .post("/tabular-review/r1/chat")
                 .set(...AUTH)
-                .send({ messages: [{ role: "user", content: "hello" }] });
+                .send({
+                    messages: [{ role: "user", content: "hello" }],
+                    model: "claude-sonnet-5",
+                });
 
             expect(res.status).toBe(422);
             expect(res.body.code).toBe("missing_api_key");
+        });
+    });
+
+    describe("PATCH /tabular-review/:reviewId/chats/:chatId", () => {
+        it("persists the chat model and reasoning independently", async () => {
+            supabaseState.tables.tabular_review_chats = {
+                data: {
+                    id: "chat-1",
+                    title: "Chat",
+                    model: "claude-sonnet-5",
+                    reasoning_level: "high",
+                    review_id: "r1",
+                    user_id: "u1",
+                },
+                error: null,
+            };
+            getUserModelSettings.mockResolvedValue({
+                title_model: "claude-haiku-4-5",
+                tabular_model: "claude-sonnet-5",
+                last_selected_chat_model: "claude-sonnet-5",
+                last_selected_reasoning_level: "high",
+                legal_research_us: false,
+                api_keys: { openai: "sk-test" },
+            });
+
+            const res = await request(app)
+                .patch("/tabular-review/r1/chats/chat-1")
+                .set(...AUTH)
+                .send({ model: "gpt-5.6-sol", reasoningLevel: "low" });
+
+            expect(res.status).toBe(200);
+            expect(supabaseState.updates).toContainEqual({
+                table: "tabular_review_chats",
+                payload: expect.objectContaining({
+                    model: "gpt-5.6-sol",
+                    reasoning_level: "low",
+                }),
+            });
         });
     });
 

@@ -46,7 +46,7 @@ create table if not exists public.user_profiles (
   title_model text,
   tabular_model text,
   last_selected_chat_model text,
-  last_selected_reasoning_level text check (last_selected_reasoning_level in ('none', 'minimal', 'low', 'medium', 'high', 'xhigh')),
+  last_selected_reasoning_level text check (last_selected_reasoning_level in ('none', 'low', 'medium', 'high', 'xhigh', 'max')),
   quote_model text,
   mfa_on_login boolean not null default false,
   legal_research_us boolean not null default true,
@@ -1268,7 +1268,7 @@ create table if not exists public.chats (
   user_id uuid not null references auth.users(id) on delete cascade,
   title text,
   model text,
-  reasoning_level text check (reasoning_level in ('none', 'minimal', 'low', 'medium', 'high', 'xhigh')),
+  reasoning_level text check (reasoning_level in ('none', 'low', 'medium', 'high', 'xhigh', 'max')),
   created_at timestamptz not null default now()
 );
 
@@ -1360,7 +1360,7 @@ create table if not exists public.word_chats (
   user_id uuid not null references auth.users(id) on delete cascade,
   title text,
   model text,
-  reasoning_level text check (reasoning_level in ('none', 'minimal', 'low', 'medium', 'high', 'xhigh')),
+  reasoning_level text check (reasoning_level in ('none', 'low', 'medium', 'high', 'xhigh', 'max')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -1968,6 +1968,8 @@ create table if not exists public.tabular_review_chats (
   review_id uuid not null references public.tabular_reviews(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
   title text,
+  model text,
+  reasoning_level text check (reasoning_level in ('none', 'low', 'medium', 'high', 'xhigh', 'max')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

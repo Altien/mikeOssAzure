@@ -348,9 +348,7 @@ chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
 
     let selectedModel: string | undefined;
     const selectedReasoningLevel =
-        hasReasoning && parsedReasoning.ok
-            ? parsedReasoning.value
-            : undefined;
+        hasReasoning && parsedReasoning.ok ? parsedReasoning.value : undefined;
     if (hasModel) {
         const settings = await getUserModelSettings(userId, db);
         const resolution = await resolveEffectiveChatModel({
@@ -564,10 +562,10 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     }
     const selectedModel = modelResolution.model;
     const selectedReasoningLevel = resolveEffectiveReasoningLevel({
+        model: selectedModel,
         requested: parsedReasoning.value,
         chatReasoningLevel,
-        lastSelectedReasoningLevel:
-            modelSettings.last_selected_reasoning_level,
+        lastSelectedReasoningLevel: modelSettings.last_selected_reasoning_level,
     });
 
     if (
@@ -854,10 +852,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
 
         if (!chatTitle && lastUser?.content) {
             const title = lastUser.content.slice(0, 120);
-            await db
-                .from("chats")
-                .update({ title })
-                .eq("id", chatId);
+            await db.from("chats").update({ title }).eq("id", chatId);
             chatTitle = title;
             if (shouldGenerateTitle && !stream.signal.aborted) {
                 write(

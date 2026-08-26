@@ -8,11 +8,11 @@ import type { RedlineEdit } from "./redline";
 export type WorkflowAttachment = { id: string; title: string };
 export type ReasoningLevel =
   | "none"
-  | "minimal"
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 export type EditDecision = "accept" | "reject";
 export type EditBusyAction =
   | "view"

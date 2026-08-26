@@ -7,6 +7,7 @@ import {
 import {
   isOpenCodeGoChatCompletionsModel,
   isOpenCodeGoMessagesModel,
+  normalizeReasoningLevelForModel,
   openCodeGoModelId,
   openRouterModelId,
   providerForModel,
@@ -14,10 +15,12 @@ import {
 } from "./models";
 import type {
   Provider,
+  ReasoningLevel,
   StreamChatParams,
   StreamChatResult,
   UserApiKeys,
 } from "./types";
+import { REASONING_LEVELS } from "./types";
 
 const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL?.trim().replace(/\/+$/, "") ||
@@ -281,12 +284,26 @@ async function createProviderAdapter(
 export async function streamWithProvider(
   params: StreamChatParams,
 ): Promise<StreamChatResult> {
+  const normalizedParams = {
+    ...params,
+    reasoning: normalizeReasoningLevelForModel(params.model, params.reasoning),
+  };
   try {
     return await streamAiSdk(
-      params,
+      normalizedParams,
       await createProviderAdapter(params.model, params.apiKeys),
     );
   } catch (error) {
+    const retryReasoning = fallbackReasoningLevelFromProviderError(
+      error,
+      normalizedParams.reasoning,
+    );
+    if (retryReasoning) {
+      return streamAiSdk(
+        { ...normalizedParams, reasoning: retryReasoning },
+        await createProviderAdapter(params.model, params.apiKeys),
+      );
+    }
     if (
       providerForModel(params.model) === "ollama" &&
       params.tools?.length &&
@@ -295,12 +312,46 @@ export async function streamWithProvider(
       )
     ) {
       return streamAiSdk(
-        { ...params, tools: undefined, runTools: undefined },
+        { ...normalizedParams, tools: undefined, runTools: undefined },
         await createProviderAdapter(params.model, params.apiKeys),
       );
     }
     throw error;
   }
+}
+
+/**
+ * Provider model capabilities can change ahead of the SDK's shared types.
+ * Retry request-validation failures at the nearest level advertised by the
+ * provider, before any stream content has been emitted.
+ */
+export function fallbackReasoningLevelFromProviderError(
+  error: unknown,
+  requested: ReasoningLevel | undefined,
+): ReasoningLevel | undefined {
+  if (!requested) return undefined;
+  const message = error instanceof Error ? error.message : String(error);
+  const supportedText = message.match(/Supported values are:\s*(.+)$/i)?.[1];
+  if (!supportedText) return undefined;
+
+  const supported = [...supportedText.matchAll(/'([^']+)'/g)]
+    .map((match) => match[1])
+    .filter(
+      (level): level is ReasoningLevel =>
+        !!level && (REASONING_LEVELS as readonly string[]).includes(level),
+    );
+  if (!supported.length || supported.includes(requested)) return undefined;
+
+  const requestedIndex = REASONING_LEVELS.indexOf(requested);
+  return supported.reduce((nearest, candidate) => {
+    const nearestDistance = Math.abs(
+      REASONING_LEVELS.indexOf(nearest) - requestedIndex,
+    );
+    const candidateDistance = Math.abs(
+      REASONING_LEVELS.indexOf(candidate) - requestedIndex,
+    );
+    return candidateDistance <= nearestDistance ? candidate : nearest;
+  });
 }
 
 export async function completeWithProvider(

@@ -320,13 +320,7 @@ export interface Message {
     files?: MessageFile[];
     workflow?: { id: string; title: string };
     model?: string;
-    reasoning?:
-        | "none"
-        | "minimal"
-        | "low"
-        | "medium"
-        | "high"
-        | "xhigh";
+    reasoning?: "none" | "low" | "medium" | "high" | "xhigh" | "max";
     citations?: Citation[];
     citationStatus?: "started" | "partial" | "final";
     events?: AssistantEvent[];
@@ -422,31 +416,31 @@ function legacyCaseSubdocumentId(clusterId: number, opinionId: number): string {
 }
 
 export function panelDocumentFromCitation(
-  citation: Citation,
-  includeQuotes = true,
+    citation: Citation,
+    includeQuotes = true,
 ): PanelDocument {
-  if (citation.document) {
-    if (!includeQuotes) return { ...citation.document, quotes: [] };
-    const citationQuotes =
-      citation.kind === "case"
-        ? citation.quotes
-        : getDocumentCitationQuotes(citation);
-    return {
-      ...citation.document,
-      quotes: citation.document.quotes.map((quote, index) => {
-        const verifiedQuote = citationQuotes[index];
-        return verifiedQuote
-          ? {
-              ...quote,
-              quote: verifiedQuote.quote,
-              ...(verifiedQuote.verification
-                ? { verification: verifiedQuote.verification }
-                : {}),
-            }
-          : quote;
-      }),
-    };
-  }
+    if (citation.document) {
+        if (!includeQuotes) return { ...citation.document, quotes: [] };
+        const citationQuotes =
+            citation.kind === "case"
+                ? citation.quotes
+                : getDocumentCitationQuotes(citation);
+        return {
+            ...citation.document,
+            quotes: citation.document.quotes.map((quote, index) => {
+                const verifiedQuote = citationQuotes[index];
+                return verifiedQuote
+                    ? {
+                          ...quote,
+                          quote: verifiedQuote.quote,
+                          ...(verifiedQuote.verification
+                              ? { verification: verifiedQuote.verification }
+                              : {}),
+                      }
+                    : quote;
+            }),
+        };
+    }
     if (citation.kind === "case") {
         const title = [citation.case_name, citation.citation]
             .filter(Boolean)

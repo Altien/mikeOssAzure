@@ -20,6 +20,8 @@ import {
     isOpenCodeGoChatCompletionsModel,
     isOpenCodeGoMessagesModel,
     isSupportedOpenCodeGoModel,
+    normalizeReasoningLevelForModel,
+    reasoningLevelsForModel,
 } from "../llm/models";
 
 // ---------------------------------------------------------------------------
@@ -260,5 +262,36 @@ describe("default models", () => {
         expect(providerForModel(DEFAULT_MAIN_MODEL)).toBe("gemini");
         expect(providerForModel(DEFAULT_TITLE_MODEL)).toBe("gemini");
         expect(providerForModel(DEFAULT_TABULAR_MODEL)).toBe("gemini");
+    });
+});
+
+describe("reasoningLevelsForModel", () => {
+    it("uses the GPT-5.6 subset exposed by the provider", () => {
+        expect(reasoningLevelsForModel("gpt-5.6-terra")).toEqual([
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+        ]);
+        expect(
+            reasoningLevelsForModel("openrouter/openai/gpt-5.6-sol"),
+        ).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);
+    });
+
+    it("excludes Max for GPT-5.4 and GPT-5.5", () => {
+        const expected = ["none", "low", "medium", "high", "xhigh"];
+        expect(reasoningLevelsForModel("gpt-5.5")).toEqual(expected);
+        expect(reasoningLevelsForModel("gpt-5.4")).toEqual(expected);
+        expect(
+            reasoningLevelsForModel("vercel/openai/gpt-5.5"),
+        ).toEqual(expected);
+    });
+
+    it("normalizes stale levels to the nearest supported value", () => {
+        expect(normalizeReasoningLevelForModel("gemini-3.7-flash", "max")).toBe(
+            "xhigh",
+        );
     });
 });

@@ -131,6 +131,9 @@ services:
       - ./backend/migrations/20260826_01_task_model_selection.sql:/model-selection-migration.sql:ro
       - ./backend/migrations/20260826_02_rename_last_selected_chat_model.sql:/last-selected-model-migration.sql:ro
       - ./backend/migrations/20260826_03_chat_reasoning_selection.sql:/reasoning-selection-migration.sql:ro
+      - ./backend/migrations/20260827_01_tabular_chat_model_reasoning.sql:/tabular-chat-settings-migration.sql:ro
+      - ./backend/migrations/20260827_02_reasoning_max.sql:/reasoning-max-migration.sql:ro
+      - ./backend/migrations/20260827_03_remove_minimal_reasoning.sql:/remove-minimal-reasoning-migration.sql:ro
     entrypoint: ["bash", "-c"]
     command:
       - |
@@ -149,6 +152,9 @@ services:
         psql "$$DB" -v ON_ERROR_STOP=1 -f /model-selection-migration.sql;
         psql "$$DB" -v ON_ERROR_STOP=1 -f /last-selected-model-migration.sql;
         psql "$$DB" -v ON_ERROR_STOP=1 -f /reasoning-selection-migration.sql;
+        psql "$$DB" -v ON_ERROR_STOP=1 -f /tabular-chat-settings-migration.sql;
+        psql "$$DB" -v ON_ERROR_STOP=1 -f /reasoning-max-migration.sql;
+        psql "$$DB" -v ON_ERROR_STOP=1 -f /remove-minimal-reasoning-migration.sql;
         psql "$$DB" -c "grant usage on schema public to service_role;
           grant all privileges on all tables in schema public to service_role;
           grant all privileges on all sequences in schema public to service_role;

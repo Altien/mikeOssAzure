@@ -1,7 +1,10 @@
 "use client";
 
+import { useEffect } from "react";
 import {
   ModelToggleUI,
+  nearestReasoningLevelForModel,
+  reasoningLevelsForModel,
   type ModelToggleOption,
   type ReasoningLevel,
 } from "@/shared/ui/ModelToggleUI";
@@ -259,6 +262,20 @@ export function ModelToggle({
     return isModelAvailable(model.id, apiKeys);
   });
   const selected = availableModels.find((model) => model.id === value);
+  const supportedReasoningLevels = reasoningLevelsForModel(value);
+  const normalizedReasoningLevel = reasoningLevel
+    ? nearestReasoningLevelForModel(value, reasoningLevel)
+    : undefined;
+  useEffect(() => {
+    if (
+      reasoningLevel &&
+      normalizedReasoningLevel &&
+      normalizedReasoningLevel !== reasoningLevel &&
+      onReasoningChange
+    ) {
+      onReasoningChange(normalizedReasoningLevel);
+    }
+  }, [normalizedReasoningLevel, onReasoningChange, reasoningLevel]);
   const selectedLabel = apiKeysLoading
     ? (models.find((model) => model.id === value)?.label ?? "Select model")
     : (selected?.label ??
@@ -282,8 +299,9 @@ export function ModelToggle({
       onEmptyClick={
         onNoModelsClick ? () => onNoModelsClick(emptyReason) : undefined
       }
-      reasoningLevel={reasoningLevel}
+      reasoningLevel={normalizedReasoningLevel}
       onReasoningChange={onReasoningChange}
+      reasoningLevels={supportedReasoningLevels}
     />
   );
 }
