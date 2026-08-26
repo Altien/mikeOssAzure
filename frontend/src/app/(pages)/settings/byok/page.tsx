@@ -62,10 +62,6 @@ export default function ByokPage() {
                                     profile?.apiKeys[field.provider].source ===
                                     "user"
                                 }
-                                isServerConfigured={
-                                    profile?.apiKeys[field.provider].source ===
-                                    "env"
-                                }
                                 onSave={(value) =>
                                     updateApiKey(
                                         field.provider,

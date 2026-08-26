@@ -16,7 +16,6 @@ export function ApiKeyField({
     description,
     placeholder,
     hasSavedKey,
-    isServerConfigured,
     onSave,
     onRemove,
 }: {
@@ -24,7 +23,6 @@ export function ApiKeyField({
     description?: string;
     placeholder: string;
     hasSavedKey: boolean;
-    isServerConfigured: boolean;
     onSave: (value: string) => Promise<boolean>;
     onRemove: () => Promise<boolean>;
 }) {
@@ -114,11 +112,7 @@ export function ApiKeyField({
                             value={value}
                             onChange={(event) => setValue(event.target.value)}
                             placeholder={
-                                hasSavedKey
-                                      ? "Saved key hidden"
-                                      : isServerConfigured
-                                        ? "Server .env key configured — add yours to override"
-                                      : placeholder
+                                hasSavedKey ? "Saved key hidden" : placeholder
                             }
                             className="pr-10"
                             autoComplete="off"

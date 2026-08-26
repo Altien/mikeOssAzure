@@ -122,9 +122,6 @@ export default function FeaturesPage() {
                             hasSavedKey={
                                 !!profile?.apiKeys.courtlistener.configured
                             }
-                            isServerConfigured={
-                                profile?.apiKeys.courtlistener.source === "env"
-                            }
                             onSave={(value) =>
                                 updateApiKey(
                                     "courtlistener",
