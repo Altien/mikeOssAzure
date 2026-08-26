@@ -331,7 +331,10 @@ export function fallbackReasoningLevelFromProviderError(
 ): ReasoningLevel | undefined {
   if (!requested) return undefined;
   const message = error instanceof Error ? error.message : String(error);
-  const supportedText = message.match(/Supported values are:\s*(.+)$/i)?.[1];
+  const marker = "supported values are:";
+  const markerIndex = message.toLocaleLowerCase().indexOf(marker);
+  if (markerIndex < 0) return undefined;
+  const supportedText = message.slice(markerIndex + marker.length).trimStart();
   if (!supportedText) return undefined;
 
   const supported = [...supportedText.matchAll(/'([^']+)'/g)]

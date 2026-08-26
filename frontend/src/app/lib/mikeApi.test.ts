@@ -127,6 +127,7 @@ import {
     updateProject,
     updateChatModel,
     updateChatReasoningLevel,
+    updateLastSelectedChatSettings,
     updateTabularChatModel,
     updateTabularChatReasoningLevel,
     updateTabularReview,
@@ -2264,6 +2265,20 @@ describe("thin endpoint wrappers", () => {
             url: "/chat/c1",
             method: "PATCH",
             body: { reasoningLevel: "xhigh" },
+        },
+        {
+            name: "updateLastSelectedChatSettings",
+            call: () =>
+                updateLastSelectedChatSettings({
+                    lastSelectedChatModel: "gpt-5.6-sol",
+                    lastSelectedReasoningLevel: "high",
+                }),
+            url: "/user/profile",
+            method: "PATCH",
+            body: {
+                lastSelectedChatModel: "gpt-5.6-sol",
+                lastSelectedReasoningLevel: "high",
+            },
         },
         {
             name: "deleteChat",
