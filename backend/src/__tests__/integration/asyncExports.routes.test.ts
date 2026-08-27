@@ -20,7 +20,8 @@ import request from "supertest";
 // Env is set inside vi.hoisted so it lands before app.ts reads it at import.
 // ---------------------------------------------------------------------------
 const { insertedJobs, dbJobsEnabled } = vi.hoisted(() => {
-    process.env.RATE_LIMIT_EXPORT_MAX = "2";
+    // 3, not 2: the no-runner test below spends one before the budget test.
+    process.env.RATE_LIMIT_EXPORT_MAX = "3";
     process.env.RATE_LIMIT_EXPORT_WINDOW_HOURS = "1";
     process.env.RATE_LIMIT_GENERAL_MAX = "500";
     return { insertedJobs: [] as unknown[], dbJobsEnabled: vi.fn(() => true) };
@@ -96,8 +97,23 @@ describe("async exports", () => {
         dbJobsEnabled.mockReturnValue(true);
     });
 
+    it("refuses to schedule when no runner will drain the queue", async () => {
+        dbJobsEnabled.mockReturnValue(false);
+
+        const res = await request(app)
+            .post("/user/exports")
+            .set(...AUTH)
+            .send({ type: "documents-zip", params: { document_ids: ["d1"] } });
+
+        // A 202 here would be a receipt for work that cannot happen, and the
+        // pending row would hold the dedupe key forever — locking the user out
+        // of that export permanently, even after the runner comes back.
+        expect(res.status).toBe(503);
+        expect(insertedJobs).toHaveLength(0);
+    });
+
     it("POST /user/exports is under the export budget; the poll is not", async () => {
-        // The budget is 2/hour for this suite.
+        // The budget is 3/hour for this suite; one was spent above.
         const first = await request(app)
             .post("/user/exports")
             .set(...AUTH)

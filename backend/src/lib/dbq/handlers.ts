@@ -103,8 +103,8 @@ export async function handleAccountDelete(db: Db, job: DbJob): Promise<void> {
     const userEmail = (job.payload.userEmail as string | undefined) ?? null;
 
     // The whole cascade is deletes — idempotent by nature, so a crash midway
-    // simply re-runs. The auth user is already gone (the route deletes it
-    // before enqueuing), so no new data can appear underneath us.
+    // simply re-runs. The user's sessions were revoked by the route, so no new
+    // data can appear underneath us.
     await deleteUserAccountData(db, userId, userEmail);
 
     // Erase the user's leftovers in the queue itself: export artifacts hold a
@@ -130,6 +130,28 @@ export async function handleAccountDelete(db: Db, job: DbJob): Promise<void> {
         .delete()
         .filter("payload->base->>userId", "eq", userId)
         .neq("id", job.id);
+
+    // The auth user goes LAST, and only once every row above is gone.
+    //
+    // documents.user_id references auth.users ON DELETE CASCADE, and
+    // document_versions cascades from documents in turn, so deleting the auth
+    // user destroys the only record of where this account's files live —
+    // storage_path, pdf_storage_path, and the version ids the extracted-text
+    // cache is keyed by. Delete auth first and the cascade above has nothing
+    // left to read: `generated/<userId>/…`, `extracted-text/<versionId>.txt`
+    // and every object uploaded by OTHER users into this user's projects are
+    // orphaned in object storage permanently, with no row anywhere pointing at
+    // them. Erasure that leaves the files behind is not erasure.
+    //
+    // Deleting it here also makes the job's retry budget mean something: while
+    // this step is outstanding the account still exists, so a permanently
+    // failed cascade leaves a recoverable account rather than a nameless pile
+    // of rows. The user cannot use it in the meantime — the route revoked
+    // their sessions before this job was ever picked up.
+    const { error } = await db.auth.admin.deleteUser(userId);
+    // "not found" is success: a previous attempt got this far before dying.
+    if (error && !/not\s*found/i.test(error.message))
+        throw new Error(`Failed to delete auth user: ${error.message}`);
 }
 
 export async function handleStorageCleanup(db: Db, job: DbJob): Promise<void> {

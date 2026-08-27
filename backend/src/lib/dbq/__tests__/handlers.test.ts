@@ -106,6 +106,13 @@ const JOB = (kind: string, payload: Record<string, unknown>): DbJob => ({
 // Minimal db double for the handlers' own db_jobs queries.
 function makeDb(selectData: unknown[] = []) {
     const deletes: Record<string, unknown>[] = [];
+    // Ordered log of everything the handler did, so a test can assert not just
+    // WHAT happened but in what order (erasure ordering is the invariant).
+    const trace: string[] = [];
+    const authDeleteUser = vi.fn(async () => {
+        trace.push("auth.deleteUser");
+        return { error: null };
+    });
     function from() {
         const state: { op: string; filters: Record<string, unknown> } = {
             op: "select",
@@ -136,7 +143,10 @@ function makeDb(selectData: unknown[] = []) {
                 return b;
             },
             then(onF: (v: unknown) => unknown) {
-                if (state.op === "delete") deletes.push({ ...state.filters });
+                if (state.op === "delete") {
+                    deletes.push({ ...state.filters });
+                    trace.push("db.delete");
+                }
                 return Promise.resolve({
                     data: state.op === "select" ? selectData : null,
                     error: null,
@@ -145,7 +155,12 @@ function makeDb(selectData: unknown[] = []) {
         };
         return b;
     }
-    return { deletes, from };
+    return {
+        deletes,
+        trace,
+        from,
+        auth: { admin: { deleteUser: authDeleteUser } },
+    };
 }
 
 beforeEach(() => {
@@ -218,6 +233,55 @@ describe("handleAccountDelete", () => {
         // both excluding the running job's own row.
         expect(db.deletes).toHaveLength(2);
         for (const d of db.deletes) expect(d["neq:id"]).toBe("job-1");
+    });
+
+    // documents.user_id references auth.users ON DELETE CASCADE, and
+    // document_versions cascades from documents, so deleting the auth user is
+    // what destroys the rows recording where this account's files live. Do it
+    // first and the cascade has nothing left to read — the objects are
+    // orphaned in storage with no row pointing at them, forever.
+    it("deletes the auth user LAST, after the data cascade", async () => {
+        const db = makeDb([]);
+        deleteUserAccountData.mockImplementation(async () => {
+            db.trace.push("cascade");
+        });
+
+        await handleAccountDelete(
+            db as never,
+            JOB("account.delete", { userId: "u1", userEmail: "u@x.test" }),
+        );
+
+        expect(db.auth.admin.deleteUser).toHaveBeenCalledWith("u1");
+        expect(db.trace[0]).toBe("cascade");
+        expect(db.trace.at(-1)).toBe("auth.deleteUser");
+    });
+
+    it("treats an already-deleted auth user as success (a retry got this far)", async () => {
+        const db = makeDb([]);
+        db.auth.admin.deleteUser.mockResolvedValue({
+            error: { message: "User not found" },
+        });
+
+        await expect(
+            handleAccountDelete(
+                db as never,
+                JOB("account.delete", { userId: "u1" }),
+            ),
+        ).resolves.toBeUndefined();
+    });
+
+    it("throws when the auth user cannot be deleted, so the job retries", async () => {
+        const db = makeDb([]);
+        db.auth.admin.deleteUser.mockResolvedValue({
+            error: { message: "gotrue unavailable" },
+        });
+
+        await expect(
+            handleAccountDelete(
+                db as never,
+                JOB("account.delete", { userId: "u1" }),
+            ),
+        ).rejects.toThrow(/gotrue unavailable/);
     });
 
     it("removes export artifacts the user still had parked in storage", async () => {

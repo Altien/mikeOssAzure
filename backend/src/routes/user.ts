@@ -5,6 +5,7 @@ import { createServerSupabase } from "../lib/supabase";
 import { recordAudit } from "../lib/audit";
 import { sendInternalError } from "../lib/httpError";
 import { enqueueDbJob } from "../lib/dbq/enqueue";
+import { dbJobsEnabled } from "../lib/dbq/runner";
 import {
     EXPORT_TYPES,
     MAX_ZIP_EXPORT_DOCUMENTS,
@@ -1654,36 +1655,62 @@ userRouter.delete(
     async (_req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
+        const token = res.locals.token as string | undefined;
         const db = createServerSupabase();
         try {
-            // Order matters, and is the REVERSE of the old inline flow:
-            // 1. Delete the auth user first. From the user's point of view
-            //    the account is now gone (no login, sessions revoked) and if
-            //    THIS fails, nothing has happened — the request is cleanly
-            //    retriable.
-            // 2. Then enqueue the data cascade as a durable job. The old
-            //    inline cascade died with the request or a restart, leaving
-            //    a half-deleted account with no owner; the job retries until
-            //    the (idempotent) cascade completes.
-            const { error } = await db.auth.admin.deleteUser(userId);
-            if (error)
-                return void sendInternalError(res, error);
-            try {
-                await enqueueDbJob(db, {
-                    kind: "account.delete",
-                    payload: { userId, userEmail: userEmail ?? null },
-                    dedupeKey: `account.delete:${userId}`,
-                    maxAttempts: 20,
-                });
-            } catch (enqueueErr) {
-                // Auth user is already gone — the user cannot retry. Fall
-                // back to the old inline cascade rather than stranding the
-                // data.
-                console.error(
-                    "[user/account] cleanup enqueue failed; running inline",
-                    { userId, error: errorMessage(enqueueErr) },
+            // DATA FIRST, AUTH LAST — main's ordering, kept.
+            //
+            // documents.user_id references auth.users ON DELETE CASCADE (and
+            // document_versions cascades from documents), so deleting the auth
+            // user first destroys every row that records where this account's
+            // files live. The cascade would then find nothing to clean up and
+            // the objects would be orphaned in storage forever. The auth user
+            // is therefore deleted by the job, as its final step, once the
+            // data is actually gone.
+            //
+            // What the user experiences is unchanged: their sessions are
+            // revoked here, immediately, so the account is unusable from the
+            // moment this returns. The auth row lingering for the length of
+            // the job is what makes the job's retries meaningful — a cascade
+            // that permanently fails leaves a recoverable account instead of
+            // an anonymous pile of rows.
+            //
+            // No runner on this process? Then a 202-style "it's queued" would
+            // be a promise nothing can keep, so run the cascade inline —
+            // exactly main's behaviour, which is still correct, just not
+            // crash-durable.
+            if (!dbJobsEnabled()) {
+                console.warn(
+                    "[user/account] DB job runner disabled; deleting inline",
+                    { userId },
                 );
                 await deleteUserAccountData(db, userId, userEmail);
+                const { error } = await db.auth.admin.deleteUser(userId);
+                if (error) return void sendInternalError(res, error);
+                return void res.status(204).send();
+            }
+
+            // Enqueue BEFORE anything is destroyed: if this fails, nothing has
+            // happened and the request is cleanly retriable.
+            await enqueueDbJob(db, {
+                kind: "account.delete",
+                payload: { userId, userEmail: userEmail ?? null },
+                dedupeKey: `account.delete:${userId}`,
+                maxAttempts: 20,
+            });
+
+            // Best-effort session revocation. A failure here only means the
+            // user keeps a valid token until the job deletes their auth user;
+            // it must not fail a deletion that is already durably scheduled.
+            if (token) {
+                try {
+                    await db.auth.admin.signOut(token, "global");
+                } catch (signOutErr) {
+                    console.error("[user/account] session revoke failed", {
+                        userId,
+                        error: errorMessage(signOutErr),
+                    });
+                }
             }
             res.status(204).send();
         } catch (err) {
@@ -1925,6 +1952,17 @@ userRouter.post(
                 });
             payload.document_ids = ids;
         }
+
+        // Nothing on this process will ever drain db_jobs, so a 202 would be
+        // a receipt for work that cannot happen — and worse than useless: the
+        // pending row holds the (user, type) dedupe key forever, so the user
+        // could never successfully start that export again, even after an
+        // operator turns the runner back on. Refuse instead. The synchronous
+        // GET /user/*/export routes still work, which is the escape hatch.
+        if (!dbJobsEnabled())
+            return void res.status(503).json({
+                detail: "Exports are temporarily unavailable. Please try again later.",
+            });
 
         const db = createServerSupabase();
         try {

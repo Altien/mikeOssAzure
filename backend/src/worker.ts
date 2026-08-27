@@ -12,6 +12,17 @@
 import { startAllWorkers, stopAllWorkers } from "./workerRuntime";
 
 startAllWorkers();
+
+// KEEPALIVE. Everything startAllWorkers() creates is deliberately unref'd —
+// it has to be, because the same code runs inside the API process and its
+// timers must not stop that process from exiting. In the Redis topology the
+// BullMQ workers' open sockets happen to hold the loop, which hides this; in
+// Postgres mode (the default) nothing does, and `node dist/worker.js` starts
+// the runner, logs that it is running, and exits within half a second.
+// `process.on("SIGTERM")` does not keep the loop alive — signal handlers are
+// not handles — so the entrypoint needs one ref'd handle of its own. This is
+// it, and it is cleared on shutdown so the process can still exit promptly.
+const keepAlive = setInterval(() => {}, 60_000);
 console.log("Mike worker process running");
 
 let shuttingDown = false;
@@ -19,6 +30,7 @@ async function shutdown(signal: string) {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`Worker shutting down gracefully (${signal})`);
+    clearInterval(keepAlive);
     const forceExit = setTimeout(() => {
         console.error("Worker graceful shutdown timed out — forcing exit");
         process.exit(1);
