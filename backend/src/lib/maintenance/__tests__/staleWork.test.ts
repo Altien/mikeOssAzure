@@ -7,7 +7,8 @@ vi.mock("../../supabase", () => ({
 const conversionGetJob = vi.fn();
 vi.mock("../../queue/conversionQueue", () => ({
     getConversionQueue: () => ({ getJob: conversionGetJob }),
-    conversionJobId: (versionId: string) => `convert_${versionId}`,
+    conversionJobId: (versionId: string, storagePath: string) =>
+        `convert_${versionId}_${storagePath}`,
 }));
 
 const extractionGetJob = vi.fn();
@@ -71,6 +72,10 @@ function makeDb(responses: Record<string, Responder>) {
             },
             eq(col: string, val: unknown) {
                 state.filters[col] = val;
+                return b;
+            },
+            in(col: string, val: unknown) {
+                state.filters[`in:${col}`] = val;
                 return b;
             },
             lt(col: string, val: unknown) {
@@ -158,12 +163,16 @@ describe("sweepStaleProcessingDocuments", () => {
     it("skips documents whose conversion job is still live (queue on)", async () => {
         process.env.ASYNC_DOCUMENT_CONVERSION = "true";
         conversionGetJob.mockImplementation(async (jobId: string) =>
-            jobId === "convert_ver-live" ? { id: jobId } : null,
+            jobId === "convert_ver-live_uploads/live.docx" ? { id: jobId } : null,
         );
         const db = makeDb({
             documents: [
                 { id: "doc-live", current_version_id: "ver-live" },
                 { id: "doc-dead", current_version_id: "ver-dead" },
+            ],
+            document_versions: [
+                { id: "ver-live", storage_path: "uploads/live.docx" },
+                { id: "ver-dead", storage_path: "uploads/dead.docx" },
             ],
         });
 
@@ -173,6 +182,28 @@ describe("sweepStaleProcessingDocuments", () => {
         const updates = db.calls.filter((c) => c.op === "update");
         expect(updates).toHaveLength(1);
         expect(updates[0].filters.id).toBe("doc-dead");
+    });
+
+    // A conversion job's identity now includes the storage key it converts,
+    // so liveness has to be asked about the file the version CURRENTLY holds.
+    // A job still carrying a superseded key cannot finalize this document
+    // (the worker's write is fenced on storage_path), so it must not count as
+    // an owner keeping the document alive.
+    it("asks about the version's current storage key, not a stale one", async () => {
+        process.env.ASYNC_DOCUMENT_CONVERSION = "true";
+        conversionGetJob.mockResolvedValue(null);
+        const db = makeDb({
+            documents: [{ id: "doc-1", current_version_id: "ver-1" }],
+            document_versions: [
+                { id: "ver-1", storage_path: "uploads/current.docx" },
+            ],
+        });
+
+        await sweepStaleProcessingDocuments(db as never);
+
+        expect(conversionGetJob).toHaveBeenCalledWith(
+            "convert_ver-1_uploads/current.docx",
+        );
     });
 });
 

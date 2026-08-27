@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Queue } from "bullmq";
 import { getRedisProducerConnection, withRedisTimeout } from "./connection";
 import { redisEnabled } from "../dbq/driver";
@@ -52,29 +53,46 @@ export function getConversionQueue(): Queue<ConversionJobData> {
  * Redis key separator and rejects most colon-containing custom ids
  * (everything except a legacy 3-segment form kept for old repeatable jobs,
  * which is why a colon scheme can pass one test and blow up in another).
+ *
+ * The id is keyed on the version AND the bytes being converted. Replace-file
+ * reuses the versionId, so a version-only id makes two replaces inside the
+ * conversion window collide: the second enqueue dedupes into the first job,
+ * which is still carrying the FIRST upload's storage key. The queue reports
+ * success, the new bytes are never converted, and the PDF the app serves is a
+ * rendition of a file the user already replaced. Every upload path mints a
+ * fresh storage key (a per-version random slug), so hashing it gives each
+ * distinct content its own job while an honest retry of the SAME content still
+ * dedupes.
  */
-export function conversionJobId(versionId: string): string {
-    return `convert_${versionId}`;
+export function conversionJobId(
+    versionId: string,
+    storagePath: string,
+): string {
+    const token = createHash("sha256")
+        .update(storagePath)
+        .digest("hex")
+        .slice(0, 12);
+    return `convert_${versionId}_${token}`;
 }
 
 /**
  * Enqueue a conversion. Retries transient failures (storage/LibreOffice
  * hiccups) with exponential backoff.
  *
- * The jobId is derived from the versionId so a double submit is deduped by
- * BullMQ instead of racing two conversions. Terminal jobs are removed
- * immediately (same rationale as the extraction queue): a version can be
- * re-converted later — replace-file reuses the versionId — and a completed
- * job record left behind would silently swallow that re-enqueue as a
- * duplicate. Durable state lives in document_versions/documents, not in the
- * job record.
+ * The jobId is derived from the version AND its storage key (see
+ * conversionJobId) so a double submit of the same file is deduped by BullMQ
+ * instead of racing two conversions, while a genuine re-upload gets its own
+ * job. Terminal jobs are removed immediately (same rationale as the extraction
+ * queue): a version can be re-converted later and a completed job record left
+ * behind would silently swallow that re-enqueue as a duplicate. Durable state
+ * lives in document_versions/documents, not in the job record.
  */
 export async function enqueueConversion(data: ConversionJobData) {
     const dbEnqueue = () =>
         enqueueDbJob(createServerSupabase(), {
             kind: "conversion.convert",
             payload: data as unknown as Record<string, unknown>,
-            dedupeKey: conversionJobId(data.versionId),
+            dedupeKey: conversionJobId(data.versionId, data.storagePath),
             maxAttempts: 3,
         });
     // Postgres driver (no Redis anywhere): the same job rides the DB queue —
@@ -87,7 +105,7 @@ export async function enqueueConversion(data: ConversionJobData) {
         // `add()` pend forever — the request never answers.
         return await withRedisTimeout("conversion enqueue", () =>
             getConversionQueue().add("convert", data, {
-                jobId: conversionJobId(data.versionId),
+                jobId: conversionJobId(data.versionId, data.storagePath),
                 attempts: 3,
                 backoff: { type: "exponential", delay: 2000 },
                 removeOnComplete: true,
