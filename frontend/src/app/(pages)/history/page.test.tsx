@@ -50,6 +50,17 @@ function expectedDateRange(from: Date, to: Date) {
 
 describe("HistoryPage", () => {
   beforeEach(() => {
+    // Pin the clock — Date only, so user-event's real timers keep working.
+    // These tests derive calendar expectations from "today": the default
+    // range opens the picker on the month of today−30, and the range test
+    // clicks today−25, which is only on that grid when the month's trailing
+    // outside-days happen to include it. That made the suite green or red by
+    // calendar alignment (first failure: CI running just past midnight UTC
+    // on 2026-08-27, where today−30 shows July but today−25 is Aug 2). A
+    // mid-month date keeps every derived day inside the visible grids,
+    // deterministically, in every timezone.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 5, 15, 12, 0, 0));
     vi.clearAllMocks();
     window.matchMedia = vi.fn().mockImplementation((query: string) => ({
       matches: true,
@@ -85,6 +96,7 @@ describe("HistoryPage", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
