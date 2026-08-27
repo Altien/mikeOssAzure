@@ -66,17 +66,46 @@ export async function sweepStaleProcessingDocuments(
     }
 
     const queueOn = process.env.ASYNC_DOCUMENT_CONVERSION === "true";
-    let flipped = 0;
-    for (const doc of (docs ?? []) as {
+    const rows = (docs ?? []) as {
         id: string;
         current_version_id?: string | null;
-    }[]) {
-        if (queueOn && doc.current_version_id) {
+    }[];
+
+    // A conversion job's id is keyed on (version, storage key), so liveness
+    // has to be asked about the file the version currently holds. That is also
+    // the semantically right question: a job still carrying a SUPERSEDED
+    // storage key can no longer finalize this document — the worker's write is
+    // fenced on the version's current storage_path — so it must not count as
+    // the owner keeping the document alive.
+    const storagePathByVersion = new Map<string, string>();
+    const versionIds = queueOn
+        ? rows
+              .map((d) => d.current_version_id)
+              .filter((id): id is string => !!id)
+        : [];
+    if (versionIds.length) {
+        const { data: versions } = await db
+            .from("document_versions")
+            .select("id, storage_path")
+            .in("id", versionIds);
+        for (const v of (versions ?? []) as {
+            id: string;
+            storage_path?: string | null;
+        }[])
+            if (v.storage_path) storagePathByVersion.set(v.id, v.storage_path);
+    }
+
+    let flipped = 0;
+    for (const doc of rows) {
+        const storagePath = doc.current_version_id
+            ? storagePathByVersion.get(doc.current_version_id)
+            : undefined;
+        if (queueOn && doc.current_version_id && storagePath) {
             // A job that still exists (waiting/active/delayed) owns this
             // document; terminal jobs are removed immediately (BullMQ) or
             // freed from the dedupe index (DB queue), so existence is the
             // liveness signal on either driver.
-            const jobId = conversionJobId(doc.current_version_id);
+            const jobId = conversionJobId(doc.current_version_id, storagePath);
             const live = redisEnabled()
                 ? !!(await withRedisTimeout("conversion job lookup", () =>
                       getConversionQueue().getJob(jobId),

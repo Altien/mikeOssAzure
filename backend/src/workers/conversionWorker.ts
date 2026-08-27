@@ -16,8 +16,17 @@ type Db = ReturnType<typeof createServerSupabase>;
  * Extracted from the worker callback so it can be unit-tested with injected
  * deps. Mirrors the synchronous upload path's semantics: a *conversion*
  * failure is non-fatal — the document is still usable (just without a PDF
- * rendition), so we still flip it to "ready". Only failure to fetch the
- * original is thrown, so BullMQ retries it.
+ * rendition), so we still flip it to "ready".
+ *
+ * WHAT IS AND IS NOT SWALLOWED. Exactly one thing is non-fatal: LibreOffice
+ * failing to render the document. Everything else — a missing original, a
+ * failed upload of the rendition, a failed database write — is thrown, because
+ * those are the failures a retry can actually fix, and a retry budget only
+ * protects the code it wraps. The earlier shape put the upload and both
+ * updates inside the conversion try/catch and ignored the updates' `error`
+ * field, so a storage blip or a DB hiccup was logged as "DOCX→PDF failed" and
+ * the job reported success: no rendition, no retry, and (on the initial-upload
+ * flow) a document flipped to "ready" that would never get its PDF.
  */
 export async function runConversionJob(
     data: ConversionJobData,
@@ -34,8 +43,20 @@ export async function runConversionJob(
         );
     }
 
+    let pdfBuf: Buffer | null = null;
     try {
-        const pdfBuf = await docxToPdf(Buffer.from(original));
+        pdfBuf = await docxToPdf(Buffer.from(original));
+    } catch (err) {
+        // Conversion failure is non-fatal (mirrors the sync path): the version
+        // stays usable without a PDF rendition. Retrying LibreOffice on the
+        // same bytes just fails the same way.
+        console.error(
+            "[conversion-worker] DOCX→PDF failed; finalizing without a PDF rendition",
+            { err, documentId, versionId },
+        );
+    }
+
+    if (pdfBuf) {
         const pdfKey = data.pdfKey ?? convertedPdfKey(userId, documentId);
         await uploadFile(
             pdfKey,
@@ -45,38 +66,40 @@ export async function runConversionJob(
             ) as ArrayBuffer,
             "application/pdf",
         );
-        await db
+        // Fenced on the storage key this job converted. Replace-file reuses
+        // the versionId, so two conversions of one version can be in flight;
+        // whichever finishes last would otherwise win, and that can be the
+        // one holding the OLDER bytes. Matching on storage_path means a job
+        // whose source is no longer the version's current file writes nothing
+        // (zero rows matched is not an error — it is the point).
+        const { error } = await db
             .from("document_versions")
             .update({ pdf_storage_path: pdfKey })
-            .eq("id", versionId);
-        if (finalize) {
-            await db
-                .from("documents")
-                .update({
-                    status: "ready",
-                    updated_at: new Date().toISOString(),
-                })
-                .eq("id", documentId);
-        }
-        console.log("[conversion-worker] converted", { documentId, versionId });
-    } catch (err) {
-        // Conversion failure is non-fatal (mirrors the sync path): the version
-        // stays usable without a PDF rendition. Only the initial-upload flow
-        // (finalize) needs the parked "processing" document flipped to ready.
-        console.error(
-            "[conversion-worker] DOCX→PDF failed; finalizing without a PDF rendition",
-            { err, documentId, versionId },
-        );
-        if (finalize) {
-            await db
-                .from("documents")
-                .update({
-                    status: "ready",
-                    updated_at: new Date().toISOString(),
-                })
-                .eq("id", documentId);
-        }
+            .eq("id", versionId)
+            .eq("storage_path", storagePath);
+        if (error)
+            throw new Error(
+                `[conversion-worker] version rendition update failed: ${error.message}`,
+            );
     }
+
+    // Only the initial-upload flow (finalize) has a document parked
+    // "processing" waiting on this job.
+    if (finalize) {
+        const { error } = await db
+            .from("documents")
+            .update({
+                status: "ready",
+                updated_at: new Date().toISOString(),
+            })
+            .eq("id", documentId);
+        if (error)
+            throw new Error(
+                `[conversion-worker] document finalize failed: ${error.message}`,
+            );
+    }
+    if (pdfBuf)
+        console.log("[conversion-worker] converted", { documentId, versionId });
 }
 
 /**

@@ -52,20 +52,52 @@ beforeEach(() => {
 });
 
 describe("conversionJobId", () => {
-    it("is deterministic on the versionId", () => {
-        expect(conversionJobId("ver-1")).toBe("convert_ver-1");
+    it("is deterministic on (versionId, storagePath)", () => {
+        expect(conversionJobId("ver-1", DATA.storagePath)).toBe(
+            conversionJobId("ver-1", DATA.storagePath),
+        );
+        expect(conversionJobId("ver-1", DATA.storagePath)).toMatch(
+            /^convert_ver-1_[0-9a-f]{12}$/,
+        );
+    });
+
+    // Replace-file reuses the versionId but always mints a NEW storage key.
+    // A version-only id therefore collapses the second replace into the job
+    // still carrying the first upload's key: the enqueue reports success and
+    // the new bytes are never converted.
+    it("gives a re-uploaded file its own id so a re-replace is not deduped away", () => {
+        expect(conversionJobId("ver-1", "uploads/user-1/aaa.docx")).not.toBe(
+            conversionJobId("ver-1", "uploads/user-1/bbb.docx"),
+        );
+    });
+
+    it("keeps colons out of the id (BullMQ reserves them)", () => {
+        expect(conversionJobId("ver-1", DATA.storagePath)).not.toContain(":");
     });
 });
 
 describe("enqueueConversion", () => {
-    it("dedupes with a deterministic jobId of convert_<versionId>", () => {
+    it("dedupes on the (version, storage key) identity", () => {
         enqueueConversion(DATA);
 
         expect(add).toHaveBeenCalledTimes(1);
         const [name, data, opts] = add.mock.calls[0];
         expect(name).toBe("convert");
         expect(data).toEqual(DATA);
-        expect(opts.jobId).toBe("convert_ver-1");
+        expect(opts.jobId).toBe(
+            conversionJobId(DATA.versionId, DATA.storagePath),
+        );
+    });
+
+    it("does not dedupe a second replace of the same version", async () => {
+        await enqueueConversion(DATA);
+        await enqueueConversion({
+            ...DATA,
+            storagePath: "uploads/user-1/doc-1-replaced.docx",
+        });
+
+        expect(add).toHaveBeenCalledTimes(2);
+        expect(add.mock.calls[0][2].jobId).not.toBe(add.mock.calls[1][2].jobId);
     });
 
     it("retries with backoff and removes terminal jobs so re-conversions can re-enqueue", () => {
@@ -114,7 +146,9 @@ describe("enqueueConversion (postgres driver)", () => {
             expect(input.kind).toBe("conversion.convert");
             // The BullMQ jobId doubles as the DB dedupe key, so double
             // submits collapse identically on either transport.
-            expect(input.dedupeKey).toBe("convert_ver-1");
+            expect(input.dedupeKey).toBe(
+                conversionJobId("ver-1", "documents/user-1/doc-1/source.docx"),
+            );
             expect(input.maxAttempts).toBe(3);
         } finally {
             process.env.QUEUE_DRIVER = "redis";

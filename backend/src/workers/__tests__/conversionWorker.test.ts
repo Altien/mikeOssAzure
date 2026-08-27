@@ -27,23 +27,39 @@ import {
 import type { Job } from "bullmq";
 import type { ConversionJobData } from "../../lib/queue/conversionQueue";
 
-type Call = { table: string; update: Record<string, unknown> };
+type Call = {
+    table: string;
+    update: Record<string, unknown>;
+    filters: Record<string, unknown>;
+};
 
-function makeDb() {
+// Chainable Supabase double. `errors` lets a test make one table's update
+// fail the way PostgREST does — by RESOLVING with an `error` field, not by
+// throwing — which is precisely the failure mode the worker used to ignore.
+function makeDb(errors: Record<string, { message: string }> = {}) {
     const calls: Call[] = [];
     return {
         calls,
         from(table: string) {
-            return {
+            const call: Call = { table, update: {}, filters: {} };
+            const b: Record<string, unknown> = {
                 update(update: Record<string, unknown>) {
-                    return {
-                        eq: async () => {
-                            calls.push({ table, update });
-                            return {};
-                        },
-                    };
+                    call.update = update;
+                    return b;
+                },
+                eq(col: string, val: unknown) {
+                    call.filters[col] = val;
+                    return b;
+                },
+                then(onF: (v: unknown) => unknown) {
+                    calls.push(call);
+                    return Promise.resolve({
+                        data: null,
+                        error: errors[table] ?? null,
+                    }).then(onF);
                 },
             };
+            return b;
         },
     };
 }
@@ -79,6 +95,7 @@ describe("runConversionJob", () => {
         expect(db.calls).toContainEqual({
             table: "document_versions",
             update: { pdf_storage_path: "converted-pdfs/user-1/doc-1.pdf" },
+            filters: { id: "ver-1", storage_path: JOB.storagePath },
         });
         const docUpdate = db.calls.find((c) => c.table === "documents");
         expect(docUpdate?.update.status).toBe("ready");
@@ -118,6 +135,7 @@ describe("runConversionJob", () => {
             update: {
                 pdf_storage_path: "converted-pdfs/user-1/doc-1/slug.pdf",
             },
+            filters: { id: "ver-1", storage_path: JOB.storagePath },
         });
     });
 
@@ -163,6 +181,70 @@ describe("runConversionJob", () => {
         );
         expect(docxToPdf).not.toHaveBeenCalled();
         expect(db.calls).toHaveLength(0);
+    });
+
+    // The retry budget only protects what it wraps. These three failures are
+    // all fixable by a retry, so none of them may be swallowed as if the
+    // conversion itself had failed.
+    it("throws when storing the rendition fails, so the retry budget applies", async () => {
+        downloadFile.mockResolvedValue(new ArrayBuffer(8));
+        docxToPdf.mockResolvedValue(Buffer.from("%PDF-1.7 fake"));
+        uploadFile.mockRejectedValue(new Error("storage 503"));
+        const db = makeDb();
+
+        await expect(runConversionJob(JOB, db as never)).rejects.toThrow(
+            /storage 503/,
+        );
+        // Nothing was finalized: the document stays "processing" for the retry
+        // rather than going "ready" with no rendition it will never get.
+        expect(db.calls).toHaveLength(0);
+    });
+
+    it("throws when the version rendition update returns an error", async () => {
+        downloadFile.mockResolvedValue(new ArrayBuffer(8));
+        docxToPdf.mockResolvedValue(Buffer.from("%PDF-1.7 fake"));
+        uploadFile.mockResolvedValue(undefined);
+        const db = makeDb({ document_versions: { message: "deadlock" } });
+
+        await expect(runConversionJob(JOB, db as never)).rejects.toThrow(
+            /rendition update failed: deadlock/,
+        );
+        expect(db.calls.some((c) => c.table === "documents")).toBe(false);
+    });
+
+    it("throws when the document finalize update returns an error", async () => {
+        downloadFile.mockResolvedValue(new ArrayBuffer(8));
+        docxToPdf.mockResolvedValue(Buffer.from("%PDF-1.7 fake"));
+        uploadFile.mockResolvedValue(undefined);
+        const db = makeDb({ documents: { message: "conn reset" } });
+
+        await expect(runConversionJob(JOB, db as never)).rejects.toThrow(
+            /document finalize failed: conn reset/,
+        );
+    });
+
+    it("fences the rendition write on the storage key it converted", async () => {
+        // Replace-file reuses the versionId, so two conversions of one version
+        // can be in flight at once. Without the storage_path filter the loser
+        // of that race — the one holding the OLDER bytes — can finish last and
+        // stamp its rendition over the newer one.
+        downloadFile.mockResolvedValue(new ArrayBuffer(8));
+        docxToPdf.mockResolvedValue(Buffer.from("%PDF-1.7 fake"));
+        uploadFile.mockResolvedValue(undefined);
+        const db = makeDb();
+
+        await runConversionJob(
+            { ...JOB, storagePath: "uploads/user-1/superseded.docx" },
+            db as never,
+        );
+
+        const versionCall = db.calls.find(
+            (c) => c.table === "document_versions",
+        );
+        expect(versionCall?.filters).toEqual({
+            id: "ver-1",
+            storage_path: "uploads/user-1/superseded.docx",
+        });
     });
 });
 
