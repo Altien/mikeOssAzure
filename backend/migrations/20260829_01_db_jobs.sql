@@ -1,3 +1,5 @@
+-- Migration date: 2026-08-29
+
 -- Durable, Postgres-backed background jobs (the "DB queue").
 --
 -- WHY A SECOND QUEUE MECHANISM: the BullMQ queues (conversion/extraction) are
