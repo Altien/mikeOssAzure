@@ -85,6 +85,18 @@ grant select, insert, update, delete on public.db_jobs to service_role;
 -- FOR UPDATE SKIP LOCKED makes concurrent claimers (multiple backend
 -- replicas, or overlapping poll ticks) partition the work instead of racing:
 -- locked rows are skipped, never waited on and never double-claimed.
+--
+-- THE ATTEMPT BUDGET APPLIES TO STALE RECOVERY TOO. The retry state machine
+-- lives in the runner, which can only spend an attempt on a job whose handler
+-- RETURNS control — it throws, the runner writes 'failed'. A job that kills
+-- its worker (OOM, SIGKILL, a native crash in LibreOffice) never gets there:
+-- it stays 'running', goes stale, and is reclaimed. Without the
+-- attempts < max_attempts guard below that is an eternal crash loop — every
+-- p_stale_seconds, forever, taking a worker with it each time. The guard makes
+-- the budget mean the same thing for a crash as for an exception, and the
+-- first CTE gives those spent rows the terminal 'failed' state they can never
+-- reach on their own. The two sets are disjoint by construction (attempts >=
+-- max_attempts versus attempts < max_attempts), so their order does not matter.
 create or replace function public.claim_db_jobs(
   p_limit integer default 5,
   p_stale_seconds integer default 600
@@ -92,12 +104,25 @@ create or replace function public.claim_db_jobs(
 returns setof public.db_jobs
 language sql
 as $$
-  with candidates as (
+  with abandoned as (
+    update public.db_jobs
+       set status = 'failed',
+           finished_at = now(),
+           last_error = coalesce(
+             last_error,
+             'abandoned: worker died mid-run and attempts are exhausted'
+           )
+     where status = 'running'
+       and claimed_at < now() - make_interval(secs => p_stale_seconds)
+       and attempts >= max_attempts
+    returning id
+  ), candidates as (
     select id
       from public.db_jobs
      where (status = 'pending' and run_at <= now())
         or (status = 'running'
-            and claimed_at < now() - make_interval(secs => p_stale_seconds))
+            and claimed_at < now() - make_interval(secs => p_stale_seconds)
+            and attempts < max_attempts)
      order by run_at
      limit p_limit
        for update skip locked
@@ -122,7 +147,10 @@ grant execute on function public.claim_db_jobs(integer, integer)
 -- through Postgres via this function, so a duplicate delivery (BullMQ retry,
 -- poller backstop racing the delivery) can never double-run the job: the
 -- second claimer matches zero rows. Same stale-running recovery as the batch
--- claim.
+-- claim, including its attempt budget: a job that kills its worker must not be
+-- redelivered forever. Terminally failing a spent stale row is left to the
+-- batch claim above, which every deployment runs (as the delivery mechanism
+-- without Redis, as the lost-delivery backstop with it).
 create or replace function public.claim_db_job(
   p_id uuid,
   p_stale_seconds integer default 600
@@ -137,7 +165,8 @@ as $$
    where j.id = p_id
      and ((j.status = 'pending' and j.run_at <= now())
        or (j.status = 'running'
-           and j.claimed_at < now() - make_interval(secs => p_stale_seconds)))
+           and j.claimed_at < now() - make_interval(secs => p_stale_seconds)
+           and j.attempts < j.max_attempts))
   returning j.*;
 $$;
 

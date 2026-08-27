@@ -3073,7 +3073,11 @@ create index if not exists db_jobs_finished_idx
 alter table public.db_jobs enable row level security;
 
 -- Atomic batch claim with built-in stale-running recovery (crash resume).
--- FOR UPDATE SKIP LOCKED partitions work between concurrent claimers.
+-- FOR UPDATE SKIP LOCKED partitions work between concurrent claimers. The
+-- attempt budget applies to stale recovery as well: a job that KILLS its
+-- worker never reaches the runner's retry state machine, so without the
+-- attempts < max_attempts guard it is reclaimed forever. Spent stale rows are
+-- given the terminal 'failed' state by the first CTE.
 create or replace function public.claim_db_jobs(
   p_limit integer default 5,
   p_stale_seconds integer default 600
@@ -3081,12 +3085,25 @@ create or replace function public.claim_db_jobs(
 returns setof public.db_jobs
 language sql
 as $$
-  with candidates as (
+  with abandoned as (
+    update public.db_jobs
+       set status = 'failed',
+           finished_at = now(),
+           last_error = coalesce(
+             last_error,
+             'abandoned: worker died mid-run and attempts are exhausted'
+           )
+     where status = 'running'
+       and claimed_at < now() - make_interval(secs => p_stale_seconds)
+       and attempts >= max_attempts
+    returning id
+  ), candidates as (
     select id
       from public.db_jobs
      where (status = 'pending' and run_at <= now())
         or (status = 'running'
-            and claimed_at < now() - make_interval(secs => p_stale_seconds))
+            and claimed_at < now() - make_interval(secs => p_stale_seconds)
+            and attempts < max_attempts)
      order by run_at
      limit p_limit
        for update skip locked
@@ -3106,7 +3123,10 @@ $$;
 -- through Postgres via this function, so a duplicate delivery (BullMQ retry,
 -- poller backstop racing the delivery) can never double-run the job: the
 -- second claimer matches zero rows. Same stale-running recovery as the batch
--- claim.
+-- claim, including its attempt budget: a job that kills its worker must not be
+-- redelivered forever. Terminally failing a spent stale row is left to the
+-- batch claim above, which every deployment runs (as the delivery mechanism
+-- without Redis, as the lost-delivery backstop with it).
 create or replace function public.claim_db_job(
   p_id uuid,
   p_stale_seconds integer default 600
@@ -3121,7 +3141,8 @@ as $$
    where j.id = p_id
      and ((j.status = 'pending' and j.run_at <= now())
        or (j.status = 'running'
-           and j.claimed_at < now() - make_interval(secs => p_stale_seconds)))
+           and j.claimed_at < now() - make_interval(secs => p_stale_seconds)
+           and j.attempts < j.max_attempts))
   returning j.*;
 $$;
 

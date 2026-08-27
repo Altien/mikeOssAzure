@@ -11,7 +11,12 @@ import {
 } from "../runner";
 import type { DbJob } from "../types";
 
-type Update = { table: string; payload: Record<string, unknown>; id?: string };
+type Update = {
+    table: string;
+    payload: Record<string, unknown>;
+    id?: string;
+    filters: Record<string, unknown>;
+};
 
 // Chainable double recording db_jobs updates/deletes; rpc is injectable.
 function makeDb(opts?: {
@@ -56,6 +61,7 @@ function makeDb(opts?: {
                         table,
                         payload: state.payload!,
                         id: state.filters.id as string,
+                        filters: { ...state.filters },
                     });
                 if (state.op === "delete")
                     deletes.push({ table, ...state.filters });
@@ -101,6 +107,68 @@ describe("retryDelayMs", () => {
         expect(retryDelayMs(2)).toBe(90_000);
         expect(retryDelayMs(3)).toBe(270_000);
         expect(retryDelayMs(10)).toBe(30 * 60 * 1000);
+    });
+});
+
+describe("processClaimedJob fencing", () => {
+    // A stale 'running' job is reclaimed by design (that IS crash recovery),
+    // so two runners can hold the same row — and the "dead" one may not be
+    // dead, just paused. Addressing a terminal write by id alone lets that
+    // zombie mark `done` a job that is running right now, or drag a finished
+    // job back to `pending` and run it a second time. `claimed_at` + `attempts`
+    // name one specific claim, so only the current claimant can finalize.
+    const FENCE = {
+        id: "job-1",
+        status: "running",
+        attempts: 1,
+        claimed_at: "2026-08-21T00:00:01Z",
+    };
+
+    it("fences the done write to this claim", async () => {
+        const db = makeDb();
+        await processClaimedJob(
+            db as never,
+            { "test.kind": async () => undefined },
+            JOB(),
+        );
+        expect(db.updates[0].filters).toEqual(FENCE);
+    });
+
+    it("fences the retry write to this claim", async () => {
+        const db = makeDb();
+        await processClaimedJob(
+            db as never,
+            {
+                "test.kind": async () => {
+                    throw new Error("transient");
+                },
+            },
+            JOB({ attempts: 1, max_attempts: 3 }),
+        );
+        expect(db.updates[0].payload.status).toBe("pending");
+        expect(db.updates[0].filters).toEqual(FENCE);
+    });
+
+    it("fences the permanent-failure write to this claim", async () => {
+        const db = makeDb();
+        await processClaimedJob(
+            db as never,
+            {
+                "test.kind": async () => {
+                    throw new Error("fatal");
+                },
+            },
+            JOB({ attempts: 3, max_attempts: 3 }),
+        );
+        expect(db.updates[0].payload.status).toBe("failed");
+        expect(db.updates[0].filters).toEqual({ ...FENCE, attempts: 3 });
+    });
+
+    it("fences the unknown-kind write to this claim", async () => {
+        const db = makeDb();
+        await processClaimedJob(db as never, {}, JOB());
+        expect(db.updates[0].payload.status).toBe("failed");
+        expect(db.updates[0].filters).toEqual(FENCE);
     });
 });
 
