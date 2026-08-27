@@ -1584,6 +1584,7 @@ export async function downloadResolvedDocument(
 
 export async function downloadDocumentsZip(
     documentIds: string[],
+    folderIds: string[] = [],
 ): Promise<Blob> {
     const response = await apiFetch(
         `${API_BASE}/single-documents/download-zip`,
@@ -1593,8 +1594,11 @@ export async function downloadDocumentsZip(
             headers: {
                 "Content-Type": "application/json",
             },
-            body: JSON.stringify({ document_ids: documentIds }),
-        }
+            body: JSON.stringify({
+                document_ids: documentIds,
+                folder_ids: folderIds,
+            }),
+        },
     );
     bounceIfUnauthorized(response);
     if (!response.ok) {

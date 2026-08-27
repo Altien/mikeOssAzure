@@ -71,6 +71,8 @@ import {
   TableRow,
   TableScrollArea,
   TableStickyCell,
+  selectedIdsAfterRangeClick,
+  selectedIdsAfterShiftClick,
 } from "@/app/components/shared/TablePrimitive";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";
 import { RowActions } from "@/app/components/shared/RowActions";
@@ -155,6 +157,7 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
 
   // Column selection
   const [selectedColIndices, setSelectedColIndices] = useState<number[]>([]);
+  const columnSelectionAnchorRef = useRef<number | null>(null);
   const [expandedPromptIndex, setExpandedPromptIndex] = useState<number | null>(
     null,
   );
@@ -754,13 +757,14 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
                               selectedColIndices.length > 0 &&
                               selectedColIndices.length < visibleColumns.length;
                         }}
-                        onChange={() =>
+                        onChange={() => {
+                          columnSelectionAnchorRef.current = null;
                           setSelectedColIndices(
                             selectedColIndices.length === visibleColumns.length
                               ? []
                               : visibleColumns.map((column) => column.index),
-                          )
-                        }
+                          );
+                        }}
                         className={TABLE_CHECKBOX_CLASS}
                       />
                     ) : (
@@ -814,7 +818,30 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
                       <TableRow
                         key={col.index}
                         selected={isChecked}
-                        onClick={() => {
+                        onClick={(event) => {
+                          if (event.shiftKey) {
+                            event.preventDefault();
+                            const anchorIndex =
+                              columnSelectionAnchorRef.current;
+                            setSelectedColIndices((current) =>
+                              selectedIdsAfterRangeClick(
+                                col.index,
+                                visibleColumns.map((column) => column.index),
+                                current,
+                                anchorIndex,
+                              ),
+                            );
+                            columnSelectionAnchorRef.current = col.index;
+                            return;
+                          }
+                          if (event.ctrlKey || event.metaKey) {
+                            event.preventDefault();
+                            setSelectedColIndices((current) =>
+                              selectedIdsAfterShiftClick(col.index, current),
+                            );
+                            columnSelectionAnchorRef.current = col.index;
+                            return;
+                          }
                           setExpandedPromptIndex(null);
                           if (readOnly) setViewingColumn(col);
                           else setEditingColumn(col);
@@ -825,13 +852,14 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
                           widthClassName={NAME_COL_W}
                           selected={isChecked}
                           onSelectionChange={() =>
-                            setSelectedColIndices((previous) =>
-                              previous.includes(col.index)
+                            setSelectedColIndices((previous) => {
+                              columnSelectionAnchorRef.current = col.index;
+                              return previous.includes(col.index)
                                 ? previous.filter(
                                     (index) => index !== col.index,
                                   )
-                                : [...previous, col.index],
-                            )
+                                : [...previous, col.index];
+                            })
                           }
                           label={col.name}
                         />
@@ -880,13 +908,20 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
                             </TRExpandedCellSurface>
                           )}
                         </TableCell>
-                        {!readOnly && (
-                          <div
-                            className="flex w-8 shrink-0 justify-end"
-                            onClick={(event) => event.stopPropagation()}
-                          >
-                            <RowActions
-                              onDelete={() => {
+                        <div
+                          className="flex w-8 shrink-0 justify-end"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <RowActions
+                            onView={() => {
+                              setExpandedPromptIndex(null);
+                              if (readOnly) setViewingColumn(col);
+                              else setEditingColumn(col);
+                            }}
+                            onDelete={
+                              readOnly
+                                ? undefined
+                                : () => {
                                 const next = columns
                                   .filter(
                                     (column) => column.index !== col.index,
@@ -897,10 +932,10 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
                                   }));
                                 setColumns(next);
                                 saveColumns(next);
-                              }}
-                            />
-                          </div>
-                        )}
+                                  }
+                            }
+                          />
+                        </div>
                       </TableRow>
                     );
                   })}
