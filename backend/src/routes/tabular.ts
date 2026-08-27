@@ -40,6 +40,7 @@ import {
 } from "../lib/tabular/tabular.generate";
 import {
     awaitCellTerminal,
+    claimCellsForGeneration,
     streamTabularGenerateAsync,
     streamTabularRunView,
 } from "../lib/tabular/tabular.generateStream";
@@ -1527,6 +1528,28 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                 surface: "tabular",
                 reviewId,
             });
+            return;
+        }
+
+        // Synchronous path: claim the cells this run intends to fill by
+        // stamping them with the generation id — the same call the async path
+        // makes before enqueuing. Every write extractRowColumns then performs
+        // is guarded on that stamp, so a run that loses the lease mid-flight
+        // (a wedged process, a renew that failed) can no longer blank or
+        // overwrite the cells its successor has already filled. Doing it here,
+        // right after the atomic lease claim, is the only window in which no
+        // other generation can be running.
+        try {
+            await claimCellsForGeneration({
+                db,
+                reviewId,
+                generationId,
+                columns,
+                rows,
+                cellMap,
+            });
+        } catch (claimErr) {
+            sendInternalError(res, claimErr);
             return;
         }
 

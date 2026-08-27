@@ -15,10 +15,14 @@
 // them to "pending" when the run was stopped and "error" otherwise).
 //
 // GENERATION ISOLATION: every write here is stamped with the caller's
-// `generationId` and, once a cell is terminal, guarded by it
-// (`.eq("generation_id", generationId)`). A run whose lease was taken over can
-// therefore never clobber the winner's results — its updates simply match no
-// rows. See tabular.shared.ts for the lease itself.
+// `generationId` and guarded by it (`.eq("generation_id", generationId)`) —
+// the mark-generating write as much as the terminal one, because marking also
+// clears `content`. A run whose lease was taken over can therefore never
+// clobber the winner's results: its updates simply match no rows. This relies
+// on the caller having CLAIMED its cells (stamped generation_id on each one)
+// before calling in — `claimCellsForGeneration` in tabular.generateStream.ts,
+// used by both the sync and async entry points. See tabular.shared.ts for the
+// lease itself.
 
 import { type UserApiKeys } from "../llm";
 import { queryTabularAllColumns } from "./tabular.extract";
@@ -140,11 +144,22 @@ export async function extractRowColumns(args: {
 
     // Mark each outstanding column "generating" (insert the cell if it's new)
     // and announce it, so the grid shows spinners immediately.
+    //
+    // GUARDED, exactly like the terminal write below. This write clears
+    // `content`, so an unguarded version is the one place a superseded run can
+    // still destroy the winner's results: a stale run whose snapshot said
+    // "pending" re-stamps the cell with its OWN generation id, blanking a
+    // result the live generation had already written — and having re-stamped
+    // it, its later `.eq("generation_id", generationId)` terminal write now
+    // MATCHES and writes the stale answer over the fresh one. Both callers
+    // claim their cells (stamping generation_id) before extraction begins, so
+    // for a run that still owns its cells this matches, and for one that has
+    // been superseded it matches nothing.
     for (const col of processed) {
         await sink.generating(row.id, col.index);
         const existing = existingByColumn.get(col.index);
         if (existing?.id) {
-            await db
+            const markQuery = db
                 .from("tabular_cells")
                 .update({
                     status: "generating",
@@ -152,6 +167,9 @@ export async function extractRowColumns(args: {
                     generation_id: generationId ?? null,
                 })
                 .eq("id", existing.id);
+            await (generationId
+                ? markQuery.eq("generation_id", generationId)
+                : markQuery);
         } else {
             await db.from("tabular_cells").insert({
                 review_id: reviewId,

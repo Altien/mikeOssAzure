@@ -76,12 +76,19 @@ export function targetPendingCells(
 
 /**
  * Stamp every cell this run intends to fill with its generation id, BEFORE any
- * job is enqueued. Two things depend on the stamp:
- *   - worker writes are guarded by it, so a superseded run cannot overwrite the
+ * work starts. Three things depend on the stamp:
+ *   - extraction's writes — the mark-generating one as much as the terminal
+ *     one — are guarded by it, so a superseded run cannot overwrite the
  *     winner's results;
  *   - it is how the workers detect that the run is finished — a row still
  *     waiting in the queue keeps its stamp, so nobody releases the lease early.
  * Cells that do not exist yet are inserted `pending` so they carry a stamp too.
+ *
+ * Used by BOTH entry points. The async path calls it before enqueuing; the
+ * synchronous path calls it immediately after claiming the lease, which is the
+ * only window in which no other generation can be running. `cellMap` is
+ * updated in place with the newly inserted rows so the caller's snapshot knows
+ * their ids (otherwise extraction would try to insert them a second time).
  */
 export async function claimCellsForGeneration(args: {
     db: Db;
@@ -120,8 +127,16 @@ export async function claimCellsForGeneration(args: {
         if (error) throw new Error(error.message);
     }
     if (inserts.length) {
-        const { error } = await db.from("tabular_cells").insert(inserts);
+        const { data, error } = await db
+            .from("tabular_cells")
+            .insert(inserts)
+            .select("id, row_id, column_index, status, content, generation_id");
         if (error) throw new Error(error.message);
+        for (const cell of (data ?? []) as Record<string, unknown>[])
+            cellMap.set(
+                cellKey(cell.row_id as string, cell.column_index as number),
+                cell,
+            );
     }
 }
 
