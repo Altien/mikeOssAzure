@@ -66,39 +66,61 @@ export async function processClaimedJob(
     handlers: DbJobHandlers,
     job: DbJob,
 ): Promise<void> {
+    /**
+     * FENCING TOKEN. Every write below is addressed to "the job as THIS claim
+     * left it", not merely to the row id.
+     *
+     * A job whose worker went quiet past the stale threshold is reclaimed —
+     * that is the crash-recovery design, and it is also how two live runners
+     * end up holding the same job. The zombie is not necessarily dead: a paused
+     * VM, a long GC, a wedged network call can all come back. When it does, an
+     * `.eq("id", job.id)` write lands on top of whatever the current claimant
+     * has since done — marking `done` a job that is running right now, or
+     * dragging a finished job back to `pending` and running it a second time.
+     *
+     * `claimed_at` and `attempts` are both set by the claim, so together they
+     * name one specific claim of one specific row; with `status = 'running'`
+     * they let exactly one claimant finalize.
+     */
+    const fence = <T extends { eq(column: string, value: unknown): T }>(
+        query: T,
+    ): T =>
+        query
+            .eq("id", job.id)
+            .eq("status", "running")
+            .eq("attempts", job.attempts)
+            .eq("claimed_at", job.claimed_at);
+
     const handler = handlers[job.kind];
     if (!handler) {
-        await db
-            .from("db_jobs")
-            .update({
+        await fence(
+            db.from("db_jobs").update({
                 status: "failed",
                 finished_at: new Date().toISOString(),
                 last_error: `unknown job kind: ${job.kind}`,
-            })
-            .eq("id", job.id);
+            }),
+        );
         console.error("[dbq] unknown job kind", { id: job.id, kind: job.kind });
         return;
     }
 
     try {
         const result = await handler(db, job);
-        await db
-            .from("db_jobs")
-            .update({
+        await fence(
+            db.from("db_jobs").update({
                 status: "done",
                 finished_at: new Date().toISOString(),
                 last_error: null,
                 ...(result ? { result } : {}),
-            })
-            .eq("id", job.id);
+            }),
+        );
     } catch (err) {
         const message =
             err instanceof Error ? err.message : String(err ?? "unknown");
         const spent = job.attempts >= job.max_attempts;
         const delayMs = retryDelayMs(job.attempts);
-        await db
-            .from("db_jobs")
-            .update(
+        await fence(
+            db.from("db_jobs").update(
                 spent
                     ? {
                           status: "failed",
@@ -110,8 +132,8 @@ export async function processClaimedJob(
                           run_at: new Date(Date.now() + delayMs).toISOString(),
                           last_error: message,
                       },
-            )
-            .eq("id", job.id);
+            ),
+        );
         if (spent) {
             const hook = DB_JOB_FAILURE_HOOKS[job.kind];
             if (hook) {
