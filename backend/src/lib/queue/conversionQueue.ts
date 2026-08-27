@@ -1,5 +1,5 @@
 import { Queue } from "bullmq";
-import { getRedisConnection } from "./connection";
+import { getRedisProducerConnection, withRedisTimeout } from "./connection";
 import { redisEnabled } from "../dbq/driver";
 import { enqueueDbJob } from "../dbq/enqueue";
 import { createServerSupabase } from "../supabase";
@@ -40,7 +40,7 @@ let queue: Queue<ConversionJobData> | null = null;
 export function getConversionQueue(): Queue<ConversionJobData> {
     if (!queue) {
         queue = new Queue<ConversionJobData>(CONVERSION_QUEUE, {
-            connection: getRedisConnection(),
+            connection: getRedisProducerConnection(),
         });
     }
     return queue;
@@ -70,24 +70,44 @@ export function conversionJobId(versionId: string): string {
  * job record.
  */
 export async function enqueueConversion(data: ConversionJobData) {
-    // Postgres driver (no Redis anywhere): the same job rides the DB queue —
-    // identical dedupe identity (the jobId doubles as the dedupe key),
-    // identical retry budget, same handler body (runConversionJob).
-    if (!redisEnabled()) {
-        return enqueueDbJob(createServerSupabase(), {
+    const dbEnqueue = () =>
+        enqueueDbJob(createServerSupabase(), {
             kind: "conversion.convert",
             payload: data as unknown as Record<string, unknown>,
             dedupeKey: conversionJobId(data.versionId),
             maxAttempts: 3,
         });
+    // Postgres driver (no Redis anywhere): the same job rides the DB queue —
+    // identical dedupe identity (the jobId doubles as the dedupe key),
+    // identical retry budget, same handler body (runConversionJob).
+    if (!redisEnabled()) return dbEnqueue();
+    try {
+        // Deadline-bounded: these enqueues sit on the upload/replace request
+        // thread, and with the worker connection options a dead Redis makes
+        // `add()` pend forever — the request never answers.
+        return await withRedisTimeout("conversion enqueue", () =>
+            getConversionQueue().add("convert", data, {
+                jobId: conversionJobId(data.versionId),
+                attempts: 3,
+                backoff: { type: "exponential", delay: 2000 },
+                removeOnComplete: true,
+                removeOnFail: true,
+            }),
+        );
+    } catch (err) {
+        // Fall back to the DB queue rather than rethrowing. Every caller of
+        // this function `await`s it without a catch, and under Express 4 a
+        // rejected async handler is an unhandled rejection whose request never
+        // responds — i.e. the same hang we just fixed, wearing a different
+        // hat. The DB queue runs conversion.convert with the same handler in
+        // every deployment, so the work still happens; it just waits for a
+        // poll tick instead of arriving instantly.
+        console.error(
+            "[conversion] Redis enqueue failed; falling back to the DB queue:",
+            err instanceof Error ? err.message : err,
+        );
+        return dbEnqueue();
     }
-    return getConversionQueue().add("convert", data, {
-        jobId: conversionJobId(data.versionId),
-        attempts: 3,
-        backoff: { type: "exponential", delay: 2000 },
-        removeOnComplete: true,
-        removeOnFail: true,
-    });
 }
 
 export async function closeConversionQueue(): Promise<void> {

@@ -22,6 +22,8 @@ vi.mock("../../supabase", () => ({
 
 vi.mock("../connection", () => ({
     getRedisConnection: () => ({}),
+    getRedisProducerConnection: () => ({}),
+    withRedisTimeout: <T,>(_label: string, run: () => Promise<T>) => run(),
 }));
 
 const add = vi.fn();
