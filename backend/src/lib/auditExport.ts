@@ -25,6 +25,10 @@ function isCalendarDate(value: string): boolean {
     return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
+/**
+ * Resolve audit visibility through Dev's single access helper. Its organisation
+ * grants, rather than a local projects.shared_with mirror, are authoritative.
+ */
 export async function accessibleProjectIds(
     db: Db,
     userId: string,
