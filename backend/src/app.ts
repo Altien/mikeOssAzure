@@ -327,6 +327,7 @@ export function buildApp(): express.Express {
   // router at both /api/user and /api/users, so limit both aliases.
   for (const userBase of ["/api/user", "/api/users"]) {
     app.get(`${userBase}/export`, exportLimiter);
+    app.post(`${userBase}/exports`, exportLimiter);
     app.get(`${userBase}/chats/export`, exportLimiter);
     app.get(`${userBase}/tabular-reviews/export`, exportLimiter);
     app.delete(`${userBase}/account`, dataDeleteLimiter);
