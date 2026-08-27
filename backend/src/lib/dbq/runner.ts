@@ -4,7 +4,12 @@
 // Runs BY DEFAULT in every deployment — the whole point of this queue is
 // durability without new infrastructure, so unlike the Redis workers there is
 // no opt-in flag; DB_JOBS_ENABLED=false exists only as an operational escape
-// hatch. Polling a partial index every few seconds costs one cheap indexed
+// hatch — and it is honored on BOTH sides. The runner stops, and producers
+// stop acknowledging work nothing will run: account deletion falls back to
+// the inline cascade, async exports answer 503. "Enqueue anyway and let it
+// wait" was the old reading, and it let a 204 stand for an erasure that
+// never happened. Split worker topology is WORKERS_MODE=none, not this
+// flag. Polling a partial index every few seconds costs one cheap indexed
 // query, and FOR UPDATE SKIP LOCKED in the claim RPC makes any number of
 // backend replicas partition the work safely.
 
