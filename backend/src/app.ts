@@ -46,13 +46,6 @@ import { configuredAllowedOrigins as configuredOrigins } from "./lib/origins";
 const JSON_BODY_LIMIT = "50mb";
 const TOOL_RESULT_PATH = "/api/word-chat/tool-result";
 
-function envInt(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (!raw) return fallback;
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
 function minutes(value: number): number {
   return value * 60 * 1000;
 }
