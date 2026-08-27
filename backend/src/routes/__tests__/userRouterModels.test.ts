@@ -13,6 +13,7 @@ const {
 }));
 
 vi.mock("../../middleware/auth", () => ({
+    localAuthOnly: (_req: unknown, _res: unknown, next: () => void) => next(),
     requireAuth: (
         _req: unknown,
         res: { locals: Record<string, unknown> },
@@ -83,7 +84,7 @@ const PROFILE_ROW = {
     quick_actions_visible: true,
 };
 
-// A permissive supabase mock: every query-builder call chains, awaiting the
+// A permissive database mock: every query-builder call chains, awaiting the
 // chain resolves { data, error }, and maybeSingle/single resolve the profile
 // row. That covers ensureProfileRow (upsert), the profile update, and
 // selectProfile without modelling PostgREST.
@@ -101,8 +102,8 @@ function chainDb() {
     return chain;
 }
 
-vi.mock("../../lib/supabase", () => ({
-    createServerSupabase: vi.fn(() => chainDb()),
+vi.mock("../../lib/database", () => ({
+    createServerDatabase: vi.fn(() => chainDb()),
 }));
 
 import { userRouter, normalizeRouterModels } from "../user";

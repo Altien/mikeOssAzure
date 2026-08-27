@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   ModelToggleUI,
   nearestReasoningLevelForModel,
@@ -9,46 +9,51 @@ import {
   type ReasoningLevel,
 } from "@/shared/ui/ModelToggleUI";
 import { isModelAvailable } from "@/app/lib/modelAvailability";
-import type { ApiKeyState } from "@/app/lib/mikeApi";
+import { getConfiguredModels, type ApiKeyState } from "@/app/lib/mikeApi";
+import { useOptionalUserProfile } from "@/app/contexts/UserProfileContext";
+import { featureEnabled } from "@/app/lib/featureFlags";
 import { useOllamaModels } from "@/app/hooks/useOllamaModels";
+import { useOpenCodeGoModels } from "@/app/hooks/useOpenCodeGoModels";
 
 export type ModelOption = ModelToggleOption;
 export type { ReasoningLevel };
 
 export const MODELS: ModelOption[] = [
-  { id: "claude-fable-5", label: "Claude Fable 5", group: "Anthropic" },
-  { id: "claude-opus-5", label: "Claude Opus 5", group: "Anthropic" },
-  { id: "claude-sonnet-5", label: "Claude Sonnet 5", group: "Anthropic" },
-  { id: "claude-opus-4-8", label: "Claude Opus 4.8", group: "Anthropic" },
-  { id: "claude-opus-4-7", label: "Claude Opus 4.7", group: "Anthropic" },
-  { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", group: "Anthropic" },
-  { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash", group: "Google" },
-  { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", group: "Google" },
-  { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", group: "Google" },
-  { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro", group: "Google" },
-  { id: "gemini-3-flash-preview", label: "Gemini 3 Flash", group: "Google" },
-  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", group: "OpenAI" },
-  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", group: "OpenAI" },
-  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", group: "OpenAI" },
-  { id: "gpt-5.5", label: "GPT-5.5", group: "OpenAI" },
-  { id: "gpt-5.4", label: "GPT-5.4", group: "OpenAI" },
-  // Local (Ollama) models are appended dynamically — see useOllamaModels.
+    { id: "claude-fable-5", label: "Claude Fable 5", group: "Anthropic" },
+    { id: "claude-opus-5", label: "Claude Opus 5", group: "Anthropic" },
+    { id: "claude-sonnet-5", label: "Claude Sonnet 5", group: "Anthropic" },
+    { id: "claude-opus-4-8", label: "Claude Opus 4.8", group: "Anthropic" },
+    { id: "claude-opus-4-7", label: "Claude Opus 4.7", group: "Anthropic" },
+    { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", group: "Anthropic" },
+    { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash", group: "Google" },
+    { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", group: "Google" },
+    { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", group: "Google" },
+    { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro", group: "Google" },
+    { id: "gemini-3-flash-preview", label: "Gemini 3 Flash", group: "Google" },
+    { id: "kimi-k3", label: "Kimi K3", group: "Moonshot" },
+    { id: "kimi-k3-256k", label: "Kimi K3 256K", group: "Moonshot" },
+    { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", group: "OpenAI" },
+    { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", group: "OpenAI" },
+    { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", group: "OpenAI" },
+    { id: "gpt-5.5", label: "GPT-5.5", group: "OpenAI" },
+    { id: "gpt-5.4", label: "GPT-5.4", group: "OpenAI" },
+    // Local (Ollama) models are appended dynamically — see useOllamaModels.
 ];
 
 export const SETTINGS_MODELS: ModelOption[] = [
-  ...MODELS,
-  { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", group: "Anthropic" },
-  {
-    id: "gemini-3.5-flash-lite",
-    label: "Gemini 3.5 Flash-Lite",
-    group: "Google",
-  },
-  {
-    id: "gemini-3.1-flash-lite",
-    label: "Gemini 3.1 Flash-Lite",
-    group: "Google",
-  },
-  { id: "gpt-5.4-mini", label: "GPT-5.4 Mini", group: "OpenAI" },
+    ...MODELS,
+    { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", group: "Anthropic" },
+    {
+        id: "gemini-3.5-flash-lite",
+        label: "Gemini 3.5 Flash-Lite",
+        group: "Google",
+    },
+    {
+        id: "gemini-3.1-flash-lite",
+        label: "Gemini 3.1 Flash-Lite",
+        group: "Google",
+    },
+    { id: "gpt-5.4-mini", label: "GPT-5.4 Mini", group: "OpenAI" },
 ];
 
 for (const model of MODELS) model.source = "Direct";
@@ -63,47 +68,132 @@ export const ALLOWED_MODEL_IDS = new Set(MODELS.map((m) => m.id));
 // them on read keeps an old saved value working instead of orphaning it.
 // Kept in sync with backend/src/lib/llm/models.ts LEGACY_MODEL_IDS.
 export const LEGACY_MODEL_IDS: Record<string, string> = {
-  "gemini-3.1-flash-lite-preview": "gemini-3.5-flash-lite",
-  "gpt-5.4-lite": "gpt-5.4-mini",
+    "gemini-3.1-flash-lite-preview": "gemini-3.5-flash-lite",
+    "gpt-5.4-lite": "gpt-5.4-mini",
 };
 
 export function canonicalModelId(id: string): string {
-  return LEGACY_MODEL_IDS[id] ?? id;
+    return LEGACY_MODEL_IDS[id] ?? id;
 }
 
 const MODEL_NAME_ACRONYMS: Record<string, string> = {
-  ai: "AI",
-  gpt: "GPT",
-  oss: "OSS",
-  r1: "R1",
+    ai: "AI",
+    gpt: "GPT",
+    oss: "OSS",
+    r1: "R1",
 };
 
 export function modelDisplayName(modelId: string): string {
-  const normalized = modelId
-    .replace(/^(?:openrouter|vercel|opencode-go|ollama)\//, "")
-    .split("/")
-    .at(-1)!
-    .replace(/(\d)-(\d)/g, "$1.$2");
-  const [rawName, variant] = normalized.split(":", 2);
-  const name = rawName ?? normalized;
-  const label = name
-    .split(/[-_\s]+/)
-    .filter(Boolean)
-    .map((token) => {
-      const lower = token.toLowerCase();
-      if (MODEL_NAME_ACRONYMS[lower]) {
-        return MODEL_NAME_ACRONYMS[lower];
-      }
-      if (/^\d+[bk]$/i.test(token)) return token.toUpperCase();
-      return token.charAt(0).toUpperCase() + token.slice(1);
-    })
-    .join(" ");
-  if (!variant) return label;
-  const variantLabel = variant
-    .split(/[-_]+/)
-    .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
-    .join(" ");
-  return `${label} (${variantLabel})`;
+    const normalized = modelId
+        .replace(/^(?:openrouter|vercel|ollama)\//, "")
+        .split("/")
+        .at(-1)!
+        .replace(/(\d)-(\d)/g, "$1.$2");
+    const [rawName, variant] = normalized.split(":", 2);
+    const name = rawName ?? normalized;
+    const label = name
+        .split(/[-_\s]+/)
+        .filter(Boolean)
+        .map((token) => {
+            const lower = token.toLowerCase();
+            if (MODEL_NAME_ACRONYMS[lower]) {
+                return MODEL_NAME_ACRONYMS[lower];
+            }
+            if (/^\d+[bk]$/i.test(token)) return token.toUpperCase();
+            return token.charAt(0).toUpperCase() + token.slice(1);
+        })
+        .join(" ");
+    if (!variant) return label;
+    const variantLabel = variant
+        .split(/[-_]+/)
+        .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
+        .join(" ");
+    return `${label} (${variantLabel})`;
+}
+
+/**
+ * Model options assembled from the instance's configured-model registry plus
+ * the dynamic catalogs (Ollama, OpenCode Go), gated by the user's feature
+ * flags. Router (OpenRouter / Vercel AI Gateway) models are NOT included here:
+ * the backend only accepts router models that are in the user's saved
+ * selection, so those come in through the explicit props below.
+ */
+export function useConfiguredModelOptions(
+    base: ModelOption[] = MODELS,
+): ModelOption[] {
+    // Optional: the composer must still render (with the static catalog) when
+    // it is mounted outside a UserProfileProvider.
+    const profile = useOptionalUserProfile()?.profile;
+    const ollamaModels = useOllamaModels();
+    const openCodeGoModels = useOpenCodeGoModels(
+        profile?.apiKeys?.["opencode-go"]?.configured === true,
+    );
+    const [options, setOptions] = useState<ModelOption[]>(base);
+    const localModelsEnabled = featureEnabled(
+        profile?.featureFlags,
+        "localModels",
+        profile?.deploymentModules,
+    );
+    const committeeModelsEnabled = featureEnabled(
+        profile?.featureFlags,
+        "committeeModels",
+        profile?.deploymentModules,
+    );
+
+    useEffect(() => {
+        let cancelled = false;
+        getConfiguredModels()
+            .then((configured) => {
+                if (cancelled || configured.length === 0) return;
+                const extra = configured
+                    .map((model): ModelOption => {
+                        const group =
+                            model.location === "committee"
+                                ? "Committee"
+                                : model.location === "local"
+                                  ? "Local"
+                                  : model.id.startsWith("opencode-go/")
+                                    ? "OpenCode Go"
+                                    : model.provider === "claude"
+                                      ? "Anthropic"
+                                      : model.id.startsWith("kimi-")
+                                        ? "Moonshot"
+                                        : model.provider === "gemini"
+                                          ? "Google"
+                                          : "OpenAI";
+                        return { id: model.id, label: model.label, group };
+                    })
+                    .filter(
+                        (model) =>
+                            (model.group !== "Local" || localModelsEnabled) &&
+                            (model.group !== "Committee" ||
+                                committeeModelsEnabled),
+                    );
+                const merged = new Map<string, ModelOption>();
+                [...base, ...extra].forEach((model) =>
+                    merged.set(model.id, model),
+                );
+                setOptions(Array.from(merged.values()));
+            })
+            .catch(() => {});
+        return () => {
+            cancelled = true;
+        };
+    }, [base, localModelsEnabled, committeeModelsEnabled]);
+
+    const merged = new Map<string, ModelOption>(
+        options.map((model) => [model.id, model]),
+    );
+    if (localModelsEnabled) {
+        ollamaModels.forEach((model) =>
+            merged.set(model.id, {
+                ...model,
+                label: modelDisplayName(model.id),
+            }),
+        );
+    }
+    openCodeGoModels.forEach((model) => merged.set(model.id, model));
+    return Array.from(merged.values());
 }
 
 /**

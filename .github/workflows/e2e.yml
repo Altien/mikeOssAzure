@@ -1,7 +1,7 @@
 # End-to-end Playwright suite (auth, chat, projects, tabular reviews, workflows).
 #
 # This workflow is what makes the e2e suite a MERGE GATE: it runs on every pull
-# request into a protected branch, boots a full local stack (Supabase + backend
+# request into a protected branch, boots a full local stack (SQLite + backend
 # API + Next.js web + MinIO object storage), runs Playwright, and fails the check
 # when any spec fails. To have a red run actually BLOCK a merge you must also mark
 # this job "e2e / playwright" as a required status check in branch protection —
@@ -17,9 +17,8 @@
 # always take the skip path), cost, and how to verify the specs ran are in
 # docs/e2e-ci.md ("Enable the LLM specs").
 #
-# The e2e user (e2e@mike.local) is bootstrapped in-job by e2e/auth.setup.ts against
-# the local Supabase admin API, so no E2E_PASSWORD secret is needed — the defaults
-# baked into auth.setup.ts are the single source of truth.
+# The e2e user (e2e@mike.local) is bootstrapped in-job by e2e/auth.setup.ts
+# through the backend's local auth API, so no E2E_PASSWORD secret is needed.
 name: e2e
 
 on:

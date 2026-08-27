@@ -10,8 +10,10 @@ import {
 } from "react";
 import {
     ArrowRight,
+    BookOpenText,
     Check,
     Library,
+    ListChecks,
     Loader2,
     Square,
     Waypoints,
@@ -22,6 +24,11 @@ import { UploadOverlay } from "./UploadOverlay";
 import { FileTypeIcon } from "../shared/FileTypeIcon";
 import { AddDocumentsModal } from "../modals/AddDocumentsModal";
 import { AssistantWorkflowModal } from "./AssistantWorkflowModal";
+import { PromptPickerModal } from "../prompts/PromptPickerModal";
+import {
+    PlaybookPickerModal,
+    type AssistantPlaybookSelection,
+} from "./PlaybookPickerModal";
 import { WORKFLOW_SLASH_MENU_ID, WorkflowSlashMenu } from "./WorkflowSlashMenu";
 import {
     exactSlashWorkflow,
@@ -50,6 +57,7 @@ import {
 import type { Document, Message, Workflow } from "../shared/types";
 import type { DirectoryTab } from "../shared/useDirectoryData";
 import { cn } from "@/app/lib/utils";
+import { featureEnabled } from "@/app/lib/featureFlags";
 import {
     LIQUID_GLASS_FLAT_CLASS,
     LIQUID_GLASS_TRANSLUCENT_CLASS,
@@ -66,6 +74,7 @@ import {
 
 export interface ChatInputHandle {
     addDoc: (doc: Document) => void;
+    setPrompt: (prompt: string) => void;
     startWorkflow: (
         workflow: { id: string; title: string },
         prompt?: string,
@@ -87,6 +96,11 @@ interface Props {
     projectCmNumber?: string | null;
     projectId?: string;
     onDocumentsUploaded?: (documents: Document[]) => void;
+    /** Controlled playbook selection (optional). When provided, ownership
+     *  lives with the parent so it survives transient remounts (e.g. the
+     *  ask_inputs continuation) instead of being lost with this component. */
+    selectedPlaybook?: AssistantPlaybookSelection | null;
+    onPlaybookChange?: (playbook: AssistantPlaybookSelection | null) => void;
     onDocumentClick?: (document: Document) => void;
     chatModel?: string | null;
     chatReasoningLevel?: ReasoningLevel | null;
@@ -104,6 +118,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         projectCmNumber,
         projectId,
         onDocumentsUploaded,
+        selectedPlaybook: selectedPlaybookProp,
+        onPlaybookChange,
         onDocumentClick,
         chatModel,
         chatReasoningLevel,
@@ -117,6 +133,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         id: string;
         title: string;
     } | null>(null);
+    const [storedSelectedPlaybook, setStoredSelectedPlaybook] =
+        useState<AssistantPlaybookSelection | null>(null);
     const {
         profile,
         loading: profileLoading,
@@ -147,6 +165,32 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     // every key gate (submit check + model toggle) fail open instead of
     // treating "we couldn't ask" as "no keys configured".
     const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
+    const promptLibraryEnabled = featureEnabled(
+        profile?.featureFlags,
+        "promptLibrary",
+        profile?.deploymentModules,
+    );
+    const playbooksEnabled = featureEnabled(
+        profile?.featureFlags,
+        "playbooks",
+        profile?.deploymentModules,
+    );
+    // When the parent owns the selection (controlled props), honor it so a
+    // transient remount (ask_inputs continuation) doesn't lose the choice.
+    const isControlled =
+        selectedPlaybookProp !== undefined || onPlaybookChange !== undefined;
+    const selectedPlaybook = playbooksEnabled
+        ? isControlled
+            ? selectedPlaybookProp ?? null
+            : storedSelectedPlaybook
+        : null;
+    const setSelectedPlaybook = useCallback(
+        (playbook: AssistantPlaybookSelection | null) => {
+            if (onPlaybookChange) onPlaybookChange(playbook);
+            setStoredSelectedPlaybook(playbook);
+        },
+        [onPlaybookChange],
+    );
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const controlsRef = useRef<HTMLDivElement>(null);
     const [compactControls, setCompactControls] = useState(false);
@@ -154,6 +198,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     const [docSelectorInitialTab, setDocSelectorInitialTab] =
         useState<DirectoryTab>("files");
     const [workflowModalOpen, setWorkflowModalOpen] = useState(false);
+    const [promptModalOpen, setPromptModalOpen] = useState(false);
+    const [playbookModalOpen, setPlaybookModalOpen] = useState(false);
     const [apiKeyModalProvider, setApiKeyModalProvider] =
         useState<ModelProvider | null>(null);
     const [noModelsWarning, setNoModelsWarning] =
@@ -228,6 +274,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             setAttachedDocs((prev) => {
                 if (prev.some((d) => d.id === doc.id)) return prev;
                 return [...prev, doc];
+            });
+        },
+        setPrompt: (prompt: string) => {
+            setValue(prompt);
+            requestAnimationFrame(() => {
+                if (!textareaRef.current) return;
+                textareaRef.current.style.height = "auto";
+                textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 192)}px`;
+                textareaRef.current.focus();
             });
         },
         startWorkflow: (workflow, prompt) => {
@@ -427,12 +482,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         }));
         setAttachedDocs([]);
         setSelectedWorkflow(null);
+        const playbook = selectedPlaybook;
+        setSelectedPlaybook(null);
 
         onSubmit?.({
             role: "user",
             content: query,
             files: files.length > 0 ? files : undefined,
             workflow: workflow ?? undefined,
+            playbook: playbook ?? undefined,
             model,
             reasoning: reasoningLevel,
         });
@@ -522,7 +580,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                     )}
                 >
                     {/* Attached chips */}
-                    {(selectedWorkflow || attachedDocs.length > 0) && (
+                    {(selectedWorkflow || selectedPlaybook || attachedDocs.length > 0) && (
                         <div className="flex flex-wrap gap-1.5 px-2 pt-2">
                             {selectedWorkflow && (
                                 <div className="inline-flex items-center gap-1 pl-2.5 pr-1 py-0.5 rounded-full text-xs bg-blue-600 text-white border border-white/20 shadow backdrop-blur-sm">
@@ -536,6 +594,22 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                             setSelectedWorkflow(null)
                                         }
                                         className="rounded-full p-0.5 ml-0.5 text-white/60 hover:text-white hover:bg-white/20 transition-colors"
+                                    >
+                                        <X className="h-2.5 w-2.5" />
+                                    </button>
+                                </div>
+                            )}
+                            {selectedPlaybook && (
+                                <div className="inline-flex items-center gap-1 rounded-full border border-emerald-600 bg-emerald-600 py-0.5 pl-2.5 pr-1 text-xs text-white shadow">
+                                    <ListChecks className="h-2.5 w-2.5 shrink-0" />
+                                    <span className="max-w-[170px] truncate">
+                                        {selectedPlaybook.title} · v{selectedPlaybook.version}
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={() => setSelectedPlaybook(null)}
+                                        aria-label="Remove playbook"
+                                        className="ml-0.5 rounded-full p-0.5 text-white/60 transition-colors hover:bg-white/20 hover:text-white"
                                     >
                                         <X className="h-2.5 w-2.5" />
                                     </button>
@@ -682,6 +756,39 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                     </span>
                                 </button>
                             )}
+                            {promptLibraryEnabled && (
+                                <button
+                                    type="button"
+                                    onClick={() => setPromptModalOpen(true)}
+                                    aria-label="Open prompt library"
+                                    title="Prompt library"
+                                    className="flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm text-gray-400 transition-colors hover:text-gray-700"
+                                >
+                                    <BookOpenText className="h-3.5 w-3.5" />
+                                    <span className={compactControls ? "hidden" : "hidden sm:inline"}>Prompts</span>
+                                </button>
+                            )}
+                            {playbooksEnabled && (
+                                <button
+                                    type="button"
+                                    onClick={() => setPlaybookModalOpen(true)}
+                                    aria-label="Select playbook"
+                                    title="Playbooks"
+                                    className={cn(
+                                        "flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm transition-colors",
+                                        selectedPlaybook
+                                            ? "text-emerald-600 hover:text-emerald-700"
+                                            : "text-gray-400 hover:text-gray-700",
+                                    )}
+                                >
+                                    {selectedPlaybook ? (
+                                        <Check className="h-3.5 w-3.5" />
+                                    ) : (
+                                        <ListChecks className="h-3.5 w-3.5" />
+                                    )}
+                                    <span className={compactControls ? "hidden" : "hidden sm:inline"}>Playbook</span>
+                                </button>
+                            )}
                         </div>
 
                         <div className="flex items-center gap-1">
@@ -760,6 +867,26 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                 projectName={projectName}
                 projectCmNumber={projectCmNumber}
             />
+            {promptLibraryEnabled && <PromptPickerModal
+                open={promptLibraryEnabled && promptModalOpen}
+                onClose={() => setPromptModalOpen(false)}
+                onSelect={(prompt) => {
+                    setValue(prompt.prompt);
+                    setPromptModalOpen(false);
+                    requestAnimationFrame(() => {
+                        if (!textareaRef.current) return;
+                        textareaRef.current.style.height = "auto";
+                        textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 192)}px`;
+                        textareaRef.current.focus();
+                    });
+                }}
+            />}
+            {playbooksEnabled && <PlaybookPickerModal
+                open={playbooksEnabled && playbookModalOpen}
+                onClose={() => setPlaybookModalOpen(false)}
+                currentId={selectedPlaybook?.id}
+                onSelect={setSelectedPlaybook}
+            />}
             <ApiKeyMissingPopup
                 open={apiKeyModalProvider !== null}
                 provider={apiKeyModalProvider}

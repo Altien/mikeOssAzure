@@ -24,3 +24,5 @@ alter table public.contact_messages enable row level security;
 
 revoke all privileges on table public.contact_messages
   from anon, authenticated;
+grant select, insert, update, delete
+  on public.contact_messages to service_role;

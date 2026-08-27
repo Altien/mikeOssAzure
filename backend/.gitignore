@@ -6,6 +6,12 @@ dist
 *.raw-llm-stream.json
 logs/
 .DS_Store
+data/uv/
+data/uv-cache/
+data/*.sqlite
+data/*.sqlite-shm
+data/*.sqlite-wal
+vendor/
 
 # Stryker mutation-testing output
 reports/

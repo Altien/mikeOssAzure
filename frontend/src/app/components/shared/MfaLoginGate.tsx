@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
@@ -12,9 +12,7 @@ const MFA_VERIFIED_AT_KEY = "mike:mfa-verified-at";
 const MFA_VERIFIED_GRACE_MS = 60_000;
 
 export function MfaLoginGate({ children }: { children: ReactNode }) {
-    const router = useRouter();
     const pathname = usePathname();
-    const searchParams = useSearchParams();
     const { user } = useAuth();
     const { profile, loading } = useUserProfile();
     const [gateState, setGateState] = useState<GateState>("idle");
@@ -40,9 +38,6 @@ export function MfaLoginGate({ children }: { children: ReactNode }) {
         }
 
         let cancelled = false;
-        setGateState((previous) =>
-            previous === "verified" ? "verified" : "checking",
-        );
 
         async function checkLoginMfa() {
             try {
@@ -59,15 +54,132 @@ export function MfaLoginGate({ children }: { children: ReactNode }) {
         return () => {
             cancelled = true;
         };
-    }, [loading, profile?.mfaOnLogin, user?.id]);
+    }, [loading, profile?.mfaOnLogin, user]);
+
+    // Reset the gate synchronously when the auth/profile inputs change
+    // (adjust-during-render); the async check above refines it.
+    const checkKey = `${user?.id ?? ""}:${loading}:${profile?.mfaOnLogin ?? ""}`;
+    const [prevCheckKey, setPrevCheckKey] = useState(checkKey);
+    if (prevCheckKey !== checkKey) {
+        setPrevCheckKey(checkKey);
+        if (!user || loading || !profile?.mfaOnLogin) {
+            setGateState("idle");
+        } else if (hasRecentMfaVerification()) {
+            setGateState("verified");
+        } else {
+            setGateState((previous) =>
+                previous === "verified" ? "verified" : "checking",
+            );
+        }
+    }
+
+    // A just-completed verification (marked in sessionStorage by the verify
+    // page) clears the gate without waiting for the async check.
+    if (
+        user &&
+        !loading &&
+        profile?.mfaOnLogin &&
+        gateState === "required" &&
+        hasRecentMfaVerification()
+    ) {
+        setGateState("verified");
+    }
+
+    const redirector = (
+        <Suspense fallback={null}>
+            <MfaGateRedirector
+                hasUser={!!user}
+                profileLoading={loading}
+                mfaOnLogin={profile?.mfaOnLogin ?? false}
+                gateState={gateState}
+                isVerifyPage={isVerifyPage}
+                pathname={pathname}
+                onVerified={() => setGateState("verified")}
+            />
+        </Suspense>
+    );
+
+    if (user && loading) {
+        return gateState === "verified" ? (
+            <>
+                {redirector}
+                {children}
+            </>
+        ) : (
+            <>
+                {redirector}
+                <FullScreenLoader />
+            </>
+        );
+    }
+
+    if (user && profile?.mfaOnLogin) {
+        if (gateState === "required" && isVerifyPage) {
+            return (
+                <>
+                    {redirector}
+                    {children}
+                </>
+            );
+        }
+        if (gateState === "verified" && isVerifyPage) {
+            return (
+                <>
+                    {redirector}
+                    <FullScreenLoader />
+                </>
+            );
+        }
+        if (gateState === "verified") {
+            return (
+                <>
+                    {redirector}
+                    {children}
+                </>
+            );
+        }
+        return (
+            <>
+                {redirector}
+                <FullScreenLoader />
+            </>
+        );
+    }
+
+    return (
+        <>
+            {redirector}
+            {children}
+        </>
+    );
+}
+
+function MfaGateRedirector({
+    hasUser,
+    profileLoading,
+    mfaOnLogin,
+    gateState,
+    isVerifyPage,
+    pathname,
+    onVerified,
+}: {
+    hasUser: boolean;
+    profileLoading: boolean;
+    mfaOnLogin: boolean;
+    gateState: GateState;
+    isVerifyPage: boolean;
+    pathname: string;
+    onVerified: () => void;
+}) {
+    const router = useRouter();
+    const searchParams = useSearchParams();
 
     useEffect(() => {
-        if (!user || loading || !profile?.mfaOnLogin) return;
+        if (!hasUser || profileLoading || !mfaOnLogin) return;
 
         if (gateState === "required" && !isVerifyPage) {
             if (hasRecentMfaVerification()) {
-                // eslint-disable-next-line react-hooks/set-state-in-effect -- clear gate when a recent MFA verification exists instead of redirecting
-                setGateState("verified");
+                onVerified();
                 return;
             }
             const search = searchParams.toString();
@@ -79,40 +191,17 @@ export function MfaLoginGate({ children }: { children: ReactNode }) {
         }
     }, [
         gateState,
+        hasUser,
         isVerifyPage,
-        loading,
+        mfaOnLogin,
+        onVerified,
         pathname,
-        profile?.mfaOnLogin,
+        profileLoading,
         router,
         searchParams,
-        user,
     ]);
 
-    if (user && loading) {
-        return gateState === "verified" ? (
-            <>{children}</>
-        ) : (
-            <FullScreenLoader />
-        );
-    }
-
-    if (user && profile?.mfaOnLogin) {
-        if (gateState === "required" && isVerifyPage) {
-            return <>{children}</>;
-        }
-        if (gateState === "verified" && isVerifyPage) {
-            return <FullScreenLoader />;
-        }
-        if (gateState === "verified") {
-            return <>{children}</>;
-        }
-        if (gateState === "required" && !isVerifyPage) {
-            return <FullScreenLoader />;
-        }
-        return <FullScreenLoader />;
-    }
-
-    return <>{children}</>;
+    return null;
 }
 
 function safeNextPath(value: string | null) {

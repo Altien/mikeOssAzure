@@ -35,6 +35,8 @@ interface ModalSelectProps {
     onOpenChange?: (open: boolean) => void;
     className?: string;
     menuClassName?: string;
+    searchable?: boolean;
+    searchPlaceholder?: string;
 }
 
 function normalizeOption(option: ModalSelectOption) {
@@ -54,14 +56,26 @@ export function ModalSelect({
     onOpenChange,
     className,
     menuClassName,
+    searchable = false,
+    searchPlaceholder = "Search options...",
 }: ModalSelectProps) {
     const [internalOpen, setInternalOpen] = useState(false);
+    const [query, setQuery] = useState("");
     const isOpen = open ?? internalOpen;
     const normalizedOptions = options.map(normalizeOption);
+    const normalizedQuery = query.trim().toLowerCase();
+    const visibleOptions = normalizedQuery
+        ? normalizedOptions.filter(
+              (option) =>
+                  option.label.toLowerCase().includes(normalizedQuery) ||
+                  option.value.toLowerCase().includes(normalizedQuery),
+          )
+        : normalizedOptions;
     const selected = normalizedOptions.find((option) => option.value === value);
     const hasValue = value.trim().length > 0;
 
     function setOpen(next: boolean) {
+        if (!next) setQuery("");
         onOpenChange?.(next);
         if (open === undefined) {
             setInternalOpen(next);

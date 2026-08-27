@@ -84,6 +84,73 @@ afterEach(() => {
 });
 
 describe("useAssistantChat SSE parsing", () => {
+    it("preserves the selected playbook when an ask-input response resumes the turn", async () => {
+        fetchMock.mockResolvedValue(sseResponse(["data: [DONE]\n\n"]));
+        const playbook = {
+            id: "playbook-vendor",
+            title: "Vendor Agreement Review",
+            version: 1,
+            versionId: "playbook-version-1",
+        };
+        const { result } = renderHook(() =>
+            useAssistantChat({
+                chatId: "chat-1",
+                initialMessages: [
+                    {
+                        role: "user",
+                        content: "Apply the playbook and create a redline.",
+                        files: [{
+                            filename: "SaaS Agreement.pdf",
+                            document_id: "document-1",
+                        }],
+                        playbook,
+                    },
+                    {
+                        role: "assistant",
+                        content: "",
+                        events: [{
+                            type: "ask_inputs",
+                            items: [],
+                        }],
+                    },
+                ],
+            }),
+        );
+
+        await act(async () => {
+            await result.current.handleChat(
+                {
+                    role: "user",
+                    content: "No Word version available - work from the PDF text",
+                    model: "gpt-5.4-lite",
+                },
+                {
+                    askInputsResponse: {
+                        type: "ask_inputs_response",
+                        responses: [{
+                            id: "redline_source",
+                            kind: "choice",
+                            question: "How should I proceed with the redline?",
+                            answer: "No Word version available - work from the PDF text",
+                        }],
+                    },
+                },
+            );
+        });
+
+        const request = JSON.parse(
+            String((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.body),
+        );
+        expect(request).toMatchObject({
+            chat_id: "chat-1",
+            playbook_id: "playbook-vendor",
+            playbook_version_id: "playbook-version-1",
+            ask_inputs_response: {
+                responses: [{ id: "redline_source", kind: "choice" }],
+            },
+        });
+    });
+
     it("reassembles an event split across chunk boundaries", async () => {
         const { assistant, result } = await sendAndGetAssistant([
             'data: {"type":"content_delta","te',

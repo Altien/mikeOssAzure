@@ -84,8 +84,16 @@ function mockSupabase() {
     };
 }
 
-vi.mock("../../lib/supabase", () => ({
-    createServerSupabase: vi.fn(() => mockSupabase()),
+vi.mock("../../lib/database", () => ({
+    createServerDatabase: vi.fn(() => mockSupabase()),
+}));
+
+// Routes resolve their db through createServerDatabase, which (under
+// MIKE_DATABASE_PROVIDER=sqlite) delegates to createServerSQLite — forward it
+// to the mocked Supabase factory so the one-shot createServerDatabase
+// overrides below see every db call the route makes.
+vi.mock("../../lib/sqlite", () => ({
+    createServerSQLite: vi.fn(() => createServerDatabase()),
 }));
 
 vi.mock("../../middleware/auth", () => ({
@@ -100,6 +108,7 @@ vi.mock("../../middleware/auth", () => ({
     },
     requireMfaIfEnrolled: (_req: unknown, _res: unknown, next: () => void) =>
         next(),
+    localAuthOnly: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
 // Every export of lib/access must be present — other routers (chat, documents,
@@ -132,7 +141,7 @@ vi.mock("../../lib/documentVersions", () => ({
 import { app } from "../../app";
 import crypto from "crypto";
 import { manifestPublicKey } from "../../lib/manifestSigning";
-import { createServerSupabase } from "../../lib/supabase";
+import { createServerDatabase } from "../../lib/database";
 
 const SIGNING_KEY = "3b".repeat(32);
 
@@ -146,7 +155,7 @@ function captureRpcArgs(): { args: unknown; name: string | undefined } {
     args: undefined,
     name: undefined,
   };
-    vi.mocked(createServerSupabase).mockImplementationOnce(() => {
+    vi.mocked(createServerDatabase).mockImplementationOnce(() => {
         const db = mockSupabase();
         const originalRpc = db.rpc;
         db.rpc = vi.fn((name: string, args: unknown) => {
@@ -154,7 +163,7 @@ function captureRpcArgs(): { args: unknown; name: string | undefined } {
             captured.args = args;
             return originalRpc(name, args as never);
         });
-        return db as unknown as ReturnType<typeof createServerSupabase>;
+        return db as unknown as ReturnType<typeof createServerDatabase>;
     });
     return captured;
 }
@@ -331,10 +340,10 @@ describe("projects.routes", () => {
                     error: null,
                 })
                 .mockResolvedValueOnce({ data: [], error: null });
-            vi.mocked(createServerSupabase).mockImplementationOnce(() => {
+            vi.mocked(createServerDatabase).mockImplementationOnce(() => {
                 const db = mockSupabase();
                 db.rpc = rpcMock;
-                return db as unknown as ReturnType<typeof createServerSupabase>;
+                return db as unknown as ReturnType<typeof createServerDatabase>;
             });
 
       const res = await request(app)

@@ -1,8 +1,8 @@
-import { createServerSupabase } from "../supabase";
+import { createServerDatabase } from "../database";
 
-export type Db = ReturnType<typeof createServerSupabase>;
+export type Db = ReturnType<typeof createServerDatabase>;
 
-export type McpTransport = "streamable_http";
+export type McpTransport = "streamable_http" | "stdio";
 export type McpAuthType = "none" | "bearer" | "oauth";
 export type McpConnectorAuthConfig = {
     bearerToken?: string;
@@ -13,6 +13,7 @@ export type McpConnectorSummary = {
     id: string;
     name: string;
     transport: McpTransport;
+    managed: boolean;
     serverUrl: string;
     authType: McpAuthType;
     enabled: boolean;
@@ -57,7 +58,7 @@ export type ConnectorRow = {
     transport: McpTransport;
     server_url: string;
     auth_type: McpAuthType;
-    enabled: boolean;
+    enabled: boolean | number | string;
     tool_policy: Record<string, unknown> | null;
     encrypted_auth_config: string | null;
     auth_config_iv: string | null;
@@ -118,8 +119,8 @@ export type ToolCacheRow = {
     input_schema: Record<string, unknown>;
     output_schema: Record<string, unknown> | null;
     annotations: Record<string, unknown> | null;
-    enabled: boolean;
-    requires_confirmation: boolean;
+    enabled: boolean | number | string;
+    requires_confirmation: boolean | number | string;
     last_seen_at: string;
 };
 

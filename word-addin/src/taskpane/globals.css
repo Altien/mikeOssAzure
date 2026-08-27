@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Office task panes have a min width of ~300px. We design for 320–500px.
+   Body uses Inter-style stack; serif (EB Garamond fallback) is opt-in via
+   `font-serif` for display headings — mirrors the desktop frontend. */
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+  background: #ffffff;
+  color: #111827;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Thin scrollbar for the compact "mini desktop app" feel */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+
+/* Native button cursor — matches desktop globals. */
+button { cursor: pointer; }
+button:disabled { cursor: default; }
+
+/* Prose output from the AI */
+.prose-sm p { margin: 0.4rem 0; }
+.prose-sm ul, .prose-sm ol { padding-left: 1.2rem; margin: 0.3rem 0; }
+.prose-sm li { margin: 0.2rem 0; }
+.prose-sm code { background: #f3f4f6; padding: 1px 4px; border-radius: 3px; font-size: 11px; }
+.prose-sm pre { background: #f3f4f6; padding: 8px; border-radius: 4px; overflow-x: auto; font-size: 11px; }
+.prose-sm pre code { background: none; padding: 0; }
+.prose-sm h1,.prose-sm h2,.prose-sm h3 {
+  font-weight: 600;
+  margin: 0.5rem 0 0.25rem;
+  font-family: "EB Garamond", "Iowan Old Style", "Baskerville", serif;
+}

@@ -18,6 +18,12 @@ next-env.d.ts
 .vercel
 coverage
 
+# Optional private prompt-library data. Keep Mike prompt data local or mount it
+# at runtime; it must never be committed to the repository.
+backend/src/data/*ExamplePrompts.json
+backend/data/*ExamplePrompts.json
+backend/data/*ExamplePrompts.xlsx
+
 # Playwright artifacts and the bootstrapped e2e session (contains auth tokens)
 test-results/
 playwright-report/

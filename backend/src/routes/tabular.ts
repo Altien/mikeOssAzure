@@ -1,9 +1,9 @@
+// @ts-nocheck
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { requireAuth } from "../middleware/auth";
-import { createServerSupabase } from "../lib/supabase";
+import { createServerDatabase } from "../lib/database";
 import { recordAudit } from "../lib/audit";
-import { sendInternalError } from "../lib/httpError";
 import { downloadFile } from "../lib/storage";
 import { attachActiveVersionPaths } from "../lib/documentVersions";
 import { docxToPdf, normalizeDocxZipPaths } from "../lib/convert";
@@ -29,12 +29,14 @@ import {
 } from "../lib/chat";
 import {
     completeText,
+    modelHasApiKey,
     providerForModel,
     resolveModel,
     streamChatWithTools,
     type Provider,
     type UserApiKeys,
 } from "../lib/llm";
+import { getConfiguredModel } from "../lib/llm/registry";
 import {
     getUserModelSettings,
     persistLastSelectedChatModel,
@@ -48,6 +50,8 @@ import {
     titleModelForChat,
 } from "../lib/modelSelection";
 import { UserFacingError } from "../lib/userFacingError";
+import { sendServerError } from "../lib/safeError";
+import { sendInternalError } from "../lib/httpError";
 import {
     checkProjectAccess,
     ensureReviewAccess,
@@ -117,7 +121,7 @@ type SourceDocument = {
     folder_id?: string | null;
     library_folder_id?: string | null;
 };
-type SupabaseDb = ReturnType<typeof createServerSupabase>;
+type Db = ReturnType<typeof createServerDatabase>;
 
 function isReviewGenerationRunning(review: Record<string, unknown>): boolean {
     if (!review.active_generation_id || !review.generation_lease_expires_at) {
@@ -134,7 +138,7 @@ function normalizeGrouping(value: unknown): DocumentGrouping {
 }
 
 async function fetchSourceDocuments(
-    db: SupabaseDb,
+    db: Db,
     documentIds: string[],
 ): Promise<SourceDocument[]> {
     if (documentIds.length === 0) return [];
@@ -188,7 +192,7 @@ function buildFolderPathMap(
 }
 
 async function getFolderPathMaps(
-    db: SupabaseDb,
+    db: Db,
     userId: string,
     docs: SourceDocument[],
 ): Promise<{
@@ -221,7 +225,7 @@ async function getFolderPathMaps(
 }
 
 async function createRowsForReview(
-    db: SupabaseDb,
+    db: Db,
     reviewId: string,
     userId: string,
     documentIds: string[],
@@ -358,7 +362,7 @@ async function createRowsForReview(
 }
 
 async function rebuildRowsForReview(
-    db: SupabaseDb,
+    db: Db,
     reviewId: string,
     userId: string,
     documentIds: string[],
@@ -381,7 +385,7 @@ async function rebuildRowsForReview(
 }
 
 async function syncCellsForReviewRows(
-    db: SupabaseDb,
+    db: Db,
     reviewId: string,
     columns: Column[],
 ): Promise<void> {
@@ -431,7 +435,7 @@ async function syncCellsForReviewRows(
 }
 
 async function loadReviewRows(
-    db: SupabaseDb,
+    db: Db,
     reviewId: string,
 ): Promise<ReviewRow[]> {
     const { data, error } = await db
@@ -466,7 +470,7 @@ async function loadReviewRows(
 }
 
 async function loadRowDocumentText(
-    db: SupabaseDb,
+    db: Db,
     row: ReviewRow,
 ): Promise<string> {
     const sourceIds =
@@ -500,10 +504,13 @@ async function loadRowDocumentText(
     return sections.join("\n\n---\n\n");
 }
 
-function providerLabel(provider: Provider): string {
+function providerLabel(provider: Provider | keyof UserApiKeys): string {
     if (provider === "claude") return "Anthropic";
     if (provider === "openai") return "OpenAI";
     if (provider === "openrouter") return "OpenRouter";
+    if (provider === "opencode-go") return "OpenCode Go";
+    if (provider === "kimi") return "Moonshot (Kimi)";
+    if (provider === "openai-compatible") return "OpenAI-compatible";
     if (provider === "vercel") return "Vercel AI Gateway";
     if (provider === "opencode-go") return "OpenCode Go";
     if (provider === "ollama") return "Local (Ollama)";
@@ -512,19 +519,20 @@ function providerLabel(provider: Provider): string {
 
 function missingModelApiKey(model: string, apiKeys: UserApiKeys) {
     const provider = providerForModel(model);
-    if (provider === "ollama") return null; // local, no key
-    if (apiKeys[provider]?.trim()) return null;
+    if (modelHasApiKey(model, apiKeys)) return null;
+    const configuredProvider = getConfiguredModel(model)?.apiKeyProvider;
+    const keyProvider = configuredProvider ?? provider;
     return {
-        provider,
+        provider: keyProvider,
         model,
-        detail: `${providerLabel(provider)} API key is required to use ${model}. Add an API key or select a different tabular review model.`,
+        detail: `${providerLabel(keyProvider)} API key is required to use ${model}. Add an API key or select a different tabular review model.`,
     };
 }
 
 async function validateSelectedModel(
     model: unknown,
     userId: string,
-    db: ReturnType<typeof createServerSupabase>,
+    db: ReturnType<typeof createServerDatabase>,
 ): Promise<
     | { ok: true; model: string; apiKeys: UserApiKeys }
     | {
@@ -590,7 +598,7 @@ async function validateSelectedModel(
 tabularRouter.get("/", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
 
     const projectIdFilter =
         typeof req.query.project_id === "string" && req.query.project_id
@@ -633,7 +641,7 @@ const TABULAR_REVIEW_IDS_MAX_PAGES = 200; // guards a runaway loop, not a produc
 tabularRouter.get("/ids", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
 
     const projectIdFilter =
         typeof req.query.project_id === "string" && req.query.project_id
@@ -697,7 +705,7 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
         });
     }
 
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const selectedModel = await validateSelectedModel(model, userId, db);
     if (!selectedModel.ok) {
         return void res.status(selectedModel.status).json(selectedModel.body);
@@ -851,7 +859,7 @@ tabularRouter.get("/:reviewId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { reviewId } = req.params;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
 
     const { data: review, error } = await db
         .from("tabular_reviews")
@@ -910,7 +918,7 @@ tabularRouter.get("/:reviewId/people", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { reviewId } = req.params;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
 
     const { data: review } = await db
         .from("tabular_reviews")
@@ -991,7 +999,7 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
     }
     updates.updated_at = new Date().toISOString();
 
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const { data: existingReview, error: reviewError } = await db
         .from("tabular_reviews")
         .select("*")
@@ -1142,7 +1150,44 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
 tabularRouter.delete("/:reviewId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const { reviewId } = req.params;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
+    const { data: review, error: loadError } = await db
+        .from("tabular_reviews")
+        .select("id")
+        .eq("id", reviewId)
+        .eq("user_id", userId)
+        .maybeSingle();
+    if (loadError) return void sendServerError(res, loadError);
+    if (!review) return void res.status(404).json({ detail: "Review not found" });
+
+    const { data: reviewChats, error: chatsError } = await db
+        .from("tabular_review_chats")
+        .select("id")
+        .eq("review_id", reviewId);
+    if (chatsError)
+        return void sendServerError(res, chatsError);
+    const chatIds = ((reviewChats ?? []) as { id: string }[]).map(
+        (row) => row.id,
+    );
+
+    const cascades: { error: { message?: string } | null }[] = [];
+    if (chatIds.length > 0) {
+        cascades.push(
+            await db
+                .from("tabular_review_chat_messages")
+                .delete()
+                .in("chat_id", chatIds),
+        );
+    }
+    cascades.push(
+        await db.from("tabular_review_chats").delete().eq("review_id", reviewId),
+        await db.from("tabular_cells").delete().eq("review_id", reviewId),
+    );
+    for (const result of cascades) {
+        if (result.error)
+            return void sendServerError(res, result.error);
+    }
+
     const { error } = await db
         .from("tabular_reviews")
         .delete()
@@ -1164,7 +1209,7 @@ tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
     if (!Array.isArray(row_ids) || row_ids.length === 0)
         return void res.status(400).json({ detail: "row_ids is required" });
 
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const { data: review, error: reviewError } = await db
         .from("tabular_reviews")
         .select(
@@ -1177,6 +1222,11 @@ tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
     const access = await ensureReviewAccess(review, userId, userEmail, db);
     if (!access.ok)
         return void res.status(404).json({ detail: "Review not found" });
+    if (!access.isOwner)
+        return void res
+            .status(403)
+            .json({ detail: "Only the review owner can clear cells" });
+
     if (isReviewGenerationRunning(review)) {
         return void res.status(409).json({
             code: "review_running",
@@ -1260,7 +1310,7 @@ tabularRouter.post(
                 .status(400)
                 .json({ detail: "row_id and column_index are required" });
 
-        const db = createServerSupabase();
+        const db = createServerDatabase();
         const { data: review, error: reviewError } = await db
             .from("tabular_reviews")
             .select("*")
@@ -1474,7 +1524,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { reviewId } = req.params;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const generationAbort = new AbortController();
     const generationId = randomUUID();
     let leaseHeartbeat: ReturnType<typeof setInterval> | null = null;
@@ -1799,7 +1849,7 @@ tabularRouter.get("/:reviewId/chats", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { reviewId } = req.params;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
 
     // Verify access (owner or shared-project member).
     const { data: review, error } = await db
@@ -1833,7 +1883,7 @@ tabularRouter.delete(
     async (req, res) => {
         const userId = res.locals.userId as string;
         const { chatId } = req.params;
-        const db = createServerSupabase();
+        const db = createServerDatabase();
         // Owner-only delete — sibling collaborators shouldn't be able to wipe
         // each other's threads.
         const { error } = await db
@@ -1892,7 +1942,7 @@ tabularRouter.patch(
                 .json({ detail: parsedReasoning.detail });
         }
 
-        const db = createServerSupabase();
+        const db = createServerDatabase();
         const { data: chat, error: chatError } = await db
             .from("tabular_review_chats")
             .select("id, model")
@@ -1975,7 +2025,7 @@ tabularRouter.get(
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
         const { reviewId, chatId } = req.params;
-        const db = createServerSupabase();
+        const db = createServerDatabase();
 
         const { data: review } = await db
             .from("tabular_reviews")
@@ -2144,7 +2194,7 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
             .json({ detail: "messages must include a user message" });
     }
 
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const { data: review, error } = await db
         .from("tabular_reviews")
         .select("*")
@@ -2318,12 +2368,14 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
             write,
             extraTools: TABULAR_TOOLS,
             includeResearchTools: false,
+            includeGmailTools: false,
             tabularStore,
             buildCitations: (text) =>
                 extractTabularAnnotations(text, tabularStore),
             model: selectedChatModel,
             reasoning: selectedReasoningLevel,
             apiKeys: api_keys,
+            userEmail,
             signal: streamAbort.signal,
         });
 

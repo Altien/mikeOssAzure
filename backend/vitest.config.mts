@@ -3,8 +3,16 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
     test: {
         environment: "node",
+        // Unit/integration tests use the self-contained local profile unless a
+        // provider-specific test overrides it explicitly.
+        env: {
+            MIKE_DATABASE_PROVIDER: "sqlite",
+            MIKE_STORAGE_PROVIDER: "sqlite",
+            MIKE_AUTH_PROVIDER: "local",
+        },
         include: ["src/**/*.test.ts"],
         exclude: ["dist/**", "node_modules/**"],
+        fileParallelism: false,
         // Generous timeouts so cold-start module transform/import latency
         // can't cause spurious timeout failures on a cold CI runner. Warm
         // tests finish in ~1s; this only guards the pathological cold case —

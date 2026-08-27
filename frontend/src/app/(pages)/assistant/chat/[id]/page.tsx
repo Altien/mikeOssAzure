@@ -8,9 +8,13 @@ import { ChatView } from "@/app/components/assistant/ChatView";
 import { getChat } from "@/app/lib/mikeApi";
 
 export default function AssistantChatPage() {
-    const router = useRouter();
     const params = useParams();
     const id = params.id as string;
+    return <AssistantChatPageInner key={id} id={id} />;
+}
+
+function AssistantChatPageInner({ id }: { id: string }) {
+    const router = useRouter();
 
     const { setCurrentChatId, newChatMessages, setNewChatMessages } =
         useChatHistoryContext();

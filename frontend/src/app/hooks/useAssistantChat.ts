@@ -231,11 +231,14 @@ export function useAssistantChat({
     updater: (e: AssistantEvent) => AssistantEvent,
   ) => {
     const events = eventsRef.current;
-    const idx = [...events]
-      .map((_, i) => i)
-      .reverse()
-      .find((i) => predicate(events[i]));
-    if (idx === undefined) return false;
+    let idx = -1;
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (predicate(events[i])) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx === -1) return false;
     const newEvents = [...events];
     newEvents[idx] = updater(events[idx]);
     eventsRef.current = newEvents;
@@ -336,6 +339,20 @@ export function useAssistantChat({
 
       const model = message.model;
       const reasoning = message.reasoning;
+      // An ask-input response resumes the same logical turn in a new HTTP
+      // request. Inherit the latest selected playbook because the response
+      // message itself does not carry the original playbook chip.
+      const continuedPlaybook = opts?.askInputsResponse
+        ? [...apiMessagesForTurn]
+            .reverse()
+            .find(
+              (currentMessage) =>
+                currentMessage.role === "user" && !!currentMessage.playbook,
+            )?.playbook
+        : undefined;
+      const activePlaybook = message.playbook ?? continuedPlaybook;
+      const playbookId = activePlaybook?.id;
+      const playbookVersionId = activePlaybook?.versionId;
 
       const displayedDoc = opts?.displayedDoc ?? null;
 
@@ -358,6 +375,8 @@ export function useAssistantChat({
             chat_id: chatId,
             model,
             reasoning,
+            playbook_id: playbookId,
+            playbook_version_id: playbookVersionId,
             displayed_doc: displayedDoc
               ? {
                   filename: displayedDoc.filename,
@@ -374,6 +393,8 @@ export function useAssistantChat({
             chat_id: chatId,
             model,
             reasoning,
+            playbook_id: playbookId,
+            playbook_version_id: playbookVersionId,
             ask_inputs_response: opts?.askInputsResponse,
             signal: controller.signal,
           }));
@@ -705,6 +726,180 @@ export function useAssistantChat({
                     typeof data.error === "string"
                       ? (data.error as string)
                       : undefined,
+                  isStreaming: false,
+                }),
+              );
+              pushThinkingPlaceholder();
+              continue;
+            }
+
+            if (data.type === "ironclad_search_contracts_start") {
+              pushEvent({
+                type: "ironclad_search_contracts",
+                query: (data.query as string) ?? "",
+                isStreaming: true,
+              });
+              continue;
+            }
+
+            if (data.type === "ironclad_search_contracts") {
+              updateMatchingEvent(
+                (e) =>
+                  e.type === "ironclad_search_contracts" &&
+                  e.query === (data.query as string) &&
+                  !!e.isStreaming,
+                () => ({
+                  type: "ironclad_search_contracts",
+                  query: (data.query as string) ?? "",
+                  result_count:
+                    typeof data.result_count === "number"
+                      ? (data.result_count as number)
+                      : 0,
+                  error:
+                    typeof data.error === "string"
+                      ? (data.error as string)
+                      : undefined,
+                  isStreaming: false,
+                }),
+              );
+              pushThinkingPlaceholder();
+              continue;
+            }
+
+            if (data.type === "ironclad_get_contract_start") {
+              pushEvent({
+                type: "ironclad_get_contract",
+                record_id: (data.record_id as string) ?? null,
+                isStreaming: true,
+              });
+              continue;
+            }
+
+            if (data.type === "ironclad_get_contract") {
+              updateMatchingEvent(
+                (e) =>
+                  e.type === "ironclad_get_contract" && !!e.isStreaming,
+                () => ({
+                  type: "ironclad_get_contract",
+                  record_id: (data.record_id as string) ?? null,
+                  name:
+                    typeof data.name === "string"
+                      ? (data.name as string)
+                      : null,
+                  attachment_count:
+                    typeof data.attachment_count === "number"
+                      ? (data.attachment_count as number)
+                      : 0,
+                  error:
+                    typeof data.error === "string"
+                      ? (data.error as string)
+                      : undefined,
+                  isStreaming: false,
+                }),
+              );
+              pushThinkingPlaceholder();
+              continue;
+            }
+
+            if (data.type === "ironclad_import_contract_start") {
+              pushEvent({
+                type: "ironclad_import_contract",
+                record_id: (data.record_id as string) ?? "",
+                attachment_key: (data.attachment_key as string) ?? "signedCopy",
+                isStreaming: true,
+              });
+              continue;
+            }
+
+            if (data.type === "ironclad_import_contract") {
+              updateMatchingEvent(
+                (e) =>
+                  e.type === "ironclad_import_contract" && !!e.isStreaming,
+                () => ({
+                  type: "ironclad_import_contract",
+                  record_id: (data.record_id as string) ?? "",
+                  attachment_key:
+                    (data.attachment_key as string) ?? "signedCopy",
+                  filename:
+                    typeof data.filename === "string"
+                      ? (data.filename as string)
+                      : undefined,
+                  error:
+                    typeof data.error === "string"
+                      ? (data.error as string)
+                      : undefined,
+                  isStreaming: false,
+                }),
+              );
+              pushThinkingPlaceholder();
+              continue;
+            }
+
+            if (data.type === "gmail_search_messages_start") {
+              pushEvent({
+                type: "gmail_search_messages",
+                query: (data.query as string) ?? "",
+                isStreaming: true,
+              });
+              continue;
+            }
+
+            if (data.type === "gmail_search_messages") {
+              updateMatchingEvent(
+                (e) => e.type === "gmail_search_messages" && !!e.isStreaming,
+                () => ({
+                  type: "gmail_search_messages",
+                  query: (data.query as string) ?? "",
+                  result_count: typeof data.result_count === "number" ? data.result_count : 0,
+                  error: typeof data.error === "string" ? data.error : undefined,
+                  isStreaming: false,
+                }),
+              );
+              pushThinkingPlaceholder();
+              continue;
+            }
+
+            if (data.type === "gmail_get_message_start") {
+              pushEvent({
+                type: "gmail_get_message",
+                message_id: (data.message_id as string) ?? "",
+                isStreaming: true,
+              });
+              continue;
+            }
+
+            if (data.type === "gmail_get_message") {
+              updateMatchingEvent(
+                (e) => e.type === "gmail_get_message" && !!e.isStreaming,
+                () => ({
+                  type: "gmail_get_message",
+                  message_id: (data.message_id as string) ?? "",
+                  subject: typeof data.subject === "string" ? data.subject : undefined,
+                  error: typeof data.error === "string" ? data.error : undefined,
+                  isStreaming: false,
+                }),
+              );
+              pushThinkingPlaceholder();
+              continue;
+            }
+
+            if (data.type === "gmail_import_message_start") {
+              pushEvent({
+                type: "gmail_import_message",
+                message_id: (data.message_id as string) ?? "",
+                isStreaming: true,
+              });
+              continue;
+            }
+
+            if (data.type === "gmail_import_message") {
+              updateMatchingEvent(
+                (e) => e.type === "gmail_import_message" && !!e.isStreaming,
+                () => ({
+                  type: "gmail_import_message",
+                  message_id: (data.message_id as string) ?? "",
+                  filename: typeof data.filename === "string" ? data.filename : undefined,
+                  error: typeof data.error === "string" ? data.error : undefined,
                   isStreaming: false,
                 }),
               );

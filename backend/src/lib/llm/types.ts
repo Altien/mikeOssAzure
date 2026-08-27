@@ -6,6 +6,7 @@ export type Provider =
     | "claude"
     | "gemini"
     | "openai"
+    | "openai-compatible"
     | "openrouter"
     | "vercel"
     | "opencode-go"
@@ -56,6 +57,7 @@ export type StreamCallbacks = {
 
 export type UserApiKeys = {
     claude?: string | null;
+    kimi?: string | null;
     gemini?: string | null;
     openai?: string | null;
     openrouter?: string | null;
@@ -80,8 +82,47 @@ export type StreamChatParams = {
      */
     reasoning?: ReasoningLevel;
     abortSignal?: AbortSignal;
+    /**
+     * Maximum time allowed for each provider response. Providers that do not
+     * expose an abortable request may ignore this value.
+     */
+    requestTimeoutMs?: number;
 };
 
 export type StreamChatResult = {
     fullText: string;
+};
+
+export type ModelLocation = "cloud" | "local";
+
+export type ConfiguredModel = {
+    id: string;
+    provider: Provider;
+    location: ModelLocation;
+    label?: string;
+    apiModel?: string;
+    modelName?: string;
+    baseUrl?: string;
+    apiKeyEnv?: string;
+    apiKeyProvider?: keyof UserApiKeys;
+    apiKey?: string;
+    extraBody?: Record<string, unknown>;
+    /** Enable chunked Assistant playbook passes for this model. */
+    playbookChunking?: boolean;
+};
+
+export type CommitteeModel = {
+    id: string;
+    label?: string;
+    members: Array<
+        | string
+        | {
+              id?: string;
+              model: string;
+              label?: string;
+              systemPrompt?: string;
+          }
+    >;
+    chair: string;
+    strategy?: "synthesize";
 };

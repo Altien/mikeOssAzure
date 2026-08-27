@@ -5,7 +5,10 @@
         "test:e2e": "playwright test",
         "test:e2e:local": "bash scripts/e2e-local-stack.sh",
         "test:e2e:headed": "playwright test --headed",
-        "test:e2e:ui": "playwright test --ui"
+        "test:e2e:ui": "playwright test --ui",
+        "word-addin:dev": "npm --prefix word-addin run dev",
+        "word-addin:build": "npm --prefix word-addin run build",
+        "word-addin:typecheck": "npm --prefix word-addin run typecheck"
     },
     "devDependencies": {
         "@axe-core/playwright": "^4.12.1",

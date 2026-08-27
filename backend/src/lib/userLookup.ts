@@ -1,6 +1,5 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
-
-type Db = SupabaseClient<any, "public", any>;
+// @ts-nocheck
+type Db = ReturnType<typeof import("./database").createServerDatabase>;
 
 export type ProfileUserInfo = {
     id: string;

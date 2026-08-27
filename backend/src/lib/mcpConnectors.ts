@@ -15,6 +15,7 @@ export {
     executeMcpToolCall,
     getUserMcpConnector,
     listUserMcpConnectors,
+    provisionPatentMcpConnector,
     refreshUserMcpConnectorTools,
     setUserMcpToolEnabled,
     startUserMcpConnectorOAuth,

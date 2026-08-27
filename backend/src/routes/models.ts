@@ -1,9 +1,14 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { requireAuth } from "../middleware/auth";
 import { ollamaAuthHeaders as authHeaders } from "../lib/llm/providers";
 import { isSupportedOpenCodeGoModel } from "../lib/llm/models";
-import { createServerSupabase } from "../lib/supabase";
+import { createServerDatabase } from "../lib/database";
 import { getUserApiKeys } from "../lib/userApiKeys";
+import {
+    OPENCODE_GO_API_BASE_URL,
+    parseOpenCodeGoModelOptions,
+} from "../lib/llm/openCodeGoCatalog";
+import { safeErrorLog } from "../lib/safeError";
 import { sendInternalError } from "../lib/httpError";
 
 export const modelsRouter = Router();
@@ -61,7 +66,7 @@ modelsRouter.get("/ollama", requireAuth, async (_req, res) => {
 modelsRouter.get("/openrouter", requireAuth, async (_req, res) => {
     const userId = res.locals.userId as string;
     try {
-        const apiKeys = await getUserApiKeys(userId, createServerSupabase());
+        const apiKeys = await getUserApiKeys(userId, createServerDatabase());
         const key = apiKeys.openrouter?.trim();
         if (!key) {
             return void res.status(422).json({
@@ -132,7 +137,7 @@ modelsRouter.get("/openrouter", requireAuth, async (_req, res) => {
 modelsRouter.get("/vercel", requireAuth, async (_req, res) => {
     const userId = res.locals.userId as string;
     try {
-        const apiKeys = await getUserApiKeys(userId, createServerSupabase());
+        const apiKeys = await getUserApiKeys(userId, createServerDatabase());
         if (!apiKeys.vercel?.trim()) {
             return void res.status(422).json({
                 code: "missing_api_key",
@@ -231,7 +236,7 @@ modelsRouter.get("/vercel", requireAuth, async (_req, res) => {
 modelsRouter.get("/opencode-go", requireAuth, async (_req, res) => {
     const userId = res.locals.userId as string;
     try {
-        const apiKeys = await getUserApiKeys(userId, createServerSupabase());
+        const apiKeys = await getUserApiKeys(userId, createServerDatabase());
         const key = apiKeys["opencode-go"]?.trim();
         if (!key) {
             return void res.status(422).json({
@@ -285,3 +290,47 @@ modelsRouter.get("/opencode-go", requireAuth, async (_req, res) => {
         sendInternalError(res, error);
     }
 });
+
+// Catalog visible to the authenticated user's OpenCode Go subscription. The
+// API key stays server-side; only model ids and display labels are returned.
+export async function openCodeGoModelsHandler(
+    _req: Request,
+    res: Response,
+): Promise<void> {
+    const userId = res.locals.userId as string;
+    try {
+        const db = createServerDatabase();
+        const apiKeys = await getUserApiKeys(userId, db);
+        const apiKey = apiKeys["opencode-go"]?.trim();
+        if (!apiKey) {
+            return void res.status(400).json({
+                detail: "OpenCode Go API key is not configured.",
+            });
+        }
+
+        const response = await fetch(`${OPENCODE_GO_API_BASE_URL}/models`, {
+            signal: AbortSignal.timeout(15_000),
+            headers: {
+                Authorization: `Bearer ${apiKey}`,
+                Accept: "application/json",
+            },
+        });
+        if (!response.ok) {
+            return void res.status(502).json({
+                detail: "Unable to load the OpenCode Go model catalog.",
+            });
+        }
+        const models = parseOpenCodeGoModelOptions(await response.json());
+        res.json({ models });
+    } catch (error) {
+        console.error(
+            "[models/opencode-go] catalog request failed",
+            safeErrorLog(error),
+        );
+        res.status(502).json({
+            detail: "Unable to load the OpenCode Go model catalog.",
+        });
+    }
+}
+
+modelsRouter.get("/opencode-go", requireAuth, openCodeGoModelsHandler);

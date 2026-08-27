@@ -11,7 +11,7 @@ import {
 type Row = Record<string, unknown>;
 
 /**
- * Minimal user_profiles-shaped Supabase mock. Supports the query chains
+ * Minimal user_profiles-shaped DB mock. Supports the query chains
  * userLookup uses (select/eq/in/not + single-row readers) plus insert and
  * update so syncProfileEmail can be exercised end to end.
  */

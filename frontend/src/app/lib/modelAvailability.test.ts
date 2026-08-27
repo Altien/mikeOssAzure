@@ -15,7 +15,7 @@ const keys = (configured: {
     openai?: boolean;
     openrouter?: boolean;
     vercel?: boolean;
-    opencodego?: boolean;
+    "opencode-go"?: boolean;
 }): ApiKeyState =>
     ({
         claude: { configured: !!configured.claude, source: null },
@@ -24,7 +24,7 @@ const keys = (configured: {
         openrouter: { configured: !!configured.openrouter, source: null },
         vercel: { configured: !!configured.vercel, source: null },
         "opencode-go": {
-            configured: !!configured.opencodego,
+            configured: !!configured["opencode-go"],
             source: null,
         },
         courtlistener: { configured: false, source: null },
@@ -33,8 +33,11 @@ const keys = (configured: {
 describe("getModelProvider", () => {
     it("maps each settings model to a provider via its group", () => {
         expect(getModelProvider("claude-opus-5")).toBe("claude");
+        expect(getModelProvider("claude-haiku-4-5")).toBe("claude");
         expect(getModelProvider("gemini-3.7-flash")).toBe("gemini");
+        expect(getModelProvider("gemini-3-flash-preview")).toBe("gemini");
         expect(getModelProvider("gpt-5.6-sol")).toBe("openai");
+        expect(getModelProvider("ollama/qwen3.6")).toBe("ollama");
         expect(getModelProvider("openrouter/openai/gpt-5.4")).toBe(
             "openrouter",
         );
@@ -81,7 +84,7 @@ describe("isModelAvailable", () => {
             ),
         ).toBe(true);
         expect(
-            isModelAvailable("opencode-go/glm-5", keys({ opencodego: true })),
+            isModelAvailable("opencode-go/glm-5", keys({ "opencode-go": true })),
         ).toBe(true);
         // Each router gates on its own key, never a sibling's.
         expect(
@@ -89,13 +92,44 @@ describe("isModelAvailable", () => {
         ).toBe(false);
     });
 
-    it("is false for an unknown model regardless of keys", () => {
+    it("allows an unknown model so server-managed dynamic models can resolve", () => {
         expect(
             isModelAvailable(
                 "not-a-model",
                 keys({ claude: true, gemini: true, openai: true }),
             ),
+        ).toBe(true);
+    });
+
+    it("allows dynamic Ollama models without an API key", () => {
+        expect(isModelAvailable("ollama/qwen3.6", keys({}))).toBe(true);
+    });
+
+    it("requires the configured OpenRouter key for dynamic models", () => {
+        const withoutKey = keys({});
+        const withKey = keys({}) as ApiKeyState;
+        withKey.openrouter = { configured: true, source: "user" };
+        expect(
+            isModelAvailable(
+                "openrouter/anthropic/claude-sonnet-4",
+                withoutKey,
+            ),
         ).toBe(false);
+        expect(
+            isModelAvailable("openrouter/anthropic/claude-sonnet-4", withKey),
+        ).toBe(true);
+    });
+
+    it("requires the configured OpenCode Go key for dynamic models", () => {
+        const withoutKey = keys({});
+        const withKey = keys({}) as ApiKeyState;
+        withKey["opencode-go"] = { configured: true, source: "user" };
+        expect(
+            isModelAvailable("opencode-go/qwen3.8-max", withoutKey),
+        ).toBe(false);
+        expect(
+            isModelAvailable("opencode-go/qwen3.8-max", withKey),
+        ).toBe(true);
     });
 
     it("is true for ollama models even with no keys configured", () => {
@@ -127,24 +161,34 @@ describe("isProviderAvailable", () => {
 
 describe("providerLabel", () => {
     it("returns the display label for each provider", () => {
+        expect(providerLabel("local")).toBe("Local");
+        expect(providerLabel("committee")).toBe("Committee");
         expect(providerLabel("claude")).toBe("Anthropic (Claude)");
+        expect(providerLabel("kimi")).toBe("Moonshot (Kimi)");
         expect(providerLabel("openai")).toBe("OpenAI");
         expect(providerLabel("openrouter")).toBe("OpenRouter");
         expect(providerLabel("vercel")).toBe("Vercel AI Gateway");
         expect(providerLabel("opencode-go")).toBe("OpenCode Go");
         expect(providerLabel("ollama")).toBe("Local (Ollama)");
         expect(providerLabel("gemini")).toBe("Google (Gemini)");
+        expect(providerLabel("openrouter")).toBe("OpenRouter");
+        expect(providerLabel("opencode-go")).toBe("OpenCode Go");
     });
 });
 
 describe("modelGroupToProvider", () => {
     it("maps every model group to its provider id", () => {
         expect(modelGroupToProvider("Anthropic")).toBe("claude");
+        expect(modelGroupToProvider("Moonshot")).toBe("kimi");
         expect(modelGroupToProvider("OpenAI")).toBe("openai");
         expect(modelGroupToProvider("OpenRouter")).toBe("openrouter");
         expect(modelGroupToProvider("OpenCode Go")).toBe("opencode-go");
         expect(modelGroupToProvider("Vercel AI Gateway")).toBe("vercel");
-        expect(modelGroupToProvider("Local")).toBe("ollama");
+        expect(modelGroupToProvider("OpenCode Go")).toBe("opencode-go");
+        expect(modelGroupToProvider("Local")).toBe("local");
+        expect(modelGroupToProvider("Committee")).toBe("committee");
         expect(modelGroupToProvider("Google")).toBe("gemini");
+        expect(modelGroupToProvider("OpenRouter")).toBe("openrouter");
+        expect(modelGroupToProvider("OpenCode Go")).toBe("opencode-go");
     });
 });

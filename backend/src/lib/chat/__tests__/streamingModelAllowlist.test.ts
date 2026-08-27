@@ -15,9 +15,16 @@ vi.mock("../../mcpConnectors", () => ({
     buildUserMcpTools: vi.fn(async () => []),
 }));
 
+// Fork-only pre-flight reads that would otherwise hit the db mock and add
+// unrelated tables to `tablesQueried`.
+vi.mock("../../userFeatures", () => ({
+    getUserFeatures: vi.fn(async () => ({ ironclad: false, gmail: false })),
+    featureForModel: vi.fn(() => null),
+}));
+
 import { AssistantStreamError, runLLMStream } from "../streaming";
 
-// Supabase mock that only has to serve getUserRouterModels' query chain.
+// Database mock that only has to serve getUserRouterModels' query chain.
 function routerModelsDb(
     rows: { model_id: string }[],
     error: unknown = null,
@@ -66,7 +73,11 @@ beforeEach(() => {
 describe("runLLMStream router-model allowlist", () => {
     it("passes a saved router model through to the adapter", async () => {
         const db = routerModelsDb([{ model_id: "allowed/model" }]);
-        await runStreamWithModel(db, "openrouter/allowed/model");
+        // A usable key for the router, so resolveUsableModel keeps the
+        // requested model instead of substituting a keyless local one.
+        await runStreamWithModel(db, "openrouter/allowed/model", {
+            openrouter: "sk-or-user",
+        });
 
         expect(streamChatWithTools).toHaveBeenCalledWith(
             expect.objectContaining({ model: "openrouter/allowed/model" }),
@@ -146,7 +157,9 @@ describe("runLLMStream router-model allowlist", () => {
 
     it("does not consult the router selection for first-party models", async () => {
         const db = routerModelsDb([]);
-        await runStreamWithModel(db, "claude-fable-5");
+        await runStreamWithModel(db, "claude-fable-5", {
+            claude: "sk-ant-user",
+        });
 
         expect(streamChatWithTools).toHaveBeenCalledWith(
             expect.objectContaining({ model: "claude-fable-5" }),

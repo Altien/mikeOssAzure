@@ -5,13 +5,13 @@ import {
   type Response,
 } from "express";
 import { requireAuth } from "../middleware/auth";
-import { createServerSupabase } from "../lib/supabase";
+import { createServerDatabase } from "../lib/database";
 import { ensureDefaultWorkflows } from "../lib/workflowCatalog";
 import { sendInternalError } from "../lib/httpError";
 
 export const quickActionsRouter = Router();
 
-type Db = ReturnType<typeof createServerSupabase>;
+type Db = ReturnType<typeof createServerDatabase>;
 type QuickActionRow = {
   id: string;
   user_id: string;
@@ -24,6 +24,12 @@ type QuickActionRow = {
   sort_order: number;
   created_at: string;
   updated_at: string;
+};
+type QuickActionWorkflowRow = {
+  id: string;
+  user_id: string;
+  title: string;
+  type: string;
 };
 
 type QuickActionSurface = "app" | "word";
@@ -82,7 +88,8 @@ async function withWorkflowDetails(
   // revoked; only keep workflows the user owns or still has a share for,
   // and drop quick actions whose workflow is no longer accessible.
   const email = (userEmail ?? "").trim().toLowerCase();
-  const foreignIds = (workflows ?? [])
+  const workflowRows = (workflows ?? []) as QuickActionWorkflowRow[];
+  const foreignIds = workflowRows
     .filter((workflow) => workflow.user_id !== userId)
     .map((workflow) => workflow.id);
   const sharedIds = new Set<string>();
@@ -96,7 +103,7 @@ async function withWorkflowDetails(
     for (const share of shares ?? []) sharedIds.add(share.workflow_id);
   }
   const byId = new Map(
-    (workflows ?? [])
+    workflowRows
       .filter(
         (workflow) =>
           workflow.type === "assistant" &&
@@ -149,7 +156,7 @@ quickActionsRouter.get(
         detail: "surface must be either 'app' or 'word'",
       });
     }
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     await ensureDefaultWorkflows(userId, db);
     const { data, error } = await db
       .from("quick_actions")
@@ -198,7 +205,7 @@ quickActionsRouter.post(
         detail: `sort_order must be between 0 and ${MAX_SORT_ORDER}`,
       });
     }
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const workflow = await canAccessWorkflow(workflowId, userId, userEmail, db);
     if (!workflow) {
       return void res.status(404).json({ detail: "Workflow not found" });
@@ -272,7 +279,7 @@ quickActionsRouter.patch(
       updates.sort_order = req.body.sort_order;
     }
 
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     if (typeof req.body?.workflow_id === "string") {
       const workflowId = req.body.workflow_id.trim();
       if (!workflowId) {
@@ -320,7 +327,7 @@ quickActionsRouter.delete(
   requireAuth,
   asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const { error } = await db
       .from("quick_actions")
       .delete()

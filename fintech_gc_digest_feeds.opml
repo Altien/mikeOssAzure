@@ -1,0 +1,53 @@
+<?xml version="1.0" ?>
+<opml version="2.0">
+  <head>
+    <title>GC Fintech Regulatory Digest Feeds</title>
+  </head>
+  <body>
+    <outline text="Federal Banking Regulators" title="Federal Banking Regulators">
+      <outline text="OCC — News Releases" title="OCC — News Releases" type="rss" xmlUrl="https://www.occ.gov/rss/occ_news.xml" htmlUrl="https://www.occ.gov/news-issuances/index-news-issuances.html"/>
+      <outline text="OCC — Bulletins" title="OCC — Bulletins" type="rss" xmlUrl="https://www.occ.gov/rss/occ_bulletins.xml" htmlUrl="https://www.occ.gov/news-issuances/bulletins/index-bulletins.html"/>
+      <outline text="FDIC — Financial Institution Letters (FILs)" title="FDIC — Financial Institution Letters (FILs)" type="rss" xmlUrl="https://public.govdelivery.com/topics/USFDIC_19/feed.rss" htmlUrl="https://www.fdic.gov/news/financial-institution-letters/"/>
+      <outline text="FDIC — Press Releases" title="FDIC — Press Releases" type="rss" xmlUrl="https://public.govdelivery.com/topics/USFDIC_26/feed.rss" htmlUrl="https://www.fdic.gov/news/press-releases/"/>
+      <outline text="Federal Reserve — Banking/Consumer Reg Policy" title="Federal Reserve — Banking/Consumer Reg Policy" type="rss" xmlUrl="https://www.federalreserve.gov/feeds/press_bcreg.xml" htmlUrl="https://www.federalreserve.gov/newsevents/pressreleases.htm"/>
+      <outline text="Federal Reserve — SR &amp; CA Letters / Manuals" title="Federal Reserve — SR &amp; CA Letters / Manuals" type="rss" xmlUrl="https://www.federalreserve.gov/feeds/bankinginfo-rss.xml" htmlUrl="https://www.federalreserve.gov/supervisionreg/srletters/srletters.htm"/>
+      <outline text="Federal Reserve — All Press Releases" title="Federal Reserve — All Press Releases" type="rss" xmlUrl="https://www.federalreserve.gov/feeds/press_all.xml" htmlUrl="https://www.federalreserve.gov/newsevents/pressreleases.htm"/>
+      <outline text="CFPB — Newsroom" title="CFPB — Newsroom" type="rss" xmlUrl="https://www.consumerfinance.gov/about-us/newsroom/feed/" htmlUrl="https://www.consumerfinance.gov/about-us/newsroom/"/>
+    </outline>
+    <outline text="Federal Register (per-agency and term-search feeds)" title="Federal Register (per-agency and term-search feeds)">
+      <outline text="Fed. Register — OCC docket" title="Fed. Register — OCC docket" type="rss" xmlUrl="https://www.federalregister.gov/api/v1/documents.rss?conditions%5Bagencies%5D%5B%5D=comptroller-of-the-currency" htmlUrl="https://www.federalregister.gov/agencies/comptroller-of-the-currency"/>
+      <outline text="Fed. Register — FDIC docket" title="Fed. Register — FDIC docket" type="rss" xmlUrl="https://www.federalregister.gov/api/v1/documents.rss?conditions%5Bagencies%5D%5B%5D=federal-deposit-insurance-corporation" htmlUrl="https://www.federalregister.gov/agencies/federal-deposit-insurance-corporation"/>
+      <outline text="Fed. Register — Federal Reserve System docket" title="Fed. Register — Federal Reserve System docket" type="rss" xmlUrl="https://www.federalregister.gov/api/v1/documents.rss?conditions%5Bagencies%5D%5B%5D=federal-reserve-system" htmlUrl="https://www.federalregister.gov/agencies/federal-reserve-system"/>
+      <outline text="Fed. Register — CFPB docket" title="Fed. Register — CFPB docket" type="rss" xmlUrl="https://www.federalregister.gov/api/v1/documents.rss?conditions%5Bagencies%5D%5B%5D=consumer-financial-protection-bureau" htmlUrl="https://www.federalregister.gov/agencies/consumer-financial-protection-bureau"/>
+      <outline text="Fed. Register — FinCEN docket" title="Fed. Register — FinCEN docket" type="rss" xmlUrl="https://www.federalregister.gov/api/v1/documents.rss?conditions%5Bagencies%5D%5B%5D=financial-crimes-enforcement-network" htmlUrl="https://www.federalregister.gov/agencies/financial-crimes-enforcement-network"/>
+      <outline text="Fed. Register — Treasury Department docket" title="Fed. Register — Treasury Department docket" type="rss" xmlUrl="https://www.federalregister.gov/api/v1/documents.rss?conditions%5Bagencies%5D%5B%5D=treasury-department" htmlUrl="https://www.federalregister.gov/agencies/treasury-department"/>
+      <outline text="Fed. Register — NCUA docket" title="Fed. Register — NCUA docket" type="rss" xmlUrl="https://www.federalregister.gov/api/v1/documents.rss?conditions%5Bagencies%5D%5B%5D=national-credit-union-administration" htmlUrl="https://www.federalregister.gov/agencies/national-credit-union-administration"/>
+      <outline text="Fed. Register — term search: &quot;bank service company&quot;" title="Fed. Register — term search: &quot;bank service company&quot;" type="rss" xmlUrl="https://www.federalregister.gov/api/v1/documents.rss?conditions%5Bterm%5D=bank+service+company" htmlUrl="https://www.federalregister.gov/documents/search?conditions%5Bterm%5D=bank+service+company"/>
+      <outline text="Fed. Register — term search: &quot;open banking&quot;" title="Fed. Register — term search: &quot;open banking&quot;" type="rss" xmlUrl="https://www.federalregister.gov/api/v1/documents.rss?conditions%5Bterm%5D=open+banking" htmlUrl="https://www.federalregister.gov/documents/search?conditions%5Bterm%5D=open+banking"/>
+    </outline>
+    <outline text="State Banking &amp; Financial Regulators" title="State Banking &amp; Financial Regulators">
+      <outline text="NY DFS — Press Releases (incl. 23 NYCRR 500 cybersecurity)" title="NY DFS — Press Releases (incl. 23 NYCRR 500 cybersecurity)" type="rss" xmlUrl="https://www.dfs.ny.gov/reports_and_publications/press_releases/rss.xml" htmlUrl="https://www.dfs.ny.gov/industry_guidance/cybersecurity"/>
+      <outline text="California DFPI — News" title="California DFPI — News" type="rss" xmlUrl="https://dfpi.ca.gov/feed/" htmlUrl="https://dfpi.ca.gov/news/"/>
+      <outline text="California DFPI — Press Releases" title="California DFPI — Press Releases" type="rss" xmlUrl="https://dfpi.ca.gov/news/press-releases/feed/" htmlUrl="https://dfpi.ca.gov/news/press-releases/"/>
+      <outline text="Texas Department of Banking" title="Texas Department of Banking" type="rss" xmlUrl="https://www.dob.texas.gov/rss.xml" htmlUrl="https://www.dob.texas.gov/news-and-events"/>
+    </outline>
+    <outline text="Fintech &amp; Payments Trade Press" title="Fintech &amp; Payments Trade Press">
+      <outline text="American Banker" title="American Banker" type="rss" xmlUrl="https://www.americanbanker.com/rss" htmlUrl="https://www.americanbanker.com/"/>
+      <outline text="Payments Dive" title="Payments Dive" type="rss" xmlUrl="https://www.paymentsdive.com/feeds/news/" htmlUrl="https://www.paymentsdive.com/"/>
+      <outline text="Finextra Headlines" title="Finextra Headlines" type="rss" xmlUrl="https://www.finextra.com/rss/headlines.aspx" htmlUrl="https://www.finextra.com/"/>
+      <outline text="Digital Transactions" title="Digital Transactions" type="rss" xmlUrl="https://www.digitaltransactions.net/feed/" htmlUrl="https://www.digitaltransactions.net/"/>
+      <outline text="PYMNTS.com" title="PYMNTS.com" type="rss" xmlUrl="https://www.pymnts.com/feed/" htmlUrl="https://www.pymnts.com/"/>
+    </outline>
+    <outline text="AI &amp; Emerging Tech in Financial Services" title="AI &amp; Emerging Tech in Financial Services">
+      <outline text="Consumer Finance Monitor — AI tag (Ballard Spahr)" title="Consumer Finance Monitor — AI tag (Ballard Spahr)" type="rss" xmlUrl="https://www.consumerfinancemonitor.com/artificial-intelligence/feed/" htmlUrl="https://www.consumerfinancemonitor.com/artificial-intelligence/"/>
+      <outline text="Consumer Finance Monitor — full feed (Ballard Spahr)" title="Consumer Finance Monitor — full feed (Ballard Spahr)" type="rss" xmlUrl="https://www.consumerfinancemonitor.com/feed/" htmlUrl="https://www.consumerfinancemonitor.com/"/>
+      <outline text="Consumer Financial Services Law Monitor (Troutman Pepper)" title="Consumer Financial Services Law Monitor (Troutman Pepper)" type="rss" xmlUrl="https://www.consumerfinancialserviceslawmonitor.com/feed/" htmlUrl="https://www.consumerfinancialserviceslawmonitor.com/"/>
+    </outline>
+    <outline text="Cybersecurity" title="Cybersecurity">
+      <outline text="CISA — All Cybersecurity Advisories" title="CISA — All Cybersecurity Advisories" type="rss" xmlUrl="https://www.cisa.gov/cybersecurity-advisories/all.xml" htmlUrl="https://www.cisa.gov/cybersecurity-advisories"/>
+      <outline text="CISA — News" title="CISA — News" type="rss" xmlUrl="https://www.cisa.gov/news.xml" htmlUrl="https://www.cisa.gov/news-events/news"/>
+      <outline text="CISA — Alerts (legacy US-CERT path, still live)" title="CISA — Alerts (legacy US-CERT path, still live)" type="rss" xmlUrl="https://www.cisa.gov/uscert/ncas/alerts.xml" htmlUrl="https://www.cisa.gov/news-events/cybersecurity-advisories"/>
+      <outline text="CIS / MS-ISAC — Advisories" title="CIS / MS-ISAC — Advisories" type="rss" xmlUrl="https://www.cisecurity.org/feed/advisories" htmlUrl="https://www.cisecurity.org/advisory"/>
+    </outline>
+  </body>
+</opml>

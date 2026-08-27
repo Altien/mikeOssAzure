@@ -9,7 +9,7 @@ import {
 type Row = Record<string, unknown>;
 
 /**
- * Read-only Supabase mock covering the query chains documentVersions uses:
+ * Read-only DB mock covering the query chains documentVersions uses:
  * select/eq/in/is/not filters plus single() and awaiting the builder.
  */
 function makeDb(tables: Record<string, Row[]>) {

@@ -29,6 +29,7 @@ let downloadFile: typeof import("../storage").downloadFile;
 let getSignedUrl: typeof import("../storage").getSignedUrl;
 
 beforeAll(async () => {
+  process.env.MIKE_STORAGE_PROVIDER = "r2";
   process.env.R2_ENDPOINT_URL = "https://r2.example.test";
   process.env.R2_ACCESS_KEY_ID = "test-access-key";
   process.env.R2_SECRET_ACCESS_KEY = "test-secret-key";

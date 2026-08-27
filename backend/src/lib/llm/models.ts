@@ -1,4 +1,16 @@
-import { REASONING_LEVELS, type Provider, type ReasoningLevel } from "./types";
+import {
+    REASONING_LEVELS,
+    type Provider,
+    type ReasoningLevel,
+    type UserApiKeys,
+} from "./types";
+import {
+    configuredModelIds,
+    configuredProviderForModel,
+    getCommitteeModel,
+    getConfiguredModel,
+} from "./registry";
+import { hasEnvApiKey } from "../userApiKeys";
 
 // ---------------------------------------------------------------------------
 // Canonical model IDs
@@ -133,11 +145,17 @@ const ALL_MODELS = new Set<string>([
     ...OPENAI_LOW_MODELS,
 ]);
 
+export function builtInModelIds(): string[] {
+    return [...ALL_MODELS];
+}
+
 // ---------------------------------------------------------------------------
 // Provider inference
 // ---------------------------------------------------------------------------
 
 export function providerForModel(model: string): Provider {
+    const configured = configuredProviderForModel(model);
+    if (configured) return configured;
     if (model.startsWith("ollama")) return "ollama";
     if (model.startsWith("openrouter/")) return "openrouter";
     if (model.startsWith("vercel/")) return "vercel";
@@ -161,6 +179,7 @@ export function resolveModel(
     fallback: string,
 ): string {
     const canonical = id ? (LEGACY_MODEL_IDS[id] ?? id) : id;
+    if (canonical && getConfiguredModel(canonical)) return canonical;
     if (
         canonical &&
         (ALL_MODELS.has(canonical) ||
@@ -201,4 +220,87 @@ export function isSupportedOpenCodeGoModel(model: string): boolean {
         isOpenCodeGoChatCompletionsModel(model) ||
         isOpenCodeGoMessagesModel(model)
     );
+}
+
+// ---------------------------------------------------------------------------
+// Usable-model resolution (API key awareness)
+// ---------------------------------------------------------------------------
+
+function providerKeyAvailable(
+    provider: Provider,
+    apiKeys?: UserApiKeys,
+): boolean {
+    switch (provider) {
+        case "claude":
+            return !!apiKeys?.claude?.trim() || hasEnvApiKey("claude");
+        case "gemini":
+            return !!apiKeys?.gemini?.trim() || hasEnvApiKey("gemini");
+        case "openai":
+            return !!apiKeys?.openai?.trim() || hasEnvApiKey("openai");
+        case "openrouter":
+            return !!apiKeys?.openrouter?.trim() || hasEnvApiKey("openrouter");
+        case "vercel":
+            return !!apiKeys?.vercel?.trim() || hasEnvApiKey("vercel");
+        case "ollama":
+            return true;
+        default:
+            return false;
+    }
+}
+
+/** True when the given model has any usable API key (user key or env). */
+export function modelHasApiKey(
+    model: string,
+    apiKeys?: UserApiKeys,
+): boolean {
+    const configured = getConfiguredModel(model);
+    if (configured) {
+        if (configured.apiKey?.trim()) return true;
+        const userKey = configured.apiKeyProvider
+            ? apiKeys?.[configured.apiKeyProvider]?.trim()
+            : undefined;
+        if (userKey) return true;
+        // A configured openai-compatible model with no key source at all
+        // (e.g. a local server) requires no API key.
+        if (!configured.apiKeyProvider && !configured.apiKeyEnv) return true;
+        return configured.apiKeyEnv
+            ? !!process.env[configured.apiKeyEnv]?.trim()
+            : false;
+    }
+    if (getCommitteeModel(model)) {
+        // Committee key resolution happens per-member at call time; don't
+        // second-guess it here.
+        return true;
+    }
+    try {
+        return providerKeyAvailable(providerForModel(model), apiKeys);
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Like resolveModel, but when the resolved model has no usable API key,
+ * substitute the first model that does (registry models first, then
+ * built-ins). Returns the original resolution when nothing is configured so
+ * the provider's own "key not configured" error still surfaces.
+ */
+export function resolveUsableModel(
+    id: string | null | undefined,
+    fallback: string,
+    apiKeys?: UserApiKeys,
+): string {
+    const selected = resolveModel(id, fallback);
+    if (modelHasApiKey(selected, apiKeys)) return selected;
+    for (const candidate of configuredModelIds()) {
+        if (candidate !== selected && modelHasApiKey(candidate, apiKeys)) {
+            return candidate;
+        }
+    }
+    for (const candidate of ALL_MODELS) {
+        if (candidate !== selected && modelHasApiKey(candidate, apiKeys)) {
+            return candidate;
+        }
+    }
+    return selected;
 }

@@ -5,8 +5,8 @@ vi.mock("@/app/hooks/useOllamaModels", () => ({
     useOllamaModels: () => [],
 }));
 
-vi.mock("@/app/contexts/UserProfileContext", () => ({
-    useUserProfile: () => ({
+const { profileContext } = vi.hoisted(() => ({
+    profileContext: () => ({
         profile: {
             // Legacy id stored before the catalog rename.
             titleModel: "gemini-3.1-flash-lite-preview",
@@ -26,6 +26,11 @@ vi.mock("@/app/contexts/UserProfileContext", () => ({
         },
         updateModelPreference: vi.fn(),
     }),
+}));
+
+vi.mock("@/app/contexts/UserProfileContext", () => ({
+    useUserProfile: profileContext,
+    useOptionalUserProfile: profileContext,
 }));
 
 import ModelPreferencesPage from "./page";

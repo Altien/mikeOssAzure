@@ -76,7 +76,7 @@ export const COURTLISTENER_SYSTEM_PROMPT = `US CASE LAW RESEARCH:
 Use CourtListener when answering US-law questions that require case law.
 
 Workflow:
-1. If you have reporter citations, verify them with courtlistener_verify_citations using only clean citations: {"citations":["467 U.S. 837","323 U.S. 134"]}. Never pass case names to this tool.
+1. If you have reporter citations, verify them with courtlistener_verify_citations using only clean citations: {"citations":["467 U.S. 837","323 U.S. 134"]}. Never pass case names to this tool. If you do not have citations, find candidate cases with courtlistener_search_case_law.
 2. Fetch matched clusters with courtlistener_get_cases.
 3. Get cite-worthy text from the fetched cases with courtlistener_find_in_case. Use short 1-3 word searches, maximum 3 searches per assistant turn.
 4. If snippets are not enough, read only the necessary opinion(s) with courtlistener_read_case. For multi-opinion cases, choose the specific opinion_id/opinionIds needed; do not read all opinions by default.
@@ -93,6 +93,45 @@ Limits:
 - If any CourtListener call returns a rate-limit/throttling/429 error, stop all CourtListener calls for that turn and answer using only information already available.`;
 
 export const COURTLISTENER_TOOLS = [
+    {
+        type: "function",
+        function: {
+            name: COURTLISTENER_TOOL_NAMES.searchCaseLaw,
+            description:
+                "Search CourtListener for US case law by keywords or legal question when you do not already have reporter citations. Returns matching opinion clusters with metadata; call courtlistener_get_cases on relevant cluster IDs to fetch them for this turn.",
+            parameters: {
+                type: "object",
+                properties: {
+                    query: {
+                        type: "string",
+                        description:
+                            "Search query describing the legal issue, e.g. \"qualified immunity excessive force\".",
+                    },
+                    court: {
+                        type: "string",
+                        description:
+                            "Optional CourtListener court ID to limit results, e.g. \"scotus\" or \"ca9\".",
+                    },
+                    filedAfter: {
+                        type: "string",
+                        description:
+                            "Optional ISO date (YYYY-MM-DD); only return cases filed on or after this date.",
+                    },
+                    filedBefore: {
+                        type: "string",
+                        description:
+                            "Optional ISO date (YYYY-MM-DD); only return cases filed on or before this date.",
+                    },
+                    limit: {
+                        type: "integer",
+                        description:
+                            "Maximum number of results to return. Default 10.",
+                    },
+                },
+                required: ["query"],
+            },
+        },
+    },
     {
         type: "function",
         function: {

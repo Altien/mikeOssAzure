@@ -113,7 +113,7 @@ npm run build --prefix frontend
 npm test --prefix backend            # backend unit + route integration tests (vitest)
 npm test --prefix frontend           # frontend component/hook tests (vitest + jsdom)
 npm run test:e2e                     # Playwright end-to-end suite — see docs/e2e-ci.md
-npm run test:stack --prefix backend  # gated: real-Supabase auth/access tests (run `supabase start` first)
+npm run test:stack --prefix backend  # SQLite stack/access tests + gated real-Supabase stack/pagination tests
 ```
 
 - New features and bug fixes should come with a test at the lowest layer that
@@ -123,5 +123,6 @@ npm run test:stack --prefix backend  # gated: real-Supabase auth/access tests (r
   (`.github/workflows/ci.yml`), and the Playwright suite in a full local stack
   (`.github/workflows/e2e.yml`). The CI workflow will also run the optional
   offline eval harness if `evals/run.mjs` is added to the tree.
-- Tests that need a live Supabase or an LLM key are env-gated and skip cleanly
-  when the environment is absent — a plain `npm test` should always be green.
+- Tests that need an LLM key or a live Supabase stack are env-gated and skip
+  cleanly when the environment is absent — a plain `npm test` should always be
+  green.

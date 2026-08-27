@@ -41,6 +41,15 @@ describe("verifyDownload", () => {
         expect(result).not.toBeNull();
         expect(result!.path).toBe(path);
         expect(result!.filename).toBe(filename);
+        expect(result!.expiresAt).toBeNull();
+    });
+
+    it("reports the expiration on a short-lived token", () => {
+        const before = Math.floor(Date.now() / 1000);
+        const token = signDownload("documents/user/file.docx", "file.docx", 300);
+        const result = verifyDownload(token);
+        expect(result?.expiresAt).toBeGreaterThanOrEqual(before + 299);
+        expect(result?.expiresAt).toBeLessThanOrEqual(before + 300);
     });
 
     it("returns null for a tampered payload", () => {

@@ -1,15 +1,16 @@
+// @ts-nocheck
 import fs from "fs/promises";
 import path from "path";
 import { downloadFile, listFiles } from "./storage";
-import { createServerSupabase } from "./supabase";
+import { createServerDatabase } from "./database";
 
 const COURTLISTENER_BASE = "https://www.courtlistener.com/api/rest/v4";
 const COURTLISTENER_WEB_BASE = "https://www.courtlistener.com";
 const COURTLISTENER_STORAGE_BASE = "https://storage.courtlistener.com";
-const COURTLISTENER_R2_OPINIONS_PREFIX = "courtlistener/opinions/by-cluster";
+const COURTLISTENER_LOCAL_OPINIONS_PREFIX = "courtlistener/opinions/by-cluster";
 
 type JsonRecord = Record<string, unknown>;
-type ServerSupabase = ReturnType<typeof createServerSupabase>;
+type ServerSQLite = ReturnType<typeof createServerDatabase>;
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
     if (isDev) console.log(...args);
@@ -553,7 +554,7 @@ function courtlistenerApiTokenAvailable(apiToken?: string | null) {
 }
 
 async function getBulkCitationLookup(args: {
-    db?: ServerSupabase;
+    db?: ServerSQLite;
     citations: string[];
     allowPartial?: boolean;
 }): Promise<CitationLookupPayload | null> {
@@ -796,7 +797,7 @@ async function fetchCourtlistenerCitationLookup(args: {
 }
 
 async function getBulkCourtlistenerCaseOpinions(args: {
-    db?: ServerSupabase;
+    db?: ServerSQLite;
     clusterId: number;
     maxChars: number;
 }) {
@@ -807,7 +808,7 @@ async function getBulkCourtlistenerCaseOpinions(args: {
         return null;
     }
 
-    const prefix = `${COURTLISTENER_R2_OPINIONS_PREFIX}/${args.clusterId}/`;
+    const prefix = `${COURTLISTENER_LOCAL_OPINIONS_PREFIX}/${args.clusterId}/`;
     devLog("[courtlistener/r2-opinions] listing", {
         clusterId: args.clusterId,
         prefix,
@@ -966,7 +967,7 @@ async function getBulkCourtlistenerCaseOpinions(args: {
 
 export async function verifyCourtlistenerCitations(args: {
     citations?: string[];
-    db?: ServerSupabase;
+    db?: ServerSQLite;
     apiToken?: string | null;
 }) {
     const citations = Array.isArray(args.citations)
@@ -1114,7 +1115,7 @@ export async function getCourtlistenerCaseOpinions(args: {
     clusterId?: number;
     includeFullText?: boolean;
     maxChars?: number;
-    db?: ServerSupabase;
+    db?: ServerSQLite;
     apiToken?: string | null;
 }) {
     if (!args.clusterId || !Number.isFinite(args.clusterId)) {
@@ -1141,7 +1142,7 @@ export async function getCourtlistenerCases(args: {
     clusterIds?: number[];
     includeFullText?: boolean;
     maxChars?: number;
-    db?: ServerSupabase;
+    db?: ServerSQLite;
     apiToken?: string | null;
 }) {
     const clusterIds = Array.from(

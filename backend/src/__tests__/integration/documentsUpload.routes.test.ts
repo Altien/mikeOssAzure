@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import request from "supertest";
 
-function mockSupabase() {
+function mockDb() {
     const result = { data: null, error: null };
     const q: Record<string, unknown> = {};
     const chain = [
@@ -23,11 +23,12 @@ function mockSupabase() {
     };
 }
 
-vi.mock("../../lib/supabase", () => ({
-    createServerSupabase: vi.fn(() => mockSupabase()),
+vi.mock("../../lib/sqlite", () => ({
+    createServerSQLite: vi.fn(() => mockDb()),
 }));
 
 vi.mock("../../middleware/auth", () => ({
+    localAuthOnly: (_req: unknown, _res: unknown, next: () => void) => next(),
     requireAuth: (
         _req: unknown,
         res: { locals: Record<string, unknown> },

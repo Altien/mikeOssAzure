@@ -10,6 +10,7 @@ import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { QuickActionsModal } from "./QuickActionsModal";
 import {
     createQuickAction,
+    getPromptLibraryItem,
     listQuickActions,
     updateQuickAction,
 } from "@/app/lib/mikeApi";
@@ -35,6 +36,19 @@ export function InitialView({ onSubmit }: InitialViewProps) {
     const [textOffset, setTextOffset] = useState(0);
     const textRef = useRef<HTMLHeadingElement>(null);
     const chatInputRef = useRef<ChatInputHandle>(null);
+    const initialPromptLoaded = useRef(false);
+
+    useEffect(() => {
+        if (initialPromptLoaded.current) return;
+        const promptId = new URLSearchParams(window.location.search).get(
+            "prompt",
+        );
+        if (!promptId) return;
+        initialPromptLoaded.current = true;
+        getPromptLibraryItem(promptId)
+            .then((prompt) => chatInputRef.current?.setPrompt(prompt.prompt))
+            .catch(() => {});
+    }, []);
 
     const username =
         profile?.displayName?.trim() || user?.email?.split("@")[0] || "there";

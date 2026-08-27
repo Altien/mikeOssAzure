@@ -55,32 +55,34 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
     );
 
     const loadChats = useCallback(async () => {
-        if (!user) {
-            setChats([]);
-            setHasMoreChats(false);
-            return;
-        }
+        if (!user) return;
 
         try {
       const data = await listChats({ limit: INITIAL_CHAT_LIMIT + 1 });
       setChats(data.slice(0, INITIAL_CHAT_LIMIT));
       setHasMoreChats(data.length > INITIAL_CHAT_LIMIT);
         } catch {
-            setChats([]);
+            // Keep the previous list on transient failures so the sidebar
+            // does not blank out; the logout reset below clears it.
             setHasMoreChats(false);
         }
   }, [user]);
 
-    useEffect(() => {
+    // Reset chat state when the user logs out (adjust-during-render).
+    const [prevUser, setPrevUser] = useState(user);
+    if (prevUser !== user) {
+        setPrevUser(user);
         if (!user) {
             setChats([]);
             setHasMoreChats(false);
       setLoadingMoreChats(false);
       loadingMoreChatsRef.current = false;
             setCurrentChatId(null);
-            return;
         }
+    }
 
+    useEffect(() => {
+        if (!user) return;
         void loadChats();
     }, [user, loadChats]);
 

@@ -1,5 +1,5 @@
 -- Mirror auth.users.email into user_profiles so backend sharing checks can
--- resolve one email without scanning Supabase Auth users.
+-- resolve one email without scanning SQLite Auth users.
 
 alter table public.user_profiles
   add column if not exists email text;

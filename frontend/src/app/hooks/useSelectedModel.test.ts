@@ -6,6 +6,7 @@ import type { ApiKeyState } from "../lib/mikeApi";
 
 const keys: ApiKeyState = {
     claude: { configured: true, source: "user" },
+    kimi: { configured: false, source: null },
     gemini: { configured: false, source: null },
     openai: { configured: true, source: "user" },
     openrouter: { configured: true, source: "user" },

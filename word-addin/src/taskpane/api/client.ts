@@ -215,6 +215,7 @@ export async function updateLastSelectedReasoningLevel(
 
 export interface ApiKeyStatus {
   claude: boolean;
+  kimi: boolean;
   gemini: boolean;
   openai: boolean;
   openrouter: boolean;
@@ -224,6 +225,7 @@ export interface ApiKeyStatus {
   sources?: Partial<
     Record<
       | "claude"
+      | "kimi"
       | "gemini"
       | "openai"
       | "openrouter"

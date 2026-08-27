@@ -8,11 +8,14 @@ import {
     completeUserOnboarding,
     copyDocumentVersionFromDocument,
     createChat,
+    createLegalMonitor,
     createQuickAction,
     createLibraryFolder,
     createMcpConnector,
     createProject,
     createProjectFolder,
+    createPromptLibraryItem,
+    updatePromptLibraryItem,
     createTabularReview,
     createWorkflow,
     deleteAccount,
@@ -22,15 +25,19 @@ import {
     deleteChat,
     deleteDocument,
     deleteDocumentVersion,
+    deleteLegalMonitor,
     deleteLibraryFolder,
     deleteMcpConnector,
+    deletePlaybook,
     deleteProject,
     deleteProjectFolder,
+    deletePromptLibraryItem,
     deleteTabularChat,
     deleteTabularReview,
     deleteWorkflow,
     deleteWorkflowReferenceFile,
     deleteWorkflowShare,
+    disconnectGmail,
     downloadDocumentsZip,
     exportAccountData,
     exportAuditHistory,
@@ -41,8 +48,14 @@ import {
     getApiKeyStatus,
     getChat,
     getAuditHistory,
+    getConfiguredModels,
     getPanelDocument,
     getDocumentUrl,
+    getGmailMessage,
+    getGmailStatus,
+    getIroncladRecord,
+    getIroncladStatus,
+    getLegalMonitorConfiguration,
     getLibrary,
     getLibraryLevels,
     getLibraryFilterOptions,
@@ -52,11 +65,14 @@ import {
     getOllamaModels,
     getOpenCodeGoModels,
     getOpenRouterModels,
+    getPlaybook,
+    getPlaybookConfiguration,
     getVercelModels,
     getProject,
     getProjectDirectoryLevel,
     getProjectFilterOptions,
     getProjectPeople,
+    getPromptLibraryItem,
     getTabularChatMessages,
     getTabularChats,
     getTabularReview,
@@ -67,17 +83,25 @@ import {
     getWorkflowFilterOptions,
     getWorkflowReferenceUrl,
     hideWorkflow,
+    importGmailMessage,
+    importIroncladRecord,
+    importPlaybook,
     isMfaRequiredError,
     listChats,
     listDocumentVersions,
     listHiddenWorkflows,
+    listLegalMonitorRuns,
+    listLegalMonitors,
     listLibraryDocumentIds,
     listMcpConnectors,
+    listPlaybookRuns,
+    listPlaybooks,
     listProjectChats,
     listProjectIds,
     listProjectSummaries,
     listProjects,
     listProjectsPage,
+    listPromptLibrary,
     listStandaloneDocuments,
     listSystemWorkflows,
     listTabularReviewIds,
@@ -95,6 +119,9 @@ import {
     moveLibraryFolder,
     moveSubfolderToFolder,
     openSourceWorkflow,
+    parseLegalMonitorOpml,
+    provisionPatentMcpConnector,
+    publishPlaybook,
     refreshMcpConnectorTools,
     regenerateTabularCell,
     renameChat,
@@ -108,22 +135,30 @@ import {
     resolveLibraryFolderPath,
     resolveProjectFolderPath,
     resolveDocumentEdit,
+    reviewDocumentWithPlaybook,
+    runLegalMonitorNow,
     saveApiKey,
     bulkDeleteLibraryDocuments,
+    searchGmailMessages,
+    searchIroncladRecords,
     searchProjectDirectory,
     searchLibraryDocuments,
     setMcpToolEnabled,
     shareWorkflow,
+    startGmailOAuth,
     startMcpConnectorOAuth,
     streamChat,
     streamProjectChat,
     streamTabularChat,
     streamTabularGeneration,
+    submitSupportFeedback,
     syncUserPasswordSet,
     tabularChatSelectionKey,
     parseTabularChatSelectionKey,
     unhideWorkflow,
+    updateLegalMonitor,
     updateMcpConnector,
+    updatePlaybook,
     updateProject,
     updateChatModel,
     updateChatReasoningLevel,
@@ -146,6 +181,7 @@ import {
     uploadReviewDocument,
     uploadStandaloneDocument,
 } from "./mikeApi";
+import type { LegalMonitorInput, PlaybookContent } from "./mikeApi";
 
 const fetchMock = vi.fn();
 
@@ -183,6 +219,16 @@ const readAll = async (response: Response) => {
         text += decoder.decode(value, { stream: true });
     }
     return text + decoder.decode();
+};
+
+const readBlobText = (blob: Blob): Promise<string> => {
+    if (typeof blob.text === "function") return blob.text();
+    return new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result ?? ""));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(blob);
+    });
 };
 
 const lastFetchCall = () => {
@@ -393,6 +439,22 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         await listChats({ limit: 5, offset: 10 });
         expect(lastFetchCall().url).toBe("/api/chat?limit=5&offset=10");
     });
+
+    it("loads the authenticated OpenRouter model catalog", async () => {
+        const models = [
+            {
+                id: "openrouter/anthropic/claude-sonnet-4",
+                label: "Claude Sonnet 4",
+                group: "OpenRouter" as const,
+            },
+        ];
+        fetchMock.mockResolvedValue(jsonResponse({ models }));
+
+        await expect(getOpenRouterModels()).resolves.toEqual(models);
+        expect(lastFetchCall().url).toBe(
+            "/api/models/openrouter",
+        );
+    });
 });
 
 describe("blob requests (exportAccountData)", () => {
@@ -409,7 +471,7 @@ describe("blob requests (exportAccountData)", () => {
         const { blob, filename } = await exportAccountData();
 
         expect(filename).toBe("export.zip");
-        expect(await blob.text()).toBe("zip-bytes");
+        expect(await readBlobText(blob)).toBe("zip-bytes");
     });
 
     it("parses unquoted filenames and returns null when absent", async () => {
@@ -493,7 +555,7 @@ describe("audit history", () => {
             "/api/audit/export?q=agreement&action=document.edited&status=failed&surface=assistant&from=2026-07-01&to=2026-07-31&sort_by=created_at&sort_dir=desc",
         );
         expect(result.filename).toBe("history.csv");
-        expect(await result.blob.text()).toBe("history");
+        expect(await readBlobText(result.blob)).toBe("history");
     });
 
     it("omits every optional audit parameter when no filters are active", async () => {
@@ -519,7 +581,7 @@ describe("downloadDocumentsZip", () => {
 
         const blob = await downloadDocumentsZip(["d1", "d2"]);
 
-        expect(await blob.text()).toBe("zip");
+        expect(await readBlobText(blob)).toBe("zip");
         const { url, init } = lastFetchCall();
         expect(url).toBe("/api/single-documents/download-zip");
         expect(JSON.parse(init.body as string)).toEqual({
@@ -627,7 +689,7 @@ describe("getChat message mapping", () => {
         expect(messages[0].citations).toEqual([{ ref: 1 }]);
     });
 
-    it("maps a legacy string assistant body to empty content without events", async () => {
+    it("preserves a legacy string assistant body without events", async () => {
         fetchMock.mockResolvedValue(
             jsonResponse({
                 chat,
@@ -637,6 +699,28 @@ describe("getChat message mapping", () => {
                         chat_id: "c1",
                         role: "assistant",
                         content: "plain string",
+                        created_at: "2026-01-01",
+                    },
+                ],
+            }),
+        );
+
+        const { messages } = await getChat("c1");
+
+        expect(messages[0].content).toBe("plain string");
+        expect(messages[0].events).toBeUndefined();
+    });
+
+    it("degrades non-string, non-event assistant content to an empty string", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({
+                chat,
+                messages: [
+                    {
+                        id: "m1",
+                        chat_id: "c1",
+                        role: "assistant",
+                        content: null,
                         created_at: "2026-01-01",
                     },
                 ],
@@ -702,7 +786,7 @@ describe("mapTRMessages", () => {
         ]);
     });
 
-    it("degrades non-array assistant content to an empty string", () => {
+    it("preserves legacy string assistant content", () => {
         const mapped = mapTRMessages([
             {
                 id: "m1",
@@ -714,10 +798,23 @@ describe("mapTRMessages", () => {
         ]);
         expect(mapped[0]).toEqual({
             role: "assistant",
-            content: "",
+            content: "legacy",
             events: undefined,
             annotations: undefined,
         });
+    });
+
+    it("degrades null assistant content to an empty string", () => {
+        const mapped = mapTRMessages([
+            {
+                id: "m1",
+                chat_id: "c1",
+                role: "assistant",
+                content: null,
+                created_at: "2026-01-01",
+            },
+        ]);
+        expect(mapped[0].content).toBe("");
     });
 });
 
@@ -995,6 +1092,16 @@ describe("listProjectSummaries", () => {
             "/api/projects?limit=11&offset=10&view=summary",
         );
     });
+
+  it("requests the summary view without pagination knobs", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([]));
+
+    await listProjectSummaries();
+
+    expect(lastFetchCall().url).toBe(
+      "/api/projects?view=summary",
+    );
+  });
 });
 
 describe("searchProjectDirectory", () => {
@@ -1014,6 +1121,16 @@ describe("searchProjectDirectory", () => {
             "/api/projects?view=directory-search&search=agreement&limit=51&offset=10",
         );
         expect(init.signal).toBe(controller.signal);
+    });
+
+    it("omits pagination params when only the search term is given", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await searchProjectDirectory({ search: "lease" });
+
+        expect(lastFetchCall().url).toBe(
+            "/api/projects?view=directory-search&search=lease",
+        );
     });
 });
 
@@ -1122,6 +1239,14 @@ describe("listWorkflows", () => {
         await listWorkflows("assistant");
 
         expect(lastFetchCall().url).toBe("/api/workflows?type=assistant");
+    });
+
+    it("requests the bare collection when no type is given", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listWorkflows();
+
+        expect(lastFetchCall().url).toBe("/api/workflows");
     });
 });
 
@@ -1240,6 +1365,18 @@ describe("getWorkflowFilterOptions", () => {
             "/api/workflows/filter-options?type=assistant&scope=shared",
         );
         expect(init.signal).toBe(controller.signal);
+    });
+
+    it("requests bare workflow facets when no filters are given", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({ practices: [], languages: [], jurisdictions: [] }),
+        );
+
+        await getWorkflowFilterOptions();
+
+        expect(lastFetchCall().url).toBe(
+            "/api/workflows/filter-options",
+        );
     });
 });
 
@@ -1797,6 +1934,12 @@ describe("query and payload defaults", () => {
             name: "Precedents",
             parent_folder_id: "parent-1",
         });
+
+        await createLibraryFolder("templates", "Forms");
+        expect(JSON.parse(lastFetchCall().init.body as string)).toEqual({
+            name: "Forms",
+            parent_folder_id: null,
+        });
     });
 
     it("resolves project and library upload paths with conflict choices", async () => {
@@ -1907,6 +2050,42 @@ describe("thin endpoint wrappers", () => {
         url: string;
         method?: string; // defaults to GET (fetch's default when unset)
         body?: unknown; // absent means the request must not carry a body
+    };
+
+    const legalMonitorInput: LegalMonitorInput = {
+        name: "Privacy watch",
+        topic: "Data privacy enforcement",
+        jurisdiction: "AU",
+        sourceTypes: ["case_law"],
+        connectorId: null,
+        connectorConfig: { mode: "agent" },
+        sources: [
+            {
+                kind: "rss",
+                name: "Regulator blog",
+                url: "https://example.test/feed",
+                enabled: true,
+            },
+        ],
+        documentIds: ["d1"],
+        model: "gpt-5.4-lite",
+        intervalHours: 24,
+        lookbackDays: 7,
+        maxItemsPerRun: 10,
+        alertEmail: null,
+        emailEnabled: false,
+        knowledgeCaptureEnabled: false,
+        enabled: true,
+    };
+
+    const playbookDraft: PlaybookContent = {
+        name: "NDA playbook",
+        description: "Standard NDA positions",
+        globalGuidance: "Be reasonable",
+        representedParty: "Licensee",
+        documentTypes: ["NDA"],
+        jurisdictions: ["NSW"],
+        topics: [],
     };
 
     const cases: WrapperCase[] = [
@@ -2382,6 +2561,230 @@ describe("thin endpoint wrappers", () => {
             url: "/workflows/w1/shares/s1",
             method: "DELETE",
         },
+        // Support & integrations
+        {
+            name: "submitSupportFeedback",
+            call: () =>
+                submitSupportFeedback({
+                    type: "bug",
+                    subject: "Broken button",
+                    message: "It does nothing",
+                }),
+            url: "/user/support",
+            method: "POST",
+            body: {
+                type: "bug",
+                subject: "Broken button",
+                message: "It does nothing",
+            },
+        },
+        {
+            name: "provisionPatentMcpConnector",
+            call: () => provisionPatentMcpConnector(),
+            url: "/user/mcp-connectors/presets/patent",
+            method: "POST",
+        },
+        // Ironclad
+        {
+            name: "getIroncladStatus",
+            call: () => getIroncladStatus(),
+            url: "/integrations/ironclad/status",
+        },
+        {
+            name: "getIroncladRecord",
+            call: () => getIroncladRecord("rec 1"),
+            url: "/integrations/ironclad/records/rec%201",
+        },
+        {
+            name: "importIroncladRecord",
+            call: () =>
+                importIroncladRecord({
+                    recordId: "r1",
+                    attachmentKey: "k1",
+                    projectId: "p1",
+                }),
+            url: "/integrations/ironclad/import",
+            method: "POST",
+            body: { recordId: "r1", attachmentKey: "k1", projectId: "p1" },
+        },
+        // Gmail
+        {
+            name: "getGmailStatus",
+            call: () => getGmailStatus(),
+            url: "/integrations/gmail/status",
+        },
+        {
+            name: "startGmailOAuth",
+            call: () => startGmailOAuth(),
+            url: "/integrations/gmail/oauth/start",
+            method: "POST",
+        },
+        {
+            name: "disconnectGmail",
+            call: () => disconnectGmail(),
+            url: "/integrations/gmail/connection",
+            method: "DELETE",
+        },
+        {
+            name: "getGmailMessage",
+            call: () => getGmailMessage("msg 1"),
+            url: "/integrations/gmail/messages/msg%201",
+        },
+        {
+            name: "importGmailMessage",
+            call: () =>
+                importGmailMessage({ messageId: "m1", projectId: null }),
+            url: "/integrations/gmail/import",
+            method: "POST",
+            body: { messageId: "m1", projectId: null },
+        },
+        // Legal monitors
+        {
+            name: "getLegalMonitorConfiguration",
+            call: () => getLegalMonitorConfiguration(),
+            url: "/legal-monitors/configuration",
+        },
+        {
+            name: "listLegalMonitors",
+            call: () => listLegalMonitors(),
+            url: "/legal-monitors",
+        },
+        {
+            name: "createLegalMonitor",
+            call: () => createLegalMonitor(legalMonitorInput),
+            url: "/legal-monitors",
+            method: "POST",
+            body: legalMonitorInput,
+        },
+        {
+            name: "updateLegalMonitor",
+            call: () => updateLegalMonitor("m1", legalMonitorInput),
+            url: "/legal-monitors/m1",
+            method: "PUT",
+            body: legalMonitorInput,
+        },
+        {
+            name: "deleteLegalMonitor",
+            call: () => deleteLegalMonitor("m1"),
+            url: "/legal-monitors/m1",
+            method: "DELETE",
+        },
+        {
+            name: "listLegalMonitorRuns",
+            call: () => listLegalMonitorRuns("m1"),
+            url: "/legal-monitors/m1/runs",
+        },
+        {
+            name: "runLegalMonitorNow",
+            call: () => runLegalMonitorNow("m1"),
+            url: "/legal-monitors/m1/run",
+            method: "POST",
+        },
+        // Playbooks
+        {
+            name: "getPlaybookConfiguration",
+            call: () => getPlaybookConfiguration(),
+            url: "/playbooks/configuration",
+        },
+        {
+            name: "listPlaybooks",
+            call: () => listPlaybooks(),
+            url: "/playbooks",
+        },
+        {
+            name: "getPlaybook",
+            call: () => getPlaybook("pb 1"),
+            url: "/playbooks/pb%201",
+        },
+        {
+            name: "updatePlaybook",
+            call: () => updatePlaybook("pb1", playbookDraft),
+            url: "/playbooks/pb1",
+            method: "PUT",
+            body: { draft: playbookDraft },
+        },
+        {
+            name: "publishPlaybook",
+            call: () => publishPlaybook("pb1"),
+            url: "/playbooks/pb1/publish",
+            method: "POST",
+        },
+        {
+            name: "reviewDocumentWithPlaybook",
+            call: () =>
+                reviewDocumentWithPlaybook("pb1", {
+                    documentText: "The agreement...",
+                    documentName: "nda.pdf",
+                    model: "gpt-5.4-lite",
+                    reviewMode: "strict",
+                }),
+            url: "/playbooks/pb1/review",
+            method: "POST",
+            body: {
+                documentText: "The agreement...",
+                documentName: "nda.pdf",
+                model: "gpt-5.4-lite",
+                reviewMode: "strict",
+            },
+        },
+        {
+            name: "listPlaybookRuns",
+            call: () => listPlaybookRuns("pb1"),
+            url: "/playbooks/pb1/runs",
+        },
+        {
+            name: "deletePlaybook",
+            call: () => deletePlaybook("pb1"),
+            url: "/playbooks/pb1",
+            method: "DELETE",
+        },
+        // Prompt library
+        {
+            name: "listPromptLibrary",
+            call: () => listPromptLibrary(),
+            url: "/prompts",
+        },
+        {
+            name: "getPromptLibraryItem",
+            call: () => getPromptLibraryItem("pr 1"),
+            url: "/prompts/pr%201",
+        },
+        {
+            name: "createPromptLibraryItem",
+            call: () =>
+                createPromptLibraryItem({
+                    name: "Summarize",
+                    prompt: "Summarize this document",
+                    categories: ["litigation"],
+                }),
+            url: "/prompts",
+            method: "POST",
+            body: {
+                name: "Summarize",
+                prompt: "Summarize this document",
+                categories: ["litigation"],
+            },
+        },
+        {
+            name: "updatePromptLibraryItem",
+            call: () =>
+                updatePromptLibraryItem("pr1", {
+                    name: "Summarize v2",
+                    prompt: "Summarize this document briefly",
+                }),
+            url: "/prompts/pr1",
+            method: "PUT",
+            body: {
+                name: "Summarize v2",
+                prompt: "Summarize this document briefly",
+            },
+        },
+        {
+            name: "deletePromptLibraryItem",
+            call: () => deletePromptLibraryItem("pr1"),
+            url: "/prompts/pr1",
+            method: "DELETE",
+        },
         {
             name: "listQuickActions",
             call: () => listQuickActions(),
@@ -2606,9 +3009,156 @@ describe("unwrapping and blob wrappers", () => {
         const chats = await exportChatData();
         expect(lastFetchCall().url).toBe("/api/user/chats/export");
         expect(chats.filename).toBe("x.zip");
-        expect(await chats.blob.text()).toBe("bytes");
+        expect(await readBlobText(chats.blob)).toBe("bytes");
 
         await exportTabularReviewsData();
         expect(lastFetchCall().url).toBe("/api/user/tabular-reviews/export");
+    });
+
+    it("getConfiguredModels unwraps the configured envelope", async () => {
+        const configured = [
+            {
+                id: "gpt-5.4-lite",
+                label: "GPT 5.4 Lite",
+                provider: "openai",
+                location: "cloud",
+            },
+        ];
+        fetchMock.mockResolvedValue(jsonResponse({ configured }));
+
+        await expect(getConfiguredModels()).resolves.toEqual(configured);
+        expect(lastFetchCall().url).toBe("/api/user/models");
+    });
+});
+
+describe("searchIroncladRecords", () => {
+    it("serializes every query knob", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({ list: [], page: 2, pageSize: 25, totalCount: 0 }),
+        );
+
+        await searchIroncladRecords({
+            search: "  nda  ",
+            page: 2,
+            pageSize: 25,
+            sortField: "agreementDate",
+            sortDirection: "DESC",
+        });
+
+        // The search term is trimmed before it hits the query string.
+        expect(lastFetchCall().url).toBe(
+            "/api/integrations/ironclad/records" +
+                "?search=nda&page=2&pageSize=25&sortField=agreementDate&sortDirection=DESC",
+        );
+    });
+
+    it("requests the bare collection when no filters are given", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({ list: [], page: 1, pageSize: 25, totalCount: null }),
+        );
+
+        await searchIroncladRecords({});
+
+        expect(lastFetchCall().url).toBe(
+            "/api/integrations/ironclad/records",
+        );
+    });
+});
+
+describe("searchGmailMessages", () => {
+    it("serializes the query and result cap", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({ messages: [], resultSizeEstimate: 0 }),
+        );
+
+        await searchGmailMessages({ query: " engagement letter ", maxResults: 10 });
+
+        expect(lastFetchCall().url).toBe(
+            "/api/integrations/gmail/messages?q=engagement+letter&maxResults=10",
+        );
+    });
+
+    it("requests the bare collection when no filters are given", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({ messages: [], resultSizeEstimate: 0 }),
+        );
+
+        await searchGmailMessages({});
+
+        expect(lastFetchCall().url).toBe(
+            "/api/integrations/gmail/messages",
+        );
+    });
+});
+
+describe("parseLegalMonitorOpml", () => {
+    it("posts the OPML text and unwraps the sources envelope", async () => {
+        const sources = [
+            {
+                kind: "rss",
+                name: "Regulator blog",
+                url: "https://example.test/feed",
+                enabled: true,
+            },
+        ];
+        fetchMock.mockResolvedValue(jsonResponse({ sources }));
+
+        await expect(parseLegalMonitorOpml("<opml/>")).resolves.toEqual(
+            sources,
+        );
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("/api/legal-monitors/parse-opml");
+        expect(init.method).toBe("POST");
+        expect(JSON.parse(init.body as string)).toEqual({ opml: "<opml/>" });
+    });
+});
+
+describe("importPlaybook", () => {
+    const file = new File(["# Playbook"], "playbook.md");
+
+    it("posts multipart form data with auth and no JSON content type", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ id: "pb1" }));
+
+        const playbook = await importPlaybook(file, "gpt-5.4-lite", " My playbook ");
+
+        expect(playbook).toEqual({ id: "pb1" });
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("/api/playbooks/import");
+        expect(init.method).toBe("POST");
+        // Setting Content-Type manually would break the multipart boundary.
+        expect(init.headers).toMatchObject({ Accept: "application/json" });
+        expect(init.credentials).toBe("include");
+        const body = init.body as FormData;
+        expect(body.get("file")).toBeInstanceOf(File);
+        expect(body.get("model")).toBe("gpt-5.4-lite");
+        // The name is trimmed before it is appended.
+        expect(body.get("name")).toBe("My playbook");
+    });
+
+    it("omits the name field when it is absent or blank", async () => {
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(jsonResponse({ id: "pb1" })),
+        );
+
+        await importPlaybook(file, "gpt-5.4-lite");
+        expect(
+            (lastFetchCall().init.body as FormData).get("name"),
+        ).toBeNull();
+
+        await importPlaybook(file, "gpt-5.4-lite", "   ");
+        expect(
+            (lastFetchCall().init.body as FormData).get("name"),
+        ).toBeNull();
+    });
+
+    it("throws a MikeApiError on failure", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({ detail: "unparseable file" }, { status: 422 }),
+        );
+
+        await expect(importPlaybook(file, "gpt-5.4-lite")).rejects.toMatchObject({
+            status: 422,
+            message: "unparseable file",
+        });
     });
 });

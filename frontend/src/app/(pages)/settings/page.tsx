@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Trash2 } from "lucide-react";
+import { Moon, Trash2 } from "lucide-react";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { Modal } from "@/app/components/modals/Modal";
 import { FieldLabel } from "@/app/components/ui/form-field";
@@ -17,6 +17,7 @@ import {
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { deleteAccount, isMfaRequiredError } from "@/app/lib/mikeApi";
 import { SettingsSection } from "./SettingsSection";
+import { SettingsToggle } from "./SettingsToggle";
 
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
@@ -31,8 +32,12 @@ interface EmailWarning {
 export default function SettingsPage() {
     const router = useRouter();
     const { user, signOut, updateEmail } = useAuth();
-    const { profile, updateDisplayName, updateOrganisation } =
-        useUserProfile();
+    const {
+        profile,
+        updateDisplayName,
+        updateOrganisation,
+        updateDarkMode,
+    } = useUserProfile();
     const [displayName, setDisplayName] = useState("");
     const [isSavingName, setIsSavingName] = useState(false);
     const [saved, setSaved] = useState(false);
@@ -51,6 +56,8 @@ export default function SettingsPage() {
     const [deleteConfirm, setDeleteConfirm] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
     const [accountDeleteMfaOpen, setAccountDeleteMfaOpen] = useState(false);
+    const [themeSaving, setThemeSaving] = useState(false);
+    const [themeError, setThemeError] = useState<string | null>(null);
     const requiresPasswordForEmailChange =
         user?.createdWithGoogle === true && profile?.passwordSet !== true;
 
@@ -213,10 +220,61 @@ export default function SettingsPage() {
         }
     };
 
+    const handleDarkModeToggle = async (enabled: boolean) => {
+        setThemeSaving(true);
+        setThemeError(null);
+        try {
+            await updateDarkMode(enabled);
+        } catch (error) {
+            setThemeError(
+                error instanceof Error
+                    ? error.message
+                    : "Failed to update appearance.",
+            );
+        } finally {
+            setThemeSaving(false);
+        }
+    };
+
     if (!user) return null;
 
     return (
         <div className="space-y-8">
+            <section className="space-y-3">
+                <h2 className="text-2xl font-medium font-serif text-gray-900">
+                    Appearance
+                </h2>
+                <SettingsSection>
+                    <div className="flex items-center justify-between gap-4 p-4">
+                        <div className="flex min-w-0 items-center gap-3">
+                            <Moon className="h-5 w-5 shrink-0 text-gray-500" />
+                            <div>
+                                <p className="text-sm font-medium text-gray-700">
+                                    Dark mode
+                                </p>
+                                <p className="text-sm text-gray-500">
+                                    Use the dark color theme throughout Mike.
+                                </p>
+                            </div>
+                        </div>
+                        <SettingsToggle
+                            checked={profile?.darkMode === true}
+                            disabled={!profile}
+                            loading={themeSaving}
+                            size="md"
+                            onChange={(enabled) =>
+                                void handleDarkModeToggle(enabled)
+                            }
+                        />
+                    </div>
+                    {themeError && (
+                        <p className="mt-3 text-xs text-red-600">
+                            {themeError}
+                        </p>
+                    )}
+                </SettingsSection>
+            </section>
+
             {/* Profile Settings */}
             <section className="space-y-3">
                 <h2 className="text-2xl font-medium font-serif text-gray-900">

@@ -73,7 +73,6 @@ jobs:
       # docs/frontend-testing.md); --if-present keeps the fallback semantics,
       # so a tree without the "test:coverage" script still no-ops.
       - run: npm run test:coverage --if-present
-
       # Blocking gate: the eslint error backlog was burned down in this PR
       # (0 errors; warnings do not fail the step), so any new error fails CI.
       - run: npm run lint

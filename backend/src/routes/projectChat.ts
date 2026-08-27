@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
-import { createServerSupabase } from "../lib/supabase";
+import { createServerDatabase } from "../lib/database";
 import { recordChatTurn } from "../lib/audit";
 import {
     buildProjectDocContext,
@@ -32,6 +32,10 @@ import {
 import { getUserModelSettings } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
 import { generateAssistantChatTitle } from "../lib/chatTitle";
+import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
+import { buildContextSuffix } from "../lib/contextSuffix";
+import { buildAssistantPlaybookContext } from "../lib/playbooks";
+import { featureForModel, getUserFeatures } from "../lib/userFeatures";
 import {
     resolveEffectiveChatModel,
     resolveEffectiveReasoningLevel,
@@ -57,6 +61,33 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         req.body && typeof req.body === "object" && !Array.isArray(req.body)
             ? (req.body as Record<string, unknown>)
             : {};
+    const editMode = body.editMode;
+    const creation_mode = body.creation_mode;
+    const selection = body.selection;
+    const playbook_id = body.playbook_id;
+    const playbook_version_id = body.playbook_version_id;
+    if (
+        playbook_id !== undefined &&
+        (typeof playbook_id !== "string" || !playbook_id.trim())
+    ) {
+        return void res
+            .status(400)
+            .json({ detail: "playbook_id must be a non-empty string" });
+    }
+    if (
+        playbook_version_id !== undefined &&
+        (typeof playbook_version_id !== "string" ||
+            !playbook_version_id.trim())
+    ) {
+        return void res.status(400).json({
+            detail: "playbook_version_id must be a non-empty string",
+        });
+    }
+    if (playbook_version_id !== undefined && playbook_id === undefined) {
+        return void res.status(400).json({
+            detail: "playbook_id is required with playbook_version_id",
+        });
+    }
     const parsedMessages = parseChatMessages(body.messages);
     if (!parsedMessages.ok) {
         return void res.status(400).json({ detail: parsedMessages.detail });
@@ -101,7 +132,23 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     const attached_documents = parsedAttachedDocuments.value;
     const askInputsResponse = parsedAskInputsResponse.value;
 
-    const db = createServerSupabase();
+    const db = createServerDatabase();
+    const userFeatures = await getUserFeatures(userId, db);
+    const modelFeature = featureForModel(model);
+    if (modelFeature && !userFeatures[modelFeature]) {
+        return void res.status(403).json({
+            detail: "The selected model feature is disabled in Account > Features.",
+            code: "feature_disabled",
+            feature: modelFeature,
+        });
+    }
+    if (playbook_id && !userFeatures.playbooks) {
+        return void res.status(403).json({
+            detail: "Playbooks are disabled in Account > Features.",
+            code: "feature_disabled",
+            feature: "playbooks",
+        });
+    }
     // Verify the user has access to the project (owner or shared member).
     const projectAccess = await checkProjectAccess(
         projectId,
@@ -111,6 +158,32 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     );
     if (!projectAccess.ok)
         return void res.status(404).json({ detail: "Project not found" });
+
+    let playbookContext = "";
+    let selectedPlaybook: {
+        id: string;
+        title: string;
+        version: number;
+        versionId: string;
+    } | null = null;
+    if (typeof playbook_id === "string") {
+        try {
+            const loaded = await buildAssistantPlaybookContext(
+                userId,
+                playbook_id.trim(),
+                db,
+                typeof playbook_version_id === "string"
+                    ? playbook_version_id.trim()
+                    : undefined,
+            );
+            playbookContext = loaded.prompt;
+            selectedPlaybook = loaded.selection;
+        } catch (error) {
+            const detail = safeErrorMessage(error, "Could not load playbook");
+            const status = /not found/i.test(detail) ? 404 : 400;
+            return void res.status(status).json({ detail });
+        }
+    }
 
     let chatId = chat_id ?? null;
     let chatTitle: string | null = null;
@@ -208,6 +281,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             content: lastUser.content,
             files: lastUser.files ?? null,
             workflow: lastUser.workflow ?? null,
+            playbook: selectedPlaybook,
         });
     }
 
@@ -282,6 +356,14 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         systemPromptExtra += `\n\nUSER-ATTACHED DOCUMENTS FOR THIS TURN:\nThe user has attached the following document(s) directly to their latest message. Treat these as the primary focus of the request unless their message clearly says otherwise.\n${lines.join("\n")}`;
     }
 
+    const wordContext = buildContextSuffix({
+        editMode,
+        creationMode: creation_mode,
+        selection,
+    });
+    if (wordContext) systemPromptExtra += `\n\n${wordContext}`;
+    if (playbookContext) systemPromptExtra += `\n\n${playbookContext}`;
+
     const {
         api_keys: apiKeys,
         legal_research_us: legalResearchUs,
@@ -301,6 +383,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         systemPromptExtra,
         undefined,
         legalResearchUs,
+        userFeatures.ironclad,
         nonce,
     );
 
@@ -379,6 +462,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             apiKeys,
             signal: streamAbort.signal,
             projectId,
+            userEmail,
             nonce,
             emitDone: false,
         });

@@ -210,6 +210,22 @@ function Divider({ onDrag }: { onDrag: (dx: number) => void }) {
 
 export default function ProjectAssistantChatPage({ params }: Props) {
     const { id: projectId, chatId } = use(params);
+    return (
+        <ProjectAssistantChatPageInner
+            key={chatId}
+            projectId={projectId}
+            chatId={chatId}
+        />
+    );
+}
+
+function ProjectAssistantChatPageInner({
+    projectId,
+    chatId,
+}: {
+    projectId: string;
+    chatId: string;
+}) {
     const router = useRouter();
 
     const { setSidebarOpen } = useSidebar();
@@ -320,9 +336,15 @@ export default function ProjectAssistantChatPage({ params }: Props) {
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
+        let stale = false;
         getProject(projectId)
-            .then(setProject)
+            .then((p) => {
+                if (!stale) setProject(p);
+            })
             .catch(() => {});
+        return () => {
+            stale = true;
+        };
     }, [projectId]);
 
     // Whenever the assistant mutates project documents — creating a new
@@ -371,9 +393,15 @@ export default function ProjectAssistantChatPage({ params }: Props) {
 
     useEffect(() => {
         if (!projectMutationSignature) return;
+        let stale = false;
         getProject(projectId)
-            .then(setProject)
+            .then((p) => {
+                if (!stale) setProject(p);
+            })
             .catch(() => {});
+        return () => {
+            stale = true;
+        };
     }, [projectMutationSignature, projectId]);
 
     useEffect(() => {
@@ -880,7 +908,15 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                   }
                 : prev,
         );
-        await moveDocumentToFolder(projectId, docId, targetFolderId);
+        try {
+            await moveDocumentToFolder(projectId, docId, targetFolderId);
+        } catch (err) {
+            // Revert the optimistic move by refetching the project
+            getProject(projectId)
+                .then(setProject)
+                .catch(() => {});
+            throw err;
+        }
     };
 
     const handleMoveFolder = async (
@@ -899,7 +935,15 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                   }
                 : prev,
         );
-        await moveSubfolderToFolder(projectId, folderId, targetFolderId);
+        try {
+            await moveSubfolderToFolder(projectId, folderId, targetFolderId);
+        } catch (err) {
+            // Revert the optimistic move by refetching the project
+            getProject(projectId)
+                .then(setProject)
+                .catch(() => {});
+            throw err;
+        }
     };
 
     const handleDeleteDoc = async (docId: string) => {
@@ -1356,7 +1400,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                                 return messages.map((msg, i) =>
                                     msg.role === "user" ? (
                                         <div
-                                            key={i}
+                                            key={msg.id ?? i}
                                             ref={
                                                 i === lastUserIdx
                                                     ? latestUserMessageRef
@@ -1367,6 +1411,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                                                 content={msg.content ?? ""}
                                                 files={msg.files}
                                                 workflow={msg.workflow}
+                                                playbook={msg.playbook}
                                                 onFileClick={(file) => {
                                                     if (!file.document_id)
                                                         return;
@@ -1383,7 +1428,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                                         </div>
                                     ) : (
                                         <AssistantMessage
-                                            key={i}
+                                            key={msg.id ?? i}
                                             events={msg.events}
                                             isStreaming={
                                                 i === messages.length - 1 &&

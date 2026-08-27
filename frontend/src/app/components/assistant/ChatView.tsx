@@ -30,6 +30,7 @@ import {
 } from "../shared/types";
 import { useSidebar } from "@/app/contexts/SidebarContext";
 import { invalidateDocxBytes } from "@/app/hooks/useFetchDocxBytes";
+import { useSelectedModel } from "@/app/hooks/useSelectedModel";
 import { resolvePanelDocumentVersion } from "./panelDocumentVersion";
 import { LIQUID_GLASS_TRANSLUCENT_ACTION_CLASS } from "@/app/components/ui/liquid-surface";
 
@@ -74,6 +75,7 @@ export function ChatView({
     handleChat,
     cancel,
 }: Props) {
+    const [selectedModel] = useSelectedModel();
     const [tabs, setTabs] = useState<AssistantSidePanelTab[]>([]);
     const [activeTabId, setActiveTabId] = useState<string | null>(null);
     const [panelMounted, setPanelMounted] = useState(false);
@@ -82,6 +84,12 @@ export function ChatView({
     const [workflowModalInitialId, setWorkflowModalInitialId] = useState<
         string | undefined
     >();
+    // Owned by ChatView (not ChatInput) so the selected playbook survives the
+    // ask_inputs continuation, where ChatInput is unmounted/remounted and
+    // would otherwise lose its local selection state.
+    const [selectedPlaybook, setSelectedPlaybook] = useState<
+        import("./PlaybookPickerModal").AssistantPlaybookSelection | null
+    >(null);
     const [hiddenAskInputKeys, setHiddenAskInputKeys] = useState<Set<string>>(
         () => new Set(),
     );
@@ -505,7 +513,7 @@ export function ChatView({
                 `calc(100dvh - ${headerHeight + messageGap * 3 + userMessageHeight + paddingBottom}px)`,
             );
         }
-    }, [messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [messages.length]);
 
     const updateScrollButton = useCallback(() => {
         const c = messagesContainerRef.current;
@@ -581,7 +589,7 @@ export function ChatView({
                 setMessagesVisible(true);
             }
         }
-    }, [messages]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [messages]);
 
     useEffect(() => {
         if (panelMounted && window.innerWidth < 768) {
@@ -685,6 +693,7 @@ export function ChatView({
                                                 content={msg.content ?? ""}
                                                 files={msg.files}
                                                 workflow={msg.workflow}
+                                                playbook={msg.playbook}
                                                 onFileClick={(file) => {
                                                     if (!file.document_id)
                                                         return;
@@ -821,7 +830,12 @@ export function ChatView({
                                             return next;
                                         });
                                         void handleChat(
-                                            { role: "user", content, files },
+                                            {
+                                                role: "user",
+                                                content,
+                                                files,
+                                                model: selectedModel,
+                                            },
                                             {
                                                 askInputsResponse: response,
                                             },

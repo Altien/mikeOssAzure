@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signup } from "@/app/lib/authApi";
 import { Input } from "@/app/components/ui/input";
@@ -40,13 +40,22 @@ function SignupContent() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState(false);
+    // Set once the form passes validation so the auth-redirect effect does
+    // not race away the post-signup confirmation screen.
+    const submittedRef = useRef(false);
+
     const isAccountCreatedPreview =
         process.env.NODE_ENV !== "production" &&
         searchParams.get("preview") === "account-created";
 
     useEffect(() => {
         if (isAccountCreatedPreview) return;
-        if (!authLoading && isAuthenticated && !success) {
+        if (
+            !authLoading &&
+            isAuthenticated &&
+            !success &&
+            !submittedRef.current
+        ) {
             router.replace("/onboarding/profile");
         }
     }, [
@@ -94,6 +103,7 @@ function SignupContent() {
                 router.push("/signup/check-email");
             }
         } catch (error: unknown) {
+            submittedRef.current = false;
             setError(
                 knownErrorCodeMessage(
                     error,

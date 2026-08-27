@@ -8,7 +8,15 @@ import {
     useRef,
     type UIEvent,
 } from "react";
-import { PanelLeft, ChevronsUpDown, ChevronDown, Loader2 } from "lucide-react";
+import {
+    PanelLeft,
+    ChevronsUpDown,
+    ChevronDown,
+    BookOpenText,
+    Radar,
+    ListChecks,
+    Loader2,
+} from "lucide-react";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
@@ -35,8 +43,17 @@ import {
     LIQUID_GLASS_SELECTED_CLASS,
     LIQUID_GLASS_HOVER_CLASS,
 } from "@/app/components/ui/liquid-surface";
+import {
+    featureEnabled,
+    type UserFeatureKey,
+} from "@/app/lib/featureFlags";
 
-const NAV_ITEMS = [
+const NAV_ITEMS: Array<{
+    href: string;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+    feature?: UserFeatureKey;
+}> = [
     { href: "/assistant", label: "Assistant", icon: ChatSkeuoIcon },
     { href: "/projects", label: "Projects", icon: FolderSkeuoIcon },
     { href: "/library", label: "Library", icon: LibrarySkeuoIcon },
@@ -46,6 +63,24 @@ const NAV_ITEMS = [
         icon: TabularReviewSkeuoIcon,
     },
     { href: "/workflows", label: "Workflows", icon: WorkflowSkeuoIcon },
+    {
+        href: "/prompts",
+        label: "Prompts",
+        icon: BookOpenText,
+        feature: "promptLibrary",
+    },
+    {
+        href: "/legal-monitors",
+        label: "Monitors",
+        icon: Radar,
+        feature: "legalMonitors",
+    },
+    {
+        href: "/playbooks",
+        label: "Playbooks",
+        icon: ListChecks,
+        feature: "playbooks",
+    },
 ];
 
 const RECENT_PROJECT_PAGE_SIZE = 10;
@@ -298,7 +333,15 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                 </div>
 
                 {/* Nav items */}
-                {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+                {NAV_ITEMS.filter(
+                    (item) =>
+                        !item.feature ||
+                        featureEnabled(
+                            profile?.featureFlags,
+                            item.feature,
+                            profile?.deploymentModules,
+                        ),
+                ).map(({ href, label, icon: Icon }) => {
                     const isActive =
                         href === "/assistant"
                             ? pathname === href

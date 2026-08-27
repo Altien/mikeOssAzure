@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import {
     CLAUDE_MAIN_MODELS,
     GEMINI_MAIN_MODELS,
@@ -14,6 +14,7 @@ import {
     DEFAULT_TABULAR_MODEL,
     providerForModel,
     resolveModel,
+    resolveUsableModel,
     openRouterModelId,
     vercelModelId,
     openCodeGoModelId,
@@ -23,6 +24,10 @@ import {
     normalizeReasoningLevelForModel,
     reasoningLevelsForModel,
 } from "../llm/models";
+
+afterEach(() => {
+    vi.unstubAllEnvs();
+});
 
 // ---------------------------------------------------------------------------
 // providerForModel
@@ -59,15 +64,24 @@ describe("providerForModel", () => {
         }
     });
 
-    it("maps namespaced OpenRouter ids to the openrouter provider", () => {
-        expect(providerForModel("openrouter/anthropic/claude-sonnet-4.5")).toBe(
-            "openrouter",
-        );
+    it("maps built-in Kimi ids to the openai-compatible provider", () => {
+        expect(providerForModel("kimi-k3")).toBe("openai-compatible");
+        expect(providerForModel("kimi-k3-256k")).toBe("openai-compatible");
+    });
+
+    it("maps dynamic Ollama ids to the keyless Ollama provider", () => {
+        expect(providerForModel("ollama/qwen3.6")).toBe("ollama");
     });
 
     it("maps namespaced Vercel AI Gateway ids to the vercel provider", () => {
         expect(providerForModel("vercel/anthropic/claude-sonnet-4.5")).toBe(
             "vercel",
+        );
+    });
+
+    it("maps namespaced OpenRouter ids to the openrouter provider", () => {
+        expect(providerForModel("openrouter/anthropic/claude-sonnet-4.5")).toBe(
+            "openrouter",
         );
     });
 
@@ -103,6 +117,13 @@ describe("resolveModel", () => {
         expect(resolveModel("gpt-5.6-sol", DEFAULT_MAIN_MODEL)).toBe(
             "gpt-5.6-sol",
         );
+        expect(resolveModel("kimi-k3", DEFAULT_MAIN_MODEL)).toBe("kimi-k3");
+        expect(resolveModel("ollama/qwen3.6", DEFAULT_MAIN_MODEL)).toBe(
+            "ollama/qwen3.6",
+        );
+        expect(
+            resolveModel("openrouter/openai/gpt-5", DEFAULT_MAIN_MODEL),
+        ).toBe("openrouter/openai/gpt-5");
     });
 
     it("falls back for unknown model ids", () => {
@@ -239,6 +260,70 @@ describe("vercelModelId", () => {
         );
         expect(vercelModelId("vercel/vercel/v0-1.5-md")).toBe(
             "vercel/v0-1.5-md",
+        );
+    });
+});
+
+// ---------------------------------------------------------------------------
+// resolveUsableModel
+// ---------------------------------------------------------------------------
+
+describe("resolveUsableModel", () => {
+    it("keeps a dynamic Ollama model without an API key", () => {
+        expect(
+            resolveUsableModel(
+                "ollama/qwen3.6",
+                DEFAULT_MAIN_MODEL,
+                {},
+            ),
+        ).toBe("ollama/qwen3.6");
+    });
+
+    it("keeps a dynamic OpenRouter model when its user key is available", () => {
+        expect(
+            resolveUsableModel(
+                "openrouter/anthropic/claude-sonnet-4",
+                DEFAULT_MAIN_MODEL,
+                { openrouter: "user-openrouter-key" },
+            ),
+        ).toBe("openrouter/anthropic/claude-sonnet-4");
+    });
+
+    it("keeps the selected model when its user API key is available", () => {
+        expect(
+            resolveUsableModel(
+                "gemini-3-flash-preview",
+                DEFAULT_MAIN_MODEL,
+                { gemini: "user-gemini-key" },
+            ),
+        ).toBe("gemini-3-flash-preview");
+    });
+
+    it("uses an available configured model when the default has no key", () => {
+        vi.stubEnv("GEMINI_API_KEY", "");
+        vi.stubEnv("ANTHROPIC_API_KEY", "");
+        vi.stubEnv("CLAUDE_API_KEY", "");
+        vi.stubEnv("OPENAI_API_KEY", "");
+        vi.stubEnv("KIMI_API_KEY", "");
+
+        expect(
+            resolveUsableModel(undefined, DEFAULT_MAIN_MODEL, {
+                kimi: "user-kimi-key",
+            }),
+        ).toBe("kimi-k3");
+    });
+
+    it("falls back to a keyless configured model when no provider keys are set", () => {
+        vi.stubEnv("GEMINI_API_KEY", "");
+        vi.stubEnv("ANTHROPIC_API_KEY", "");
+        vi.stubEnv("CLAUDE_API_KEY", "");
+        vi.stubEnv("OPENAI_API_KEY", "");
+        vi.stubEnv("KIMI_API_KEY", "");
+
+        // qwen3.8-local requires no API key, so it is the only usable
+        // configured model once every provider key is absent.
+        expect(resolveUsableModel(undefined, DEFAULT_MAIN_MODEL, {})).toBe(
+            "qwen3.8-local",
         );
     });
 });

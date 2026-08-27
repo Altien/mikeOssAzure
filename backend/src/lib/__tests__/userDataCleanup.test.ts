@@ -19,7 +19,7 @@ const listFilesMock = vi.mocked(listFiles);
 type Row = Record<string, unknown>;
 
 /**
- * Stateful Supabase mock: deletes and updates mutate `tables`, so tests can
+ * Stateful DB mock: deletes and updates mutate `tables`, so tests can
  * assert on exactly which rows survived a cleanup call. Supports the chains
  * userDataCleanup uses (select/delete/update + eq/in/filter-cs) and can
  * inject a delete error per table to exercise error propagation.
@@ -376,6 +376,10 @@ describe("deleteUserAccountData", () => {
                 { id: "w1", user_id: "u1" },
                 { id: "w-other", user_id: "u2" },
             ],
+            saved_prompts: [
+                { id: "prompt-1", user_id: "u1" },
+                { id: "prompt-other", user_id: "u2" },
+            ],
             audit_events: [
                 { id: "a1", user_id: "u1" },
                 { id: "a2", user_id: "u1" },
@@ -399,6 +403,7 @@ describe("deleteUserAccountData", () => {
         expect(tables.hidden_workflows).toEqual([]);
         expect(tables.workflow_open_source_submissions).toEqual([]);
         expect(ids(tables.workflows)).toEqual(["w-other"]);
+        expect(ids(tables.saved_prompts)).toEqual(["prompt-other"]);
 
         // Audit rows carry PII (email, titles, prompt excerpts) and must be
         // purged on account deletion — only the other user's row survives.

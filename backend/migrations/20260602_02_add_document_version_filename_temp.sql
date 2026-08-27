@@ -1,6 +1,6 @@
 -- Migration date: 2026-06-02
 
--- Temporary live-Supabase migration: add document_versions.filename without
+-- Temporary live-SQLite migration: add document_versions.filename without
 -- renaming or dropping document_versions.display_name yet.
 
 ALTER TABLE public.document_versions

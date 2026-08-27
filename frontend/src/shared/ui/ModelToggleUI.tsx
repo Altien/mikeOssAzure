@@ -86,8 +86,13 @@ export function nearestReasoningLevelForModel(
   }, supported[0] ?? "high");
 }
 
+// Committee and Local lead: instance-specific models the user configured
+// themselves are the ones they are most likely reaching for.
 export const MODEL_TOGGLE_GROUPS: readonly ModelToggleGroup[] = [
+  "Committee",
+  "Local",
   "Anthropic",
+  "Moonshot",
   "Google",
   "OpenAI",
   "Moonshot AI",

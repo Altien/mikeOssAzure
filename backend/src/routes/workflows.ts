@@ -6,7 +6,7 @@ import {
 } from "express";
 import crypto from "crypto";
 import { requireAuth } from "../middleware/auth";
-import { createServerSupabase } from "../lib/supabase";
+import { createServerDatabase } from "../lib/database";
 import {
   catalogWorkflowToLegacy,
   ensureDefaultWorkflows,
@@ -41,7 +41,7 @@ import {
 
 export const workflowsRouter = Router();
 
-type Db = ReturnType<typeof createServerSupabase>;
+type Db = ReturnType<typeof createServerDatabase>;
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
   if (isDev) console.log(...args);
@@ -258,11 +258,15 @@ async function markDefaultWorkflows<T extends { id: string }>(
       workflows.map((workflow) => workflow.id),
     );
   if (error) throw error;
-  const defaultKeyByWorkflowId = new Map(
-    (data ?? []).flatMap((row) =>
-      row.workflow_id && row.default_key
-        ? [[row.workflow_id, row.default_key] as const]
-        : [],
+  const defaultKeyByWorkflowId = new Map<string, string>(
+    (data ?? []).flatMap(
+      (row: {
+        workflow_id?: string | null;
+        default_key?: string | null;
+      }): Array<[string, string]> =>
+        row.workflow_id && row.default_key
+          ? [[row.workflow_id, row.default_key]]
+          : [],
     ),
   );
   return workflows.map((workflow) => ({
@@ -433,7 +437,7 @@ workflowsRouter.get(
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { type } = req.query as { type?: string };
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const workflowType = typeof type === "string" && type ? type : null;
 
     if (!(await ensureDefaultsForRequest(userId, db, res))) return;
@@ -489,7 +493,7 @@ workflowsRouter.get(
       req.query.type === "assistant" || req.query.type === "tabular"
         ? req.query.type
         : null;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const catalog = await listActiveCatalogWorkflows(db, {
       type: workflowType,
     });
@@ -513,7 +517,7 @@ workflowsRouter.get(
         ? req.query.type
         : null;
     const scope = parseWorkflowScope(req.query.scope);
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     if (!(await ensureDefaultsForRequest(userId, db, res))) return;
     const { data, error } = await db.rpc("get_workflow_filter_options", {
       p_user_id: userId,
@@ -546,7 +550,7 @@ workflowsRouter.get(
   asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     if (!(await ensureDefaultsForRequest(userId, db, res))) return;
 
     const workflowType =
@@ -610,7 +614,7 @@ workflowsRouter.post(
         .status(400)
         .json({ detail: "metadata.type must be 'assistant' or 'tabular'" });
 
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     devLog("[workflows/create] request", {
       userId,
       title: title.trim(),
@@ -684,7 +688,7 @@ async function handleWorkflowUpdate(req: Request, res: Response) {
   if (metadata && "jurisdictions" in metadata)
     updates.jurisdictions = normalizeJurisdictions(metadata.jurisdictions);
 
-  const db = createServerSupabase();
+  const db = createServerDatabase();
   const access = await resolveWorkflowAccess(workflowId, userId, userEmail, db);
   if (!access || !access.allowEdit) {
     return void res
@@ -730,7 +734,7 @@ workflowsRouter.delete(
   asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const { workflowId } = req.params;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const catalogWorkflow = await findCatalogWorkflow(workflowId, db);
     if (catalogWorkflow) {
       return void res.json(
@@ -752,7 +756,8 @@ workflowsRouter.delete(
     if (error) return void sendInternalError(res, error);
     if ((deleted ?? []).length > 0) {
       await Promise.all(
-        (referenceDocuments ?? []).map((reference) =>
+        (referenceDocuments ?? []).map(
+          (reference: { storage_path: string }) =>
           deleteFile(reference.storage_path).catch(() => {}),
         ),
       );
@@ -767,13 +772,13 @@ workflowsRouter.get(
   requireAuth,
   asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const { data, error } = await db
       .from("hidden_workflows")
       .select("workflow_id")
       .eq("user_id", userId);
     if (error) return void sendInternalError(res, error);
-    res.json((data ?? []).map((r) => r.workflow_id));
+    res.json((data ?? []).map((r: { workflow_id: string }) => r.workflow_id));
   }),
 );
 
@@ -786,7 +791,7 @@ workflowsRouter.post(
     const { workflow_id } = req.body as { workflow_id: string };
     if (!workflow_id?.trim())
       return void res.status(400).json({ detail: "workflow_id is required" });
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const { error } = await db
       .from("hidden_workflows")
       .upsert(
@@ -805,7 +810,7 @@ workflowsRouter.delete(
   asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const { workflowId } = req.params;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const { error } = await db
       .from("hidden_workflows")
       .delete()
@@ -836,7 +841,7 @@ workflowsRouter.post(
     };
     const requestedContributorMode =
       openSourceBody.contributor_mode === "named" ? "named" : "anonymous";
-    const db = createServerSupabase();
+    const db = createServerDatabase();
 
     const { data: workflow, error: workflowError } = await db
       .from("workflows")
@@ -956,7 +961,7 @@ workflowsRouter.get(
   asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const access = await resolveWorkflowAccess(
       req.params.workflowId,
       userId,
@@ -987,7 +992,7 @@ workflowsRouter.post(
   asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const access = await resolveWorkflowAccess(
       req.params.workflowId,
       userId,
@@ -1062,7 +1067,7 @@ workflowsRouter.get(
   asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const access = await resolveWorkflowAccess(
       req.params.workflowId,
       userId,
@@ -1099,7 +1104,7 @@ workflowsRouter.put(
   asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const access = await resolveWorkflowAccess(
       req.params.workflowId,
       userId,
@@ -1182,7 +1187,7 @@ workflowsRouter.delete(
   asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const access = await resolveWorkflowAccess(
       req.params.workflowId,
       userId,
@@ -1222,7 +1227,7 @@ workflowsRouter.get(
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { workflowId } = req.params;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const catalogWorkflow = await findCatalogWorkflow(workflowId, db);
     if (catalogWorkflow) {
       return void res.json(
@@ -1269,7 +1274,7 @@ workflowsRouter.get(
   asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const { workflowId } = req.params;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
 
     const { data: wf } = await db
       .from("workflows")
@@ -1300,7 +1305,7 @@ workflowsRouter.delete(
   asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const { workflowId, shareId } = req.params;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
 
     const { data: wf } = await db
       .from("workflows")
@@ -1349,7 +1354,7 @@ workflowsRouter.post(
         .json({ detail: "You cannot share a workflow with yourself." });
     }
 
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const missingSharedUsers = await findMissingUserEmails(
       db,
       normalizedEmails,

@@ -1,12 +1,13 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
-import { createServerSupabase } from "../lib/supabase";
+import { createServerDatabase } from "../lib/database";
 import { deleteFile } from "../lib/storage";
 import {
   attachActiveVersionPaths,
   attachLatestVersionNumbers,
 } from "../lib/documentVersions";
 import { singleFileUpload } from "../lib/upload";
+import { sendServerError } from "../lib/safeError";
 import { handleDocumentUpload } from "./documents";
 import { parsePaginationQuery, type PaginationParams } from "../lib/pagination";
 import { normalizeSearchTerm } from "../lib/search";
@@ -72,7 +73,7 @@ function mapLibraryDocument<T extends Record<string, unknown>>(doc: T) {
 }
 
 async function loadLibraryFolder(
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerDatabase>,
   userId: string,
   kind: LibraryKind,
   folderId: string,
@@ -90,7 +91,7 @@ async function loadLibraryFolder(
 }
 
 async function deleteLibraryDocumentsAndVersionFiles(
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerDatabase>,
   userId: string,
   kind: LibraryKind,
   documentIds: string[],
@@ -109,7 +110,7 @@ async function deleteLibraryDocumentsAndVersionFiles(
     await eligibleQuery.in("id", documentIds);
   if (eligibleError) return { error: eligibleError, deletedIds: [] };
   const eligibleIds = (eligibleDocuments ?? []).map(
-    (document) => document.id as string,
+    (document: { id: string }) => document.id as string,
   );
   if (eligibleIds.length === 0) return { error: null, deletedIds: [] };
 
@@ -132,6 +133,12 @@ async function deleteLibraryDocumentsAndVersionFiles(
     }
   }
   await Promise.all([...paths].map((path) => deleteFile(path).catch(() => {})));
+  const { error: linksError } = await db
+    .from("legal_monitor_documents")
+    .delete()
+    .eq("user_id", userId)
+    .in("document_id", documentIds);
+  if (linksError) return { error: linksError, deletedIds: [] };
 
   let deleteQuery = db
     .from("documents")
@@ -152,7 +159,7 @@ async function deleteLibraryDocumentsAndVersionFiles(
 // paginated — one extra row is fetched over `limit` to detect `hasMore`
 // without a separate count query.
 async function loadLibraryLevel(
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerDatabase>,
   userId: string,
   kind: LibraryKind,
   parentFolderId: string | null,
@@ -236,7 +243,7 @@ libraryRouter.get("/:kind", requireAuth, async (req, res) => {
   const kind = normalizeLibraryKind(req.params.kind);
   if (!kind) return void res.status(404).json({ detail: "Library not found" });
 
-  const db = createServerSupabase();
+  const db = createServerDatabase();
   const pagination = parsePaginationQuery(req.query as Record<string, unknown>);
   if (req.query.view === "search") {
     const searchTerm = normalizeSearchTerm(req.query.search);
@@ -318,7 +325,7 @@ libraryRouter.post("/:kind/levels", requireAuth, async (req, res) => {
       .json({ detail: "1 to 100 levels are required" });
   }
 
-  const db = createServerSupabase();
+  const db = createServerDatabase();
   const results: Array<{
     parentId: string | null;
     result: Awaited<ReturnType<typeof loadLibraryLevel>>;
@@ -359,7 +366,7 @@ libraryRouter.get("/:kind/filter-options", requireAuth, async (req, res) => {
   const kind = normalizeLibraryKind(req.params.kind);
   if (!kind) return void res.status(404).json({ detail: "Library not found" });
 
-  const db = createServerSupabase();
+  const db = createServerDatabase();
   const { data, error } = await db.rpc("get_library_filter_options", {
     p_user_id: userId,
     p_library_kind: kind,
@@ -382,7 +389,7 @@ libraryRouter.get("/:kind/ids", requireAuth, async (req, res) => {
   const kind = normalizeLibraryKind(req.params.kind);
   if (!kind) return void res.status(404).json({ detail: "Library not found" });
 
-  const db = createServerSupabase();
+  const db = createServerDatabase();
   const searchTerm = normalizeSearchTerm(req.query.search);
   const fileType = normalizeSearchTerm(req.query.file_type)?.toLowerCase() ?? null;
   const ids: string[] = [];
@@ -425,7 +432,7 @@ libraryRouter.post(
     );
     if (ids.length === 0) return void res.json({ deletedIds: [] });
 
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const deletedIds: string[] = [];
     for (
       let offset = 0;
@@ -457,7 +464,7 @@ libraryRouter.post(
     const kind = normalizeLibraryKind(req.params.kind);
     if (!kind)
       return void res.status(404).json({ detail: "Library not found" });
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const folderId =
       typeof req.body?.folder_id === "string" && req.body.folder_id.trim()
         ? req.body.folder_id.trim()
@@ -484,7 +491,7 @@ libraryRouter.get(
     if (!kind)
       return void res.status(404).json({ detail: "Library not found" });
 
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const { data, error } = await db
       .from("library_folders")
       .select("*")
@@ -492,21 +499,24 @@ libraryRouter.get(
       .eq("library_kind", kind);
     if (error) return void sendInternalError(res, error);
 
-    const folders = data ?? [];
-    const foldersById = new Map(
-      folders.map((folder) => [folder.id as string, folder]),
-    );
+    type LibraryFolderRow = {
+      id: string;
+      parent_folder_id?: string | null;
+      [key: string]: unknown;
+    };
+    const folders = (data ?? []) as LibraryFolderRow[];
+    const foldersById = new Map(folders.map((folder) => [folder.id, folder]));
     const path: typeof folders = [];
     const visited = new Set<string>();
     let current = foldersById.get(req.params.folderId);
     if (!current)
       return void res.status(404).json({ detail: "Folder not found" });
 
-    while (current && !visited.has(current.id as string)) {
-      visited.add(current.id as string);
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
       path.unshift(current);
       current = current.parent_folder_id
-        ? foldersById.get(current.parent_folder_id as string)
+        ? foldersById.get(current.parent_folder_id)
         : undefined;
     }
 
@@ -552,7 +562,7 @@ libraryRouter.post(
         ? body.base_folder_id.trim()
         : null;
 
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     if (baseFolderId) {
       const parent = await loadLibraryFolder(db, userId, kind, baseFolderId);
       if (!parent)
@@ -584,7 +594,7 @@ libraryRouter.post("/:kind/folders", requireAuth, async (req, res) => {
   if (!name?.trim())
     return void res.status(400).json({ detail: "name is required" });
 
-  const db = createServerSupabase();
+  const db = createServerDatabase();
   if (parent_folder_id) {
     const parent = await loadLibraryFolder(db, userId, kind, parent_folder_id);
     if (!parent)
@@ -620,7 +630,7 @@ libraryRouter.patch(
       name?: string;
       parent_folder_id?: string | null;
     };
-  const db = createServerSupabase();
+    const db = createServerDatabase();
   const folder = await loadLibraryFolder(db, userId, kind, folderId);
     if (!folder)
       return void res.status(404).json({ detail: "Folder not found" });
@@ -679,7 +689,7 @@ libraryRouter.delete(
       return void res.status(404).json({ detail: "Library not found" });
 
   const { folderId } = req.params;
-  const db = createServerSupabase();
+  const db = createServerDatabase();
   const { data: allFolders, error: foldersError } = await db
     .from("library_folders")
     .select("id, parent_folder_id")
@@ -687,7 +697,7 @@ libraryRouter.delete(
     .eq("library_kind", kind);
   if (foldersError)
     return void sendInternalError(res, foldersError);
-  if (!(allFolders ?? []).some((folder) => folder.id === folderId)) {
+  if (!(allFolders ?? []).some((folder: { id: string }) => folder.id === folderId)) {
     return void res.status(404).json({ detail: "Folder not found" });
   }
 
@@ -725,8 +735,8 @@ libraryRouter.delete(
     if (docsError)
       return void sendInternalError(res, docsError);
 
-  const docIds = (docs ?? []).map((doc) => doc.id as string);
-    const deleteDocsResult = await deleteLibraryDocumentsAndVersionFiles(
+  const docIds = (docs ?? []).map((doc: { id: string }) => doc.id as string);
+  const deleteDocsResult = await deleteLibraryDocumentsAndVersionFiles(
     db,
     userId,
     kind,
@@ -758,7 +768,7 @@ libraryRouter.patch(
 
     const { documentId } = req.params;
     const { folder_id } = req.body as { folder_id: string | null };
-    const db = createServerSupabase();
+    const db = createServerDatabase();
 
     if (folder_id) {
       const folder = await loadLibraryFolder(db, userId, kind, folder_id);
@@ -797,7 +807,7 @@ libraryRouter.patch(
       return void res.status(404).json({ detail: "Library not found" });
 
     const { documentId } = req.params;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     let docQuery = db
       .from("documents")
       .select("id, current_version_id")

@@ -17,7 +17,7 @@ Tests live throughout `backend/src/**/*.test.ts`, including `lib/__tests__/`,
 nested feature directories, `routes/__tests__/`, and `src/__tests__/integration/`.
 Read a couple of the existing suites first (`lib/__tests__/access.test.ts`,
 `lib/__tests__/userDataCleanup.test.ts`) and match their conventions: plain
-in-memory Supabase query mocks for unit tests, no real network, one `describe`
+in-memory database query mocks for unit tests, no real network, one `describe`
 block per function or concern, and assertions on current behavior. Tests that
 need a real local Supabase stack are explicitly gated.
 
@@ -30,6 +30,8 @@ Per-area statement coverage from `npm run test:coverage`:
 | `lib/userDataCleanup.ts`, `lib/manifestSigning.ts`, `lib/supabase.ts` | 100 | ✓ |
 | `lib/llm/models.ts` | 96 | ✓ |
 | `lib/chat/types.ts` | 95 | ✓ |
+| `lib/chat/verifyCitations.ts` | 89 | ✓ |
+| `lib/chat/requestValidation.ts` | 86 | ✓ |
 | `lib/documentVersions.ts` | 98 | ✓ |
 | `lib/chat/citations.ts` | 98 | ✓ |
 | `lib/userLookup.ts` | 91 | ✓ |
@@ -64,7 +66,7 @@ Size is a rough guess: S ≈ an hour, M ≈ an afternoon.
 - [x] `lib/chat/prompts.ts` — pure prompt builders; assert key instructions and
       interpolated values appear in the output strings. (S)
 - [ ] `lib/userSettings.ts` — title/tabular model resolution from which API
-      keys a user has; reuse the Supabase mock pattern from
+      keys a user has; reuse the DB mock pattern from
       `userLookup.test.ts`. (S)
 - [ ] `lib/upload.ts` — multer wrapper: assert LIMIT_FILE_SIZE maps to a 413
       with the right message and other errors pass through. (S)
@@ -73,7 +75,7 @@ Size is a rough guess: S ≈ an hour, M ≈ an afternoon.
 - [ ] `lib/chat/tools/toolSchemas.ts` — assert every tool schema has a name,
       description, and well-formed parameters (guards against schema drift). (S)
 - [ ] `lib/userApiKeys.ts` (rest) — encrypt/decrypt round-trip and DB
-      load/store paths with a mocked Supabase client. (M)
+      load/store paths with a mocked database client. (M)
 - [ ] `lib/storage.ts` (rest) — S3 upload/download/list/delete wrappers with a
       mocked AWS SDK client. (M)
 - [ ] `lib/userDataExport.ts` — export assembly: given seeded mock tables,
@@ -113,7 +115,7 @@ better exercised by the e2e suite.
 ## Ratchet policy
 
 `backend/vitest.config.mts` enforces global coverage **floors** (currently
-statements 39 / branches 35 / functions 42 / lines 40). They are a
+statements 54 / branches 47 / functions 59 / lines 56). They are a
 no-regression ratchet, not a target:
 
 - **Floors only go up.** Never lower them to get a PR green — that means your

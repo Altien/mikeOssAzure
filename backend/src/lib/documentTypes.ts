@@ -7,14 +7,20 @@ export const ALLOWED_DOCUMENT_TYPES = new Set([
   "xls",
   "pptx",
   "ppt",
+  "md",
 ]);
 
 export const ALLOWED_DOCUMENT_TYPES_LABEL =
-  "pdf, docx, doc, xlsx, xlsm, xls, pptx, ppt";
+  "pdf, docx, doc, xlsx, xlsm, xls, pptx, ppt, md";
 
 const WORD_TYPES = new Set(["docx", "doc"]);
 const SPREADSHEET_TYPES = new Set(["xlsx", "xlsm", "xls"]);
 const PRESENTATION_TYPES = new Set(["pptx", "ppt"]);
+const TEXT_TYPES = new Set(["md", "txt", "markdown"]);
+
+export function isTextDocumentType(fileType: string | null | undefined) {
+  return TEXT_TYPES.has((fileType ?? "").toLowerCase());
+}
 
 export function isWordDocumentType(fileType: string | null | undefined) {
   return WORD_TYPES.has((fileType ?? "").toLowerCase());
@@ -54,6 +60,11 @@ export function contentTypeForDocumentType(fileType: string | null | undefined) 
       return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
     case "ppt":
       return "application/vnd.ms-powerpoint";
+    case "md":
+    case "markdown":
+      return "text/markdown";
+    case "txt":
+      return "text/plain";
     default:
       return "application/octet-stream";
   }

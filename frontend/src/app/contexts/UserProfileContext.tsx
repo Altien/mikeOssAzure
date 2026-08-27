@@ -33,6 +33,13 @@ import {
 import type { Message } from "@/app/components/shared/types";
 import { applyDarkMode } from "@/app/lib/theme";
 import { publishTabularChatSettingsUpdate } from "@/app/lib/tabularChatSettingsEvents";
+import {
+    DEFAULT_DEPLOYMENT_MODULES,
+    DEFAULT_USER_FEATURE_FLAGS,
+    type DeploymentModules,
+    type UserFeatureFlags,
+    type UserFeatureKey,
+} from "@/app/lib/featureFlags";
 
 interface UserProfile {
     displayName: string | null;
@@ -54,11 +61,14 @@ interface UserProfile {
     lastSelectedReasoningLevel: NonNullable<Message["reasoning"]>;
     mfaOnLogin: boolean;
     legalResearchUs: boolean;
+    emailIntegrationEnabled: boolean;
+    darkMode: boolean;
+    featureFlags: UserFeatureFlags;
+    deploymentModules: DeploymentModules;
     quickActionsVisible: boolean;
     openRouterModels: string[];
     vercelModels: string[];
     openCodeGoModels: string[];
-    darkMode: boolean;
     apiKeys: ApiKeyState;
 }
 
@@ -96,11 +106,16 @@ interface UserProfileContextType {
     ) => Promise<boolean>;
     updateMfaOnLogin: (enabled: boolean) => Promise<boolean>;
     updateLegalResearchUs: (enabled: boolean) => Promise<boolean>;
+    updateEmailIntegration: (enabled: boolean) => Promise<boolean>;
+    updateDarkMode: (enabled: boolean) => Promise<void>;
+    updateFeatureFlag: (
+        key: UserFeatureKey,
+        enabled: boolean,
+    ) => Promise<boolean>;
     updateQuickActionsVisible: (visible: boolean) => Promise<boolean>;
     updateOpenRouterModels: (models: string[]) => Promise<boolean>;
     updateVercelModels: (models: string[]) => Promise<boolean>;
     updateOpenCodeGoModels: (models: string[]) => Promise<boolean>;
-    updateDarkMode: (enabled: boolean) => Promise<void>;
     updateApiKey: (
         provider: ApiKeyProvider,
         value: string | null,
@@ -115,6 +130,7 @@ const UserProfileContext = createContext<UserProfileContextType | undefined>(
 
 const API_KEY_PROVIDERS: ApiKeyProvider[] = [
     "claude",
+    "kimi",
     "gemini",
     "openai",
     "openrouter",
@@ -126,6 +142,7 @@ const API_KEY_PROVIDERS: ApiKeyProvider[] = [
 function emptyApiKeys(): ApiKeyState {
     return {
         claude: { configured: false, source: null },
+        kimi: { configured: false, source: null },
         gemini: { configured: false, source: null },
         openai: { configured: false, source: null },
         openrouter: { configured: false, source: null },
@@ -162,6 +179,14 @@ function toProfile(data: ApiUserProfile): UserProfile {
         lastSelectedReasoningLevel:
             profile.lastSelectedReasoningLevel ?? "high",
         mfaOnLogin: profile.mfaOnLogin === true,
+        featureFlags: {
+            ...DEFAULT_USER_FEATURE_FLAGS,
+            ...profile.featureFlags,
+        },
+        deploymentModules: {
+            ...DEFAULT_DEPLOYMENT_MODULES,
+            ...profile.deploymentModules,
+        },
         openRouterModels: Array.isArray(profile.openRouterModels)
             ? profile.openRouterModels
             : [],
@@ -226,11 +251,14 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 lastSelectedReasoningLevel: "high",
                 mfaOnLogin: false,
                 legalResearchUs: true,
+                emailIntegrationEnabled: false,
+                darkMode: false,
+                featureFlags: { ...DEFAULT_USER_FEATURE_FLAGS },
+                deploymentModules: { ...DEFAULT_DEPLOYMENT_MODULES },
                 quickActionsVisible: true,
                 openRouterModels: [],
                 vercelModels: [],
                 openCodeGoModels: [],
-                darkMode: false,
                 apiKeys: emptyApiKeys(),
             });
         } finally {
@@ -282,7 +310,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 return true;
             } catch (error) {
                 if (isMfaRequiredError(error)) throw error;
-                return false;
+                throw error;
             }
         },
         [user],
@@ -465,6 +493,68 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         [user],
     );
 
+    const updateEmailIntegration = useCallback(
+        async (enabled: boolean): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                const updated = await updateUserProfile({
+                    emailIntegrationEnabled: enabled,
+                });
+                setProfile((prev) =>
+                    prev ? { ...prev, ...toProfile(updated) } : null,
+                );
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [user],
+    );
+
+    const updateDarkMode = useCallback(
+        async (enabled: boolean): Promise<void> => {
+            if (!user) throw new Error("Sign in to update Dark Mode.");
+            const previous = profile?.darkMode === true;
+            // Apply immediately so the toggle is responsive even while the
+            // profile request is in flight. Roll back if persistence fails.
+            applyDarkMode(enabled);
+            try {
+                const updated = await updateUserProfile({ darkMode: enabled });
+                const normalized = toProfile(updated);
+                setProfile((prev) =>
+                    prev
+                        ? { ...prev, ...normalized, darkMode: enabled }
+                        : null,
+                );
+            } catch (error) {
+                applyDarkMode(previous);
+                throw error;
+            }
+        },
+        [user, profile?.darkMode],
+    );
+
+    const updateFeatureFlag = useCallback(
+        async (key: UserFeatureKey, enabled: boolean): Promise<boolean> => {
+            if (!user || !profile) return false;
+            const featureFlags = {
+                ...DEFAULT_USER_FEATURE_FLAGS,
+                ...profile.featureFlags,
+                [key]: enabled,
+            };
+            try {
+                const updated = await updateUserProfile({ featureFlags });
+                setProfile((prev) =>
+                    prev ? { ...prev, ...toProfile(updated) } : null,
+                );
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [user, profile],
+    );
+
     const updateQuickActionsVisible = useCallback(
         async (visible: boolean): Promise<boolean> => {
             if (!user) return false;
@@ -529,25 +619,6 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             }
         },
         [user],
-    );
-
-    const updateDarkMode = useCallback(
-        async (enabled: boolean): Promise<void> => {
-            if (!user) throw new Error("Sign in to update Dark Mode.");
-            const previous = profile?.darkMode === true;
-            applyDarkMode(enabled);
-            try {
-                const updated = await updateUserProfile({ darkMode: enabled });
-                const normalized = toProfile(updated);
-                setProfile((prev) =>
-                    prev ? { ...prev, ...normalized, darkMode: enabled } : null,
-                );
-            } catch (error) {
-                applyDarkMode(previous);
-                throw error;
-            }
-        },
-        [user, profile?.darkMode],
     );
 
     const updateApiKey = useCallback(
@@ -618,11 +689,13 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 persistChatReasoningSelection,
                 updateMfaOnLogin,
                 updateLegalResearchUs,
+                updateEmailIntegration,
+                updateDarkMode,
+                updateFeatureFlag,
                 updateQuickActionsVisible,
                 updateOpenRouterModels,
                 updateVercelModels,
                 updateOpenCodeGoModels,
-                updateDarkMode,
                 updateApiKey,
                 reloadProfile,
                 incrementMessageCredits,
@@ -641,4 +714,14 @@ export function useUserProfile() {
         );
     }
     return context;
+}
+
+/**
+ * Same context, but tolerant of being rendered outside a provider — for
+ * components that merely *decorate* themselves with profile data (extra model
+ * groups, an optional import source) and stay usable without it. Everything
+ * that genuinely needs a profile should keep using useUserProfile.
+ */
+export function useOptionalUserProfile(): UserProfileContextType | undefined {
+    return useContext(UserProfileContext);
 }

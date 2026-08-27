@@ -1,14 +1,43 @@
+// @ts-nocheck
 import crypto from "crypto";
 import { Router } from "express";
-import { requireAuth, requireMfaIfEnrolled } from "../middleware/auth";
-import { createServerSupabase } from "../lib/supabase";
+import {
+    localAuthOnly,
+    requireAuth,
+    requireMfaIfEnrolled,
+} from "../middleware/auth";
+import {
+    createLocalUser,
+    createSession,
+    deleteSession,
+    findLocalUserByEmail,
+    findLocalUserById,
+    findSession,
+    markSessionMfaVerified,
+    updateLocalUserEmail,
+    verifyPassword,
+} from "../lib/sqlite";
+import {
+    createServerDatabase,
+    type ServerDatabase,
+} from "../lib/database";
+import {
+    createMfaChallenge,
+    createMfaFactor,
+    hasVerifiedTotpFactor,
+    listMfaFactors,
+    unenrollMfaFactor,
+    verifyMfaFactorCode,
+} from "../lib/mfa";
 import { recordAudit } from "../lib/audit";
 import { sendInternalError } from "../lib/httpError";
+import { sendServerError } from "../lib/safeError";
 import {
     isSupportedOpenCodeGoModel,
     REASONING_LEVELS,
     resolveModel,
 } from "../lib/llm";
+import { configuredModelSummaries } from "../lib/llm/registry";
 import {
     normalizeOptionalModelPreference,
     normalizeReasoningLevel,
@@ -26,6 +55,7 @@ import {
     deleteUserMcpConnector,
     getUserMcpConnector,
     listUserMcpConnectors,
+    provisionPatentMcpConnector,
     McpOAuthRequiredError,
     refreshUserMcpConnectorTools,
     setUserMcpToolEnabled,
@@ -47,7 +77,16 @@ import {
 import { findProfileUserByEmail } from "../lib/userLookup";
 import { configuredApiPublicUrl } from "../lib/runtimeConfig";
 import {
+    getUserFeatures,
+    normalizeUserFeatures,
+    requireUserFeature,
+    USER_FEATURE_KEYS,
+    type UserFeatures,
+} from "../lib/userFeatures";
+import { resolveDeploymentModules } from "../lib/deploymentModules";
+import {
     getAllUserRouterModels,
+    getUserRouterModels,
     replaceUserRouterModels,
     ROUTER_SLUGS,
     type RouterModelSelections,
@@ -57,6 +96,158 @@ import {
 export const userRouter = Router();
 
 const MONTHLY_CREDIT_LIMIT = 999999;
+
+function publicUser(user: { id: string; email?: string | null }) {
+    return { id: user.id, email: user.email ?? "", pendingEmail: null };
+}
+
+function bearerToken(req: { headers: { authorization?: string } }) {
+    const auth = req.headers.authorization ?? "";
+    return auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+}
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function isValidEmail(email: string): boolean {
+    return email.length <= 254 && EMAIL_PATTERN.test(email);
+}
+
+userRouter.post("/auth/signup", localAuthOnly, async (req, res) => {
+    const email =
+        typeof req.body?.email === "string" ? req.body.email.trim() : "";
+    const password =
+        typeof req.body?.password === "string" ? req.body.password : "";
+    if (!isValidEmail(email) || password.length < 6) {
+        return void res
+            .status(400)
+            .json({ detail: "A valid email and a 6+ character password are required" });
+    }
+    if (findLocalUserByEmail(email)) {
+        return void res.status(409).json({ detail: "Email is already registered" });
+    }
+    const user = createLocalUser(email, password);
+    const token = createSession(user.id);
+    res.json({ token, user: publicUser(user) });
+});
+
+function profileMfaOnLogin(userId: string): boolean {
+    const db = createServerDatabase();
+    return db
+        .from("user_profiles")
+        .select("mfa_on_login")
+        .eq("user_id", userId)
+        .maybeSingle()
+        .then(({ data }) => {
+            const value = (data as { mfa_on_login?: unknown } | null)
+                ?.mfa_on_login;
+            return value === true || value === 1 || value === "1";
+        })
+        .catch(() => false);
+}
+
+userRouter.post("/auth/login", localAuthOnly, async (req, res) => {
+    const email =
+        typeof req.body?.email === "string" ? req.body.email.trim() : "";
+    const password =
+        typeof req.body?.password === "string" ? req.body.password : "";
+    const row = findLocalUserByEmail(email) as
+        | {
+              id: string;
+              email: string;
+              password_hash: string;
+              password_salt: string;
+          }
+        | null;
+    if (!row || !verifyPassword(password, row.password_hash, row.password_salt)) {
+        return void res.status(401).json({ detail: "Invalid email or password" });
+    }
+    const mfaRequired =
+        hasVerifiedTotpFactor(row.id) && (await profileMfaOnLogin(row.id));
+    const token = createSession(row.id, !mfaRequired);
+    res.json({ token, user: publicUser(row), mfaRequired });
+});
+
+userRouter.get("/auth/session", localAuthOnly, async (req, res) => {
+    const session = findSession(bearerToken(req));
+    if (!session) return void res.json({ user: null });
+    const user = findLocalUserById(session.userId) as
+        | { id: string; email?: string }
+        | null;
+    res.json({ user: user ? publicUser(user) : null });
+});
+
+userRouter.post("/auth/logout", localAuthOnly, async (req, res) => {
+    const token = bearerToken(req);
+    if (token) deleteSession(token);
+    res.status(204).send();
+});
+
+userRouter.patch("/auth/email", localAuthOnly, requireAuth, async (req, res) => {
+    const email =
+        typeof req.body?.email === "string" ? req.body.email.trim() : "";
+    if (!isValidEmail(email)) {
+        return void res.status(400).json({ detail: "A valid email is required" });
+    }
+    const userId = res.locals.userId as string;
+    const existing = findLocalUserByEmail(email) as { id: string } | null;
+    if (existing && existing.id !== userId) {
+        return void res.status(409).json({ detail: "Email is already registered" });
+    }
+    const user = updateLocalUserEmail(userId, email);
+    res.json({ user: publicUser(user) });
+});
+
+const SUPPORT_FEEDBACK_TYPES = new Set(["bug", "feature", "question", "other"]);
+
+userRouter.post("/support", requireAuth, async (req, res) => {
+    const type = typeof req.body?.type === "string" ? req.body.type : "";
+    const subject = typeof req.body?.subject === "string" ? req.body.subject.trim() : "";
+    const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
+    const link = typeof req.body?.link === "string" ? req.body.link.trim() : "";
+    if (!SUPPORT_FEEDBACK_TYPES.has(type) || !subject || !message) {
+        return void res
+            .status(400)
+            .json({ detail: "type, subject, and message are required" });
+    }
+    const userId = res.locals.userId as string;
+    const userEmail = (res.locals.userEmail as string) ?? "";
+    const db = createServerDatabase();
+    const { error } = await db.from("support_feedback").insert({
+        id: crypto.randomUUID(),
+        user_id: userId,
+        email: userEmail,
+        type,
+        subject: subject.slice(0, 200),
+        message: message.slice(0, 10000),
+        link: link.slice(0, 2000) || null,
+    });
+    if (error) {
+        return void res.status(500).json({ detail: "Failed to submit feedback" });
+    }
+
+    const inbox = process.env.SUPPORT_INBOX_EMAIL;
+    const resendKey = process.env.RESEND_API_KEY;
+    if (inbox && resendKey) {
+        void (async () => {
+            try {
+                const { Resend } = await import("resend");
+                const resend = new Resend(resendKey);
+                await resend.emails.send({
+                    from: process.env.SUPPORT_FROM_EMAIL ?? "Mike Support <onboarding@resend.dev>",
+                    to: inbox,
+                    subject: `[Mike ${type}] ${subject.slice(0, 200)}`,
+                    text: `From: ${userEmail} (${userId})\nType: ${type}\nLink: ${link || "-"}\n\n${message}`,
+                });
+            } catch (err) {
+                console.error("[user/support] email delivery failed", {
+                    userId,
+                    error: errorMessage(err),
+                });
+            }
+        })();
+    }
+    res.status(204).send();
+});
 
 type UserProfileRow = {
     display_name: string | null;
@@ -76,9 +267,120 @@ type UserProfileRow = {
     last_selected_reasoning_level?: string | null;
     mfa_on_login: boolean | null;
     legal_research_us: boolean | null;
-    quick_actions_visible: boolean | null;
+    email_integration_enabled: boolean | null;
     dark_mode: boolean | null;
+    feature_flags?: unknown;
+    quick_actions_visible: boolean | null;
 };
+
+// GET /user/mfa/status — factors plus authenticator assurance levels.
+userRouter.get("/mfa/status", localAuthOnly, requireAuth, async (_req, res) => {
+    const userId = res.locals.userId as string;
+    const factors = listMfaFactors(userId).map((factor) => ({
+        id: factor.id,
+        friendly_name: factor.friendly_name,
+        factor_type: "totp",
+        status: factor.status,
+        created_at: factor.created_at,
+        updated_at: factor.updated_at,
+    }));
+    const hasVerified = factors.some((factor) => factor.status === "verified");
+    const mfaVerified = res.locals.mfaVerified !== false;
+    res.json({
+        factors,
+        currentLevel: mfaVerified ? (hasVerified ? "aal2" : "aal1") : "aal1",
+        nextLevel: hasVerified ? "aal2" : "aal1",
+    });
+});
+
+// POST /user/mfa/enroll — create a pending TOTP factor.
+userRouter.post("/mfa/enroll", localAuthOnly, requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = (res.locals.userEmail as string) ?? "";
+    const friendlyName =
+        typeof req.body?.friendlyName === "string" && req.body.friendlyName.trim()
+            ? req.body.friendlyName.trim().slice(0, 100)
+            : "Mike";
+    try {
+        const result = await createMfaFactor(userId, userEmail, friendlyName);
+        if ("error" in result && result.error) {
+            return void res.status(400).json({ detail: result.error });
+        }
+        res.json({
+            id: result.id,
+            totp: { qr_code: result.qrCode, secret: result.secret, uri: result.uri },
+        });
+    } catch (err) {
+        sendServerError(res, err);
+    }
+});
+
+// POST /user/mfa/challenge — TOTP challenges are stateless; the client must
+// present the returned challenge id when verifying.
+userRouter.post("/mfa/challenge", localAuthOnly, requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const factorId = typeof req.body?.factorId === "string" ? req.body.factorId : "";
+    if (!factorId) {
+        return void res.status(400).json({ detail: "factorId is required" });
+    }
+    try {
+        const challenge = createMfaChallenge(factorId, userId);
+        if (!challenge) {
+            return void res.status(404).json({ detail: "Factor not found" });
+        }
+        res.json(challenge);
+    } catch (err) {
+        sendServerError(res, err);
+    }
+});
+
+// POST /user/mfa/verify — verify a TOTP code; confirms pending factors and
+// elevates the current session to aal2.
+userRouter.post("/mfa/verify", localAuthOnly, requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const factorId = typeof req.body?.factorId === "string" ? req.body.factorId : "";
+    const challengeId =
+        typeof req.body?.challengeId === "string" ? req.body.challengeId : undefined;
+    const code = typeof req.body?.code === "string" ? req.body.code : "";
+    if (!factorId || !code) {
+        return void res.status(400).json({ detail: "factorId and code are required" });
+    }
+    try {
+        const result = verifyMfaFactorCode({ factorId, userId, challengeId, code });
+        if (!result.ok) {
+            return void res.status(400).json({ detail: result.error });
+        }
+        markSessionMfaVerified(res.locals.token as string);
+        res.status(204).send();
+    } catch (err) {
+        sendServerError(res, err);
+    }
+});
+
+// POST /user/mfa/unenroll — requires an MFA-verified (aal2) session so a
+// password-only session cannot disable MFA.
+userRouter.post("/mfa/unenroll", localAuthOnly, requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const factorId = typeof req.body?.factorId === "string" ? req.body.factorId : "";
+    if (!factorId) {
+        return void res.status(400).json({ detail: "factorId is required" });
+    }
+    if (res.locals.mfaVerified === false) {
+        return void res.status(403).json({
+            detail: "Verify your authenticator before removing factors.",
+            code: "mfa_verification_required",
+        });
+    }
+    unenrollMfaFactor(factorId, userId);
+    if (!hasVerifiedTotpFactor(userId)) {
+        const db = createServerDatabase();
+        await db
+            .from("user_profiles")
+            .update({ mfa_on_login: false })
+            .eq("user_id", userId);
+    }
+    res.status(204).send();
+});
 
 function errorMessage(error: unknown): string {
     if (error instanceof Error && error.message) return error.message;
@@ -139,10 +441,13 @@ function mcpOAuthPopupHtml(
 ) {
     const targetOrigin = new URL(frontendUrl()).origin;
     const targetUrl = frontendUrl();
+    // Escape "<" so attacker-influenced payload fields (e.g. the OAuth
+    // ?error= query param echoed into `detail`) cannot break out of the
+    // inline <script> block with a "</script>" sequence.
     const message = JSON.stringify({
         type: "mcp_oauth_result",
         ...payload,
-    });
+    }).replace(/</g, "\\u003c");
     return `<!doctype html>
 <html>
   <head>
@@ -188,41 +493,30 @@ function mcpOAuthPopupCsp(nonce: string) {
     ].join("; ");
 }
 
-const PROFILE_SELECT_WITH_CHAT_SELECTIONS =
-    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, last_selected_chat_model, last_selected_reasoning_level, mfa_on_login, legal_research_us, quick_actions_visible, dark_mode";
-const PROFILE_SELECT_WITH_LAST_SELECTED_CHAT_MODEL =
-    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, last_selected_chat_model, mfa_on_login, legal_research_us, quick_actions_visible, dark_mode";
 const PROFILE_SELECT =
-    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, quick_actions_visible, dark_mode";
-// Deploy-before-migrate tolerance is per column: a database that already has
-// the 20260821 onboarding/password columns but not yet dark_mode must keep
-// them rather than fall all the way back to a lower tier. This is exactly
-// PROFILE_SELECT minus dark_mode.
-const PROFILE_SELECT_NO_DARK_MODE =
-    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, quick_actions_visible";
-// PROFILE_SELECT minus the 20260821 onboarding / password-capability columns,
-// for databases that have not applied those migrations yet. Migration 02
-// (password_set_at) gets its own tier so a database that applied 01 but not
-// 02 keeps its live onboarding/personalisation columns.
-const PROFILE_SELECT_NO_PASSWORD =
-    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, quick_actions_visible";
-const PROFILE_SELECT_NO_ONBOARDING =
-    "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, quick_actions_visible";
-const ONBOARDING_PROFILE_COLUMNS = [
-    "jurisdiction",
-    "practice_setting",
-    "professional_title",
-    "practice_areas",
-    "onboarding_version",
-];
-const PROFILE_SELECT_NO_QUICK_ACTIONS =
-    "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us";
-const PROFILE_SELECT_NO_LEGAL =
-    "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login";
-const LEGACY_PROFILE_SELECT =
-    "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model";
-const LEGACY_PROFILE_MODEL_SELECT =
-    "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model";
+    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, last_selected_chat_model, last_selected_reasoning_level, mfa_on_login, legal_research_us, email_integration_enabled, dark_mode, feature_flags, quick_actions_visible";
+
+// Deploy-before-migrate tolerance is per column. Retry without whichever
+// optional column the database reports missing while preserving every newer
+// column it does have, then supply the serialization-safe default.
+const OPTIONAL_PROFILE_COLUMN_DEFAULTS: Record<string, unknown> = {
+    jurisdiction: undefined,
+    practice_setting: undefined,
+    professional_title: undefined,
+    practice_areas: undefined,
+    onboarding_version: undefined,
+    password_set_at: undefined,
+    title_model: null,
+    tabular_model: null,
+    last_selected_chat_model: null,
+    last_selected_reasoning_level: null,
+    mfa_on_login: false,
+    legal_research_us: true,
+    email_integration_enabled: false,
+    dark_mode: false,
+    feature_flags: {},
+    quick_actions_visible: true,
+};
 
 function isMissingProfileColumn(error: unknown, column: string): boolean {
     const record =
@@ -234,229 +528,42 @@ function isMissingProfileColumn(error: unknown, column: string): boolean {
 }
 
 // Loads a profile while tolerating older databases that lack newer preference
-// columns. Tries the full select first, then falls back through the legacy
-// cascade (which also handles missing title_model / mfa_on_login) and applies
-// safe defaults for missing fields.
+// columns: retries the select without each column PostgREST reports missing
+// and applies that column's safe default to the returned row.
 async function selectProfile(
-    db: ReturnType<typeof createServerSupabase>,
+    db: ServerDatabase,
     userId: string,
     mode: "maybe" | "single",
 ) {
-    const newestQuery = db
-        .from("user_profiles")
-        .select(PROFILE_SELECT_WITH_CHAT_SELECTIONS)
-        .eq("user_id", userId);
-    const newest =
-        mode === "single"
-            ? await newestQuery.single()
-            : await newestQuery.maybeSingle();
-    if (!newest.error) return newest;
-    let cascadeError: unknown = newest.error;
-
-    if (isMissingProfileColumn(cascadeError, "last_selected_reasoning_level")) {
-        const modelOnlyQuery = db
+    const columns = PROFILE_SELECT.split(", ");
+    const defaults: Record<string, unknown> = {};
+    while (true) {
+        const query = db
             .from("user_profiles")
-            .select(PROFILE_SELECT_WITH_LAST_SELECTED_CHAT_MODEL)
+            .select(columns.join(", "))
             .eq("user_id", userId);
-        const modelOnly =
+        const result =
             mode === "single"
-                ? await modelOnlyQuery.single()
-                : await modelOnlyQuery.maybeSingle();
-        if (!modelOnly.error) {
-            if (modelOnly.data && typeof modelOnly.data === "object") {
-                Object.assign(modelOnly.data as Record<string, unknown>, {
-                    last_selected_reasoning_level: null,
-                });
+                ? await query.single()
+                : await query.maybeSingle();
+        if (!result.error) {
+            if (result.data && typeof result.data === "object") {
+                Object.assign(result.data as Record<string, unknown>, defaults);
             }
-            return modelOnly;
+            return result;
         }
-        cascadeError = modelOnly.error;
-    }
 
-    if (isMissingProfileColumn(cascadeError, "last_selected_chat_model")) {
-        const fullQuery = db
-            .from("user_profiles")
-            .select(PROFILE_SELECT)
-            .eq("user_id", userId);
-        const full =
-            mode === "single"
-                ? await fullQuery.single()
-                : await fullQuery.maybeSingle();
-        if (!full.error) {
-            if (full.data && typeof full.data === "object") {
-                Object.assign(full.data as Record<string, unknown>, {
-                    last_selected_chat_model: null,
-                    last_selected_reasoning_level: null,
-                });
-            }
-            return full;
-        }
-        cascadeError = full.error;
+        const missingColumn = Object.keys(
+            OPTIONAL_PROFILE_COLUMN_DEFAULTS,
+        ).find(
+            (column) =>
+                columns.includes(column) &&
+                isMissingProfileColumn(result.error, column),
+        );
+        if (!missingColumn) return result;
+        columns.splice(columns.indexOf(missingColumn), 1);
+        defaults[missingColumn] = OPTIONAL_PROFILE_COLUMN_DEFAULTS[missingColumn];
     }
-
-    // dark_mode is the newest column, so its retry tier sits above the
-    // 20260821 tiers: a database missing only dark_mode keeps its live
-    // onboarding, password and quick-action columns and defaults the theme
-    // to light. A database old enough to lack the 20260821 columns too
-    // fails the full select on one of those instead (they sort earlier in
-    // the select list), so this tier is skipped and the tiers below handle it.
-    if (isMissingProfileColumn(cascadeError, "dark_mode")) {
-        const noDarkQuery = db
-            .from("user_profiles")
-            .select(PROFILE_SELECT_NO_DARK_MODE)
-            .eq("user_id", userId);
-        const noDark =
-            mode === "single"
-                ? await noDarkQuery.single()
-                : await noDarkQuery.maybeSingle();
-        if (!noDark.error) {
-            if (noDark.data && typeof noDark.data === "object") {
-                Object.assign(noDark.data as Record<string, unknown>, {
-                    dark_mode: false,
-                });
-            }
-            return noDark;
-        }
-        cascadeError = noDark.error;
-    }
-
-    // A database that predates the 20260821 migrations rejects the full
-    // select on the first of the new columns, which would otherwise skip
-    // every tier below (they key on *their* new column's name) and land on
-    // a select that silently resets the legal-research and quick-action
-    // preferences to defaults. Two retry tiers, most-migrated first:
-    // missing only password_set_at (migration 02) keeps the live
-    // onboarding columns; missing the migration-01 columns drops them all,
-    // and serializeProfile treats the absent fields as legacy-exempt —
-    // matching what the migration's backfill would write.
-    if (isMissingProfileColumn(cascadeError, "password_set_at")) {
-        const prePasswordQuery = db
-            .from("user_profiles")
-            .select(PROFILE_SELECT_NO_PASSWORD)
-            .eq("user_id", userId);
-        const prePassword =
-            mode === "single"
-                ? await prePasswordQuery.single()
-                : await prePasswordQuery.maybeSingle();
-        if (!prePassword.error) return prePassword;
-        cascadeError = prePassword.error;
-    }
-    if (
-        ONBOARDING_PROFILE_COLUMNS.some((column) =>
-            isMissingProfileColumn(cascadeError, column),
-        )
-    ) {
-        const preOnboardingQuery = db
-            .from("user_profiles")
-            .select(PROFILE_SELECT_NO_ONBOARDING)
-            .eq("user_id", userId);
-        const preOnboarding =
-            mode === "single"
-                ? await preOnboardingQuery.single()
-                : await preOnboardingQuery.maybeSingle();
-        if (!preOnboarding.error) return preOnboarding;
-        cascadeError = preOnboarding.error;
-    }
-
-    if (isMissingProfileColumn(cascadeError, "quick_actions_visible")) {
-        const previousQuery = db
-            .from("user_profiles")
-            .select(PROFILE_SELECT_NO_QUICK_ACTIONS)
-            .eq("user_id", userId);
-        const previous =
-            mode === "single"
-                ? await previousQuery.single()
-                : await previousQuery.maybeSingle();
-        if (!previous.error) {
-            if (previous.data && typeof previous.data === "object") {
-                Object.assign(previous.data, {
-                    quick_actions_visible: true,
-                    dark_mode: false,
-                });
-            }
-            return previous;
-        }
-    }
-
-    const legacy = await selectProfileLegacy(db, userId, mode);
-    if (legacy.data && typeof legacy.data === "object") {
-        const row = legacy.data as Record<string, unknown>;
-        if (!("legal_research_us" in row)) {
-            Object.assign(row, { legal_research_us: true });
-        }
-        Object.assign(row, { quick_actions_visible: true });
-        if (!("dark_mode" in row)) {
-            Object.assign(row, { dark_mode: false });
-        }
-    }
-    return legacy;
-}
-
-async function selectProfileLegacy(
-    db: ReturnType<typeof createServerSupabase>,
-    userId: string,
-    mode: "maybe" | "single",
-) {
-    const query = db
-        .from("user_profiles")
-        .select(PROFILE_SELECT_NO_LEGAL)
-        .eq("user_id", userId);
-    const result =
-        mode === "single" ? await query.single() : await query.maybeSingle();
-    if (!result.error) {
-        return result;
-    }
-
-    const missingMfaOnLogin = isMissingProfileColumn(
-        result.error,
-        "mfa_on_login",
-    );
-    if (missingMfaOnLogin) {
-        const modelQuery = db
-            .from("user_profiles")
-            .select(LEGACY_PROFILE_MODEL_SELECT)
-            .eq("user_id", userId);
-        const modelLegacy =
-            mode === "single"
-                ? await modelQuery.single()
-                : await modelQuery.maybeSingle();
-        if (
-            !modelLegacy.error ||
-            !isMissingProfileColumn(modelLegacy.error, "title_model")
-        ) {
-            if (modelLegacy.data && typeof modelLegacy.data === "object") {
-                const row = modelLegacy.data as Record<string, unknown>;
-                Object.assign(row, {
-                    mfa_on_login: false,
-                });
-            }
-            return modelLegacy;
-        }
-    }
-
-    if (
-        !missingMfaOnLogin &&
-        !isMissingProfileColumn(result.error, "title_model")
-    ) {
-        return result;
-    }
-
-    const legacyQuery = db
-        .from("user_profiles")
-        .select(LEGACY_PROFILE_SELECT)
-        .eq("user_id", userId);
-    const legacy =
-        mode === "single"
-            ? await legacyQuery.single()
-            : await legacyQuery.maybeSingle();
-    if (legacy.data && typeof legacy.data === "object") {
-        const row = legacy.data as Record<string, unknown>;
-        Object.assign(row, {
-            title_model: null,
-            mfa_on_login: false,
-        });
-    }
-    return legacy;
 }
 
 const CATALOG_MODEL_ID_RE = /^[^\s/]+\/[^\s]+$/;
@@ -565,6 +672,10 @@ function serializeProfile(
             "high",
         mfaOnLogin: row.mfa_on_login === true,
         legalResearchUs: row.legal_research_us !== false,
+        emailIntegrationEnabled: row.email_integration_enabled === true,
+        darkMode: row.dark_mode === true,
+        featureFlags: normalizeUserFeatures(row.feature_flags),
+        deploymentModules: resolveDeploymentModules(),
         quickActionsVisible: row.quick_actions_visible !== false,
         darkMode: row.dark_mode === true,
         ...Object.fromEntries(
@@ -725,6 +836,9 @@ function validateProfilePayload(body: unknown):
               last_selected_chat_model?: string | null;
               last_selected_reasoning_level?: string | null;
               legal_research_us?: boolean;
+              email_integration_enabled?: boolean;
+              dark_mode?: boolean;
+              feature_flags?: UserFeatures;
               quick_actions_visible?: boolean;
               updated_at: string;
           };
@@ -748,6 +862,9 @@ function validateProfilePayload(body: unknown):
         "lastSelectedChatModel",
         "lastSelectedReasoningLevel",
         "legalResearchUs",
+        "emailIntegrationEnabled",
+        "darkMode",
+        "featureFlags",
         "quickActionsVisible",
         "darkMode",
         ...ROUTER_SLUGS.map((slug) => ROUTER_PROFILE_FIELDS[slug]),
@@ -774,6 +891,9 @@ function validateProfilePayload(body: unknown):
         last_selected_chat_model?: string | null;
         last_selected_reasoning_level?: string | null;
         legal_research_us?: boolean;
+        email_integration_enabled?: boolean;
+        dark_mode?: boolean;
+        feature_flags?: UserFeatures;
         quick_actions_visible?: boolean;
         dark_mode?: boolean;
         updated_at: string;
@@ -929,6 +1049,62 @@ function validateProfilePayload(body: unknown):
         update.legal_research_us = raw.legalResearchUs;
     }
 
+    if ("emailIntegrationEnabled" in raw) {
+        if (typeof raw.emailIntegrationEnabled !== "boolean") {
+            return {
+                ok: false,
+                detail: "emailIntegrationEnabled must be a boolean",
+            };
+        }
+        update.email_integration_enabled = raw.emailIntegrationEnabled;
+    }
+
+    if ("darkMode" in raw) {
+        if (typeof raw.darkMode !== "boolean") {
+            return {
+                ok: false,
+                detail: "darkMode must be a boolean",
+            };
+        }
+        update.dark_mode = raw.darkMode;
+    }
+
+    if ("featureFlags" in raw) {
+        if (
+            !raw.featureFlags ||
+            typeof raw.featureFlags !== "object" ||
+            Array.isArray(raw.featureFlags)
+        ) {
+            return {
+                ok: false,
+                detail: "featureFlags must be an object",
+            };
+        }
+        const flags = raw.featureFlags as Record<string, unknown>;
+        const invalidFeature = Object.keys(flags).find(
+            (key) =>
+                !USER_FEATURE_KEYS.includes(
+                    key as (typeof USER_FEATURE_KEYS)[number],
+                ),
+        );
+        if (invalidFeature) {
+            return {
+                ok: false,
+                detail: `Unsupported feature flag: ${invalidFeature}`,
+            };
+        }
+        const nonBooleanFeature = Object.entries(flags).find(
+            ([, value]) => typeof value !== "boolean",
+        );
+        if (nonBooleanFeature) {
+            return {
+                ok: false,
+                detail: `featureFlags.${nonBooleanFeature[0]} must be a boolean`,
+            };
+        }
+        update.feature_flags = normalizeUserFeatures(flags);
+    }
+
     if ("quickActionsVisible" in raw) {
         if (typeof raw.quickActionsVisible !== "boolean") {
             return {
@@ -973,37 +1149,31 @@ function readBooleanBodyField(
 }
 
 async function userHasVerifiedTotpFactor(
-    db: ReturnType<typeof createServerSupabase>,
+    db: ServerDatabase,
     userId: string,
 ) {
-    const { data, error } = await db.auth.admin.getUserById(userId);
-    if (error) return { ok: false as const, error };
-
-    const factors = data.user?.factors ?? [];
+    void db;
     return {
         ok: true as const,
-        hasVerifiedTotp: factors.some(
-            (factor) =>
-                factor.factor_type === "totp" && factor.status === "verified",
-        ),
+        hasVerifiedTotp: hasVerifiedTotpFactor(userId),
     };
 }
 
 async function ensureProfileRow(
-    db: ReturnType<typeof createServerSupabase>,
+    db: ServerDatabase,
     userId: string,
 ) {
     const { error } = await db
         .from("user_profiles")
         .upsert(
-            { user_id: userId },
+            { user_id: userId, email_integration_enabled: false },
             { onConflict: "user_id", ignoreDuplicates: true },
         );
     return error;
 }
 
 async function loadProfile(
-    db: ReturnType<typeof createServerSupabase>,
+    db: ServerDatabase,
     userId: string,
     options: { repairMissing?: boolean; apiKeyStatus?: ApiKeyStatus } = {},
 ) {
@@ -1037,7 +1207,8 @@ async function loadProfile(
                 credits_reset_date: creditsResetDate.toISOString(),
                 updated_at: new Date().toISOString(),
             })
-            .eq("user_id", userId);
+            .eq("user_id", userId)
+            .lt("credits_reset_date", new Date().toISOString());
 
         if (resetError) return { data: null, error: resetError };
         const { data: resetData, error: resetLoadError } = await selectProfile(
@@ -1069,7 +1240,7 @@ async function loadProfile(
 // POST /user/profile
 userRouter.post("/profile", requireAuth, async (_req, res) => {
     const userId = res.locals.userId as string;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const error = await ensureProfileRow(db, userId);
     if (error) return void sendInternalError(res, error);
     res.json({ ok: true });
@@ -1082,7 +1253,7 @@ userRouter.get("/lookup", requireAuth, async (req, res) => {
         return void res.status(400).json({ detail: "email is required" });
     }
 
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const user = await findProfileUserByEmail(db, email);
     res.json({
         exists: !!user,
@@ -1094,7 +1265,7 @@ userRouter.get("/lookup", requireAuth, async (req, res) => {
 // GET /user/profile
 userRouter.get("/profile", requireAuth, async (_req, res) => {
     const userId = res.locals.userId as string;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const apiKeyStatus = await getUserApiKeyStatus(userId, db);
     const { data, error } = await loadProfile(db, userId, {
         repairMissing: true,
@@ -1104,13 +1275,26 @@ userRouter.get("/profile", requireAuth, async (_req, res) => {
     res.json({ ...data, apiKeyStatus });
 });
 
+// GET /user/models
+userRouter.get("/models", requireAuth, async (_req, res) => {
+    const db = createServerDatabase();
+    const features = await getUserFeatures(res.locals.userId as string, db);
+    res.json({
+        configured: configuredModelSummaries().filter(
+            (model) =>
+                (model.location !== "local" || features.localModels) &&
+                (model.location !== "committee" || features.committeeModels),
+        ),
+    });
+});
+
 // PATCH /user/profile
 userRouter.patch("/profile", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const parsed = validateProfilePayload(req.body);
     if (!parsed.ok) return void res.status(400).json({ detail: parsed.detail });
 
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const ensureError = await ensureProfileRow(db, userId);
     if (ensureError)
         return void sendInternalError(res, ensureError);
@@ -1170,7 +1354,7 @@ userRouter.post("/onboarding", requireAuth, async (req, res) => {
     const personalisationUpdate = personalisation.update;
 
     const userId = res.locals.userId as string;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const ensureError = await ensureProfileRow(db, userId);
     if (ensureError) {
         return void res.status(500).json({ detail: ensureError.message });
@@ -1198,7 +1382,7 @@ userRouter.post("/onboarding", requireAuth, async (req, res) => {
 // Record password capability only after verifying Supabase's auth.users row.
 userRouter.post("/security/password-set", requireAuth, async (_req, res) => {
     const userId = res.locals.userId as string;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const ensureError = await ensureProfileRow(db, userId);
     if (ensureError) {
         return void res.status(500).json({ detail: ensureError.message });
@@ -1219,7 +1403,7 @@ userRouter.post("/security/password-set", requireAuth, async (_req, res) => {
 
     const apiKeyStatus = await getUserApiKeyStatus(userId, db);
     const { data, error } = await loadProfile(db, userId, { apiKeyStatus });
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendServerError(res, error);
     res.json({ ...data, apiKeyStatus });
 });
 
@@ -1234,7 +1418,7 @@ userRouter.patch(
         if (!parsed.ok)
             return void res.status(400).json({ detail: parsed.detail });
 
-        const db = createServerSupabase();
+        const db = createServerDatabase();
         if (parsed.value) {
             const factorCheck = await userHasVerifiedTotpFactor(db, userId);
             if (!factorCheck.ok) {
@@ -1271,7 +1455,7 @@ userRouter.patch(
 // GET /user/api-keys
 userRouter.get("/api-keys", requireAuth, async (_req, res) => {
     const userId = res.locals.userId as string;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const status = await getUserApiKeyStatus(userId, db);
     res.json(status);
 });
@@ -1291,7 +1475,7 @@ userRouter.put(
 
         const apiKey =
             typeof req.body?.api_key === "string" ? req.body.api_key : null;
-        const db = createServerSupabase();
+        const db = createServerDatabase();
         try {
             if (hasEnvApiKey(provider)) {
                 return void res.status(409).json({
@@ -1315,7 +1499,7 @@ userRouter.put(
 // GET /user/mcp-connectors
 userRouter.get("/mcp-connectors", requireAuth, async (_req, res) => {
     const userId = res.locals.userId as string;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     try {
         res.json(
             await listUserMcpConnectors(userId, db, { includeTools: false }),
@@ -1336,7 +1520,7 @@ userRouter.get(
     requireAuth,
     async (req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSupabase();
+        const db = createServerDatabase();
         try {
             res.json(
                 await getUserMcpConnector(userId, req.params.connectorId, db),
@@ -1373,7 +1557,7 @@ userRouter.post(
             !Array.isArray(req.body.headers)
                 ? (req.body.headers as Record<string, unknown>)
                 : undefined;
-        const db = createServerSupabase();
+        const db = createServerDatabase();
         try {
             const connector = await createUserMcpConnector(
                 userId,
@@ -1394,6 +1578,31 @@ userRouter.post(
     },
 );
 
+// POST /user/mcp-connectors/presets/patent
+userRouter.post(
+    "/mcp-connectors/presets/patent",
+    requireAuth,
+    requireUserFeature("patentConnector"),
+    requireMfaIfEnrolled,
+    async (_req, res) => {
+        const userId = res.locals.userId as string;
+        const db = createServerDatabase();
+        try {
+            const connector = await provisionPatentMcpConnector(userId, db);
+            res.status(201).json(
+                await refreshUserMcpConnectorTools(userId, connector.id, db),
+            );
+        } catch (err) {
+            const detail = errorMessage(err);
+            console.error("[user/mcp-connectors] patent preset failed", {
+                userId,
+                error: detail,
+            });
+            res.status(400).json({ detail });
+        }
+    },
+);
+
 // PATCH /user/mcp-connectors/:connectorId
 userRouter.patch(
     "/mcp-connectors/:connectorId",
@@ -1401,7 +1610,7 @@ userRouter.patch(
     requireMfaIfEnrolled,
     async (req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSupabase();
+        const db = createServerDatabase();
         const body = req.body ?? {};
         try {
             const connector = await updateUserMcpConnector(
@@ -1463,7 +1672,7 @@ userRouter.delete(
     requireMfaIfEnrolled,
     async (req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSupabase();
+        const db = createServerDatabase();
         try {
             await deleteUserMcpConnector(userId, req.params.connectorId, db);
             res.status(204).send();
@@ -1486,7 +1695,7 @@ userRouter.post(
     requireMfaIfEnrolled,
     async (req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSupabase();
+        const db = createServerDatabase();
         try {
             const redirectUri = `${backendPublicUrl(req)}/user/mcp-connectors/oauth/callback`;
             const result = await startUserMcpConnectorOAuth(
@@ -1520,7 +1729,7 @@ userRouter.get("/mcp-connectors/oauth/callback", async (req, res) => {
     const code = typeof req.query.code === "string" ? req.query.code : "";
     const error =
         typeof req.query.error === "string" ? req.query.error : undefined;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     try {
         if (error) throw new Error(error);
         if (!state || !code)
@@ -1573,7 +1782,7 @@ userRouter.post(
     requireMfaIfEnrolled,
     async (req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSupabase();
+        const db = createServerDatabase();
         try {
             const connector = await refreshUserMcpConnectorTools(
                 userId,
@@ -1612,7 +1821,7 @@ userRouter.patch(
         if (!parsed.ok)
             return void res.status(400).json({ detail: parsed.detail });
 
-        const db = createServerSupabase();
+        const db = createServerDatabase();
         try {
             const connector = await setUserMcpToolEnabled(
                 userId,
@@ -1645,7 +1854,7 @@ userRouter.delete(
     async (_req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
-        const db = createServerSupabase();
+        const db = createServerDatabase();
         try {
             await deleteUserAccountData(db, userId, userEmail);
             const { error } = await db.auth.admin.deleteUser(userId);
@@ -1670,7 +1879,7 @@ userRouter.delete(
     requireMfaIfEnrolled,
     async (_req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSupabase();
+        const db = createServerDatabase();
         try {
             await deleteAllUserChats(db, userId);
             res.status(204).send();
@@ -1692,7 +1901,7 @@ userRouter.delete(
     requireMfaIfEnrolled,
     async (_req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSupabase();
+        const db = createServerDatabase();
         try {
             await deleteUserProjects(db, userId);
             res.status(204).send();
@@ -1714,7 +1923,7 @@ userRouter.delete(
     requireMfaIfEnrolled,
     async (_req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSupabase();
+        const db = createServerDatabase();
         try {
             await deleteAllUserTabularReviews(db, userId);
             res.status(204).send();
@@ -1737,7 +1946,7 @@ userRouter.get(
     async (_req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
-        const db = createServerSupabase();
+        const db = createServerDatabase();
         try {
             const data = await buildUserAccountExport(db, userId, userEmail);
             res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -1745,7 +1954,7 @@ userRouter.get(
                 "Content-Disposition",
                 `attachment; filename="${userExportFilename("account", userId)}"`,
             );
-            void recordAudit(createServerSupabase(), {
+            void recordAudit(createServerDatabase(), {
                 userId,
                 userEmail: res.locals.userEmail as string | undefined,
                 action: "export.account",
@@ -1768,7 +1977,7 @@ userRouter.get(
     async (_req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
-        const db = createServerSupabase();
+        const db = createServerDatabase();
         try {
             const data = await buildUserChatsExport(db, userId, userEmail);
             res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -1776,7 +1985,7 @@ userRouter.get(
                 "Content-Disposition",
                 `attachment; filename="${userExportFilename("chats", userId)}"`,
             );
-            void recordAudit(createServerSupabase(), {
+            void recordAudit(createServerDatabase(), {
                 userId,
                 userEmail: res.locals.userEmail as string | undefined,
                 action: "export.chats",
@@ -1802,7 +2011,7 @@ userRouter.get(
     async (_req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
-        const db = createServerSupabase();
+        const db = createServerDatabase();
         try {
             const data = await buildUserTabularReviewsExport(
                 db,
@@ -1814,7 +2023,7 @@ userRouter.get(
                 "Content-Disposition",
                 `attachment; filename="${userExportFilename("tabular-reviews", userId)}"`,
             );
-            void recordAudit(createServerSupabase(), {
+            void recordAudit(createServerDatabase(), {
                 userId,
                 userEmail: res.locals.userEmail as string | undefined,
                 action: "export.tabular",

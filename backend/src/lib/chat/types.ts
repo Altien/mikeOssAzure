@@ -85,6 +85,7 @@ export type ChatMessage = {
     version_number?: number;
   }[];
   workflow?: { id: string; title: string };
+  playbook?: { id: string; title: string; version: number; versionId: string };
 };
 
 /**

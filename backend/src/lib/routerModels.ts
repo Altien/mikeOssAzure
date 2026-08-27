@@ -1,8 +1,8 @@
-import { createServerSupabase } from "./supabase";
+import { createServerDatabase } from "./database";
 import { UserFacingError } from "./userFacingError";
 import { resolveModel } from "./llm/models";
 
-type Db = ReturnType<typeof createServerSupabase>;
+type Db = ReturnType<typeof createServerDatabase>;
 
 export type RouterSlug = "openrouter" | "vercel" | "opencode-go";
 
@@ -66,7 +66,7 @@ export async function resolveRequestedModel(
     requested: string | null | undefined,
     fallback: string,
     userId: string,
-    db: Db = createServerSupabase(),
+    db: Db = createServerDatabase(),
     onOutsideSelection: "throw" | "fallback" = "fallback",
 ): Promise<string> {
     const resolved = resolveModel(requested, fallback);
@@ -117,7 +117,7 @@ let warnedMissingTable = false;
 /** Every router's saved selection for a user, in one round of queries. */
 export async function getAllUserRouterModels(
     userId: string,
-    db: Db = createServerSupabase(),
+    db: Db = createServerDatabase(),
 ): Promise<RouterModelSelections> {
     const selections = await Promise.all(
         ROUTER_SLUGS.map((slug) => getUserRouterModels(userId, slug, db)),
@@ -130,7 +130,7 @@ export async function getAllUserRouterModels(
 export async function getUserRouterModels(
     userId: string,
     router: string,
-    db: Db = createServerSupabase(),
+    db: Db = createServerDatabase(),
 ): Promise<string[]> {
     const { data, error } = await db
         .from("user_router_models")
@@ -154,7 +154,7 @@ export async function getUserRouterModels(
         throw error;
     }
 
-    return (data ?? []).flatMap((row) =>
+    return ((data ?? []) as Array<{ model_id?: unknown }>).flatMap((row) =>
         typeof row.model_id === "string" && row.model_id.trim()
             ? [row.model_id.trim()]
             : [],
@@ -165,7 +165,7 @@ export async function replaceUserRouterModels(
     userId: string,
     router: string,
     modelIds: string[],
-    db: Db = createServerSupabase(),
+    db: Db = createServerDatabase(),
 ): Promise<void> {
     const { error } = await db.rpc("replace_user_router_models", {
         target_user_id: userId,

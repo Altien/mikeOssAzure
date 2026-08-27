@@ -2,7 +2,7 @@
 
 -- Migration: move BYO provider API keys into encrypted, server-only storage.
 -- The backend encrypts values before writing them. RLS is enabled with no
--- client policies so browser Supabase clients cannot read key material.
+-- client policies so browser SQLite clients cannot read key material.
 
 CREATE TABLE IF NOT EXISTS public.user_api_keys (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -350,6 +350,7 @@ describe("active Word document context", () => {
             prompt,
             undefined,
             false,
+            false,
             undefined,
             "replace",
         ) as { role: string; content: string }[];
@@ -453,6 +454,31 @@ describe("active Word document context", () => {
         expect(writes.join("\n")).toContain('"type":"doc_read_start"');
         expect(writes.join("\n")).toContain('"type":"doc_read"');
         expect(writes.join("\n")).toContain(TEST_ACTIVE_WORD_DOCUMENT_NAME);
+    });
+
+    it("truncates oversized read_document output with a find_in_document note", async () => {
+        const bigBody = "X".repeat(150_000);
+        const store: DocStore = new Map([
+            [
+                ACTIVE_WORD_DOCUMENT_ID,
+                {
+                    storage_path: "inline:word-document:test",
+                    file_type: "text/plain",
+                    filename: TEST_ACTIVE_WORD_DOCUMENT_NAME,
+                    inline_text: bigBody,
+                },
+            ],
+        ]);
+
+        const text = await readDocumentContent(
+            ACTIVE_WORD_DOCUMENT_ID,
+            store,
+            () => {},
+        );
+
+        expect(text.length).toBeLessThan(bigBody.length);
+        expect(text).toContain("Document truncated");
+        expect(text).toContain("find_in_document");
     });
 
     it("spotlight-fences inline Word text before returning it to the model", async () => {

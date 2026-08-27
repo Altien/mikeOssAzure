@@ -1,7 +1,7 @@
 -- Migration date: 2026-05-08
 
 -- Migration: make application data tables backend-only.
--- RLS remains enabled as defense in depth, but direct browser Supabase clients
+-- RLS remains enabled as defense in depth, but direct browser SQLite clients
 -- should not be able to query or mutate these tables with anon/authenticated.
 
 DO $$

@@ -296,25 +296,25 @@ function TRAssistantMessage({
             <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
-                    p: ({ node, ...props }) => (
+                    p: ({ node: _node, ...props }) => (
                         <p className="mb-2 leading-6" {...props} />
                     ),
-                    ul: ({ node, ...props }) => (
+                    ul: ({ node: _node, ...props }) => (
                         <ul
                             className="list-disc list-outside mb-2 pl-4"
                             {...props}
                         />
                     ),
-                    ol: ({ node, ...props }) => (
+                    ol: ({ node: _node, ...props }) => (
                         <ol
                             className="list-decimal list-outside mb-2 pl-4"
                             {...props}
                         />
                     ),
-                    li: ({ node, ...props }) => (
+                    li: ({ node: _node, ...props }) => (
                         <li className="mb-0.5 leading-6" {...props} />
                     ),
-                    strong: ({ node, ...props }) => (
+                    strong: ({ node: _node, ...props }) => (
                         <strong className="font-semibold" {...props} />
                     ),
                     code: ({ children }) => {
@@ -776,6 +776,17 @@ export function TRChatPanel({
             .finally(() => setIsLoadingMessages(false));
     }, [reviewId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // Abort any in-flight stream and stop the drip animation on unmount
+    useEffect(() => {
+        return () => {
+            abortRef.current?.abort();
+            if (dripIntervalRef.current !== null) {
+                clearInterval(dripIntervalRef.current);
+                dripIntervalRef.current = null;
+            }
+        };
+    }, []);
+
     // Fill in title once chats list arrives
     useEffect(() => {
         if (currentChatId && !currentChatTitle) {
@@ -1129,6 +1140,10 @@ export function TRChatPanel({
                 message.model,
                 message.reasoning,
             );
+            if (!response.ok) {
+                const errText = await response.text();
+                throw new Error(`HTTP ${response.status}: ${errText}`);
+            }
             if (!response.body) throw new Error("No response body");
 
             const reader = response.body.getReader();

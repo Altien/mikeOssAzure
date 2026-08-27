@@ -218,13 +218,16 @@ export function VerificationCodeInput({
     useEffect(() => {
         if (!autoFocus || disabled) return;
         const focusTimer = window.setTimeout(() => {
-            const firstEmptyIndex = digits.findIndex((digit) => !digit);
+            const firstEmptyIndex = Array.from(
+                { length: 6 },
+                (_, index) => value[index] ?? "",
+            ).findIndex((digit) => !digit);
             inputsRef.current[
                 firstEmptyIndex === -1 ? 0 : firstEmptyIndex
             ]?.focus();
         }, 0);
         return () => window.clearTimeout(focusTimer);
-    }, [autoFocus, disabled]);
+    }, [autoFocus, disabled, value]);
 
     function updateDigit(index: number, nextValue: string) {
         const digit = nextValue.replace(/\D/g, "").slice(-1);

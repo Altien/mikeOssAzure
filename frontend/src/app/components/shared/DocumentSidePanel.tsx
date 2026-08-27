@@ -18,12 +18,14 @@ import { FileTypeIcon } from "@/app/components/shared/FileTypeIcon";
 import { PdfView } from "@/app/components/shared/views/PdfView";
 import { DocxView } from "@/app/components/shared/views/DocxView";
 import { SpreadsheetView } from "@/app/components/shared/views/SpreadsheetView";
+import { MarkdownView } from "@/app/components/shared/views/MarkdownView";
 import { GlassIconButton } from "@/app/components/ui/glass-icon-button";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import type { Document } from "@/app/components/shared/types";
 import {
     isDocxFilename,
+    isMarkdownFilename,
     isSpreadsheetFilename,
 } from "@/app/components/shared/types";
 import type { DocumentVersion } from "@/app/lib/mikeApi";
@@ -135,6 +137,8 @@ export function DocumentSidePanel({
     const panelRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const replaceFileInputRef = useRef<HTMLInputElement>(null);
+    const onLoadVersionsRef = useRef(onLoadVersions);
+    onLoadVersionsRef.current = onLoadVersions;
     const dragStartX = useRef(0);
     const dragStartDataWidth = useRef(DEFAULT_DATA_COLUMN_WIDTH);
     const dragStartPanelWidth = useRef(
@@ -155,9 +159,9 @@ export function DocumentSidePanel({
     }, [dataColumnWidth, mounted]);
 
     useEffect(() => {
-        if (!doc) return;
+        if (!doc?.id) return;
         setUploadError(null);
-        void onLoadVersions(doc.id);
+        void onLoadVersionsRef.current(doc.id);
     }, [doc?.id]);
 
     useEffect(() => {
@@ -246,6 +250,10 @@ export function DocumentSidePanel({
         isDocxFilename(selectedFilename) ||
         selectedFileTypeKey === "docx" ||
         selectedFileTypeKey === "doc";
+    const selectedIsMarkdown =
+        isMarkdownFilename(selectedFilename) ||
+        selectedFileTypeKey === "md" ||
+        selectedFileTypeKey === "markdown";
     const selectedSizeBytes =
         selectedVersion?.size_bytes === undefined
             ? doc.size_bytes
@@ -536,6 +544,12 @@ export function DocumentSidePanel({
                     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                         {isSpreadsheetFilename(selectedFilename) ? (
                             <SpreadsheetView
+                                key={`${selectedVersionId ?? "current"}:${selectedUploadedAt ?? ""}:${selectedSizeBytes ?? ""}`}
+                                documentId={doc.id}
+                                versionId={selectedVersionId}
+                            />
+                        ) : selectedIsMarkdown ? (
+                            <MarkdownView
                                 key={`${selectedVersionId ?? "current"}:${selectedUploadedAt ?? ""}:${selectedSizeBytes ?? ""}`}
                                 documentId={doc.id}
                                 versionId={selectedVersionId}

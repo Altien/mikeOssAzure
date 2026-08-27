@@ -20,6 +20,7 @@ import {
     canonicalModelId,
     openCodeGoModelOptions,
     openRouterModelOptions,
+    useConfiguredModelOptions,
     vercelModelOptions,
     type ModelOption,
 } from "@/app/components/assistant/ModelToggle";
@@ -35,6 +36,10 @@ type ModelPreferenceField = "titleModel" | "tabularModel";
 export default function ModelPreferencesPage() {
     const { profile, updateModelPreference } = useUserProfile();
     const ollamaModels = useOllamaModels();
+    // Registry (configured) models, committees and the OpenCode Go catalog,
+    // merged with the static first-party lists.
+    const settingsOptions = useConfiguredModelOptions(SETTINGS_MODELS);
+    const chatOptions = useConfiguredModelOptions(MODELS);
     const [savingField, setSavingField] = useState<ModelPreferenceField | null>(
         null,
     );
@@ -106,7 +111,7 @@ export default function ModelPreferencesPage() {
                                     "",
                             )}
                             options={[
-                                ...SETTINGS_MODELS,
+                                ...settingsOptions,
                                 ...selectedOpenRouterOptions,
                                 ...selectedVercelOptions,
                                 ...selectedOpenCodeGoOptions,
@@ -134,7 +139,7 @@ export default function ModelPreferencesPage() {
                                     "",
                             )}
                             options={[
-                                ...MODELS,
+                                ...chatOptions,
                                 ...selectedOpenRouterOptions,
                                 ...selectedVercelOptions,
                                 ...selectedOpenCodeGoOptions,
@@ -174,7 +179,8 @@ function ModelPreferenceDropdown({
 }) {
     const [isOpen, setIsOpen] = useState(false);
     const availableOptions = options.filter((model) => {
-        if (model.group === "Local") return true;
+        // Local and committee models are served without a hosted API key.
+        if (model.group === "Local" || model.group === "Committee") return true;
         return apiKeys ? isModelAvailable(model.id, apiKeys) : false;
     });
     const selected = availableOptions.find((model) => model.id === value);

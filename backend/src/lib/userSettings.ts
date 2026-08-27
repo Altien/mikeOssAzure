@@ -1,4 +1,4 @@
-import { createServerSupabase } from "./supabase";
+import { createServerDatabase } from "./database";
 import { type UserApiKeys } from "./llm";
 import { type ReasoningLevel } from "./llm";
 import { getUserApiKeys as getStoredUserApiKeys } from "./userApiKeys";
@@ -33,9 +33,9 @@ export type UserModelSettings = {
 
 export async function getUserModelSettings(
     userId: string,
-    db?: ReturnType<typeof createServerSupabase>,
+    db?: ReturnType<typeof createServerDatabase>,
 ): Promise<UserModelSettings> {
-    const client = db ?? createServerSupabase();
+    const client = db ?? createServerDatabase();
     const [profileResult, api_keys, routerModels] = await Promise.all([
         client
             .from("user_profiles")
@@ -129,7 +129,7 @@ export async function getUserModelSettings(
                     : null,
             practiceAreas: Array.isArray(data?.practice_areas)
                 ? data.practice_areas.filter(
-                      (area): area is string => typeof area === "string",
+                      (area: unknown): area is string => typeof area === "string",
                   )
                 : [],
         },
@@ -141,7 +141,7 @@ export async function getUserModelSettings(
 export async function persistLastSelectedReasoningLevel(
     userId: string,
     reasoningLevel: ReasoningLevel,
-    db: ReturnType<typeof createServerSupabase>,
+    db: ReturnType<typeof createServerDatabase>,
 ): Promise<unknown | null> {
     const { error } = await db
         .from("user_profiles")
@@ -157,7 +157,7 @@ export async function persistLastSelectedReasoningLevel(
 export async function persistLastSelectedChatModel(
     userId: string,
     model: string,
-    db: ReturnType<typeof createServerSupabase>,
+    db: ReturnType<typeof createServerDatabase>,
 ): Promise<unknown | null> {
     const { error } = await db
         .from("user_profiles")
@@ -171,8 +171,8 @@ export async function persistLastSelectedChatModel(
 
 export async function getUserApiKeys(
     userId: string,
-    db?: ReturnType<typeof createServerSupabase>,
+    db?: ReturnType<typeof createServerDatabase>,
 ): Promise<UserApiKeys> {
-    const client = db ?? createServerSupabase();
+    const client = db ?? createServerDatabase();
     return getStoredUserApiKeys(userId, client);
 }

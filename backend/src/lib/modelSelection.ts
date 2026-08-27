@@ -14,7 +14,7 @@ import {
     type RouterModelSelections,
 } from "./routerModels";
 import { resolveRequestedModel } from "./routerModels";
-import { createServerSupabase } from "./supabase";
+import { createServerDatabase } from "./database";
 import { UserFacingError } from "./userFacingError";
 
 export const MODEL_REQUIRED_DETAIL =
@@ -76,7 +76,8 @@ export function hasApiKeyForModel(
     apiKeys: UserApiKeys,
 ): boolean {
     const provider = providerForModel(model);
-    return provider === "ollama" || !!apiKeys[provider]?.trim();
+    if (provider === "ollama" || provider === "openai-compatible") return true;
+    return !!apiKeys[provider]?.trim();
 }
 
 type EffectiveChatModelResult =
@@ -103,7 +104,7 @@ export async function resolveEffectiveChatModel(args: {
     lastSelectedModel?: string | null;
     apiKeys: UserApiKeys;
     userId: string;
-    db: ReturnType<typeof createServerSupabase>;
+    db: ReturnType<typeof createServerDatabase>;
 }): Promise<EffectiveChatModelResult> {
     const requestedText = args.requested?.trim() ?? "";
     if (requestedText) {
@@ -204,6 +205,7 @@ export function titleModelForChat(
         case "vercel":
         case "opencode-go":
         case "ollama":
+        case "openai-compatible":
             return resolvedChatModel;
     }
 }

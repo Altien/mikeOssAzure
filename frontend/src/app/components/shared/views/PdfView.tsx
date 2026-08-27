@@ -483,6 +483,16 @@ export function PdfView({
         };
     }, []);
 
+    // Reset zoom/page state when a new document arrives (adjust-during-render).
+    const [prevResult, setPrevResult] = useState(result);
+    if (prevResult !== result) {
+        setPrevResult(result);
+        if (result && result.type === "pdf") {
+            setZoom(1.0);
+            setNumPages(0);
+        }
+    }
+
     // Render PDF when fetch result arrives
     useEffect(() => {
         if (!result || result.type !== "pdf") return;

@@ -1,27 +1,25 @@
 # Safe Local Testing
 
-Mike is a young open-source legal AI project. Until you have reviewed your
-deployment and data flows, test it with disposable infrastructure and synthetic
-documents only.
+Mike is a legal AI project. Until you have reviewed your deployment and data
+flows, test it with disposable local data and synthetic documents only.
 
 ## Use Disposable Test Resources
 
-Create separate test resources for Mike:
+Use separate test resources:
 
-- a throwaway Supabase project
-- a throwaway S3-compatible storage bucket, such as Cloudflare R2
+- local SQLite files under `backend/data/`
 - disposable model-provider API keys with low spending limits
+- a local OpenAI-compatible server when possible
 - a test email account
 
-Do not use production Supabase projects, production storage buckets, firm API
-keys, or real client documents for initial testing.
+Do not use firm API keys or real client documents for initial testing.
 
-## Keep Secrets Out of the Frontend
+## Keep Secrets Out Of The Frontend
 
 The browser does not need Supabase configuration. Session handling and all
 Supabase keys stay server-side.
 
-For frontend testing, `frontend/.env.local` should normally contain only:
+For frontend testing, `frontend/.env.local` normally needs only:
 
 ```env
 API_BASE_URL=http://localhost:3001
@@ -35,7 +33,7 @@ SUPABASE_PUBLISHABLE_KEY=your-supabase-anon-key
 ```
 
 Model-provider keys such as `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and
-`OPENROUTER_API_KEY` should also stay in `backend/.env`.
+`OPENAI_API_KEY` should stay in `backend/.env`.
 
 ## Test With Synthetic Documents
 
@@ -47,8 +45,8 @@ Use fake or public sample documents when testing:
 - dummy PDF/DOCX files
 
 Do not upload privileged, confidential, client, matter, personnel, or firm
-knowledge-management material until you are comfortable with the deployment's
-storage, logging, deletion, and model-provider behavior.
+knowledge-management material until you are comfortable with storage, logging,
+deletion, and model-provider behavior.
 
 ## Confirm Environment Files Are Not Tracked
 
@@ -63,26 +61,25 @@ output.
 
 ## Start With Non-LLM Flows
 
-If you do not want to use model-provider keys yet, use dummy provider values and
-test only the non-LLM flows first:
+If you do not want to use model-provider keys yet, test only the non-LLM flows
+first:
 
-- account creation against a test Supabase project
+- account creation
 - project creation
 - file upload with synthetic documents
 - folder organization
 - document deletion
 
-Then add one disposable, capped model-provider key and test assistant behavior
-with synthetic documents.
+Then add one disposable, capped model-provider key or a local
+OpenAI-compatible model and test assistant behavior with synthetic documents.
 
 ## Clean Up After Testing
 
 After testing, delete:
 
-- uploaded objects from the storage bucket
-- test Supabase rows or the whole test Supabase project
+- local SQLite files under `backend/data/`
 - disposable model-provider keys
 - local `.env` files that contain secrets
 
-For legal-document workflows, deletion semantics matter. Verify that your
-storage bucket no longer contains test document objects after delete flows.
+For legal-document workflows, deletion semantics matter. Verify that local file
+storage no longer contains test document bytes after delete flows.

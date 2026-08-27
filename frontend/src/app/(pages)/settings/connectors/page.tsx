@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
     ChevronDown,
+    Database,
     Eye,
     EyeOff,
     Loader2,
@@ -32,11 +33,14 @@ import {
     getMcpConnector,
     isMfaRequiredError,
     listMcpConnectors,
+    provisionPatentMcpConnector,
     refreshMcpConnectorTools,
     setMcpToolEnabled,
     startMcpConnectorOAuth,
     updateMcpConnector,
 } from "@/app/lib/mikeApi";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import { featureEnabled } from "@/app/lib/featureFlags";
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import { settingsGlassIconButtonClassName } from "../settingsStyles";
 import { SettingsSection } from "../SettingsSection";
@@ -44,6 +48,7 @@ import { SettingsToggle } from "../SettingsToggle";
 
 type PendingMfaAction =
     | { type: "create" }
+    | { type: "create-patent" }
     | { type: "save"; connectorId: string }
     | { type: "clear-token"; connectorId: string }
     | { type: "delete"; connectorId: string }
@@ -111,6 +116,7 @@ function isGoogleMcpConnector(connector: McpConnectorSummary) {
 }
 
 export default function ConnectorsPage() {
+    const { profile } = useUserProfile();
     const [connectors, setConnectors] = useState<McpConnectorSummary[]>([]);
     const [loading, setLoading] = useState(true);
     const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -137,6 +143,7 @@ export default function ConnectorsPage() {
         clearBearerToken: false,
     });
     const [detailError, setDetailError] = useState<string | null>(null);
+    const [toolsDirty, setToolsDirty] = useState(false);
     const [loadingConnectorId, setLoadingConnectorId] = useState<string | null>(
         null,
     );
@@ -146,6 +153,9 @@ export default function ConnectorsPage() {
     const [showDetailAdvanced, setShowDetailAdvanced] = useState(false);
 
     const selectedConnector = selectedConnectorDetails;
+    const selectedDetailId = selectedConnector?.id;
+    const selectedDetailName = selectedConnector?.name;
+    const selectedDetailServerUrl = selectedConnector?.serverUrl;
 
     const loadConnectors = useCallback(async () => {
         setLoading(true);
@@ -166,10 +176,10 @@ export default function ConnectorsPage() {
     }, [loadConnectors]);
 
     useEffect(() => {
-        if (!selectedConnector) return;
+        if (!selectedDetailId) return;
         setDetailDraft({
-            name: selectedConnector.name,
-            serverUrl: selectedConnector.serverUrl,
+            name: selectedDetailName ?? "",
+            serverUrl: selectedDetailServerUrl ?? "",
             bearerToken: "",
             customHeaders: "",
             clearBearerToken: false,
@@ -179,9 +189,9 @@ export default function ConnectorsPage() {
         setShowDetailToken(false);
         setShowDetailAdvanced(false);
     }, [
-        selectedConnector?.id,
-        selectedConnector?.name,
-        selectedConnector?.serverUrl,
+        selectedDetailId,
+        selectedDetailName,
+        selectedDetailServerUrl,
     ]);
 
     const replaceConnector = (
@@ -415,6 +425,21 @@ export default function ConnectorsPage() {
         });
     };
 
+    const handleProvisionPatent = async () => {
+        await runSensitiveAction({ type: "create-patent" }, async () => {
+            setBusyKey("create-patent");
+            setError(null);
+            try {
+                const connector = await provisionPatentMcpConnector();
+                replaceConnector(connector);
+                setSelectedConnectorId(connector.id);
+                setSelectedConnectorDetails(connector);
+            } finally {
+                setBusyKey(null);
+            }
+        });
+    };
+
     const handleSaveSelectedConnector = async () => {
         if (!selectedConnector) return;
         await runSensitiveAction(
@@ -451,6 +476,7 @@ export default function ConnectorsPage() {
                         customHeaders: "",
                         clearBearerToken: false,
                     });
+                    setToolsDirty(false);
                 } finally {
                     setBusyKey(null);
                 }
@@ -538,6 +564,7 @@ export default function ConnectorsPage() {
                     replaceConnector(
                         await setMcpToolEnabled(connectorId, toolId, enabled),
                     );
+                    setToolsDirty(true);
                 } finally {
                     setBusyKey(null);
                 }
@@ -568,6 +595,7 @@ export default function ConnectorsPage() {
         setPendingMfaAction(null);
         if (!action) return;
         if (action.type === "create") await handleCreate();
+        if (action.type === "create-patent") await handleProvisionPatent();
         if (action.type === "save") await handleSaveSelectedConnector();
         if (action.type === "clear-token") {
             await handleClearBearerToken(action.connectorId);
@@ -594,6 +622,25 @@ export default function ConnectorsPage() {
                         Connectors
                     </h2>
                     <div className="flex shrink-0 items-center rounded-full border border-white/70 bg-app-surface p-0.5 shadow-[0_8px_24px_rgba(15,23,42,0.06)] backdrop-blur-2xl">
+                        {featureEnabled(
+                            profile?.featureFlags,
+                            "patentConnector",
+                            profile?.deploymentModules,
+                        ) && (
+                            <button
+                                type="button"
+                                onClick={() => void handleProvisionPatent()}
+                                disabled={busyKey === "create-patent"}
+                                className={`flex h-6 items-center justify-center gap-1 rounded-full px-2.5 text-xs font-medium text-gray-500 transition-colors hover:text-gray-900 disabled:opacity-45 ${LIQUID_GLASS_HOVER_CLASS} ${LIQUID_GLASS_PRESSED_CLASS}`}
+                            >
+                                {busyKey === "create-patent" ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                    <Database className="h-3.5 w-3.5" />
+                                )}
+                                USPTO
+                            </button>
+                        )}
                         <button
                             type="button"
                             onClick={() => setAddOpen(true)}
@@ -674,9 +721,11 @@ export default function ConnectorsPage() {
                 onDraftChange={setDetailDraft}
                 onShowTokenChange={setShowDetailToken}
                 onShowAdvancedChange={setShowDetailAdvanced}
+                toolsDirty={toolsDirty}
                 onClose={() => {
                     setSelectedConnectorId(null);
                     setSelectedConnectorDetails(null);
+                    setToolsDirty(false);
                 }}
                 onSave={handleSaveSelectedConnector}
                 onClearBearerToken={handleClearBearerToken}
@@ -751,7 +800,9 @@ function ConnectorRow({
                         />
                     </div>
                     <p className="min-w-0 truncate text-xs text-gray-500">
-                        {connector.serverUrl}
+                        {connector.transport === "stdio"
+                            ? "Local stdio · patent-mcp-server 0.9.5"
+                            : connector.serverUrl}
                     </p>
                     <button
                         type="button"
@@ -774,6 +825,7 @@ function McpConnectorDetailsModal({
     draft,
     error,
     busyKey,
+    toolsDirty,
     toolsLoading,
     clearTokenStatus,
     showToken,
@@ -793,6 +845,7 @@ function McpConnectorDetailsModal({
     draft: DetailDraft;
     error: string | null;
     busyKey: string | null;
+    toolsDirty: boolean;
     toolsLoading: boolean;
     clearTokenStatus: "idle" | "clearing" | "cleared";
     showToken: boolean;
@@ -817,7 +870,8 @@ function McpConnectorDetailsModal({
 }) {
     const hasChanges =
         !!connector &&
-        (draft.name.trim() !== connector.name ||
+        (toolsDirty ||
+            draft.name.trim() !== connector.name ||
             draft.serverUrl.trim() !== connector.serverUrl ||
             draft.bearerToken.trim().length > 0 ||
             draft.customHeaders.trim().length > 0);
@@ -843,7 +897,7 @@ function McpConnectorDetailsModal({
             }
             size="md"
             secondaryAction={
-                connector
+                connector && !connector.managed
                     ? {
                           label: "Delete connector",
                           variant: "danger",
@@ -852,7 +906,7 @@ function McpConnectorDetailsModal({
                       }
                     : undefined
             }
-            primaryAction={{
+            primaryAction={connector?.managed ? undefined : {
                 label: isSaving ? "Saving..." : "Save",
                 icon: isSaving ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -874,6 +928,11 @@ function McpConnectorDetailsModal({
         >
             {connector && (
                 <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto pb-4">
+                    {connector.managed ? (
+                        <div className="border-b border-gray-100 pb-4 text-sm text-gray-600">
+                            Local stdio · patent-mcp-server 0.9.5
+                        </div>
+                    ) : (
                     <ConnectorForm
                         draft={draft}
                         showToken={showToken}
@@ -912,6 +971,7 @@ function McpConnectorDetailsModal({
                         onShowTokenChange={onShowTokenChange}
                         onShowAdvancedChange={onShowAdvancedChange}
                     />
+                    )}
                     <div className="flex min-h-0 flex-1 flex-col">
                         <div className="mb-2 flex items-center justify-between">
                             <h3 className="text-xs font-medium text-gray-500">

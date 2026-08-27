@@ -86,6 +86,14 @@ vi.mock("../../lib/supabase", () => ({
     createServerSupabase: vi.fn(() => mockSupabase()),
 }));
 
+// Routes resolve their db through createServerDatabase, which (under
+// MIKE_DATABASE_PROVIDER=sqlite) delegates to createServerSQLite — forward it
+// to the mocked Supabase factory so the one-shot createServerSupabase
+// overrides below see every db call the route makes.
+vi.mock("../../lib/sqlite", () => ({
+    createServerSQLite: vi.fn(() => createServerSupabase()),
+}));
+
 vi.mock("../../middleware/auth", () => ({
     requireAuth: (
         _req: unknown,
@@ -98,6 +106,7 @@ vi.mock("../../middleware/auth", () => ({
     },
     requireMfaIfEnrolled: (_req: unknown, _res: unknown, next: () => void) =>
         next(),
+    localAuthOnly: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
 vi.mock("../../lib/access", () => ({

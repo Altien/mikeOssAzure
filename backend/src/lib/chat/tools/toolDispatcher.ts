@@ -9,8 +9,11 @@ import {
   type CaseCitationEvent,
   type CourtlistenerToolEvent,
 } from "./courtlistenerTools";
-import { executeMcpToolCall, type McpToolEvent } from "../../mcpConnectors";
-import { createServerSupabase } from "../../supabase";
+import {
+  executeMcpToolCall,
+  type McpToolEvent,
+} from "../../mcpConnectors";
+import { createServerDatabase } from "../../database";
 import {
   type DocStore,
   type DocIndex,
@@ -30,10 +33,29 @@ import {
   shouldConvertToPdf,
 } from "../../documentTypes";
 import { buildDownloadUrl } from "../../downloadTokens";
+import { createDocumentFromBytes } from "../../documentIngest";
+import {
+  downloadIroncladAttachment,
+  findIroncladAttachment,
+  getIroncladRecord,
+  listIroncladRecords,
+} from "../../ironclad";
+import {
+  IRONCLAD_TOOL_NAMES,
+  type IroncladToolEvent,
+} from "./ironcladTools";
+import {
+  getGmailMessage,
+  importGmailMessage,
+  searchGmailMessages,
+} from "../../gmail";
+import { GMAIL_TOOL_NAMES, type GmailToolEvent } from "./gmailTools";
+import { safeErrorMessage } from "../../safeError";
 import { contentSha256, loadActiveVersion } from "../../documentVersions";
 import { type EditInput } from "../../docxTrackedChanges";
 import {
   citationReminder,
+  createEditableDocxFromPdf,
   generateDocx,
   generateExcel,
   generatePpt,
@@ -258,7 +280,7 @@ export async function runToolCalls(
   toolCalls: ToolCall[],
   docStore: DocStore,
   userId: string,
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerDatabase>,
   write: (s: string) => void,
   workflowStore?: WorkflowStore,
   tabularStore?: TabularCellStore,
@@ -269,6 +291,7 @@ export async function runToolCalls(
   courtlistenerState?: CourtlistenerTurnState,
   apiKeys?: import("../../llm").UserApiKeys,
   nonce?: string,
+  userEmail?: string | null,
 ): Promise<{
   toolResults: unknown[];
   docsRead: {
@@ -293,6 +316,8 @@ export async function runToolCalls(
   courtlistenerEvents: CourtlistenerToolEvent[];
   caseCitationEvents: CaseCitationEvent[];
   mcpEvents: McpToolEvent[];
+  ironcladEvents: IroncladToolEvent[];
+  gmailEvents: GmailToolEvent[];
 }> {
   const toolResults: unknown[] = [];
   const docsRead: {
@@ -317,6 +342,8 @@ export async function runToolCalls(
   const courtlistenerEvents: CourtlistenerToolEvent[] = [];
   const caseCitationEvents: CaseCitationEvent[] = [];
   const mcpEvents: McpToolEvent[] = [];
+  const ironcladEvents: IroncladToolEvent[] = [];
+  const gmailEvents: GmailToolEvent[] = [];
   const courtState: CourtlistenerTurnState = courtlistenerState ?? {
     casesByClusterId: new Map(),
   };
@@ -424,8 +451,11 @@ export async function runToolCalls(
     let args: Record<string, unknown> = {};
     try {
       args = JSON.parse(tc.function.arguments || "{}");
-    } catch {
-      /* ignore */
+    } catch (parseErr) {
+      devLog(
+        `[toolDispatcher] failed to parse args for ${tc.function.name}:`,
+        parseErr instanceof Error ? parseErr.message : parseErr,
+      );
     }
 
     if (tc.function.name.startsWith("mcp_")) {
@@ -1394,8 +1424,8 @@ export async function runToolCalls(
           tool_call_id: tc.id,
           content: JSON.stringify({ error: err }),
         });
-      } else if (docInfo.file_type !== "docx") {
-        const err = "edit_document only supports .docx files.";
+      } else if (docInfo.file_type !== "docx" && docInfo.file_type !== "pdf") {
+        const err = "edit_document only supports .docx and .pdf files.";
         emitEditError(docInfo.filename, indexed.document_id, err);
         toolResults.push({
           role: "tool",
@@ -1403,10 +1433,50 @@ export async function runToolCalls(
           content: JSON.stringify({ error: err }),
         });
       } else {
+        // PDFs can't carry tracked changes — on the first edit of a PDF in
+        // this turn, materialize an editable .docx copy from the extracted
+        // text and redirect the edits (and the download card) to that copy.
+        let editFilename = docInfo.filename;
+        let editDocumentId = indexed.document_id;
+        let conversionReuse:
+          | { versionId: string; versionNumber: number; storagePath: string }
+          | undefined;
+        let conversionError: string | null = null;
+        if (docInfo.file_type === "pdf") {
+          const priorConversion = turnEditState?.get(indexed.document_id);
+          if (priorConversion?.documentId) {
+            editDocumentId = priorConversion.documentId;
+            conversionReuse = priorConversion;
+          } else {
+            const conversion = await createEditableDocxFromPdf({
+              documentId: indexed.document_id,
+              userId,
+              db,
+            });
+            if (conversion.ok) {
+              editFilename = conversion.filename;
+              editDocumentId = conversion.document_id;
+            } else {
+              conversionError = conversion.error;
+            }
+          }
+        }
+
+        if (conversionError) {
+          emitEditError(docInfo.filename, indexed.document_id, conversionError);
+          toolResults.push({
+            role: "tool",
+            tool_call_id: tc.id,
+            content: JSON.stringify({
+              error: conversionError,
+              is_pdf: true,
+            }),
+          });
+        } else {
         write(
           `data: ${JSON.stringify({
             type: "doc_edited_start",
-            filename: docInfo.filename,
+            filename: editFilename,
           })}\n\n`,
         );
         const edits: EditInput[] = (editsRaw as Record<string, unknown>[]).map(
@@ -1418,9 +1488,10 @@ export async function runToolCalls(
             reason: e.reason ? String(e.reason) : undefined,
           }),
         );
-        const reuseVersion = turnEditState?.get(indexed.document_id);
+        const reuseVersion =
+          conversionReuse ?? turnEditState?.get(editDocumentId);
         const result = await runEditDocument({
-          documentId: indexed.document_id,
+          documentId: editDocumentId,
           userId,
           edits,
           db,
@@ -1432,12 +1503,15 @@ export async function runToolCalls(
             versionId: result.version_id,
             versionNumber: result.version_number,
             storagePath: result.storage_path,
+            ...(editDocumentId !== indexed.document_id
+              ? { documentId: editDocumentId }
+              : {}),
           });
-          clearTurnReadsForDocument(turnReadState, indexed.document_id);
+          clearTurnReadsForDocument(turnReadState, editDocumentId);
           // Keep the chat-local doc label pointed at the latest
           // edited version so any follow-up read_document call in
           // the same assistant turn reads and cites the same bytes.
-          if (docIndex[docId]) {
+          if (editDocumentId === indexed.document_id && docIndex[docId]) {
             docIndex[docId] = {
               ...docIndex[docId],
               version_id: result.version_id,
@@ -1445,15 +1519,15 @@ export async function runToolCalls(
             };
           }
           const currentDocStore = docStore.get(docId);
-          if (currentDocStore) {
+          if (editDocumentId === indexed.document_id && currentDocStore) {
             docStore.set(docId, {
               ...currentDocStore,
               storage_path: result.storage_path,
             });
           }
           const payload: DocEditedResult = {
-            filename: docInfo.filename,
-            document_id: indexed.document_id,
+            filename: editFilename,
+            document_id: editDocumentId,
             version_id: result.version_id,
             version_number: result.version_number,
             download_url: result.download_url,
@@ -1472,11 +1546,17 @@ export async function runToolCalls(
             content: JSON.stringify({
               ok: true,
               doc_id: docId,
-              document_id: indexed.document_id,
+              document_id: editDocumentId,
               version_id: result.version_id,
               version_number: result.version_number,
               applied: result.annotations.length,
               errors: result.errors,
+              ...(docInfo.file_type === "pdf"
+                ? {
+                    converted_from_pdf: true,
+                    editable_filename: editFilename,
+                  }
+                : {}),
               next_required_action: [
                 `The edited document remains available as doc_id "${docId}".`,
                 `Before making factual claims about the edited document's final contents, call read_document with doc_id "${docId}" and base the response on that returned text.`,
@@ -1489,8 +1569,8 @@ export async function runToolCalls(
           write(
             `data: ${JSON.stringify({
               type: "doc_edited",
-              filename: docInfo.filename,
-              document_id: indexed.document_id,
+              filename: editFilename,
+              document_id: editDocumentId,
               version_id: "",
               download_url: "",
               annotations: [],
@@ -1505,6 +1585,7 @@ export async function runToolCalls(
               error: result.error,
             }),
           });
+        }
         }
       }
     } else if (tc.function.name === "replicate_document" && docIndex) {
@@ -1867,7 +1948,7 @@ export async function runToolCalls(
       // not enable numbering.
       const numberSections = args.numberSections === true;
       devLog(
-        `[generate_docx] title="${title}" landscape=${landscape} args.landscape=${args.landscape}`,
+        `[generate_docx] title="${title}" landscape=${landscape} numberSections=${numberSections}`,
       );
       const previewFilename = safeGeneratedFilename(title, "docx");
       write(
@@ -1926,6 +2007,287 @@ export async function runToolCalls(
         previewFilename,
         "pptx",
       );
+    } else if (tc.function.name === IRONCLAD_TOOL_NAMES.searchContracts) {
+      const query = typeof args.query === "string" ? args.query.trim() : "";
+      write(
+        `data: ${JSON.stringify({ type: "ironclad_search_contracts_start", query })}\n\n`,
+      );
+      try {
+        const limit =
+          typeof args.limit === "number" && Number.isFinite(args.limit)
+            ? Math.min(25, Math.max(1, Math.floor(args.limit)))
+            : 10;
+        const result = await listIroncladRecords({
+          userEmail,
+          search: query,
+          page: 0,
+          pageSize: limit,
+        });
+        const event: IroncladToolEvent = {
+          type: "ironclad_search_contracts",
+          query,
+          result_count: result.list.length,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        ironcladEvents.push(event);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({ records: result.list }),
+        });
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Ironclad search failed.";
+        const event: IroncladToolEvent = {
+          type: "ironclad_search_contracts",
+          query,
+          result_count: 0,
+          error: message,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        ironcladEvents.push(event);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({ error: message }),
+        });
+      }
+    } else if (tc.function.name === IRONCLAD_TOOL_NAMES.getContract) {
+      const recordId =
+        typeof args.recordId === "string" ? args.recordId.trim() : "";
+      write(
+        `data: ${JSON.stringify({ type: "ironclad_get_contract_start", record_id: recordId })}\n\n`,
+      );
+      try {
+        const record = await getIroncladRecord({ recordId, userEmail });
+        const event: IroncladToolEvent = {
+          type: "ironclad_get_contract",
+          record_id: record.id,
+          name: record.name,
+          attachment_count: record.attachments.length,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        ironcladEvents.push(event);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify(record),
+        });
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Ironclad lookup failed.";
+        const event: IroncladToolEvent = {
+          type: "ironclad_get_contract",
+          record_id: recordId || null,
+          attachment_count: 0,
+          error: message,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        ironcladEvents.push(event);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({ error: message }),
+        });
+      }
+    } else if (tc.function.name === IRONCLAD_TOOL_NAMES.importContract) {
+      const recordId =
+        typeof args.recordId === "string" ? args.recordId.trim() : "";
+      const attachmentKey =
+        typeof args.attachmentKey === "string" && args.attachmentKey.trim()
+          ? args.attachmentKey.trim()
+          : "signedCopy";
+      write(
+        `data: ${JSON.stringify({ type: "ironclad_import_contract_start", record_id: recordId, attachment_key: attachmentKey })}\n\n`,
+      );
+      try {
+        if (!recordId) throw new Error("recordId is required.");
+        const record = await getIroncladRecord({ recordId, userEmail });
+        const attachment = findIroncladAttachment(record, attachmentKey);
+        const downloaded = await downloadIroncladAttachment({
+          recordId,
+          attachmentKey,
+          userEmail,
+          filenameHint: attachment?.filename ?? null,
+          contentTypeHint: attachment?.contentType ?? null,
+        });
+        const imported = await createDocumentFromBytes({
+          userId,
+          projectId: projectId ?? null,
+          filename: downloaded.filename,
+          content: downloaded.bytes,
+          source: "ironclad",
+          db,
+        });
+        if (!imported.ok) throw new Error(imported.detail);
+        const documentId = String(imported.document.id);
+        const filename =
+          (imported.document.filename as string) ?? downloaded.filename;
+        const result = {
+          document_id: documentId,
+          version_id: imported.document.current_version_id ?? null,
+          version_number: 1,
+          filename,
+          storage_path: imported.document.storage_path ?? null,
+          download_url: buildDownloadUrl(
+            (imported.document.storage_path as string) ?? "",
+            filename,
+          ),
+          note:
+            "Imported into Mike documents. Use the doc_id label from the tool activity to read it.",
+        };
+        registerGeneratedDocument(
+          tc,
+          result as Record<string, unknown>,
+          filename,
+          (imported.document.file_type as string) ?? "pdf",
+        );
+        const event: IroncladToolEvent = {
+          type: "ironclad_import_contract",
+          record_id: recordId,
+          attachment_key: attachmentKey,
+          filename,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        ironcladEvents.push(event);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Ironclad import failed.";
+        const event: IroncladToolEvent = {
+          type: "ironclad_import_contract",
+          record_id: recordId,
+          attachment_key: attachmentKey,
+          error: message,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        ironcladEvents.push(event);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({ error: message }),
+        });
+      }
+    } else if (tc.function.name === GMAIL_TOOL_NAMES.searchMessages) {
+      const query = typeof args.query === "string" ? args.query.trim() : "";
+      write(
+        `data: ${JSON.stringify({ type: "gmail_search_messages_start", query })}\n\n`,
+      );
+      try {
+        const limit = typeof args.limit === "number" && Number.isFinite(args.limit)
+          ? Math.min(25, Math.max(1, Math.floor(args.limit)))
+          : 10;
+        const result = await searchGmailMessages({
+          userId,
+          query,
+          maxResults: limit,
+          db,
+        });
+        const event: GmailToolEvent = {
+          type: "gmail_search_messages",
+          query,
+          result_count: result.messages.length,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        gmailEvents.push(event);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({ messages: result.messages }),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Gmail search failed.";
+        const event: GmailToolEvent = {
+          type: "gmail_search_messages",
+          query,
+          result_count: 0,
+          error: message,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        gmailEvents.push(event);
+        toolResults.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify({ error: message }) });
+      }
+    } else if (tc.function.name === GMAIL_TOOL_NAMES.getMessage) {
+      const messageId = typeof args.messageId === "string" ? args.messageId.trim() : "";
+      write(
+        `data: ${JSON.stringify({ type: "gmail_get_message_start", message_id: messageId })}\n\n`,
+      );
+      try {
+        if (!messageId) throw new Error("messageId is required.");
+        const message = await getGmailMessage(userId, messageId, db);
+        const event: GmailToolEvent = {
+          type: "gmail_get_message",
+          message_id: messageId,
+          subject: message.subject,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        gmailEvents.push(event);
+        const body = message.body.slice(0, 100_000);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({
+            ...message,
+            body,
+            bodyTruncated: body.length < message.body.length,
+          }),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Gmail message lookup failed.";
+        const event: GmailToolEvent = {
+          type: "gmail_get_message",
+          message_id: messageId,
+          error: message,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        gmailEvents.push(event);
+        toolResults.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify({ error: message }) });
+      }
+    } else if (tc.function.name === GMAIL_TOOL_NAMES.importMessage) {
+      const messageId = typeof args.messageId === "string" ? args.messageId.trim() : "";
+      write(
+        `data: ${JSON.stringify({ type: "gmail_import_message_start", message_id: messageId })}\n\n`,
+      );
+      try {
+        if (!messageId) throw new Error("messageId is required.");
+        const imported = await importGmailMessage({
+          userId,
+          messageId,
+          projectId: projectId ?? null,
+          db,
+        });
+        if (!imported.ok) throw new Error(imported.detail);
+        const filename = (imported.document.filename as string) ?? "Gmail message.docx";
+        const result = {
+          document_id: String(imported.document.id),
+          version_id: imported.document.current_version_id ?? null,
+          version_number: 1,
+          filename,
+          storage_path: imported.document.storage_path ?? null,
+          download_url: buildDownloadUrl(
+            (imported.document.storage_path as string) ?? "",
+            filename,
+          ),
+          note: "Imported into Mike documents. Use the doc_id label from the tool activity to read it.",
+        };
+        registerGeneratedDocument(tc, result, filename, "docx");
+        const event: GmailToolEvent = {
+          type: "gmail_import_message",
+          message_id: messageId,
+          filename,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        gmailEvents.push(event);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Gmail import failed.";
+        const event: GmailToolEvent = {
+          type: "gmail_import_message",
+          message_id: messageId,
+          error: message,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        gmailEvents.push(event);
+        toolResults.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify({ error: message }) });
+      }
     }
   }
 
@@ -1960,5 +2322,7 @@ export async function runToolCalls(
     courtlistenerEvents,
     caseCitationEvents,
     mcpEvents,
+    ironcladEvents,
+    gmailEvents,
   };
 }

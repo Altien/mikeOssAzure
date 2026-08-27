@@ -1,22 +1,35 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, Upload, Loader2, X } from "lucide-react";
+import {
+    AlertCircle,
+    FileDown,
+    Mail,
+    Upload,
+    Loader2,
+    X,
+} from "lucide-react";
 import {
     uploadStandaloneDocument,
     uploadProjectDocument,
     addDocumentToProject,
+    getGmailStatus,
     getProject,
 } from "@/app/lib/mikeApi";
 import type { Document, Folder } from "../shared/types";
 import { FileDirectory } from "../shared/FileDirectory";
 import type { DirectoryTab } from "../shared/useDirectoryData";
+import { invalidateDirectoryCache } from "../shared/useDirectoryData";
 import { Modal } from "./Modal";
+import { IroncladImportModal } from "./IroncladImportModal";
+import { GmailImportModal } from "./GmailImportModal";
 import {
     SUPPORTED_DOCUMENT_ACCEPT,
     formatUnsupportedDocumentWarning,
     partitionSupportedDocumentFiles,
 } from "@/app/lib/documentUploadValidation";
+import { useOptionalUserProfile } from "@/app/contexts/UserProfileContext";
+import { featureEnabled } from "@/app/lib/featureFlags";
 
 interface Props {
     open: boolean;
@@ -53,6 +66,7 @@ export function AddDocumentsModal({
     tabs,
     disabledDocumentIds,
 }: Props) {
+    const profile = useOptionalUserProfile()?.profile;
     const [selectedDocuments, setSelectedDocuments] = useState<Document[]>([]);
     const [uploading, setUploading] = useState(false);
     const [uploadingFilenames, setUploadingFilenames] = useState<string[]>([]);
@@ -62,6 +76,10 @@ export function AddDocumentsModal({
     const [projectFolders, setProjectFolders] = useState<Folder[]>([]);
     const [projectDirectoryLoading, setProjectDirectoryLoading] =
         useState(false);
+    const [ironcladOpen, setIroncladOpen] = useState(false);
+    const [gmailOpen, setGmailOpen] = useState(false);
+    const [gmailAvailable, setGmailAvailable] = useState(false);
+    const gmailDeploymentEnabled = profile?.deploymentModules.gmail === true;
     const [projectDocumentLimitByLevel, setProjectDocumentLimitByLevel] =
         useState<Record<string, number>>({ root: DIRECTORY_PAGE_SIZE });
     const [loadedProjectFolderIds, setLoadedProjectFolderIds] = useState<
@@ -77,6 +95,29 @@ export function AddDocumentsModal({
     useEffect(() => {
         if (open) setHasOpened(true);
     }, [open]);
+
+    useEffect(() => {
+        if (!open) return;
+        if (!gmailDeploymentEnabled) {
+            setGmailAvailable(false);
+            return;
+        }
+        let cancelled = false;
+        getGmailStatus()
+            .then((status) => {
+                if (!cancelled) {
+                    setGmailAvailable(
+                        status.available && status.enabled && status.connected,
+                    );
+                }
+            })
+            .catch(() => {
+                if (!cancelled) setGmailAvailable(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [gmailDeploymentEnabled, open]);
 
     useEffect(() => {
         if (!open || !projectDocumentsOnly || !projectId) return;
@@ -288,6 +329,34 @@ export function AddDocumentsModal({
             onClose={onClose}
             keepMounted={keepMounted}
             breadcrumbs={breadcrumb}
+            headerAction={
+                <div className="flex items-center gap-1">
+                    {gmailAvailable && (
+                        <button
+                            type="button"
+                            onClick={() => setGmailOpen(true)}
+                            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800"
+                        >
+                            <Mail className="h-3.5 w-3.5" />
+                            Import from Gmail
+                        </button>
+                    )}
+                    {featureEnabled(
+                        profile?.featureFlags,
+                        "ironclad",
+                        profile?.deploymentModules,
+                    ) && (
+                        <button
+                            type="button"
+                            onClick={() => setIroncladOpen(true)}
+                            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800"
+                        >
+                            <FileDown className="h-3.5 w-3.5" />
+                            Import from Ironclad
+                        </button>
+                    )}
+                </div>
+            }
             secondaryAction={{
                 label: uploading ? "Uploading…" : "Upload",
                 icon: uploading ? (
@@ -365,6 +434,37 @@ export function AddDocumentsModal({
                     }
                 />
             </div>
+
+            {featureEnabled(
+                profile?.featureFlags,
+                "ironclad",
+                profile?.deploymentModules,
+            ) && (
+                <IroncladImportModal
+                    open={ironcladOpen}
+                    onClose={() => setIroncladOpen(false)}
+                    projectId={projectId ?? null}
+                    onImported={(doc) => {
+                        invalidateDirectoryCache();
+                        setExtraUploadedDocs((prev) => [doc, ...prev]);
+                        setSelectedDocuments((prev) => [...prev, doc]);
+                    }}
+                />
+            )}
+            <GmailImportModal
+                open={gmailOpen}
+                onClose={() => setGmailOpen(false)}
+                projectId={projectId ?? null}
+                onImported={(doc) => {
+                    invalidateDirectoryCache();
+                    setExtraUploadedDocs((prev) => [doc, ...prev]);
+                    setSelectedDocuments((prev) =>
+                        prev.some((selected) => selected.id === doc.id)
+                            ? prev
+                            : [...prev, doc],
+                    );
+                }}
+            />
         </Modal>
     );
 }

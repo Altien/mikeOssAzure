@@ -36,3 +36,5 @@ alter table public.workflow_open_source_submissions enable row level security;
 
 revoke all privileges on table public.workflow_open_source_submissions
   from anon, authenticated;
+grant select, insert, update, delete
+  on public.workflow_open_source_submissions to service_role;

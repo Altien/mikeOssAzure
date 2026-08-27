@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
-import { createServerSupabase } from "../lib/supabase";
+import { createServerDatabase } from "../lib/database";
 import {
   AssistantStreamError,
   ASSISTANT_ERROR_MESSAGE,
@@ -47,7 +47,7 @@ import {
 
 export const wordChatRouter = Router();
 
-type Db = ReturnType<typeof createServerSupabase>;
+type Db = ReturnType<typeof createServerDatabase>;
 type WordChatStorageMode = "cloud" | "local";
 type LookupResult<T> =
   | { ok: true; value: T | null }
@@ -305,7 +305,7 @@ wordChatRouter.get("/", requireAuth, async (req, res) => {
   const offset = Number.isFinite(requestedOffset)
     ? Math.max(requestedOffset, 0)
     : 0;
-  const db = createServerSupabase();
+  const db = createServerDatabase();
   const documentLookup = await getWordDocumentRowId(
     parsedDocumentId.value,
     userId,
@@ -336,7 +336,12 @@ wordChatRouter.get("/", requireAuth, async (req, res) => {
     console.error("[word-chat] failed to list chats", error);
     return void res.status(500).json({ detail: "Failed to load Word chats" });
   }
-  res.json((data ?? []).map((chat) => ({ ...chat, project_id: null })));
+  res.json(
+    (data ?? []).map((chat: Record<string, unknown>) => ({
+      ...chat,
+      project_id: null,
+    })),
+  );
 });
 
 // GET /word-chat/:chatId?document_id=<embedded document UUID>
@@ -349,7 +354,7 @@ wordChatRouter.get("/:chatId", requireAuth, async (req, res) => {
   if (!isUuid(req.params.chatId)) {
     return void res.status(404).json({ detail: "Chat not found" });
   }
-  const db = createServerSupabase();
+  const db = createServerDatabase();
   const documentLookup = await getWordDocumentRowId(
     parsedDocumentId.value,
     userId,
@@ -388,7 +393,11 @@ wordChatRouter.get("/:chatId", requireAuth, async (req, res) => {
     console.error("[word-chat] failed to load messages", error);
     return void res.status(500).json({ detail: "Failed to load Word chat" });
   }
-  const visibleMessages = withoutEmptyAssistantReservations(messages ?? []);
+  const visibleMessages = withoutEmptyAssistantReservations<{
+    id?: unknown;
+    role?: unknown;
+    content?: unknown;
+  }>(messages ?? []);
   const assistantMessageIds = visibleMessages.flatMap((message) =>
     message.role === "assistant" && typeof message.id === "string"
       ? [message.id]
@@ -442,7 +451,7 @@ wordChatRouter.patch("/:chatId/model", requireAuth, async (req, res) => {
     });
   }
 
-  const db = createServerSupabase();
+  const db = createServerDatabase();
   const documentLookup = await getWordDocumentRowId(
     parsedDocumentId.value,
     userId,
@@ -537,7 +546,7 @@ wordChatRouter.patch("/:chatId/reasoning", requireAuth, async (req, res) => {
         : parsedReasoning.detail,
     });
   }
-  const db = createServerSupabase();
+  const db = createServerDatabase();
   const documentLookup = await getWordDocumentRowId(
     parsedDocumentId.value,
     userId,
@@ -603,7 +612,7 @@ wordChatRouter.put(
     if (!parsedEdit.ok) {
       return void res.status(400).json({ detail: parsedEdit.detail });
     }
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const messageLookup = await getAccessibleWordMessage({
       messageId: req.params.messageId,
       clientDocumentId: parsedDocumentId.value,
@@ -732,7 +741,7 @@ wordChatRouter.patch(
     if (Object.keys(patch).length === 1) {
       return void res.status(400).json({ detail: "No edit fields supplied" });
     }
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const messageLookup = await getAccessibleWordMessage({
       messageId: req.params.messageId,
       clientDocumentId: parsedDocumentId.value,
@@ -854,7 +863,7 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
   const activeDocumentName = parsedDocumentName.value;
   const persistChat = parsedStorage.value === "cloud";
   const editApplyMode = parsedEditApplyMode.value;
-  const db = createServerSupabase();
+  const db = createServerDatabase();
   let chatId = parsedChatId.value;
   let chatTitle: string | null = null;
   let chatModel: string | null = null;
@@ -1041,6 +1050,7 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
     docAvailability,
     wordSystemPrompt,
     docIndex,
+    false,
     false,
     nonce,
     "replace",

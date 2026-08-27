@@ -2,7 +2,7 @@
 
 -- OSS migration for the current backend/schema.sql diff.
 --
--- This brings existing OSS Supabase databases in line with the updated fresh
+-- This brings existing OSS SQLite databases in line with the updated fresh
 -- schema: model preference columns, BYO provider expansion, per-version
 -- document metadata, and CourtListener bulk lookup tables.
 

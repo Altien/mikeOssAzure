@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Send, CheckCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/contexts/AuthContext";
+import { submitSupportFeedback } from "@/app/lib/mikeApi";
 import { FieldLabel } from "@/app/components/ui/form-field";
 import { authenticatedFetch } from "@/app/lib/authEvents";
 
@@ -70,10 +71,6 @@ export default function SupportPage() {
                     link,
                 }),
             });
-
-            if (!response.ok) {
-                throw new Error("Failed to submit feedback");
-            }
 
             setIsSubmitted(true);
         } catch (err) {

@@ -1,6 +1,6 @@
-import type { createServerSupabase } from "../supabase";
+import type { createServerDatabase } from "../database";
 
-type Db = ReturnType<typeof createServerSupabase>;
+type Db = ReturnType<typeof createServerDatabase>;
 
 export type WordEditApplyMode = "direct" | "approval";
 

@@ -1,8 +1,12 @@
 -- Mike Supabase schema
+-- Use this for a fresh Supabase database. SQLite deployments create their
+-- local schema through the SQLite adapter. Existing Supabase deployments
+-- should instead apply the dated incremental migration files in
+-- backend/migrations that are newer than the version of Mike they currently
+-- have deployed.
 -- Use this for a fresh Supabase database. Existing deployments should instead
 -- apply the dated incremental migration files in backend/migrations that are
 -- newer than the version of Mike they currently have deployed.
-
 create extension if not exists "pgcrypto";
 create extension if not exists "pg_trgm";
 
@@ -50,6 +54,9 @@ create table if not exists public.user_profiles (
   quote_model text,
   mfa_on_login boolean not null default false,
   legal_research_us boolean not null default true,
+  email_integration_enabled boolean not null default false,
+  dark_mode boolean not null default false,
+  feature_flags jsonb not null default '{}'::jsonb,
   quick_actions_visible boolean not null default true,
   dark_mode boolean not null default false,
   created_at timestamptz not null default now(),
@@ -286,7 +293,7 @@ create table if not exists public.user_mcp_connectors (
   user_id uuid not null references auth.users(id) on delete cascade,
   name text not null,
   transport text not null default 'streamable_http'
-    check (transport in ('streamable_http')),
+    check (transport in ('streamable_http', 'stdio')),
   server_url text not null,
   auth_type text not null default 'none'
     check (auth_type in ('none', 'bearer', 'oauth')),
@@ -492,7 +499,8 @@ create table if not exists public.document_versions (
       'assistant_edit'::text,
       'user_accept'::text,
       'user_reject'::text,
-      'generated'::text
+      'generated'::text,
+      'ironclad'::text
     ]))
 );
 
@@ -1328,6 +1336,7 @@ create table if not exists public.chat_messages (
   content jsonb,
   files jsonb,
   workflow jsonb,
+  playbook jsonb,
   citations jsonb,
   created_at timestamptz not null default now()
 );
@@ -1679,9 +1688,11 @@ $$;
 create index if not exists idx_tabular_cells_review
   on public.tabular_cells(review_id, document_id, column_index);
 
+drop function if exists public.get_tabular_reviews_overview(
+  text, text, text, integer, integer, text, text, text
+);
 create index if not exists idx_tabular_cells_review_row
   on public.tabular_cells(review_id, row_id, column_index);
-
 create or replace function public.get_tabular_reviews_overview(
   p_user_id text,
   p_user_email text,
@@ -1993,6 +2004,416 @@ create index if not exists tabular_review_chat_messages_chat_idx
   on public.tabular_review_chat_messages(chat_id, created_at);
 
 -- ---------------------------------------------------------------------------
+-- Optional packaged modules
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.saved_prompts (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null,
+  prompt text not null,
+  description text,
+  prompt_type text,
+  categories jsonb not null default '[]'::jsonb,
+  practice_areas jsonb not null default '[]'::jsonb,
+  source_requirements jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_saved_prompts_user_updated
+  on public.saved_prompts(user_id, updated_at desc);
+
+create table if not exists public.playbooks (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null,
+  description text not null default '',
+  status text not null default 'draft',
+  draft_json jsonb not null,
+  published_version_id uuid,
+  source_filename text,
+  source_storage_key text,
+  source_structure_json jsonb,
+  import_model text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_playbooks_user_updated
+  on public.playbooks(user_id, updated_at desc);
+
+create table if not exists public.playbook_versions (
+  id uuid primary key default gen_random_uuid(),
+  playbook_id uuid not null references public.playbooks(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  version_number integer not null,
+  content_json jsonb not null,
+  created_at timestamptz not null default now(),
+  unique(playbook_id, version_number)
+);
+
+create table if not exists public.playbook_runs (
+  id uuid primary key default gen_random_uuid(),
+  playbook_id uuid not null references public.playbooks(id) on delete cascade,
+  version_id uuid not null references public.playbook_versions(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  model text not null,
+  document_name text,
+  review_mode text not null,
+  status text not null,
+  summary text,
+  findings_json jsonb,
+  error text,
+  started_at timestamptz not null,
+  completed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.playbook_imports (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  filename text not null,
+  requested_name text,
+  model text not null,
+  status text not null,
+  stage text not null,
+  error text,
+  playbook_id uuid references public.playbooks(id) on delete set null,
+  started_at timestamptz not null,
+  completed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_playbook_imports_user_started
+  on public.playbook_imports(user_id, started_at desc);
+
+create table if not exists public.gmail_connections (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  email text not null,
+  encrypted_refresh_token text not null,
+  iv text not null,
+  auth_tag text not null,
+  scopes jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.gmail_oauth_states (
+  id text primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  redirect_uri text not null,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_gmail_oauth_states_expiry
+  on public.gmail_oauth_states(expires_at);
+
+create table if not exists public.legal_monitors (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null,
+  topic text not null,
+  jurisdiction text not null,
+  source_types jsonb not null default '[]'::jsonb,
+  connector_id text not null default '',
+  connector_config jsonb not null default '{"mode":"agent"}'::jsonb,
+  model text not null,
+  interval_hours integer not null,
+  lookback_days integer not null default 14,
+  max_items_per_run integer not null default 50,
+  alert_email text,
+  email_enabled boolean not null default false,
+  enabled boolean not null default true,
+  next_run_at timestamptz,
+  last_run_at timestamptz,
+  last_status text,
+  last_error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_legal_monitors_user_updated
+  on public.legal_monitors(user_id, updated_at desc);
+create index if not exists idx_legal_monitors_due
+  on public.legal_monitors(enabled, next_run_at);
+
+create table if not exists public.legal_monitor_runs (
+  id uuid primary key default gen_random_uuid(),
+  monitor_id uuid not null references public.legal_monitors(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  status text not null,
+  summary text,
+  report text,
+  developments jsonb,
+  has_material_updates boolean not null default false,
+  tool_calls integer not null default 0,
+  source_items_count integer not null default 0,
+  source_errors jsonb,
+  email_status text not null default 'not_requested',
+  email_error text,
+  error text,
+  started_at timestamptz not null,
+  completed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_legal_monitor_runs_monitor_started
+  on public.legal_monitor_runs(monitor_id, started_at desc);
+create index if not exists idx_legal_monitor_runs_user_started
+  on public.legal_monitor_runs(user_id, started_at desc);
+
+create table if not exists public.legal_monitor_sources (
+  id uuid primary key default gen_random_uuid(),
+  monitor_id uuid not null references public.legal_monitors(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  kind text not null check (kind in ('rss', 'web')),
+  name text not null,
+  url text not null,
+  category text,
+  enabled boolean not null default true,
+  etag text,
+  last_modified text,
+  last_checked_at timestamptz,
+  last_success_at timestamptz,
+  last_error text,
+  item_count integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(monitor_id, kind, url)
+);
+
+create index if not exists idx_legal_monitor_sources_monitor
+  on public.legal_monitor_sources(monitor_id, created_at);
+create index if not exists idx_legal_monitor_sources_user
+  on public.legal_monitor_sources(user_id, updated_at desc);
+
+create table if not exists public.legal_monitor_source_items (
+  id uuid primary key default gen_random_uuid(),
+  monitor_id uuid not null references public.legal_monitors(id) on delete cascade,
+  source_id uuid not null references public.legal_monitor_sources(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  external_id text not null,
+  canonical_url text,
+  title text not null,
+  published_at timestamptz,
+  summary text,
+  content text,
+  content_hash text not null,
+  first_seen_at timestamptz not null,
+  last_seen_at timestamptz not null,
+  processed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(source_id, external_id)
+);
+
+create index if not exists idx_legal_monitor_source_items_pending
+  on public.legal_monitor_source_items(monitor_id, processed_at, first_seen_at);
+create index if not exists idx_legal_monitor_source_items_source
+  on public.legal_monitor_source_items(source_id, published_at desc);
+
+create table if not exists public.legal_monitor_connector_items (
+  id uuid primary key default gen_random_uuid(),
+  monitor_id uuid not null references public.legal_monitors(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  connector_id text not null,
+  tool_name text not null,
+  external_id text not null,
+  payload jsonb not null,
+  first_seen_at timestamptz not null,
+  last_seen_at timestamptz not null,
+  processed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(monitor_id, connector_id, tool_name, external_id)
+);
+
+create index if not exists idx_legal_monitor_connector_items_pending
+  on public.legal_monitor_connector_items(monitor_id, processed_at, first_seen_at);
+create index if not exists idx_legal_monitor_connector_items_source
+  on public.legal_monitor_connector_items(connector_id, tool_name, last_seen_at desc);
+
+create table if not exists public.legal_monitor_documents (
+  id uuid primary key default gen_random_uuid(),
+  monitor_id uuid not null references public.legal_monitors(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  document_id uuid not null references public.documents(id) on delete cascade,
+  position integer not null default 0,
+  created_at timestamptz not null default now(),
+  unique(monitor_id, document_id)
+);
+
+create index if not exists idx_legal_monitor_documents_monitor
+  on public.legal_monitor_documents(monitor_id, position);
+create index if not exists idx_legal_monitor_documents_document
+  on public.legal_monitor_documents(document_id);
+create index if not exists idx_legal_monitor_documents_user
+  on public.legal_monitor_documents(user_id);
+
+create table if not exists public.workflow_open_source_submissions (
+  id uuid primary key default gen_random_uuid(),
+  workflow_id uuid not null references public.workflows(id) on delete cascade,
+  submitted_by_user_id text not null,
+  submitter_email text,
+  submitter_name text,
+  contributor_mode text not null default 'anonymous'
+    check (contributor_mode in ('named', 'anonymous')),
+  status text not null default 'pending'
+    check (status in ('pending', 'approved', 'rejected')),
+  snapshot jsonb not null,
+  submitted_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  reviewed_at timestamptz,
+  review_notes text
+);
+
+create unique index if not exists idx_workflow_open_source_submissions_pending
+  on public.workflow_open_source_submissions(workflow_id, submitted_by_user_id)
+  where status = 'pending';
+create index if not exists idx_workflow_open_source_submissions_reviewer_queue
+  on public.workflow_open_source_submissions(status, submitted_at desc);
+create index if not exists idx_workflow_open_source_submissions_submitter
+  on public.workflow_open_source_submissions(submitted_by_user_id, submitted_at desc);
+
+create table if not exists public.support_feedback (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  email text,
+  type text not null check (type in ('bug', 'feature', 'question', 'other')),
+  subject text not null,
+  message text not null,
+  link text,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.contact_messages (
+  id uuid primary key default gen_random_uuid(),
+  name text,
+  email text not null,
+  subject text,
+  message text not null,
+  source text not null default 'landing',
+  user_agent text,
+  ip_hash text,
+  created_at timestamptz not null default now(),
+  responded_at timestamptz
+);
+
+create index if not exists idx_contact_messages_created_at
+  on public.contact_messages(created_at desc);
+
+alter table public.saved_prompts enable row level security;
+alter table public.playbooks enable row level security;
+alter table public.playbook_versions enable row level security;
+alter table public.playbook_runs enable row level security;
+alter table public.playbook_imports enable row level security;
+alter table public.gmail_connections enable row level security;
+alter table public.gmail_oauth_states enable row level security;
+alter table public.legal_monitors enable row level security;
+alter table public.legal_monitor_runs enable row level security;
+alter table public.legal_monitor_sources enable row level security;
+alter table public.legal_monitor_source_items enable row level security;
+alter table public.legal_monitor_connector_items enable row level security;
+alter table public.legal_monitor_documents enable row level security;
+alter table public.workflow_open_source_submissions enable row level security;
+alter table public.support_feedback enable row level security;
+alter table public.contact_messages enable row level security;
+
+-- ---------------------------------------------------------------------------
+-- CourtListener bulk-data indexes
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.courtlistener_citation_index (
+  id bigint primary key,
+  volume text not null,
+  reporter text not null,
+  page text not null,
+  type integer,
+  cluster_id bigint not null,
+  date_created timestamptz,
+  date_modified timestamptz
+);
+
+create index if not exists courtlistener_citation_lookup_idx
+  on public.courtlistener_citation_index(volume, reporter, page);
+
+create index if not exists courtlistener_citation_cluster_idx
+  on public.courtlistener_citation_index(cluster_id);
+
+alter table public.courtlistener_citation_index enable row level security;
+
+create table if not exists public.courtlistener_opinion_cluster_index (
+  id bigint primary key,
+  case_name text,
+  case_name_short text,
+  case_name_full text,
+  slug text,
+  date_filed date,
+  citation_count integer,
+  precedential_status text,
+  filepath_pdf_harvard text,
+  filepath_json_harvard text,
+  docket_id bigint
+);
+
+alter table public.courtlistener_opinion_cluster_index enable row level security;
+
+-- ---------------------------------------------------------------------------
+-- Direct client grant hardening
+-- ---------------------------------------------------------------------------
+--
+-- The frontend uses Supabase directly only for authentication when the
+-- Supabase Auth provider is selected. Application data access goes through the
+-- backend API with the service role after the backend verifies the user's JWT.
+-- Do not grant the browser anon/authenticated
+-- roles direct table privileges for backend-owned data.
+
+revoke all on public.user_profiles from anon, authenticated;
+revoke all on public.projects from anon, authenticated;
+revoke all on public.project_subfolders from anon, authenticated;
+revoke all on public.library_folders from anon, authenticated;
+revoke all on public.documents from anon, authenticated;
+revoke all on public.document_versions from anon, authenticated;
+revoke all on public.document_edits from anon, authenticated;
+revoke all on public.workflows from anon, authenticated;
+revoke all on public.hidden_workflows from anon, authenticated;
+revoke all on public.workflow_shares from anon, authenticated;
+revoke all on public.chats from anon, authenticated;
+revoke all on public.chat_messages from anon, authenticated;
+revoke all on public.tabular_reviews from anon, authenticated;
+revoke all on public.tabular_cells from anon, authenticated;
+revoke all on public.tabular_review_chats from anon, authenticated;
+revoke all on public.tabular_review_chat_messages from anon, authenticated;
+revoke all on public.user_api_keys from anon, authenticated;
+revoke all on public.user_mcp_connectors from anon, authenticated;
+revoke all on public.user_mcp_oauth_tokens from anon, authenticated;
+revoke all on public.user_mcp_oauth_states from anon, authenticated;
+revoke all on public.user_mcp_connector_tools from anon, authenticated;
+revoke all on public.user_mcp_tool_audit_logs from anon, authenticated;
+revoke all on public.saved_prompts from anon, authenticated;
+revoke all on public.playbooks from anon, authenticated;
+revoke all on public.playbook_versions from anon, authenticated;
+revoke all on public.playbook_runs from anon, authenticated;
+revoke all on public.playbook_imports from anon, authenticated;
+revoke all on public.gmail_connections from anon, authenticated;
+revoke all on public.gmail_oauth_states from anon, authenticated;
+revoke all on public.legal_monitors from anon, authenticated;
+revoke all on public.legal_monitor_runs from anon, authenticated;
+revoke all on public.legal_monitor_sources from anon, authenticated;
+revoke all on public.legal_monitor_source_items from anon, authenticated;
+revoke all on public.legal_monitor_connector_items from anon, authenticated;
+revoke all on public.legal_monitor_documents from anon, authenticated;
+revoke all on public.workflow_open_source_submissions from anon, authenticated;
+revoke all on public.support_feedback from anon, authenticated;
+revoke all on public.contact_messages from anon, authenticated;
+revoke all on public.courtlistener_citation_index from anon, authenticated;
+revoke all on public.courtlistener_opinion_cluster_index from anon, authenticated;
+
 -- CourtListener bulk-data indexes
 -- ---------------------------------------------------------------------------
 

@@ -1,20 +1,18 @@
 import {
+  deleteFile,
   downloadFile,
   generatedDocKey,
   uploadFile,
 } from "../../storage";
 import { convertedPdfKey, docxToPdf } from "../../convert";
-import { createServerSupabase } from "../../supabase";
+import { createServerDatabase } from "../../database";
 import {
   applyTrackedEdits,
   extractDocxBodyText,
   type EditInput,
 } from "../../docxTrackedChanges";
 import { buildDownloadUrl } from "../../downloadTokens";
-import {
-  contentSha256,
-  loadActiveVersion,
-} from "../../documentVersions";
+import { contentSha256, loadActiveVersion } from "../../documentVersions";
 import {
   type DocStore,
   type DocIndex,
@@ -26,12 +24,12 @@ import {
   contentTypeForDocumentType,
   isPresentationDocumentType,
   isSpreadsheetDocumentType,
+  isTextDocumentType,
   isWordDocumentType,
   shouldConvertToPdf,
 } from "../../documentTypes";
 import { extractPresentationText } from "../../officeText";
 import { spreadsheetToLLMText } from "../../spreadsheet";
-
 
 export function citationReminder(
   docLabel: string,
@@ -54,6 +52,123 @@ export function citationReminder(
   ].join("\n");
 }
 
+type PdfTextItem = {
+  str?: string;
+  transform?: number[];
+  width?: number;
+  height?: number;
+  hasEOL?: boolean;
+};
+
+/**
+ * Rebuild a page's text from positioned pdfjs items, preserving the visual
+ * layout: lines are reconstructed from y-coordinates/hasEOL markers, words
+ * are joined (or split) based on measured x-gaps rather than a blanket
+ * space, paragraph breaks become blank lines, and indentation is kept
+ * relative to the page's left margin.
+ */
+function layoutPageText(items: PdfTextItem[]): string {
+  type Item = {
+    str: string;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    eol: boolean;
+  };
+  const clean: Item[] = [];
+  for (const it of items) {
+    const str = it.str ?? "";
+    if (!str) continue;
+    const t = Array.isArray(it.transform) ? it.transform : [];
+    clean.push({
+      str,
+      x: typeof t[4] === "number" ? t[4] : 0,
+      y: typeof t[5] === "number" ? t[5] : 0,
+      w: typeof it.width === "number" ? it.width : 0,
+      h:
+        Math.abs(typeof t[3] === "number" ? t[3] : 0) ||
+        (typeof it.height === "number" ? it.height : 0) ||
+        10,
+      eol: it.hasEOL === true,
+    });
+  }
+  if (!clean.length) return "";
+
+  // Group into lines: pdfjs marks line ends with hasEOL; also break when the
+  // y coordinate jumps (some producers don't set hasEOL reliably).
+  const lines: Item[][] = [];
+  let cur: Item[] = [];
+  let curY: number | null = null;
+  const flush = () => {
+    if (cur.length) {
+      lines.push(cur);
+      cur = [];
+      curY = null;
+    }
+  };
+  for (const it of clean) {
+    if (cur.length && curY !== null) {
+      const lineH = Math.max(...cur.map((c) => c.h));
+      if (Math.abs(it.y - curY) > Math.max(2, lineH * 0.5)) flush();
+    }
+    cur.push(it);
+    curY = it.y;
+    if (it.eol) flush();
+  }
+  flush();
+
+  // Order lines top-to-bottom (PDF y grows upward) and items left-to-right.
+  lines.sort((a, b) => (b[0]?.y ?? 0) - (a[0]?.y ?? 0));
+  for (const line of lines) line.sort((a, b) => a.x - b.x);
+
+  const marginX = Math.min(...lines.map((line) => line[0]?.x ?? 0));
+
+  const out: string[] = [];
+  let prevY: number | null = null;
+  let prevLineH: number | null = null;
+  for (const line of lines) {
+    const lineH = Math.max(...line.map((c) => c.h));
+
+    // Paragraph break: a vertical gap well above the line height.
+    if (prevY !== null && prevLineH !== null) {
+      const vGap = Math.abs((line[0]?.y ?? 0) - prevY);
+      if (vGap > prevLineH * 1.7) out.push("");
+    }
+
+    // Indentation relative to the page's left margin.
+    const charW = Math.max(1, lineH * 0.5);
+    const indent = Math.min(
+      24,
+      Math.max(0, Math.round(((line[0]?.x ?? 0) - marginX) / charW)),
+    );
+
+    let s = "";
+    let prevEnd: number | null = null;
+    for (const it of line) {
+      if (prevEnd !== null) {
+        const gap = it.x - prevEnd;
+        // Only insert a space for a real word gap — small kerning gaps
+        // (e.g. "constitut" + "e") are joined without one.
+        if (gap > lineH * 2.5) {
+          // Preserve obvious columns (signature blocks and simple tables)
+          // without exaggerating ordinary word spacing in justified text.
+          s += " ".repeat(Math.min(16, Math.max(4, Math.round(gap / charW))));
+        } else if (gap > lineH * 0.28) {
+          s += " ";
+        }
+      }
+      s += it.str;
+      prevEnd = it.x + it.w;
+    }
+    const trimmed = s.trimEnd();
+    if (trimmed) out.push(" ".repeat(indent) + trimmed);
+    prevY = line[0]?.y ?? prevY;
+    prevLineH = lineH;
+  }
+  return out.join("\n");
+}
+
 export async function extractPdfText(buf: ArrayBuffer): Promise<string> {
   try {
     const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs" as string);
@@ -64,7 +179,7 @@ export async function extractPdfText(buf: ArrayBuffer): Promise<string> {
             numPages: number;
             getPage: (n: number) => Promise<{
               getTextContent: () => Promise<{
-                items: { str?: string }[];
+                items: PdfTextItem[];
               }>;
             }>;
           }>;
@@ -78,9 +193,7 @@ export async function extractPdfText(buf: ArrayBuffer): Promise<string> {
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const textContent = await page.getTextContent();
-      parts.push(
-        `[Page ${i}]\n${textContent.items.map((it) => it.str ?? "").join(" ")}`,
-      );
+      parts.push(`[Page ${i}]\n${layoutPageText(textContent.items)}`);
     }
     return parts.join("\n\n");
   } catch {
@@ -88,17 +201,200 @@ export async function extractPdfText(buf: ArrayBuffer): Promise<string> {
   }
 }
 
+export type EditablePdfBlock =
+  | {
+      kind:
+        | "disclaimer"
+        | "attachment"
+        | "title"
+        | "section_heading"
+        | "clause"
+        | "list_item"
+        | "body"
+        | "source_notes_heading"
+        | "footnote";
+      text: string;
+    }
+  | { kind: "signature_row"; left: string; right: string };
+
+function joinWrappedPdfLines(lines: string[]): string {
+  let result = "";
+  for (const rawLine of lines) {
+    const line = rawLine.trim().replace(/\s+/g, " ");
+    if (!line) continue;
+    if (!result) {
+      result = line;
+    } else if (result.endsWith("-")) {
+      // A hyphen at the visual line boundary belongs to the split word (for
+      // example, "non-" + "sublicensable"), not to a new paragraph.
+      result += line;
+    } else {
+      result += ` ${line}`;
+    }
+  }
+  return result;
+}
+
+function editablePdfBlockKind(
+  text: string,
+): Exclude<EditablePdfBlock["kind"], "signature_row"> {
+  if (/^Attachment\s+\d+/i.test(text)) return "attachment";
+  if (/^\d+\.\s+[A-Z]/.test(text)) return "section_heading";
+  if (/^\d+\.\d+(?:\.\d+)*\s+/.test(text)) return "clause";
+  if (/^\([a-z0-9ivx]+\)\s+/i.test(text)) return "list_item";
+  const letters = text.replace(/[^A-Za-z]/g, "");
+  if (
+    letters.length >= 4 &&
+    letters === letters.toUpperCase() &&
+    text.length <= 220
+  ) {
+    return "title";
+  }
+  return "body";
+}
+
+function canJoinPageContinuation(
+  block: EditablePdfBlock,
+  next: string,
+): block is Extract<EditablePdfBlock, { text: string }> {
+  return (
+    block.kind !== "signature_row" &&
+    (block.kind === "body" ||
+      block.kind === "clause" ||
+      block.kind === "list_item") &&
+    !/[.!?;:”"')\]]$/.test(block.text.trim()) &&
+    /^[a-z(]/.test(next)
+  );
+}
+
+/**
+ * Convert visual PDF text into semantic legal-document blocks. PDF line
+ * wrapping is removed, repeated headers/footers are discarded, clauses and
+ * headings remain distinct, and source footnotes are collected at the end so
+ * they do not interrupt body provisions at every page boundary.
+ */
+export function reconstructEditablePdfBlocks(
+  extractedText: string,
+): EditablePdfBlock[] {
+  const pageChunks = extractedText
+    .split(/^\[Page \d+\]\s*$/m)
+    .map((page) => page.trim())
+    .filter(Boolean);
+  const main: EditablePdfBlock[] = [];
+  const footnotes: EditablePdfBlock[] = [];
+
+  for (const [pageIndex, page] of pageChunks.entries()) {
+    const rawBlocks = page
+      .split(/\n[ \t]*\n+/)
+      .map((block) => block.trimEnd())
+      .filter((block) => block.trim());
+    let substantiveBlocks = 0;
+
+    for (const rawBlock of rawBlocks) {
+      const lines = rawBlock
+        .split("\n")
+        .map((line) => line.trimEnd())
+        .filter((line) => line.trim());
+      if (!lines.length) continue;
+
+      const text = joinWrappedPdfLines(lines);
+      if (!text || text === "ACC FORM" || /^\d{1,3}$/.test(text)) continue;
+      if (
+        lines.every((line) => /^(?:\s*\d{1,3}\s*|\s*ACC FORM\s*)$/.test(line))
+      ) {
+        continue;
+      }
+
+      if (
+        /made available for general informational purposes only/i.test(text)
+      ) {
+        if (pageIndex === 0) main.push({ kind: "disclaimer", text });
+        continue;
+      }
+
+      if (/^\s*\d{1,2}\s*$/.test(lines[0]) && lines.length > 1) {
+        let noteLines: string[] = [];
+        const flushNote = () => {
+          if (!noteLines.length) return;
+          footnotes.push({
+            kind: "footnote",
+            text: joinWrappedPdfLines(noteLines),
+          });
+          noteLines = [];
+        };
+        for (const line of lines) {
+          if (/^\s*\d{1,2}\s*$/.test(line) && noteLines.length) flushNote();
+          noteLines.push(line);
+        }
+        flushNote();
+        continue;
+      }
+
+      if (lines.length === 1) {
+        const signatureMatch =
+          lines[0].trim().match(/^(CLIENT)\s+(SAAS PROVIDER)$/i) ??
+          lines[0].trim().match(/^(By:|Name:|Title:|Date:)\s+\1$/i);
+        if (signatureMatch) {
+          main.push({
+            kind: "signature_row",
+            left: signatureMatch[1],
+            right: signatureMatch[2] ?? signatureMatch[1],
+          });
+          substantiveBlocks += 1;
+          continue;
+        }
+        const columns = lines[0]
+          .trim()
+          .split(/\s{4,}/)
+          .map((column) => column.trim())
+          .filter(Boolean);
+        if (columns.length === 2) {
+          main.push({
+            kind: "signature_row",
+            left: columns[0],
+            right: columns[1],
+          });
+          substantiveBlocks += 1;
+          continue;
+        }
+      }
+
+      const kind = editablePdfBlockKind(text);
+      const previous = main[main.length - 1];
+      if (
+        pageIndex > 0 &&
+        substantiveBlocks === 0 &&
+        previous &&
+        canJoinPageContinuation(previous, text)
+      ) {
+        previous.text = joinWrappedPdfLines([previous.text, text]);
+      } else {
+        main.push({ kind, text });
+      }
+      substantiveBlocks += 1;
+    }
+  }
+
+  if (footnotes.length) {
+    main.push({ kind: "source_notes_heading", text: "Source Footnotes" });
+    main.push(...footnotes);
+  }
+  return main;
+}
+
 export async function generateDocx(
   title: string,
   sections: unknown[],
   userId: string,
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerDatabase>,
   options?: {
     landscape?: boolean;
     numberSections?: boolean;
     projectId?: string | null;
   },
 ) {
+  let fileUploaded = false;
+  let discardFile: () => Promise<void> = async () => {};
   try {
     const {
       Document,
@@ -120,6 +416,9 @@ export async function generateDocx(
 
     const FONT = "Times New Roman";
     const SIZE = 22; // 11pt in half-points
+    // `=== true` is intentional: missing, null, or malformed values must
+    // produce an unnumbered document.
+    const numberSections = options?.numberSections === true;
 
     type DocChild = InstanceType<typeof Paragraph> | InstanceType<typeof Table>;
     const children: DocChild[] = [];
@@ -153,9 +452,6 @@ export async function generateDocx(
       HeadingLevel.HEADING_3,
       HeadingLevel.HEADING_4,
     ];
-    // `=== true` is intentional: missing, null, or malformed values must
-    // produce an unnumbered document.
-    const numberSections = options?.numberSections === true;
     const LEGAL_NUMBERING_REF = "legal-clause-numbering";
     const legalNumbering = (level: number) => ({
       reference: LEGAL_NUMBERING_REF,
@@ -538,13 +834,27 @@ export async function generateDocx(
         .slice(0, 64) || "document";
     const filename = `${safeTitle}.docx`;
     const key = generatedDocKey(userId, docId, filename);
+    // Validate signing configuration before persisting bytes. Otherwise a
+    // missing secret leaves an unreachable file in SQLite storage.
+    const downloadUrl = buildDownloadUrl(key, filename);
+
+    fileUploaded = false;
+    discardFile = async () => {
+      try {
+        await deleteFile(key);
+      } catch (cleanupError) {
+        devLog(
+          `[generate_docx] failed to discard ${key}: ${String(cleanupError)}`,
+        );
+      }
+    };
 
     await uploadFile(
       key,
-      buf.buffer as ArrayBuffer,
+      buf,
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     );
-    const downloadUrl = buildDownloadUrl(key, filename);
+    fileUploaded = true;
 
     // Persist to DB so generated docs are first-class documents:
     // openable in the DocPanel and editable via edit_document. In
@@ -561,6 +871,7 @@ export async function generateDocx(
       .select("id")
       .single();
     if (docErr || !docRow) {
+      await discardFile();
       return {
         error: `Failed to record generated document: ${docErr?.message ?? "unknown"}`,
       };
@@ -583,18 +894,40 @@ export async function generateDocx(
       .select("id")
       .single();
     if (verErr || !versionRow) {
+      await db
+        .from("documents")
+        .delete()
+        .eq("id", documentId)
+        .eq("user_id", userId);
+      await discardFile();
       return {
         error: `Failed to record generated document version: ${verErr?.message ?? "unknown"}`,
       };
     }
     const versionId = versionRow.id as string;
 
-    await db
+    const { error: currentVersionError } = await db
       .from("documents")
       .update({
         current_version_id: versionId,
       })
       .eq("id", documentId);
+    if (currentVersionError) {
+      await db
+        .from("document_versions")
+        .delete()
+        .eq("id", versionId)
+        .eq("document_id", documentId);
+      await db
+        .from("documents")
+        .delete()
+        .eq("id", documentId)
+        .eq("user_id", userId);
+      await discardFile();
+      return {
+        error: `Failed to activate generated document version: ${currentVersionError.message}`,
+      };
+    }
 
     return {
       filename,
@@ -606,6 +939,7 @@ export async function generateDocx(
       message: `Document '${filename}' has been generated successfully.`,
     };
   } catch (e) {
+    if (fileUploaded) await discardFile();
     return { error: String(e) };
   }
 }
@@ -641,8 +975,14 @@ function excelColumnName(index: number) {
 }
 
 function normalizeSheetName(value: unknown, fallback: string) {
-  const raw = typeof value === "string" && value.trim() ? value.trim() : fallback;
-  return raw.replace(/[:\\/?*[\]]/g, " ").trim().slice(0, 31) || fallback;
+  const raw =
+    typeof value === "string" && value.trim() ? value.trim() : fallback;
+  return (
+    raw
+      .replace(/[:\\/?*[\]]/g, " ")
+      .trim()
+      .slice(0, 31) || fallback
+  );
 }
 
 function normalizeRows(rows: unknown, colCount: number) {
@@ -659,7 +999,9 @@ function normalizeRows(rows: unknown, colCount: number) {
 async function buildXlsxWorkbook(title: string, sheetsInput: unknown[]) {
   const JSZip = (await import("jszip")).default;
   const zip = new JSZip();
-  const sheets = sheetsInput.length ? sheetsInput : [{ name: title, columns: [], rows: [] }];
+  const sheets = sheetsInput.length
+    ? sheetsInput
+    : [{ name: title, columns: [], rows: [] }];
 
   const normalizedSheets = sheets.map((sheet, index) => {
     const raw = (sheet && typeof sheet === "object" ? sheet : {}) as {
@@ -782,15 +1124,24 @@ function pptTextParagraphs(lines: string[], opts: { title?: boolean } = {}) {
     .map((line, index) => {
       const escaped = xmlEscape(line);
       const titleAttrs = opts.title ? ' sz="3200" b="1"' : ' sz="2000"';
-      const bullet = !opts.title && index >= 0
-        ? '<a:pPr marL="342900" indent="-171450"><a:buChar char="&#8226;"/></a:pPr>'
-        : "";
+      const bullet =
+        !opts.title && index >= 0
+          ? '<a:pPr marL="342900" indent="-171450"><a:buChar char="&#8226;"/></a:pPr>'
+          : "";
       return `<a:p>${bullet}<a:r><a:rPr lang="en-US"${titleAttrs}/><a:t>${escaped}</a:t></a:r></a:p>`;
     })
     .join("");
 }
 
-function pptShape(id: number, name: string, x: number, y: number, cx: number, cy: number, body: string) {
+function pptShape(
+  id: number,
+  name: string,
+  x: number,
+  y: number,
+  cx: number,
+  cy: number,
+  body: string,
+) {
   return `<p:sp>
   <p:nvSpPr><p:cNvPr id="${id}" name="${xmlEscape(name)}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
   <p:spPr><a:xfrm><a:off x="${x}" y="${y}"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></p:spPr>
@@ -966,7 +1317,7 @@ async function persistGeneratedFile(params: {
   extension: "xlsx" | "pptx";
   buffer: Buffer;
   userId: string;
-  db: ReturnType<typeof createServerSupabase>;
+  db: ReturnType<typeof createServerDatabase>;
   projectId?: string | null;
 }) {
   const { title, extension, buffer, userId, db, projectId } = params;
@@ -1061,7 +1412,7 @@ export async function generateExcel(
   title: string,
   sheets: unknown[],
   userId: string,
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerDatabase>,
   options?: { projectId?: string | null },
 ) {
   try {
@@ -1087,7 +1438,7 @@ export async function generatePpt(
   title: string,
   slides: unknown[],
   userId: string,
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerDatabase>,
   options?: { projectId?: string | null },
 ) {
   try {
@@ -1119,7 +1470,7 @@ export async function generatePpt(
  */
 export async function loadCurrentVersionBytes(
   documentId: string,
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerDatabase>,
   versionId?: string | null,
 ): Promise<{ bytes: Buffer; storage_path: string } | null> {
   const active = await loadActiveVersion(documentId, db, versionId);
@@ -1127,6 +1478,383 @@ export async function loadCurrentVersionBytes(
   const raw = await downloadFile(active.storage_path);
   if (!raw) return null;
   return { bytes: Buffer.from(raw), storage_path: active.storage_path };
+}
+
+/**
+ * Build an editable .docx copy of a PDF document so PDFs can be redlined
+ * via edit_document. The copy is registered as a new document (the
+ * original PDF is left untouched) containing a semantic reconstruction of
+ * the extracted text suitable for tracked changes.
+ */
+export async function createEditableDocxFromPdf(params: {
+  documentId: string;
+  userId: string;
+  db: ReturnType<typeof createServerDatabase>;
+}): Promise<
+  | {
+      ok: true;
+      document_id: string;
+      version_id: string;
+      filename: string;
+      storage_path: string;
+    }
+  | { ok: false; error: string }
+> {
+  const { documentId, userId, db } = params;
+
+  const { data: sourceDoc } = await db
+    .from("documents")
+    .select("id, project_id")
+    .eq("id", documentId)
+    .single();
+  if (!sourceDoc) return { ok: false, error: "Document not found." };
+
+  const active = await loadActiveVersion(documentId, db);
+  if (!active) return { ok: false, error: "Could not load document." };
+  const raw = await downloadFile(active.storage_path);
+  if (!raw) return { ok: false, error: "Could not load document bytes." };
+
+  const text = await extractPdfText(raw);
+  if (!text.trim()) {
+    return {
+      ok: false,
+      error:
+        "Could not extract text from the PDF (scanned or image-only PDFs are not supported).",
+    };
+  }
+
+  const {
+    AlignmentType,
+    BorderStyle,
+    Document,
+    Footer,
+    PageNumber,
+    Packer,
+    Paragraph,
+    Table,
+    TableCell,
+    TableRow,
+    TextRun,
+    WidthType,
+  } = await import("docx");
+  const baseName = (active.filename?.trim() || "Untitled document").replace(
+    /\.pdf$/i,
+    "",
+  );
+  const filename = `${baseName} (Editable).docx`;
+  const FONT = "Times New Roman";
+  const BODY_SIZE = 22;
+  const SMALL_SIZE = 18;
+  const blocks = reconstructEditablePdfBlocks(text);
+  type DocChild = InstanceType<typeof Paragraph> | InstanceType<typeof Table>;
+  const children: DocChild[] = [];
+
+  const bodyRun = (value: string, options?: { bold?: boolean }) =>
+    new TextRun({
+      text: value,
+      font: FONT,
+      size: BODY_SIZE,
+      color: "000000",
+      bold: options?.bold,
+    });
+
+  const clauseRuns = (value: string) => {
+    const match = value.match(
+      /^(\d+(?:\.\d+)+)\s+((?:“[^”]+”|"[^"]+"|[^.]{1,100}\.))(.*)$/,
+    );
+    if (!match) return [bodyRun(value)];
+    return [
+      bodyRun(`${match[1]} ${match[2]}`, { bold: true }),
+      bodyRun(match[3]),
+    ];
+  };
+
+  const noBorder = {
+    style: BorderStyle.NONE,
+    size: 0,
+    color: "FFFFFF",
+  };
+  const tableBorders = {
+    top: noBorder,
+    bottom: noBorder,
+    left: noBorder,
+    right: noBorder,
+    insideHorizontal: noBorder,
+    insideVertical: noBorder,
+  };
+
+  for (let index = 0; index < blocks.length; index += 1) {
+    const block = blocks[index];
+    if (block.kind === "signature_row") {
+      const rows: EditablePdfBlock[] = [];
+      while (blocks[index]?.kind === "signature_row") {
+        rows.push(blocks[index]);
+        index += 1;
+      }
+      index -= 1;
+      children.push(
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          columnWidths: [4500, 4500],
+          borders: tableBorders,
+          rows: rows.map((row) => {
+            if (row.kind !== "signature_row") {
+              throw new Error("Invalid signature row.");
+            }
+            const signatureCell = (value: string) => {
+              const heading = /^(?:CLIENT|SAAS PROVIDER)$/i.test(value);
+              const display = heading
+                ? value
+                : `${value}  ________________________`;
+              return new TableCell({
+                width: { size: 50, type: WidthType.PERCENTAGE },
+                margins: { top: 80, bottom: 80, left: 0, right: 240 },
+                children: [
+                  new Paragraph({
+                    spacing: { after: heading ? 160 : 80 },
+                    children: [bodyRun(display, { bold: heading })],
+                  }),
+                ],
+              });
+            };
+            return new TableRow({
+              children: [signatureCell(row.left), signatureCell(row.right)],
+            });
+          }),
+        }),
+      );
+      continue;
+    }
+
+    if (block.kind === "disclaimer") {
+      children.push(
+        new Paragraph({
+          spacing: { after: 240 },
+          children: [
+            new TextRun({
+              text: block.text,
+              font: FONT,
+              size: SMALL_SIZE,
+              color: "555555",
+              italics: true,
+            }),
+          ],
+        }),
+      );
+    } else if (block.kind === "attachment") {
+      children.push(
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          keepNext: true,
+          spacing: { before: 120, after: 180 },
+          children: [
+            new TextRun({
+              text: block.text,
+              font: FONT,
+              size: BODY_SIZE,
+              bold: true,
+              underline: {},
+            }),
+          ],
+        }),
+      );
+    } else if (block.kind === "title") {
+      children.push(
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          keepNext: true,
+          spacing: { before: 120, after: 180 },
+          children: [bodyRun(block.text, { bold: true })],
+        }),
+      );
+    } else if (
+      block.kind === "section_heading" ||
+      block.kind === "source_notes_heading"
+    ) {
+      children.push(
+        new Paragraph({
+          keepNext: true,
+          spacing: { before: 240, after: 120 },
+          children: [bodyRun(block.text, { bold: true })],
+        }),
+      );
+    } else if (block.kind === "footnote") {
+      const note = block.text.match(/^(\d{1,2})\s+(.*)$/s);
+      children.push(
+        new Paragraph({
+          alignment: AlignmentType.JUSTIFIED,
+          indent: { left: 360, hanging: 240 },
+          spacing: { after: 80, line: 220 },
+          children: note
+            ? [
+                new TextRun({
+                  text: note[1],
+                  font: FONT,
+                  size: SMALL_SIZE,
+                  superScript: true,
+                }),
+                new TextRun({
+                  text: ` ${note[2]}`,
+                  font: FONT,
+                  size: SMALL_SIZE,
+                }),
+              ]
+            : [
+                new TextRun({
+                  text: block.text,
+                  font: FONT,
+                  size: SMALL_SIZE,
+                }),
+              ],
+        }),
+      );
+    } else {
+      children.push(
+        new Paragraph({
+          alignment: AlignmentType.JUSTIFIED,
+          indent:
+            block.kind === "clause"
+              ? { firstLine: 540 }
+              : block.kind === "list_item"
+                ? { left: 720, hanging: 360 }
+                : { firstLine: 360 },
+          spacing: { after: 120, line: 276 },
+          children:
+            block.kind === "clause"
+              ? clauseRuns(block.text)
+              : [bodyRun(block.text)],
+        }),
+      );
+    }
+  }
+
+  const docxDoc = new Document({
+    title: filename.replace(/\.docx$/i, ""),
+    creator: "MikeOSS",
+    styles: {
+      default: {
+        document: {
+          run: { font: FONT, size: BODY_SIZE, color: "000000" },
+          paragraph: { spacing: { after: 120, line: 276 } },
+        },
+      },
+    },
+    sections: [
+      {
+        properties: {
+          page: {
+            margin: {
+              top: 1080,
+              right: 1080,
+              bottom: 1080,
+              left: 1080,
+              header: 540,
+              footer: 540,
+              gutter: 0,
+            },
+          },
+        },
+        footers: {
+          default: new Footer({
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                children: [
+                  new TextRun({
+                    children: ["Page ", PageNumber.CURRENT],
+                    font: FONT,
+                    size: 18,
+                    color: "666666",
+                  }),
+                ],
+              }),
+            ],
+          }),
+        },
+        children,
+      },
+    ],
+  });
+  const buf = await Packer.toBuffer(docxDoc);
+
+  const newDocId = crypto.randomUUID().replace(/-/g, "");
+  const key = generatedDocKey(userId, newDocId, filename);
+  let uploaded = false;
+  try {
+    await uploadFile(
+      key,
+      buf,
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    );
+    uploaded = true;
+
+    const { data: docRow, error: docErr } = await db
+      .from("documents")
+      .insert({
+        project_id: sourceDoc.project_id ?? null,
+        user_id: userId,
+        status: "ready",
+      })
+      .select("id")
+      .single();
+    if (docErr || !docRow) {
+      throw new Error(docErr?.message ?? "failed to register document");
+    }
+
+    const { data: versionRow, error: verErr } = await db
+      .from("document_versions")
+      .insert({
+        document_id: docRow.id,
+        storage_path: key,
+        source: "generated",
+        version_number: 1,
+        filename,
+        file_type: "docx",
+        size_bytes: buf.byteLength,
+        page_count: null,
+      })
+      .select("id")
+      .single();
+    if (verErr || !versionRow) {
+      await db
+        .from("documents")
+        .delete()
+        .eq("id", docRow.id)
+        .eq("user_id", userId);
+      throw new Error(verErr?.message ?? "failed to register version");
+    }
+
+    const { error: currentVersionError } = await db
+      .from("documents")
+      .update({ current_version_id: versionRow.id })
+      .eq("id", docRow.id);
+    if (currentVersionError) {
+      await db.from("document_versions").delete().eq("id", versionRow.id);
+      await db
+        .from("documents")
+        .delete()
+        .eq("id", docRow.id)
+        .eq("user_id", userId);
+      throw new Error(currentVersionError.message);
+    }
+
+    return {
+      ok: true,
+      document_id: docRow.id as string,
+      version_id: versionRow.id as string,
+      filename,
+      storage_path: key,
+    };
+  } catch (e) {
+    if (uploaded) {
+      try {
+        await deleteFile(key);
+      } catch {
+        /* ignore */
+      }
+    }
+    return { ok: false, error: String(e) };
+  }
 }
 
 /**
@@ -1138,7 +1866,7 @@ export async function runEditDocument(params: {
   documentId: string;
   userId: string;
   edits: EditInput[];
-  db: ReturnType<typeof createServerSupabase>;
+  db: ReturnType<typeof createServerDatabase>;
   /**
    * If provided, append these edits to the existing turn-scoped version
    * (overwrites the file at storagePath and reuses the document_versions
@@ -1173,8 +1901,7 @@ export async function runEditDocument(params: {
   if (!doc) return { ok: false, error: "Document not found." };
 
   const activeVersion = await loadActiveVersion(documentId, db);
-  let versionFilename =
-    activeVersion?.filename?.trim() || "Untitled document";
+  let versionFilename = activeVersion?.filename?.trim() || "Untitled document";
 
   const current = await loadCurrentVersionBytes(documentId, db);
   if (!current) return { ok: false, error: "Could not load document bytes." };
@@ -1250,10 +1977,14 @@ export async function runEditDocument(params: {
       .select("version_number")
       .eq("document_id", documentId)
       .in("source", ["upload", "user_upload", "assistant_edit"])
-      .order("version_number", { ascending: false, nullsFirst: false })
+      .order("version_number", {
+        ascending: false,
+        nullsFirst: false,
+        numeric: true,
+      })
       .limit(1)
       .maybeSingle();
-    nextVersionNumber = ((maxRow?.version_number as number | null) ?? 1) + 1;
+    nextVersionNumber = (Number(maxRow?.version_number ?? 1) || 1) + 1;
 
     // Inherit the filename from the most recent prior version so
     // user-applied renames carry forward through further edits. Malformed
@@ -1376,7 +2107,7 @@ export async function getTurnReadIdentity(params: {
   docLabel: string;
   docStore: DocStore;
   docIndex?: DocIndex;
-  db?: ReturnType<typeof createServerSupabase>;
+  db?: ReturnType<typeof createServerDatabase>;
 }): Promise<{
   key: string;
   docLabel: string;
@@ -1445,18 +2176,29 @@ export function clearTurnReadsForDocument(
   }
 }
 
+// Cap how much document text a single read_document call returns, so a large
+// document can't blow the model's context window (the full text still stays
+// reachable via find_in_document). ~100k chars is ~50k tokens of legal text,
+// which fits a 131k-context server alongside history and a second document.
+// Override per deployment with MAX_READ_DOCUMENT_CHARS.
+export const MAX_READ_DOCUMENT_CHARS = Number(
+    process.env.MAX_READ_DOCUMENT_CHARS,
+) || 100_000;
+
 export async function readDocumentContent(
   docLabel: string,
   docStore: DocStore,
   write: (s: string) => void,
   docIndex?: DocIndex,
-  db?: ReturnType<typeof createServerSupabase>,
+  db?: ReturnType<typeof createServerDatabase>,
   opts?: {
     emitEvents?: boolean;
+    maxChars?: number;
     readIdentity?: Awaited<ReturnType<typeof getTurnReadIdentity>>;
   },
 ): Promise<string> {
   const emitEvents = opts?.emitEvents ?? true;
+  const maxChars = opts?.maxChars ?? MAX_READ_DOCUMENT_CHARS;
   devLog(`[read_document] called with docLabel="${docLabel}"`);
   const docInfo = docStore.get(docLabel);
   if (!docInfo) {
@@ -1512,6 +2254,9 @@ export async function readDocumentContent(
         `[read_document] using request-scoped inline text (chars=${docInfo.inline_text.length}) for filename="${docInfo.filename}"`,
       );
       emitDocRead();
+      if (docInfo.inline_text.length > maxChars) {
+        return `${docInfo.inline_text.slice(0, maxChars)}\n\n[Document truncated: shown ${maxChars} of ${docInfo.inline_text.length} characters. Use find_in_document for targeted searches of the remaining content.]`;
+      }
       return docInfo.inline_text;
     }
 
@@ -1619,6 +2364,11 @@ export async function readDocumentContent(
       devLog(
         `[read_document] legacy Office PDF extraction length=${text.length} for filename="${docInfo.filename}"`,
       );
+    } else if (isTextDocumentType(fileType)) {
+      text = Buffer.from(raw).toString("utf8");
+      devLog(
+        `[read_document] text file read length=${text.length} for filename="${docInfo.filename}"`,
+      );
     } else {
       devLog(
         `[read_document] unknown file_type="${docInfo.file_type}" for filename="${docInfo.filename}", trying mammoth`,
@@ -1636,6 +2386,9 @@ export async function readDocumentContent(
       `[read_document] DONE filename="${docInfo.filename}" finalTextLength=${text.length} firstChars=${JSON.stringify(text.slice(0, 120))}`,
     );
     emitDocRead();
+    if (text.length > maxChars) {
+      return `${text.slice(0, maxChars)}\n\n[Document truncated: shown ${maxChars} of ${text.length} characters. Use find_in_document for targeted searches of the remaining content.]`;
+    }
     return text;
   } catch (err) {
     devLog(
@@ -1769,7 +2522,7 @@ export async function findInDocumentContent(params: {
   docStore: DocStore;
   write: (s: string) => void;
   docIndex?: DocIndex;
-  db?: ReturnType<typeof createServerSupabase>;
+  db?: ReturnType<typeof createServerDatabase>;
   readIdentity?: Awaited<ReturnType<typeof getTurnReadIdentity>>;
 }): Promise<string> {
   const {
@@ -1893,7 +2646,18 @@ export type DocEditedResult = {
 
 export type TurnEditState = Map<
   string,
-  { versionId: string; versionNumber: number; storagePath: string }
+  {
+    versionId: string;
+    versionNumber: number;
+    storagePath: string;
+    /**
+     * Set when the turn's edits target a different document than the map
+     * key — e.g. edits against a PDF are redirected to the editable .docx
+     * copy created for it, so repeat edit_document calls in the same turn
+     * reuse that copy instead of converting again.
+     */
+    documentId?: string;
+  }
 >;
 
 export type TurnReadState = Map<

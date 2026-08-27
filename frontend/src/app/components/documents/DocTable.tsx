@@ -849,14 +849,29 @@ export function DocTable({
         }
 
         // Replace with real folder from API
-        const folder = await operations.createFolder(name, parentId ?? null);
-        setFolders((prev) => prev.map((f) => (f.id === tempId ? folder : f)));
-        setExpandedFolderIds((prev) => {
-            const next = new Set(prev);
-            next.delete(tempId);
-            next.add(folder.id);
-            return next;
-        });
+        try {
+            const folder = await operations.createFolder(
+                name,
+                parentId ?? null,
+            );
+            setFolders((prev) =>
+                prev.map((f) => (f.id === tempId ? folder : f)),
+            );
+            setExpandedFolderIds((prev) => {
+                const next = new Set(prev);
+                next.delete(tempId);
+                next.add(folder.id);
+                return next;
+            });
+        } catch (err) {
+            console.error("Folder creation failed", err);
+            setFolders((prev) => prev.filter((f) => f.id !== tempId));
+            setExpandedFolderIds((prev) => {
+                const next = new Set(prev);
+                next.delete(tempId);
+                return next;
+            });
+        }
     }
 
     async function handleRenameFolder(folderId: string) {

@@ -6,7 +6,7 @@ import {
 } from "../llm";
 import { resolveRequestedModel } from "../routerModels";
 import { UserFacingError } from "../userFacingError";
-import { createServerSupabase } from "../supabase";
+import { createServerDatabase } from "../database";
 import { buildUserMcpTools, type McpToolEvent } from "../mcpConnectors";
 import type { SourceDocument } from "../sourceDocuments";
 import {
@@ -14,6 +14,17 @@ import {
   type CaseCitationEvent,
   type CourtlistenerToolEvent,
 } from "./tools/courtlistenerTools";
+import { IRONCLAD_TOOLS } from "./tools/ironcladTools";
+import { isIroncladConfigured } from "../ironclad";
+import type { IroncladToolEvent } from "./tools/ironcladTools";
+import { getUserFeatures } from "../userFeatures";
+import { deploymentModuleEnabled } from "../deploymentModules";
+import {
+  GMAIL_SYSTEM_PROMPT,
+  GMAIL_TOOLS,
+  type GmailToolEvent,
+} from "./tools/gmailTools";
+import { getGmailStatus, isGmailConfigured } from "../gmail";
 import {
   type DocStore,
   type DocIndex,
@@ -44,7 +55,24 @@ import {
   type TurnReadState,
 } from "./tools/documentOps";
 import { verifyCitations } from "./verifyCitations";
+import { getConfiguredModel } from "../llm/registry";
+import { analyzePlaybookChunks } from "./playbookChunking";
+import { spotlight } from "./contextBuilders";
 
+function isDingDuffMcpTool(tool: OpenAIToolSchema): boolean {
+  const haystack = [
+    tool.function.name,
+    tool.function.description,
+    JSON.stringify(tool.function.parameters),
+  ]
+    .join(" ")
+    .toLowerCase();
+  return (
+    haystack.includes("dingduff") ||
+    haystack.includes("ding-duff") ||
+    haystack.includes("ding duff")
+  );
+}
 export type AssistantEvent =
   | { type: "reasoning"; text: string }
   | AskInputsEvent
@@ -102,6 +130,8 @@ export type AssistantEvent =
   | CaseCitationEvent
   | CourtlistenerToolEvent
   | McpToolEvent
+  | IroncladToolEvent
+  | GmailToolEvent
   | {
       type: "case_opinions";
       cluster_id: number;
@@ -217,10 +247,13 @@ export async function runLLMStream(params: {
   docStore: DocStore;
   docIndex: DocIndex;
   userId: string;
-  db: ReturnType<typeof createServerSupabase>;
+  userEmail?: string | null;
+  db: ReturnType<typeof createServerDatabase>;
   write: (s: string) => void;
   extraTools?: unknown[];
   includeResearchTools?: boolean;
+  includeGmailTools?: boolean;
+  includeIroncladTools?: boolean;
   /** Expose ask_inputs only to clients that can render and answer it. */
   includeAskInputs?: boolean;
   workflowStore?: WorkflowStore;
@@ -251,6 +284,8 @@ export async function runLLMStream(params: {
    *  here so that the same nonce fences both the system-prompt filenames
    *  (added by buildMessages) and the document bodies returned by tools. */
   nonce?: string;
+  /** Attached documents to analyze in isolated passes for local playbooks. */
+  playbookChunkDocumentIds?: string[];
 }): Promise<{
   fullText: string;
   events: AssistantEvent[];
@@ -265,6 +300,8 @@ export async function runLLMStream(params: {
     write: unsafeWrite,
     extraTools,
     includeResearchTools = true,
+    includeGmailTools = true,
+    includeIroncladTools = true,
     includeAskInputs = true,
     workflowStore,
     tabularStore,
@@ -274,12 +311,31 @@ export async function runLLMStream(params: {
     apiKeys,
     signal,
     projectId,
+    userEmail,
     nonce,
+    playbookChunkDocumentIds,
   } = params;
   const write = (chunk: string) =>
     unsafeWrite(sanitizeAssistantSseChunk(chunk));
-  const researchTools = includeResearchTools ? COURTLISTENER_TOOLS : [];
-  const mcpTools = await buildUserMcpTools(userId, db);
+  const userFeatures = await getUserFeatures(userId, db);
+  const ironcladTools =
+    includeIroncladTools && userFeatures.ironclad && isIroncladConfigured()
+      ? IRONCLAD_TOOLS
+      : [];
+  const gmailStatus = includeGmailTools &&
+    deploymentModuleEnabled("gmail") &&
+    isGmailConfigured()
+    ? await getGmailStatus(userId, db)
+    : { available: false, enabled: false, connected: false };
+  const gmailTools = gmailStatus.available && gmailStatus.enabled && gmailStatus.connected
+    ? GMAIL_TOOLS
+    : [];
+  const mcpTools = await buildUserMcpTools(userId, db, {
+    excludeManagedPatent: !userFeatures.patentConnector,
+  });
+  const hasDingDuffMcpTools = mcpTools.some(isDingDuffMcpTool);
+  const researchTools =
+    includeResearchTools && !hasDingDuffMcpTools ? COURTLISTENER_TOOLS : [];
   const conversationTools = includeAskInputs
     ? TOOLS
     : TOOLS.filter((tool) => tool.function.name !== "ask_inputs");
@@ -294,8 +350,17 @@ export async function runLLMStream(params: {
   // Extract system prompt; pass remaining turns to the adapter as
   // plain user/assistant messages.
   const rawMsgs = apiMessages as { role: string; content: string | null }[];
-  const systemPrompt =
+  let systemPrompt =
     rawMsgs[0]?.role === "system" ? (rawMsgs[0].content ?? "") : "";
+  if (hasDingDuffMcpTools) {
+    systemPrompt = `${systemPrompt}
+
+DINGDUFF MCP CASE RETRIEVAL:
+Use the available DingDuff MCP tool(s) for case retrieval, case reading, and case-specific document lookup. Do not use CourtListener for case retrieval in this turn; the built-in CourtListener tools are intentionally unavailable when DingDuff MCP tools are present.`;
+  }
+  if (gmailTools.length > 0) {
+    systemPrompt = `${systemPrompt}\n\n${GMAIL_SYSTEM_PROMPT}`;
+  }
   const chatMessages: LlmMessage[] = rawMsgs
     .filter((m) => m.role !== "system")
     .map((m) => ({
@@ -431,7 +496,6 @@ export async function runLLMStream(params: {
   };
 
   try {
-    throwIfAborted(signal);
     // Single request-time choke point for every runLLMStream caller (chat,
     // project chat, Word chat, tabular): router-prefixed models must be in the
     // user's saved selection.
@@ -460,6 +524,70 @@ export async function runLLMStream(params: {
       db,
       "throw",
     );
+    const shouldChunkPlaybook =
+      playbookChunkDocumentIds?.length &&
+      getConfiguredModel(selectedModel)?.playbookChunking === true;
+
+    if (shouldChunkPlaybook) {
+      const documents = await Promise.all(
+        playbookChunkDocumentIds.map(async (docId) => ({
+          id: docId,
+          filename: docStore.get(docId)?.filename ?? docId,
+          text: await readDocumentContent(
+            docId,
+            docStore,
+            write,
+            docIndex,
+            db,
+            { maxChars: Number.MAX_SAFE_INTEGER },
+          ),
+        })),
+      );
+      for (const document of documents) {
+        events.push({
+          type: "doc_read",
+          filename: document.filename,
+          document_id: docIndex[document.id]?.document_id,
+        });
+      }
+      const chunkSummaries = await analyzePlaybookChunks({
+        documents,
+        signal,
+        runPass: async ({ documentId, filename, index, total, text }) => {
+          let summary = "";
+          await streamChatWithTools({
+            model: selectedModel,
+            systemPrompt: `${systemPrompt}\n\nCHUNKED PLAYBOOK REVIEW: Analyze only the supplied document chunk. Do not call document-reading tools. Return a concise factual analysis with exact quotes and locations relevant to the user's request. This is an intermediate result, not the final answer.`,
+            messages: [
+              ...chatMessages,
+              {
+                role: "user",
+                content: `DOCUMENT CHUNK ${index + 1} OF ${total} (${filename}, ${documentId}):\n${nonce ? spotlight(text, nonce) : text}`,
+              },
+            ],
+            tools: [],
+            maxIterations: 0,
+            apiKeys,
+            reasoning: "high",
+            abortSignal: signal,
+            callbacks: {
+              onContentDelta: (delta) => {
+                summary += delta;
+              },
+            },
+          });
+          return summary;
+        },
+      });
+      if (chunkSummaries.length) {
+        chatMessages.push({
+          role: "user",
+          content: `The attached document was analyzed in independent chunks. Use these intermediate results to produce one coherent final answer. Do not call read_document or fetch_documents for the chunked attached document; doing so would reintroduce the full document into context. You may still use other available tools when needed.\n\n${chunkSummaries.join("\n\n")}`,
+        });
+      }
+    }
+
+    throwIfAborted(signal);
     await streamChatWithTools({
       model: selectedModel,
       systemPrompt,
@@ -546,6 +674,8 @@ export async function runLLMStream(params: {
           courtlistenerEvents,
           caseCitationEvents,
           mcpEvents,
+          ironcladEvents,
+          gmailEvents,
         } = await runToolCalls(
           toolCalls,
           docStore,
@@ -561,6 +691,7 @@ export async function runLLMStream(params: {
           courtlistenerTurnState,
           apiKeys,
           nonce,
+          userEmail,
         );
         throwIfAborted(signal);
         for (const r of docsRead) {
@@ -627,6 +758,12 @@ export async function runLLMStream(params: {
           events.push(event);
         }
         for (const event of mcpEvents) {
+          events.push(event);
+        }
+        for (const event of ironcladEvents) {
+          events.push(event);
+        }
+        for (const event of gmailEvents) {
           events.push(event);
         }
         for (const event of caseCitationEvents) {
@@ -722,6 +859,7 @@ export async function runLLMStream(params: {
         pending = label
           ? readDocumentContent(label, docStore, () => {}, docIndex, db, {
               emitEvents: false,
+              maxChars: Number.MAX_SAFE_INTEGER,
             })
           : Promise.resolve("");
         sourceTextByDocId.set(docId, pending);

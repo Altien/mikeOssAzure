@@ -153,7 +153,7 @@ test("create project, upload PDF, ask a question and receive a response", async 
 
        The reply is preceded by a POST that persists the chat, a client-side
        route change to /assistant/chat/<id>, and a real LLM round-trip; under
-       local-Supabase load that can outlast a 30s budget, so allow the same
+       local backend load that can outlast a 30s budget, so allow the same
        headroom the rest of this flow gets. */
     const assistantAnswer = page
         .locator("div.prose.font-serif.text-gray-900")
@@ -174,7 +174,7 @@ test.describe("unauthenticated", () => {
         page,
     }) => {
         await page.goto("/assistant");
-        /* Auth check is client-side (Supabase getSession) — allow time for the
+        /* Auth check is client-side — allow time for the
            async check to resolve and for Next.js router.push to fire. */
         await expect(page).toHaveURL(/\/login/, { timeout: 15_000 });
     });

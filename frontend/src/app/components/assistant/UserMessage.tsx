@@ -1,6 +1,6 @@
 "use client";
 
-import { Library } from "lucide-react";
+import { Library, ListChecks } from "lucide-react";
 import { FileTypeIcon } from "../shared/FileTypeIcon";
 import type { MessageFile } from "../shared/types";
 import { LIQUID_GLASS_FLAT_CLASS } from "@/shared/ui/LiquidGlassUI";
@@ -9,22 +9,42 @@ interface Props {
     content: string;
     files?: MessageFile[];
     workflow?: { id: string; title: string };
+    playbook?: {
+        id: string;
+        title: string;
+        version: number;
+        versionId: string;
+    };
     onFileClick?: (file: MessageFile) => void;
 }
 
-export function UserMessage({ content, files, workflow, onFileClick }: Props) {
+export function UserMessage({
+    content,
+    files,
+    workflow,
+    playbook,
+    onFileClick,
+}: Props) {
     const hasFiles = files && files.length > 0;
 
     return (
         <div className="w-full flex justify-end">
             <div className="max-w-[80%] bg-gray-100 rounded-xl px-4 py-3">
                 <p className="text-sm text-gray-900 whitespace-pre-wrap">{content}</p>
-                {(workflow || hasFiles) && (
+                {(workflow || playbook || hasFiles) && (
                     <div className="flex flex-wrap justify-end gap-1.5 mt-3">
                         {workflow && (
                             <div className="inline-flex items-center gap-1 pl-2 pr-2.5 py-0.5 rounded-full text-xs bg-blue-600 text-white shadow border border-blue-600">
                                 <Library className="h-2.5 w-2.5 shrink-0" />
                                 <span className="max-w-[140px] truncate">{workflow.title}</span>
+                            </div>
+                        )}
+                        {playbook && (
+                            <div className="inline-flex items-center gap-1 rounded-full border border-emerald-600 bg-emerald-600 py-0.5 pl-2 pr-2.5 text-xs text-white shadow">
+                                <ListChecks className="h-2.5 w-2.5 shrink-0" />
+                                <span className="max-w-[170px] truncate">
+                                    {playbook.title} · v{playbook.version}
+                                </span>
                             </div>
                         )}
                         {hasFiles &&

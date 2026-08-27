@@ -1,7 +1,7 @@
+import { createServerDatabase } from "./database";
 import { sealManifest } from "./manifestSigning";
-import { createServerSupabase } from "./supabase";
 
-type Db = ReturnType<typeof createServerSupabase>;
+type Db = ReturnType<typeof createServerDatabase>;
 
 const PAGE_SIZE = 1000;
 
@@ -296,6 +296,7 @@ export async function buildUserAccountExport(
     const [
         profile,
         apiKeys,
+        gmailConnections,
         routerModels,
         projects,
         standaloneDocuments,
@@ -310,12 +311,29 @@ export async function buildUserAccountExport(
         assistantChats,
         tabularChats,
         tabularReviews,
+        legalMonitors,
+        legalMonitorRuns,
+        legalMonitorSources,
+        legalMonitorSourceItems,
+        legalMonitorConnectorItems,
+        legalMonitorDocuments,
+        savedPrompts,
+        playbooks,
+        playbookVersions,
+        playbookRuns,
+        playbookImports,
         sharedProjects,
         sharedTabularReviews,
         auditEvents,
     ] = await Promise.all([
         selectAll(db, "user_profiles", (query) => query.eq("user_id", userId)),
         loadApiKeyStatus(db, userId),
+        selectAll(
+            db,
+            "gmail_connections",
+            (query) => query.eq("user_id", userId),
+            "user_id, email, scopes, created_at, updated_at",
+        ),
         selectAll(db, "user_router_models", (query) =>
             query
                 .eq("user_id", userId)
@@ -367,6 +385,39 @@ export async function buildUserAccountExport(
         loadUserTabularChats(db, userId),
         selectAll(db, "tabular_reviews", (query) =>
             query.eq("user_id", userId).order("created_at", { ascending: true }),
+        ),
+        selectAll(db, "legal_monitors", (query) =>
+            query.eq("user_id", userId).order("created_at", { ascending: true }),
+        ),
+        selectAll(db, "legal_monitor_runs", (query) =>
+            query.eq("user_id", userId).order("started_at", { ascending: true }),
+        ),
+        selectAll(db, "legal_monitor_sources", (query) =>
+            query.eq("user_id", userId).order("created_at", { ascending: true }),
+        ),
+        selectAll(db, "legal_monitor_source_items", (query) =>
+            query.eq("user_id", userId).order("first_seen_at", { ascending: true }),
+        ),
+        selectAll(db, "legal_monitor_connector_items", (query) =>
+            query.eq("user_id", userId).order("first_seen_at", { ascending: true }),
+        ),
+        selectAll(db, "legal_monitor_documents", (query) =>
+            query.eq("user_id", userId).order("created_at", { ascending: true }),
+        ),
+        selectAll(db, "saved_prompts", (query) =>
+            query.eq("user_id", userId).order("created_at", { ascending: true }),
+        ),
+        selectAll(db, "playbooks", (query) =>
+            query.eq("user_id", userId).order("created_at", { ascending: true }),
+        ),
+        selectAll(db, "playbook_versions", (query) =>
+            query.eq("user_id", userId).order("created_at", { ascending: true }),
+        ),
+        selectAll(db, "playbook_runs", (query) =>
+            query.eq("user_id", userId).order("started_at", { ascending: true }),
+        ),
+        selectAll(db, "playbook_imports", (query) =>
+            query.eq("user_id", userId).order("started_at", { ascending: true }),
         ),
         userEmail
             ? selectAll(db, "projects", (query) =>
@@ -420,6 +471,7 @@ export async function buildUserAccountExport(
         user: { id: userId, email: userEmail ?? null },
         profile,
         api_keys: apiKeys,
+        gmail_connections: gmailConnections,
         router_models: routerModels,
         projects,
         project_subfolders: folders,
@@ -438,6 +490,17 @@ export async function buildUserAccountExport(
         tabular_reviews: tabularReviews,
         tabular_cells: tabularCells,
         tabular_review_chats: tabularChats,
+        legal_monitors: legalMonitors,
+        legal_monitor_runs: legalMonitorRuns,
+        legal_monitor_sources: legalMonitorSources,
+        legal_monitor_source_items: legalMonitorSourceItems,
+        legal_monitor_connector_items: legalMonitorConnectorItems,
+        legal_monitor_documents: legalMonitorDocuments,
+        saved_prompts: savedPrompts,
+        playbooks,
+        playbook_versions: playbookVersions,
+        playbook_runs: playbookRuns,
+        playbook_imports: playbookImports,
         shared_access: {
             projects: sharedProjects,
             tabular_reviews: sharedTabularReviews,

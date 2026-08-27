@@ -13,7 +13,7 @@ export const PROJECT_EXTRA_TOOLS = [
     function: {
       name: "fetch_documents",
       description:
-        "Read the full text content of multiple documents in a single call. Use this instead of calling read_document repeatedly when you need to read several documents at once. In one response, fetch each document/version at most once; after it has been fetched, use the prior tool result or find_in_document for targeted checks.",
+        "Read the full text content of multiple documents in a single call. Use this instead of calling read_document repeatedly when you need to read several documents at once. In one response, fetch each document/version at most once; after it has been fetched, use the prior tool result or find_in_document for targeted checks. Large documents may be truncated in the result; use find_in_document for targeted searches of the remaining content.",
       parameters: {
         type: "object",
         properties: {
@@ -208,7 +208,7 @@ export const TOOLS = [
     function: {
       name: "read_document",
       description:
-        "Read the full text content of an available document. Always call this before answering questions about, summarising, citing from, or editing a document, but call it at most once per document/version in a single response. After this returns, use the prior tool result or find_in_document for targeted checks instead of reading the same document/version again.",
+        "Read the full text content of an available document. Always call this before answering questions about, summarising, citing from, or editing a document, but call it at most once per document/version in a single response. After this returns, use the prior tool result or find_in_document for targeted checks instead of reading the same document/version again. Very large documents are truncated in the result; use find_in_document to search the remaining content.",
       parameters: {
         type: "object",
         properties: {
@@ -428,7 +428,7 @@ export const TOOLS = [
     function: {
       name: "edit_document",
       description:
-        "Propose edits to a user-attached .docx as tracked changes. Each edit is a precise, minimal substitution of specific words/characters, NOT a whole-line or paragraph replacement. Use read_document first unless this same document/version has already been read in the current response. Anchor each edit with short before/after context so it can be located unambiguously. Returns per-edit annotations the UI will render as Accept/Reject cards and a download link to the edited document.",
+        "Propose edits to a user-attached .docx or .pdf as tracked changes. Each edit is a precise, minimal substitution of specific words/characters, NOT a whole-line or paragraph replacement. Use read_document first unless this same document/version has already been read in the current response. Anchor each edit with short before/after context so it can be located unambiguously. For PDFs, an editable .docx copy is created automatically from the extracted text and the tracked changes are applied to that copy. Returns per-edit annotations the UI will render as Accept/Reject cards and a download link to the edited document.",
       parameters: {
         type: "object",
         properties: {

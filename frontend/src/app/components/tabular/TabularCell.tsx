@@ -87,24 +87,24 @@ function CellMarkdown({
         <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
-                p: ({ node, ...props }) =>
+                p: ({ node: _node, ...props }) =>
                     inline ? (
                         <span {...props} />
                     ) : (
                         <p className="mb-1 last:mb-0 leading-relaxed" {...props} />
                     ),
-                ul: ({ node, ...props }) => (
+                ul: ({ node: _node, ...props }) => (
                     <ul className="list-disc pl-4 space-y-0.5" {...props} />
                 ),
-                ol: ({ node, ...props }) => (
+                ol: ({ node: _node, ...props }) => (
                     <ol className="list-decimal pl-4 space-y-0.5" {...props} />
                 ),
-                li: ({ node, ...props }) => <li {...props} />,
-                strong: ({ node, ...props }) => (
+                li: ({ node: _node, ...props }) => <li {...props} />,
+                strong: ({ node: _node, ...props }) => (
                     <strong className="font-semibold" {...props} />
                 ),
-                em: ({ node, ...props }) => <em className="italic" {...props} />,
-                a: ({ node, href, children, ...props }) => (
+                em: ({ node: _node, ...props }) => <em className="italic" {...props} />,
+                a: ({ node: _node, href, children, ...props }) => (
                     <a
                         href={href}
                         target="_blank"
@@ -115,7 +115,7 @@ function CellMarkdown({
                         {children}
                     </a>
                 ),
-                code: ({ node, children, ...props }) => {
+                code: ({ node: _node, children, ...props }) => {
                     const t = String(children);
                     const citMatch = t.match(/^§c(\d+)§$/);
                     if (citMatch) {

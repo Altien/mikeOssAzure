@@ -68,8 +68,8 @@ async function createProject(
        so allow extra time for navigation when a file is attached.
 
        (The modal's FileDirectory used to fan out a getProject() request per
-       existing project on open, which could overwhelm the local Supabase
-       gateway and required settle-waits plus a submit-retry loop here. The
+       existing project on open, which could overwhelm the backend storage
+       layer and required settle-waits plus a submit-retry loop here. The
        directory now loads via one batched listProjects?include=documents
        request, so a single submit is reliable.)
 
@@ -325,7 +325,7 @@ test("file upload type validation — .txt file is rejected", async ({ page }) =
     // (UNSUPPORTED_DOCUMENT_WARNING_MESSAGE in documentUploadValidation.ts).
     await expect(
         page.getByText(
-            "Unsupported file type. Only PDF, Word, Excel, and PowerPoint files can be uploaded.",
+            "Unsupported file type. Only PDF, Word, Excel, PowerPoint, and Markdown files can be uploaded.",
         ),
     ).toBeVisible({ timeout: 10_000 });
 

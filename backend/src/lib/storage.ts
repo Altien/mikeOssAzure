@@ -1,197 +1,81 @@
-/**
- * Cloudflare R2 storage utilities for Mike document management.
- * R2 is S3-compatible — uses @aws-sdk/client-s3.
- *
- * Required env vars:
- *   R2_ENDPOINT_URL     — https://<account-id>.r2.cloudflarestorage.com
- *   R2_ACCESS_KEY_ID    — R2 API token (Access Key ID)
- *   R2_SECRET_ACCESS_KEY — R2 API token (Secret Access Key)
- *   R2_BUCKET_NAME      — bucket name (default: "mike")
- */
+import path from "node:path";
+import { r2StorageProvider } from "./storage/r2";
+import { sqliteStorageProvider } from "./storage/sqlite";
+import type { StorageProvider } from "./storage/types";
 
-import {
-  S3Client,
-  PutObjectCommand,
-  DeleteObjectCommand,
-  ListObjectsV2Command,
-} from "@aws-sdk/client-s3";
-import * as S3Commands from "@aws-sdk/client-s3";
-import { getSignedUrl as awsGetSignedUrl } from "@aws-sdk/s3-request-presigner";
+export {
+  buildContentDisposition,
+  encodeRFC5987,
+  normalizeDownloadFilename,
+  sanitizeDispositionFilename,
+} from "./storage/filenames";
 
-const GetObjectCommand = (S3Commands as any).GetObjectCommand;
+export const STORAGE_PROVIDERS = ["r2", "sqlite"] as const;
+export type StorageProviderName = (typeof STORAGE_PROVIDERS)[number];
 
-let cachedClient: S3Client | undefined;
-
-function getClient(): S3Client {
-  if (!cachedClient) {
-    cachedClient = new S3Client({
-      region: "auto",
-      endpoint: process.env.R2_ENDPOINT_URL!,
-      forcePathStyle: true,
-      credentials: {
-        accessKeyId: process.env.R2_ACCESS_KEY_ID!,
-        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
-      },
-    });
-  }
-  return cachedClient;
-}
-
-const BUCKET = process.env.R2_BUCKET_NAME ?? "mike";
-
-export const storageEnabled = Boolean(
-  process.env.R2_ENDPOINT_URL &&
-  process.env.R2_ACCESS_KEY_ID &&
-  process.env.R2_SECRET_ACCESS_KEY,
-);
-
-function requireStorageConfig(): void {
-  if (!storageEnabled) {
+export function resolveStorageProvider(
+  env: NodeJS.ProcessEnv = process.env,
+): StorageProviderName {
+  const configured = env.MIKE_STORAGE_PROVIDER?.trim().toLowerCase();
+  if (configured) {
+    if (configured === "r2" || configured === "sqlite") return configured;
     throw new Error(
-      "R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, and R2_SECRET_ACCESS_KEY must be set",
+      `Unsupported MIKE_STORAGE_PROVIDER "${configured}". Expected one of: ${STORAGE_PROVIDERS.join(", ")}.`,
     );
   }
+
+  // Preserve pre-provider local installations while keeping upstream R2 as
+  // the default for fresh deployments.
+  if (
+    env.SQLITE_STORAGE_PATH?.trim() &&
+    !env.R2_ENDPOINT_URL?.trim() &&
+    !env.R2_ACCESS_KEY_ID?.trim() &&
+    !env.R2_SECRET_ACCESS_KEY?.trim()
+  ) {
+    return "sqlite";
+  }
+  return "r2";
 }
 
-// ---------------------------------------------------------------------------
-// Upload
-// ---------------------------------------------------------------------------
+export function createStorageProvider(): StorageProvider {
+  return resolveStorageProvider() === "sqlite"
+    ? sqliteStorageProvider
+    : r2StorageProvider;
+}
+
+function provider(): StorageProvider {
+  return createStorageProvider();
+}
+
+export const storageEnabled = provider().enabled;
 
 export async function uploadFile(
   key: string,
-  content: ArrayBuffer,
+  content: ArrayBuffer | ArrayBufferView,
   contentType: string,
 ): Promise<void> {
-  requireStorageConfig();
-  const client = getClient();
-  await client.send(
-    new PutObjectCommand({
-      Bucket: BUCKET,
-      Key: key,
-      Body: Buffer.from(content),
-      ContentType: contentType,
-    }),
-  );
+  return provider().uploadFile(key, content, contentType);
 }
 
-// ---------------------------------------------------------------------------
-// Download
-// ---------------------------------------------------------------------------
-
 export async function downloadFile(key: string): Promise<ArrayBuffer | null> {
-  if (!storageEnabled) return null;
-  try {
-    const client = getClient();
-    const response = (await client.send(
-      new GetObjectCommand({ Bucket: BUCKET, Key: key }),
-    )) as any;
-    if (!response.Body) return null;
-    const bytes = await response.Body.transformToByteArray();
-    return bytes.buffer as ArrayBuffer;
-  } catch (error) {
-    console.error("[storage] downloadFile failed", {
-      key,
-      error: error,
-    });
-    return null;
-  }
+  return provider().downloadFile(key);
 }
 
 export async function listFiles(prefix: string): Promise<string[]> {
-  if (!storageEnabled) return [];
-  const client = getClient();
-  const keys: string[] = [];
-  let ContinuationToken: string | undefined;
-  do {
-    const response = await client.send(
-      new ListObjectsV2Command({
-        Bucket: BUCKET,
-        Prefix: prefix,
-        ContinuationToken,
-      }),
-    );
-    for (const item of response.Contents ?? []) {
-      if (item.Key) keys.push(item.Key);
-    }
-    ContinuationToken = response.NextContinuationToken;
-  } while (ContinuationToken);
-  return keys;
+  return provider().listFiles(prefix);
 }
-
-// ---------------------------------------------------------------------------
-// Delete
-// ---------------------------------------------------------------------------
 
 export async function deleteFile(key: string): Promise<void> {
-  if (!storageEnabled) return;
-  const client = getClient();
-  await client.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
+  return provider().deleteFile(key);
 }
-
-// ---------------------------------------------------------------------------
-// Signed URL (pre-signed for temporary direct access)
-// ---------------------------------------------------------------------------
 
 export async function getSignedUrl(
   key: string,
   expiresIn = 3600,
   downloadFilename?: string,
 ): Promise<string | null> {
-  if (!storageEnabled) return null;
-  try {
-    const client = getClient();
-    // Override the response Content-Disposition so the browser uses this
-    // filename on download, instead of the last path segment of the R2 key
-    // (which includes the document UUID). The `download` attribute on <a>
-    // is ignored for cross-origin URLs, so we have to set it server-side.
-    const responseContentDisposition = downloadFilename
-      ? buildContentDisposition("attachment", downloadFilename)
-      : undefined;
-    const command = new GetObjectCommand({
-      Bucket: BUCKET,
-      Key: key,
-      ResponseContentDisposition: responseContentDisposition,
-    }) as any;
-    return await awsGetSignedUrl(client, command, { expiresIn });
-  } catch (error) {
-    console.error("[storage] getSignedUrl failed", {
-      key,
-      error: error,
-    });
-    return null;
-  }
+  return provider().getSignedUrl(key, expiresIn, downloadFilename);
 }
-
-export function normalizeDownloadFilename(name: string): string {
-  const trimmed = name.trim();
-  const base = trimmed || "download";
-  return base.replace(/[\x00-\x1F\x7F]/g, "_").replace(/[\\/]/g, "_");
-}
-
-export function sanitizeDispositionFilename(name: string): string {
-  return normalizeDownloadFilename(name)
-    .replace(/["\\]/g, "_")
-    .replace(/[^\x20-\x7E]/g, "_");
-}
-
-export function encodeRFC5987(str: string): string {
-  return encodeURIComponent(str).replace(
-    /['()*]/g,
-    (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase(),
-  );
-}
-
-export function buildContentDisposition(
-  kind: "inline" | "attachment",
-  filename: string,
-): string {
-  const normalized = normalizeDownloadFilename(filename);
-  return `${kind}; filename="${sanitizeDispositionFilename(normalized)}"; filename*=UTF-8''${encodeRFC5987(normalized)}`;
-}
-
-// ---------------------------------------------------------------------------
-// Storage key helpers
-// ---------------------------------------------------------------------------
 
 export function storageKey(
   userId: string,
@@ -237,8 +121,6 @@ export function workflowReferenceKey(
 }
 
 function storageExtension(filename: string, fallback: string): string {
-  const lastDot = filename.lastIndexOf(".");
-  if (lastDot < 0) return fallback;
-  const ext = filename.slice(lastDot).toLowerCase();
-  return /^\.[a-z0-9]{1,16}$/.test(ext) ? ext : fallback;
+  const extension = path.extname(filename).toLowerCase();
+  return /^\.[a-z0-9]{1,16}$/.test(extension) ? extension : fallback;
 }

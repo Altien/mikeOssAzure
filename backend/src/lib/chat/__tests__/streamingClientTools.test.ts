@@ -13,6 +13,18 @@ vi.mock("../../mcpConnectors", () => ({
   buildUserMcpTools: vi.fn(async () => []),
 }));
 
+vi.mock("../../userFeatures", () => ({
+  getUserFeatures: vi.fn(async () => ({
+    promptLibrary: true,
+    legalMonitors: true,
+    playbooks: true,
+    ironclad: true,
+    localModels: true,
+    committeeModels: true,
+    patentConnector: true,
+  })),
+}));
+
 import { runLLMStream, type ClientToolsAdapter } from "../streaming";
 
 type RunToolsFn = (

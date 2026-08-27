@@ -97,7 +97,7 @@ test.describe("unauthenticated", () => {
 
         for (const route of protectedRoutes) {
             await page.goto(route);
-            /* Auth check is client-side (Supabase getSession) — allow time for
+            /* Auth check is client-side — allow time for
                the async check to resolve and for Next.js router.push to fire. */
             await expect(page).toHaveURL(/\/login/, { timeout: 10_000 });
         }
@@ -108,12 +108,9 @@ test.describe("unauthenticated", () => {
 
 /* ── Test 3: logout redirects to /login ─────────────────────────────────── */
 
-/* The logout flow calls supabase.auth.signOut(), which defaults to GLOBAL
-   scope and revokes the user's session server-side. If this ran against the
-   shared `e2e@mike.local` user it would 401 every other parallel worker
-   ("Invalid or expired token"). So this test starts from a clean session and
-   logs in as a DEDICATED user (created in auth.setup.ts) whose session can be
-   safely destroyed without affecting any other test. */
+/* The logout flow destroys the current bearer session. This test starts from a
+   clean session and logs in as a dedicated user created in auth.setup.ts, so it
+   cannot affect the shared e2e@mike.local session. */
 test.describe("logout (isolated user)", () => {
     test.use({ storageState: { cookies: [], origins: [] } });
 

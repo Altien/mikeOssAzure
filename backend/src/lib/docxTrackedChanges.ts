@@ -178,7 +178,7 @@ function buildRun(rPr: XNode | null, text: string, tagName: "w:t" | "w:delText")
 }
 
 function cloneNode<T>(n: T): T {
-    return JSON.parse(JSON.stringify(n)) as T;
+    return structuredClone(n);
 }
 
 // ---------------------------------------------------------------------------

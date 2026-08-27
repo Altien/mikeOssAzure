@@ -29,6 +29,12 @@ const EMPTY_LOADED: Record<DirectoryTab, boolean> = {
     projects: false,
 };
 
+let directoryGeneration = 0;
+
+export function invalidateDirectoryCache() {
+    directoryGeneration += 1;
+}
+
 function sortDocuments(docs: Document[]) {
     return [...docs].sort((a, b) => {
         const aDate = a.updated_at ?? a.created_at ?? "";
@@ -100,6 +106,7 @@ export function useDirectoryData(
     const loadedTabsRef = useRef<Record<DirectoryTab, boolean>>({
         ...EMPTY_LOADED,
     });
+    const generationRef = useRef(directoryGeneration);
   const loadedFolderIdsRef = useRef<Record<LibraryDirectoryTab, Set<string>>>({
     files: new Set(),
     templates: new Set(),
@@ -145,6 +152,10 @@ export function useDirectoryData(
 
     const loadTab = useCallback(
         async (tab: DirectoryTab) => {
+            if (generationRef.current !== directoryGeneration) {
+                generationRef.current = directoryGeneration;
+                loadedTabsRef.current = { ...EMPTY_LOADED };
+            }
             if (
                 !enabled ||
                 loadingTabsRef.current[tab] ||

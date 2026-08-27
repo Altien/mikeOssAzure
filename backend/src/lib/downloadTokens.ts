@@ -1,12 +1,14 @@
 import crypto from "crypto";
 
 /**
- * HMAC-signed, non-expiring download tokens.
+ * HMAC-signed download tokens.
  *
- * The token encodes the R2 storage path + filename; the backend route
- * `/download/:token` validates the signature and streams the file. This
- * gives persistent links safe to store in chat history without signed-URL
- * expiry or R2 CORS headaches.
+ * The token encodes the storage path + filename (+ optional expiry); the
+ * backend route `/download/:token` validates the signature and streams the
+ * file. Tokens used for one-off signed URLs (`getSignedUrl`) carry an
+ * expiry; tokens used for chat-history cards/perminks (`buildDownloadUrl`)
+ * stay non-expiring because the downloads route re-checks document access
+ * on every request, so revocation works by removing access.
  */
 
 function getSecret(): string {
@@ -39,9 +41,19 @@ function timingSafeEqStr(a: string, b: string): boolean {
     return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
 }
 
-export function signDownload(path: string, filename: string): string {
-    const payload = JSON.stringify({ p: path, f: filename });
-    const enc = b64urlEncode(Buffer.from(payload, "utf8"));
+export function signDownload(
+    path: string,
+    filename: string,
+    expiresInSeconds?: number,
+): string {
+    const payload: { p: string; f: string; e?: number } = {
+        p: path,
+        f: filename,
+    };
+    if (expiresInSeconds && Number.isFinite(expiresInSeconds) && expiresInSeconds > 0) {
+        payload.e = Math.floor(Date.now() / 1000) + Math.floor(expiresInSeconds);
+    }
+    const enc = b64urlEncode(Buffer.from(JSON.stringify(payload), "utf8"));
     const sig = crypto
         .createHmac("sha256", getSecret())
         .update(enc)
@@ -51,7 +63,7 @@ export function signDownload(path: string, filename: string): string {
 
 export function verifyDownload(
     token: string,
-): { path: string; filename: string } | null {
+): { path: string; filename: string; expiresAt: number | null } | null {
     const parts = token.split(".");
     if (parts.length !== 2) return null;
     const [enc, sigEnc] = parts;
@@ -64,9 +76,20 @@ export function verifyDownload(
         const parsed = JSON.parse(b64urlDecode(enc).toString("utf8")) as {
             p: string;
             f: string;
+            e?: number;
         };
         if (!parsed?.p || !parsed?.f) return null;
-        return { path: parsed.p, filename: parsed.f };
+        if (
+            typeof parsed.e === "number" &&
+            parsed.e <= Math.floor(Date.now() / 1000)
+        ) {
+            return null;
+        }
+        return {
+            path: parsed.p,
+            filename: parsed.f,
+            expiresAt: typeof parsed.e === "number" ? parsed.e : null,
+        };
     } catch {
         return null;
     }

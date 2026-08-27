@@ -32,6 +32,8 @@ export const STATIC_MODELS: readonly ModelOption[] = [
   { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", group: "Google" },
   { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro", group: "Google" },
   { id: "gemini-3-flash-preview", label: "Gemini 3 Flash", group: "Google" },
+  { id: "kimi-k3", label: "Kimi K3", group: "Moonshot" },
+  { id: "kimi-k3-256k", label: "Kimi K3 256K", group: "Moonshot" },
   { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", group: "OpenAI" },
   { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", group: "OpenAI" },
   { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", group: "OpenAI" },
@@ -200,8 +202,11 @@ export function isModelAvailable(
   if (modelId.startsWith("vercel/")) return !!status.vercel;
   if (modelId.startsWith("opencode-go/")) return !!status["opencode-go"];
   const model = STATIC_MODELS.find((item) => item.id === modelId);
-  if (!model || model.group === "Local") return false;
+  if (!model || model.group === "Local" || model.group === "Committee") {
+    return false;
+  }
   if (model.group === "Anthropic") return !!status.claude;
+  if (model.group === "Moonshot") return !!status.kimi;
   if (model.group === "Google") return !!status.gemini;
   return !!status.openai;
 }

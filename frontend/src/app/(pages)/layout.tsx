@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { PanelLeft } from "lucide-react";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { ChatHistoryProvider } from "@/app/contexts/ChatHistoryContext";
@@ -9,6 +9,17 @@ import { SidebarContext } from "@/app/contexts/SidebarContext";
 import { PageChromeContext } from "@/app/contexts/PageChromeContext";
 import { AppSidebar } from "@/app/components/shared/AppSidebar";
 import { FullScreenLoader } from "@/app/components/shared/FullScreenLoader";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import {
+    featureEnabled,
+    type UserFeatureKey,
+} from "@/app/lib/featureFlags";
+
+const FEATURE_ROUTES: Array<{ prefix: string; feature: UserFeatureKey }> = [
+    { prefix: "/prompts", feature: "promptLibrary" },
+    { prefix: "/legal-monitors", feature: "legalMonitors" },
+    { prefix: "/playbooks", feature: "playbooks" },
+];
 
 export default function MikeLayout({
     children,
@@ -16,28 +27,35 @@ export default function MikeLayout({
     children: React.ReactNode;
 }) {
     const { isAuthenticated, authLoading } = useAuth();
+    const { profile, loading: profileLoading } = useUserProfile();
     const router = useRouter();
+    const pathname = usePathname();
     const [mobileActionsContainer, setMobileActionsContainer] =
         useState<HTMLDivElement | null>(null);
 
-    const [isSidebarOpenDesktop, setIsSidebarOpenDesktop] = useState(() => {
-        if (typeof window !== "undefined") {
-            const saved = localStorage.getItem("sidebarOpen");
-            return saved !== null ? saved === "true" : true;
-        }
-        return true;
-    });
+    const [isSidebarOpenDesktop, setIsSidebarOpenDesktop] = useState(true);
+    const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
-    const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
-        if (typeof window !== "undefined" && window.innerWidth < 768) {
-            return false;
-        }
-        return true;
-    });
+    useEffect(() => {
+        const frame = requestAnimationFrame(() => {
+            if (window.innerWidth < 768) {
+                setIsSidebarOpen(false);
+                return;
+            }
+            const saved = localStorage.getItem("sidebarOpen");
+            const open = saved !== null ? saved === "true" : true;
+            setIsSidebarOpenDesktop(open);
+            setIsSidebarOpen(open);
+        });
+        return () => cancelAnimationFrame(frame);
+    }, []);
 
     useEffect(() => {
         if (typeof window !== "undefined" && window.innerWidth >= 768) {
-            localStorage.setItem("sidebarOpen", isSidebarOpen.toString());
+            localStorage.setItem(
+                "sidebarOpen",
+                isSidebarOpenDesktop.toString(),
+            );
         }
     }, [isSidebarOpenDesktop]);
 
@@ -74,6 +92,21 @@ export default function MikeLayout({
             router.push("/login");
         }
     }, [authLoading, isAuthenticated, router]);
+
+    useEffect(() => {
+        if (profileLoading || !profile) return;
+        const gatedRoute = FEATURE_ROUTES.find(
+            (route) =>
+                (pathname === route.prefix ||
+                    pathname.startsWith(`${route.prefix}/`)) &&
+                !featureEnabled(
+                    profile.featureFlags,
+                    route.feature,
+                    profile.deploymentModules,
+                ),
+        );
+        if (gatedRoute) router.replace("/assistant");
+    }, [pathname, profile, profileLoading, router]);
 
     if (authLoading) {
         return <FullScreenLoader />;

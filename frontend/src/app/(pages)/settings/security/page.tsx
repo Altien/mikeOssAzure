@@ -7,6 +7,7 @@ import {
     type ClipboardEvent,
     type KeyboardEvent,
 } from "react";
+import Image from "next/image";
 import { Copy, Loader2 } from "lucide-react";
 import {
     AuthApiError,
@@ -657,9 +658,12 @@ export default function SecurityPage() {
                             </div>
                             <div className="flex justify-center">
                                 <div className="flex h-48 w-48 items-center justify-center rounded-xl bg-white p-2">
-                                    <img
+                                    <Image
                                         src={enrollment.qrCode}
                                         alt="MFA QR code"
+                                        width={176}
+                                        height={176}
+                                        unoptimized
                                         className="h-full w-full"
                                     />
                                 </div>

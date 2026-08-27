@@ -190,6 +190,13 @@ vi.mock("../../lib/supabase", () => ({
     createServerSupabase: vi.fn(() => mockSupabase()),
 }));
 
+// Routes resolve their db through createServerDatabase, which (under
+// MIKE_DATABASE_PROVIDER=sqlite) delegates to createServerSQLite — point it
+// at the same in-memory fake so query tracking sees every write.
+vi.mock("../../lib/sqlite", () => ({
+    createServerSQLite: vi.fn(() => mockSupabase()),
+}));
+
 // Authenticate every request as user "u1" without exercising the real Supabase
 // JWT path. requireMfaIfEnrolled must be exported too — userRouter (mounted by
 // the app) imports it at module load.
@@ -205,6 +212,7 @@ vi.mock("../../middleware/auth", () => ({
     },
     requireMfaIfEnrolled: (_req: unknown, _res: unknown, next: () => void) =>
         next(),
+    localAuthOnly: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
 // Keep the real error helpers (the failure-path test relies on genuine
@@ -1055,7 +1063,7 @@ describe("POST /chat — streaming endpoint", () => {
         const buildMessagesCall = vi.mocked(chatLib.buildMessages).mock
             .calls[0];
         expect(buildMessagesCall[4]).toBe(false);
-        expect(buildMessagesCall[6]).toBe("replace");
+        expect(buildMessagesCall[7]).toBe("replace");
         expect(runLLMStream).toHaveBeenCalledWith(
             expect.objectContaining({ includeResearchTools: false }),
         );

@@ -18,6 +18,12 @@ import { userRouter } from "./routes/user";
 import { modelsRouter } from "./routes/models";
 import { downloadsRouter } from "./routes/downloads";
 import { sourceDocumentsRouter } from "./routes/sourceDocuments";
+import { ironcladRouter } from "./routes/ironclad";
+import { legalMonitorsRouter } from "./routes/legalMonitors";
+import { promptsRouter } from "./routes/prompts";
+import { playbooksRouter } from "./routes/playbooks";
+import { gmailRouter } from "./routes/gmail";
+import { requireDeploymentModule } from "./lib/deploymentModules";
 import { auditRouter } from "./routes/audit";
 import { authRouter } from "./routes/auth";
 import { manifestPublicKey } from "./lib/manifestSigning";
@@ -249,6 +255,11 @@ app.put(
   uploadLimiter,
 );
 app.post("/projects/:projectId/documents", uploadLimiter);
+app.post("/integrations/ironclad/import", uploadLimiter);
+app.post("/integrations/gmail/import", uploadLimiter);
+app.post("/legal-monitors/:monitorId/run", chatLimiter);
+app.post("/playbooks/import", uploadLimiter);
+app.post("/playbooks/:playbookId/review", chatLimiter);
 app.get("/projects/:projectId/export", exportLimiter);
 app.get("/user/export", exportLimiter);
 app.get("/user/chats/export", exportLimiter);
@@ -281,6 +292,31 @@ app.use("/user", userRouter);
 app.use("/users", userRouter);
 app.use("/download", downloadsRouter);
 app.use("/documents", sourceDocumentsRouter);
+app.use(
+  "/integrations/ironclad",
+  requireDeploymentModule("ironclad"),
+  ironcladRouter,
+);
+app.use(
+  "/integrations/gmail",
+  requireDeploymentModule("gmail"),
+  gmailRouter,
+);
+app.use(
+  "/legal-monitors",
+  requireDeploymentModule("legalMonitors"),
+  legalMonitorsRouter,
+);
+app.use(
+  "/prompts",
+  requireDeploymentModule("promptLibrary"),
+  promptsRouter,
+);
+app.use(
+  "/playbooks",
+  requireDeploymentModule("playbooks"),
+  playbooksRouter,
+);
 app.use("/audit", auditRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));

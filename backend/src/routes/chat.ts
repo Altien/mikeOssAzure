@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { requireAuth } from "../middleware/auth";
-import { createServerSupabase } from "../lib/supabase";
+import { createServerDatabase } from "../lib/database";
 import { recordChatTurn } from "../lib/audit";
 import {
     buildDocContext,
@@ -25,6 +25,8 @@ import {
     parseOptionalModel,
     parseOptionalReasoning,
     parseOptionalProjectId,
+    parseOptionalDocumentContext,
+    buildWordDocumentContextPrompt,
     createReservedAssistantMessageUpdater,
     openAssistantSse,
     reserveAssistantMessage,
@@ -37,16 +39,24 @@ import {
 } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
 import { generateAssistantChatTitle } from "../lib/chatTitle";
+import {
+    safeErrorLog,
+    safeErrorMessage,
+    sendServerError,
+} from "../lib/safeError";
 import { sendInternalError } from "../lib/httpError";
 import {
     resolveEffectiveChatModel,
     resolveEffectiveReasoningLevel,
     titleModelForChat,
 } from "../lib/modelSelection";
+import { buildContextSuffix } from "../lib/contextSuffix";
+import { buildAssistantPlaybookContext } from "../lib/playbooks";
+import { featureForModel, getUserFeatures } from "../lib/userFeatures";
 
 export const chatRouter = Router();
 
-type Db = ReturnType<typeof createServerSupabase>;
+type Db = ReturnType<typeof createServerDatabase>;
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
     if (isDev) console.log(...args);
@@ -60,6 +70,20 @@ type AccessibleChat = {
     model: string | null;
     reasoning_level: string | null;
 } & Record<string, unknown>;
+
+function parseOptionalPlaybookId(value: unknown):
+    | { ok: true; playbookId: string | undefined }
+    | { ok: false; detail: string } {
+    if (value === undefined || value === null)
+        return { ok: true, playbookId: undefined };
+    if (typeof value !== "string" || !value.trim()) {
+        return {
+            ok: false,
+            detail: "playbook_id must be a non-empty string",
+        };
+    }
+    return { ok: true, playbookId: value.trim() };
+}
 
 async function validateAccessibleProjectId(
     projectId: string | null,
@@ -111,7 +135,7 @@ async function getAccessibleChat(
 // listed per-project via GET /projects/:projectId/chats.
 chatRouter.get("/", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const requestedLimit = Number.parseInt(String(req.query.limit ?? ""), 10);
     const requestedOffset = Number.parseInt(String(req.query.offset ?? ""), 10);
     const limit = Number.isFinite(requestedLimit)
@@ -140,7 +164,7 @@ chatRouter.post("/create", requireAuth, async (req, res) => {
         return void res.status(400).json({ detail: parsedProjectId.detail });
     }
     const projectId = parsedProjectId.value.projectId;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const projectAccess = await validateAccessibleProjectId(
         projectId,
         userId,
@@ -167,7 +191,7 @@ chatRouter.get("/:chatId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { chatId } = req.params;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
 
     const chat = await getAccessibleChat(chatId, userId, userEmail, db);
     if (!chat) return void res.status(404).json({ detail: "Chat not found" });
@@ -191,7 +215,7 @@ chatRouter.get("/:chatId", requireAuth, async (req, res) => {
 // we merge the current DB status in so EditCards render with the real state.
 async function hydrateEditStatuses(
     messages: Record<string, unknown>[],
-    db: ReturnType<typeof createServerSupabase>,
+    db: ReturnType<typeof createServerDatabase>,
 ): Promise<Record<string, unknown>[]> {
     const editIds = new Set<string>();
     const versionIds = new Set<string>();
@@ -340,7 +364,7 @@ chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
         return void res.status(400).json({ detail: parsedReasoning.detail });
     }
 
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const chat = await getAccessibleChat(chatId, userId, userEmail, db);
     if (!chat || (hasTitle && chat.user_id !== userId)) {
         return void res.status(404).json({ detail: "Chat not found" });
@@ -408,7 +432,23 @@ chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
 chatRouter.delete("/:chatId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const { chatId } = req.params;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
+    const { data: chat, error: loadError } = await db
+        .from("chats")
+        .select("id")
+        .eq("id", chatId)
+        .eq("user_id", userId)
+        .maybeSingle();
+    if (loadError) return void sendServerError(res, loadError);
+    if (!chat) return void res.status(404).json({ detail: "Chat not found" });
+
+    const { error: messagesError } = await db
+        .from("chat_messages")
+        .delete()
+        .eq("chat_id", chatId);
+    if (messagesError)
+        return void sendServerError(res, messagesError);
+
     const { error } = await db
         .from("chats")
         .delete()
@@ -430,7 +470,7 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
         typeof req.body?.model === "string" ? req.body.model.trim() : null;
     if (!message)
         return void res.status(400).json({ detail: "message is required" });
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const chat = await getAccessibleChat(chatId, userId, userEmail, db);
     if (!chat) return void res.status(404).json({ detail: "Chat not found" });
 
@@ -492,6 +532,31 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     if (!parsedReasoning.ok) {
         return void res.status(400).json({ detail: parsedReasoning.detail });
     }
+    const parsedPlaybookId = parseOptionalPlaybookId(body.playbook_id);
+    if (!parsedPlaybookId.ok) {
+        return void res.status(400).json({ detail: parsedPlaybookId.detail });
+    }
+    const parsedPlaybookVersionId = parseOptionalPlaybookId(
+        body.playbook_version_id,
+    );
+    if (!parsedPlaybookVersionId.ok) {
+        return void res.status(400).json({
+            detail: "playbook_version_id must be a non-empty string",
+        });
+    }
+    if (parsedPlaybookVersionId.playbookId && !parsedPlaybookId.playbookId) {
+        return void res.status(400).json({
+            detail: "playbook_id is required with playbook_version_id",
+        });
+    }
+    const parsedDocumentContext = parseOptionalDocumentContext(
+        body.document_context,
+    );
+    if (!parsedDocumentContext.ok) {
+        return void res
+            .status(400)
+            .json({ detail: parsedDocumentContext.detail });
+    }
     const parsedAskInputsResponse = parseOptionalAskInputsResponse(
         body.ask_inputs_response,
     );
@@ -505,6 +570,23 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     const project_id = parsedProjectId.value.projectId;
     const model = parsedModel.value;
     const askInputsResponse = parsedAskInputsResponse.value;
+    const db = createServerDatabase();
+    const userFeatures = await getUserFeatures(userId, db);
+    const modelFeature = featureForModel(model);
+    if (modelFeature && !userFeatures[modelFeature]) {
+        return void res.status(403).json({
+            detail: "The selected model feature is disabled in Account > Features.",
+            code: "feature_disabled",
+            feature: modelFeature,
+        });
+    }
+    if (parsedPlaybookId.playbookId && !userFeatures.playbooks) {
+        return void res.status(403).json({
+            detail: "Playbooks are disabled in Account > Features.",
+            code: "feature_disabled",
+            feature: "playbooks",
+        });
+    }
     // Reserve a stable assistant identity before streaming. This lets clients
     // associate streamed UI with the same durable message after a reload.
     const assistantMessageId = askInputsResponse ? null : randomUUID();
@@ -518,7 +600,29 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     });
 
     const userEmail = res.locals.userEmail as string | undefined;
-    const db = createServerSupabase();
+    let playbookContext = "";
+    let selectedPlaybook: {
+        id: string;
+        title: string;
+        version: number;
+        versionId: string;
+    } | null = null;
+    if (parsedPlaybookId.playbookId) {
+        try {
+            const loaded = await buildAssistantPlaybookContext(
+                userId,
+                parsedPlaybookId.playbookId,
+                db,
+                parsedPlaybookVersionId.playbookId,
+            );
+            playbookContext = loaded.prompt;
+            selectedPlaybook = loaded.selection;
+        } catch (error) {
+            const detail = safeErrorMessage(error, "Could not load playbook");
+            const status = /not found/i.test(detail) ? 404 : 400;
+            return void res.status(status).json({ detail });
+        }
+    }
     let chatId = chat_id ?? null;
     let chatTitle: string | null = null;
     let chatModel: string | null = null;
@@ -639,6 +743,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             content: lastUser.content,
             files: lastUser.files ?? null,
             workflow: lastUser.workflow ?? null,
+            playbook: selectedPlaybook,
         });
     }
 
@@ -672,12 +777,32 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         personalisation,
         nonce,
     );
+    const wordContext = buildContextSuffix({
+        editMode: body.editMode,
+        creationMode: body.creation_mode,
+        selection: body.selection,
+    });
+    const wordDocumentContext = parsedDocumentContext.documentContext
+        ? buildWordDocumentContextPrompt(
+              parsedDocumentContext.documentContext,
+              nonce,
+          )
+        : "";
+    const assistantContext = [
+        wordContext,
+        playbookContext,
+        wordDocumentContext,
+        personalisationPrompt,
+    ]
+        .filter(Boolean)
+        .join("\n\n");
     const apiMessages = buildMessages(
         enrichedMessages,
         docAvailability,
-        personalisationPrompt || undefined,
+        assistantContext || undefined,
         undefined,
         legalResearchUs,
+        userFeatures.ironclad,
         nonce,
     );
 
@@ -787,10 +912,17 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             apiKeys,
             signal: stream.signal,
             projectId: resolvedProjectId,
+            userEmail,
             nonce,
             // This route first makes the advertised assistant ID durable.
             // It emits [DONE] only after the reserved row has been populated.
             emitDone: false,
+            playbookChunkDocumentIds:
+                selectedPlaybook && lastUser?.files?.length
+                    ? lastUser.files
+                          .map((file) => file.document_id)
+                          .filter((id): id is string => typeof id === "string")
+                    : undefined,
         });
 
         devLog("[chat/stream] LLM stream finished", {

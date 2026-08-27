@@ -6,11 +6,13 @@ const {
     checkProjectAccess,
     buildMessages,
     buildProjectDocContext,
+    buildAssistantPlaybookContext,
 } = vi.hoisted(() => ({
     runLLMStream: vi.fn(),
     checkProjectAccess: vi.fn(),
     buildMessages: vi.fn(),
     buildProjectDocContext: vi.fn(),
+    buildAssistantPlaybookContext: vi.fn(),
 }));
 
 function makeQuery() {
@@ -32,7 +34,7 @@ function makeQuery() {
     return q;
 }
 
-function mockSupabase() {
+function mockDb() {
     return {
         from: vi.fn(() => makeQuery()),
         rpc: vi.fn(() => Promise.resolve({ data: null, error: null })),
@@ -43,11 +45,12 @@ function mockSupabase() {
     };
 }
 
-vi.mock("../../lib/supabase", () => ({
-    createServerSupabase: vi.fn(() => mockSupabase()),
+vi.mock("../../lib/sqlite", () => ({
+    createServerSQLite: vi.fn(() => mockDb()),
 }));
 
 vi.mock("../../middleware/auth", () => ({
+    localAuthOnly: (_req: unknown, _res: unknown, next: () => void) => next(),
     requireAuth: (
         _req: unknown,
         res: { locals: Record<string, unknown> },
@@ -94,6 +97,15 @@ vi.mock("../../lib/userSettings", () => ({
     getUserApiKeys: vi.fn(async () => ({})),
 }));
 
+vi.mock("../../lib/playbooks", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../lib/playbooks")>();
+    return {
+        ...actual,
+        buildAssistantPlaybookContext: (...args: unknown[]) =>
+            buildAssistantPlaybookContext(...args),
+    };
+});
+
 vi.mock("../../lib/access", () => ({
     checkProjectAccess: (...args: unknown[]) => checkProjectAccess(...args),
     ensureDocAccess: vi.fn(async () => ({ ok: true, isOwner: true })),
@@ -104,7 +116,7 @@ vi.mock("../../lib/access", () => ({
 
 import { app } from "../../app";
 import { spotlight } from "../../lib/chat";
-import { createServerSupabase } from "../../lib/supabase";
+import { createServerSQLite } from "../../lib/sqlite";
 
 const VALID_BODY = {
     messages: [{ role: "user", content: "hello" }],
@@ -130,6 +142,12 @@ describe("POST /projects/:projectId/chat", () => {
             isOwner: true,
             project: { id: "p1", user_id: "u1", shared_with: null },
         });
+        buildAssistantPlaybookContext.mockResolvedValue(
+            {
+                prompt: "ACTIVE PUBLISHED PLAYBOOK: project test",
+                selection: { id: "playbook-1", title: "Test", version: 1, versionId: "version-1" },
+            },
+        );
     });
 
     it("returns 404 and never streams when project access is denied", async () => {
@@ -306,7 +324,7 @@ describe("POST /projects/:projectId/chat", () => {
 
             expect(res.status).toBe(400);
             expect(res.body.detail).toBe(detail);
-            expect(createServerSupabase).not.toHaveBeenCalled();
+            expect(createServerSQLite).not.toHaveBeenCalled();
             expect(checkProjectAccess).not.toHaveBeenCalled();
             expect(buildProjectDocContext).not.toHaveBeenCalled();
             expect(runLLMStream).not.toHaveBeenCalled();
@@ -344,13 +362,14 @@ describe("POST /projects/:projectId/chat", () => {
                 ],
             });
 
-        const [messages, , systemPromptExtra, , , nonce] =
+        const [messages, , systemPromptExtra, , , , nonce] =
             buildMessages.mock.calls[0] as unknown as [
                 { content: string }[],
                 unknown,
                 string,
                 unknown,
                 unknown,
+                boolean,
                 string,
             ];
         const fencedFilename = spotlight(canonicalFilename, nonce);
@@ -372,5 +391,25 @@ describe("POST /projects/:projectId/chat", () => {
         expect(res.status).toBe(200);
         expect(res.text).toContain('"type":"error"');
         expect(res.text).toContain("[DONE]");
+    });
+
+    it("loads a selected playbook inside a project chat", async () => {
+        const res = await request(app)
+            .post("/projects/p1/chat")
+            .set("Authorization", "Bearer test")
+            .send({
+                ...VALID_BODY,
+                playbook_id: "playbook-1",
+                playbook_version_id: "version-1",
+            });
+
+        expect(res.status).toBe(200);
+        expect(buildAssistantPlaybookContext).toHaveBeenCalledWith(
+            "u1",
+            "playbook-1",
+            expect.anything(),
+            "version-1",
+        );
+        expect(runLLMStream).toHaveBeenCalledTimes(1);
     });
 });
