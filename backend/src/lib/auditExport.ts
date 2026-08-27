@@ -18,6 +18,22 @@ export const AUDIT_EXPORT_LIMIT = 2000;
 const MAX_PAGE = 100_000;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * Which projects' audit rows this user may read.
+ *
+ * !! MERGE NOTE — this function is a VERBATIM MOVE of the one that lives in
+ * routes/audit.ts on main, kept byte-for-byte so this PR changes no
+ * authorization behaviour. It is NOT an independent implementation, and the
+ * `shared_with` email predicate below is not a decision made here.
+ *
+ * The organisations/RBAC stack retires `projects.shared_with` as an
+ * authorization source and replaces this exact predicate with a grant lookup.
+ * Because this file is new, git will auto-merge it past that change without a
+ * conflict and quietly resurrect the email predicate. WHICHEVER ORDER THE TWO
+ * LAND IN, the orgs version of this logic wins: after that stack merges, this
+ * body must be re-pointed at grants (or, better, deleted in favour of
+ * importing the single shared helper it introduces).
+ */
 export async function accessibleProjectIds(
     db: Db,
     userId: string,
