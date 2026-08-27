@@ -1230,7 +1230,7 @@ describe("listWorkflows", () => {
         );
     });
 
-    it("requests the full untyped collection when no type is given", async () => {
+    it("requests the unfiltered collection when type is omitted", async () => {
         fetchMock.mockResolvedValue(jsonResponse([]));
 
         await listWorkflows();
@@ -1625,6 +1625,9 @@ describe("tabular review chats", () => {
             chatId: "c1",
         });
         expect(parseTabularChatSelectionKey("ordinary-chat-id")).toBeNull();
+        expect(
+            parseTabularChatSelectionKey("tabular-review-chat:r1:"),
+        ).toBeNull();
     });
 
     it("rejects prefixed keys missing either half", () => {
@@ -1962,11 +1965,9 @@ describe("query and payload defaults", () => {
             parent_folder_id: "parent-1",
         });
 
-        // Same default for the library sibling: a root-level folder sends an
-        // explicit null parent, mirroring the project route's contract.
-        await createLibraryFolder("files", "Discovery");
+        await createLibraryFolder("files", "Root folder");
         expect(JSON.parse(lastFetchCall().init.body as string)).toEqual({
-            name: "Discovery",
+            name: "Root folder",
             parent_folder_id: null,
         });
     });
