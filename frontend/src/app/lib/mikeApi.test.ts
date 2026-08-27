@@ -1173,7 +1173,7 @@ describe("listWorkflows", () => {
         expect(lastFetchCall().url).toBe("/api/workflows?type=assistant");
     });
 
-    it("requests the full untyped collection when no type is given", async () => {
+    it("requests the unfiltered collection when type is omitted", async () => {
         fetchMock.mockResolvedValue(jsonResponse([]));
 
         await listWorkflows();
@@ -1299,7 +1299,7 @@ describe("getWorkflowFilterOptions", () => {
         expect(init.signal).toBe(controller.signal);
     });
 
-    it("requests unscoped facets with a bare URL when no filters are active", async () => {
+    it("requests unfiltered facets when options are omitted", async () => {
         fetchMock.mockResolvedValue(
             jsonResponse({ practices: [], languages: [], jurisdictions: [] }),
         );
@@ -1511,6 +1511,9 @@ describe("tabular review chats", () => {
             chatId: "c1",
         });
         expect(parseTabularChatSelectionKey("ordinary-chat-id")).toBeNull();
+        expect(
+            parseTabularChatSelectionKey("tabular-review-chat:r1:"),
+        ).toBeNull();
     });
 
     it("rejects prefixed keys missing either half", () => {
@@ -1680,11 +1683,9 @@ describe("query and payload defaults", () => {
             parent_folder_id: "parent-1",
         });
 
-        // Same default for the library sibling: a root-level folder sends an
-        // explicit null parent, mirroring the project route's contract.
-        await createLibraryFolder("files", "Discovery");
+        await createLibraryFolder("files", "Root folder");
         expect(JSON.parse(lastFetchCall().init.body as string)).toEqual({
-            name: "Discovery",
+            name: "Root folder",
             parent_folder_id: null,
         });
     });
