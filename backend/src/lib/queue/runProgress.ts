@@ -1,4 +1,4 @@
-import { getRedisConnection } from "./connection";
+import { getRedisProducerConnection, withRedisTimeout } from "./connection";
 import { redisEnabled } from "../dbq/driver";
 
 /**
@@ -40,9 +40,11 @@ export async function publishCellUpdate(
     // publish is correct, and dialing Redis here would hang no-Redis deploys.
     if (!redisEnabled()) return;
     try {
-        await getRedisConnection().publish(
-            runProgressChannel(reviewId),
-            JSON.stringify(update),
+        await withRedisTimeout("progress publish", () =>
+            getRedisProducerConnection().publish(
+                runProgressChannel(reviewId),
+                JSON.stringify(update),
+            ),
         );
     } catch {
         // Non-fatal: the worker has already persisted the cell; the tailing

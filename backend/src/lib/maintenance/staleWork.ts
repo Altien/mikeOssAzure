@@ -32,6 +32,7 @@
 import { createServerSupabase } from "../supabase";
 import { getConversionQueue, conversionJobId } from "../queue/conversionQueue";
 import { getExtractionQueue, extractionJobId } from "../queue/extractionQueue";
+import { withRedisTimeout } from "../queue/connection";
 import { finalizeCell } from "../tabular/tabular.extractRow";
 import { finishGenerationIfIdle } from "../tabular/tabular.shared";
 import { redisEnabled } from "../dbq/driver";
@@ -77,7 +78,9 @@ export async function sweepStaleProcessingDocuments(
             // liveness signal on either driver.
             const jobId = conversionJobId(doc.current_version_id);
             const live = redisEnabled()
-                ? !!(await getConversionQueue().getJob(jobId))
+                ? !!(await withRedisTimeout("conversion job lookup", () =>
+                      getConversionQueue().getJob(jobId),
+                  ))
                 : await liveDbJobExists(db, jobId);
             if (live) continue;
         }
@@ -160,9 +163,9 @@ export async function sweepStaleGeneratingCells(
     const useRedis = redisEnabled();
     const jobLive = (jobId: string) =>
         useRedis
-            ? getExtractionQueue()
-                  .getJob(jobId)
-                  .then((j) => !!j)
+            ? withRedisTimeout("extraction job lookup", () =>
+                  getExtractionQueue().getJob(jobId),
+              ).then((j) => !!j)
             : liveDbJobExists(db, jobId);
     // One liveness lookup per (review, row) — full-row jobs cover every cell
     // of their row; single-cell jobs are checked individually.

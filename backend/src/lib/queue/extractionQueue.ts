@@ -1,5 +1,5 @@
 import { Queue } from "bullmq";
-import { getRedisConnection } from "./connection";
+import { getRedisProducerConnection, withRedisTimeout } from "./connection";
 import { redisEnabled } from "../dbq/driver";
 import { enqueueDbJob } from "../dbq/enqueue";
 import { createServerSupabase } from "../supabase";
@@ -54,7 +54,7 @@ let queue: Queue<ExtractionJobData> | null = null;
 export function getExtractionQueue(): Queue<ExtractionJobData> {
     if (!queue) {
         queue = new Queue<ExtractionJobData>(EXTRACTION_QUEUE, {
-            connection: getRedisConnection(),
+            connection: getRedisProducerConnection(),
         });
     }
     return queue;
@@ -101,13 +101,17 @@ export async function enqueueExtraction(data: ExtractionJobData) {
             maxAttempts: 3,
         });
     }
-    return getExtractionQueue().add("extract", data, {
-        jobId: extractionJobId(data.reviewId, data.rowId, data.columnIndex),
-        attempts: 3,
-        backoff: { type: "exponential", delay: 2000 },
-        removeOnComplete: true,
-        removeOnFail: true,
-    });
+    // Deadline-bounded — see enqueueAppJobDelivery: a Redis outage must not
+    // hang the /generate request that is enqueuing this row.
+    return withRedisTimeout("extraction enqueue", () =>
+        getExtractionQueue().add("extract", data, {
+            jobId: extractionJobId(data.reviewId, data.rowId, data.columnIndex),
+            attempts: 3,
+            backoff: { type: "exponential", delay: 2000 },
+            removeOnComplete: true,
+            removeOnFail: true,
+        }),
+    );
 }
 
 /**

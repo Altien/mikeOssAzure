@@ -1,5 +1,5 @@
 import { Queue } from "bullmq";
-import { getRedisConnection } from "./connection";
+import { getRedisProducerConnection, withRedisTimeout } from "./connection";
 
 /**
  * BullMQ *delivery* queue for the DB-backed registry jobs (audit, deletion,
@@ -26,7 +26,7 @@ let queue: Queue<AppJobDelivery> | null = null;
 export function getAppJobsQueue(): Queue<AppJobDelivery> {
     if (!queue) {
         queue = new Queue<AppJobDelivery>(APP_JOBS_QUEUE, {
-            connection: getRedisConnection(),
+            connection: getRedisProducerConnection(),
         });
     }
     return queue;
@@ -41,19 +41,24 @@ export function enqueueAppJobDelivery(
     dbJobId: string,
     opts?: { delayMs?: number; attempt?: number },
 ) {
-    return getAppJobsQueue().add(
-        "deliver",
-        { dbJobId },
-        {
-            // Underscores, not ':' — see conversionJobId's note on BullMQ ids.
-            jobId: `dbjob_${dbJobId}_${opts?.attempt ?? 0}`,
-            attempts: 1,
-            ...(opts?.delayMs && opts.delayMs > 0
-                ? { delay: opts.delayMs }
-                : {}),
-            removeOnComplete: true,
-            removeOnFail: true,
-        },
+    // Deadline-bounded: this runs on request threads (chat audit fan-out,
+    // account deletion, export scheduling). The db_jobs row is already
+    // committed, so a timeout here costs latency on the job, never the job.
+    return withRedisTimeout("app-jobs delivery", () =>
+        getAppJobsQueue().add(
+            "deliver",
+            { dbJobId },
+            {
+                // Underscores, not ':' — see conversionJobId's note on BullMQ ids.
+                jobId: `dbjob_${dbJobId}_${opts?.attempt ?? 0}`,
+                attempts: 1,
+                ...(opts?.delayMs && opts.delayMs > 0
+                    ? { delay: opts.delayMs }
+                    : {}),
+                removeOnComplete: true,
+                removeOnFail: true,
+            },
+        ),
     );
 }
 
