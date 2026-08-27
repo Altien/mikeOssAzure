@@ -32,16 +32,23 @@ describe("docker-compose db-init migration replay", () => {
     });
 
     it.each(migrations)("mounts and applies %s", (file) => {
-        const mount = compose.match(
-            new RegExp(
-                `\\./backend/migrations/${file.replace(/\./g, "\\.")}:(/[\\w.-]+)`,
-            ),
-        );
+        // Plain string search, no dynamically built RegExp: the filename
+        // comes from readdirSync so nothing hostile reaches it, but a regex
+        // assembled from it still needs every metacharacter escaped
+        // (CodeQL js/incomplete-sanitization), and an exact-substring probe
+        // needs none.
+        const needle = `./backend/migrations/${file}:`;
+        const mountLine = compose
+            .split("\n")
+            .find((line) => line.includes(needle));
         expect(
-            mount,
+            mountLine,
             `docker-compose.yml does not mount backend/migrations/${file} into db-init`,
-        ).not.toBeNull();
-        const containerPath = mount![1];
+        ).toBeDefined();
+        const containerPath = mountLine!
+            .slice(mountLine!.indexOf(needle) + needle.length)
+            .split(":")[0]
+            .trim();
         expect(
             compose.includes(`-f ${containerPath};`),
             `docker-compose.yml mounts ${file} at ${containerPath} but never psql's it`,
