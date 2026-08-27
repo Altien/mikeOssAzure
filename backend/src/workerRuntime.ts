@@ -21,7 +21,8 @@ import {
 } from "./lib/dbq/handlers";
 import { enqueueDbJob } from "./lib/dbq/enqueue";
 import { runStaleWorkSweep } from "./lib/maintenance/staleWork";
-import { startUploadProcessingWorker } from "./lib/uploadProcessing";
+import { startUploadProcessingWorkers } from "./lib/uploadProcessing";
+import { uploadProcessingConfiguration } from "./lib/runtimeConfig";
 import { createServerSupabase } from "./lib/supabase";
 
 const SWEEP_INTERVAL_MS = (() => {
@@ -95,7 +96,12 @@ export function startAllWorkers(): void {
 
     // Upload-session processing: lease-based claims over Postgres, so any
     // number of runtimes can poll concurrently without double-processing.
-    stopUploadWorker = startUploadProcessingWorker();
+    const uploadProcessing = uploadProcessingConfiguration();
+    stopUploadWorker = startUploadProcessingWorkers(uploadProcessing);
+    console.log(
+        `Upload processing started with ${uploadProcessing.concurrency} workers ` +
+            `and a ${uploadProcessing.maxRunningPerUser}-job per-user cap`,
+    );
 
     // Stale-work reaper: a crash between "status = processing/generating"
     // and the finalizing write strands rows in a transient state forever —
