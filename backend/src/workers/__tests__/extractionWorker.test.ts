@@ -11,11 +11,15 @@ vi.mock("../../lib/tabular/tabular.rows", () => ({
     loadRowDocumentText: (...a: unknown[]) => loadRowDocumentText(...a),
 }));
 
-vi.mock("../../lib/userSettings", () => ({
-    getUserModelSettings: async () => ({
-        tabular_model: "claude-test",
-        api_keys: {},
-    }),
+// The review's model is resolved through tabular.shared (router aliases + the
+// owner's provider keys). Stub only that resolution; the lease helpers exported
+// from the same module are the subject of the tests below and must stay real.
+const validateSelectedModel = vi.fn();
+vi.mock("../../lib/tabular/tabular.shared", async (importOriginal) => ({
+    ...(await importOriginal<
+        typeof import("../../lib/tabular/tabular.shared")
+    >()),
+    validateSelectedModel: (...a: unknown[]) => validateSelectedModel(...a),
 }));
 
 const queryTabularAllColumns = vi.fn();
@@ -141,13 +145,23 @@ beforeEach(() => {
     loadRowDocumentText.mockReset();
     loadRowDocumentText.mockResolvedValue("extracted text");
     queryTabularAllColumns.mockReset();
+    validateSelectedModel.mockReset();
+    validateSelectedModel.mockResolvedValue({
+        ok: true,
+        model: "claude-test",
+        apiKeys: {},
+    });
 });
 
 describe("runExtractionJob", () => {
     it("marks every column generating then done and publishes each", async () => {
         const publish = vi.fn(async () => {});
         const db = makeDb({
-            tabular_reviews: { select: { data: { columns_config: COLUMNS } } },
+            tabular_reviews: {
+                select: {
+                    data: { columns_config: COLUMNS, model: "claude-test" },
+                },
+            },
             tabular_cells: { select: { data: [] } }, // no cells yet
         });
         queryTabularAllColumns.mockImplementation(
@@ -183,7 +197,11 @@ describe("runExtractionJob", () => {
     it("reuses existing cell records (update, not insert) when they already exist", async () => {
         const publish = vi.fn(async () => {});
         const db = makeDb({
-            tabular_reviews: { select: { data: { columns_config: COLUMNS } } },
+            tabular_reviews: {
+                select: {
+                    data: { columns_config: COLUMNS, model: "claude-test" },
+                },
+            },
             tabular_cells: {
                 select: {
                     data: [
@@ -211,7 +229,11 @@ describe("runExtractionJob", () => {
     it("skips columns already done with content — no LLM call", async () => {
         const publish = vi.fn(async () => {});
         const db = makeDb({
-            tabular_reviews: { select: { data: { columns_config: COLUMNS } } },
+            tabular_reviews: {
+                select: {
+                    data: { columns_config: COLUMNS, model: "claude-test" },
+                },
+            },
             tabular_cells: {
                 select: {
                     data: [
@@ -231,7 +253,11 @@ describe("runExtractionJob", () => {
     it("throws when the model omits a column so BullMQ retries", async () => {
         const publish = vi.fn(async () => {});
         const db = makeDb({
-            tabular_reviews: { select: { data: { columns_config: COLUMNS } } },
+            tabular_reviews: {
+                select: {
+                    data: { columns_config: COLUMNS, model: "claude-test" },
+                },
+            },
             tabular_cells: { select: { data: [] } },
         });
         // Only column 0 comes back.
@@ -249,7 +275,11 @@ describe("runExtractionJob", () => {
     it("restricts a single-cell job (columnIndex) to its one column", async () => {
         const publish = vi.fn(async () => {});
         const db = makeDb({
-            tabular_reviews: { select: { data: { columns_config: COLUMNS } } },
+            tabular_reviews: {
+                select: {
+                    data: { columns_config: COLUMNS, model: "claude-test" },
+                },
+            },
             tabular_cells: {
                 select: {
                     data: [
@@ -286,7 +316,11 @@ describe("runExtractionJob", () => {
     it("returns early on a canceled job without touching the DB (clear-cells won)", async () => {
         const publish = vi.fn(async () => {});
         const db = makeDb({
-            tabular_reviews: { select: { data: { columns_config: COLUMNS } } },
+            tabular_reviews: {
+                select: {
+                    data: { columns_config: COLUMNS, model: "claude-test" },
+                },
+            },
             tabular_cells: { select: { data: [] } },
         });
 
@@ -305,7 +339,11 @@ describe("runExtractionJob", () => {
     it("a canceled leased job drops its stamp and releases the lease", async () => {
         const publish = vi.fn(async () => {});
         const db = makeDb({
-            tabular_reviews: { select: { data: { columns_config: COLUMNS } } },
+            tabular_reviews: {
+                select: {
+                    data: { columns_config: COLUMNS, model: "claude-test" },
+                },
+            },
             // No cell still carries gen-1 once the stamp is dropped.
             tabular_cells: { select: { data: [] } },
         });
@@ -338,7 +376,11 @@ describe("runExtractionJob", () => {
     it("a canceled single-cell job un-stamps only its own column", async () => {
         const publish = vi.fn(async () => {});
         const db = makeDb({
-            tabular_reviews: { select: { data: { columns_config: COLUMNS } } },
+            tabular_reviews: {
+                select: {
+                    data: { columns_config: COLUMNS, model: "claude-test" },
+                },
+            },
             tabular_cells: { select: { data: [] } },
         });
 
@@ -354,10 +396,40 @@ describe("runExtractionJob", () => {
         expect(stampClears[0].filters.column_index).toBe(1);
     });
 
+    it("throws when the review's model is no longer usable", async () => {
+        // The enqueuing request validated the model, but a review can be
+        // re-pointed (or the owner's key removed) before the job runs. Throwing
+        // sends the row down the normal retry/permanent-failure path, which
+        // leaves the grid in a terminal "error" state rather than spinning.
+        const publish = vi.fn(async () => {});
+        const db = makeDb({
+            tabular_reviews: {
+                select: {
+                    data: { columns_config: COLUMNS, model: "claude-test" },
+                },
+            },
+            tabular_cells: { select: { data: [] } },
+        });
+        validateSelectedModel.mockResolvedValue({
+            ok: false,
+            status: 422,
+            body: { code: "missing_api_key", detail: "no key" },
+        });
+
+        await expect(
+            runExtractionJob(DATA, { db: db as never, publish }),
+        ).rejects.toThrow(/model unusable/);
+        expect(queryTabularAllColumns).not.toHaveBeenCalled();
+    });
+
     it("returns early when the review has no columns", async () => {
         const publish = vi.fn(async () => {});
         const db = makeDb({
-            tabular_reviews: { select: { data: { columns_config: [] } } },
+            tabular_reviews: {
+                select: {
+                    data: { columns_config: [], model: "claude-test" },
+                },
+            },
         });
 
         await runExtractionJob(DATA, { db: db as never, publish });
@@ -371,7 +443,11 @@ describe("runExtractionJob", () => {
         const publish = vi.fn(async () => {});
         loadReviewRow.mockResolvedValue(null);
         const db = makeDb({
-            tabular_reviews: { select: { data: { columns_config: COLUMNS } } },
+            tabular_reviews: {
+                select: {
+                    data: { columns_config: COLUMNS, model: "claude-test" },
+                },
+            },
         });
 
         await runExtractionJob(DATA, { db: db as never, publish });
@@ -578,7 +654,11 @@ describe("generation lease", () => {
     it("stamps and guards cell writes with the job's generation id", async () => {
         const publish = vi.fn(async () => {});
         const db = makeDb({
-            tabular_reviews: { select: { data: { columns_config: COLUMNS } } },
+            tabular_reviews: {
+                select: {
+                    data: { columns_config: COLUMNS, model: "claude-test" },
+                },
+            },
             tabular_cells: {
                 select: (call) =>
                     // The idleness probe filters on generation_id; answer it
@@ -640,7 +720,11 @@ describe("generation lease", () => {
     it("releases the lease once no cell still carries the generation id", async () => {
         const publish = vi.fn(async () => {});
         const db = makeDb({
-            tabular_reviews: { select: { data: { columns_config: COLUMNS } } },
+            tabular_reviews: {
+                select: {
+                    data: { columns_config: COLUMNS, model: "claude-test" },
+                },
+            },
             tabular_cells: {
                 select: (call) =>
                     call.filters.generation_id ? { data: [] } : { data: [] },
@@ -669,7 +753,11 @@ describe("generation lease", () => {
     it("keeps the lease while cells are still claimed (retry pending)", async () => {
         const publish = vi.fn(async () => {});
         const db = makeDb({
-            tabular_reviews: { select: { data: { columns_config: COLUMNS } } },
+            tabular_reviews: {
+                select: {
+                    data: { columns_config: COLUMNS, model: "claude-test" },
+                },
+            },
             tabular_cells: {
                 select: (call) =>
                     call.filters.generation_id
@@ -699,7 +787,11 @@ describe("generation lease", () => {
     it("takes no lease action when the job carries no generation id", async () => {
         const publish = vi.fn(async () => {});
         const db = makeDb({
-            tabular_reviews: { select: { data: { columns_config: COLUMNS } } },
+            tabular_reviews: {
+                select: {
+                    data: { columns_config: COLUMNS, model: "claude-test" },
+                },
+            },
             tabular_cells: { select: { data: [] } },
         });
         queryTabularAllColumns.mockImplementation(
