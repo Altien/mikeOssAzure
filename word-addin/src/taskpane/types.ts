@@ -17,22 +17,13 @@ export interface Project {
 
 export interface Document {
   id: string;
+  workflow_id?: string | null;
   folder_id?: string | null;
   library_folder_id?: string | null;
   filename: string;
   file_type: string | null;
   size_bytes: number | null;
   created_at: string | null;
-}
-
-export interface WorkflowReferenceDocument {
-  id: string;
-  workflow_id: string;
-  filename: string;
-  file_type: string;
-  size_bytes: number | null;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface Chat {

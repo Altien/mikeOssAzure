@@ -48,7 +48,7 @@ describe("workflow catalog identifiers", () => {
     expect(catalogKeyFromWorkflowId("builtin-../proofread")).toBeNull();
   });
 
-  it("preserves the compatibility response without embedding reference bytes", () => {
+  it("preserves the compatibility response without embedding asset bytes", () => {
     expect(catalogWorkflowToLegacy(CATALOG_ROW)).toEqual(
       expect.objectContaining({
         id: "builtin-proofread",
@@ -60,7 +60,7 @@ describe("workflow catalog identifiers", () => {
           type: "assistant",
         }),
         skill_md: CATALOG_ROW.prompt_md,
-        reference_files: [],
+        assets: [],
       }),
     );
   });

@@ -119,7 +119,7 @@ describe("workflow catalog synchronization", () => {
         syncWorkflowCatalog({ rpc } as never, { temporaryRoot, fetchImpl }),
       ).resolves.toEqual({
         workflows: 5,
-        references: 1,
+        assets: 1,
         sourceCommit: COMMIT,
       });
       expect(storage.uploadFile).toHaveBeenCalledOnce();
@@ -130,7 +130,7 @@ describe("workflow catalog synchronization", () => {
         expect.arrayContaining([
           expect.objectContaining({
             workflow_key: "proofread",
-            reference_files: [
+            assets: [
               expect.objectContaining({
                 filename: "template.docx",
                 storage_path: expect.stringContaining(
@@ -148,7 +148,7 @@ describe("workflow catalog synchronization", () => {
     }
   });
 
-  it("fails and cleans up instead of dropping reference files without storage", async () => {
+  it("fails and cleans up instead of dropping assets without storage", async () => {
     storage.enabled = false;
     const bytes = await sourceArchive();
     const fetchImpl = vi.fn(async (url: string | URL | Request) => {

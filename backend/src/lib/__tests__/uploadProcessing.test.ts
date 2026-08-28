@@ -309,34 +309,33 @@ describe("upload processing", () => {
     );
   });
 
-  it("creates an idempotent workflow reference using its reserved resource id", async () => {
-    const reference = {
+  it("creates an idempotent workflow asset as a document using its reserved resource id", async () => {
+    const asset = {
       id: baseFile.resource_id,
       workflow_id: "55555555-5555-4555-8555-555555555555",
       filename: baseFile.filename,
     };
     const db = fakeDb({
-      workflows: [
-        {
-          data: { id: reference.workflow_id, user_id: baseSession.user_id },
-          error: null,
-        },
-      ],
-      workflow_reference_documents: [{ data: reference, error: null }],
+      documents: [{ data: asset, error: null }],
     });
 
     const result = await processUploadFile(
       db as never,
       {
         ...baseSession,
-        purpose: "workflow_reference_create",
-        destination: { workflow_id: reference.workflow_id },
+        purpose: "document_create",
+        destination: { scope: "workflow", workflow_id: asset.workflow_id },
       },
       baseFile,
     );
 
-    expect(db.from).toHaveBeenCalledWith("workflow_reference_documents");
-    expect(result).toEqual(reference);
+    expect(db.from).toHaveBeenCalledWith("documents");
+    expect(db.from).toHaveBeenCalledWith("document_versions");
+    expect(result).toMatchObject({
+      id: asset.id,
+      workflow_id: asset.workflow_id,
+      filename: asset.filename,
+    });
     expect(mocks.copyFile).toHaveBeenCalledOnce();
   });
 

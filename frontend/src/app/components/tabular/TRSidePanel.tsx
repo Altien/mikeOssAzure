@@ -26,7 +26,6 @@ import type {
     TabularCell,
     TabularReviewRow,
 } from "../shared/types";
-import { isSpreadsheetFilename } from "../shared/types";
 import { preprocessCitations, type ParsedCitation } from "./citation-utils";
 import { getPillClass } from "./pillUtils";
 import { PdfView } from "../shared/views/PdfView";
@@ -43,16 +42,7 @@ import {
 } from "@/app/components/ui/liquid-surface";
 import { GlassIconButton } from "@/app/components/ui/glass-icon-button";
 import { CitationPillUI } from "@/shared/ui/CitationPillUI";
-
-function isDocxDocument(d: {
-    file_type?: string | null;
-    filename?: string;
-}): boolean {
-    const ft = (d.file_type ?? "").toLowerCase();
-    if (ft === "docx" || ft === "doc") return true;
-    const ext = d.filename?.split(".").pop()?.toLowerCase();
-    return ext === "docx" || ext === "doc";
-}
+import { resolveDocumentViewType } from "@/app/lib/documentViewType";
 
 interface Props {
     cell: TabularCell;
@@ -163,6 +153,11 @@ export function TRSidePanel({
         ) ?? initialDocument;
     const activeVersionNumber =
         doc?.active_version_number ?? doc?.latest_version_number ?? 1;
+    const documentViewType = resolveDocumentViewType({
+        filename: doc?.filename,
+        fileType: doc?.file_type,
+        preferPdfForWord: Boolean(doc?.pdf_storage_path),
+    });
     const [documentPaneOpen, setDocumentPaneOpen] = useState(
         displayDocument && !!doc,
     );
@@ -379,7 +374,7 @@ export function TRSidePanel({
                             />
                         </div>
                     )}
-                    {isDocxDocument(doc) && !doc.pdf_storage_path ? (
+                    {documentViewType === "docx" ? (
                         <DocxView
                             documentId={doc.id}
                             quotes={
@@ -393,7 +388,7 @@ export function TRSidePanel({
                                     : undefined
                             }
                         />
-                    ) : isSpreadsheetFilename(doc.filename ?? "") ? (
+                    ) : documentViewType === "spreadsheet" ? (
                         <SpreadsheetView
                             documentId={doc.id}
                             highlightCells={

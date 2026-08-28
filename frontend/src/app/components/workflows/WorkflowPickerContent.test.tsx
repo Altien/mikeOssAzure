@@ -50,4 +50,20 @@ describe("WorkflowPickerContent row labels", () => {
 
         expect(screen.queryByText("Commercial")).not.toBeInTheDocument();
     });
+
+    it("shows a prompt skeleton instead of an empty-prompt message while loading", () => {
+        Element.prototype.scrollIntoView = vi.fn();
+        render(
+            <WorkflowPickerContent
+                {...commonProps}
+                selected={{ ...workflow, skill_md: null }}
+                previewLoading
+            />,
+        );
+
+        expect(
+            screen.getByRole("status", { name: "Loading workflow prompt" }),
+        ).toBeInTheDocument();
+        expect(screen.queryByText("No prompt defined.")).not.toBeInTheDocument();
+    });
 });

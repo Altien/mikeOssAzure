@@ -37,7 +37,10 @@ vi.mock("../../lib/storage", async (importOriginal) => {
   };
 });
 
-vi.mock("../../lib/convert", () => ({ docxToPdf }));
+vi.mock("../../lib/convert", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/convert")>();
+  return { ...actual, docxToPdf };
+});
 
 import { workflowAddonsRouter } from "../../routes/workflowAddons";
 
@@ -118,7 +121,7 @@ describe("workflow add-on catalog routes", () => {
       }),
     ]);
     expect(response.body[0]).not.toHaveProperty("workflow_key");
-    expect(response.body[0].reference_files).toEqual([
+    expect(response.body[0].assets).toEqual([
       expect.objectContaining({
         id: "reference-1",
         filename: "Precedent.docx",
@@ -129,8 +132,9 @@ describe("workflow add-on catalog routes", () => {
     expect(eq).toHaveBeenCalledWith("type", "assistant");
   });
 
-  it("copies catalog reference files when an add-on is imported", async () => {
-    const insertedReferences: unknown[] = [];
+  it("copies catalog assets into documents and document versions when imported", async () => {
+    const insertedDocuments: unknown[] = [];
+    const insertedVersions: unknown[] = [];
     from.mockImplementation((table: string) => {
       if (table === "mike_workflows") {
         return singleQueryReturning({
@@ -158,7 +162,7 @@ describe("workflow add-on catalog routes", () => {
           created_at: "2026-08-28T00:00:00.000Z",
         });
       }
-      if (table === "mike_workflow_reference_files") {
+      if (table === "mike_workflow_assets") {
         return queryReturning([
           {
             filename: "Precedent.docx",
@@ -168,10 +172,19 @@ describe("workflow add-on catalog routes", () => {
           },
         ]);
       }
-      if (table === "workflow_reference_documents") {
+      if (table === "documents") {
         const query = singleQueryReturning(null);
         query.insert = vi.fn((value: unknown) => {
-          insertedReferences.push(value);
+          insertedDocuments.push(value);
+          return query;
+        });
+        query.update = vi.fn(() => query);
+        return query;
+      }
+      if (table === "document_versions") {
+        const query = singleQueryReturning(null);
+        query.insert = vi.fn((value: unknown) => {
+          insertedVersions.push(value);
           return query;
         });
         return query;
@@ -183,19 +196,29 @@ describe("workflow add-on catalog routes", () => {
       "/workflow-addons/catalog-1/import",
     );
 
-    expect(response.status).toBe(201);
+    expect(response.status, JSON.stringify(response.body)).toBe(201);
     expect(downloadFile).toHaveBeenCalledWith(
       "mike-workflows/catalog-1/precedent.docx",
     );
-    expect(uploadFile).toHaveBeenCalledTimes(1);
-    expect(insertedReferences).toEqual([
+    expect(uploadFile).toHaveBeenCalledTimes(2);
+    expect(insertedDocuments).toEqual([
       expect.objectContaining({
         workflow_id: "workflow-1",
         user_id: "u1",
-        filename: "Precedent.docx",
-        file_type: "docx",
+        library_kind: "workflow_asset",
       }),
     ]);
+    expect(insertedVersions).toEqual([
+      expect.objectContaining({
+        filename: "Precedent.docx",
+        file_type: "docx",
+        version_number: 1,
+        pdf_storage_path: expect.stringMatching(
+          /^converted-pdfs\/u1\/.+\.pdf$/,
+        ),
+      }),
+    ]);
+    expect(docxToPdf).toHaveBeenCalledOnce();
   });
 
   it("streams an add-on asset and converts presentations for PdfView", async () => {
@@ -206,7 +229,7 @@ describe("workflow add-on catalog routes", () => {
           type: "assistant",
         });
       }
-      if (table === "mike_workflow_reference_files") {
+      if (table === "mike_workflow_assets") {
         return singleQueryReturning({
           id: "reference-1",
           filename: "Deck.pptx",
@@ -218,7 +241,7 @@ describe("workflow add-on catalog routes", () => {
     });
 
     const response = await request(app).get(
-      "/workflow-addons/catalog-1/reference-files/reference-1/display",
+      "/workflow-addons/catalog-1/assets/reference-1/display",
     );
 
     expect(response.status).toBe(200);

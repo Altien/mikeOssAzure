@@ -22,12 +22,9 @@ import { GlassIconButton } from "@/app/components/ui/glass-icon-button";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import type { Document } from "@/app/components/shared/types";
-import {
-    isDocxFilename,
-    isSpreadsheetFilename,
-} from "@/app/components/shared/types";
 import type { DocumentVersion } from "@/app/lib/mikeApi";
 import { cn } from "@/app/lib/utils";
+import { resolveDocumentViewType } from "@/app/lib/documentViewType";
 import {
     LIQUID_FLOAT_PANEL_SURFACE_CLASS,
     LIQUID_GLASS_FLAT_CLASS,
@@ -249,11 +246,10 @@ export function DocumentSidePanel({
         selectedVersion != null
             ? fileTypeForVersion(selectedVersion, doc.file_type)
             : doc.file_type;
-    const selectedFileTypeKey = selectedFileType?.toLowerCase() ?? "";
-    const selectedIsDocx =
-        isDocxFilename(selectedFilename) ||
-        selectedFileTypeKey === "docx" ||
-        selectedFileTypeKey === "doc";
+    const selectedViewType = resolveDocumentViewType({
+        filename: selectedFilename,
+        fileType: selectedFileType,
+    });
     const selectedSizeBytes =
         selectedVersion?.size_bytes === undefined
             ? doc.size_bytes
@@ -542,14 +538,14 @@ export function DocumentSidePanel({
                     )}
                 >
                     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                        {isSpreadsheetFilename(selectedFilename) ? (
+                        {selectedViewType === "spreadsheet" ? (
                             <SpreadsheetView
                                 key={`${selectedVersionId ?? "current"}:${selectedUploadedAt ?? ""}:${selectedSizeBytes ?? ""}`}
                                 documentId={doc.id}
                                 versionId={selectedVersionId}
                                 displayUrl={displayUrl}
                             />
-                        ) : selectedIsDocx ? (
+                        ) : selectedViewType === "docx" ? (
                             <DocxView
                                 key={`${selectedVersionId ?? "current"}:${selectedUploadedAt ?? ""}:${selectedSizeBytes ?? ""}`}
                                 documentId={doc.id}

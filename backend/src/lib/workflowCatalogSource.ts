@@ -49,7 +49,7 @@ const DEFAULT_WORKFLOW_BY_KEY = new Map<
 
 type UnknownRecord = Record<string, unknown>;
 
-export type WorkflowCatalogReferenceSource = {
+export type WorkflowCatalogAssetSource = {
   filename: string;
   file_type: string;
   size_bytes: number;
@@ -85,7 +85,7 @@ export type WorkflowCatalogSourceWorkflow = {
   document_upload: boolean;
   word_quick_action: boolean;
   word_quick_action_prompt: string | null;
-  reference_files: WorkflowCatalogReferenceSource[];
+  assets: WorkflowCatalogAssetSource[];
   content_hash: string;
 };
 
@@ -542,7 +542,7 @@ async function parseArchive(
     if (assetPaths.length > MAX_ASSETS_PER_WORKFLOW) {
       throw new Error(`${workflowKey} exceeds the 50 asset limit`);
     }
-    const references: WorkflowCatalogReferenceSource[] = [];
+    const assets: WorkflowCatalogAssetSource[] = [];
     for (const [index, assetPath] of assetPaths.entries()) {
       const bytes = await readEntry(assetPath);
       const contentHash = sha256(bytes);
@@ -552,7 +552,7 @@ async function parseArchive(
       );
       await writeFile(temporaryPath, bytes, { mode: 0o600 });
       const filename = assetPath.slice(assetPrefix.length);
-      references.push({
+      assets.push({
         filename,
         file_type: path.extname(filename).slice(1).toLowerCase() || "bin",
         size_bytes: bytes.byteLength,
@@ -618,13 +618,11 @@ async function parseArchive(
       word_quick_action_prompt: defaultConfig?.wordQuickAction
         ? DEFAULT_WORD_QUICK_ACTION_PROMPT
         : null,
-      reference_files: references,
+      assets,
     };
     const hashPayload = {
       ...payload,
-      reference_files: references.map(
-        ({ temporary_path: _path, ...reference }) => reference,
-      ),
+      assets: assets.map(({ temporary_path: _path, ...asset }) => asset),
     };
     workflows.push({
       ...payload,
@@ -710,45 +708,42 @@ export function validateWorkflowCatalogDocument(
     ) {
       throw new Error(`Workflow '${key}' has an invalid content hash`);
     }
-    if (!Array.isArray(workflow.reference_files)) {
-      throw new Error(`Workflow '${key}' has invalid reference files`);
+    if (!Array.isArray(workflow.assets)) {
+      throw new Error(`Workflow '${key}' has invalid assets`);
     }
-    if (workflow.reference_files.length > MAX_ASSETS_PER_WORKFLOW) {
+    if (workflow.assets.length > MAX_ASSETS_PER_WORKFLOW) {
       throw new Error(`Workflow '${key}' exceeds the 50 asset limit`);
     }
-    for (const item of workflow.reference_files) {
-      const reference = asRecord(item, `Workflow '${key}' reference file`);
+    for (const item of workflow.assets) {
+      const asset = asRecord(item, `Workflow '${key}' asset`);
       const filename = requiredString(
-        reference.filename,
-        `Workflow '${key}' reference filename`,
+        asset.filename,
+        `Workflow '${key}' asset filename`,
       );
       if (
         filename.startsWith(".") ||
         filename.includes("/") ||
         filename.includes("\\")
       ) {
-        throw new Error(`Workflow '${key}' has an unsafe reference filename`);
+        throw new Error(`Workflow '${key}' has an unsafe asset filename`);
       }
-      requiredString(
-        reference.file_type,
-        `Workflow '${key}' reference file type`,
-      );
+      requiredString(asset.file_type, `Workflow '${key}' asset file type`);
       if (
-        !Number.isInteger(reference.size_bytes) ||
-        (reference.size_bytes as number) < 0 ||
-        (reference.size_bytes as number) > MAX_FILE_BYTES
+        !Number.isInteger(asset.size_bytes) ||
+        (asset.size_bytes as number) < 0 ||
+        (asset.size_bytes as number) > MAX_FILE_BYTES
       ) {
-        throw new Error(`Workflow '${key}' has an invalid reference size`);
+        throw new Error(`Workflow '${key}' has an invalid asset size`);
       }
       if (
-        typeof reference.content_hash !== "string" ||
-        !/^[0-9a-f]{64}$/.test(reference.content_hash)
+        typeof asset.content_hash !== "string" ||
+        !/^[0-9a-f]{64}$/.test(asset.content_hash)
       ) {
-        throw new Error(`Workflow '${key}' has an invalid reference hash`);
+        throw new Error(`Workflow '${key}' has an invalid asset hash`);
       }
       requiredString(
-        reference.temporary_path,
-        `Workflow '${key}' reference temporary path`,
+        asset.temporary_path,
+        `Workflow '${key}' asset temporary path`,
       );
     }
   }

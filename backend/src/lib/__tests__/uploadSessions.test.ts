@@ -93,7 +93,7 @@ describe("parseUploadSessionRequest", () => {
     ).toThrow(UploadSessionValidationError);
   });
 
-  it("allows a workflow reference batch while reserving one resource per file", () => {
+  it("keeps legacy workflow asset batches compatible while reserving one resource per file", () => {
     const result = parseUploadSessionRequest(
       {
         purpose: "workflow_reference_create",

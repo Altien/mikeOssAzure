@@ -62,8 +62,9 @@ export interface Document {
     id: string;
     user_id?: string;
     project_id: string | null;
+    workflow_id?: string | null;
     folder_id?: string | null;
-    library_kind?: "file" | "template";
+    library_kind?: "file" | "template" | "workflow_asset";
     library_folder_id?: string | null;
     filename: string;
     owner_email?: string | null;
@@ -830,16 +831,6 @@ export interface QuickAction {
     workflow: { id: string; title: string };
 }
 
-export interface WorkflowReferenceDocument {
-    id: string;
-    workflow_id: string;
-    filename: string;
-    file_type: string;
-    size_bytes: number | null;
-    created_at: string;
-    updated_at: string;
-}
-
 export interface WorkflowAddon {
     id: string;
     addon_key: string;
@@ -859,7 +850,7 @@ export interface WorkflowAddon {
     jurisdictions: string[] | null;
     active: boolean;
     updated_at: string;
-    reference_files?: {
+    assets?: {
         id: string;
         filename: string;
         file_type: string;

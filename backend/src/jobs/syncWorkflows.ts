@@ -10,7 +10,7 @@ async function main() {
     githubToken ? { githubToken } : {},
   );
   console.log(
-    `Synced ${result.workflows} Mike workflows and ${result.references} reference files from ${result.sourceCommit}`,
+    `Synced ${result.workflows} Mike workflows and ${result.assets} assets from ${result.sourceCommit}`,
   );
 }
 

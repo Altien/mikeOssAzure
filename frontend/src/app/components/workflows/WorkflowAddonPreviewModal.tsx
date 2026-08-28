@@ -4,25 +4,21 @@ import { useEffect, useRef, useState } from "react";
 import { Check, ChevronLeft, Code2, Plus } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import {
-  isDocxFilename,
-  isSpreadsheetFilename,
-  type WorkflowAddon,
-} from "../shared/types";
+import { type WorkflowAddon } from "../shared/types";
 import {
   LIQUID_GLASS_HOVER_CLASS,
   LIQUID_SUBTLE_PANEL_SURFACE_CLASS,
 } from "@/app/components/ui/liquid-surface";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 import { Modal } from "../modals/Modal";
-import { fileTypeKind, FileTypeIcon } from "../shared/FileTypeIcon";
-import { DocxView } from "../shared/views/DocxView";
+import { FileTypeIcon } from "../shared/FileTypeIcon";
 import { PdfView } from "../shared/views/PdfView";
 import { SpreadsheetView } from "../shared/views/SpreadsheetView";
-import { workflowAddonReferenceDisplayUrl } from "@/app/lib/mikeApi";
+import { workflowAddonAssetDisplayUrl } from "@/app/lib/mikeApi";
+import { resolveDocumentViewType } from "@/app/lib/documentViewType";
 
 type DetailView = "columns" | "skill" | "assets";
-type AddonAsset = NonNullable<WorkflowAddon["reference_files"]>[number];
+type AddonAsset = NonNullable<WorkflowAddon["assets"]>[number];
 
 const DESCRIPTION_PREVIEW_LENGTH = 180;
 
@@ -212,37 +208,21 @@ function AddonAssetViewer({
   addonId: string;
   asset: AddonAsset;
 }) {
-  const displayUrl = workflowAddonReferenceDisplayUrl(addonId, asset.id);
-  const fileType = asset.file_type || asset.filename;
-  const kind = fileTypeKind(fileType);
-  const normalizedType =
-    asset.file_type?.toLowerCase() ??
-    asset.filename.split(".").pop()?.toLowerCase() ??
-    "";
-  const isDocx =
-    normalizedType === "docx" ||
-    (isDocxFilename(asset.filename) && normalizedType !== "doc");
+  const displayUrl = workflowAddonAssetDisplayUrl(addonId, asset.id);
+  const viewType = resolveDocumentViewType({
+    filename: asset.filename,
+    fileType: asset.file_type,
+    legacyDocViewType: "pdf",
+    preferPdfForWord: true,
+  });
 
-  if (isSpreadsheetFilename(asset.filename) || kind === "excel") {
+  if (viewType === "spreadsheet") {
     return (
-      <SpreadsheetView
-        documentId={asset.id}
-        displayUrl={displayUrl}
-        rounded
-      />
-    );
-  }
-  if (isDocx) {
-    return (
-      <DocxView documentId={asset.id} displayUrl={displayUrl} rounded />
+      <SpreadsheetView documentId={asset.id} displayUrl={displayUrl} rounded />
     );
   }
   return (
-    <PdfView
-      doc={{ document_id: asset.id }}
-      displayUrl={displayUrl}
-      rounded
-    />
+    <PdfView doc={{ document_id: asset.id }} displayUrl={displayUrl} rounded />
   );
 }
 
@@ -299,13 +279,13 @@ function WorkflowAddonPreviewDialog({
     };
   }, [addon, onClose]);
 
-  const references = addon.reference_files ?? [];
+  const assets = addon.assets ?? [];
   const tabs: { id: DetailView; label: string }[] =
     addon.type === "tabular"
       ? [{ id: "columns", label: "Columns" }]
       : [
           { id: "skill", label: "SKILL.md" },
-          ...(references.length > 0
+          ...(assets.length > 0
             ? [{ id: "assets" as const, label: "Assets" }]
             : []),
         ];
@@ -454,12 +434,12 @@ function WorkflowAddonPreviewDialog({
                     Assets
                   </div>
                   <div className="min-h-0 flex-1 overflow-y-auto">
-                    {references.length === 0 ? (
+                    {assets.length === 0 ? (
                       <div className="flex h-full min-h-24 items-center justify-center px-4 text-xs text-gray-400">
-                        No reference files included.
+                        No assets included.
                       </div>
                     ) : (
-                      references.map((file) => (
+                      assets.map((file) => (
                         <button
                           key={file.id}
                           type="button"

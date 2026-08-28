@@ -414,10 +414,6 @@ export async function deleteUserAccountData(
         db.from("user_mcp_oauth_states").delete().eq("user_id", userId),
         db.from("user_mcp_connectors").delete().eq("user_id", userId),
         db
-            .from("workflow_reference_documents")
-            .delete()
-            .eq("user_id", userId),
-        db
             .from("default_workflow_installations")
             .delete()
             .eq("user_id", userId),

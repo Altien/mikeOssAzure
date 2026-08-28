@@ -55,14 +55,14 @@ describe("buildSystemPrompt", () => {
             expect(prompt).toContain("WORKFLOWS:");
             expect(prompt).toContain("LIBRARY TEMPLATES:");
             expect(prompt).toContain(
-                "Workflow reference files used as templates are immutable",
+                "Workflow assets used as templates are immutable",
             );
             expect(prompt).toContain("Library Templates are immutable");
             expect(prompt).toContain(
                 "call replicate_document with a descriptive new_filename",
             );
             expect(prompt).toContain(
-                "open the relevant files with read_document before continuing",
+                "open the relevant assets with read_document before continuing",
             );
             // edit_document only handles .docx, so the copy-then-edit
             // mandate is scoped to .docx copies in both sections, with a

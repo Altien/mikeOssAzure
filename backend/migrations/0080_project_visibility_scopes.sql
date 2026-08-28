@@ -1,4 +1,4 @@
--- Migration date: 2026-08-28
+-- Migration date: 2026-09-01
 
 -- Add visibility-based scopes for the Projects table while retaining the
 -- existing all/mine/shared scopes for older clients. "collaborative" includes
