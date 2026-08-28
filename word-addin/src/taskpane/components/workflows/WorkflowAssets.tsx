@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
-import type { WorkflowReferenceDocument } from "../../types";
+import type { Document } from "../../types";
 import {
-  deleteWorkflowReferenceFile,
-  getWorkflowReferenceUrl,
-  listWorkflowReferenceFiles,
-  replaceWorkflowReferenceFile,
-  uploadWorkflowReferenceFiles,
+  deleteWorkflowAsset,
+  getWorkflowAssetUrl,
+  listWorkflowAssets,
+  uploadWorkflowAssets,
+  uploadWorkflowAssetVersion,
 } from "../../api/mikeApi";
 
 /**
@@ -24,29 +24,29 @@ function openExternalUrl(url: string): void {
   }
 }
 
-export function WorkflowReferenceFiles({
+export function WorkflowAssets({
   workflowId,
   readOnly,
 }: {
   workflowId: string;
   readOnly: boolean;
 }): React.ReactElement {
-  const [files, setFiles] = useState<WorkflowReferenceDocument[]>([]);
+  const [files, setFiles] = useState<Document[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
-  const replaceRef = useRef<HTMLInputElement>(null);
-  const replaceTarget = useRef<WorkflowReferenceDocument | null>(null);
+  const versionUploadRef = useRef<HTMLInputElement>(null);
+  const versionUploadTarget = useRef<Document | null>(null);
 
   const reload = async (): Promise<void> => {
-    setFiles(await listWorkflowReferenceFiles(workflowId));
+    setFiles(await listWorkflowAssets(workflowId));
   };
 
   useEffect(() => {
     // Guard against out-of-order responses when the user switches workflows
     // quickly, and surface failures instead of rendering an empty list.
     let cancelled = false;
-    listWorkflowReferenceFiles(workflowId)
+    listWorkflowAssets(workflowId)
       .then((rows) => {
         if (!cancelled) {
           setFiles(rows);
@@ -57,9 +57,7 @@ export function WorkflowReferenceFiles({
         if (!cancelled) {
           setFiles([]);
           setError(
-            reason instanceof Error
-              ? reason.message
-              : "Could not load reference files",
+            reason instanceof Error ? reason.message : "Could not load assets",
           );
         }
       });
@@ -71,7 +69,7 @@ export function WorkflowReferenceFiles({
   const upload = async (file: File): Promise<void> => {
     setBusy(true);
     try {
-      const outcomes = await uploadWorkflowReferenceFiles(workflowId, [file]);
+      const outcomes = await uploadWorkflowAssets(workflowId, [file]);
       await reload();
       setError(
         outcomes.some((outcome) => outcome.status === "error")
@@ -85,21 +83,19 @@ export function WorkflowReferenceFiles({
     }
   };
 
-  const replace = async (file: File): Promise<void> => {
-    if (!replaceTarget.current) return;
+  const uploadVersion = async (file: File): Promise<void> => {
+    if (!versionUploadTarget.current) return;
     setBusy(true);
     try {
-      await replaceWorkflowReferenceFile(
-        workflowId,
-        replaceTarget.current.id,
-        file,
-      );
+      await uploadWorkflowAssetVersion(versionUploadTarget.current.id, file);
       await reload();
       setError(null);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Replacement failed");
+      setError(
+        reason instanceof Error ? reason.message : "Version upload failed",
+      );
     } finally {
-      replaceTarget.current = null;
+      versionUploadTarget.current = null;
       setBusy(false);
     }
   };
@@ -108,7 +104,7 @@ export function WorkflowReferenceFiles({
     <section className="mt-2 shrink-0 rounded-xl border border-white/70 bg-white/55 p-3 text-xs">
       <div className="flex items-center justify-between gap-2">
         <div>
-          <p className="font-medium text-gray-700">Reference files</p>
+          <p className="font-medium text-gray-700">Assets</p>
           <p className="mt-0.5 text-[11px] text-gray-400">
             Available when this workflow runs.
           </p>
@@ -136,17 +132,17 @@ export function WorkflowReferenceFiles({
       />
       {error && <p className="mt-2 text-[11px] text-red-500">{error}</p>}
       <input
-        ref={replaceRef}
+        ref={versionUploadRef}
         type="file"
         className="hidden"
         onChange={(event) => {
           const file = event.target.files?.[0];
           event.target.value = "";
-          if (file) void replace(file);
+          if (file) void uploadVersion(file);
         }}
       />
       {files.length === 0 ? (
-        <p className="mt-2 text-[11px] text-gray-400">No reference files.</p>
+        <p className="mt-2 text-[11px] text-gray-400">No assets.</p>
       ) : (
         <div className="mt-2 max-h-24 space-y-1 overflow-y-auto">
           {files.map((file) => (
@@ -160,7 +156,7 @@ export function WorkflowReferenceFiles({
               <button
                 type="button"
                 onClick={() =>
-                  void getWorkflowReferenceUrl(workflowId, file.id)
+                  void getWorkflowAssetUrl(file.id)
                     .then(({ url }) => openExternalUrl(url))
                     .catch((reason: unknown) =>
                       setError(
@@ -179,17 +175,17 @@ export function WorkflowReferenceFiles({
                   <button
                     type="button"
                     onClick={() => {
-                      replaceTarget.current = file;
-                      replaceRef.current?.click();
+                      versionUploadTarget.current = file;
+                      versionUploadRef.current?.click();
                     }}
                     className="text-[10px] text-gray-500"
                   >
-                    Replace
+                    Upload new version
                   </button>
                   <button
                     type="button"
                     onClick={() =>
-                      void deleteWorkflowReferenceFile(workflowId, file.id)
+                      void deleteWorkflowAsset(workflowId, file.id)
                         .then(reload)
                         .catch((reason: unknown) =>
                           setError(

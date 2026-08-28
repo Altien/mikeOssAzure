@@ -79,8 +79,6 @@ describe("legacy multipart upload endpoints", () => {
         ["post", "/projects/11111111-1111-4111-8111-111111111111/documents"],
         ["post", "/single-documents/11111111-1111-4111-8111-111111111111/versions"],
         ["put", "/single-documents/11111111-1111-4111-8111-111111111111/versions/22222222-2222-4222-8222-222222222222/file"],
-        ["post", "/workflows/11111111-1111-4111-8111-111111111111/reference-files"],
-        ["put", "/workflows/11111111-1111-4111-8111-111111111111/reference-files/22222222-2222-4222-8222-222222222222"],
     ] as const)("returns 410 for %s %s", async (method, path) => {
         const res = await request(app)[method](path)
             .set("Authorization", "Bearer test")

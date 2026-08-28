@@ -41,8 +41,8 @@ export type WorkflowStore = Map<
     title: string;
     skill_md: string;
     listed?: boolean;
-    reference_files?: {
-      reference_id: string;
+    assets?: {
+      asset_id: string;
       filename: string;
       file_type: string;
       storage_path: string;

@@ -59,11 +59,8 @@ import type {
     Message,
     Project,
 } from "@/app/components/shared/types";
-import {
-    expandCitationToEntries,
-    isDocxFilename,
-    isSpreadsheetFilename,
-} from "@/app/components/shared/types";
+import { expandCitationToEntries } from "@/app/components/shared/types";
+import { resolveDocumentViewType } from "@/app/lib/documentViewType";
 import {
     INITIAL_FOLDER_DELETE_DIALOG_STATE,
     clearDeletedDocumentId,
@@ -257,6 +254,9 @@ export default function ProjectAssistantChatPage({ params }: Props) {
     );
 
     const activeTab = tabs.find((t) => t.documentId === activeTabId) ?? null;
+    const activeTabViewType = activeTab
+        ? resolveDocumentViewType({ filename: activeTab.filename })
+        : null;
     const tabBarRef = useRef<HTMLDivElement | null>(null);
     const tabItemRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -1229,7 +1229,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                     </div>
                     <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
                         {activeTab ? (
-                            isDocxFilename(activeTab.filename) ? (
+                            activeTabViewType === "docx" ? (
                                 <DocxView
                                     key={activeTab.documentId}
                                     documentId={activeTab.documentId}
@@ -1261,7 +1261,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                                     }
                                     rounded={false}
                                 />
-                            ) : isSpreadsheetFilename(activeTab.filename) ? (
+                            ) : activeTabViewType === "spreadsheet" ? (
                                 <SpreadsheetView
                                     key={activeTab.documentId}
                                     documentId={activeTab.documentId}

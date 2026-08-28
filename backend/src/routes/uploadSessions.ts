@@ -145,6 +145,41 @@ export async function validateDestinationAccess(
 
   if (manifest.purpose === "document_create") {
     if (destination.scope === "standalone") return true;
+    if (destination.scope === "workflow") {
+      const workflowId = destination.workflow_id as string;
+      const { data: workflow, error } = await db
+        .from("workflows")
+        .select("id, user_id, type")
+        .eq("id", workflowId)
+        .maybeSingle();
+      if (error) {
+        sendInternalError(res, error);
+        return false;
+      }
+      if (!workflow || workflow.type !== "assistant") {
+        res.status(404).json({ detail: "Workflow not found or not editable" });
+        return false;
+      }
+      if (workflow.user_id === userId) return true;
+      const normalizedEmail = (userEmail ?? "").trim().toLowerCase();
+      if (!normalizedEmail) {
+        res.status(404).json({ detail: "Workflow not found or not editable" });
+        return false;
+      }
+      const { data: share, error: shareError } = await db
+        .from("workflow_shares")
+        .select("allow_edit")
+        .eq("workflow_id", workflowId)
+        .eq("shared_with_email", normalizedEmail)
+        .maybeSingle();
+      if (shareError) {
+        sendInternalError(res, shareError);
+        return false;
+      }
+      if (share?.allow_edit === true) return true;
+      res.status(404).json({ detail: "Workflow not found or not editable" });
+      return false;
+    }
     if (destination.scope === "project") {
       const projectId = destination.project_id as string;
       const access = await checkProjectAccess(projectId, userId, userEmail, db);
@@ -211,7 +246,7 @@ export async function validateDestinationAccess(
     const documentId = destination.document_id as string;
     const { data: document, error } = await db
       .from("documents")
-      .select("id, user_id, project_id")
+      .select("id, user_id, project_id, workflow_id")
       .eq("id", documentId)
       .maybeSingle();
     if (error) {
@@ -223,9 +258,13 @@ export async function validateDestinationAccess(
       return false;
     }
     const access = await ensureDocAccess(document, userId, userEmail, db);
+    const canReplace =
+      access.ok &&
+      (access.isOwner || (Boolean(document.workflow_id) && access.canEdit));
     if (
       !access.ok ||
-      (manifest.purpose === "document_version_replace" && !access.isOwner)
+      !access.canEdit ||
+      (manifest.purpose === "document_version_replace" && !canReplace)
     ) {
       res.status(404).json({ detail: "Document not found" });
       return false;
@@ -293,24 +332,26 @@ export async function validateDestinationAccess(
   }
   if (workflow.type === "tabular") {
     res.status(400).json({
-      detail: "Reference files are only supported for assistant workflows",
+      detail: "Assets are only supported for assistant workflows",
     });
     return false;
   }
 
+  // Compatibility validation for in-flight sessions created by the previous
+  // release. New clients use document_version_create.
   if (manifest.purpose === "workflow_reference_replace") {
-    const { data: reference, error: referenceError } = await db
-      .from("workflow_reference_documents")
+    const { data: asset, error: assetError } = await db
+      .from("documents")
       .select("id")
       .eq("id", destination.reference_id as string)
       .eq("workflow_id", workflowId)
       .maybeSingle();
-    if (referenceError) {
-      sendInternalError(res, referenceError);
+    if (assetError) {
+      sendInternalError(res, assetError);
       return false;
     }
-    if (!reference) {
-      res.status(404).json({ detail: "Reference file not found" });
+    if (!asset) {
+      res.status(404).json({ detail: "Asset not found" });
       return false;
     }
   }

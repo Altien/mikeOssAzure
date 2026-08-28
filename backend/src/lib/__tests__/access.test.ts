@@ -40,6 +40,7 @@ function makeDb(tables: Record<string, Row[]>) {
                     return query;
                 },
                 single: async () => ({ data: rows[0] ?? null, error: null }),
+                maybeSingle: async () => ({ data: rows[0] ?? null, error: null }),
                 then: (
                     resolve: (value: { data: Row[]; error: null }) => unknown,
                     reject?: (reason: unknown) => unknown,
@@ -72,6 +73,18 @@ describe("access helpers", () => {
                 id: "private-doc",
                 user_id: "other-owner",
                 project_id: "private-project",
+            },
+        ],
+        workflow_shares: [
+            {
+                workflow_id: "shared-workflow",
+                shared_with_email: "reviewer@example.com",
+                allow_edit: false,
+            },
+            {
+                workflow_id: "editable-workflow",
+                shared_with_email: "reviewer@example.com",
+                allow_edit: true,
             },
         ],
     });
@@ -122,6 +135,33 @@ describe("access helpers", () => {
                 db,
             ),
         ).resolves.toMatchObject({ ok: true, isOwner: false });
+    });
+
+    it("applies workflow share edit permissions to workflow assets", async () => {
+        await expect(
+            ensureDocAccess(
+                {
+                    user_id: "other-owner",
+                    project_id: null,
+                    workflow_id: "shared-workflow",
+                },
+                "reviewer",
+                " REVIEWER@EXAMPLE.COM ",
+                db,
+            ),
+        ).resolves.toEqual({ ok: true, isOwner: false, canEdit: false });
+        await expect(
+            ensureDocAccess(
+                {
+                    user_id: "other-owner",
+                    project_id: null,
+                    workflow_id: "editable-workflow",
+                },
+                "reviewer",
+                "reviewer@example.com",
+                db,
+            ),
+        ).resolves.toEqual({ ok: true, isOwner: false, canEdit: true });
     });
 
     it("filters user-supplied document IDs to accessible documents only", async () => {

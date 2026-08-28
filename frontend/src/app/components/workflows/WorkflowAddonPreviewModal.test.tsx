@@ -26,12 +26,6 @@ vi.mock("../modals/Modal", () => ({
   ),
 }));
 
-vi.mock("../shared/views/DocxView", () => ({
-  DocxView: ({ displayUrl }: { displayUrl: string }) => (
-    <div data-testid="docx-view">{displayUrl}</div>
-  ),
-}));
-
 vi.mock("../shared/views/PdfView", () => ({
   PdfView: ({ displayUrl }: { displayUrl: string }) => (
     <div data-testid="pdf-view">{displayUrl}</div>
@@ -44,9 +38,7 @@ vi.mock("../shared/views/SpreadsheetView", () => ({
   ),
 }));
 
-function addon(
-  referenceFiles: WorkflowAddon["reference_files"],
-): WorkflowAddon {
+function addon(assets: WorkflowAddon["assets"]): WorkflowAddon {
   return {
     id: "addon-1",
     addon_key: "draft-from-precedent",
@@ -67,12 +59,12 @@ function addon(
     jurisdictions: ["General"],
     active: true,
     updated_at: "2026-08-28T00:00:00.000Z",
-    reference_files: referenceFiles,
+    assets,
   };
 }
 
 describe("WorkflowAddonPreviewModal", () => {
-  it("shows the add-on's reference files in its details", async () => {
+  it("shows the add-on's assets in its details", async () => {
     const user = userEvent.setup();
     render(
       <WorkflowAddonPreviewModal
@@ -130,7 +122,7 @@ describe("WorkflowAddonPreviewModal", () => {
   });
 
   it.each([
-    ["Precedent.docx", "docx", "docx-view"],
+    ["Precedent.docx", "docx", "pdf-view"],
     ["Report.pdf", "pdf", "pdf-view"],
     ["Model.xlsx", "xlsx", "spreadsheet-view"],
     ["Deck.pptx", "pptx", "pdf-view"],
@@ -163,7 +155,7 @@ describe("WorkflowAddonPreviewModal", () => {
       );
 
       expect(screen.getByTestId(testId)).toHaveTextContent(
-        "/workflow-addons/addon-1/reference-files/reference-1/display",
+        "/workflow-addons/addon-1/assets/reference-1/display",
       );
       expect(screen.getByRole("button", { name: "Back" })).toBeVisible();
 

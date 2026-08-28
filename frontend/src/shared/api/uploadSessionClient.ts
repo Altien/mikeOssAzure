@@ -4,9 +4,7 @@ import { createSecureUuid } from "../lib/secureUuid";
 export type UploadSessionPurpose =
     | "document_create"
     | "document_version_create"
-    | "document_version_replace"
-    | "workflow_reference_create"
-    | "workflow_reference_replace";
+    | "document_version_replace";
 
 export type UploadSessionInput = {
     file: File;

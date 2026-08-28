@@ -14,7 +14,7 @@ import { HeaderButtonUI } from "@/shared/ui/HeaderButtonsUI";
 interface DocumentUploadMenuProps {
     onSavedFiles?: (() => void) | null;
     onUploadFiles: (() => void) | null;
-    onUploadFolder: (() => void) | null;
+    onUploadFolder?: (() => void) | null;
     disabled?: boolean;
 }
 
@@ -61,14 +61,16 @@ export function DocumentUploadMenu({
                     <Upload className="mr-2 h-3.5 w-3.5" />
                     Upload files
                 </LiquidDropdownItem>
-                <LiquidDropdownItem
-                    disabled={disabled || !onUploadFolder}
-                    onSelect={() => onUploadFolder?.()}
-                    className="flex items-center px-3 py-2"
-                >
-                    <FolderUp className="mr-2 h-3.5 w-3.5" />
-                    Upload folder
-                </LiquidDropdownItem>
+                {onUploadFolder !== undefined && (
+                    <LiquidDropdownItem
+                        disabled={disabled || !onUploadFolder}
+                        onSelect={() => onUploadFolder?.()}
+                        className="flex items-center px-3 py-2"
+                    >
+                        <FolderUp className="mr-2 h-3.5 w-3.5" />
+                        Upload folder
+                    </LiquidDropdownItem>
+                )}
             </LiquidDropdownContent>
         </DropdownMenu>
     );

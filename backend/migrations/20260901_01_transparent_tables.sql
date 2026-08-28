@@ -1,4 +1,4 @@
--- Migration date: 2026-08-28
+-- Migration date: 2026-09-01
 
 alter table public.user_profiles
   add column if not exists transparent_tables boolean not null default true;

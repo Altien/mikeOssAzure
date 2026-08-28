@@ -14,13 +14,13 @@ type Db = ReturnType<typeof createServerSupabase>;
 
 export type WorkflowCatalogSyncResult = {
   workflows: number;
-  references: number;
+  assets: number;
   sourceCommit: string;
 };
 
-function metadataWithoutTemporaryReferences(
+function metadataWithoutTemporaryAssets(
   workflow: WorkflowCatalogSourceWorkflow,
-  referenceFiles: Array<{
+  assets: Array<{
     filename: string;
     file_type: string;
     storage_path: string;
@@ -28,8 +28,8 @@ function metadataWithoutTemporaryReferences(
     content_hash: string;
   }>,
 ) {
-  const { reference_files: _references, ...metadata } = workflow;
-  return { ...metadata, reference_files: referenceFiles };
+  const { assets: _assets, ...metadata } = workflow;
+  return { ...metadata, assets };
 }
 
 export async function syncWorkflowCatalog(
@@ -41,45 +41,45 @@ export async function syncWorkflowCatalog(
     const document = validateWorkflowCatalogDocument(
       JSON.parse(await readFile(prepared.catalogPath, "utf8")) as unknown,
     );
-    let references = 0;
+    let assetCount = 0;
     const databaseWorkflows = [];
-    const hasReferences = document.workflows.some(
-      (workflow) => workflow.reference_files.length > 0,
+    const hasAssets = document.workflows.some(
+      (workflow) => workflow.assets.length > 0,
     );
-    if (hasReferences && !storageEnabled) {
+    if (hasAssets && !storageEnabled) {
       throw new Error(
-        "Workflow reference files require configured S3-compatible storage",
+        "Workflow assets require configured S3-compatible storage",
       );
     }
 
     for (const workflow of document.workflows) {
-      const databaseReferences = [];
-      for (const reference of workflow.reference_files) {
+      const databaseAssets = [];
+      for (const asset of workflow.assets) {
         if (storageEnabled) {
           const storagePath =
             `mike-workflows/${workflow.workflow_key}/` +
-            `${reference.content_hash}/${reference.filename}`;
-          const bytes = await readFile(reference.temporary_path);
+            `${asset.content_hash}/${asset.filename}`;
+          const bytes = await readFile(asset.temporary_path);
           await uploadFile(
             storagePath,
             bytes.buffer.slice(
               bytes.byteOffset,
               bytes.byteOffset + bytes.byteLength,
             ) as ArrayBuffer,
-            contentTypeForDocumentType(reference.file_type),
+            contentTypeForDocumentType(asset.file_type),
           );
-          databaseReferences.push({
-            filename: reference.filename,
-            file_type: reference.file_type,
+          databaseAssets.push({
+            filename: asset.filename,
+            file_type: asset.file_type,
             storage_path: storagePath,
-            size_bytes: reference.size_bytes,
-            content_hash: reference.content_hash,
+            size_bytes: asset.size_bytes,
+            content_hash: asset.content_hash,
           });
-          references += 1;
+          assetCount += 1;
         }
       }
       databaseWorkflows.push(
-        metadataWithoutTemporaryReferences(workflow, databaseReferences),
+        metadataWithoutTemporaryAssets(workflow, databaseAssets),
       );
     }
 
@@ -91,7 +91,7 @@ export async function syncWorkflowCatalog(
 
     return {
       workflows: databaseWorkflows.length,
-      references,
+      assets: assetCount,
       sourceCommit: document.source_commit,
     };
   } finally {

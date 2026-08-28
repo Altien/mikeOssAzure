@@ -18,7 +18,6 @@ import {
   Play,
   Plus,
   Trash2,
-  Upload,
   Users,
 } from "lucide-react";
 import {
@@ -35,7 +34,11 @@ import { UseWorkflowModal } from "@/app/components/workflows/UseWorkflowModal";
 import { WFEditColumnModal } from "@/app/components/workflows/WFEditColumnModal";
 import { WFColumnViewModal } from "@/app/components/workflows/WFColumnViewModal";
 import { AddColumnModal } from "@/app/components/tabular/AddColumnModal";
-import type { ColumnConfig, Workflow } from "@/app/components/shared/types";
+import type {
+  ColumnConfig,
+  Document,
+  Workflow,
+} from "@/app/components/shared/types";
 import {
   formatIcon,
   formatIconClassName,
@@ -47,6 +50,7 @@ import {
   type HeaderActionsMenuItem,
 } from "@/app/components/shared/HeaderActionsMenu";
 import { PeopleModal } from "@/app/components/modals/PeopleModal";
+import { AddDocumentsModal } from "@/app/components/modals/AddDocumentsModal";
 import { OpenSourceWorkflowModal } from "@/app/components/workflows/OpenSourceWorkflowModal";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import { EmptyState } from "@/app/components/ui/empty-state";
@@ -78,14 +82,12 @@ import { TableToolbar } from "@/app/components/shared/TableToolbar";
 import { RowActions } from "@/app/components/shared/RowActions";
 import { TRExpandedCellSurface } from "@/app/components/tabular/TRExpandedCellSurface";
 import { UploadOverlay } from "@/app/components/assistant/UploadOverlay";
+import { DocumentUploadMenu } from "@/app/components/shared/DocumentUploadMenu";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { useQueryParamTab } from "@/app/hooks/useQueryParamTab";
 import { downloadWorkflowZip } from "./workflowZipExport";
-import {
-  WorkflowReferenceFiles,
-  type WorkflowReferenceFilesHandle,
-} from "./WorkflowReferenceFiles";
+import { WorkflowAssets, type WorkflowAssetsHandle } from "./WorkflowAssets";
 // dynamic import keeps Tiptap (browser-only) out of the SSR bundle
 const WorkflowPromptEditor = dynamic(
   () =>
@@ -132,10 +134,11 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
   // Editor state
   const [promptMd, setPromptMd] = useState("");
   const [columns, setColumns] = useState<ColumnConfig[]>([]);
-  const [referenceFilesUploading, setReferenceFilesUploading] = useState(false);
-  const [draggingReferenceFiles, setDraggingReferenceFiles] = useState(false);
-  const referenceFilesRef = useRef<WorkflowReferenceFilesHandle>(null);
-  const pendingReferenceFilesRef = useRef<File[] | null>(null);
+  const [assetsUploading, setAssetsUploading] = useState(false);
+  const [draggingAssets, setDraggingAssets] = useState(false);
+  const [addSavedAssetsOpen, setAddSavedAssetsOpen] = useState(false);
+  const assetsRef = useRef<WorkflowAssetsHandle>(null);
+  const pendingAssetsRef = useRef<File[] | null>(null);
   const searchParams = useSearchParams();
   const [assistantTab, setAssistantTab] = useQueryParamTab(
     ASSISTANT_TABS,
@@ -189,56 +192,54 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
   }, [colActionsOpen]);
 
   useEffect(() => {
-    if (assistantTab !== "assets" || !pendingReferenceFilesRef.current) return;
-    const pendingFiles = pendingReferenceFilesRef.current;
-    pendingReferenceFilesRef.current = null;
-    referenceFilesRef.current?.uploadFiles(pendingFiles);
+    if (assistantTab !== "assets" || !pendingAssetsRef.current) return;
+    const pendingFiles = pendingAssetsRef.current;
+    pendingAssetsRef.current = null;
+    assetsRef.current?.uploadFiles(pendingFiles);
   }, [assistantTab]);
 
   function hasFilePayload(dataTransfer: DataTransfer) {
     return Array.from(dataTransfer.types).includes("Files");
   }
 
-  function handleReferenceDragOver(event: DragEvent<HTMLDivElement>) {
+  function handleAssetDragOver(event: DragEvent<HTMLDivElement>) {
     if (!hasFilePayload(event.dataTransfer)) return;
     event.preventDefault();
     if (
       workflow?.metadata.type !== "assistant" ||
       readOnly ||
-      referenceFilesUploading
+      assetsUploading
     ) {
       return;
     }
     event.dataTransfer.dropEffect = "copy";
-    setDraggingReferenceFiles(true);
+    setDraggingAssets(true);
   }
 
-  function handleReferenceDragLeave(event: DragEvent<HTMLDivElement>) {
-    if (
-      !event.currentTarget.contains(event.relatedTarget as Node | null)
-    ) {
-      setDraggingReferenceFiles(false);
+  function handleAssetDragLeave(event: DragEvent<HTMLDivElement>) {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      setDraggingAssets(false);
     }
   }
 
-  function handleReferenceDrop(event: DragEvent<HTMLDivElement>) {
+  function handleAssetDrop(event: DragEvent<HTMLDivElement>) {
     if (!hasFilePayload(event.dataTransfer)) return;
     event.preventDefault();
     event.stopPropagation();
-    setDraggingReferenceFiles(false);
+    setDraggingAssets(false);
     if (workflow?.metadata.type !== "assistant" || readOnly) return;
     // A batch is already uploading: dropping more files now would interleave
-    // with it (WorkflowReferenceFiles also rejects and explains). The toolbar
+    // with it (WorkflowAssets also rejects and explains). The toolbar
     // button is disabled for the same window.
-    if (referenceFilesUploading) return;
+    if (assetsUploading) return;
 
     const files = Array.from(event.dataTransfer.files);
     if (files.length === 0) return;
-    if (assistantTab === "assets" && referenceFilesRef.current) {
-      referenceFilesRef.current.uploadFiles(files);
+    if (assistantTab === "assets" && assetsRef.current) {
+      assetsRef.current.uploadFiles(files);
       return;
     }
-    pendingReferenceFilesRef.current = files;
+    pendingAssetsRef.current = files;
     setAssistantTab("assets");
   }
 
@@ -494,12 +495,12 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
   return (
     <div
       className="flex flex-col h-full"
-      onDragOver={handleReferenceDragOver}
-      onDragLeave={handleReferenceDragLeave}
-      onDrop={handleReferenceDrop}
+      onDragOver={handleAssetDragOver}
+      onDragLeave={handleAssetDragLeave}
+      onDrop={handleAssetDrop}
     >
       <UploadOverlay
-        open={draggingReferenceFiles}
+        open={draggingAssets}
         label="Drop files here to add as workflow assets"
       />
       {/* Page header */}
@@ -531,6 +532,24 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
                       ) : null}
                       {saveStatus === "saving" ? "Saving…" : "Saved"}
                     </span>
+                  ),
+                },
+              ]
+            : [],
+          workflow.metadata.type === "assistant" &&
+          assistantTab === "assets" &&
+          !readOnly
+            ? [
+                {
+                  type: "custom",
+                  render: (
+                    <DocumentUploadMenu
+                      onSavedFiles={() => setAddSavedAssetsOpen(true)}
+                      onUploadFiles={() =>
+                        assetsRef.current?.openUploadPicker()
+                      }
+                      disabled={assetsUploading}
+                    />
                   ),
                 },
               ]
@@ -567,6 +586,21 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
         workflow={useOpen ? workflow : null}
         onClose={() => setUseOpen(false)}
         skipSelect
+      />
+      <AddDocumentsModal
+        open={addSavedAssetsOpen}
+        onClose={() => setAddSavedAssetsOpen(false)}
+        onSelect={(documents: Document[]) => {
+          assetsRef.current?.addSavedDocuments(documents);
+          setAddSavedAssetsOpen(false);
+        }}
+        breadcrumb={[
+          "Workflows",
+          workflow.metadata.title,
+          "Assets",
+          "Add Assets",
+        ]}
+        keepMounted
       />
       <NewWorkflowModal
         open={detailsOpen}
@@ -650,19 +684,6 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
               ]}
               active={assistantTab}
               onChange={setAssistantTab}
-              actions={
-                assistantTab === "assets" && !readOnly ? (
-                  <TabPillButton
-                    disabled={referenceFilesUploading}
-                    onClick={() =>
-                      referenceFilesRef.current?.openUploadPicker()
-                    }
-                  >
-                    <Upload className="h-3.5 w-3.5" />
-                    {referenceFilesUploading ? "Uploading…" : "Upload files"}
-                  </TabPillButton>
-                ) : undefined
-              }
             />
             {assistantTab === "prompt" ? (
               <div className="mx-4 mb-2 min-h-0 min-w-0 flex-1 md:mx-8 md:mb-3">
@@ -673,11 +694,11 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
                 />
               </div>
             ) : (
-              <WorkflowReferenceFiles
-                ref={referenceFilesRef}
+              <WorkflowAssets
+                ref={assetsRef}
                 workflowId={id}
                 readOnly={readOnly}
-                onUploadingChange={setReferenceFilesUploading}
+                onUploadingChange={setAssetsUploading}
               />
             )}
           </>

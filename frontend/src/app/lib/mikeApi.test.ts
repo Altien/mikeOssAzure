@@ -7,6 +7,7 @@ import {
     clearTabularCells,
     completeUserOnboarding,
     copyDocumentVersionFromDocument,
+    copyDocumentsToWorkflowAssets,
     createChat,
     createQuickAction,
     createLibraryFolder,
@@ -29,7 +30,7 @@ import {
     deleteTabularChat,
     deleteTabularReview,
     deleteWorkflow,
-    deleteWorkflowReferenceFile,
+    deleteWorkflowAsset,
     deleteWorkflowShare,
     downloadDocumentsZip,
     downloadUserExport,
@@ -68,7 +69,6 @@ import {
     getWorkflow,
     getWorkflowAddon,
     getWorkflowFilterOptions,
-    getWorkflowReferenceUrl,
     hideWorkflow,
     isMfaRequiredError,
     listChats,
@@ -87,13 +87,13 @@ import {
     listTabularReviews,
     listWorkflowIds,
     listWorkflowAddons,
-    listWorkflowReferenceFiles,
+    listWorkflowAssets,
     listWorkflowShares,
     listWorkflows,
     listWorkflowsPage,
     lookupUserByEmail,
     mapTRMessages,
-    workflowReferenceDisplayUrl,
+    workflowAddonAssetDisplayUrl,
     moveDocumentToFolder,
     moveLibraryDocument,
     moveLibraryFolder,
@@ -2407,19 +2407,22 @@ describe("thin endpoint wrappers", () => {
             method: "POST",
         },
         {
-            name: "listWorkflowReferenceFiles",
-            call: () => listWorkflowReferenceFiles("w1"),
-            url: "/workflows/w1/reference-files",
+            name: "listWorkflowAssets",
+            call: () => listWorkflowAssets("w1"),
+            url: "/workflows/w1/assets",
         },
         {
-            name: "getWorkflowReferenceUrl",
-            call: () => getWorkflowReferenceUrl("w1", "ref-1"),
-            url: "/workflows/w1/reference-files/ref-1/url",
+            name: "copyDocumentsToWorkflowAssets",
+            call: () =>
+                copyDocumentsToWorkflowAssets("w1", ["document-1", "document-2"]),
+            url: "/workflows/w1/assets/from-documents",
+            method: "POST",
+            body: { document_ids: ["document-1", "document-2"] },
         },
         {
-            name: "deleteWorkflowReferenceFile",
-            call: () => deleteWorkflowReferenceFile("w1", "ref-1"),
-            url: "/workflows/w1/reference-files/ref-1",
+            name: "deleteWorkflowAsset",
+            call: () => deleteWorkflowAsset("w1", "asset-1"),
+            url: "/workflows/w1/assets/asset-1",
             method: "DELETE",
         },
     ];
@@ -2453,9 +2456,9 @@ describe("thin endpoint wrappers", () => {
 // ---------------------------------------------------------------------------
 
 describe("unwrapping and blob wrappers", () => {
-    it("builds an encoded workflow-reference display URL", () => {
-        expect(workflowReferenceDisplayUrl("workflow/1", "reference 1")).toBe(
-            "/api/workflows/workflow%2F1/reference-files/reference%201/display",
+    it("builds an encoded workflow add-on asset display URL", () => {
+        expect(workflowAddonAssetDisplayUrl("workflow/1", "asset 1")).toBe(
+            "/api/workflow-addons/workflow%2F1/assets/asset%201/display",
         );
     });
 

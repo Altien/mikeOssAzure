@@ -47,6 +47,22 @@ describe("DocumentUploadMenu", () => {
         expect(screen.getAllByRole("menuitem")).toHaveLength(2);
     });
 
+    it("omits folder upload when the caller does not support it", async () => {
+        const user = userEvent.setup();
+        render(
+            <DocumentUploadMenu
+                onSavedFiles={vi.fn()}
+                onUploadFiles={vi.fn()}
+            />,
+        );
+
+        await user.click(screen.getByRole("button", { name: "Upload" }));
+        expect(
+            screen.queryByRole("menuitem", { name: "Upload folder" }),
+        ).toBeNull();
+        expect(screen.getAllByRole("menuitem")).toHaveLength(2);
+    });
+
     it("disables upload while its collection is loading", () => {
         render(
             <DocumentUploadMenu

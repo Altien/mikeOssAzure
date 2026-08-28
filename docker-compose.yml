@@ -136,6 +136,9 @@ services:
       - ./backend/migrations/20260827_03_remove_minimal_reasoning.sql:/remove-minimal-reasoning-migration.sql:ro
       - ./backend/migrations/20260828_02_upload_sessions.sql:/upload-sessions-migration.sql:ro
       - ./backend/migrations/20260829_01_db_jobs.sql:/db-jobs-migration.sql:ro
+      - ./backend/migrations/20260901_01_transparent_tables.sql:/transparent-tables-migration.sql:ro
+      - ./backend/migrations/20260901_02_project_visibility_scopes.sql:/project-visibility-migration.sql:ro
+      - ./backend/migrations/20260901_03_workflow_assets_as_documents.sql:/workflow-assets-migration.sql:ro
     entrypoint: ["bash", "-c"]
     command:
       - |
@@ -159,6 +162,9 @@ services:
         psql "$$DB" -v ON_ERROR_STOP=1 -f /remove-minimal-reasoning-migration.sql;
         psql "$$DB" -v ON_ERROR_STOP=1 -f /upload-sessions-migration.sql;
         psql "$$DB" -v ON_ERROR_STOP=1 -f /db-jobs-migration.sql;
+        psql "$$DB" -v ON_ERROR_STOP=1 -f /transparent-tables-migration.sql;
+        psql "$$DB" -v ON_ERROR_STOP=1 -f /project-visibility-migration.sql;
+        psql "$$DB" -v ON_ERROR_STOP=1 -f /workflow-assets-migration.sql;
         psql "$$DB" -c "grant usage on schema public to service_role;
           grant all privileges on all tables in schema public to service_role;
           grant all privileges on all sequences in schema public to service_role;

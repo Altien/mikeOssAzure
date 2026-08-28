@@ -33,6 +33,7 @@ interface WorkflowPickerContentProps {
     search: string;
     onSearchChange: (value: string) => void;
     loading?: boolean;
+    previewLoading?: boolean;
     workflowType?: Workflow["metadata"]["type"] | "all";
     emptyMessage?: string;
     previewMode?: WorkflowPreviewMode;
@@ -48,6 +49,7 @@ export function WorkflowPickerContent({
     search,
     onSearchChange,
     loading = false,
+    previewLoading = false,
     workflowType = "all",
     emptyMessage,
     previewMode = "auto",
@@ -204,6 +206,7 @@ export function WorkflowPickerContent({
                     mode={previewMode}
                     onClear={handleClearPreview}
                     allowClear={allowClearPreview}
+                    loading={previewLoading}
                     className={
                         mobilePane === "details" ? "flex" : "hidden md:flex"
                     }
@@ -218,12 +221,14 @@ function WorkflowPreview({
     mode,
     onClear,
     allowClear,
+    loading,
     className = "flex",
 }: {
     workflow: Workflow;
     mode: WorkflowPreviewMode;
     onClear: () => void;
     allowClear: boolean;
+    loading: boolean;
     className?: string;
 }) {
     const resolvedMode =
@@ -254,7 +259,9 @@ function WorkflowPreview({
                     ) : null}
                 </div>
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
-                    {resolvedMode === "columns" ? (
+                    {loading ? (
+                        <WorkflowPreviewSkeleton mode={resolvedMode} />
+                    ) : resolvedMode === "columns" ? (
                         <WorkflowColumnPreview
                             columns={workflow.columns_config ?? []}
                         />
@@ -267,6 +274,26 @@ function WorkflowPreview({
                     )}
                 </div>
             </div>
+        </div>
+    );
+}
+
+function WorkflowPreviewSkeleton({ mode }: { mode: "prompt" | "columns" }) {
+    return (
+        <div
+            role="status"
+            aria-label={`Loading workflow ${mode}`}
+            className="min-w-0 flex-1 space-y-3 px-3 py-3"
+        >
+            {(mode === "columns"
+                ? ["w-3/4", "w-2/3", "w-4/5", "w-1/2"]
+                : ["w-full", "w-11/12", "w-4/5", "w-full", "w-2/3"]
+            ).map((width, index) => (
+                <div
+                    key={index}
+                    className={`h-3 animate-pulse rounded bg-gray-100 ${width}`}
+                />
+            ))}
         </div>
     );
 }

@@ -37,6 +37,10 @@ import {
   shouldConvertToPdf,
 } from "../lib/documentTypes";
 import { uniqueArchiveFilename, zipExportLimitDetail } from "../lib/zipExport";
+import {
+  loadDocumentDisplay,
+  sendDocumentDisplay,
+} from "../lib/documentDisplay";
 
 export const documentsRouter = Router();
 const isDev = process.env.NODE_ENV !== "production";
@@ -177,11 +181,10 @@ documentsRouter.get("/:documentId/display", requireAuth, async (req, res) => {
 
   const { data: doc } = await db
     .from("documents")
-    .select("id, user_id, project_id")
+    .select("id, user_id, project_id, workflow_id")
     .eq("id", documentId)
     .single();
-  if (!doc)
-    return void res.status(404).json({ detail: "Document not found" });
+  if (!doc) return void res.status(404).json({ detail: "Document not found" });
   const access = await ensureDocAccess(doc, userId, userEmail, db);
   if (!access.ok)
     return void res.status(404).json({ detail: "Document not found" });
@@ -190,40 +193,27 @@ documentsRouter.get("/:documentId/display", requireAuth, async (req, res) => {
   if (!active)
     return void res.status(404).json({ detail: "No file available" });
 
-  const fileType = active.file_type ?? "";
-  const isConvertibleOffice = shouldConvertToPdf(fileType);
   const displayFilename = downloadFilenameForVersion(
     active.filename,
     active.version_number,
     active.source === "assistant_edit",
   );
 
-  // For Office files, prefer the per-version PDF rendition if one exists.
-  const servePath =
-    isConvertibleOffice && active.pdf_storage_path
-      ? active.pdf_storage_path
-      : active.storage_path;
-  const raw = await downloadFile(servePath);
-  if (!raw)
-    return void res
-      .status(404)
-      .json({ detail: "Document not found in storage" });
-
-  if (fileType === "pdf" || (isConvertibleOffice && active.pdf_storage_path)) {
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      buildContentDisposition("inline", displayFilename),
-    );
-    res.send(Buffer.from(raw));
-  } else {
-    // Fallback: serve raw Office bytes when PDF conversion was unavailable.
-    res.setHeader("Content-Type", contentTypeForDocumentType(fileType));
-    res.setHeader(
-      "Content-Disposition",
-      buildContentDisposition("inline", displayFilename),
-    );
-    res.send(Buffer.from(raw));
+  try {
+    const display = await loadDocumentDisplay({
+      filename: displayFilename,
+      fileType: active.file_type,
+      storagePath: active.storage_path,
+      pdfStoragePath: active.pdf_storage_path,
+    });
+    if (!display) {
+      return void res
+        .status(404)
+        .json({ detail: "Document not found in storage" });
+    }
+    sendDocumentDisplay(res, display);
+  } catch (error) {
+    return void sendInternalError(res, error);
   }
 });
 
@@ -268,7 +258,7 @@ documentsRouter.post("/download-zip", requireAuth, async (req, res) => {
   if (documentIds.length > 0) {
     const { data, error } = await db
       .from("documents")
-      .select("id, current_version_id, user_id, project_id")
+      .select("id, current_version_id, user_id, project_id, workflow_id")
       .in("id", documentIds);
     if (error) return void sendInternalError(res, error);
     for (const doc of data ?? [])
@@ -300,12 +290,7 @@ documentsRouter.post("/download-zip", requireAuth, async (req, res) => {
       await Promise.all(
         projectIds.map(async (projectId) => ({
           projectId,
-          access: await checkProjectAccess(
-            projectId,
-            userId,
-            userEmail,
-            db,
-          ),
+          access: await checkProjectAccess(projectId, userId, userEmail, db),
         })),
       )
     )
@@ -353,13 +338,13 @@ documentsRouter.post("/download-zip", requireAuth, async (req, res) => {
       projectFolderIds.length > 0
         ? db
             .from("documents")
-            .select("id, current_version_id, user_id, project_id")
+            .select("id, current_version_id, user_id, project_id, workflow_id")
             .in("folder_id", projectFolderIds)
         : Promise.resolve({ data: [], error: null }),
       libraryFolderIds.length > 0
         ? db
             .from("documents")
-            .select("id, current_version_id, user_id, project_id")
+            .select("id, current_version_id, user_id, project_id, workflow_id")
             .in("library_folder_id", libraryFolderIds)
         : Promise.resolve({ data: [], error: null }),
     ]);
@@ -387,9 +372,7 @@ documentsRouter.post("/download-zip", requireAuth, async (req, res) => {
       ),
     })),
   );
-  const docs = accessChecks
-    .filter((x) => x.access.ok)
-    .map((x) => x.doc);
+  const docs = accessChecks.filter((x) => x.access.ok).map((x) => x.doc);
   if (!docs || docs.length === 0)
     return void res.status(404).json({ detail: "No documents found" });
 
@@ -482,12 +465,13 @@ documentsRouter.get("/:documentId/url", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { documentId } = req.params;
-  const versionIdParam = typeof req.query.version_id === "string" ? req.query.version_id : null;
+  const versionIdParam =
+    typeof req.query.version_id === "string" ? req.query.version_id : null;
   const db = createServerSupabase();
 
   const { data: doc, error } = await db
     .from("documents")
-    .select("id, user_id, project_id")
+    .select("id, user_id, project_id, workflow_id")
     .eq("id", documentId)
     .single();
   if (error || !doc)
@@ -505,11 +489,7 @@ documentsRouter.get("/:documentId/url", requireAuth, async (req, res) => {
     active.version_number,
     active.source === "assistant_edit",
   );
-  const url = await getSignedUrl(
-    active.storage_path,
-    3600,
-    downloadFilename,
-  );
+  const url = await getSignedUrl(active.storage_path, 3600, downloadFilename);
   if (!url)
     return void res.status(503).json({ detail: "Storage not configured" });
 
@@ -533,12 +513,13 @@ documentsRouter.get("/:documentId/docx", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { documentId } = req.params;
-  const versionIdParam = typeof req.query.version_id === "string" ? req.query.version_id : null;
+  const versionIdParam =
+    typeof req.query.version_id === "string" ? req.query.version_id : null;
   const db = createServerSupabase();
 
   const { data: doc, error } = await db
     .from("documents")
-    .select("id, user_id, project_id")
+    .select("id, user_id, project_id, workflow_id")
     .eq("id", documentId)
     .single();
   if (error || !doc)
@@ -553,7 +534,9 @@ documentsRouter.get("/:documentId/docx", requireAuth, async (req, res) => {
 
   const raw = await downloadFile(active.storage_path);
   if (!raw)
-    return void res.status(404).json({ detail: "Document bytes not available" });
+    return void res
+      .status(404)
+      .json({ detail: "Document bytes not available" });
 
   res.setHeader(
     "Content-Type",
@@ -584,11 +567,10 @@ documentsRouter.get("/:documentId/versions", requireAuth, async (req, res) => {
 
   const { data: doc } = await db
     .from("documents")
-    .select("id, current_version_id, user_id, project_id")
+    .select("id, current_version_id, user_id, project_id, workflow_id")
     .eq("id", documentId)
     .single();
-  if (!doc)
-    return void res.status(404).json({ detail: "Document not found" });
+  if (!doc) return void res.status(404).json({ detail: "Document not found" });
   const access = await ensureDocAccess(doc, userId, userEmail, db);
   if (!access.ok)
     return void res.status(404).json({ detail: "Document not found" });
@@ -636,23 +618,33 @@ documentsRouter.post(
 
     const { data: targetDoc } = await db
       .from("documents")
-      .select("id, user_id, project_id")
+      .select("id, user_id, project_id, workflow_id")
       .eq("id", documentId)
       .single();
     if (!targetDoc)
       return void res.status(404).json({ detail: "Document not found" });
-    const targetAccess = await ensureDocAccess(targetDoc, userId, userEmail, db);
-    if (!targetAccess.ok)
+    const targetAccess = await ensureDocAccess(
+      targetDoc,
+      userId,
+      userEmail,
+      db,
+    );
+    if (!targetAccess.ok || !targetAccess.canEdit)
       return void res.status(404).json({ detail: "Document not found" });
 
     const { data: sourceDoc } = await db
       .from("documents")
-      .select("id, user_id, project_id")
+      .select("id, user_id, project_id, workflow_id")
       .eq("id", sourceDocumentId)
       .single();
     if (!sourceDoc)
       return void res.status(404).json({ detail: "Source document not found" });
-    const sourceAccess = await ensureDocAccess(sourceDoc, userId, userEmail, db);
+    const sourceAccess = await ensureDocAccess(
+      sourceDoc,
+      userId,
+      userEmail,
+      db,
+    );
     if (!sourceAccess.ok)
       return void res.status(404).json({ detail: "Source document not found" });
     const willDeleteSource =
@@ -787,7 +779,10 @@ documentsRouter.post(
       })
       .eq("id", documentId);
     if (updateDocErr) {
-      console.error("[versions/copy] current version update failed", updateDocErr);
+      console.error(
+        "[versions/copy] current version update failed",
+        updateDocErr,
+      );
       return void res
         .status(500)
         .json({ detail: "Failed to update document current version." });
@@ -811,7 +806,10 @@ documentsRouter.post(
         sourceDocumentId,
       );
       if (deleteErr) {
-        console.error("[versions/copy] source document delete failed", deleteErr);
+        console.error(
+          "[versions/copy] source document delete failed",
+          deleteErr,
+        );
         return void res
           .status(500)
           .json({ detail: "Failed to delete source document." });
@@ -835,13 +833,13 @@ documentsRouter.patch(
 
     const { data: doc } = await db
       .from("documents")
-      .select("id, user_id, project_id")
+      .select("id, user_id, project_id, workflow_id")
       .eq("id", documentId)
       .single();
     if (!doc)
       return void res.status(404).json({ detail: "Document not found" });
     const access = await ensureDocAccess(doc, userId, userEmail, db);
-    if (!access.ok)
+    if (!access.ok || !access.canEdit)
       return void res.status(404).json({ detail: "Document not found" });
 
     const raw = req.body?.filename;
@@ -879,13 +877,13 @@ documentsRouter.delete(
 
     const { data: doc } = await db
       .from("documents")
-      .select("id, user_id, project_id, current_version_id")
+      .select("id, user_id, project_id, workflow_id, current_version_id")
       .eq("id", documentId)
       .single();
     if (!doc)
       return void res.status(404).json({ detail: "Document not found" });
     const access = await ensureDocAccess(doc, userId, userEmail, db);
-    if (!access.ok || !access.isOwner)
+    if (!access.ok || (!access.isOwner && !(doc.workflow_id && access.canEdit)))
       return void res.status(404).json({ detail: "Document not found" });
 
     const { data: versions, error: versionsErr } = await db
@@ -993,7 +991,7 @@ documentsRouter.get(
 
     const { data: doc } = await db
       .from("documents")
-      .select("id, user_id, project_id")
+      .select("id, user_id, project_id, workflow_id")
       .eq("id", documentId)
       .single();
     if (!doc)
@@ -1056,7 +1054,7 @@ async function handleEditResolution(
     });
     const { data: doc } = await db
       .from("documents")
-      .select("current_version_id, user_id, project_id")
+      .select("current_version_id, user_id, project_id, workflow_id")
       .eq("id", documentId)
       .single();
     if (!doc) {
@@ -1092,14 +1090,13 @@ async function handleEditResolution(
 
   const { data: doc, error: docErr } = await db
     .from("documents")
-    .select("id, current_version_id, user_id, project_id")
+    .select("id, current_version_id, user_id, project_id, workflow_id")
     .eq("id", documentId)
     .single();
   devLog(`[edit-resolution] fetched doc`, { doc, docErr });
-  if (!doc)
-    return void res.status(404).json({ detail: "Document not found" });
+  if (!doc) return void res.status(404).json({ detail: "Document not found" });
   const access = await ensureDocAccess(doc, userId, userEmail, db);
-  if (!access.ok)
+  if (!access.ok || !access.canEdit)
     return void res.status(404).json({ detail: "Document not found" });
 
   const active = await loadActiveVersion(documentId, db);
@@ -1116,7 +1113,9 @@ async function handleEditResolution(
     byteLength: raw?.byteLength ?? 0,
   });
   if (!raw)
-    return void res.status(404).json({ detail: "Document bytes not available" });
+    return void res
+      .status(404)
+      .json({ detail: "Document bytes not available" });
 
   const wIds = [edit.del_w_id, edit.ins_w_id].filter(
     (v): v is string => typeof v === "string" && v.length > 0,
@@ -1141,7 +1140,10 @@ async function handleEditResolution(
     // may have been auto-consumed by a previous accept/reject pass.
     const { error: updErr } = await db
       .from("document_edits")
-      .update({ status: mode === "accept" ? "accepted" : "rejected", resolved_at: new Date().toISOString() })
+      .update({
+        status: mode === "accept" ? "accepted" : "rejected",
+        resolved_at: new Date().toISOString(),
+      })
       .eq("id", editId);
     devLog(`[edit-resolution] status-only update`, { updErr });
     const payload = {

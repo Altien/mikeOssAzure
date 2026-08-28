@@ -20,6 +20,7 @@ import { quoteVerificationState } from "./message/citationVerification";
 import { FileTypeIcon } from "../shared/FileTypeIcon";
 import { CaseView } from "./CaseView";
 import { useResolvedPanelDocument } from "./useResolvedPanelDocument";
+import { resolveDocumentViewType } from "@/app/lib/documentViewType";
 
 /**
  * Discriminated-union describing what the panel is showing above the viewer.
@@ -92,8 +93,10 @@ export function DocPanel({
     const documentId = resolvedDocument.document_id;
     const versionId = resolvedDocument.version_id ?? null;
     const isCase = resolvedDocument.type === "case";
-    const isDocx = resolvedDocument.type === "docx";
-    const isSpreadsheet = resolvedDocument.type === "spreadsheet";
+    const viewType = resolveDocumentViewType({
+        filename: resolvedDocument.title,
+        fileType: resolvedDocument.type,
+    });
     const firstSelectableQuoteIndex =
         mode.kind === "citation"
             ? resolvedDocument.quotes.findIndex(
@@ -226,7 +229,7 @@ export function DocPanel({
                         onRetry={retryDocument}
                         onClearQuote={() => setActiveCitationQuoteId(null)}
                     />
-                ) : isDocx ? (
+                ) : viewType === "docx" ? (
                     <DocxView
                         documentId={documentId}
                         versionId={versionId ?? undefined}
@@ -239,7 +242,7 @@ export function DocPanel({
                         initialScrollTop={initialScrollTop ?? null}
                         onScrollChange={onScrollChange}
                     />
-                ) : isSpreadsheet ? (
+                ) : viewType === "spreadsheet" ? (
                     <SpreadsheetView
                         documentId={documentId}
                         versionId={versionId}

@@ -18,9 +18,16 @@ import {
 } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
 import {
-  LIQUID_GLASS_FLOAT_CLASS,
   TABLE_SURFACE_CLASS,
 } from "@/app/components/ui/liquid-surface";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+} from "@/app/components/ui/dropdown-menu";
+import {
+  LiquidDropdownContent,
+  LiquidDropdownItem,
+} from "@/app/components/ui/liquid-dropdown";
 
 interface Props {
   value: string;
@@ -85,7 +92,14 @@ export function WorkflowPromptEditor({
 }: Props) {
   const lastEmittedRef = useRef(value);
   const rawTextareaRef = useRef<HTMLTextAreaElement>(null);
-  const tablePickerRef = useRef<HTMLDivElement>(null);
+  const tableInsertionSelectionRef = useRef<{
+    from: number;
+    to: number;
+  } | null>(null);
+  const rawTableInsertionSelectionRef = useRef<{
+    start: number;
+    end: number;
+  } | null>(null);
   const [rawMode, setRawMode] = useState(false);
   const [rawMarkdown, setRawMarkdown] = useState(value);
   const [tablePickerOpen, setTablePickerOpen] = useState(false);
@@ -152,35 +166,6 @@ export function WorkflowPromptEditor({
       editor.commands.setContent(value);
     }
   }, [value, editor]);
-
-  useEffect(() => {
-    if (!tablePickerOpen) return;
-
-    function handlePointerDown(event: MouseEvent) {
-      if (
-        tablePickerRef.current &&
-        !tablePickerRef.current.contains(event.target as Node)
-      ) {
-        setTablePickerOpen(false);
-        setTablePickerSize(null);
-      }
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setTablePickerOpen(false);
-        setTablePickerSize(null);
-      }
-    }
-
-    document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [tablePickerOpen]);
 
   function handleRawToggle() {
     if (!editor || editor.isDestroyed) return;
@@ -303,9 +288,11 @@ export function WorkflowPromptEditor({
   function insertRawTable(rows: number, cols: number) {
     const textarea = rawTextareaRef.current;
     if (!textarea) return;
-    const start = textarea.selectionStart;
+    const savedSelection = rawTableInsertionSelectionRef.current;
+    const start = savedSelection?.start ?? textarea.selectionStart;
+    const end = savedSelection?.end ?? textarea.selectionEnd;
     const before = rawMarkdown.slice(0, start);
-    const after = rawMarkdown.slice(textarea.selectionEnd);
+    const after = rawMarkdown.slice(end);
     // Keep the table on its own line(s), whatever the caret sits on.
     const lead = before.length === 0 || before.endsWith("\n") ? "" : "\n";
     const trail = after.length === 0 || after.startsWith("\n") ? "" : "\n";
@@ -336,9 +323,11 @@ export function WorkflowPromptEditor({
       return;
     }
 
-    editor
-      ?.chain()
-      .focus()
+    if (!editor) return;
+    const chain = editor.chain().focus();
+    const savedSelection = tableInsertionSelectionRef.current;
+    if (savedSelection) chain.setTextSelection(savedSelection);
+    chain
       .insertTable({
         rows,
         cols,
@@ -347,12 +336,30 @@ export function WorkflowPromptEditor({
       .run();
   }
 
+  function rememberTableInsertionSelection() {
+    if (rawMode) {
+      const textarea = rawTextareaRef.current;
+      rawTableInsertionSelectionRef.current = textarea
+        ? {
+            start: textarea.selectionStart,
+            end: textarea.selectionEnd,
+          }
+        : null;
+      return;
+    }
+    if (!editor) return;
+    tableInsertionSelectionRef.current = {
+      from: editor.state.selection.from,
+      to: editor.state.selection.to,
+    };
+  }
+
   return (
     <div
-      className={`flex h-full flex-col overflow-hidden ${TABLE_SURFACE_CLASS}`}
+      className={`workflow-prompt-editor-surface flex h-full flex-col overflow-hidden ${TABLE_SURFACE_CLASS}`}
     >
       {!readOnly && editor && (
-        <div className="flex shrink-0 items-center gap-0.5 border-b border-white/70 bg-app-surface px-2 py-1.5 backdrop-blur-xl">
+        <div className="flex shrink-0 items-center gap-0.5 bg-app-surface px-2 py-1.5 backdrop-blur-xl">
           <AppToolbarButton
             onClick={() =>
               rawMode
@@ -433,28 +440,38 @@ export function WorkflowPromptEditor({
             <ListOrdered className="h-4 w-4" />
           </AppToolbarButton>
           <div className="w-px h-4 bg-gray-200 mx-1 shrink-0" />
-          <div ref={tablePickerRef} className="relative">
-            <AppToolbarButton
-              onClick={() =>
-                setTablePickerOpen((open) => {
-                  const nextOpen = !open;
-                  if (!nextOpen) {
-                    setTablePickerSize(null);
-                  }
-                  return nextOpen;
-                })
-              }
-              active={tablePickerOpen}
-              title="Insert table"
-            >
-              <Table2 className="h-4 w-4" />
-            </AppToolbarButton>
-            {tablePickerOpen && (
-              <div
-                role="dialog"
+          <DropdownMenu
+            open={tablePickerOpen}
+            onOpenChange={(open) => {
+              setTablePickerOpen(open);
+              if (!open) setTablePickerSize(null);
+            }}
+          >
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                title="Insert table"
                 aria-label="Insert table"
-                className={`absolute left-0 top-full z-[250] mt-1 w-max rounded-md p-2 ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-2xl`}
+                aria-pressed={tablePickerOpen}
+                className={`h-7 w-7 text-gray-600 hover:bg-white hover:text-gray-900 ${
+                  tablePickerOpen
+                    ? "bg-gray-300 text-gray-950 hover:bg-gray-300"
+                    : ""
+                }`}
+                onPointerDown={rememberTableInsertionSelection}
               >
+                <Table2 className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <LiquidDropdownContent
+              align="start"
+              aria-label="Insert table"
+              className="z-[250] w-max p-2"
+              onCloseAutoFocus={(event) => event.preventDefault()}
+            >
+              <div className="space-y-2">
                 <div
                   className="grid gap-1"
                   style={{
@@ -477,11 +494,11 @@ export function WorkflowPromptEditor({
                             cols <= tablePickerSize.cols;
 
                           return (
-                            <button
+                            <LiquidDropdownItem
                               key={`${rows}-${cols}`}
-                              type="button"
                               aria-label={`Insert ${rows} by ${cols} table`}
-                              onMouseEnter={() =>
+                              selected={selected}
+                              onPointerMove={() =>
                                 setTablePickerSize({
                                   rows,
                                   cols,
@@ -493,14 +510,11 @@ export function WorkflowPromptEditor({
                                   cols,
                                 })
                               }
-                              onMouseDown={(event) => {
-                                event.preventDefault();
-                                insertTable(rows, cols);
-                              }}
-                              className={`h-4 w-4 rounded-[3px] border transition-colors ${
+                              onSelect={() => insertTable(rows, cols)}
+                              className={`h-4 w-4 min-w-0 rounded-[3px] border p-0 transition-colors ${
                                 selected
-                                  ? "border-gray-700 bg-gray-800"
-                                  : "border-gray-200 bg-white hover:border-gray-400"
+                                  ? "border-blue-600 bg-blue-600 focus:bg-blue-600"
+                                  : "border-gray-200 bg-white hover:border-gray-400 focus:bg-white"
                               }`}
                             />
                           );
@@ -508,14 +522,14 @@ export function WorkflowPromptEditor({
                       ),
                   )}
                 </div>
-                <div className="mt-2 text-center text-[11px] font-medium text-gray-500">
+                <div className="text-center text-[11px] font-medium text-gray-500">
                   {tablePickerSize
                     ? `${tablePickerSize.rows} x ${tablePickerSize.cols}`
                     : "Select table size"}
                 </div>
               </div>
-            )}
-          </div>
+            </LiquidDropdownContent>
+          </DropdownMenu>
           <div className="ml-auto" />
           <AppToolbarButton
             onClick={handleRawToggle}

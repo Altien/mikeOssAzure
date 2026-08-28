@@ -1,8 +1,6 @@
 import crypto from "crypto";
 import { createServerSupabase } from "../supabase";
-import {
-  attachActiveVersionPaths,
-} from "../documentVersions";
+import { attachActiveVersionPaths } from "../documentVersions";
 import {
   type DocStore,
   type DocIndex,
@@ -17,10 +15,7 @@ import { buildSystemPrompt } from "./prompts";
 import { ACTIVE_WORD_DOCUMENT_LIVE_FILENAME } from "./wordPrompt";
 import { parseCitations, createCitation } from "./citations";
 import type { AssistantEvent } from "./streaming";
-import {
-  catalogWorkflowId,
-  ensureDefaultWorkflows,
-} from "../workflowCatalog";
+import { catalogWorkflowId, ensureDefaultWorkflows } from "../workflowCatalog";
 
 // ---------------------------------------------------------------------------
 // Prompt-injection spotlighting helpers
@@ -45,10 +40,7 @@ function neutralizeFenceTokens(text: string, nonce: string): string {
   return String(text)
     .split(nonce)
     .join("[redacted-nonce]")
-    .replace(
-      /<(\/?)(untrusted-content|workflow-instructions)/gi,
-      "&lt;$1$2",
-    );
+    .replace(/<(\/?)(untrusted-content|workflow-instructions)/gi, "&lt;$1$2");
 }
 
 /**
@@ -93,9 +85,7 @@ export function buildUserPersonalisationPrompt(
   const facts = {
     ...(profile.displayName ? { name: profile.displayName } : {}),
     ...(profile.organisation ? { organisation: profile.organisation } : {}),
-    ...(profile.professionalTitle
-      ? { title: profile.professionalTitle }
-      : {}),
+    ...(profile.professionalTitle ? { title: profile.professionalTitle } : {}),
     ...(profile.practiceSetting
       ? {
           professional_setting:
@@ -129,7 +119,7 @@ export function spotlightFilename(filename: string, nonce?: string): string {
  * self-contradiction. The system prompt tells the model to follow
  * `<workflow-instructions>` like a user request, but never to let a workflow
  * override system policy, exfiltrate data, or re-interpret other fenced
- * content. External data a workflow references (documents, fetched text)
+ * content. External data a workflow consumes (documents, fetched text)
  * still arrives via `spotlight()` and stays data-only.
  *
  * Uses the same per-request nonce and fence-token neutralization as
@@ -140,7 +130,6 @@ export function spotlightWorkflow(text: string, nonce: string): string {
   const neutralized = neutralizeFenceTokens(text, nonce);
   return `<workflow-instructions nonce="${nonce}">\n${neutralized}\n</workflow-instructions nonce="${nonce}">`;
 }
-
 
 export async function enrichWithPriorEvents(
   messages: ChatMessage[],
@@ -188,7 +177,9 @@ export async function enrichWithPriorEvents(
   const lines: string[] = [];
   for (const ev of content as Record<string, unknown>[]) {
     if (ev?.type === "doc_created") {
-      lines.push(`- generated_document → ${refFor(ev.document_id, ev.filename)}`);
+      lines.push(
+        `- generated_document → ${refFor(ev.document_id, ev.filename)}`,
+      );
     } else if (ev?.type === "doc_edited") {
       lines.push(`- edit_document → ${refFor(ev.document_id, ev.filename)}`);
     } else if (ev?.type === "doc_read") {
@@ -236,10 +227,7 @@ export async function enrichWithPriorEvents(
           typeof row.answer === "string"
         ) {
           lines.push(`- user answered: ${untrustedRef(row.answer)}`);
-        } else if (
-          row.kind === "documents" &&
-          Array.isArray(row.filenames)
-        ) {
+        } else if (row.kind === "documents" && Array.isArray(row.filenames)) {
           lines.push(
             `- user attached documents: ${
               row.filenames.length
@@ -289,7 +277,9 @@ export const MAX_DOCUMENT_CONTEXT_CHARS = 200_000;
  * values normalize to `undefined`; anything that is present but not a
  * string is a 400.
  */
-export function parseOptionalDocumentContext(value: unknown):
+export function parseOptionalDocumentContext(
+  value: unknown,
+):
   | { ok: true; documentContext: string | undefined }
   | { ok: false; detail: string } {
   if (value === undefined || value === null) {
@@ -412,10 +402,7 @@ export function parseAskInputsResponsePayload(
       const id = cleanAskInputResponseId(current.id);
       const kind = current.kind;
       const skipped = current.skipped === true;
-      if (
-        !id ||
-        (kind !== "choice" && kind !== "text" && kind !== "documents")
-      )
+      if (!id || (kind !== "choice" && kind !== "text" && kind !== "documents"))
         return null;
       if (kind === "choice" || kind === "text") {
         const question =
@@ -426,10 +413,7 @@ export function parseAskInputsResponsePayload(
           typeof current.answer === "string"
             ? current.answer
                 .trim()
-                .slice(
-                  0,
-                  kind === "text" ? MAX_ASK_INPUT_TEXT_LENGTH : 1_000,
-                )
+                .slice(0, kind === "text" ? MAX_ASK_INPUT_TEXT_LENGTH : 1_000)
             : "";
         if (!question || (!answer && !skipped)) return null;
         return {
@@ -466,12 +450,18 @@ export async function appendAskInputsResponseToLastAssistantMessage(
   response: AskInputsResponseRequest,
   messageTable = "chat_messages",
 ) {
-  await appendAssistantEventsToLastAssistantMessage(db, chatId, [
-    {
-      type: "ask_inputs_response" as const,
-      responses: response.responses,
-    },
-  ], undefined, messageTable);
+  await appendAssistantEventsToLastAssistantMessage(
+    db,
+    chatId,
+    [
+      {
+        type: "ask_inputs_response" as const,
+        responses: response.responses,
+      },
+    ],
+    undefined,
+    messageTable,
+  );
 }
 
 export async function appendAssistantEventsToLastAssistantMessage(
@@ -510,13 +500,9 @@ export async function appendAssistantEventsToLastAssistantMessage(
     content: unknown;
     citations?: unknown;
   };
-  const existing = Array.isArray(row.content)
-    ? row.content
-    : [];
+  const existing = Array.isArray(row.content) ? row.content : [];
   const next = [...existing, ...events];
-  const existingCitations = Array.isArray(row.citations)
-    ? row.citations
-    : [];
+  const existingCitations = Array.isArray(row.citations) ? row.citations : [];
   const nextCitations =
     citations && citations.length > 0
       ? [...existingCitations, ...citations]
@@ -604,9 +590,7 @@ export async function buildDocContext(
               typeof (copy as { document_id?: unknown }).document_id ===
                 "string"
             ) {
-              documentIds.add(
-                (copy as { document_id: string }).document_id,
-              );
+              documentIds.add((copy as { document_id: string }).document_id);
             }
           }
         }
@@ -848,28 +832,30 @@ export async function buildWorkflowStore(
     .filter(([, workflow]) => workflow.listed !== false)
     .map(([id]) => id);
   if (databaseWorkflowIds.length > 0) {
-    const { data: referenceDocuments } = await db
-      .from("workflow_reference_documents")
-      .select("id, workflow_id, filename, file_type, storage_path")
+    const { data: assetDocuments } = await db
+      .from("documents")
+      .select("id, workflow_id, current_version_id")
       .in("workflow_id", databaseWorkflowIds);
-    const documents = (referenceDocuments ?? []) as {
+    const documents = (assetDocuments ?? []) as {
       id: string;
       workflow_id: string;
-      filename: string;
-      file_type: string;
-      storage_path: string;
+      current_version_id: string | null;
+      filename?: string | null;
+      file_type?: string | null;
+      storage_path?: string | null;
     }[];
+    await attachActiveVersionPaths(db, documents);
     for (const document of documents) {
       const workflow = store.get(document.workflow_id);
-      if (!workflow) continue;
-      const references = workflow.reference_files ?? [];
-      references.push({
-        reference_id: document.id,
-        filename: document.filename?.trim() || "Untitled reference",
-        file_type: document.file_type,
+      if (!workflow || !document.storage_path) continue;
+      const assets = workflow.assets ?? [];
+      assets.push({
+        asset_id: document.id,
+        filename: document.filename?.trim() || "Untitled asset",
+        file_type: document.file_type ?? "",
         storage_path: document.storage_path,
       });
-      workflow.reference_files = references;
+      workflow.assets = assets;
     }
   }
   return store;

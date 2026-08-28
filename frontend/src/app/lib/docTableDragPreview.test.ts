@@ -77,4 +77,21 @@ describe("DocTable drag preview", () => {
 
         expect(setDragImage).not.toHaveBeenCalled();
     });
+
+    it("keeps the native preview when fewer than two selected rows are visible", () => {
+        const root = document.createElement("div");
+        root.appendChild(documentRow("a", 100));
+        const setDragImage = vi.fn();
+
+        setDocumentRowsDragPreview({
+            dataTransfer: { setDragImage },
+            tableRoot: root,
+            draggedDocumentIds: ["a", "offscreen"],
+            draggedDocumentId: "a",
+            clientX: 30,
+            clientY: 110,
+        });
+
+        expect(setDragImage).not.toHaveBeenCalled();
+    });
 });

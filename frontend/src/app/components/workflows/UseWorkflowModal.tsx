@@ -55,6 +55,11 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
     // "switch workflow" screen supports any workflow, unlike
     // WorkflowPickerModal which is always scoped to one type.
     const [pickerWorkflows, setPickerWorkflows] = useState<Workflow[]>([]);
+    const [pickerLoadedWorkflowId, setPickerLoadedWorkflowId] = useState<
+        string | null
+    >(null);
+    const pickerLoading =
+        workflow !== null && pickerLoadedWorkflowId !== workflow.id;
 
     useEffect(() => {
         if (!workflow) return;
@@ -68,6 +73,9 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
             })
             .catch(() => {
                 if (!cancelled) setPickerWorkflows([]);
+            })
+            .finally(() => {
+                if (!cancelled) setPickerLoadedWorkflowId(workflow.id);
             });
         return () => {
             cancelled = true;
@@ -105,7 +113,11 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
 
     useEffect(() => {
         if (workflow) {
-            setSelected(workflow);
+            setSelected(
+                pickerWorkflows.find(
+                    (candidate) => candidate.id === workflow.id,
+                ) ?? workflow,
+            );
             setScreen(skipSelect ? "details" : "select");
             setListSearch("");
         } else {
@@ -350,6 +362,8 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
                     search={listSearch}
                     onSearchChange={setListSearch}
                     workflowType="all"
+                    loading={pickerLoading}
+                    previewLoading={pickerLoading}
                     previewMode="auto"
                     showTypeIcon
                     allowClearPreview={false}

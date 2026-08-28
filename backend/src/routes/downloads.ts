@@ -20,16 +20,13 @@ downloadsRouter.get("/:token", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const info = verifyDownload(req.params.token);
-    if (!info)
-        return void res.status(404).json({ detail: "Invalid link" });
+    if (!info) return void res.status(404).json({ detail: "Invalid link" });
 
     const db = createServerSupabase();
-    let version:
-        | {
-              id: string;
-              document_id: string;
-          }
-        | null = null;
+    let version: {
+        id: string;
+        document_id: string;
+    } | null = null;
 
     const { data: byStoragePath } = await db
         .from("document_versions")
@@ -46,19 +43,17 @@ downloadsRouter.get("/:token", requireAuth, async (req, res) => {
 
     const { data: doc } = await db
         .from("documents")
-        .select("id, user_id, project_id")
+        .select("id, user_id, project_id, workflow_id")
         .eq("id", version.document_id)
         .single();
-    if (!doc)
-        return void res.status(404).json({ detail: "File not found" });
+    if (!doc) return void res.status(404).json({ detail: "File not found" });
 
     const access = await ensureDocAccess(doc, userId, userEmail, db);
     if (!access.ok)
         return void res.status(404).json({ detail: "File not found" });
 
     const raw = await downloadFile(info.path);
-    if (!raw)
-        return void res.status(404).json({ detail: "File not found" });
+    if (!raw) return void res.status(404).json({ detail: "File not found" });
 
     res.setHeader("Content-Type", contentTypeFor(info.filename));
     res.setHeader(

@@ -19,7 +19,6 @@ import {
   storageKey,
   uploadFileFromPath,
   versionStorageKey,
-  workflowReferenceKey,
 } from "./storage";
 import { createServerSupabase } from "./supabase";
 import { UPLOAD_VERIFICATION_LEASE_SECONDS } from "./uploadSessions";
@@ -225,7 +224,8 @@ async function processCreatedDocument(
   artifact: SealedFileArtifact,
 ) {
   const destination = session.destination;
-  const scope = destination.scope as "standalone" | "project" | "library";
+  const scope = destination.scope as
+    "standalone" | "project" | "library" | "workflow";
   const projectId =
     scope === "project" ? (destination.project_id as string) : null;
   const folderId =
@@ -241,9 +241,13 @@ async function processCreatedDocument(
         null)
       : null;
   const libraryKind =
-    scope === "library"
-      ? (destination.library_kind as "file" | "template")
-      : "file";
+    scope === "workflow"
+      ? "workflow_asset"
+      : scope === "library"
+        ? (destination.library_kind as "file" | "template")
+        : "file";
+  const workflowId =
+    scope === "workflow" ? (destination.workflow_id as string) : null;
   const documentId = file.resource_id;
   const versionId = file.id;
 
@@ -256,6 +260,7 @@ async function processCreatedDocument(
       folder_id: folderId,
       library_kind: libraryKind,
       library_folder_id: libraryFolderId,
+      workflow_id: workflowId,
     },
     { onConflict: "id" },
   );
@@ -495,82 +500,6 @@ async function processReplacementDocumentVersion(
   return updated;
 }
 
-async function processWorkflowReference(
-  db: Db,
-  session: UploadSessionRow,
-  file: UploadFileRow,
-  artifact: SealedFileArtifact,
-) {
-  const workflowId = session.destination.workflow_id as string;
-  const replacing = session.purpose === "workflow_reference_replace";
-  const referenceId = replacing
-    ? (session.destination.reference_id as string)
-    : file.resource_id;
-  const { data: workflow, error: workflowError } = await db
-    .from("workflows")
-    .select("id, user_id")
-    .eq("id", workflowId)
-    .single();
-  if (workflowError || !workflow) {
-    throw workflowError ?? new Error("workflow_not_found");
-  }
-  const ownerId = (workflow.user_id as string | null) ?? session.user_id;
-  const hash = artifact.sha256;
-  const sourcePath = workflowReferenceKey(
-    ownerId,
-    workflowId,
-    referenceId,
-    hash,
-    file.filename,
-  );
-  await copyFile(file.sealed_storage_path, sourcePath);
-
-  let oldPath: string | null = null;
-  if (replacing) {
-    const { data: current, error } = await db
-      .from("workflow_reference_documents")
-      .select("id, storage_path")
-      .eq("id", referenceId)
-      .eq("workflow_id", workflowId)
-      .single();
-    if (error || !current) throw error ?? new Error("reference_not_found");
-    oldPath = current.storage_path as string;
-  }
-
-  const payload = {
-    id: referenceId,
-    workflow_id: workflowId,
-    user_id: ownerId,
-    filename: file.filename,
-    file_type: file.file_type,
-    storage_path: sourcePath,
-    size_bytes: artifact.size,
-    content_hash: hash,
-    updated_at: new Date().toISOString(),
-  };
-  const query = replacing
-    ? db
-        .from("workflow_reference_documents")
-        .update(payload)
-        .eq("id", referenceId)
-        .eq("workflow_id", workflowId)
-    : db
-        .from("workflow_reference_documents")
-        .upsert(payload, { onConflict: "id" });
-  const { data: reference, error } = await query
-    .select(
-      "id, workflow_id, filename, file_type, size_bytes, created_at, updated_at",
-    )
-    .single();
-  if (error || !reference) {
-    throw error ?? new Error("reference_write_returned_no_data");
-  }
-  if (oldPath && oldPath !== sourcePath) {
-    await deleteFile(oldPath).catch(() => {});
-  }
-  return reference;
-}
-
 export async function processUploadFile(
   db: Db,
   session: UploadSessionRow,
@@ -591,8 +520,37 @@ export async function processUploadFile(
           artifact,
         );
       case "workflow_reference_create":
+        // Complete upload sessions created by the previous release using the
+        // standard workflow-asset document path.
+        return await processCreatedDocument(
+          db,
+          {
+            ...session,
+            purpose: "document_create",
+            destination: {
+              scope: "workflow",
+              workflow_id: session.destination.workflow_id,
+            },
+          },
+          file,
+          artifact,
+        );
       case "workflow_reference_replace":
-        return await processWorkflowReference(db, session, file, artifact);
+        // A former replacement is retained as a new version so history is not
+        // destroyed during a rolling deployment.
+        return await processNewDocumentVersion(
+          db,
+          {
+            ...session,
+            purpose: "document_version_create",
+            destination: {
+              document_id: session.destination.reference_id,
+              filename: file.filename,
+            },
+          },
+          file,
+          artifact,
+        );
     }
   } finally {
     await removeTemporaryArtifact(artifact.directory);
