@@ -121,7 +121,7 @@ export function PageHeader({
             className={cn(
                 "flex items-center justify-between",
                 "mx-4 md:mx-8",
-                "min-h-[76px] pb-4 pt-5.5",
+                "min-h-[76px] pb-5 pt-4.5",
                 shrink && "shrink-0",
             )}
         >

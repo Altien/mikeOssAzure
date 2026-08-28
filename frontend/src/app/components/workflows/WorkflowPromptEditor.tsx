@@ -19,7 +19,7 @@ import {
 import { Button } from "@/app/components/ui/button";
 import {
   LIQUID_GLASS_FLOAT_CLASS,
-  LIQUID_TABLE_SURFACE_CLASS,
+  TABLE_SURFACE_CLASS,
 } from "@/app/components/ui/liquid-surface";
 
 interface Props {
@@ -349,7 +349,7 @@ export function WorkflowPromptEditor({
 
   return (
     <div
-      className={`flex h-full flex-col overflow-hidden ${LIQUID_TABLE_SURFACE_CLASS}`}
+      className={`flex h-full flex-col overflow-hidden ${TABLE_SURFACE_CLASS}`}
     >
       {!readOnly && editor && (
         <div className="flex shrink-0 items-center gap-0.5 border-b border-white/70 bg-app-surface px-2 py-1.5 backdrop-blur-xl">

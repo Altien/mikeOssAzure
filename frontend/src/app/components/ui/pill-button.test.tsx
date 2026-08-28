@@ -74,6 +74,37 @@ describe("PillButton", () => {
         );
     });
 
+    it.each([
+        ["sm" as const, "px-2", "has-[svg]:pl-1"],
+        ["normal" as const, "px-4", "has-[svg]:pl-3"],
+    ])(
+        "reduces left padding by one when the %s size includes an icon",
+        (size, horizontalPadding, iconLeftPadding) => {
+            render(
+                <PillButton tone="blue" size={size}>
+                    <svg aria-hidden="true" />
+                    Continue
+                </PillButton>,
+            );
+
+            expect(
+                screen.getByRole("button", { name: "Continue" }),
+            ).toHaveClass(horizontalPadding, iconLeftPadding);
+        },
+    );
+
+    it("keeps symmetric padding when no icon is included", () => {
+        render(
+            <PillButton tone="blue" size="normal">
+                Continue
+            </PillButton>,
+        );
+
+        const button = screen.getByRole("button", { name: "Continue" });
+        expect(button).toHaveClass("px-4");
+        expect(button).not.toHaveClass("pl-3");
+    });
+
     it("fires onClick when activated", async () => {
         const onClick = vi.fn();
         const user = userEvent.setup();

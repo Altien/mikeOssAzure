@@ -18,7 +18,12 @@ export type ProjectSortKey =
   | "reviews"
   | "created";
 export type ProjectSortDirection = "asc" | "desc";
-export type ProjectScope = "all" | "mine" | "shared";
+export type ProjectScope =
+    | "all"
+    | "mine"
+    | "shared"
+    | "collaborative"
+    | "private";
 
 const PAGE_SIZE = 30;
 

@@ -184,11 +184,11 @@ userRouter.get("/lookup", requireAuth, async (req, res) => {
 const MONTHLY_CREDIT_LIMIT = 999999;
 
 const PROFILE_SELECT_WITH_CHAT_SELECTIONS =
-    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, fast_model, tabular_model, last_selected_chat_model, last_selected_reasoning_level, legal_research_us, quick_actions_visible, dark_mode";
+    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, fast_model, tabular_model, last_selected_chat_model, last_selected_reasoning_level, legal_research_us, quick_actions_visible, dark_mode, transparent_tables";
 const PROFILE_SELECT_WITH_LAST_SELECTED_CHAT_MODEL =
-    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, fast_model, tabular_model, last_selected_chat_model, legal_research_us, quick_actions_visible, dark_mode";
+    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, fast_model, tabular_model, last_selected_chat_model, legal_research_us, quick_actions_visible, dark_mode, transparent_tables";
 const PROFILE_SELECT =
-  "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us, quick_actions_visible, dark_mode";
+  "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us, quick_actions_visible, dark_mode, transparent_tables";
 const PROFILE_SELECT_NO_DARK_MODE =
   "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us, quick_actions_visible";
 const PROFILE_SELECT_NO_PASSWORD =
@@ -228,6 +228,7 @@ type UserProfileRow = {
   legal_research_us: boolean | null;
   quick_actions_visible: boolean | null;
   dark_mode?: boolean | null;
+  transparent_tables?: boolean | null;
 };
 
 type ProfileApiKeyStatus = Record<OrganisationCredentialProvider, boolean> & {
@@ -361,6 +362,7 @@ function serializeProfile(
     legalResearchUs: row.legal_research_us !== false,
     quickActionsVisible: row.quick_actions_visible !== false,
     darkMode: row.dark_mode === true,
+    transparentTables: row.transparent_tables !== false,
     apiKeyStatus,
     ...Object.fromEntries(ROUTER_SLUGS.map(slug => [ROUTER_PROFILE_FIELDS[slug], routerModels[slug]])),
   };
@@ -378,10 +380,16 @@ async function loadProfile(
       const withSelections = await db.from("user_profiles").select(PROFILE_SELECT_WITH_CHAT_SELECTIONS).eq("user_id", userId).single();
       if (!withSelections.error) return withSelections;
       if (withSelections.error.code !== "42703" && withSelections.error.code !== "PGRST204") return { data: null, error: withSelections.error };
-      const withChatModel = await db.from("user_profiles").select(PROFILE_SELECT_WITH_LAST_SELECTED_CHAT_MODEL).eq("user_id", userId).single();
+      const selectionWithoutTables = (columns: string) => columns.replace(", transparent_tables", "");
+      const transparentTablesPending = isMissingProfileColumn(withSelections.error, "transparent_tables");
+      if (transparentTablesPending) {
+        const prior = await db.from("user_profiles").select(selectionWithoutTables(PROFILE_SELECT_WITH_CHAT_SELECTIONS)).eq("user_id", userId).single();
+        if (!prior.error) return prior;
+      }
+      const withChatModel = await db.from("user_profiles").select(transparentTablesPending ? selectionWithoutTables(PROFILE_SELECT_WITH_LAST_SELECTED_CHAT_MODEL) : PROFILE_SELECT_WITH_LAST_SELECTED_CHAT_MODEL).eq("user_id", userId).single();
       if (!withChatModel.error) return withChatModel;
       if (withChatModel.error.code !== "42703" && withChatModel.error.code !== "PGRST204") return { data: null, error: withChatModel.error };
-      const current = await db.from("user_profiles").select(PROFILE_SELECT).eq("user_id", userId).single();
+      const current = await db.from("user_profiles").select(transparentTablesPending ? selectionWithoutTables(PROFILE_SELECT) : PROFILE_SELECT).eq("user_id", userId).single();
       if (!current.error) return current;
       let cascadeError = current.error;
       if (isMissingProfileColumn(cascadeError, "dark_mode")) {
@@ -459,6 +467,7 @@ type ProfileUpdate = {
   legal_research_us?: boolean;
   quick_actions_visible?: boolean;
   dark_mode?: boolean;
+  transparent_tables?: boolean;
   updated_at: string;
 };
 
@@ -503,6 +512,7 @@ function validateProfilePayload(
     "legalResearchUs",
     "quickActionsVisible",
     "darkMode",
+    "transparentTables",
     ...ROUTER_SLUGS.map(slug => ROUTER_PROFILE_FIELDS[slug]),
   ]);
   const invalidField = Object.keys(raw).find((key) => !allowedFields.has(key));
@@ -605,6 +615,10 @@ function validateProfilePayload(
       return { ok: false, detail: "darkMode must be a boolean" };
     }
     update.dark_mode = raw.darkMode;
+  }
+  if ("transparentTables" in raw) {
+    if (typeof raw.transparentTables !== "boolean") return { ok: false, detail: "transparentTables must be a boolean" };
+    update.transparent_tables = raw.transparentTables;
   }
 
   const routerModels: Partial<Record<RouterSlug, string[]>> = {};

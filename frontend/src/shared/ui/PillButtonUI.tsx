@@ -33,8 +33,8 @@ const toneClasses: Record<PillButtonUITone, string> = {
 };
 
 const sizeClasses: Record<PillButtonUISize, string> = {
-    sm: "px-2 py-1 text-xs",
-    normal: "px-4 py-1.5 text-sm",
+    sm: "px-2 py-1 text-xs has-[svg]:pl-1 has-[img]:pl-1",
+    normal: "px-4 py-1.5 text-sm has-[svg]:pl-3 has-[img]:pl-3",
 };
 
 export function pillButtonUIClassName({

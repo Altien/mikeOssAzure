@@ -330,7 +330,7 @@ export async function listProjectsPage(pagination?: {
     search?: string;
     sortKey?: string;
     sortDirection?: "asc" | "desc";
-    scope?: "all" | "mine" | "shared";
+    scope?: "all" | "mine" | "shared" | "collaborative" | "private";
     practice?: string;
     ownerUserId?: string;
     signal?: AbortSignal;
@@ -418,7 +418,7 @@ export async function searchProjectDirectory(options: {
 
 export async function listProjectIds(options?: {
     search?: string;
-    scope?: "all" | "mine" | "shared";
+    scope?: "all" | "mine" | "shared" | "collaborative" | "private";
     practice?: string;
     ownerUserId?: string;
     signal?: AbortSignal;
@@ -593,6 +593,7 @@ export interface UserProfile {
     legalResearchUs: boolean;
     quickActionsVisible: boolean;
     darkMode: boolean;
+    transparentTables: boolean;
     openRouterModels: string[];
     vercelModels: string[];
     openCodeGoModels: string[];
@@ -706,6 +707,7 @@ export async function updateUserProfile(payload: {
     legalResearchUs?: boolean;
     quickActionsVisible?: boolean;
     darkMode?: boolean;
+    transparentTables?: boolean;
     openRouterModels?: string[];
     vercelModels?: string[];
     openCodeGoModels?: string[];
@@ -2572,6 +2574,20 @@ export async function getWorkflowReferenceUrl(
     return apiRequest<{ url: string; filename: string }>(
         `/workflows/${workflowId}/reference-files/${referenceId}/url`,
     );
+}
+
+export function workflowReferenceDisplayUrl(
+    workflowId: string,
+    referenceId: string,
+): string {
+    return `${API_BASE}/workflows/${encodeURIComponent(workflowId)}/reference-files/${encodeURIComponent(referenceId)}/display`;
+}
+
+export function workflowAddonReferenceDisplayUrl(
+    addonId: string,
+    referenceId: string,
+): string {
+    return `${API_BASE}/workflow-addons/${encodeURIComponent(addonId)}/reference-files/${encodeURIComponent(referenceId)}/display`;
 }
 
 export async function deleteWorkflowReferenceFile(

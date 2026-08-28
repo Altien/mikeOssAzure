@@ -101,6 +101,8 @@ describe("parseProjectScope", () => {
     it("accepts supported project scopes", () => {
         expect(parseProjectScope("mine")).toBe("mine");
         expect(parseProjectScope("shared")).toBe("shared");
+        expect(parseProjectScope("collaborative")).toBe("collaborative");
+        expect(parseProjectScope("private")).toBe("private");
     });
 
     it("falls back to all for missing or unsupported scopes", () => {

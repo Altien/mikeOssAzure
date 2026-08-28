@@ -1,11 +1,10 @@
 import {
-    LIQUID_GLASS_FLAT_CLASS,
     LIQUID_GLASS_FLOAT_CLASS,
     LIQUID_GLASS_SUBTLE_CLASS,
 } from "@/shared/ui/LiquidGlassUI";
 
-export const LIQUID_TABLE_SURFACE_CLASS =
-    `rounded-2xl ${LIQUID_GLASS_FLAT_CLASS}`;
+export const TABLE_SURFACE_CLASS =
+    "table-surface rounded-2xl";
 
 export const LIQUID_FLOAT_PANEL_SURFACE_CLASS =
     `rounded-2xl ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-2xl`;

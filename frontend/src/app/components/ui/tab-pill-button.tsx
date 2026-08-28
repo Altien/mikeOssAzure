@@ -26,6 +26,7 @@ export function TabPillButton({
 
     return (
         <button
+            data-slot="tab-pill-button"
             type={type}
             aria-pressed={active}
             className={cn(

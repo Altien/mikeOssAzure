@@ -12,6 +12,7 @@ import {
     useState,
 } from "react";
 import { useRouter, useSelectedLayoutSegments } from "next/navigation";
+import { ChevronLeft } from "lucide-react";
 import {
     createTabularReview,
     deleteProject,
@@ -27,6 +28,7 @@ import type {
     Project,
 } from "@/app/components/shared/types";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";
+import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 import { NewTRModal } from "@/app/components/tabular/NewTRModal";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import { OwnerOnlyPopup } from "@/app/components/popups/OwnerOnlyPopup";
@@ -59,7 +61,10 @@ type ProjectWorkspaceValue = {
     creatingReview: boolean;
     createChat: () => Promise<void>;
     openNewReview: () => void;
-    setAddDocumentsHeaderAction: (action: (() => void) | null) => void;
+    setDocumentUploadHeaderAction: (
+        kind: "savedFiles" | "uploadFiles" | "uploadFolder",
+        action: (() => void) | null,
+    ) => void;
     setDocumentFolderBreadcrumbs: React.Dispatch<
         React.SetStateAction<Array<{ label: string; onClick: () => void }>>
     >;
@@ -124,8 +129,11 @@ export function ProjectWorkspaceProvider({
     const [newTRModalOpen, setNewTRModalOpen] = useState(false);
     const [creatingChat, setCreatingChat] = useState(false);
     const [creatingReview, setCreatingReview] = useState(false);
-    const [addDocumentsHeaderAction, setAddDocumentsHeaderActionState] =
-        useState<{ action: (() => void) | null }>({ action: null });
+    const [documentUploadActions, setDocumentUploadActions] = useState<{
+        savedFiles: (() => void) | null;
+        uploadFiles: (() => void) | null;
+        uploadFolder: (() => void) | null;
+    }>({ savedFiles: null, uploadFiles: null, uploadFolder: null });
     const [documentFolderBreadcrumbs, setDocumentFolderBreadcrumbs] = useState<
         Array<{ label: string; onClick: () => void }>
     >([]);
@@ -145,9 +153,15 @@ export function ProjectWorkspaceProvider({
         projectChatsPromiseRef.current = null;
     }, [projectId]);
 
-    const setAddDocumentsHeaderAction = useCallback(
-        (action: (() => void) | null) => {
-            setAddDocumentsHeaderActionState({ action });
+    const setDocumentUploadHeaderAction = useCallback(
+        (
+            kind: "savedFiles" | "uploadFiles" | "uploadFolder",
+            action: (() => void) | null,
+        ) => {
+            setDocumentUploadActions((current) => ({
+                ...current,
+                [kind]: action,
+            }));
         },
         [],
     );
@@ -352,7 +366,7 @@ export function ProjectWorkspaceProvider({
             creatingReview,
             createChat,
             openNewReview,
-            setAddDocumentsHeaderAction,
+            setDocumentUploadHeaderAction,
             setDocumentFolderBreadcrumbs,
             setOwnerOnlyAction,
         }),
@@ -372,7 +386,7 @@ export function ProjectWorkspaceProvider({
             creatingReview,
             createChat,
             openNewReview,
-            setAddDocumentsHeaderAction,
+            setDocumentUploadHeaderAction,
         ],
     );
 
@@ -402,7 +416,9 @@ export function ProjectWorkspaceProvider({
                     onOpenPeople={() => setPeopleModalOpen(true)}
                     onNewChat={() => void createChat()}
                     onNewReview={openNewReview}
-                    onAddDocuments={addDocumentsHeaderAction.action}
+                    onSavedFiles={documentUploadActions.savedFiles}
+                    onUploadFiles={documentUploadActions.uploadFiles}
+                    onUploadFolder={documentUploadActions.uploadFolder}
                     documentFolderBreadcrumbs={documentFolderBreadcrumbs}
                 />
 
@@ -505,19 +521,25 @@ export function ProjectWorkspaceProvider({
 
 export function ProjectSectionToolbar({
     actions,
+    backAction,
 }: {
     actions?: ReactNode;
+    backAction?: (() => void) | null;
 }) {
     const { activeSection, projectId } = useProjectWorkspace();
     const router = useRouter();
 
     return (
         <TableToolbar
-            items={[
-                { id: "documents", label: "Documents" },
-                { id: "assistant", label: "Chats" },
-                { id: "reviews", label: "Tabular Reviews" },
-            ]}
+            items={
+                backAction
+                    ? []
+                    : [
+                          { id: "documents", label: "Documents" },
+                          { id: "assistant", label: "Chats" },
+                          { id: "reviews", label: "Tabular Reviews" },
+                      ]
+            }
             active={activeSection}
             onChange={(next) => {
                 const href =
@@ -528,6 +550,14 @@ export function ProjectSectionToolbar({
                           : `/projects/${projectId}/tabular-reviews`;
                 router.push(href);
             }}
+            leading={
+                backAction ? (
+                    <TabPillButton onClick={backAction}>
+                        <ChevronLeft className="h-3.5 w-3.5" />
+                        Back
+                    </TabPillButton>
+                ) : undefined
+            }
             actions={actions}
         />
     );

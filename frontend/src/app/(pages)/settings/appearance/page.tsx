@@ -7,27 +7,48 @@ import { SettingsSection } from "../SettingsSection";
 import { SettingsToggle } from "../SettingsToggle";
 
 export default function AppearancePage() {
-    const { profile, updateDarkMode } = useUserProfile();
-    const [saving, setSaving] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    const { profile, updateDarkMode, updateTransparentTables } =
+        useUserProfile();
+    const [savingDarkMode, setSavingDarkMode] = useState(false);
+    const [savingTables, setSavingTables] = useState(false);
+    const [darkModeError, setDarkModeError] = useState<string | null>(null);
+    const [tablesError, setTablesError] = useState<string | null>(null);
 
     if (!profile) return null;
 
-    const handleToggle = async (enabled: boolean) => {
-        if (saving) return;
-        setSaving(true);
-        setError(null);
+    const handleDarkModeToggle = async (enabled: boolean) => {
+        if (savingDarkMode) return;
+        setSavingDarkMode(true);
+        setDarkModeError(null);
         try {
             await updateDarkMode(enabled);
         } catch (toggleError) {
-            setError(
+            setDarkModeError(
                 userFacingApiError(
                     toggleError,
                     "Could not update the appearance setting.",
                 ),
             );
         } finally {
-            setSaving(false);
+            setSavingDarkMode(false);
+        }
+    };
+
+    const handleTablesToggle = async (liquidGlassEnabled: boolean) => {
+        if (savingTables) return;
+        setSavingTables(true);
+        setTablesError(null);
+        try {
+            await updateTransparentTables(!liquidGlassEnabled);
+        } catch (toggleError) {
+            setTablesError(
+                userFacingApiError(
+                    toggleError,
+                    "Could not update the table appearance setting.",
+                ),
+            );
+        } finally {
+            setSavingTables(false);
         }
     };
 
@@ -45,17 +66,45 @@ export default function AppearancePage() {
                         <p className="text-sm text-gray-500">
                             Use a darker color palette throughout Mike.
                         </p>
-                        {error && (
+                        {darkModeError && (
                             <p role="alert" className="text-xs text-red-600">
-                                {error}
+                                {darkModeError}
                             </p>
                         )}
                     </div>
                     <SettingsToggle
                         checked={profile.darkMode === true}
-                        loading={saving}
+                        loading={savingDarkMode}
                         size="md"
-                        onChange={(checked) => void handleToggle(checked)}
+                        ariaLabel="Dark mode"
+                        onChange={(checked) =>
+                            void handleDarkModeToggle(checked)
+                        }
+                    />
+                </div>
+                <div className="flex items-center justify-between gap-4 border-t border-gray-100 px-4 py-5">
+                    <div className="min-w-0 space-y-1">
+                        <p className="text-sm font-medium text-gray-900">
+                            Liquid glass tables
+                        </p>
+                        <p className="text-sm text-gray-500">
+                            Add a subtle liquid glass background, border, and
+                            shadow to tables.
+                        </p>
+                        {tablesError && (
+                            <p role="alert" className="text-xs text-red-600">
+                                {tablesError}
+                            </p>
+                        )}
+                    </div>
+                    <SettingsToggle
+                        checked={profile.transparentTables === false}
+                        loading={savingTables}
+                        size="md"
+                        ariaLabel="Liquid glass tables"
+                        onChange={(checked) =>
+                            void handleTablesToggle(checked)
+                        }
                     />
                 </div>
             </SettingsSection>

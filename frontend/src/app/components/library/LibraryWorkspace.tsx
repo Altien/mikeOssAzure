@@ -13,7 +13,7 @@ import {
     useState,
 } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, FolderUp, Plus, Upload } from "lucide-react";
+import { ChevronLeft, Plus } from "lucide-react";
 import { DocTable } from "@/app/components/documents/DocTable";
 import type {
   DocTableFolderBreadcrumb,
@@ -22,6 +22,7 @@ import type {
 } from "@/app/components/documents/DocTable";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";
+import { DocumentUploadMenu } from "@/app/components/shared/DocumentUploadMenu";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 import {
   bulkDeleteLibraryDocuments,
@@ -652,8 +653,6 @@ export function LibraryCollectionPage({
     >([]);
     const loading =
         !collection || loadingByKind[kind] || !folderAvailable;
-    const addCollectionLabel = kind === "templates" ? "Templates" : "Files";
-
     const handleAddDocumentsActionChange = useCallback(
         (action: (() => void) | null) => {
             setAddDocumentsAction(() => action);
@@ -923,11 +922,14 @@ export function LibraryCollectionPage({
                     {
                         actions: [
                             {
-                                icon: <Upload className="h-3.5 w-3.5" />,
-                                iconOnly: true,
-                                title: `Add ${addCollectionLabel}`,
-                                onClick: addDocumentsAction ?? undefined,
-                                disabled: !addDocumentsAction || loading,
+                                type: "custom",
+                                render: (
+                                    <DocumentUploadMenu
+                                        onUploadFiles={addDocumentsAction}
+                                        onUploadFolder={uploadFolderAction}
+                                        disabled={loading}
+                                    />
+                                ),
                             },
                         ],
                     },
@@ -936,38 +938,29 @@ export function LibraryCollectionPage({
 
             <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
                 <TableToolbar
-                    items={LIBRARY_TABS}
+                    items={folderBackAction ? [] : LIBRARY_TABS}
                     active={kind}
                     onChange={(next) =>
                         router.push(
                             next === "files" ? "/library" : "/library/templates",
                         )
                     }
+                    leading={
+                        folderBackAction ? (
+                            <TabPillButton onClick={folderBackAction}>
+                                <ChevronLeft className="h-3.5 w-3.5" />
+                                Back
+                            </TabPillButton>
+                        ) : undefined
+                    }
                     actions={
-                        <>
-                            {folderBackAction && (
-                                <TabPillButton onClick={folderBackAction}>
-                                    <ChevronLeft className="h-3.5 w-3.5" />
-                                    Back
-                                </TabPillButton>
-                            )}
-                            <TabPillButton
-                                onClick={uploadFolderAction ?? undefined}
-                                disabled={!uploadFolderAction || loading}
-                            >
-                                <FolderUp className="h-3.5 w-3.5" />
-                                <span className="hidden sm:inline">
-                                    Upload folder
-                                </span>
-                            </TabPillButton>
-                            <TabPillButton
-                                onClick={createFolderAction ?? undefined}
-                                disabled={!createFolderAction || loading}
-                            >
-                                <Plus className="h-3.5 w-3.5" />
-                                <span className="hidden sm:inline">Folder</span>
-                            </TabPillButton>
-                        </>
+                        <TabPillButton
+                            onClick={createFolderAction ?? undefined}
+                            disabled={!createFolderAction || loading}
+                        >
+                            <Plus className="h-3.5 w-3.5" />
+                            <span className="hidden sm:inline">Folder</span>
+                        </TabPillButton>
                     }
                 />
                 <DocTable

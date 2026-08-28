@@ -18,6 +18,7 @@ import {
     Pencil,
     Trash2,
     Upload,
+    X,
 } from "lucide-react";
 import { SubfolderSvgIcon } from "@/app/components/shared/FolderSvgIcon";
 import {
@@ -36,6 +37,7 @@ export { CLOSE_ROW_ACTIONS_EVENT, closeRowActionMenus };
 export type RowActionMenuSurfaceProps = ComponentPropsWithoutRef<"div">;
 
 interface Props {
+    onDeselect?: () => void;
     onView?: () => void;
     onDelete?: () => void | Promise<void>;
     onHide?: () => void;
@@ -70,6 +72,7 @@ export const RowActionMenuItems = forwardRef<
     HTMLDivElement,
     RowActionMenuItemsProps
 >(function RowActionMenuItems({
+    onDeselect,
     onView,
     onDelete,
     onHide,
@@ -102,6 +105,15 @@ export const RowActionMenuItems = forwardRef<
             className={cn("w-48 overflow-hidden", surfaceClassName)}
             {...restSurfaceProps}
         >
+            {onDeselect && (
+                <LiquidDropdownButton
+                    onClick={() => { onClose(); onDeselect(); }}
+                    className={ROW_ACTION_LEFT_ITEM_CLASS}
+                >
+                    <X className="h-3.5 w-3.5 shrink-0" />
+                    Deselect rows
+                </LiquidDropdownButton>
+            )}
             {onView && (
                 <LiquidDropdownButton
                     onClick={() => { onClose(); onView(); }}

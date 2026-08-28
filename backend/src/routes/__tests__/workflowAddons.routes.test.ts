@@ -2,10 +2,15 @@ import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { from, eq } = vi.hoisted(() => ({
-  from: vi.fn(),
-  eq: vi.fn(),
-}));
+const { from, eq, downloadFile, uploadFile, deleteFile, docxToPdf } =
+  vi.hoisted(() => ({
+    from: vi.fn(),
+    eq: vi.fn(),
+    downloadFile: vi.fn(),
+    uploadFile: vi.fn(),
+    deleteFile: vi.fn(),
+    docxToPdf: vi.fn(),
+  }));
 
 vi.mock("../../lib/supabase", () => ({
   createServerSupabase: () => ({ from }),
@@ -22,14 +27,40 @@ vi.mock("../../middleware/auth", () => ({
   },
 }));
 
+vi.mock("../../lib/storage", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/storage")>();
+  return {
+    ...actual,
+    downloadFile,
+    uploadFile,
+    deleteFile,
+  };
+});
+
+vi.mock("../../lib/convert", () => ({ docxToPdf }));
+
 import { workflowAddonsRouter } from "../../routes/workflowAddons";
 
 function queryReturning(data: unknown[]) {
   const query: Record<string, unknown> = {};
-  for (const method of ["select", "order"]) {
+  for (const method of ["select", "order", "in"]) {
     query[method] = vi.fn(() => query);
   }
   query.eq = eq.mockImplementation(() => query);
+  query.then = (
+    resolve: (value: unknown) => unknown,
+    reject?: (error: unknown) => unknown,
+  ) => Promise.resolve({ data, error: null }).then(resolve, reject);
+  return query;
+}
+
+function singleQueryReturning(data: unknown) {
+  const query: Record<string, unknown> = {};
+  for (const method of ["select", "insert", "delete", "eq"]) {
+    query[method] = vi.fn(() => query);
+  }
+  query.single = vi.fn(async () => ({ data, error: null }));
+  query.maybeSingle = vi.fn(async () => ({ data, error: null }));
   query.then = (
     resolve: (value: unknown) => unknown,
     reject?: (error: unknown) => unknown,
@@ -44,21 +75,37 @@ app.use("/workflow-addons", workflowAddonsRouter);
 describe("workflow add-on catalog routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    downloadFile.mockResolvedValue(
+      new TextEncoder().encode("reference").buffer,
+    );
+    uploadFile.mockResolvedValue(undefined);
+    deleteFile.mockResolvedValue(undefined);
+    docxToPdf.mockResolvedValue(Buffer.from("converted-pdf"));
   });
 
   it("lists only active add-ons and preserves the public addon_key field", async () => {
-    from.mockImplementation((table: string) => {
-      expect(table).toBe("mike_workflows");
-      return queryReturning([
-        {
-          id: "catalog-1",
-          workflow_key: "design-partner-draft",
-          title: "Design Partner Draft",
-          type: "assistant",
-          active: true,
-        },
-      ]);
-    });
+    from.mockImplementation((table: string) =>
+      table === "mike_workflows"
+        ? queryReturning([
+            {
+              id: "catalog-1",
+              workflow_key: "design-partner-draft",
+              title: "Design Partner Draft",
+              type: "assistant",
+              active: true,
+            },
+          ])
+        : queryReturning([
+            {
+              id: "reference-1",
+              mike_workflow_id: "catalog-1",
+              filename: "Precedent.docx",
+              file_type: "docx",
+              size_bytes: 42,
+              created_at: "2026-08-28T00:00:00.000Z",
+            },
+          ]),
+    );
 
     const response = await request(app).get("/workflow-addons?type=assistant");
 
@@ -71,8 +118,116 @@ describe("workflow add-on catalog routes", () => {
       }),
     ]);
     expect(response.body[0]).not.toHaveProperty("workflow_key");
+    expect(response.body[0].reference_files).toEqual([
+      expect.objectContaining({
+        id: "reference-1",
+        filename: "Precedent.docx",
+      }),
+    ]);
     expect(eq).toHaveBeenCalledWith("distribution", "addon");
     expect(eq).toHaveBeenCalledWith("active", true);
     expect(eq).toHaveBeenCalledWith("type", "assistant");
+  });
+
+  it("copies catalog reference files when an add-on is imported", async () => {
+    const insertedReferences: unknown[] = [];
+    from.mockImplementation((table: string) => {
+      if (table === "mike_workflows") {
+        return singleQueryReturning({
+          id: "catalog-1",
+          title: "Design Partner Draft",
+          type: "assistant",
+          prompt_md: "Draft from the precedent.",
+          columns_config: null,
+          language: "English",
+          practice: "General Transactions",
+          jurisdictions: ["General"],
+        });
+      }
+      if (table === "workflows") {
+        return singleQueryReturning({
+          id: "workflow-1",
+          user_id: "u1",
+          title: "Design Partner Draft",
+          type: "assistant",
+          prompt_md: "Draft from the precedent.",
+          columns_config: null,
+          language: "English",
+          practice: "General Transactions",
+          jurisdictions: ["General"],
+          created_at: "2026-08-28T00:00:00.000Z",
+        });
+      }
+      if (table === "mike_workflow_reference_files") {
+        return queryReturning([
+          {
+            filename: "Precedent.docx",
+            file_type: "docx",
+            storage_path: "mike-workflows/catalog-1/precedent.docx",
+            size_bytes: 9,
+          },
+        ]);
+      }
+      if (table === "workflow_reference_documents") {
+        const query = singleQueryReturning(null);
+        query.insert = vi.fn((value: unknown) => {
+          insertedReferences.push(value);
+          return query;
+        });
+        return query;
+      }
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    const response = await request(app).post(
+      "/workflow-addons/catalog-1/import",
+    );
+
+    expect(response.status).toBe(201);
+    expect(downloadFile).toHaveBeenCalledWith(
+      "mike-workflows/catalog-1/precedent.docx",
+    );
+    expect(uploadFile).toHaveBeenCalledTimes(1);
+    expect(insertedReferences).toEqual([
+      expect.objectContaining({
+        workflow_id: "workflow-1",
+        user_id: "u1",
+        filename: "Precedent.docx",
+        file_type: "docx",
+      }),
+    ]);
+  });
+
+  it("streams an add-on asset and converts presentations for PdfView", async () => {
+    from.mockImplementation((table: string) => {
+      if (table === "mike_workflows") {
+        return singleQueryReturning({
+          id: "catalog-1",
+          type: "assistant",
+        });
+      }
+      if (table === "mike_workflow_reference_files") {
+        return singleQueryReturning({
+          id: "reference-1",
+          filename: "Deck.pptx",
+          file_type: "pptx",
+          storage_path: "mike-workflows/catalog-1/deck.pptx",
+        });
+      }
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    const response = await request(app).get(
+      "/workflow-addons/catalog-1/reference-files/reference-1/display",
+    );
+
+    expect(response.status).toBe(200);
+    expect(downloadFile).toHaveBeenCalledWith(
+      "mike-workflows/catalog-1/deck.pptx",
+    );
+    expect(docxToPdf).toHaveBeenCalledTimes(1);
+    expect(response.headers["content-type"]).toMatch(/^application\/pdf/);
+    expect(response.headers["content-disposition"]).toContain("Deck.pdf");
+    expect(Buffer.from(response.body).toString()).toBe("converted-pdf");
   });
 });

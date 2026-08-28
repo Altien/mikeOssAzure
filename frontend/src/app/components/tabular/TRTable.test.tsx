@@ -56,9 +56,21 @@ describe("TRTable", () => {
     // The grid here is div-based (no table/columnheader/rowheader roles), so
     // this asserts on rendered content rather than ARIA table semantics.
     it("renders one table row for a grouped folder", () => {
-        renderTable();
+        const { container } = renderTable();
         expect(screen.getByText("Folder / Document")).toBeInTheDocument();
+        expect(screen.getByText("Folder / Document").parentElement).toHaveClass(
+            "text-gray-700",
+        );
         expect(screen.getByText("Contracts")).toBeInTheDocument();
+        expect(container.querySelector(".table-surface")).toHaveClass(
+            "tabular-review-table-surface",
+        );
+        expect(
+            screen.getByText("Folder / Document").parentElement,
+        ).toHaveClass("table-sticky-cell");
+        expect(
+            screen.getByText("Contracts").closest(".table-sticky-cell"),
+        ).not.toBeNull();
         // One select-all checkbox in the header plus one per logical review row.
         expect(screen.getAllByRole("checkbox")).toHaveLength(2);
     });

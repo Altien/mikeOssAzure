@@ -17,6 +17,7 @@ export type HighlightCell = { sheet?: string; cell?: string };
 interface Props {
     documentId: string;
     versionId?: string | null;
+    displayUrl?: string | null;
     /** Cell(s) to select/scroll to (from a spreadsheet citation). */
     highlightCells?: HighlightCell[];
     rounded?: boolean;
@@ -238,6 +239,7 @@ function tintHeaderCell(
 export function SpreadsheetView({
     documentId,
     versionId,
+    displayUrl,
     highlightCells,
     rounded = true,
 }: Props) {
@@ -258,6 +260,7 @@ export function SpreadsheetView({
     const { result, error: fetchError } = useFetchSingleDoc(
         documentId,
         versionId,
+        displayUrl,
     );
 
     // Fortune-sheet touches browser-only APIs while loading, so keep the import

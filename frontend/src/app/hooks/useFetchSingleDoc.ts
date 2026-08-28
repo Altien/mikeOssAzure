@@ -9,7 +9,7 @@ import { authenticatedFetch } from "@/app/lib/authEvents";
 
 /**
  * /display returns PDF bytes (when the active version has a PDF rendition),
- * raw spreadsheet bytes (xlsx/xlsm/xls — never converted to PDF), or raw DOCX
+ * raw spreadsheet bytes (xlsx/xlsm/xls â€” never converted to PDF), or raw DOCX
  * bytes otherwise. Reporting the type lets the caller swap between PdfView
  * (PDF.js), SpreadsheetView (Fortune-sheet), and DocxView (docx-preview).
  */
@@ -30,6 +30,7 @@ function isSpreadsheetContentType(contentType: string): boolean {
 export function useFetchSingleDoc(
     documentId: string | null | undefined,
     versionId?: string | null,
+    displayUrl?: string | null,
 ) {
     const [result, setResult] = useState<DocResult>(null);
     const [loading, setLoading] = useState(false);
@@ -38,7 +39,8 @@ export function useFetchSingleDoc(
 
     useEffect(() => {
         if (!documentId) return;
-        const requestKey = `${documentId}:${versionId ?? "current"}`;
+        const requestKey =
+            displayUrl ?? `${documentId}:${versionId ?? "current"}`;
         if (requestKey === prevKeyRef.current) return;
         prevKeyRef.current = requestKey;
 
@@ -63,7 +65,7 @@ export function useFetchSingleDoc(
                     ? `?version_id=${encodeURIComponent(versionId)}`
                     : "";
                 const response = await authenticatedFetch(
-                    `${apiBase}/single-documents/${documentId}/display${qs}`,
+                    displayUrl ?? `${apiBase}/single-documents/${documentId}/display${qs}`,
                     { credentials: "include" },
                 );
                 bounceIfUnauthorized(response);
@@ -95,7 +97,7 @@ export function useFetchSingleDoc(
             cancelled = true;
             prevKeyRef.current = null;
         };
-    }, [documentId, versionId]);
+    }, [displayUrl, documentId, versionId]);
 
     return { result, loading, error };
 }

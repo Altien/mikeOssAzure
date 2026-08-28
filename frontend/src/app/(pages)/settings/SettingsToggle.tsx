@@ -30,6 +30,7 @@ export function SettingsToggle({
     onChange,
     size = "sm",
     label,
+    ariaLabel,
     className,
 }: {
     checked: boolean;
@@ -38,6 +39,7 @@ export function SettingsToggle({
     onChange: (checked: boolean) => void;
     size?: SettingsToggleSize;
     label?: string;
+    ariaLabel?: string;
     className?: string;
 }) {
     const sizes = sizeClasses[size];
@@ -45,6 +47,7 @@ export function SettingsToggle({
         <button
             type="button"
             role="switch"
+            aria-label={ariaLabel}
             aria-checked={checked}
             disabled={disabled || loading}
             onClick={() => onChange(!checked)}
