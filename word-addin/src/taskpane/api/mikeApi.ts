@@ -73,7 +73,12 @@ export {
   uploadStandaloneDocuments,
   uploadWorkflowReferenceFiles,
 } from "./client";
-export type { ApiKeyStatus, UploadOutcome, UploadProgress } from "./client";
+export type {
+  ApiKeyStatus,
+  UploadOutcome,
+  UploadProgress,
+  UploadRequestOptions,
+} from "./client";
 
 /**
  * List a project's documents (GET /projects/:id/documents). The base client
