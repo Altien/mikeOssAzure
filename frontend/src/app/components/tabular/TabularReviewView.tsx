@@ -1487,6 +1487,7 @@ export function TRView({ reviewId, projectId }: Props) {
                         ...(review ? [review.title || "Untitled Review"] : []),
                         "Add Documents",
                     ]}
+                    uploadStateId={`tabular-review:${review?.id ?? "new"}:project`}
                     projectId={project.id}
                     projectDocumentsOnly
                     disabledDocumentIds={
@@ -1503,6 +1504,7 @@ export function TRView({ reviewId, projectId }: Props) {
                         ...(review ? [review.title || "Untitled Review"] : []),
                         "Add Documents",
                     ]}
+                    uploadStateId={`tabular-review:${review?.id ?? "new"}:library`}
                     tabs={["files", "projects"]}
                 />
             )}
