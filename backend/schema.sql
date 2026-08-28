@@ -52,6 +52,7 @@ create table if not exists public.user_profiles (
   legal_research_us boolean not null default true,
   quick_actions_visible boolean not null default true,
   dark_mode boolean not null default false,
+  transparent_tables boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -2495,6 +2496,18 @@ as $$
         coalesce(p_scope, 'all') = 'all'
         or (p_scope = 'mine' and p.user_id::text = p_user_id)
         or (p_scope = 'shared' and p.user_id::text <> p_user_id)
+        or (
+          p_scope = 'collaborative'
+          and (
+            p.user_id::text <> p_user_id
+            or p.shared_with <> '[]'::jsonb
+          )
+        )
+        or (
+          p_scope = 'private'
+          and p.user_id::text = p_user_id
+          and p.shared_with = '[]'::jsonb
+        )
       )
       and (
         p_search_term is null
@@ -2616,6 +2629,18 @@ as $$
       coalesce(p_scope, 'all') = 'all'
       or (p_scope = 'mine' and p.user_id::text = p_user_id)
       or (p_scope = 'shared' and p.user_id::text <> p_user_id)
+      or (
+        p_scope = 'collaborative'
+        and (
+          p.user_id::text <> p_user_id
+          or p.shared_with <> '[]'::jsonb
+        )
+      )
+      or (
+        p_scope = 'private'
+        and p.user_id::text = p_user_id
+        and p.shared_with = '[]'::jsonb
+      )
     )
     and (
       p_search_term is null

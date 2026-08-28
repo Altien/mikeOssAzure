@@ -31,7 +31,7 @@ import {
     parseTabularChatSelectionKey,
 } from "@/app/lib/mikeApi";
 import type { Message } from "@/app/components/shared/types";
-import { applyDarkMode } from "@/app/lib/theme";
+import { applyDarkMode, applyTransparentTables } from "@/app/lib/theme";
 import { publishTabularChatSettingsUpdate } from "@/app/lib/tabularChatSettingsEvents";
 
 interface UserProfile {
@@ -59,6 +59,7 @@ interface UserProfile {
     vercelModels: string[];
     openCodeGoModels: string[];
     darkMode: boolean;
+    transparentTables: boolean;
     apiKeys: ApiKeyState;
 }
 
@@ -101,6 +102,7 @@ interface UserProfileContextType {
     updateVercelModels: (models: string[]) => Promise<boolean>;
     updateOpenCodeGoModels: (models: string[]) => Promise<boolean>;
     updateDarkMode: (enabled: boolean) => Promise<void>;
+    updateTransparentTables: (enabled: boolean) => Promise<void>;
     updateApiKey: (
         provider: ApiKeyProvider,
         value: string | null,
@@ -162,6 +164,7 @@ function toProfile(data: ApiUserProfile): UserProfile {
         lastSelectedReasoningLevel:
             profile.lastSelectedReasoningLevel ?? "high",
         mfaOnLogin: profile.mfaOnLogin === true,
+        transparentTables: profile.transparentTables !== false,
         openRouterModels: Array.isArray(profile.openRouterModels)
             ? profile.openRouterModels
             : [],
@@ -231,6 +234,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 vercelModels: [],
                 openCodeGoModels: [],
                 darkMode: false,
+                transparentTables: true,
                 apiKeys: emptyApiKeys(),
             });
         } finally {
@@ -251,6 +255,10 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         applyDarkMode(profile?.darkMode === true);
     }, [profile?.darkMode]);
+
+    useEffect(() => {
+        applyTransparentTables(profile?.transparentTables !== false);
+    }, [profile?.transparentTables]);
 
     const updateDisplayName = useCallback(
         async (displayName: string): Promise<boolean> => {
@@ -550,6 +558,35 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         [user, profile?.darkMode],
     );
 
+    const updateTransparentTables = useCallback(
+        async (enabled: boolean): Promise<void> => {
+            if (!user) {
+                throw new Error("Sign in to update table appearance.");
+            }
+            const previous = profile?.transparentTables === true;
+            applyTransparentTables(enabled);
+            try {
+                const updated = await updateUserProfile({
+                    transparentTables: enabled,
+                });
+                const normalized = toProfile(updated);
+                setProfile((prev) =>
+                    prev
+                        ? {
+                              ...prev,
+                              ...normalized,
+                              transparentTables: enabled,
+                          }
+                        : null,
+                );
+            } catch (error) {
+                applyTransparentTables(previous);
+                throw error;
+            }
+        },
+        [user, profile?.transparentTables],
+    );
+
     const updateApiKey = useCallback(
         async (
             provider: ApiKeyProvider,
@@ -623,6 +660,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 updateVercelModels,
                 updateOpenCodeGoModels,
                 updateDarkMode,
+                updateTransparentTables,
                 updateApiKey,
                 reloadProfile,
                 incrementMessageCredits,

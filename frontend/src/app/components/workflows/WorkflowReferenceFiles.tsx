@@ -4,20 +4,21 @@ import {
   forwardRef,
   useEffect,
   useImperativeHandle,
-  useRef,
-  useState,
+    useRef,
+    useState,
 } from "react";
-import type { WorkflowReferenceDocument } from "../shared/types";
+import type { Document, WorkflowReferenceDocument } from "../shared/types";
 import {
-  deleteWorkflowReferenceFile,
-  failedUploadMessage,
+    deleteWorkflowReferenceFile,
+    failedUploadMessage,
   getWorkflowReferenceUrl,
-  listWorkflowReferenceFiles,
-  replaceWorkflowReferenceFile,
-  uploadWorkflowReferenceFiles,
+    listWorkflowReferenceFiles,
+    replaceWorkflowReferenceFile,
+    uploadWorkflowReferenceFiles,
+    workflowReferenceDisplayUrl,
 } from "@/app/lib/mikeApi";
 import {
-  SUPPORTED_DOCUMENT_ACCEPT,
+    SUPPORTED_DOCUMENT_ACCEPT,
   formatUnsupportedDocumentWarning,
   partitionSupportedDocumentFiles,
 } from "@/app/lib/documentUploadValidation";
@@ -26,9 +27,10 @@ import { EmptyState } from "@/app/components/ui/empty-state";
 import { ConfirmPopup } from "../popups/ConfirmPopup";
 import { FileTypeIcon } from "../shared/FileTypeIcon";
 import { RowActions } from "../shared/RowActions";
+import { DocumentSidePanel } from "../shared/DocumentSidePanel";
 import {
-  SkeletonLine,
-  TableBody,
+    SkeletonLine,
+    TableBody,
   TableCell,
   TableEmptyState,
   TableHeaderCell,
@@ -53,12 +55,29 @@ function formatDate(value: string) {
     day: "numeric",
     month: "short",
     year: "numeric",
-  });
+    });
+}
+
+function asDocument(file: WorkflowReferenceDocument): Document {
+    return {
+        id: file.id,
+        project_id: null,
+        filename: file.filename,
+        file_type: file.file_type,
+        storage_path: null,
+        pdf_storage_path: null,
+        size_bytes: file.size_bytes,
+        page_count: null,
+        structure_tree: null,
+        status: "ready",
+        created_at: file.created_at,
+        updated_at: file.updated_at,
+    };
 }
 
 export interface WorkflowReferenceFilesHandle {
-  openUploadPicker: () => void;
-  uploadFiles: (files: File[]) => void;
+    openUploadPicker: () => void;
+    uploadFiles: (files: File[]) => void;
 }
 
 export const WorkflowReferenceFiles = forwardRef<
@@ -72,16 +91,19 @@ export const WorkflowReferenceFiles = forwardRef<
   { workflowId, readOnly, onUploadingChange },
   ref,
 ) {
-  const [files, setFiles] = useState<WorkflowReferenceDocument[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [error, setError] = useState("");
-  const [pendingDeleteFile, setPendingDeleteFile] =
-    useState<WorkflowReferenceDocument | null>(null);
-  const [deleteStatus, setDeleteStatus] = useState<"idle" | "loading">("idle");
-  const uploadInputRef = useRef<HTMLInputElement>(null);
-  const replaceInputRef = useRef<HTMLInputElement>(null);
-  const replaceTargetRef = useRef<WorkflowReferenceDocument | null>(null);
+    const [files, setFiles] = useState<WorkflowReferenceDocument[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [busyId, setBusyId] = useState<string | null>(null);
+    const [viewingFileId, setViewingFileId] = useState<string | null>(null);
+    const [error, setError] = useState("");
+    const [pendingDeleteFile, setPendingDeleteFile] =
+        useState<WorkflowReferenceDocument | null>(null);
+    const [deleteStatus, setDeleteStatus] = useState<"idle" | "loading">(
+        "idle",
+    );
+    const uploadInputRef = useRef<HTMLInputElement>(null);
+    const replaceInputRef = useRef<HTMLInputElement>(null);
+    const replaceTargetRef = useRef<WorkflowReferenceDocument | null>(null);
   // Synchronous guard against overlapping upload batches: drops and the file
   // picker can both call upload() before React re-renders `busyId`.
   const uploadInFlightRef = useRef(false);
@@ -98,13 +120,15 @@ export const WorkflowReferenceFiles = forwardRef<
 
   async function reload() {
     try {
-      setFiles(await listWorkflowReferenceFiles(workflowId));
-      setError("");
-    } catch (caught) {
-      setError(userFacingApiError(caught, "Unable to load reference files."));
-    } finally {
-      setLoading(false);
-    }
+            setFiles(await listWorkflowReferenceFiles(workflowId));
+            setError("");
+        } catch (caught) {
+            setError(
+                userFacingApiError(caught, "Unable to load reference files."),
+            );
+        } finally {
+            setLoading(false);
+        }
   }
 
   useEffect(() => {
@@ -189,45 +213,40 @@ export const WorkflowReferenceFiles = forwardRef<
       setError(userFacingApiError(caught, "Download failed."));
     } finally {
       setBusyId(null);
+        }
     }
-  }
 
-  async function view(file: WorkflowReferenceDocument) {
-    setBusyId(file.id);
-    try {
-      const resolved = await getWorkflowReferenceUrl(workflowId, file.id);
-      const anchor = document.createElement("a");
-      anchor.href = resolved.url;
-      anchor.target = "_blank";
-      anchor.rel = "noopener noreferrer";
-      anchor.click();
-    } catch (caught) {
-      setError(userFacingApiError(caught, "File could not be opened."));
-    } finally {
-      setBusyId(null);
+    function view(file: WorkflowReferenceDocument) {
+        setViewingFileId(file.id);
     }
-  }
 
-  async function confirmRemove() {
+    async function confirmRemove() {
     const file = pendingDeleteFile;
     if (!file) return;
     setDeleteStatus("loading");
-    setBusyId(file.id);
-    try {
-      await deleteWorkflowReferenceFile(workflowId, file.id);
-      setFiles((current) => current.filter((item) => item.id !== file.id));
-    } catch (caught) {
-      setError(userFacingApiError(caught, "Delete failed."));
-    } finally {
+        setBusyId(file.id);
+        try {
+            await deleteWorkflowReferenceFile(workflowId, file.id);
+            setFiles((current) =>
+                current.filter((item) => item.id !== file.id),
+            );
+            setViewingFileId((current) =>
+                current === file.id ? null : current,
+            );
+        } catch (caught) {
+            setError(userFacingApiError(caught, "Delete failed."));
+        } finally {
       setBusyId(null);
       setPendingDeleteFile(null);
       setDeleteStatus("idle");
+        }
     }
-  }
 
-  return (
-    <>
-      <input
+    const viewingFile = files.find((file) => file.id === viewingFileId) ?? null;
+
+    return (
+        <>
+            <input
         ref={uploadInputRef}
         type="file"
         multiple
@@ -248,23 +267,32 @@ export const WorkflowReferenceFiles = forwardRef<
           const file = event.target.files?.[0];
           event.target.value = "";
           if (file) void replace(file);
-        }}
-      />
-      {error && (
-        <p className="mx-4 mb-2 -mt-1 text-xs text-red-600 md:mx-8">{error}</p>
-      )}
-      <TableScrollArea
-        header={
-          <TableHeaderRow>
-            <TableStickyCell header widthClassName={REFERENCE_NAME_COL_W}>
-              Name
-            </TableStickyCell>
-            <TableHeaderCell className="ml-auto w-20">Type</TableHeaderCell>
-            <TableHeaderCell className="w-24">Size</TableHeaderCell>
-            <TableHeaderCell className="w-32">Updated</TableHeaderCell>
-            <TableHeaderCell className="w-8" />
-          </TableHeaderRow>
-        }
+                }}
+            />
+            {error && (
+                <p className="mx-4 mb-2 -mt-1 text-xs text-red-600 md:mx-8">
+                    {error}
+                </p>
+            )}
+            <TableScrollArea
+                header={
+                    <TableHeaderRow>
+                        <TableStickyCell
+                            header
+                            widthClassName={REFERENCE_NAME_COL_W}
+                        >
+                            Name
+                        </TableStickyCell>
+                        <TableHeaderCell className="ml-auto w-20">
+                            Type
+                        </TableHeaderCell>
+                        <TableHeaderCell className="w-24">Size</TableHeaderCell>
+                        <TableHeaderCell className="w-32">
+                            Updated
+                        </TableHeaderCell>
+                        <TableHeaderCell className="w-8" />
+                    </TableHeaderRow>
+                }
       >
         {loading ? (
           <TableBody>
@@ -297,16 +325,35 @@ export const WorkflowReferenceFiles = forwardRef<
               description="Upload files that this workflow can reference when it runs."
             />
           </TableEmptyState>
-        ) : (
-          <TableBody>
-            {files.map((file) => (
-              <TableRow key={file.id} interactive={false}>
-                <TableStickyCell widthClassName={REFERENCE_NAME_COL_W}>
-                  <FileTypeIcon
-                    fileType={file.file_type || file.filename}
-                    className="mr-2 h-4 w-4"
-                  />
-                  <span className="min-w-0 flex-1 truncate text-xs text-gray-800">
+                ) : (
+                    <TableBody>
+                        {files.map((file) => (
+                            <TableRow
+                                key={file.id}
+                                data-document-row
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => view(file)}
+                                onKeyDown={(event) => {
+                                    if (
+                                        event.key !== "Enter" &&
+                                        event.key !== " "
+                                    )
+                                        return;
+                                    event.preventDefault();
+                                    view(file);
+                                }}
+                            >
+                                <TableStickyCell
+                                    widthClassName={REFERENCE_NAME_COL_W}
+                                >
+                                    <FileTypeIcon
+                                        fileType={
+                                            file.file_type || file.filename
+                                        }
+                                        className="mr-2 h-4 w-4"
+                                    />
+                                    <span className="min-w-0 flex-1 truncate text-xs text-gray-800">
                     {file.filename}
                   </span>
                 </TableStickyCell>
@@ -321,34 +368,61 @@ export const WorkflowReferenceFiles = forwardRef<
                 </TableCell>
                 <div
                   className="flex w-8 shrink-0 justify-end"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <RowActions
-                    onView={() => void view(file)}
-                    onDownload={() => void download(file)}
-                    onUploadNewVersion={
-                      readOnly
-                        ? undefined
-                        : () => {
-                            replaceTargetRef.current = file;
-                            replaceInputRef.current?.click();
-                          }
-                    }
-                    uploadNewVersionLabel="Replace file"
-                    onDelete={
-                      readOnly ? undefined : () => setPendingDeleteFile(file)
-                    }
-                    deleteDisabled={busyId === file.id}
-                  />
+                                    onClick={(event) => event.stopPropagation()}
+                                >
+                                    <RowActions
+                                        onView={() => view(file)}
+                                        onDownload={() => void download(file)}
+                                        onUploadNewVersion={
+                                            readOnly
+                                                ? undefined
+                                                : () => {
+                                                      replaceTargetRef.current =
+                                                          file;
+                                                      replaceInputRef.current?.click();
+                                                  }
+                                        }
+                                        uploadNewVersionLabel="Replace file"
+                                        onDelete={
+                                            readOnly
+                                                ? undefined
+                                                : () =>
+                                                      setPendingDeleteFile(file)
+                                        }
+                                        deleteDisabled={busyId === file.id}
+                                    />
                 </div>
               </TableRow>
             ))}
-          </TableBody>
-        )}
-      </TableScrollArea>
-      <ConfirmPopup
-        open={pendingDeleteFile !== null}
-        title="Delete reference file?"
+                    </TableBody>
+                )}
+            </TableScrollArea>
+            <DocumentSidePanel
+                doc={viewingFile ? asDocument(viewingFile) : null}
+                displayUrl={
+                    viewingFileId
+                        ? workflowReferenceDisplayUrl(workflowId, viewingFileId)
+                        : null
+                }
+                readOnly
+                versions={[]}
+                versionsLoading={false}
+                onClose={() => setViewingFileId(null)}
+                onLoadVersions={() => undefined}
+                onSelectVersion={() => undefined}
+                onDownloadDocument={async () => {
+                    if (viewingFile) await download(viewingFile);
+                }}
+                onDownloadVersion={() => undefined}
+                onRenameVersion={() => undefined}
+                onDeleteVersion={() => undefined}
+                onUploadNewVersion={async () => undefined}
+                onReplaceVersion={() => undefined}
+                onDelete={() => undefined}
+            />
+            <ConfirmPopup
+                open={pendingDeleteFile !== null}
+                title="Delete reference file?"
         message={
           pendingDeleteFile ? (
             <p>

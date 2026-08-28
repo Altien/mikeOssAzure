@@ -81,6 +81,7 @@ import {
     SINGLE_DOCUMENT_DRAG_TYPE,
     writeDocumentDragPayload,
 } from "@/app/lib/docTableSelection";
+import { setDocumentRowsDragPreview } from "@/app/lib/docTableDragPreview";
 import {
     DOC_NAME_COL_W,
     DocIcon,
@@ -102,6 +103,7 @@ import {
 } from "@/app/components/ui/liquid-surface";
 import {
     TABLE_CHECKBOX_CLASS,
+    selectionAnchorAfterRowSelection,
     selectionRangeIds,
     TableFilters,
     TableHeaderCell,
@@ -118,6 +120,7 @@ import {
 // and should download instantly, while a large one risks an out-of-memory or a
 // gateway timeout and is worth the polling round trips.
 const ASYNC_ZIP_THRESHOLD = 10;
+const DOC_TABLE_STICKY_CELL_CLASS = "table-sticky-cell";
 
 export type DocTableFolder = ProjectFolder | LibraryFolder;
 export type DocTableFolderBreadcrumb = {
@@ -205,6 +208,7 @@ interface DocTableProps {
         onSelect: (documents: Document[]) => void,
     ) => ReactNode;
     onAddDocumentsActionChange?: (action: (() => void) | null) => void;
+    onUploadFilesActionChange?: (action: (() => void) | null) => void;
     onUploadFolderActionChange?: (action: (() => void) | null) => void;
     onCreateFolderActionChange?: (action: (() => void) | null) => void;
     onFolderViewBackActionChange?: (action: (() => void) | null) => void;
@@ -261,13 +265,12 @@ function documentVersionNumber(doc: Document): number | null {
     return doc.active_version_number ?? doc.latest_version_number ?? null;
 }
 
-function ProjectTableLoadingHeader({ stickyCellBg }: { stickyCellBg: string }) {
+function ProjectTableLoadingHeader() {
     return (
-        <TableHeaderRow className={`${stickyCellBg} pr-3`}>
+        <TableHeaderRow className="pr-3">
             <TableStickyCell
                 header
                 widthClassName={DOC_NAME_COL_W}
-                bgClassName={stickyCellBg}
             >
                 <div className="mr-3 h-2.5 w-2.5 rounded bg-gray-100 animate-pulse" />
                 <span className="mr-1">Name</span>
@@ -292,12 +295,12 @@ function ProjectTableLoadingHeader({ stickyCellBg }: { stickyCellBg: string }) {
     );
 }
 
-function ProjectTableLoading({ stickyCellBg }: { stickyCellBg: string }) {
+function ProjectTableLoading() {
     return (
         <div className="flex-1 flex flex-col min-h-0">
             {[1, 2, 3, 4, 5].map((i) => (
                 <div key={i} className="flex h-10 min-w-max items-center pr-3">
-                    <div className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${stickyCellBg} py-2 pl-3 pr-2`}>
+                    <div className={`${DOC_TABLE_STICKY_CELL_CLASS} sticky left-0 z-[60] ${DOC_NAME_COL_W} py-2 pl-3 pr-2`}>
                         <div className="flex min-w-0 items-center">
                             <div className="mr-3 h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse" />
                             <div className="mr-2 h-4 w-4 shrink-0 rounded bg-gray-100 animate-pulse" />
@@ -354,6 +357,7 @@ export function DocTable({
     emptyStateTitle,
     renderAddDocumentsModal,
     onAddDocumentsActionChange,
+    onUploadFilesActionChange,
     onUploadFolderActionChange,
     onCreateFolderActionChange,
     onFolderViewBackActionChange,
@@ -381,7 +385,6 @@ export function DocTable({
 }: DocTableProps) {
     const [addDocsOpen, setAddDocsOpen] = useState(false);
     const { user } = useAuth();
-    const stickyCellBg = "bg-app-surface";
     const [viewingDoc, setViewingDoc] = useState<Document | null>(null);
     const [viewingDocVersion, setViewingDocVersion] = useState<{
         id: string;
@@ -424,6 +427,16 @@ export function DocTable({
         onAddDocumentsActionChange?.(openAddDocuments);
         return () => onAddDocumentsActionChange?.(null);
     }, [onAddDocumentsActionChange, openAddDocuments]);
+
+    const openUploadFiles = useCallback(() => {
+        if (loadingRef.current) return;
+        documentUploadInputRef.current?.click();
+    }, []);
+
+    useEffect(() => {
+        onUploadFilesActionChange?.(openUploadFiles);
+        return () => onUploadFilesActionChange?.(null);
+    }, [onUploadFilesActionChange, openUploadFiles]);
 
     const openUploadFolder = useCallback(() => {
         if (loadingRef.current) return;
@@ -1834,7 +1847,7 @@ export function DocTable({
                 key={`new-folder-${parentId ?? "root"}`}
             >
                 <div
-                    className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${stickyCellBg} py-2 pl-3 pr-2`}
+                    className={`${DOC_TABLE_STICKY_CELL_CLASS} sticky left-0 z-[60] ${DOC_NAME_COL_W} py-2 pl-3 pr-2`}
                     style={treeNameCellStyle(depth)}
                 >
                     <div className="flex items-center">
@@ -1895,7 +1908,7 @@ export function DocTable({
         return (
             <div key={key} className="group flex h-10 min-w-max items-center pr-3">
                 <div
-                    className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${stickyCellBg} py-2 pl-3 pr-2`}
+                    className={`${DOC_TABLE_STICKY_CELL_CLASS} sticky left-0 z-[60] ${DOC_NAME_COL_W} py-2 pl-3 pr-2`}
                     style={treeNameCellStyle(depth)}
                 >
                     <div className="flex min-w-0 items-center">
@@ -2193,7 +2206,12 @@ export function DocTable({
             );
         }
         updateCollectionRowSelection(rowKeys, selected);
-        selectionAnchorKeyRef.current = targetKey;
+        selectionAnchorKeyRef.current = selectionAnchorAfterRowSelection(
+            selectionAnchorKeyRef.current,
+            targetKey,
+            rowKeys,
+            selected,
+        );
     }
 
     function handleDocumentRowClick(
@@ -2231,6 +2249,14 @@ export function DocTable({
             doc.id,
             selectedVisibleIds,
         );
+        setDocumentRowsDragPreview({
+            dataTransfer: event.dataTransfer,
+            tableRoot: tableRootRef.current,
+            draggedDocumentIds: draggedIds,
+            draggedDocumentId: doc.id,
+            clientX: event.clientX,
+            clientY: event.clientY,
+        });
         if (!effectiveSelectedDocIdSet.has(doc.id)) {
             setSelectedFolderIds(new Set());
             setSelectionCameFromSelectAll(false);
@@ -2374,11 +2400,11 @@ export function DocTable({
                                         ? "bg-blue-50"
                                         : isSelected
                                           ? LIQUID_GLASS_SELECTED_CLASS
-                                          : stickyCellBg;
+                                          : "";
                                     return (
                                         <>
                                             <div
-                                                className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${rowBg} py-2 pl-3 pr-2 transition-colors ${isVersionDragOver || isSelected ? "" : LIQUID_GLASS_GROUP_HOVER_CLASS}`}
+                                                className={`${DOC_TABLE_STICKY_CELL_CLASS} sticky left-0 z-[60] ${DOC_NAME_COL_W} ${rowBg} py-2 pl-3 pr-2 transition-colors ${isVersionDragOver || isSelected ? "" : LIQUID_GLASS_GROUP_HOVER_CLASS}`}
                                                 style={treeNameCellStyle(depth)}
                                             >
                                                 <div className="flex items-center">
@@ -2690,7 +2716,7 @@ export function DocTable({
                                 className={`group flex h-10 min-w-max items-center pr-3 ${folderExplicitlySelected ? LIQUID_GLASS_SELECTED_CLASS : LIQUID_GLASS_HOVER_CLASS} cursor-pointer transition-colors ${isRenaming ? "" : "select-none"} ${dragOverFolderId === folder.id ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : ""}`}
                             >
                                 <div
-                                    className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} py-2 pl-3 pr-2 ${dragOverFolderId === folder.id ? "bg-blue-50" : folderExplicitlySelected ? LIQUID_GLASS_SELECTED_CLASS : stickyCellBg} transition-colors ${dragOverFolderId === folder.id || folderExplicitlySelected ? "" : LIQUID_GLASS_GROUP_HOVER_CLASS}`}
+                                    className={`${DOC_TABLE_STICKY_CELL_CLASS} sticky left-0 z-[60] ${DOC_NAME_COL_W} py-2 pl-3 pr-2 ${dragOverFolderId === folder.id ? "bg-blue-50" : folderExplicitlySelected ? LIQUID_GLASS_SELECTED_CLASS : ""} transition-colors ${dragOverFolderId === folder.id || folderExplicitlySelected ? "" : LIQUID_GLASS_GROUP_HOVER_CLASS}`}
                                     style={treeNameCellStyle(depth)}
                                 >
                                     <div className="flex items-center">
@@ -3406,6 +3432,7 @@ export function DocTable({
     );
 
     const handleToggleAllDocuments = useCallback(async () => {
+        selectionAnchorKeyRef.current = null;
         if (allVisibleRowsSelected || selectionCameFromSelectAll) {
             setSelectedDocIds([]);
             setSelectedFolderIds(new Set());
@@ -3707,12 +3734,22 @@ export function DocTable({
             {/* Table content */}
             <TableScrollArea
                 onScroll={handleTableScroll}
+                viewportOverlay={
+                    <>
+                        {dragOverRoot && dragOverFolderId === null && (
+                            <div className="absolute inset-0 z-[80] rounded-b-2xl border-2 border-blue-400 pointer-events-none" />
+                        )}
+                        {dragOverFileRoot && (
+                            <div className="absolute inset-0 z-[90] rounded-b-2xl border-2 border-blue-400 bg-blue-50/40 pointer-events-none" />
+                        )}
+                    </>
+                }
                 header={
                     loading || (serverQueryActive && serverQueryLoading) ? (
-                        <ProjectTableLoadingHeader stickyCellBg={stickyCellBg} />
+                        <ProjectTableLoadingHeader />
                     ) : (
-                        <TableHeaderRow className={`${stickyCellBg} pr-3`}>
-                            <TableStickyCell header widthClassName={DOC_NAME_COL_W} bgClassName={stickyCellBg}>
+                        <TableHeaderRow className="pr-3">
+                            <TableStickyCell header widthClassName={DOC_NAME_COL_W}>
                                 <input
                                     type="checkbox"
                                     checked={
@@ -3760,10 +3797,9 @@ export function DocTable({
                 }
             >
                 {loading || (serverQueryActive && serverQueryLoading) ? (
-                    <ProjectTableLoading stickyCellBg={stickyCellBg} />
+                    <ProjectTableLoading />
                 ) : (
                     <div className="flex-1 flex flex-col min-h-0">
-                        {/* Blue ring wraps everything below the header when root-dropping */}
                         <div
                             className="flex-1 flex flex-col min-h-0 relative"
                             onDragOver={(e) => {
@@ -3793,13 +3829,6 @@ export function DocTable({
                                 );
                             }}
                         >
-                            {dragOverRoot && dragOverFolderId === null && (
-                                <div className="absolute inset-0 border-2 border-blue-400 pointer-events-none z-[80]" />
-                            )}
-                            {dragOverFileRoot && (
-                                <div className="absolute inset-0 z-[90] border-2 border-blue-400 bg-blue-50/40 pointer-events-none" />
-                            )}
-
                             {/* Empty state */}
                             {viewedFolderIsEmpty ? (
                                 <div className="flex flex-1 items-center justify-center py-24 text-center">
@@ -3949,7 +3978,7 @@ export function DocTable({
                                                             className={`group flex h-10 min-w-max items-center pr-3 cursor-pointer transition-colors ${isVersionDragOver ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : isSelected ? LIQUID_GLASS_SELECTED_CLASS : LIQUID_GLASS_HOVER_CLASS}`}
                                                         >
                                                             <div
-                                                                className={`sticky left-0 z-[60] ${DOC_NAME_COL_W} ${isVersionDragOver ? "bg-blue-50" : isSelected ? LIQUID_GLASS_SELECTED_CLASS : stickyCellBg} py-2 pl-3 pr-2 transition-colors ${isVersionDragOver || isSelected ? "" : LIQUID_GLASS_GROUP_HOVER_CLASS}`}
+                                                                className={`${DOC_TABLE_STICKY_CELL_CLASS} sticky left-0 z-[60] ${DOC_NAME_COL_W} ${isVersionDragOver ? "bg-blue-50" : isSelected ? LIQUID_GLASS_SELECTED_CLASS : ""} py-2 pl-3 pr-2 transition-colors ${isVersionDragOver || isSelected ? "" : LIQUID_GLASS_GROUP_HOVER_CLASS}`}
                                                             >
                                                                 <div className="flex items-center">
                                                                     {isProcessing || isUploadingVersion ? (
@@ -4147,15 +4176,19 @@ export function DocTable({
                                     const menuDocHasVersions =
                                         typeof menuDocVersionNumber === "number" && menuDocVersionNumber > 1;
                                     const menuDocVersionsOpen = menuDoc ? expandedVersionDocIds.has(menuDoc.id) : false;
-                                    const menuAppliesToSelection =
+                                    const menuDocIsSelected =
                                         !!menuDoc &&
-                                        effectiveSelectedDocIdSet.has(menuDoc.id) &&
+                                        effectiveSelectedDocIdSet.has(menuDoc.id);
+                                    const menuAppliesToSelection =
+                                        menuDocIsSelected &&
                                         selectedItemCount > 1;
-                                    const menuFolderAppliesToSelection =
+                                    const menuFolderIsSelected =
                                         !!contextMenu.folderId &&
                                         selectedFolderIds.has(
                                             contextMenu.folderId,
-                                        ) &&
+                                        );
+                                    const menuFolderAppliesToSelection =
+                                        menuFolderIsSelected &&
                                         selectedItemCount > 1;
                                     const surfaceProps: RowActionMenuSurfaceProps = {
                                         className: "fixed z-[120]",
@@ -4172,6 +4205,11 @@ export function DocTable({
                                                 ref={contextMenuRef}
                                                 surfaceProps={surfaceProps}
                                                 onClose={() => setContextMenu(null)}
+                                                onDeselect={
+                                                    menuDocIsSelected
+                                                        ? clearCollectionSelection
+                                                        : undefined
+                                                }
                                                 onView={
                                                     menuAppliesToSelection
                                                         ? undefined
@@ -4236,6 +4274,11 @@ export function DocTable({
                                                 ref={contextMenuRef}
                                                 surfaceProps={surfaceProps}
                                                 onClose={() => setContextMenu(null)}
+                                                onDeselect={
+                                                    menuFolderIsSelected
+                                                        ? clearCollectionSelection
+                                                        : undefined
+                                                }
                                                 onView={
                                                     !menuFolderAppliesToSelection &&
                                                     contextMenu.showFolderActions &&

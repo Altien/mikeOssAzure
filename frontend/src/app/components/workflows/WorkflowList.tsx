@@ -415,29 +415,20 @@ export function WorkflowList({
         )}
       </div>
     ) : undefined;
-  const addonToolbarActions = activeTab === "addons" ? (
-    <>
-      {packKey && (
-        <TabPillButton onClick={closeAddonPack}>
-          <ChevronLeft className="h-3.5 w-3.5" />
-          Back
-        </TabPillButton>
-      )}
-      {selectedAddonIds.length > 0 && (
-        <button
-          type="button"
-          disabled={bulkImportingAddons}
-          onClick={() => void importSelectedAddons()}
-          className="inline-flex items-center gap-1 px-1.5 py-1 text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:opacity-50"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          {bulkImportingAddons
-            ? "Importing…"
-            : `Import${selectedAddonIds.length > 1 ? ` (${selectedAddonIds.length})` : ""}`}
-        </button>
-      )}
-    </>
-  ) : undefined;
+  const addonToolbarActions =
+    activeTab === "addons" && selectedAddonIds.length > 0 ? (
+      <PillButton
+        tone="black"
+        size="sm"
+        disabled={bulkImportingAddons}
+        onClick={() => void importSelectedAddons()}
+      >
+        <Plus className="h-3.5 w-3.5" />
+        {bulkImportingAddons
+          ? "Importing…"
+          : `Import${selectedAddonIds.length > 1 ? ` (${selectedAddonIds.length})` : ""}`}
+      </PillButton>
+    ) : undefined;
   const pendingDefaultDeleteCount = pendingDeleteWorkflows.filter(
     (workflow) => workflow.is_default,
   ).length;
@@ -495,9 +486,17 @@ export function WorkflowList({
       </PageHeader>
 
       <TableToolbar
-        items={WORKFLOW_TABS}
+        items={packKey ? [] : WORKFLOW_TABS}
         active={activeTab}
         onChange={changeTab}
+        leading={
+          packKey ? (
+            <TabPillButton onClick={closeAddonPack}>
+              <ChevronLeft className="h-3.5 w-3.5" />
+              Back
+            </TabPillButton>
+          ) : undefined
+        }
         actions={
           activeTab === "addons" ? addonToolbarActions : workflowToolbarActions
         }
@@ -1195,18 +1194,18 @@ function AddonTable({
           {addon.language || "—"}
         </TableCell>
         <TableCell className="w-20">
-          <button
-            type="button"
+          <PillButton
+            tone="black"
+            size="sm"
             disabled={bulkImporting || importingAddonId === addon.id}
             onClick={(event) => {
               event.stopPropagation();
               void onImport(addon);
             }}
-            className="inline-flex items-center gap-1 px-1 py-1 text-xs font-medium text-gray-600 transition-colors hover:text-gray-950 disabled:opacity-50"
           >
             <Plus className="h-3.5 w-3.5" />
             {importingAddonId === addon.id ? "Importing…" : "Import"}
-          </button>
+          </PillButton>
         </TableCell>
       </TableRow>
     );

@@ -40,7 +40,7 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
 import { UserProfileProvider, useUserProfile } from "./UserProfileContext";
 import { subscribeToTabularChatSettingsUpdates } from "@/app/lib/tabularChatSettingsEvents";
 
-function apiProfile(darkMode: boolean) {
+function apiProfile(darkMode: boolean, transparentTables = true) {
     return {
         displayName: "Ada",
         organisation: null,
@@ -56,6 +56,7 @@ function apiProfile(darkMode: boolean) {
         legalResearchUs: true,
         emailIntegrationEnabled: false,
         darkMode,
+        transparentTables,
         featureFlags: {},
         deploymentModules: {},
         apiKeyStatus: {
@@ -79,6 +80,20 @@ function ThemeControls() {
             </span>
             <button onClick={() => void updateDarkMode(false)}>Light</button>
             <button onClick={() => void updateDarkMode(true)}>Dark</button>
+        </>
+    );
+}
+
+function TableAppearanceControls() {
+    const { profile, updateTransparentTables } = useUserProfile();
+    return (
+        <>
+            <span data-testid="table-appearance">
+                {profile?.transparentTables ? "transparent" : "glass"}
+            </span>
+            <button onClick={() => void updateTransparentTables(true)}>
+                Transparent
+            </button>
         </>
     );
 }
@@ -124,8 +139,13 @@ function TabularChatSettings() {
 beforeEach(() => {
     getUserProfile.mockResolvedValue(apiProfile(true));
     updateUserProfile.mockImplementation(
-        ({ darkMode }: { darkMode: boolean }) =>
-            Promise.resolve(apiProfile(darkMode)),
+        ({
+            darkMode = true,
+            transparentTables = true,
+        }: {
+            darkMode?: boolean;
+            transparentTables?: boolean;
+        }) => Promise.resolve(apiProfile(darkMode, transparentTables)),
     );
     updateLastSelectedChatSettings.mockResolvedValue(apiProfile(true));
     updateTabularChatModel.mockResolvedValue({});
@@ -134,6 +154,7 @@ beforeEach(() => {
 
 afterEach(() => {
     document.documentElement.classList.remove("dark");
+    document.documentElement.classList.remove("transparent-tables");
     document.documentElement.style.colorScheme = "";
     vi.clearAllMocks();
 });
@@ -197,6 +218,68 @@ describe("UserProfileProvider dark mode", () => {
         fireEvent.click(screen.getByRole("button", { name: "Light" }));
         await waitFor(() =>
             expect(document.documentElement).toHaveClass("dark"),
+        );
+    });
+
+    it("applies and persists transparent table styling", async () => {
+        getUserProfile.mockResolvedValue(apiProfile(true, false));
+        render(
+            <UserProfileProvider>
+                <TableAppearanceControls />
+            </UserProfileProvider>,
+        );
+
+        await waitFor(() =>
+            expect(screen.getByTestId("table-appearance")).toHaveTextContent(
+                "glass",
+            ),
+        );
+        fireEvent.click(
+            screen.getByRole("button", { name: "Transparent" }),
+        );
+
+        await waitFor(() => {
+            expect(document.documentElement).toHaveClass(
+                "transparent-tables",
+            );
+            expect(
+                screen.getByTestId("table-appearance"),
+            ).toHaveTextContent("transparent");
+        });
+        expect(updateUserProfile).toHaveBeenCalledWith({
+            transparentTables: true,
+        });
+    });
+
+    it("rolls transparent table styling back when persistence fails", async () => {
+        getUserProfile.mockResolvedValue(apiProfile(true, false));
+        updateUserProfile.mockRejectedValueOnce(new Error("save failed"));
+        function FailingTableControl() {
+            const { updateTransparentTables } = useUserProfile();
+            return (
+                <button
+                    onClick={() => {
+                        void updateTransparentTables(true).catch(() => {});
+                    }}
+                >
+                    Transparent
+                </button>
+            );
+        }
+        render(
+            <UserProfileProvider>
+                <FailingTableControl />
+            </UserProfileProvider>,
+        );
+        await waitFor(() => expect(getUserProfile).toHaveBeenCalled());
+
+        fireEvent.click(
+            screen.getByRole("button", { name: "Transparent" }),
+        );
+        await waitFor(() =>
+            expect(document.documentElement).not.toHaveClass(
+                "transparent-tables",
+            ),
         );
     });
 

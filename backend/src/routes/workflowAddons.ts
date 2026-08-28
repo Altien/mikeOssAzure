@@ -8,14 +8,19 @@ import crypto from "crypto";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import {
+  buildContentDisposition,
   downloadFile,
   uploadFile,
   workflowReferenceKey,
 } from "../lib/storage";
 import { enqueueStorageCleanup } from "../lib/dbq/enqueue";
-import { contentTypeForDocumentType } from "../lib/documentTypes";
+import {
+  contentTypeForDocumentType,
+  isPresentationDocumentType,
+} from "../lib/documentTypes";
 import { contentSha256 } from "../lib/documentVersions";
 import { sendInternalError } from "../lib/httpError";
+import { docxToPdf } from "../lib/convert";
 
 export const workflowAddonsRouter = Router();
 
@@ -44,12 +49,101 @@ workflowAddonsRouter.get(
       query = query.eq("type", type);
     const { data, error } = await query.order("title", { ascending: true });
     if (error) return void sendInternalError(res, error);
+    const addons = data ?? [];
+    const assistantIds = addons
+      .filter((addon) => addon.type === "assistant")
+      .map((addon) => addon.id);
+    const { data: references, error: referencesError } =
+      assistantIds.length > 0
+        ? await db
+            .from("mike_workflow_reference_files")
+            .select(
+              "id, mike_workflow_id, filename, file_type, size_bytes, created_at",
+            )
+            .in("mike_workflow_id", assistantIds)
+            .order("created_at", { ascending: true })
+        : { data: [], error: null };
+    if (referencesError) return void sendInternalError(res, referencesError);
+    const referencesByAddon = new Map<string, typeof references>();
+    for (const reference of references ?? []) {
+      const current = referencesByAddon.get(reference.mike_workflow_id) ?? [];
+      current.push(reference);
+      referencesByAddon.set(reference.mike_workflow_id, current);
+    }
     res.json(
-      (data ?? []).map(({ workflow_key, ...addon }) => ({
+      addons.map(({ workflow_key, ...addon }) => ({
         ...addon,
         addon_key: workflow_key,
+        reference_files: (referencesByAddon.get(addon.id) ?? []).map(
+          ({ mike_workflow_id: _workflowId, ...reference }) => reference,
+        ),
       })),
     );
+  }),
+);
+
+workflowAddonsRouter.get(
+  "/:addonId/reference-files/:referenceId/display",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const db = createServerSupabase();
+    const { data: addon, error: addonError } = await db
+      .from("mike_workflows")
+      .select("id, type")
+      .eq("id", req.params.addonId)
+      .eq("distribution", "addon")
+      .eq("active", true)
+      .maybeSingle();
+    if (addonError) return void sendInternalError(res, addonError);
+    if (!addon || addon.type !== "assistant") {
+      return void res.status(404).json({ detail: "Add-on not found" });
+    }
+
+    const { data: reference, error: referenceError } = await db
+      .from("mike_workflow_reference_files")
+      .select("id, filename, file_type, storage_path")
+      .eq("id", req.params.referenceId)
+      .eq("mike_workflow_id", addon.id)
+      .maybeSingle();
+    if (referenceError) return void sendInternalError(res, referenceError);
+    if (!reference) {
+      return void res.status(404).json({ detail: "Asset not found" });
+    }
+
+    const bytes = await downloadFile(reference.storage_path);
+    if (!bytes) {
+      return void res
+        .status(404)
+        .json({ detail: "Asset not found in storage" });
+    }
+
+    const fileType =
+      reference.file_type?.toLowerCase() ??
+      reference.filename.split(".").pop()?.toLowerCase() ??
+      "";
+    let displayBytes: Buffer = Buffer.from(bytes);
+    let displayType = contentTypeForDocumentType(fileType);
+    let displayFilename = reference.filename;
+
+    // PowerPoint files have no native browser renderer in the app. Use the
+    // same LibreOffice-to-PDF path as uploaded presentations so PdfView can
+    // display them inside the modal.
+    if (isPresentationDocumentType(fileType) || fileType === "doc") {
+      try {
+        displayBytes = await docxToPdf(displayBytes);
+        displayType = "application/pdf";
+        displayFilename = `${reference.filename.replace(/\.[^.]+$/, "")}.pdf`;
+      } catch (error) {
+        return void sendInternalError(res, error);
+      }
+    }
+
+    res.setHeader("Content-Type", displayType);
+    res.setHeader(
+      "Content-Disposition",
+      buildContentDisposition("inline", displayFilename),
+    );
+    res.send(displayBytes);
   }),
 );
 
@@ -188,10 +282,7 @@ workflowAddonsRouter.post(
         .eq("user_id", userId);
       await enqueueStorageCleanup(db, createdStoragePaths);
       return void res.status(500).json({
-        detail:
-          referenceError instanceof Error
-            ? referenceError.message
-            : "Failed to copy add-on reference files",
+        detail: "Failed to copy add-on reference files",
       });
     }
 

@@ -93,6 +93,7 @@ import {
     listWorkflowsPage,
     lookupUserByEmail,
     mapTRMessages,
+    workflowReferenceDisplayUrl,
     moveDocumentToFolder,
     moveLibraryDocument,
     moveLibraryFolder,
@@ -1031,6 +1032,21 @@ describe("listProjectsPage", () => {
         await listProjectsPage({ scope: "all", limit: 10 });
 
         expect(lastFetchCall().url).toBe("/api/projects?limit=10");
+    });
+
+    it("serializes the project visibility scopes", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listProjectsPage({ scope: "collaborative", limit: 10 });
+        expect(lastFetchCall().url).toBe(
+            "/api/projects?limit=10&scope=collaborative",
+        );
+
+        fetchMock.mockResolvedValue(jsonResponse([]));
+        await listProjectsPage({ scope: "private", limit: 10 });
+        expect(lastFetchCall().url).toBe(
+            "/api/projects?limit=10&scope=private",
+        );
     });
 });
 
@@ -2437,6 +2453,12 @@ describe("thin endpoint wrappers", () => {
 // ---------------------------------------------------------------------------
 
 describe("unwrapping and blob wrappers", () => {
+    it("builds an encoded workflow-reference display URL", () => {
+        expect(workflowReferenceDisplayUrl("workflow/1", "reference 1")).toBe(
+            "/api/workflows/workflow%2F1/reference-files/reference%201/display",
+        );
+    });
+
     it("getOllamaModels unwraps the models envelope", async () => {
         const models = [
             { id: "ollama/llama3.2", label: "Llama 3.2", group: "Local" },

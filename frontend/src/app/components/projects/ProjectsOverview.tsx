@@ -12,7 +12,10 @@ import {
 import { deleteTabularReviewsWithConcurrency } from "@/app/lib/deleteTabularReviewsWithConcurrency";
 import { restoreOptimisticallyDeletedRows } from "@/app/lib/optimisticRows";
 import { useDebouncedValue } from "@/app/hooks/useDebouncedValue";
-import { usePaginatedProjects } from "@/app/hooks/usePaginatedProjects";
+import {
+    usePaginatedProjects,
+    type ProjectScope,
+} from "@/app/hooks/usePaginatedProjects";
 import { OwnerOnlyPopup } from "@/app/components/popups/OwnerOnlyPopup";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
@@ -75,7 +78,7 @@ function getProjectOwnerLabel(project: Project, currentUserId?: string | null) {
     );
 }
 
-type ProjectFilter = "all" | "mine" | "shared-with-me";
+type ProjectFilter = "all" | "shared" | "private";
 type ProjectSortKey =
     | "name"
     | "cm"
@@ -90,10 +93,15 @@ const SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
 ];
 const PROJECT_FILTERS: { id: ProjectFilter; label: string }[] = [
     { id: "all", label: "All" },
-    { id: "mine", label: "Mine" },
-    { id: "shared-with-me", label: "Shared with me" },
+    { id: "shared", label: "Shared" },
+    { id: "private", label: "Private" },
 ];
 const PROJECT_FILTER_IDS = PROJECT_FILTERS.map((filter) => filter.id);
+const PROJECT_FILTER_SCOPES: Record<ProjectFilter, ProjectScope> = {
+    all: "all",
+    shared: "collaborative",
+    private: "private",
+};
 
 export function ProjectsOverview() {
     const router = useRouter();
@@ -144,7 +152,7 @@ export function ProjectsOverview() {
     } = usePaginatedProjects({
         search: debouncedSearch,
         selectionKey: search,
-        scope: activeFilter === "shared-with-me" ? "shared" : activeFilter,
+        scope: PROJECT_FILTER_SCOPES[activeFilter],
         practiceFilter,
         ownerUserIdFilter: ownerFilter,
         sort,
@@ -624,7 +632,11 @@ export function ProjectsOverview() {
                     </TableEmptyState>
                 ) : visibleProjects.length === 0 ? (
                     <TableEmptyState>
-                        {activeFilter === "all" || activeFilter === "mine" ? (
+                        {activeFilter === "shared" ? (
+                            <p className="text-sm text-gray-400">
+                                No shared projects
+                            </p>
+                        ) : (
                             <EmptyState
                                 icon={<OpenProjectSvgIcon />}
                                 title="Projects"
@@ -640,10 +652,6 @@ export function ProjectsOverview() {
                                     </PillButton>
                                 }
                             />
-                        ) : (
-                            <p className="text-sm text-gray-400">
-                                No {activeFilter} projects
-                            </p>
                         )}
                     </TableEmptyState>
                 ) : (

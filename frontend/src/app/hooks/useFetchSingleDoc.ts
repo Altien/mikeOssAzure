@@ -27,6 +27,7 @@ function isSpreadsheetContentType(contentType: string): boolean {
 export function useFetchSingleDoc(
     documentId: string | null | undefined,
     versionId?: string | null,
+    displayUrl?: string | null,
 ) {
     const [result, setResult] = useState<DocResult>(null);
     const [loading, setLoading] = useState(false);
@@ -35,7 +36,8 @@ export function useFetchSingleDoc(
 
     useEffect(() => {
         if (!documentId) return;
-        const requestKey = `${documentId}:${versionId ?? "current"}`;
+        const requestKey =
+            displayUrl ?? `${documentId}:${versionId ?? "current"}`;
         if (requestKey === prevKeyRef.current) return;
         prevKeyRef.current = requestKey;
 
@@ -52,7 +54,8 @@ export function useFetchSingleDoc(
                     ? `?version_id=${encodeURIComponent(versionId)}`
                     : "";
                 const response = await authenticatedFetch(
-                    `${API_BASE}/single-documents/${documentId}/display${qs}`,
+                    displayUrl ??
+                        `${API_BASE}/single-documents/${documentId}/display${qs}`,
                     { credentials: "include" },
                 );
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -83,7 +86,7 @@ export function useFetchSingleDoc(
             cancelled = true;
             prevKeyRef.current = null;
         };
-    }, [documentId, versionId]);
+    }, [displayUrl, documentId, versionId]);
 
     return { result, loading, error };
 }

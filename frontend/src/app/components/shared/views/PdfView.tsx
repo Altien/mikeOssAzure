@@ -14,6 +14,7 @@ import { LIQUID_GLASS_TRANSLUCENT_CLASS } from "@/shared/ui/LiquidGlassUI";
 
 interface Props {
     doc: { document_id: string; version_id?: string | null } | null;
+    displayUrl?: string | null;
     /** Preferred: one or more (page, quote) pairs to highlight. */
     quotes?: CitationQuote[];
     /** Changes when the parent wants the current quote re-focused. */
@@ -57,6 +58,7 @@ export function getObservedPanelWidth(entry: ResizeObserverEntry): number {
 
 export function PdfView({
     doc,
+    displayUrl,
     quotes,
     quoteFocusKey,
     quote,
@@ -94,6 +96,7 @@ export function PdfView({
     const { result, loading, error } = useFetchSingleDoc(
         doc?.document_id ?? null,
         doc?.version_id ?? null,
+        displayUrl,
     );
 
     // Track container width via ResizeObserver so re-renders fire on resize
@@ -590,13 +593,17 @@ export function PdfView({
                 <>
                     {/* Page counter — bottom left */}
                     <div className="absolute bottom-4 left-4 pointer-events-none">
-                        <span className={`flex items-center rounded-full px-3 py-1.5 text-xs font-medium tabular-nums text-gray-700 ${LIQUID_GLASS_TRANSLUCENT_CLASS}`}>
+                        <span
+                            className={`flex items-center rounded-full px-3 py-1.5 text-xs font-medium tabular-nums text-gray-700 ${LIQUID_GLASS_TRANSLUCENT_CLASS}`}
+                        >
                             {currentPage}/{numPages}
                         </span>
                     </div>
 
                     {/* Zoom controls — bottom right */}
-                    <div className={`absolute bottom-4 right-4 flex items-center gap-px rounded-full px-1 py-1 ${LIQUID_GLASS_TRANSLUCENT_CLASS}`}>
+                    <div
+                        className={`absolute bottom-4 right-4 flex items-center gap-px rounded-full px-1 py-1 ${LIQUID_GLASS_TRANSLUCENT_CLASS}`}
+                    >
                         <button
                             onClick={handleZoomOut}
                             disabled={zoom <= ZOOM_MIN}

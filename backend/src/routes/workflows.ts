@@ -25,9 +25,12 @@ import {
 } from "../lib/workflowsOverview";
 import { sendInternalError } from "../lib/httpError";
 import {
+  buildContentDisposition,
+  downloadFile,
   getSignedUrl,
 } from "../lib/storage";
 import { enqueueStorageCleanup } from "../lib/dbq/enqueue";
+import { contentTypeForDocumentType } from "../lib/documentTypes";
 
 export const workflowsRouter = Router();
 
@@ -484,9 +487,7 @@ workflowsRouter.get(
       type: workflowType,
     });
     res.json(
-      catalog
-        .map(catalogWorkflowToLegacy)
-        .map(withSystemWorkflowAccess),
+      catalog.map(catalogWorkflowToLegacy).map(withSystemWorkflowAccess),
     );
   }),
 );
@@ -1005,6 +1006,53 @@ workflowsRouter.get(
     if (!url)
       return void res.status(503).json({ detail: "Storage not configured" });
     res.json({ url, filename: reference.filename });
+  }),
+);
+
+// GET /workflows/:workflowId/reference-files/:referenceId/display
+// Streams the original asset through the API so the shared document viewers
+// can render it without relying on cross-origin access to object storage.
+workflowsRouter.get(
+  "/:workflowId/reference-files/:referenceId/display",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const db = createServerSupabase();
+    const access = await resolveWorkflowAccess(
+      req.params.workflowId,
+      userId,
+      userEmail,
+      db,
+    );
+    if (!access)
+      return void res.status(404).json({ detail: "Workflow not found" });
+    if (rejectReferenceFilesForTabularWorkflow(access, res)) return;
+
+    const { data: reference, error } = await db
+      .from("workflow_reference_documents")
+      .select("id, filename, file_type, storage_path")
+      .eq("id", req.params.referenceId)
+      .eq("workflow_id", req.params.workflowId)
+      .maybeSingle();
+    if (error) return void sendInternalError(res, error);
+    if (!reference)
+      return void res.status(404).json({ detail: "Reference file not found" });
+
+    const bytes = await downloadFile(reference.storage_path);
+    if (!bytes)
+      return void res
+        .status(404)
+        .json({ detail: "Reference file not found in storage" });
+    res.setHeader(
+      "Content-Type",
+      contentTypeForDocumentType(reference.file_type),
+    );
+    res.setHeader(
+      "Content-Disposition",
+      buildContentDisposition("inline", reference.filename),
+    );
+    res.send(Buffer.from(bytes));
   }),
 );
 

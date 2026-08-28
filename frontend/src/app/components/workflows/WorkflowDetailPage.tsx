@@ -54,7 +54,7 @@ import { PillButton } from "@/app/components/ui/pill-button";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 import {
   LIQUID_GLASS_FLOAT_CLASS,
-  LIQUID_TABLE_SURFACE_CLASS,
+  TABLE_SURFACE_CLASS,
 } from "@/app/components/ui/liquid-surface";
 import { NewWorkflowModal } from "@/app/components/workflows/NewWorkflowModal";
 import { TabularReviewSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
@@ -988,7 +988,7 @@ function AssistantWorkflowEditorSkeleton() {
         active="prompt"
       />
       <div className="mx-4 mb-2 min-h-0 min-w-0 flex-1 md:mx-8 md:mb-3">
-        <div className={`h-full px-5 py-4 ${LIQUID_TABLE_SURFACE_CLASS}`}>
+        <div className={`h-full px-5 py-4 ${TABLE_SURFACE_CLASS}`}>
           <div className="space-y-3">
             <div className="h-3 w-24 animate-pulse rounded bg-gray-100" />
             <div className="h-3 w-5/6 animate-pulse rounded bg-gray-100" />

@@ -263,7 +263,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
             >
                 {/* Toggle + Logo */}
                 <div
-                    className={`items-center justify-between px-2.5 py-3 ${
+                    className={`items-center justify-between px-2.5 py-2 ${
                         !isOpen ? "hidden md:flex" : "flex"
                     }`}
                 >
@@ -298,49 +298,51 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                 </div>
 
                 {/* Nav items */}
-                {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
-                    const isActive =
-                        href === "/assistant"
-                            ? pathname === href
-                            : href === "/projects"
-                              ? pathname === href
-                              : pathname === href ||
-                                pathname.startsWith(href + "/");
-                    return (
-                        <div key={href} className="py-0.5 px-2.5">
-                            <button
-                                onClick={() => router.push(href)}
-                                title={!isOpen ? label : ""}
-                                className={cn(
-                                    "w-full h-9 flex items-center gap-3 px-2.5 py-2 rounded-md transition-colors text-left",
-                                    isActive
-                                        ? `${LIQUID_GLASS_SELECTED_CLASS} text-gray-900`
-                                        : `text-gray-700 ${LIQUID_GLASS_HOVER_CLASS}`,
-                                    !isOpen ? "hidden md:flex" : "flex",
-                                )}
-                            >
-                                <Icon
-                                    className={`h-4 w-4 flex-shrink-0 ${
+                <div className="pt-2">
+                    {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+                        const isActive =
+                            href === "/assistant"
+                                ? pathname === href
+                                : href === "/projects"
+                                  ? pathname === href
+                                  : pathname === href ||
+                                    pathname.startsWith(href + "/");
+                        return (
+                            <div key={href} className="py-0.5 px-2.5">
+                                <button
+                                    onClick={() => router.push(href)}
+                                    title={!isOpen ? label : ""}
+                                    className={cn(
+                                        "w-full h-9 flex items-center gap-3 px-2.5 py-2 rounded-md transition-colors text-left",
                                         isActive
-                                            ? "text-gray-900"
-                                            : "text-black"
-                                    }`}
-                                />
-                                {isOpen && (
-                                    <span
-                                        className={`text-sm font-medium ${
-                                            shouldAnimate
-                                                ? "sidebar-fade-in-2"
-                                                : ""
+                                            ? `${LIQUID_GLASS_SELECTED_CLASS} text-gray-900`
+                                            : `text-gray-700 ${LIQUID_GLASS_HOVER_CLASS}`,
+                                        !isOpen ? "hidden md:flex" : "flex",
+                                    )}
+                                >
+                                    <Icon
+                                        className={`h-4 w-4 flex-shrink-0 ${
+                                            isActive
+                                                ? "text-gray-900"
+                                                : "text-black"
                                         }`}
-                                    >
-                                        {label}
-                                    </span>
-                                )}
-                            </button>
-                        </div>
-                    );
-                })}
+                                    />
+                                    {isOpen && (
+                                        <span
+                                            className={`text-sm font-medium ${
+                                                shouldAnimate
+                                                    ? "sidebar-fade-in-2"
+                                                    : ""
+                                            }`}
+                                        >
+                                            {label}
+                                        </span>
+                                    )}
+                                </button>
+                            </div>
+                        );
+                    })}
+                </div>
 
                 {isOpen && (
                     <div className="mt-4 flex min-h-0 flex-1 flex-col gap-4">

@@ -1,7 +1,18 @@
-export type ProjectScope = "all" | "mine" | "shared";
+export type ProjectScope =
+    | "all"
+    | "mine"
+    | "shared"
+    | "collaborative"
+    | "private";
 
 export function parseProjectScope(value: unknown): ProjectScope {
-    if (value === "mine" || value === "shared") return value;
+    if (
+        value === "mine" ||
+        value === "shared" ||
+        value === "collaborative" ||
+        value === "private"
+    )
+        return value;
     return "all";
 }
 
