@@ -294,6 +294,48 @@ describe("handleAccountDelete", () => {
         );
         expect(deleteFile).toHaveBeenCalledWith("exports/u1/e1.json");
     });
+
+    // result.storage_path on the export rows is the ONLY record of where
+    // those artifacts live — each one a full copy of the account's data.
+    // Swallowing a storage failure and purging the rows anyway orphans the
+    // artifact forever: nothing is left anywhere to retry the delete.
+    it("throws when an export artifact delete fails — the pointer rows must survive for the retry", async () => {
+        const db = makeDb([
+            { id: "e1", result: { storage_path: "exports/u1/e1.json" } },
+        ]);
+        deleteFile.mockRejectedValue(new Error("storage down"));
+
+        await expect(
+            handleAccountDelete(
+                db as never,
+                JOB("account.delete", { userId: "u1" }),
+            ),
+        ).rejects.toThrow(/export artifact/);
+
+        // No db_jobs purge ran (rows keep pointing at the surviving file)
+        // and the auth user survives, so the job stays retryable.
+        expect(db.deletes).toHaveLength(0);
+        expect(db.auth.admin.deleteUser).not.toHaveBeenCalled();
+    });
+
+    it("deletes export artifacts BEFORE the row purge that erases their pointers", async () => {
+        const db = makeDb([
+            { id: "e1", result: { storage_path: "exports/u1/e1.json" } },
+        ]);
+        deleteFile.mockImplementation(async (...a: unknown[]) => {
+            db.trace.push(`file:${a[0]}`);
+        });
+
+        await handleAccountDelete(
+            db as never,
+            JOB("account.delete", { userId: "u1" }),
+        );
+
+        const fileAt = db.trace.indexOf("file:exports/u1/e1.json");
+        const purgeAt = db.trace.indexOf("db.delete");
+        expect(fileAt).toBeGreaterThanOrEqual(0);
+        expect(purgeAt).toBeGreaterThan(fileAt);
+    });
 });
 
 describe("handleStorageCleanup", () => {

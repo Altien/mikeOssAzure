@@ -109,27 +109,63 @@ export async function handleAccountDelete(db: Db, job: DbJob): Promise<void> {
 
     // Erase the user's leftovers in the queue itself: export artifacts hold a
     // full copy of their data, and queued audit payloads hold titles/prompts.
-    const { data: exportJobs } = await db
+    //
+    // FILE BEFORE POINTER, and loudly. result.storage_path on these rows is
+    // the only record of where the artifacts live, and the row purge below
+    // destroys it. A swallowed storage failure here would let the purge
+    // proceed and orphan a full copy of the user's data with nothing left
+    // anywhere to retry the delete — so lookup and delete failures throw
+    // instead: the job stays retryable (the route enqueues it with
+    // maxAttempts 20) and the rows survive until their files are actually
+    // gone. deleteUserAccountData already purged the exports/<userId>/
+    // prefix with the same throwing semantics; this per-row pass covers
+    // listings a storage backend serves stale.
+    const { data: exportJobs, error: exportJobsError } = await db
         .from("db_jobs")
         .select("id, result")
         .eq("kind", "export.build")
         .filter("payload->>userId", "eq", userId);
-    for (const row of (exportJobs ?? []) as Pick<DbJob, "id" | "result">[]) {
+    if (exportJobsError) {
+        throw new Error(
+            `Failed to load export jobs: ${exportJobsError.message}`,
+        );
+    }
+    const exportRows = (exportJobs ?? []) as Pick<DbJob, "id" | "result">[];
+    let artifactFailures = 0;
+    for (const row of exportRows) {
         const path = row.result?.storage_path;
         if (typeof path === "string" && path.length > 0) {
-            await deleteFile(path).catch(() => {});
+            try {
+                await deleteFile(path);
+            } catch {
+                artifactFailures += 1;
+            }
         }
     }
-    await db
-        .from("db_jobs")
-        .delete()
-        .filter("payload->>userId", "eq", userId)
-        .neq("id", job.id);
-    await db
-        .from("db_jobs")
-        .delete()
-        .filter("payload->base->>userId", "eq", userId)
-        .neq("id", job.id);
+    if (artifactFailures > 0) {
+        throw new Error(
+            `${artifactFailures}/${exportRows.length} export artifact deletes failed`,
+        );
+    }
+    const purges = [
+        await db
+            .from("db_jobs")
+            .delete()
+            .filter("payload->>userId", "eq", userId)
+            .neq("id", job.id),
+        await db
+            .from("db_jobs")
+            .delete()
+            .filter("payload->base->>userId", "eq", userId)
+            .neq("id", job.id),
+    ];
+    for (const purge of purges) {
+        if (purge.error) {
+            throw new Error(
+                `Failed to purge queue rows: ${purge.error.message}`,
+            );
+        }
+    }
 
     // The auth user goes LAST, and only once every row above is gone.
     //

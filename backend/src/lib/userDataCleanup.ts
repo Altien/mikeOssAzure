@@ -126,9 +126,6 @@ async function deleteUserStoragePrefix(userId: string) {
         const paths = new Set([
             ...(await listFiles(`documents/${userId}/`)),
             ...(await listFiles(`workflow-references/${userId}/`)),
-            // Export artifacts hold a full copy of the account's data, so
-            // account erasure must purge them too.
-            ...(await listFiles(`exports/${userId}/`)),
         ]);
         await Promise.all(
             [...paths].map((path) => deleteFile(path).catch(() => {})),
@@ -136,6 +133,42 @@ async function deleteUserStoragePrefix(userId: string) {
     } catch {
         // Version-linked objects are deleted above. Prefix cleanup is best-effort
         // for orphaned files left behind by interrupted uploads.
+    }
+}
+
+/**
+ * Purge the account's export artifacts (`exports/<userId>/…`). Each object
+ * here is a complete copy of the account's data, and once account deletion
+ * purges the user's db_jobs rows this listing is the last enumeration of
+ * those objects anywhere. So unlike the orphan sweep above, failures MUST
+ * propagate: the caller is a durable job (or the route's inline fallback,
+ * which surfaces a 5xx) and a retry re-runs this with the listing intact.
+ * Swallowing here would let erasure report success while a full export of
+ * the user's data survives with nothing left pointing at it.
+ */
+async function deleteUserExportArtifacts(userId: string) {
+    let paths: string[];
+    try {
+        paths = await listFiles(`exports/${userId}/`);
+    } catch (err) {
+        throw new Error(
+            `Failed to list export artifacts: ${
+                err instanceof Error ? err.message : "unknown error"
+            }`,
+        );
+    }
+    let failures = 0;
+    for (const path of paths) {
+        try {
+            await deleteFile(path);
+        } catch {
+            failures += 1;
+        }
+    }
+    if (failures > 0) {
+        throw new Error(
+            `Failed to delete ${failures}/${paths.length} export artifacts`,
+        );
     }
 }
 
@@ -344,6 +377,7 @@ export async function deleteUserAccountData(
         removeEmailFromSharedWith(db, "tabular_reviews", userEmail),
         deleteDocumentVersionFiles(db, documentIds),
         deleteUserStoragePrefix(userId),
+        deleteUserExportArtifacts(userId),
     ]);
 
     await deleteByIds(db, "documents", documentIds);

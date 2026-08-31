@@ -392,7 +392,13 @@ describe("deleteUserAccountData", () => {
 
     it("removes the user's rows, files, and share references everywhere", async () => {
         const { db, tables } = fixture();
-        listFilesMock.mockResolvedValue(["documents/u1/orphan.bin"]);
+        listFilesMock.mockImplementation(async (prefix: string) =>
+            prefix === "documents/u1/"
+                ? ["documents/u1/orphan.bin"]
+                : prefix === "exports/u1/"
+                  ? ["exports/u1/e1-account.json"]
+                  : [],
+        );
 
         await deleteUserAccountData(db, "u1", " U1@Example.COM ");
 
@@ -426,21 +432,62 @@ describe("deleteUserAccountData", () => {
             "documents/u1/d1/source.pdf",
             "documents/u1/orphan.bin",
             "documents/u2/d-guest/source.docx",
+            // Export artifacts hold a full copy of the account's data;
+            // erasure must purge them with the rest.
+            "exports/u1/e1-account.json",
             // Version-id-keyed text caches: not under any user prefix, so
             // account erasure would leak them without this.
             "extracted-text/v-guest.txt",
             "extracted-text/v1.txt",
         ]);
         expect(listFilesMock).toHaveBeenCalledWith("documents/u1/");
+        expect(listFilesMock).toHaveBeenCalledWith("exports/u1/");
     });
 
-    it("treats storage prefix cleanup as best-effort", async () => {
+    it("treats document/workflow prefix cleanup as best-effort", async () => {
         const { db, tables } = fixture();
-        listFilesMock.mockRejectedValue(new Error("storage unavailable"));
+        // Orphan sweep failing is tolerable: version-linked files were
+        // already deleted (throwing) via the document_versions walk.
+        listFilesMock.mockImplementation(async (prefix: string) => {
+            if (prefix === "exports/u1/") return [];
+            throw new Error("storage unavailable");
+        });
         await expect(
             deleteUserAccountData(db, "u1", "u1@example.com"),
         ).resolves.toBeUndefined();
         expect(ids(tables.documents)).toEqual(["d-other"]);
+    });
+
+    // The exports/ prefix is different in kind from the orphan sweep: each
+    // object under it is a complete copy of the account's data, and once the
+    // account.delete job purges the user's db_jobs rows this listing is the
+    // last enumeration of those objects anywhere. A swallowed failure here
+    // means the deletion "succeeds" while a full export survives with nothing
+    // left to retry its removal — so failures must propagate and let the
+    // durable job retry.
+    it("propagates an export-prefix listing failure so the durable job retries", async () => {
+        const { db } = fixture();
+        listFilesMock.mockImplementation(async (prefix: string) => {
+            if (prefix === "exports/u1/") throw new Error("storage unavailable");
+            return [];
+        });
+        await expect(
+            deleteUserAccountData(db, "u1", "u1@example.com"),
+        ).rejects.toThrow(/export/i);
+    });
+
+    it("propagates an export-artifact delete failure so the durable job retries", async () => {
+        const { db } = fixture();
+        listFilesMock.mockImplementation(async (prefix: string) =>
+            prefix === "exports/u1/" ? ["exports/u1/e1-account.json"] : [],
+        );
+        deleteFileMock.mockImplementation(async (path: string) => {
+            if (path === "exports/u1/e1-account.json")
+                throw new Error("storage unavailable");
+        });
+        await expect(
+            deleteUserAccountData(db, "u1", "u1@example.com"),
+        ).rejects.toThrow(/export/i);
     });
 
     it("skips shared_with scrubbing when no email is known", async () => {

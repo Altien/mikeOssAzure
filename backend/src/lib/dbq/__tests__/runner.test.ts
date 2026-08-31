@@ -48,6 +48,10 @@ function makeDb(opts?: {
                 state.filters[col] = val;
                 return b;
             },
+            neq(col: string, val: unknown) {
+                state.filters[`neq:${col}`] = val;
+                return b;
+            },
             lt(col: string, val: unknown) {
                 state.filters[`lt:${col}`] = val;
                 return b;
@@ -285,5 +289,28 @@ describe("runDbJobRetentionSweep", () => {
             },
         });
         expect(db.deletes.some((d) => d.id === "e1")).toBe(false);
+    });
+
+    // The keep-to-retry promise above is only real if no OTHER deleter can
+    // reach the row: the generic 7-day done purge carries no id filter, so
+    // once finished_at ages past DONE_RETENTION_MS it would sweep the very
+    // row step 1 preserved — erasing the only pointer to an artifact whose
+    // delete is still failing, and leaking a full copy of the user's data.
+    it("exempts export.build from the generic done purge — kept rows are retry state", async () => {
+        const db = makeDb({
+            selectData: [
+                { id: "e1", result: { storage_path: "exports/u/e1.json" } },
+            ],
+        });
+        await runDbJobRetentionSweep(db as never, {
+            deleteStoredFile: async () => {
+                throw new Error("storage down");
+            },
+        });
+        const donePurge = db.deletes.find(
+            (d) => d.status === "done" && "lt:finished_at" in d,
+        );
+        expect(donePurge).toBeDefined();
+        expect(donePurge?.["neq:kind"]).toBe("export.build");
     });
 });
