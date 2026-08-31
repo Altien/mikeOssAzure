@@ -20,9 +20,13 @@ vi.mock("../../supabase", () => ({
     createServerSupabase: () => ({ rpc: (...a: unknown[]) => rpc(...a) }),
 }));
 
+// One stable object per mock: the real getter returns the SAME instance
+// until a wedge replaces it, and the queue getters rebuild on identity
+// change — a fresh {} per call would look like a replacement every time.
+const fakeProducerConnection = {};
 vi.mock("../connection", () => ({
     getRedisConnection: () => ({}),
-    getRedisProducerConnection: () => ({}),
+    getRedisProducerConnection: () => fakeProducerConnection,
     withRedisTimeout: <T,>(_label: string, run: () => Promise<T>) => run(),
 }));
 

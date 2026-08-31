@@ -50,12 +50,64 @@ export function getRedisConnection(): IORedis {
 }
 
 /**
+ * The wedged-connection signature, and why replacement is the only cure.
+ *
+ * With `enableReadyCheck: false`, ioredis marks a connection "ready" straight
+ * from the TCP 'connect' event. When the link is flapping (a Redis restart, a
+ * Docker/NAT proxy in the middle), a socket can die milliseconds after
+ * connecting, and the events can land in this order — captured live:
+ *
+ *     close          → closeHandler schedules a reconnect
+ *     ready (stale)  → status becomes "ready" on the DESTROYED stream
+ *
+ * The scheduled reconnect then aborts, because ioredis refuses to connect a
+ * client whose status says "ready". From here no event will ever fire again:
+ * the socket is destroyed, so disconnect() (stream.end()) and even a forced
+ * stream.destroy() are no-ops with no 'close' to emit — both were tried live
+ * and healed nothing. Every command rejects with "Stream isn't writeable and
+ * enableOfflineQueue options is false" until the process restarts; measured:
+ * 6+ minutes wedged with a healthy Redis one PING away, every delivery
+ * silently riding the 60s poll backstop instead of BullMQ.
+ *
+ * So: a client whose status claims "ready" while its stream is missing,
+ * destroyed, or unwritable is dead beyond recovery, and the fix is to throw
+ * the OBJECT away, not to poke its socket. The check is a synchronous pair of
+ * property reads, so the getter runs it on every call; consumers that cache
+ * anything built on this connection (the BullMQ Queue singletons) must
+ * compare identity on each use and rebuild when it changes.
+ */
+function producerConnectionWedged(conn: IORedis): boolean {
+    if (conn.status !== "ready") return false;
+    const stream = (
+        conn as unknown as {
+            stream?: { writable?: boolean; destroyed?: boolean };
+        }
+    ).stream;
+    return !stream || stream.destroyed === true || stream.writable === false;
+}
+
+/**
  * Shared Redis connection for PRODUCERS (Queue instances, pub/sub publishes).
  * `enableOfflineQueue: false` makes commands issued while disconnected reject
  * immediately instead of buffering without bound, and `commandTimeout` bounds
  * one that was accepted just before the link died.
+ *
+ * A wedged instance (see producerConnectionWedged) is replaced on the next
+ * call: best-effort teardown of the husk, then a fresh client. Callers must
+ * therefore never cache the returned instance across calls.
  */
 export function getRedisProducerConnection(): IORedis {
+    if (producerConnection && producerConnectionWedged(producerConnection)) {
+        console.error(
+            "[redis] producer connection wedged (status ready on a dead stream); replacing it",
+        );
+        try {
+            producerConnection.disconnect();
+        } catch {
+            // The husk has no working socket; nothing to clean up.
+        }
+        producerConnection = null;
+    }
     if (!producerConnection) {
         producerConnection = new IORedis(REDIS_URL, {
             maxRetriesPerRequest: 1,

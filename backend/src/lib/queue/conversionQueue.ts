@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { Queue } from "bullmq";
+import type IORedis from "ioredis";
 import { getRedisProducerConnection, withRedisTimeout } from "./connection";
 import { redisEnabled } from "../dbq/driver";
 import { enqueueDbJob } from "../dbq/enqueue";
@@ -37,12 +38,23 @@ export interface ConversionJobData {
 }
 
 let queue: Queue<ConversionJobData> | null = null;
+let queueConnection: IORedis | null = null;
 
 export function getConversionQueue(): Queue<ConversionJobData> {
+    // The producer connection is replaced when it wedges (see connection.ts);
+    // a Queue still holding the dead client can never deliver again, so
+    // compare identity on every call and rebuild on a fresh connection.
+    const connection = getRedisProducerConnection();
+    if (queue && queueConnection !== connection) {
+        const stale = queue;
+        queue = null;
+        void Promise.resolve()
+            .then(() => stale.close())
+            .catch(() => {});
+    }
     if (!queue) {
-        queue = new Queue<ConversionJobData>(CONVERSION_QUEUE, {
-            connection: getRedisProducerConnection(),
-        });
+        queue = new Queue<ConversionJobData>(CONVERSION_QUEUE, { connection });
+        queueConnection = connection;
     }
     return queue;
 }

@@ -1,4 +1,5 @@
 import { Queue } from "bullmq";
+import type IORedis from "ioredis";
 import { getRedisProducerConnection, withRedisTimeout } from "./connection";
 
 /**
@@ -22,12 +23,23 @@ export interface AppJobDelivery {
 }
 
 let queue: Queue<AppJobDelivery> | null = null;
+let queueConnection: IORedis | null = null;
 
 export function getAppJobsQueue(): Queue<AppJobDelivery> {
+    // The producer connection is replaced when it wedges (see connection.ts);
+    // a Queue still holding the dead client can never deliver again, so
+    // compare identity on every call and rebuild on a fresh connection.
+    const connection = getRedisProducerConnection();
+    if (queue && queueConnection !== connection) {
+        const stale = queue;
+        queue = null;
+        void Promise.resolve()
+            .then(() => stale.close())
+            .catch(() => {});
+    }
     if (!queue) {
-        queue = new Queue<AppJobDelivery>(APP_JOBS_QUEUE, {
-            connection: getRedisProducerConnection(),
-        });
+        queue = new Queue<AppJobDelivery>(APP_JOBS_QUEUE, { connection });
+        queueConnection = connection;
     }
     return queue;
 }
