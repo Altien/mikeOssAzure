@@ -246,12 +246,19 @@ export async function runDbJobRetentionSweep(
         await db.from("db_jobs").delete().eq("id", row.id);
     }
 
-    // 2. Drop old finished rows.
+    // 2. Drop old finished rows — EXCEPT export.build. Step 1 is the only
+    //    deleter of done export rows because it removes the storage object
+    //    before the row: a row it kept after a failed file delete is retry
+    //    state, and this generic purge sweeping it at the 7-day boundary
+    //    would erase the only pointer to the artifact and leak a full copy
+    //    of the user's data — the exact leak the docstring above promises
+    //    not to commit.
     const doneCutoff = new Date(Date.now() - DONE_RETENTION_MS).toISOString();
     await db
         .from("db_jobs")
         .delete()
         .eq("status", "done")
+        .neq("kind", "export.build")
         .lt("finished_at", doneCutoff);
     const failedCutoff = new Date(
         Date.now() - FAILED_RETENTION_MS,
