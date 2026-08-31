@@ -391,6 +391,21 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         });
     });
 
+    it("labels a 4xx with its status when the detail is unusable", async () => {
+        // The non-5xx sibling of the test above: a client error whose detail
+        // is not a usable string gets the status-labelled fallback, never the
+        // internal-error copy reserved for 5xx.
+        fetchMock.mockResolvedValue(
+            jsonResponse({ detail: { nested: true } }, { status: 404 }),
+        );
+
+        await expect(getUserProfile()).rejects.toMatchObject({
+            status: 404,
+            code: null,
+            message: "API error: 404",
+        });
+    });
+
     it("discards raw JSON details from 5xx responses and keeps the request ID", async () => {
         fetchMock.mockResolvedValue(
             jsonResponse(
@@ -912,6 +927,14 @@ describe("streamTabularGenerationResume", () => {
         expect(init.body).toBeUndefined();
         expect(init.signal).toBe(controller.signal);
     });
+
+    it("passes no signal when the caller has none to forward", async () => {
+        fetchMock.mockResolvedValue(streamResponse([]));
+
+        await streamTabularGenerationResume("r1");
+
+        expect(lastFetchCall().init.signal).toBeUndefined();
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -1202,6 +1225,14 @@ describe("listWorkflows", () => {
             "http://localhost:3001/api/workflows?type=assistant",
         );
     });
+
+    it("requests the full untyped collection when no type is given", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listWorkflows();
+
+        expect(lastFetchCall().url).toBe("/api/workflows");
+    });
 });
 
 describe("listWorkflowsPage", () => {
@@ -1323,6 +1354,17 @@ describe("getWorkflowFilterOptions", () => {
       "http://localhost:3001/api/workflows/filter-options?type=assistant&scope=shared",
     );
     expect(init.signal).toBe(controller.signal);
+  });
+  it("requests unscoped facets with a bare query when no filters are active", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ practices: [], languages: [], jurisdictions: [] }),
+    );
+
+    await getWorkflowFilterOptions();
+
+    const { url, init } = lastFetchCall();
+    expect(url).toBe("http://localhost:3001/api/workflows/filter-options");
+    expect(init.signal).toBeUndefined();
   });
 });
 
@@ -1579,6 +1621,18 @@ describe("tabular review chats", () => {
             chatId: "c1",
         });
         expect(parseTabularChatSelectionKey("ordinary-chat-id")).toBeNull();
+    });
+
+    it("rejects prefixed keys missing either half", () => {
+        // A prefixed key must carry both a review id and a chat id: an empty
+        // review id puts the separator first, an empty chat id puts it last,
+        // and both must parse to null rather than a half-empty selection.
+        expect(
+            parseTabularChatSelectionKey(tabularChatSelectionKey("", "c1")),
+        ).toBeNull();
+        expect(
+            parseTabularChatSelectionKey(tabularChatSelectionKey("r1", "")),
+        ).toBeNull();
     });
 
     it("lists chats and fetches messages from the nested routes", async () => {
@@ -1902,6 +1956,14 @@ describe("query and payload defaults", () => {
         expect(JSON.parse(lastFetchCall().init.body as string)).toEqual({
             name: "Precedents",
             parent_folder_id: "parent-1",
+        });
+
+        // Same default for the library sibling: a root-level folder sends an
+        // explicit null parent, mirroring the project route's contract.
+        await createLibraryFolder("files", "Discovery");
+        expect(JSON.parse(lastFetchCall().init.body as string)).toEqual({
+            name: "Discovery",
+            parent_folder_id: null,
         });
     });
 
