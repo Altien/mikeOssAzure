@@ -9,6 +9,8 @@
 // connection, and the DB queue's claim is FOR UPDATE SKIP LOCKED — N worker
 // processes divide the jobs, never duplicate them.
 
+// Load backend/.env before worker initialization, including bare-metal split
+// deployments where settings are not injected by a container runtime.
 import "dotenv/config";
 import "./telemetry";
 import { installProcessGuards } from "./lib/processGuards";
