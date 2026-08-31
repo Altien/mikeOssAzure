@@ -9,6 +9,14 @@
 // connection, and the DB queue's claim is FOR UPDATE SKIP LOCKED — N worker
 // processes divide the jobs, never duplicate them.
 
+// Load backend/.env before anything reads process.env, exactly like the API
+// entrypoint does (app.ts's first import). Without this, `node dist/worker.js`
+// on a bare-metal install — where configuration lives in .env, not in a
+// container's environment block — dies at boot on the Supabase client's
+// "SUPABASE_URL and SUPABASE_SECRET_KEY must be set" check. Compose deployments
+// never noticed because compose injects real environment variables.
+import "dotenv/config";
+
 import { startAllWorkers, stopAllWorkers } from "./workerRuntime";
 
 startAllWorkers();
