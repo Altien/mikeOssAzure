@@ -968,6 +968,24 @@ describe("direct upload sessions", () => {
         },
     );
 
+    it("renames the uploaded file when replacing a document version", async () => {
+        const server = installSuccessfulSessionServer();
+
+        await replaceDocumentVersionFile(
+            "document-1",
+            "version-1",
+            new File(["pdf"], "contract.pdf", {
+                type: "application/pdf",
+                lastModified: 123,
+            }),
+            "renamed.pdf",
+        );
+
+        expect(server.manifests[0].files[0]).toMatchObject({
+            filename: "renamed.pdf",
+        });
+    });
+
     it("reports per-file failures without session-wide completion", async () => {
         const manifests: Manifest[] = [];
         fetchMock.mockImplementation(

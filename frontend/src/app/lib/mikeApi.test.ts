@@ -1097,6 +1097,14 @@ describe("listProjectSummaries", () => {
       "http://localhost:3001/api/projects?limit=11&offset=10&view=summary",
         );
     });
+
+    it("omits pagination parameters when they are not requested", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listProjectSummaries();
+
+        expect(lastFetchCall().url).toBe("/api/projects?view=summary");
+    });
 });
 
 describe("searchProjectDirectory", () => {

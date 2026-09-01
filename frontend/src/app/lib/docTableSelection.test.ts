@@ -25,6 +25,18 @@ describe("DocTable folder selection", () => {
         ]);
     });
 
+    it("handles branching trees, duplicate roots, and empty root ids", () => {
+        const branchingFolders = [
+            { id: "root", parent_folder_id: null },
+            { id: "left", parent_folder_id: "root" },
+            { id: "right", parent_folder_id: "root" },
+        ];
+
+        expect(
+            folderTreeIds(branchingFolders, ["root", "root", ""]),
+        ).toEqual(new Set(["root", "left", "right"]));
+    });
+
     it("keeps only top-most selected folders", () => {
         expect(
             folderSelectionRootIds(
@@ -44,6 +56,15 @@ describe("DocTable folder selection", () => {
         expect(folderSelectionRootIds(cyclicFolders, new Set(["a"]))).toEqual([
             "a",
         ]);
+    });
+
+    it("keeps selections with unknown or dangling ancestry", () => {
+        expect(
+            folderSelectionRootIds(
+                [{ id: "child", parent_folder_id: "missing" }],
+                new Set(["child", "unknown"]),
+            ),
+        ).toEqual(["child", "unknown"]);
     });
 });
 
@@ -68,6 +89,13 @@ describe("DocTable select all state", () => {
                 new Set(),
             ),
         ).toEqual({ allSelected: false, someSelected: true });
+    });
+
+    it("reports no selection when the view is empty", () => {
+        expect(collectionSelectAllState([], [], [], new Set())).toEqual({
+            allSelected: false,
+            someSelected: false,
+        });
     });
 });
 
