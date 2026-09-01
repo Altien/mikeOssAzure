@@ -254,6 +254,13 @@ app.get("/user/export", exportLimiter);
 app.get("/user/chats/export", exportLimiter);
 app.get("/user/tabular-reviews/export", exportLimiter);
 app.get("/audit/export", exportLimiter);
+// Scheduling an async export costs exactly what the synchronous GETs above
+// cost — the same whole-corpus walk, just on a worker — so it shares their
+// budget. Deliberately POST-only: the /user/exports/:id poll and its download
+// stay on the general limiter, because a client polls every couple of seconds
+// while an export builds and a 10/hour budget would lock the user out of an
+// export they legitimately scheduled.
+app.post("/user/exports", exportLimiter);
 app.delete("/user/account", dataDeleteLimiter);
 app.delete("/user/chats", dataDeleteLimiter);
 app.delete("/user/projects", dataDeleteLimiter);

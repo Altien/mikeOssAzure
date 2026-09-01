@@ -32,6 +32,7 @@ import {
     deleteWorkflowReferenceFile,
     deleteWorkflowShare,
     downloadDocumentsZip,
+    downloadUserExport,
     exportAccountData,
     exportAuditHistory,
     exportChatData,
@@ -42,6 +43,7 @@ import {
     getChat,
     getAuditHistory,
     getPanelDocument,
+    getDocument,
     getDocumentUrl,
     getLibrary,
     getLibraryLevels,
@@ -61,6 +63,7 @@ import {
     getTabularChats,
     getTabularReview,
     getTabularReviewPeople,
+    getUserExportStatus,
     getUserProfile,
     getWorkflow,
     getWorkflowAddon,
@@ -115,10 +118,12 @@ import {
     setMcpToolEnabled,
     shareWorkflow,
     startMcpConnectorOAuth,
+    startUserExport,
     streamChat,
     streamProjectChat,
     streamTabularChat,
     streamTabularGeneration,
+    streamTabularGenerationResume,
     syncUserPasswordSet,
     tabularChatSelectionKey,
     parseTabularChatSelectionKey,
@@ -339,6 +344,21 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
             status: 500,
             code: null,
             message: "Something went wrong. Please try again.",
+        });
+    });
+
+    it("labels a 4xx with its status when the detail is unusable", async () => {
+        // The non-5xx sibling of the test above: a client error whose detail
+        // is not a usable string gets the status-labelled fallback, never the
+        // internal-error copy reserved for 5xx.
+        fetchMock.mockResolvedValue(
+            jsonResponse({ detail: { nested: true } }, { status: 404 }),
+        );
+
+        await expect(getUserProfile()).rejects.toMatchObject({
+            status: 404,
+            code: null,
+            message: "API error: 404",
         });
     });
 
@@ -845,6 +865,31 @@ describe("streamTabularGeneration", () => {
     });
 });
 
+describe("streamTabularGenerationResume", () => {
+    it("GETs the resumable stream view (no body, no lease taken)", async () => {
+        fetchMock.mockResolvedValue(streamResponse([]));
+        const controller = new AbortController();
+
+        await streamTabularGenerationResume("r1", controller.signal);
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("/api/tabular-review/r1/generate/stream");
+        // A GET with no expected_updated_at: resuming observes a run, it never
+        // starts one, so it cannot 409 review_running/review_stale.
+        expect(init.method).toBeUndefined();
+        expect(init.body).toBeUndefined();
+        expect(init.signal).toBe(controller.signal);
+    });
+
+    it("passes no signal when the caller has none to forward", async () => {
+        fetchMock.mockResolvedValue(streamResponse([]));
+
+        await streamTabularGenerationResume("r1");
+
+        expect(lastFetchCall().init.signal).toBeUndefined();
+    });
+});
+
 // ---------------------------------------------------------------------------
 // Tabular review listing. This is the query-building half of the paginated
 // review list (PR #263 db-pagination + PR #274 folder grouping): the backend
@@ -1123,6 +1168,14 @@ describe("listWorkflows", () => {
 
         expect(lastFetchCall().url).toBe("/api/workflows?type=assistant");
     });
+
+    it("requests the full untyped collection when no type is given", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listWorkflows();
+
+        expect(lastFetchCall().url).toBe("/api/workflows");
+    });
 });
 
 describe("listWorkflowsPage", () => {
@@ -1240,6 +1293,18 @@ describe("getWorkflowFilterOptions", () => {
             "/api/workflows/filter-options?type=assistant&scope=shared",
         );
         expect(init.signal).toBe(controller.signal);
+    });
+
+    it("requests unscoped facets with a bare URL when no filters are active", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({ practices: [], languages: [], jurisdictions: [] }),
+        );
+
+        await getWorkflowFilterOptions();
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("/api/workflows/filter-options");
+        expect(init.signal).toBeUndefined();
     });
 });
 
@@ -1490,6 +1555,18 @@ describe("tabular review chats", () => {
         expect(parseTabularChatSelectionKey("ordinary-chat-id")).toBeNull();
     });
 
+    it("rejects prefixed keys missing either half", () => {
+        // A prefixed key must carry both a review id and a chat id: an empty
+        // review id puts the separator first, an empty chat id puts it last,
+        // and both must parse to null rather than a half-empty selection.
+        expect(
+            parseTabularChatSelectionKey(tabularChatSelectionKey("", "c1")),
+        ).toBeNull();
+        expect(
+            parseTabularChatSelectionKey(tabularChatSelectionKey("r1", "")),
+        ).toBeNull();
+    });
+
     it("lists chats and fetches messages from the nested routes", async () => {
         fetchMock.mockImplementation(() => Promise.resolve(jsonResponse([])));
 
@@ -1566,7 +1643,7 @@ describe("tabular cell operations", () => {
 
         const cell = await regenerateTabularCell("r1", "row-1", 2);
 
-        expect(cell.flag).toBe("green");
+        expect(cell).toEqual({ summary: "s", flag: "green", reasoning: "r" });
         const { url, init } = lastFetchCall();
         expect(url).toBe("/api/tabular-review/r1/regenerate-cell");
         expect(JSON.parse(init.body as string)).toEqual({
@@ -1796,6 +1873,14 @@ describe("query and payload defaults", () => {
         expect(JSON.parse(lastFetchCall().init.body as string)).toEqual({
             name: "Precedents",
             parent_folder_id: "parent-1",
+        });
+
+        // Same default for the library sibling: a root-level folder sends an
+        // explicit null parent, mirroring the project route's contract.
+        await createLibraryFolder("files", "Discovery");
+        expect(JSON.parse(lastFetchCall().init.body as string)).toEqual({
+            name: "Discovery",
+            parent_folder_id: null,
         });
     });
 
@@ -2199,11 +2284,47 @@ describe("thin endpoint wrappers", () => {
             method: "PATCH",
             body: { filename: "renamed.docx" },
         },
+        // Async (durable) exports. `params` is optional: the filtered exports
+        // send it, the whole-account ones must omit the key entirely so the
+        // backend's discriminated payload stays valid.
+        {
+            name: "startUserExport (with params)",
+            call: () =>
+                startUserExport("audit-csv", {
+                    q: "agreement",
+                    sort_dir: "desc",
+                }),
+            url: "/user/exports",
+            method: "POST",
+            body: {
+                type: "audit-csv",
+                params: { q: "agreement", sort_dir: "desc" },
+            },
+        },
+        {
+            name: "startUserExport (params omitted)",
+            call: () => startUserExport("account"),
+            url: "/user/exports",
+            method: "POST",
+            body: { type: "account" },
+        },
+        {
+            // Export ids come back from the API, so encode them the same way
+            // every other path segment is encoded.
+            name: "getUserExportStatus",
+            call: () => getUserExportStatus("exp/1"),
+            url: "/user/exports/exp%2F1",
+        },
         // Standalone documents & versions
         {
             name: "listStandaloneDocuments",
             call: () => listStandaloneDocuments(),
             url: "/single-documents",
+        },
+        {
+            name: "getDocument",
+            call: () => getDocument("d1"),
+            url: "/single-documents/d1",
         },
         {
             name: "deleteDocument",
@@ -2610,5 +2731,23 @@ describe("unwrapping and blob wrappers", () => {
 
         await exportTabularReviewsData();
         expect(lastFetchCall().url).toBe("/api/user/tabular-reviews/export");
+    });
+
+    it("downloadUserExport streams the finished artifact by encoded id", async () => {
+        fetchMock.mockResolvedValue(
+            new Response("csv-bytes", {
+                status: 200,
+                headers: {
+                    "content-disposition":
+                        'attachment; filename="history.csv"',
+                },
+            }),
+        );
+
+        const { blob, filename } = await downloadUserExport("exp/1");
+
+        expect(lastFetchCall().url).toBe("/api/user/exports/exp%2F1/download");
+        expect(filename).toBe("history.csv");
+        expect(await blob.text()).toBe("csv-bytes");
     });
 });

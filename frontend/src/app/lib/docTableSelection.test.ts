@@ -93,4 +93,16 @@ describe("DocTable document drag payload", () => {
             }),
         ).toEqual([]);
     });
+
+    it("reads a drag that carries only the legacy single-row payload", () => {
+        // A drag started by an older tab (or any non-DocTable source) sets no
+        // multi-row type at all, so getData returns "" and the JSON.parse must
+        // be skipped rather than attempted on an empty string.
+        expect(
+            readDocumentDragPayload({
+                getData: (type: string) =>
+                    type === SINGLE_DOCUMENT_DRAG_TYPE ? "legacy" : "",
+            }),
+        ).toEqual(["legacy"]);
+    });
 });

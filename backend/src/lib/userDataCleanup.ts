@@ -1,5 +1,6 @@
 import { createServerSupabase } from "./supabase";
-import { deleteFile, listFiles } from "./storage";
+import { deleteFile, extractedTextKey, listFiles } from "./storage";
+import { enqueueStorageCleanup } from "./dbq/enqueue";
 
 type Db = ReturnType<typeof createServerSupabase>;
 
@@ -76,17 +77,27 @@ async function getDocumentIdsForAccountDeletion(
     ]);
 }
 
-async function deleteDocumentVersionFiles(db: Db, documentIds: string[]) {
+async function collectDocumentVersionPaths(
+    db: Db,
+    documentIds: string[],
+): Promise<string[]> {
     const paths = new Set<string>();
 
     for (const batch of chunks(documentIds)) {
         const { data, error } = await db
             .from("document_versions")
-            .select("storage_path, pdf_storage_path")
+            .select("id, storage_path, pdf_storage_path")
             .in("document_id", batch);
         await throwIfError(error, "Failed to load document storage paths");
 
         for (const version of data ?? []) {
+            // The extracted-text cache is keyed by version id and lives
+            // outside the per-user storage prefixes, so nothing else would
+            // ever enumerate it. Deleting an object that was never written is
+            // a no-op, so this is unconditional rather than type-gated.
+            if (typeof version.id === "string" && version.id.length > 0) {
+                paths.add(extractedTextKey(version.id));
+            }
             if (
                 typeof version.storage_path === "string" &&
                 version.storage_path.length > 0
@@ -102,7 +113,12 @@ async function deleteDocumentVersionFiles(db: Db, documentIds: string[]) {
         }
     }
 
-    await Promise.all([...paths].map((path) => deleteFile(path)));
+    return [...paths];
+}
+
+async function deleteDocumentVersionFiles(db: Db, documentIds: string[]) {
+    const paths = await collectDocumentVersionPaths(db, documentIds);
+    await Promise.all(paths.map((path) => deleteFile(path)));
 }
 
 async function deleteUserStoragePrefix(userId: string) {
@@ -117,6 +133,42 @@ async function deleteUserStoragePrefix(userId: string) {
     } catch {
         // Version-linked objects are deleted above. Prefix cleanup is best-effort
         // for orphaned files left behind by interrupted uploads.
+    }
+}
+
+/**
+ * Purge the account's export artifacts (`exports/<userId>/…`). Each object
+ * here is a complete copy of the account's data, and once account deletion
+ * purges the user's db_jobs rows this listing is the last enumeration of
+ * those objects anywhere. So unlike the orphan sweep above, failures MUST
+ * propagate: the caller is a durable job (or the route's inline fallback,
+ * which surfaces a 5xx) and a retry re-runs this with the listing intact.
+ * Swallowing here would let erasure report success while a full export of
+ * the user's data survives with nothing left pointing at it.
+ */
+async function deleteUserExportArtifacts(userId: string) {
+    let paths: string[];
+    try {
+        paths = await listFiles(`exports/${userId}/`);
+    } catch (err) {
+        throw new Error(
+            `Failed to list export artifacts: ${
+                err instanceof Error ? err.message : "unknown error"
+            }`,
+        );
+    }
+    let failures = 0;
+    for (const path of paths) {
+        try {
+            await deleteFile(path);
+        } catch {
+            failures += 1;
+        }
+    }
+    if (failures > 0) {
+        throw new Error(
+            `Failed to delete ${failures}/${paths.length} export artifacts`,
+        );
     }
 }
 
@@ -282,7 +334,12 @@ export async function deleteUserProjects(
         ((reviewChats ?? []) as { id: string | null }[]).map((row) => row.id),
     );
 
-    await deleteDocumentVersionFiles(db, documentIds);
+    // Collect the storage keys BEFORE the version rows go away, but delete
+    // the files AFTER the rows via the durable storage.cleanup job: if any
+    // row delete below fails, no file has been touched; if the process dies
+    // after them, the queued job still removes the files (the old inline
+    // Promise.all died with the request and leaked on any storage error).
+    const storagePaths = await collectDocumentVersionPaths(db, documentIds);
     await deleteWhereIn(
         db,
         "tabular_review_chat_messages",
@@ -297,6 +354,8 @@ export async function deleteUserProjects(
     await deleteByIds(db, "documents", documentIds);
     await deleteByIds(db, "project_subfolders", folderIds);
     await deleteByIds(db, "projects", ownedProjectIds);
+
+    await enqueueStorageCleanup(db, storagePaths);
 
     return ownedProjectIds.length;
 }
@@ -318,6 +377,7 @@ export async function deleteUserAccountData(
         removeEmailFromSharedWith(db, "tabular_reviews", userEmail),
         deleteDocumentVersionFiles(db, documentIds),
         deleteUserStoragePrefix(userId),
+        deleteUserExportArtifacts(userId),
     ]);
 
     await deleteByIds(db, "documents", documentIds);

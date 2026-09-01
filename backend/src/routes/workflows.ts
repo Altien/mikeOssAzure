@@ -33,11 +33,11 @@ import {
 import { contentSha256 } from "../lib/documentVersions";
 import { sendInternalError } from "../lib/httpError";
 import {
-  deleteFile,
   getSignedUrl,
   uploadFile,
   workflowReferenceKey,
 } from "../lib/storage";
+import { enqueueStorageCleanup } from "../lib/dbq/enqueue";
 
 export const workflowsRouter = Router();
 
@@ -751,10 +751,13 @@ workflowsRouter.delete(
       .select("id");
     if (error) return void sendInternalError(res, error);
     if ((deleted ?? []).length > 0) {
-      await Promise.all(
-        (referenceDocuments ?? []).map((reference) =>
-          deleteFile(reference.storage_path).catch(() => {}),
-        ),
+      // Durable storage.cleanup job — previously fire-and-forget deletes
+      // that leaked the files on any storage hiccup.
+      await enqueueStorageCleanup(
+        db,
+        (referenceDocuments ?? [])
+          .map((reference) => reference.storage_path as string)
+          .filter((path) => typeof path === "string" && path.length > 0),
       );
     }
     res.status(204).send();
@@ -1045,7 +1048,9 @@ workflowsRouter.post(
       )
       .single();
     if (error || !data) {
-      await deleteFile(storagePath).catch(() => {});
+      // Roll the uploaded bytes back durably: the fire-and-forget delete
+      // this replaces leaked the orphaned object whenever storage hiccuped.
+      await enqueueStorageCleanup(db, [storagePath]);
       return void sendInternalError(
         res,
         error ?? new Error("Reference upload returned no data"),
@@ -1162,14 +1167,14 @@ workflowsRouter.put(
       )
       .single();
     if (error || !data) {
-      await deleteFile(storagePath).catch(() => {});
+      await enqueueStorageCleanup(db, [storagePath]);
       return void sendInternalError(
         res,
         error ?? new Error("Reference replacement returned no data"),
       );
     }
     if (current.storage_path !== storagePath) {
-      await deleteFile(current.storage_path).catch(() => {});
+      await enqueueStorageCleanup(db, [current.storage_path]);
     }
     res.json(data);
   }),
@@ -1204,12 +1209,14 @@ workflowsRouter.delete(
     if (!reference) {
       return void res.status(404).json({ detail: "Reference file not found" });
     }
-    await deleteFile(reference.storage_path).catch(() => {});
     const { error } = await db
       .from("workflow_reference_documents")
       .delete()
       .eq("id", reference.id);
     if (error) return void sendInternalError(res, error);
+    // Row first, file second (durable): a failed row delete leaves the file
+    // referenced and intact; a crash after it still cleans the file up.
+    await enqueueStorageCleanup(db, [reference.storage_path]);
     res.status(204).send();
   }),
 );

@@ -24,6 +24,9 @@ const {
     buildUserChatsExport,
     buildUserTabularReviewsExport,
     supabaseRpc,
+    adminSignOut,
+    adminDeleteUser,
+    dbJobsEnabled,
 } = vi.hoisted(() => ({
     requireMfaIfEnrolled: vi.fn(),
     getUserApiKeyStatus: vi.fn(),
@@ -38,6 +41,9 @@ const {
     buildUserChatsExport: vi.fn(),
     buildUserTabularReviewsExport: vi.fn(),
     supabaseRpc: vi.fn(),
+    adminSignOut: vi.fn(),
+    adminDeleteUser: vi.fn(),
+    dbJobsEnabled: vi.fn(() => true),
 }));
 
 // ---------------------------------------------------------------------------
@@ -54,6 +60,7 @@ type QueryResult = { data: unknown; error: unknown };
 let supabaseState: {
     tables: Record<string, QueryResult | QueryResult[]>;
     updates: Record<string, unknown[]>;
+    inserts: Record<string, unknown[]>;
     adminGetUserById: QueryResult;
     adminDeleteUser: { error: unknown };
 };
@@ -62,6 +69,7 @@ function resetSupabaseState() {
     supabaseState = {
         tables: {},
         updates: {},
+        inserts: {},
         adminGetUserById: {
             data: { user: { id: "u1", factors: [] } },
             error: null,
@@ -112,6 +120,10 @@ function makeQuery(table: string) {
         (supabaseState.updates[table] ??= []).push(payload);
         return q;
     });
+    q.insert = vi.fn((payload: unknown) => {
+        (supabaseState.inserts[table] ??= []).push(payload);
+        return q;
+    });
     q.single = vi.fn(() => Promise.resolve(resultForTable(table)));
     q.maybeSingle = vi.fn(() => Promise.resolve(resultForTable(table)));
     q.then = (
@@ -132,9 +144,8 @@ function mockSupabase() {
                 getUserById: vi.fn(() =>
                     Promise.resolve(supabaseState.adminGetUserById),
                 ),
-                deleteUser: vi.fn(() =>
-                    Promise.resolve(supabaseState.adminDeleteUser),
-                ),
+                deleteUser: (...a: unknown[]) => adminDeleteUser(...a),
+                signOut: (...a: unknown[]) => adminSignOut(...a),
             },
         },
     };
@@ -143,6 +154,13 @@ function mockSupabase() {
 vi.mock("../../lib/supabase", () => ({
     createServerSupabase: vi.fn(() => mockSupabase()),
 }));
+
+// The DB-queue runner's enabled flag is what the account-delete and export
+// routes branch on; keep the rest of the module real.
+vi.mock("../../lib/dbq/runner", async (importOriginal) => {
+    const actual = await importOriginal<Record<string, unknown>>();
+    return { ...actual, dbJobsEnabled: () => dbJobsEnabled() };
+});
 
 // requireAuth always authenticates u1. requireMfaIfEnrolled is a reconfigurable
 // guard so we can drive both the satisfied (next()) and rejected
@@ -243,6 +261,11 @@ describe("user.routes", () => {
         requireMfaIfEnrolled.mockImplementation(
             (_req: unknown, _res: unknown, next: () => void) => next(),
         );
+        adminDeleteUser.mockImplementation(() =>
+            Promise.resolve(supabaseState.adminDeleteUser),
+        );
+        adminSignOut.mockResolvedValue({ data: null, error: null });
+        dbJobsEnabled.mockReturnValue(true);
         getUserApiKeyStatus.mockResolvedValue(STATUS);
         saveUserApiKey.mockResolvedValue(undefined);
         hasEnvApiKey.mockReturnValue(false);
@@ -954,21 +977,56 @@ describe("user.routes", () => {
             );
         });
 
-        it("DELETE /user/account purges data then deletes the auth user (204)", async () => {
+        // ERASURE ORDERING. documents.user_id references auth.users ON DELETE
+        // CASCADE (and document_versions cascades from documents), so deleting
+        // the auth user is what destroys the rows recording where the account's
+        // files live. It must therefore happen LAST — inside the job, after the
+        // cascade — never in this request.
+        it("DELETE /user/account schedules the cascade and does NOT delete the auth user yet", async () => {
+            supabaseState.tables.db_jobs = {
+                data: { id: "job-1" },
+                error: null,
+            };
+
             const res = await request(app)
                 .delete("/user/account")
                 .set(...AUTH);
 
             expect(res.status).toBe(204);
-            // Account purge runs the cleanup helper with id + email.
+            // Durable job queued...
+            const jobInserts = (supabaseState.inserts.db_jobs ?? []) as Record<
+                string,
+                unknown
+            >[];
+            expect(jobInserts).toHaveLength(1);
+            expect(jobInserts[0]).toMatchObject({ kind: "account.delete" });
+            // ...auth user still present, so the cascade can still read the
+            // storage paths it is about to delete.
+            expect(adminDeleteUser).not.toHaveBeenCalled();
+            // Sessions are revoked immediately all the same: the account is
+            // unusable from the moment this returns.
+            expect(adminSignOut).toHaveBeenCalledWith("test-token", "global");
+        });
+
+        it("DELETE /user/account runs inline when no runner will drain the queue", async () => {
+            dbJobsEnabled.mockReturnValue(false);
+
+            const res = await request(app)
+                .delete("/user/account")
+                .set(...AUTH);
+
+            expect(res.status).toBe(204);
+            // Data first, auth last — main's ordering, done synchronously.
             expect(deleteUserAccountData).toHaveBeenCalledWith(
                 expect.anything(),
                 "u1",
                 "u1@test.local",
             );
+            expect(supabaseState.inserts.db_jobs ?? []).toHaveLength(0);
         });
 
-        it("DELETE /user/account returns 500 when the auth-user delete errors", async () => {
+        it("DELETE /user/account returns 500 when the inline auth-user delete errors", async () => {
+            dbJobsEnabled.mockReturnValue(false);
             supabaseState.adminDeleteUser = { error: { message: "auth boom" } };
 
             const res = await request(app)
@@ -977,6 +1035,23 @@ describe("user.routes", () => {
 
             expect(res.status).toBe(500);
             expect(res.body.detail).toBe("Something went wrong. Please try again.");
+        });
+
+        it("DELETE /user/account returns 500 when the cascade cannot be scheduled", async () => {
+            // Nothing has been destroyed yet, so the request is cleanly
+            // retriable — it must not answer 204.
+            supabaseState.tables.db_jobs = {
+                data: null,
+                error: { code: "08006", message: "connection lost" },
+            };
+
+            const res = await request(app)
+                .delete("/user/account")
+                .set(...AUTH);
+
+            expect(res.status).toBe(500);
+            expect(deleteUserAccountData).not.toHaveBeenCalled();
+            expect(adminSignOut).not.toHaveBeenCalled();
         });
 
         it("DELETE /user/chats returns 500 when cleanup throws", async () => {

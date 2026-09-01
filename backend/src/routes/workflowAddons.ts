@@ -8,11 +8,11 @@ import crypto from "crypto";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import {
-  deleteFile,
   downloadFile,
   uploadFile,
   workflowReferenceKey,
 } from "../lib/storage";
+import { enqueueStorageCleanup } from "../lib/dbq/enqueue";
 import { contentTypeForDocumentType } from "../lib/documentTypes";
 import { contentSha256 } from "../lib/documentVersions";
 import { sendInternalError } from "../lib/httpError";
@@ -175,14 +175,18 @@ workflowAddonsRouter.post(
         if (referenceError) throw referenceError;
       }
     } catch (referenceError) {
-      await Promise.all(
-        createdStoragePaths.map((path) => deleteFile(path).catch(() => {})),
-      );
+      // Rollback order matters: drop the workflow row first, so nothing can
+      // reference the half-made copies, then hand the object deletes to the
+      // durable storage.cleanup job. The previous Promise.all of best-effort
+      // deletes died with the request — a restart mid-loop, or a single
+      // storage error, leaked every copy made so far with no row left
+      // pointing at them. The job retries until they are actually gone.
       await db
         .from("workflows")
         .delete()
         .eq("id", workflow.id)
         .eq("user_id", userId);
+      await enqueueStorageCleanup(db, createdStoragePaths);
       return void res.status(500).json({
         detail:
           referenceError instanceof Error
