@@ -107,7 +107,6 @@ import {
     renameProjectDocument,
     renameProjectFolder,
     renameTabularChat,
-    replaceDocumentVersionFile,
     resolveLibraryFolderPath,
     resolveProjectFolderPath,
     resolveDocumentEdit,
@@ -143,13 +142,6 @@ import {
     deleteQuickAction,
     importWorkflowAddon,
     listQuickActions,
-    replaceWorkflowReferenceFile,
-    uploadWorkflowReferenceFile,
-    uploadDocumentVersion,
-    uploadLibraryDocument,
-    uploadProjectDocument,
-    uploadReviewDocument,
-    uploadStandaloneDocument,
 } from "./mikeApi";
 
 const fetchMock = vi.fn();
@@ -544,6 +536,18 @@ describe("downloadDocumentsZip", () => {
         expect(url).toBe("/api/single-documents/download-zip");
         expect(JSON.parse(init.body as string)).toEqual({
             document_ids: ["d1", "d2"],
+            folder_ids: [],
+        });
+    });
+
+    it("POSTs folder ids for recursive downloads", async () => {
+        fetchMock.mockResolvedValue(new Response("zip", { status: 200 }));
+
+        await downloadDocumentsZip(["d1"], ["folder-1"]);
+
+        expect(JSON.parse(lastFetchCall().init.body as string)).toEqual({
+            document_ids: ["d1"],
+            folder_ids: ["folder-1"],
         });
     });
 
@@ -1040,6 +1044,14 @@ describe("listProjectSummaries", () => {
             "/api/projects?limit=11&offset=10&view=summary",
         );
     });
+
+    it("omits pagination parameters when they are not requested", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listProjectSummaries();
+
+        expect(lastFetchCall().url).toBe("/api/projects?view=summary");
+    });
 });
 
 describe("searchProjectDirectory", () => {
@@ -1169,7 +1181,7 @@ describe("listWorkflows", () => {
         expect(lastFetchCall().url).toBe("/api/workflows?type=assistant");
     });
 
-    it("requests the full untyped collection when no type is given", async () => {
+    it("requests the unfiltered collection when type is omitted", async () => {
         fetchMock.mockResolvedValue(jsonResponse([]));
 
         await listWorkflows();
@@ -1295,7 +1307,7 @@ describe("getWorkflowFilterOptions", () => {
         expect(init.signal).toBe(controller.signal);
     });
 
-    it("requests unscoped facets with a bare URL when no filters are active", async () => {
+    it("requests unfiltered facets when options are omitted", async () => {
         fetchMock.mockResolvedValue(
             jsonResponse({ practices: [], languages: [], jurisdictions: [] }),
         );
@@ -1499,52 +1511,6 @@ describe("tabular review CRUD", () => {
     });
 });
 
-describe("uploadReviewDocument", () => {
-    it("uploads into the project then appends the new id to the review", async () => {
-        fetchMock
-            .mockResolvedValueOnce(jsonResponse({ id: "new-doc" }))
-            .mockResolvedValueOnce(jsonResponse({ id: "r1" }));
-        const file = new File(["x"], "a.pdf");
-
-        const uploaded = await uploadReviewDocument("r1", file, {
-            projectId: "p1",
-            documentIds: ["d1"],
-            columnsConfig: [{ index: 0, name: "Term", prompt: "p" }],
-        });
-
-        expect(uploaded).toEqual({ id: "new-doc" });
-        const [uploadCall, patchCall] = fetchMock.mock.calls;
-        expect(uploadCall[0]).toBe("/api/projects/p1/documents");
-        expect((uploadCall[1] as RequestInit).body).toBeInstanceOf(FormData);
-        expect(patchCall[0]).toBe("/api/tabular-review/r1");
-        // Existing ids must be preserved — the review would otherwise shrink
-        // to just the newly uploaded document.
-        expect(
-            JSON.parse((patchCall[1] as RequestInit).body as string),
-        ).toEqual({
-            columns_config: [{ index: 0, name: "Term", prompt: "p" }],
-            document_ids: ["d1", "new-doc"],
-        });
-    });
-
-    it("falls back to a standalone upload when the review has no project", async () => {
-        fetchMock
-            .mockResolvedValueOnce(jsonResponse({ id: "new-doc" }))
-            .mockResolvedValueOnce(jsonResponse({ id: "r1" }));
-
-        await uploadReviewDocument("r1", new File(["x"], "a.pdf"));
-
-        const [uploadCall, patchCall] = fetchMock.mock.calls;
-        expect(uploadCall[0]).toBe("/api/single-documents");
-        // With no prior ids the review ends up with exactly the new document.
-        expect(
-            JSON.parse((patchCall[1] as RequestInit).body as string),
-        ).toEqual({
-            document_ids: ["new-doc"],
-        });
-    });
-});
-
 describe("tabular review chats", () => {
     it("round-trips tabular chat selection keys", () => {
         const key = tabularChatSelectionKey("r1", "c1");
@@ -1553,6 +1519,9 @@ describe("tabular review chats", () => {
             chatId: "c1",
         });
         expect(parseTabularChatSelectionKey("ordinary-chat-id")).toBeNull();
+        expect(
+            parseTabularChatSelectionKey("tabular-review-chat:r1:"),
+        ).toBeNull();
     });
 
     it("rejects prefixed keys missing either half", () => {
@@ -1665,159 +1634,6 @@ describe("tabular cell operations", () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// Multipart uploads. These bypass apiRequest (FormData must not get a JSON
-// content type) and therefore have their own, weaker error contract: a plain
-// Error carrying the raw response text instead of MikeApiError.
-// ---------------------------------------------------------------------------
-
-describe("multipart upload endpoints", () => {
-    const file = new File(["pdf-bytes"], "a.pdf", { type: "application/pdf" });
-
-    it("uploadLibraryDocument posts FormData with auth and no JSON content type", async () => {
-        fetchMock.mockResolvedValue(jsonResponse({ id: "d1" }));
-
-        const doc = await uploadLibraryDocument("templates", file);
-
-        expect(doc).toEqual({ id: "d1" });
-        const { url, init } = lastFetchCall();
-        expect(url).toBe("/api/library/templates/documents");
-        expect(init.method).toBe("POST");
-        expect(init.body).toBeInstanceOf(FormData);
-        expect((init.body as FormData).get("file")).toBeInstanceOf(File);
-        // Setting Content-Type manually would break the multipart boundary.
-        expect(init.headers).toBeUndefined();
-        expect(init.credentials).toBe("include");
-    });
-
-    it("includes the destination folder in project and library uploads", async () => {
-        fetchMock.mockImplementation(() =>
-            Promise.resolve(jsonResponse({ id: "d1" })),
-        );
-
-        await uploadProjectDocument("p1", file, "project-folder");
-        let body = lastFetchCall().init.body as FormData;
-        expect(body.get("folder_id")).toBe("project-folder");
-
-        await uploadLibraryDocument("files", file, "library-folder");
-        body = lastFetchCall().init.body as FormData;
-        expect(body.get("folder_id")).toBe("library-folder");
-    });
-
-    it("multipart upload failures use the sanitized API error contract", async () => {
-        fetchMock.mockImplementation(() =>
-            Promise.resolve(new Response("file too large", { status: 413 })),
-        );
-
-        const error = await uploadProjectDocument("p1", file).catch(
-            (e: unknown) => e,
-        );
-
-        expect(error).toBeInstanceOf(MikeApiError);
-        expect(error).toMatchObject({
-            status: 413,
-            message: "The request could not be completed. Please try again.",
-        });
-
-        await expect(uploadStandaloneDocument(file)).rejects.toThrow(
-            "The request could not be completed. Please try again.",
-        );
-        await expect(uploadLibraryDocument("files", file)).rejects.toThrow(
-            "The request could not be completed. Please try again.",
-        );
-    });
-
-    it("uploadDocumentVersion appends the filename field only when given", async () => {
-        fetchMock.mockImplementation(() =>
-            Promise.resolve(jsonResponse({ id: "v1" })),
-        );
-
-        await uploadDocumentVersion("d1", file, "renamed.pdf");
-        let body = lastFetchCall().init.body as FormData;
-        expect(lastFetchCall().url).toBe("/api/single-documents/d1/versions");
-        expect(body.get("filename")).toBe("renamed.pdf");
-
-        await uploadDocumentVersion("d1", file);
-        body = lastFetchCall().init.body as FormData;
-        expect(body.get("filename")).toBeNull();
-    });
-
-    it("uploadDocumentVersion uses the sanitized API error contract", async () => {
-        fetchMock.mockResolvedValue(
-            new Response("database connection failed", { status: 500 }),
-        );
-
-        await expect(uploadDocumentVersion("d1", file)).rejects.toMatchObject({
-            status: 500,
-            message: "Something went wrong. Please try again.",
-        });
-    });
-
-    it("replaceDocumentVersionFile PUTs to the version file route and surfaces errors", async () => {
-        fetchMock.mockResolvedValue(jsonResponse({ id: "v1" }));
-
-        await replaceDocumentVersionFile("d1", "v1", file, "renamed.pdf");
-
-        const { url, init } = lastFetchCall();
-        expect(url).toBe("/api/single-documents/d1/versions/v1/file");
-        expect(init.method).toBe("PUT");
-        expect((init.body as FormData).get("filename")).toBe("renamed.pdf");
-
-        fetchMock.mockResolvedValue(new Response("nope", { status: 409 }));
-        await expect(
-            replaceDocumentVersionFile("d1", "v1", file),
-        ).rejects.toThrow(
-            "The request could not be completed. Please try again.",
-        );
-    });
-
-    it("uploads workflow reference files as authenticated multipart data", async () => {
-        fetchMock.mockResolvedValue(jsonResponse({ id: "ref-1" }));
-
-        await expect(uploadWorkflowReferenceFile("w1", file)).resolves.toEqual({
-            id: "ref-1",
-        });
-
-        const { url, init } = lastFetchCall();
-        expect(url).toBe("/api/workflows/w1/reference-files");
-        expect(init.method).toBe("POST");
-        expect(init.headers).toBeUndefined();
-        expect(init.credentials).toBe("include");
-        expect(init.body).toBeInstanceOf(FormData);
-        expect((init.body as FormData).get("file")).toBeInstanceOf(File);
-
-        fetchMock.mockResolvedValue(
-            jsonResponse({ detail: "Unsupported file" }, { status: 415 }),
-        );
-        await expect(
-            uploadWorkflowReferenceFile("w1", file),
-        ).rejects.toBeInstanceOf(MikeApiError);
-    });
-
-    it("replaces workflow reference files as authenticated multipart data", async () => {
-        fetchMock.mockResolvedValue(jsonResponse({ id: "ref-1" }));
-
-        await expect(
-            replaceWorkflowReferenceFile("w1", "ref-1", file),
-        ).resolves.toEqual({ id: "ref-1" });
-
-        const { url, init } = lastFetchCall();
-        expect(url).toBe("/api/workflows/w1/reference-files/ref-1");
-        expect(init.method).toBe("PUT");
-        expect(init.headers).toBeUndefined();
-        expect(init.credentials).toBe("include");
-        expect(init.body).toBeInstanceOf(FormData);
-        expect((init.body as FormData).get("file")).toBeInstanceOf(File);
-
-        fetchMock.mockResolvedValue(
-            jsonResponse({ detail: "Reference not found" }, { status: 404 }),
-        );
-        await expect(
-            replaceWorkflowReferenceFile("w1", "missing", file),
-        ).rejects.toBeInstanceOf(MikeApiError);
-    });
-});
-
 describe("query and payload defaults", () => {
     it("getDocumentUrl appends version_id only when a version is requested", async () => {
         fetchMock.mockImplementation(() =>
@@ -1875,11 +1691,9 @@ describe("query and payload defaults", () => {
             parent_folder_id: "parent-1",
         });
 
-        // Same default for the library sibling: a root-level folder sends an
-        // explicit null parent, mirroring the project route's contract.
-        await createLibraryFolder("files", "Discovery");
+        await createLibraryFolder("files", "Root folder");
         expect(JSON.parse(lastFetchCall().init.body as string)).toEqual({
-            name: "Discovery",
+            name: "Root folder",
             parent_folder_id: null,
         });
     });

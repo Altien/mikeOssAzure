@@ -1,21 +1,23 @@
 import { Router } from "express";
+import { pipeline } from "node:stream/promises";
+import type { Readable } from "node:stream";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
-import { recordAudit } from "../lib/audit";
 import { sendInternalError } from "../lib/httpError";
 import {
   buildContentDisposition,
+  createFileReadStream,
   downloadFile,
   deleteFile,
   extractedTextKey,
   getSignedUrl,
-  storageKey,
+  headFile,
   uploadFile,
   versionStorageKey,
 } from "../lib/storage";
-import { docxToPdf, convertedPdfKey } from "../lib/convert";
+import { docxToPdf } from "../lib/convert";
 import { enqueueConversion } from "../lib/queue/conversionQueue";
-import { enqueueDbJob, enqueueStorageCleanup } from "../lib/dbq/enqueue";
+import { enqueueStorageCleanup } from "../lib/dbq/enqueue";
 import {
   extractTrackedChangeIds,
   resolveTrackedChange,
@@ -28,21 +30,40 @@ import {
   downloadFilenameForVersion,
   loadActiveVersion,
 } from "../lib/documentVersions";
-import { ensureDocAccess } from "../lib/access";
-import { singleFileUpload } from "../lib/upload";
+import { checkProjectAccess, ensureDocAccess } from "../lib/access";
+import { mapWithConcurrency } from "../lib/concurrency";
 import {
-  ALLOWED_DOCUMENT_TYPES,
-  ALLOWED_DOCUMENT_TYPES_LABEL,
   contentTypeForDocumentType,
-  requiresLibreOfficeTextExtraction,
   shouldConvertToPdf,
 } from "../lib/documentTypes";
+import { uniqueArchiveFilename, zipExportLimitDetail } from "../lib/zipExport";
 
 export const documentsRouter = Router();
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
   if (isDev) console.log(...args);
 };
+
+export function collectFolderDescendantIds(
+  roots: Array<{ id: unknown }>,
+  allFolders: Array<{ id: unknown; parent_folder_id: unknown }>,
+) {
+  const selected = new Set(roots.map((folder) => String(folder.id)));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const folder of allFolders) {
+      const id = String(folder.id);
+      const parentId = folder.parent_folder_id
+        ? String(folder.parent_folder_id)
+        : null;
+      if (!parentId || !selected.has(parentId) || selected.has(id)) continue;
+      selected.add(id);
+      changed = true;
+    }
+  }
+  return [...selected];
+}
 
 async function deleteDocumentAndVersionFiles(
   db: ReturnType<typeof createServerSupabase>,
@@ -123,20 +144,6 @@ documentsRouter.get("/:documentId", requireAuth, async (req, res) => {
   await attachActiveVersionPaths(db, docs);
   res.json(docs[0]);
 });
-
-// POST /single-documents
-documentsRouter.post(
-  "/",
-  requireAuth,
-  singleFileUpload("file"),
-  async (req, res) => {
-    const userId = res.locals.userId as string;
-    const db = createServerSupabase();
-    await handleDocumentUpload(req, res, userId, null, db, {
-      libraryKind: "file",
-    });
-  },
-);
 
 // DELETE /single-documents/:documentId
 documentsRouter.delete("/:documentId", requireAuth, async (req, res) => {
@@ -226,21 +233,151 @@ documentsRouter.get("/:documentId/display", requireAuth, async (req, res) => {
 documentsRouter.post("/download-zip", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
-  const { document_ids } = req.body as { document_ids?: string[] };
+  const { document_ids, folder_ids } = req.body as {
+    document_ids?: string[];
+    folder_ids?: string[];
+  };
+  const documentIds = Array.isArray(document_ids)
+    ? [...new Set(document_ids.filter((id) => typeof id === "string"))]
+    : [];
+  const folderIds = Array.isArray(folder_ids)
+    ? [...new Set(folder_ids.filter((id) => typeof id === "string"))]
+    : [];
 
-  if (!Array.isArray(document_ids) || document_ids.length === 0)
-    return void res.status(400).json({ detail: "document_ids is required" });
-
+  if (documentIds.length === 0 && folderIds.length === 0)
+    return void res
+      .status(400)
+      .json({ detail: "document_ids or folder_ids is required" });
+  const requestedCountLimit = zipExportLimitDetail(documentIds.length, 0);
+  if (requestedCountLimit) {
+    return void res.status(413).json({ detail: requestedCountLimit });
+  }
   const db = createServerSupabase();
-  const { data: rawDocs, error } = await db
-    .from("documents")
-    .select("id, current_version_id, user_id, project_id")
-    .in("id", document_ids);
+  type DownloadDocumentRow = {
+    id: string;
+    current_version_id?: string | null;
+    user_id: string;
+    project_id: string | null;
+    storage_path?: string | null;
+    filename?: string | null;
+    source?: string | null;
+    active_version_number?: number | null;
+  };
+  const rawDocsById = new Map<string, DownloadDocumentRow>();
 
-  if (error) return void sendInternalError(res, error);
+  if (documentIds.length > 0) {
+    const { data, error } = await db
+      .from("documents")
+      .select("id, current_version_id, user_id, project_id")
+      .in("id", documentIds);
+    if (error) return void sendInternalError(res, error);
+    for (const doc of data ?? [])
+      rawDocsById.set(doc.id as string, doc as DownloadDocumentRow);
+  }
+
+  if (folderIds.length > 0) {
+    const [projectRootsResult, libraryRootsResult] = await Promise.all([
+      db
+        .from("project_subfolders")
+        .select("id, project_id, parent_folder_id")
+        .in("id", folderIds),
+      db
+        .from("library_folders")
+        .select("id, user_id, library_kind, parent_folder_id")
+        .in("id", folderIds)
+        .eq("user_id", userId),
+    ]);
+    if (projectRootsResult.error)
+      return void sendInternalError(res, projectRootsResult.error);
+    if (libraryRootsResult.error)
+      return void sendInternalError(res, libraryRootsResult.error);
+
+    const projectRoots = projectRootsResult.data ?? [];
+    const projectIds = [
+      ...new Set(projectRoots.map((folder) => folder.project_id as string)),
+    ];
+    const accessibleProjectIds = (
+      await Promise.all(
+        projectIds.map(async (projectId) => ({
+          projectId,
+          access: await checkProjectAccess(
+            projectId,
+            userId,
+            userEmail,
+            db,
+          ),
+        })),
+      )
+    )
+      .filter((result) => result.access.ok)
+      .map((result) => result.projectId);
+
+    const accessibleProjectRoots = projectRoots.filter((folder) =>
+      accessibleProjectIds.includes(folder.project_id as string),
+    );
+    const libraryRoots = libraryRootsResult.data ?? [];
+    const libraryKinds = [
+      ...new Set(libraryRoots.map((folder) => folder.library_kind as string)),
+    ];
+
+    const [projectFoldersResult, libraryFoldersResult] = await Promise.all([
+      accessibleProjectIds.length > 0
+        ? db
+            .from("project_subfolders")
+            .select("id, project_id, parent_folder_id")
+            .in("project_id", accessibleProjectIds)
+        : Promise.resolve({ data: [], error: null }),
+      libraryKinds.length > 0
+        ? db
+            .from("library_folders")
+            .select("id, user_id, library_kind, parent_folder_id")
+            .eq("user_id", userId)
+            .in("library_kind", libraryKinds)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (projectFoldersResult.error)
+      return void sendInternalError(res, projectFoldersResult.error);
+    if (libraryFoldersResult.error)
+      return void sendInternalError(res, libraryFoldersResult.error);
+
+    const projectFolderIds = collectFolderDescendantIds(
+      accessibleProjectRoots,
+      projectFoldersResult.data ?? [],
+    );
+    const libraryFolderIds = collectFolderDescendantIds(
+      libraryRoots,
+      libraryFoldersResult.data ?? [],
+    );
+
+    const folderDocumentResults = await Promise.all([
+      projectFolderIds.length > 0
+        ? db
+            .from("documents")
+            .select("id, current_version_id, user_id, project_id")
+            .in("folder_id", projectFolderIds)
+        : Promise.resolve({ data: [], error: null }),
+      libraryFolderIds.length > 0
+        ? db
+            .from("documents")
+            .select("id, current_version_id, user_id, project_id")
+            .in("library_folder_id", libraryFolderIds)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    for (const result of folderDocumentResults) {
+      if (result.error) return void sendInternalError(res, result.error);
+      for (const doc of result.data ?? [])
+        rawDocsById.set(doc.id as string, doc as DownloadDocumentRow);
+    }
+  }
+
+  const resolvedCountLimit = zipExportLimitDetail(rawDocsById.size, 0);
+  if (resolvedCountLimit) {
+    return void res.status(413).json({ detail: resolvedCountLimit });
+  }
+
   // Filter to docs the user actually has access to (own + shared-project).
   const accessChecks = await Promise.all(
-    (rawDocs ?? []).map(async (d) => ({
+    [...rawDocsById.values()].map(async (d) => ({
       doc: d,
       access: await ensureDocAccess(
         d as { user_id: string; project_id: string | null },
@@ -252,34 +389,90 @@ documentsRouter.post("/download-zip", requireAuth, async (req, res) => {
   );
   const docs = accessChecks
     .filter((x) => x.access.ok)
-    .map((x) => x.doc as { id: string });
+    .map((x) => x.doc);
   if (!docs || docs.length === 0)
     return void res.status(404).json({ detail: "No documents found" });
 
+  await attachActiveVersionPaths(db, docs);
+  const activeDocs = docs.filter(
+    (
+      doc,
+    ): doc is DownloadDocumentRow & {
+      storage_path: string;
+    } => typeof doc.storage_path === "string" && doc.storage_path.length > 0,
+  );
+  if (activeDocs.length === 0)
+    return void res.status(404).json({ detail: "No files available" });
+
+  let exportEntries: Array<{
+    doc: (typeof activeDocs)[number];
+    size: number;
+  }>;
+  try {
+    exportEntries = (
+      await mapWithConcurrency(activeDocs, 5, async (doc) => ({
+        doc,
+        metadata: await headFile(doc.storage_path),
+      }))
+    )
+      .filter(
+        (
+          entry,
+        ): entry is {
+          doc: (typeof activeDocs)[number];
+          metadata: NonNullable<Awaited<ReturnType<typeof headFile>>>;
+        } => entry.metadata != null,
+      )
+      .map(({ doc, metadata }) => ({ doc, size: metadata.size }));
+  } catch (error) {
+    return void sendInternalError(res, error);
+  }
+  if (exportEntries.length === 0)
+    return void res.status(404).json({ detail: "No files available" });
+
+  const sizeLimit = zipExportLimitDetail(
+    exportEntries.length,
+    exportEntries.reduce((total, entry) => total + entry.size, 0),
+  );
+  if (sizeLimit) {
+    return void res.status(413).json({ detail: sizeLimit });
+  }
+
   const JSZip = (await import("jszip")).default;
   const zip = new JSZip();
-
-  await Promise.all(
-    docs.map(async (doc) => {
-      const active = await loadActiveVersion(doc.id, db);
-      if (!active) return;
-      const raw = await downloadFile(active.storage_path);
-      if (!raw) return;
-      zip.file(
+  const usedNames = new Set<string>();
+  const fileStreams = exportEntries.map(({ doc }) => {
+    const stream = createFileReadStream(doc.storage_path);
+    zip.file(
+      uniqueArchiveFilename(
         downloadFilenameForVersion(
-          active.filename,
-          active.version_number,
-          active.source === "assistant_edit",
+          doc.filename,
+          doc.active_version_number ?? null,
+          doc.source === "assistant_edit",
         ),
-        Buffer.from(raw),
-      );
-    }),
-  );
+        usedNames,
+      ),
+      stream,
+      { compression: "STORE" },
+    );
+    return stream;
+  });
 
-  const content = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
   res.setHeader("Content-Type", "application/zip");
   res.setHeader("Content-Disposition", 'attachment; filename="documents.zip"');
-  res.send(content);
+  const archiveStream = zip.generateNodeStream({
+    type: "nodebuffer",
+    streamFiles: true,
+    compression: "STORE",
+  }) as Readable;
+  try {
+    await pipeline(archiveStream, res);
+  } catch (error) {
+    for (const stream of fileStreams) stream.destroy();
+    if (!res.headersSent && !res.destroyed) {
+      return void sendInternalError(res, error);
+    }
+  }
 });
 
 // GET /single-documents/:documentId/url
@@ -629,186 +822,6 @@ documentsRouter.post(
   },
 );
 
-// POST /single-documents/:documentId/versions
-// Upload a brand-new version of an existing document. The uploaded file
-// becomes the new current_version_id. filename defaults to the
-// uploaded filename; client may override via the `filename` form field.
-documentsRouter.post(
-  "/:documentId/versions",
-  requireAuth,
-  singleFileUpload("file"),
-  async (req, res) => {
-    const userId = res.locals.userId as string;
-    const userEmail = res.locals.userEmail as string | undefined;
-    const { documentId } = req.params;
-    const db = createServerSupabase();
-
-    const file = req.file;
-    if (!file)
-      return void res.status(400).json({ detail: "file is required" });
-
-    const { data: doc } = await db
-      .from("documents")
-      .select("id, user_id, project_id, current_version_id")
-      .eq("id", documentId)
-      .single();
-    if (!doc)
-      return void res.status(404).json({ detail: "Document not found" });
-    const access = await ensureDocAccess(doc, userId, userEmail, db);
-    if (!access.ok)
-      return void res.status(404).json({ detail: "Document not found" });
-
-    const suffix = file.originalname.includes(".")
-      ? file.originalname.split(".").pop()!.toLowerCase()
-      : "";
-    if (!ALLOWED_DOCUMENT_TYPES.has(suffix)) {
-      return void res.status(400).json({
-        detail: `Unsupported file type: ${suffix}. Allowed: ${ALLOWED_DOCUMENT_TYPES_LABEL}`,
-      });
-    }
-
-    // Peg the new version into a predictable /versions/:id path under the
-    // existing document folder so ops can spot the history in storage.
-    const versionSlug = crypto.randomUUID().replace(/-/g, "");
-    const key = versionStorageKey(
-      userId,
-      documentId,
-      versionSlug,
-      file.originalname,
-    );
-    const contentType = contentTypeForDocumentType(suffix);
-    try {
-      await uploadFile(
-        key,
-        file.buffer.buffer.slice(
-          file.buffer.byteOffset,
-          file.buffer.byteOffset + file.buffer.byteLength,
-        ) as ArrayBuffer,
-        contentType,
-      );
-    } catch (e) {
-      console.error("[versions/upload] storage write failed", e);
-      return void res
-        .status(500)
-        .json({ detail: "Failed to upload new version." });
-    }
-
-    // Render this version's bytes to PDF up front so /display can show
-    // historical versions without on-demand conversion. Same logic as the
-    // initial-upload pipeline; failures don't block the version row.
-    // With the job queue enabled the LibreOffice work is deferred to the
-    // conversion worker instead of blocking this request; the version row is
-    // created with pdf_storage_path null and the worker fills it in.
-    const deferConversion =
-      shouldConvertToPdf(suffix) &&
-      process.env.ASYNC_DOCUMENT_CONVERSION === "true";
-    let pdfStoragePath: string | null = null;
-    if (!deferConversion && shouldConvertToPdf(suffix)) {
-      try {
-        const pdfBuf = await docxToPdf(file.buffer);
-        const pdfKey = `converted-pdfs/${userId}/${documentId}/${versionSlug}.pdf`;
-        await uploadFile(
-          pdfKey,
-          pdfBuf.buffer.slice(
-            pdfBuf.byteOffset,
-            pdfBuf.byteOffset + pdfBuf.byteLength,
-          ) as ArrayBuffer,
-          "application/pdf",
-        );
-        pdfStoragePath = pdfKey;
-      } catch (err) {
-        console.error(
-          `[versions/upload] Office→PDF conversion failed for ${file.originalname}:`,
-          err,
-        );
-      }
-    } else if (suffix === "pdf") {
-      // For PDF uploads, the uploaded bytes are themselves the PDF rendition.
-      pdfStoragePath = key;
-    }
-
-    const rawBuf = file.buffer.buffer.slice(
-      file.buffer.byteOffset,
-      file.buffer.byteOffset + file.buffer.byteLength,
-    ) as ArrayBuffer;
-    const pageCount = suffix === "pdf" ? await countPdfPages(rawBuf) : null;
-
-    // Per-document sequential version_number — the upload is V1 and
-    // user_upload + assistant_edit count forward from there.
-    const { data: maxRow } = await db
-      .from("document_versions")
-      .select("version_number")
-      .eq("document_id", documentId)
-      .in("source", ["upload", "user_upload", "assistant_edit"])
-      .order("version_number", { ascending: false, nullsFirst: false })
-      .limit(1)
-      .maybeSingle();
-    const nextVersionNumber =
-      ((maxRow?.version_number as number | null) ?? 1) + 1;
-
-    const requestedFilename =
-      typeof req.body?.filename === "string" &&
-      req.body.filename.trim()
-        ? req.body.filename.trim().slice(0, 200)
-        : file.originalname;
-
-    const { data: versionRow, error: verErr } = await db
-      .from("document_versions")
-      .insert({
-        document_id: documentId,
-        storage_path: key,
-        pdf_storage_path: pdfStoragePath,
-        source: "user_upload",
-        version_number: nextVersionNumber,
-        filename: requestedFilename,
-        file_type: suffix,
-        size_bytes: file.buffer.byteLength,
-        page_count: pageCount,
-        content_sha256: contentSha256(file.buffer),
-      })
-      .select("id, version_number, source, created_at, filename")
-      .single();
-    if (verErr || !versionRow) {
-      console.error("[versions/upload] insert failed", verErr);
-      return void res
-        .status(500)
-        .json({ detail: "Failed to record new version." });
-    }
-
-    const { error: updateDocErr } = await db
-      .from("documents")
-      .update({
-        current_version_id: versionRow.id,
-      })
-      .eq("id", documentId);
-    if (updateDocErr) {
-      console.error(
-        "[versions/upload] current version update failed",
-        updateDocErr,
-      );
-      return void res
-        .status(500)
-        .json({ detail: "Failed to update document current version." });
-    }
-
-    if (deferConversion) {
-      // The document itself stays "ready" — only this version's rendition is
-      // pending, so the worker must not touch documents.status.
-      await enqueueConversion({
-        documentId,
-        versionId: versionRow.id as string,
-        userId,
-        storagePath: key,
-        fileType: suffix,
-        pdfKey: `converted-pdfs/${userId}/${documentId}/${versionSlug}.pdf`,
-        finalizeDocumentStatus: false,
-      });
-    }
-
-    res.status(201).json(versionRow);
-  },
-);
-
 // PATCH /single-documents/:documentId/versions/:versionId
 // Rename a version's filename. Pass `{ "filename": "…" }`.
 documentsRouter.patch(
@@ -848,181 +861,6 @@ documentsRouter.patch(
     if (error || !updated) {
       return void res.status(404).json({ detail: "Version not found" });
     }
-    res.json(updated);
-  },
-);
-
-// PUT /single-documents/:documentId/versions/:versionId/file
-// Replace the file bytes and metadata for an existing version while keeping
-// its version number and id. This is destructive and owner-only.
-documentsRouter.put(
-  "/:documentId/versions/:versionId/file",
-  requireAuth,
-  singleFileUpload("file"),
-  async (req, res) => {
-    const userId = res.locals.userId as string;
-    const userEmail = res.locals.userEmail as string | undefined;
-    const { documentId, versionId } = req.params;
-    const db = createServerSupabase();
-
-    const file = req.file;
-    if (!file)
-      return void res.status(400).json({ detail: "file is required" });
-
-    const { data: doc } = await db
-      .from("documents")
-      .select("id, user_id, project_id")
-      .eq("id", documentId)
-      .single();
-    if (!doc)
-      return void res.status(404).json({ detail: "Document not found" });
-    const access = await ensureDocAccess(doc, userId, userEmail, db);
-    if (!access.ok || !access.isOwner)
-      return void res.status(404).json({ detail: "Document not found" });
-
-    const { data: target, error: targetErr } = await db
-      .from("document_versions")
-      .select("id, storage_path, pdf_storage_path, file_type, deleted_at")
-      .eq("id", versionId)
-      .eq("document_id", documentId)
-      .single();
-    if (targetErr || !target)
-      return void res.status(404).json({ detail: "Version not found" });
-    if (target.deleted_at)
-      return void res.status(400).json({ detail: "Version is deleted." });
-
-    const suffix = file.originalname.includes(".")
-      ? file.originalname.split(".").pop()!.toLowerCase()
-      : "";
-    if (!ALLOWED_DOCUMENT_TYPES.has(suffix)) {
-      return void res.status(400).json({
-        detail: `Unsupported file type: ${suffix}. Allowed: ${ALLOWED_DOCUMENT_TYPES_LABEL}`,
-      });
-    }
-    if (target.file_type && target.file_type !== suffix) {
-      return void res.status(400).json({
-        detail: `Uploaded file type (${suffix}) does not match version type (${target.file_type}).`,
-      });
-    }
-
-    const versionSlug = crypto.randomUUID().replace(/-/g, "");
-    const key = versionStorageKey(
-      userId,
-      documentId,
-      versionSlug,
-      file.originalname,
-    );
-    const contentType = contentTypeForDocumentType(suffix);
-
-    try {
-      await uploadFile(
-        key,
-        file.buffer.buffer.slice(
-          file.buffer.byteOffset,
-          file.buffer.byteOffset + file.buffer.byteLength,
-        ) as ArrayBuffer,
-        contentType,
-      );
-    } catch (e) {
-      console.error("[versions/replace] storage write failed", e);
-      return void res
-        .status(500)
-        .json({ detail: "Failed to upload replacement version." });
-    }
-
-    // Same queue deferral as version uploads: the replacement's rendition is
-    // produced by the conversion worker when the flag is on. The old rendition
-    // is deleted below either way, so /display briefly falls back until the
-    // worker writes the new one.
-    const deferConversion =
-      shouldConvertToPdf(suffix) &&
-      process.env.ASYNC_DOCUMENT_CONVERSION === "true";
-    let pdfStoragePath: string | null = null;
-    if (!deferConversion && shouldConvertToPdf(suffix)) {
-      try {
-        const pdfBuf = await docxToPdf(file.buffer);
-        const pdfKey = `converted-pdfs/${userId}/${documentId}/${versionSlug}.pdf`;
-        await uploadFile(
-          pdfKey,
-          pdfBuf.buffer.slice(
-            pdfBuf.byteOffset,
-            pdfBuf.byteOffset + pdfBuf.byteLength,
-          ) as ArrayBuffer,
-          "application/pdf",
-        );
-        pdfStoragePath = pdfKey;
-      } catch (err) {
-        console.error(
-          `[versions/replace] Office→PDF conversion failed for ${file.originalname}:`,
-          err,
-        );
-      }
-    } else if (suffix === "pdf") {
-      pdfStoragePath = key;
-    }
-
-    const rawBuf = file.buffer.buffer.slice(
-      file.buffer.byteOffset,
-      file.buffer.byteOffset + file.buffer.byteLength,
-    ) as ArrayBuffer;
-    const pageCount = suffix === "pdf" ? await countPdfPages(rawBuf) : null;
-    const requestedFilename =
-      typeof req.body?.filename === "string" && req.body.filename.trim()
-        ? req.body.filename.trim().slice(0, 200)
-        : file.originalname;
-    const uploadedAt = new Date().toISOString();
-
-    const { data: updated, error: updateErr } = await db
-      .from("document_versions")
-      .update({
-        storage_path: key,
-        pdf_storage_path: pdfStoragePath,
-        filename: requestedFilename,
-        file_type: suffix,
-        size_bytes: file.buffer.byteLength,
-        page_count: pageCount,
-        content_sha256: contentSha256(file.buffer),
-        created_at: uploadedAt,
-      })
-      .eq("id", versionId)
-      .eq("document_id", documentId)
-      .select(
-        "id, version_number, source, created_at, filename, file_type, size_bytes, page_count",
-      )
-      .single();
-    if (updateErr || !updated) {
-      await Promise.all(
-        [key, pdfStoragePath]
-          .filter((path): path is string => !!path)
-          .map((path) => deleteFile(path).catch(() => {})),
-      );
-      return void sendInternalError(
-        res,
-        updateErr ?? new Error("Version replacement returned no data"),
-      );
-    }
-
-    await Promise.all(
-      [target.storage_path, target.pdf_storage_path]
-        .filter((path): path is string => !!path)
-        .map((path) => deleteFile(path).catch(() => {})),
-    );
-
-    if (deferConversion) {
-      // Replace reuses the versionId, which is exactly why terminal jobs are
-      // removed from the queue immediately — this enqueue must not be deduped
-      // against a completed job for the same version.
-      await enqueueConversion({
-        documentId,
-        versionId,
-        userId,
-        storagePath: key,
-        fileType: suffix,
-        pdfKey: `converted-pdfs/${userId}/${documentId}/${versionSlug}.pdf`,
-        finalizeDocumentStatus: false,
-      });
-    }
-
     res.json(updated);
   },
 );
@@ -1422,224 +1260,3 @@ documentsRouter.post(
   requireAuth,
   (req, res) => void handleEditResolution(req, res, "reject"),
 );
-
-export async function handleDocumentUpload(
-  req: import("express").Request,
-  res: import("express").Response,
-  userId: string,
-  projectId: string | null,
-  db: ReturnType<typeof createServerSupabase>,
-  options: {
-    libraryKind?: "file" | "template";
-    libraryFolderId?: string | null;
-  } = {},
-) {
-  const file = req.file;
-  if (!file) return void res.status(400).json({ detail: "file is required" });
-
-  const filename = file.originalname;
-  const suffix = filename.includes(".")
-    ? filename.split(".").pop()!.toLowerCase()
-    : "";
-  if (!ALLOWED_DOCUMENT_TYPES.has(suffix))
-    return void res
-      .status(400)
-      .json({
-        detail: `Unsupported file type: ${suffix}. Allowed: ${ALLOWED_DOCUMENT_TYPES_LABEL}`,
-      });
-
-  const content = file.buffer;
-  const { data: doc, error: insertErr } = await db
-    .from("documents")
-    .insert({
-      project_id: projectId,
-      user_id: userId,
-      status: "processing",
-      library_kind: options.libraryKind ?? "file",
-      library_folder_id: options.libraryFolderId ?? null,
-    })
-    .select("*")
-    .single();
-
-  if (insertErr || !doc)
-    console.error("[single-documents/upload] failed to create document row", {
-      userId,
-      projectId,
-      filename,
-      suffix,
-      error: insertErr,
-    });
-  if (insertErr || !doc)
-    return void res
-      .status(500)
-      .json({ detail: "Failed to create document record" });
-
-  try {
-    const docId = doc.id as string;
-    const key = storageKey(userId, docId, filename);
-    const contentType = contentTypeForDocumentType(suffix);
-    await uploadFile(
-      key,
-      content.buffer.slice(
-        content.byteOffset,
-        content.byteOffset + content.byteLength,
-      ) as ArrayBuffer,
-      contentType,
-    );
-
-    const rawBuf = content.buffer.slice(
-      content.byteOffset,
-      content.byteOffset + content.byteLength,
-    ) as ArrayBuffer;
-    const pageCount = suffix === "pdf" ? await countPdfPages(rawBuf) : null;
-
-    // When the job queue is enabled, defer Office → PDF conversion to the
-    // BullMQ worker instead of blocking the upload request on LibreOffice.
-    const deferConversion =
-      shouldConvertToPdf(suffix) &&
-      process.env.ASYNC_DOCUMENT_CONVERSION === "true";
-
-    // Convert Office files → PDF for display. PDFs are their own rendition.
-    let pdfStoragePath: string | null = null;
-    if (!deferConversion && shouldConvertToPdf(suffix)) {
-      try {
-        const pdfBuf = await docxToPdf(content);
-        const pdfKey = convertedPdfKey(userId, docId);
-        await uploadFile(
-          pdfKey,
-          pdfBuf.buffer.slice(
-            pdfBuf.byteOffset,
-            pdfBuf.byteOffset + pdfBuf.byteLength,
-          ) as ArrayBuffer,
-          "application/pdf",
-        );
-        pdfStoragePath = pdfKey;
-      } catch (err) {
-        console.error(
-          `[upload] Office→PDF conversion failed for ${filename}:`,
-          err,
-        );
-      }
-    } else if (suffix === "pdf") {
-      pdfStoragePath = key;
-    }
-
-    // storage_path / pdf_storage_path live on document_versions now —
-    // create the V1 "upload" row and point documents.current_version_id
-    // at it.
-    const { data: versionRow, error: verErr } = await db
-      .from("document_versions")
-      .insert({
-        document_id: docId,
-        storage_path: key,
-        pdf_storage_path: pdfStoragePath,
-        source: "upload",
-        version_number: 1,
-        filename: filename,
-        file_type: suffix,
-        size_bytes: content.byteLength,
-        page_count: pageCount,
-        content_sha256: contentSha256(content),
-      })
-      .select("id")
-      .single();
-    if (verErr || !versionRow) {
-      throw new Error(
-        `Failed to record upload version: ${verErr?.message ?? "unknown"}`,
-      );
-    }
-
-    await db
-      .from("documents")
-      .update({
-        current_version_id: versionRow.id,
-        // Deferred conversion leaves the doc "processing" until the worker
-        // produces the PDF and flips it to "ready".
-        status: deferConversion ? "processing" : "ready",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", docId);
-
-    if (deferConversion) {
-      await enqueueConversion({
-        documentId: docId,
-        versionId: versionRow.id,
-        userId,
-        storagePath: key,
-        fileType: suffix,
-      });
-    }
-
-    // .doc/.ppt are the only types read_document can read solely by paying
-    // for a LibreOffice conversion. Extract that text once now, in the
-    // background, so the first chat that reads this document does not pay a
-    // subprocess round trip inside its own tool call. Best-effort: a failed
-    // enqueue just means the read path converts inline and re-queues itself.
-    if (requiresLibreOfficeTextExtraction(suffix)) {
-      try {
-        await enqueueDbJob(db, {
-          kind: "document.precompute_text",
-          payload: {
-            versionId: versionRow.id,
-            storagePath: key,
-            fileType: suffix,
-            userId,
-          },
-          dedupeKey: `precompute:${versionRow.id}`,
-          maxAttempts: 3,
-        });
-      } catch (err) {
-        console.error("[upload] precompute-text enqueue failed", err);
-      }
-    }
-
-    const { data: updated } = await db
-      .from("documents")
-      .select("*")
-      .eq("id", docId)
-      .single();
-    // Surface storage paths to the caller for backward compatibility.
-    const responseDoc = updated
-      ? {
-          ...updated,
-          filename,
-          storage_path: key,
-          pdf_storage_path: pdfStoragePath,
-          folder_id:
-            (updated.library_folder_id as string | null | undefined) ?? null,
-          file_type: suffix,
-          size_bytes: content.byteLength,
-          page_count: pageCount,
-          active_version_number: 1,
-        }
-      : updated;
-    void recordAudit(db, {
-      userId,
-      userEmail: res.locals.userEmail as string | undefined,
-      action: "document.uploaded",
-      title: filename,
-      surface: "assistant",
-      documentId: (updated as { id?: string } | null)?.id ?? null,
-    });
-    return void res.status(201).json(responseDoc);
-  } catch (e) {
-    await db.from("documents").update({ status: "error" }).eq("id", doc.id);
-    return void sendInternalError(res, e);
-  }
-}
-
-async function countPdfPages(buf: ArrayBuffer): Promise<number | null> {
-  try {
-    const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs" as string);
-    const pdf = await (
-      pdfjsLib as unknown as {
-        getDocument: (opts: unknown) => {
-          promise: Promise<{ numPages: number }>;
-        };
-      }
-    ).getDocument({ data: new Uint8Array(buf) }).promise;
-    return pdf.numPages;
-  } catch {
-    return null;
-  }
-}

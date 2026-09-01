@@ -10,10 +10,14 @@ import { WorkflowModal } from "../workflows/WorkflowModal";
 import { ChatInput as ChatInputShell } from "../../../shared/chat/ChatInput";
 import {
   getApiKeyStatus,
+  failedUploadMessage,
   getUserProfile,
   listWorkflows,
-  uploadStandaloneDocument,
+  uploadStandaloneDocuments,
+  UploadBatchError,
   type ApiKeyStatus,
+  type UploadOutcome,
+  type UploadProgress,
 } from "../../api/mikeApi";
 import { useSelectedModel } from "../../hooks/useSelectedModel";
 import type { Document, Workflow } from "../../types";
@@ -304,33 +308,72 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       setDocumentUploadError(
         unsupported.length > 0 ? "Unsupported files were skipped." : null,
       );
-      const results = await Promise.allSettled(
-        supported.map((file) => uploadStandaloneDocument(file)),
-      );
-      const uploaded = results.flatMap((result) =>
-        result.status === "fulfilled" ? [result.value] : [],
-      );
-
-      if (!mountedRef.current || generation !== uploadGenerationRef.current) {
-        return;
-      }
-      if (uploaded.length > 0) {
+      // Documents that finished are kept even when the batch as a whole did
+      // not: attach them as they land, and again from whatever accounting the
+      // upload returns (or carries on an UploadBatchError).
+      const attachDocuments = (documents: Document[]): void => {
+        if (documents.length === 0) return;
+        if (!mountedRef.current || generation !== uploadGenerationRef.current) {
+          return;
+        }
         setAttachedDocuments((current) => {
           const existing = new Set(current.map((document) => document.id));
           return [
             ...current,
-            ...uploaded.filter((document) => !existing.has(document.id)),
+            ...documents.filter((document) => !existing.has(document.id)),
           ];
         });
-      }
-      if (results.some((result) => result.status === "rejected")) {
-        setDocumentUploadError(
-          uploaded.length > 0
-            ? "Some documents could not be uploaded."
-            : "Documents could not be uploaded. Please try again.",
+      };
+      const completedDocuments = (
+        outcomes: UploadOutcome<Document>[],
+      ): Document[] =>
+        outcomes.flatMap((outcome) =>
+          outcome.status === "completed" && outcome.result
+            ? [outcome.result]
+            : [],
         );
+
+      try {
+        const outcomes = await uploadStandaloneDocuments(supported, {
+          onProgress: (progress: UploadProgress<Document>) => {
+            if (progress.status === "completed" && progress.result) {
+              attachDocuments([progress.result]);
+            }
+          },
+        });
+
+        if (!mountedRef.current || generation !== uploadGenerationRef.current) {
+          return;
+        }
+        attachDocuments(completedDocuments(outcomes));
+        if (outcomes.some((outcome) => outcome.status === "error")) {
+          setDocumentUploadError(failedUploadMessage(outcomes));
+        }
+      } catch (reason) {
+        if (!mountedRef.current || generation !== uploadGenerationRef.current) {
+          return;
+        }
+        if (reason instanceof UploadBatchError) {
+          const outcomes = reason.outcomes as UploadOutcome<Document>[];
+          attachDocuments(completedDocuments(outcomes));
+          setDocumentUploadError(
+            failedUploadMessage(outcomes, reason.message),
+          );
+        } else {
+          setDocumentUploadError(
+            reason instanceof Error
+              ? reason.message
+              : "Documents could not be uploaded. Please try again.",
+          );
+        }
+      } finally {
+        if (
+          mountedRef.current &&
+          generation === uploadGenerationRef.current
+        ) {
+          setUploadingLocalFiles(false);
+        }
       }
-      setUploadingLocalFiles(false);
     };
 
     const selectSlashWorkflow = (workflow: Workflow): void => {

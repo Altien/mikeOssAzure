@@ -36,7 +36,8 @@ export { CLOSE_ROW_ACTIONS_EVENT, closeRowActionMenus };
 export type RowActionMenuSurfaceProps = ComponentPropsWithoutRef<"div">;
 
 interface Props {
-    onDelete?: () => void;
+    onView?: () => void;
+    onDelete?: () => void | Promise<void>;
     onHide?: () => void;
     onUnhide?: () => void;
     onDownload?: () => void;
@@ -49,6 +50,8 @@ interface Props {
     onEditDetails?: () => void;
     onRename?: () => void;
     onUpdateCmNumber?: () => void;
+    viewLabel?: string;
+    editDetailsLabel?: string;
     newSubfolderLabel?: string;
     renameLabel?: string;
     uploadNewVersionLabel?: string;
@@ -67,6 +70,7 @@ export const RowActionMenuItems = forwardRef<
     HTMLDivElement,
     RowActionMenuItemsProps
 >(function RowActionMenuItems({
+    onView,
     onDelete,
     onHide,
     onUnhide,
@@ -80,6 +84,8 @@ export const RowActionMenuItems = forwardRef<
     onEditDetails,
     onRename,
     onUpdateCmNumber,
+    viewLabel = "View",
+    editDetailsLabel = "Edit details",
     newSubfolderLabel = "New subfolder",
     renameLabel = "Rename",
     uploadNewVersionLabel = "Upload new version",
@@ -96,6 +102,15 @@ export const RowActionMenuItems = forwardRef<
             className={cn("w-48 overflow-hidden", surfaceClassName)}
             {...restSurfaceProps}
         >
+            {onView && (
+                <LiquidDropdownButton
+                    onClick={() => { onClose(); onView(); }}
+                    className={ROW_ACTION_ITEM_CLASS}
+                >
+                    <Eye className="h-3.5 w-3.5" />
+                    {viewLabel}
+                </LiquidDropdownButton>
+            )}
             {onNewSubfolder && (
                 <LiquidDropdownButton
                     onClick={() => { onClose(); onNewSubfolder(); }}
@@ -120,7 +135,7 @@ export const RowActionMenuItems = forwardRef<
                     className={ROW_ACTION_ITEM_CLASS}
                 >
                     <Pencil className="h-3.5 w-3.5" />
-                    Edit details
+                    {editDetailsLabel}
                 </LiquidDropdownButton>
             )}
             {onUpdateCmNumber && (
@@ -191,7 +206,13 @@ export const RowActionMenuItems = forwardRef<
                     onClick={() => {
                         if (deleteDisabled || deleting) return;
                         onClose();
-                        onDelete();
+                        // The menu closes immediately, so an async handler that
+                        // rejects has nothing left to report to. Swallow it here
+                        // rather than leaving an unhandled rejection; surfaces
+                        // that can explain the failure do so themselves.
+                        void Promise.resolve(onDelete()).catch((error) => {
+                            console.error("row delete action failed", error);
+                        });
                     }}
                     disabled={deleting || deleteDisabled}
                     className={`flex items-center gap-2 w-full px-3 py-2 text-xs text-red-500 transition-colors disabled:opacity-40 ${
@@ -255,6 +276,8 @@ export function RowActions(props: Props) {
         <>
             <button
                 ref={btnRef}
+                type="button"
+                aria-label="Open row actions"
                 onClick={handleToggle}
                 className={`flex items-center justify-center w-6 h-6 rounded text-gray-700 hover:text-gray-900 transition-colors leading-none ${LIQUID_GLASS_HOVER_CLASS}`}
             >

@@ -1,30 +1,101 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+    collectionSelectAllState,
+    folderSelectionRootIds,
+    folderTreeIds,
     MULTI_DOCUMENT_DRAG_TYPE,
     readDocumentDragPayload,
-    selectedDocumentRange,
     SINGLE_DOCUMENT_DRAG_TYPE,
     writeDocumentDragPayload,
 } from "./docTableSelection";
 
-describe("DocTable range selection", () => {
-    it("selects every visible row between the anchor and target", () => {
-        expect(
-            selectedDocumentRange(["a", "b", "c", "d"], "b", "d"),
-        ).toEqual(["b", "c", "d"]);
-        expect(
-            selectedDocumentRange(["a", "b", "c", "d"], "d", "b"),
-        ).toEqual(["b", "c", "d"]);
+describe("DocTable folder selection", () => {
+    const folders = [
+        { id: "parent", parent_folder_id: null },
+        { id: "child", parent_folder_id: "parent" },
+        { id: "grandchild", parent_folder_id: "child" },
+        { id: "sibling", parent_folder_id: null },
+    ];
+
+    it("collects every descendant once", () => {
+        expect([...folderTreeIds(folders, ["parent"])]).toEqual([
+            "parent",
+            "child",
+            "grandchild",
+        ]);
     });
 
-    it("falls back to the clicked row when the anchor is not visible", () => {
-        expect(selectedDocumentRange(["a", "b"], "missing", "b")).toEqual([
-            "b",
+    it("handles branching trees, duplicate roots, and empty root ids", () => {
+        const branchingFolders = [
+            { id: "root", parent_folder_id: null },
+            { id: "left", parent_folder_id: "root" },
+            { id: "right", parent_folder_id: "root" },
+        ];
+
+        expect(
+            folderTreeIds(branchingFolders, ["root", "root", ""]),
+        ).toEqual(new Set(["root", "left", "right"]));
+    });
+
+    it("keeps only top-most selected folders", () => {
+        expect(
+            folderSelectionRootIds(
+                folders,
+                new Set(["parent", "child", "sibling"]),
+            ),
+        ).toEqual(["parent", "sibling"]);
+    });
+
+    it("stops safely when malformed folder ancestry contains a cycle", () => {
+        const cyclicFolders = [
+            { id: "a", parent_folder_id: "b" },
+            { id: "b", parent_folder_id: "c" },
+            { id: "c", parent_folder_id: "a" },
+        ];
+
+        expect(folderSelectionRootIds(cyclicFolders, new Set(["a"]))).toEqual([
+            "a",
         ]);
-        expect(selectedDocumentRange(["a", "b"], null, "b")).toEqual(["b"]);
-        expect(selectedDocumentRange(["a", "b"], "a", "missing")).toEqual([
-            "missing",
-        ]);
+    });
+
+    it("keeps selections with unknown or dangling ancestry", () => {
+        expect(
+            folderSelectionRootIds(
+                [{ id: "child", parent_folder_id: "missing" }],
+                new Set(["child", "unknown"]),
+            ),
+        ).toEqual(["child", "unknown"]);
+    });
+});
+
+describe("DocTable select all state", () => {
+    it("treats a folder-only view as fully selected", () => {
+        expect(
+            collectionSelectAllState(
+                [],
+                ["folder-a", "folder-b"],
+                [],
+                new Set(["folder-a", "folder-b"]),
+            ),
+        ).toEqual({ allSelected: true, someSelected: false });
+    });
+
+    it("treats a mixed file and folder selection as partial", () => {
+        expect(
+            collectionSelectAllState(
+                ["document-a"],
+                ["folder-a"],
+                ["document-a"],
+                new Set(),
+            ),
+        ).toEqual({ allSelected: false, someSelected: true });
+    });
+
+    it("reports no selection when the view is empty", () => {
+        expect(collectionSelectAllState([], [], [], new Set())).toEqual({
+            allSelected: false,
+            someSelected: false,
+        });
     });
 });
 

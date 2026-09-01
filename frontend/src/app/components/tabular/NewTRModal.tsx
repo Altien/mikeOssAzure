@@ -4,11 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2, Upload } from "lucide-react";
 import type { Document, Folder, Project, Workflow } from "../shared/types";
 import {
+    UploadBatchError,
+    failedUploadMessage,
     getProject,
     listWorkflows,
-    uploadProjectDocument,
-    uploadStandaloneDocument,
+    uploadProjectDocuments,
+    uploadStandaloneDocuments,
 } from "@/app/lib/mikeApi";
+import { userFacingApiError } from "@/app/lib/userFacingError";
 import { FileDirectory } from "../shared/FileDirectory";
 import { Modal } from "../modals/Modal";
 import { ModalSelect } from "../modals/ModalSelect";
@@ -83,6 +86,7 @@ export function NewTRModal({
     const [selectedDocuments, setSelectedDocuments] = useState<Document[]>([]);
     const [groupBySubfolder, setGroupBySubfolder] = useState(false);
     const [uploading, setUploading] = useState(false);
+    const [uploadError, setUploadError] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // Workflow templates
@@ -101,8 +105,9 @@ export function NewTRModal({
             .then((workflows) => {
                 devLog("[workflows/ui:tabular-review-modal] loaded", {
                     workflowCount: workflows.length,
-                    systemCount: workflows.filter((workflow) => workflow.is_system)
-                        .length,
+                    systemCount: workflows.filter(
+                        (workflow) => workflow.is_system,
+                    ).length,
                     sample: workflows.slice(0, 5).map((workflow) => ({
                         id: workflow.id,
                         title: workflow.metadata.title,
@@ -115,10 +120,7 @@ export function NewTRModal({
                 setWorkflows(workflows);
             })
             .catch((error) => {
-                devLog(
-                    "[workflows/ui:tabular-review-modal] failed",
-                    error,
-                );
+                devLog("[workflows/ui:tabular-review-modal] failed", error);
                 setWorkflows([]);
             })
             .finally(() => setLoadingWorkflows(false));
@@ -168,14 +170,13 @@ export function NewTRModal({
         setSelectedDocuments([]);
         setGroupBySubfolder(false);
         setSelectedWorkflowId(null);
+        setUploadError(null);
         onClose();
     }
 
     function submitterValue(e: React.FormEvent<HTMLFormElement>) {
         return (
-            (e.nativeEvent as SubmitEvent).submitter as
-                | HTMLButtonElement
-                | null
+            (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null
         )?.value;
     }
 
@@ -227,18 +228,25 @@ export function NewTRModal({
         const files = Array.from(e.target.files ?? []);
         if (!files.length) return;
         setUploading(true);
+        setUploadError(null);
         try {
             const uploadProjectId = isProjectMode
                 ? projectId
                 : underProject
                   ? selectedProjectId
                   : undefined;
-            const uploaded = await Promise.all(
-                files.map((f) =>
-                    uploadProjectId
-                        ? uploadProjectDocument(uploadProjectId, f)
-                        : uploadStandaloneDocument(f),
-                ),
+            const outcomes = uploadProjectId
+                ? await uploadProjectDocuments(
+                      uploadProjectId,
+                      files.map((file) => ({ file })),
+                  )
+                : await uploadStandaloneDocuments(
+                      files.map((file) => ({ file })),
+                  );
+            const uploaded = outcomes.flatMap((outcome) =>
+                outcome.status === "completed" && outcome.result
+                    ? [outcome.result]
+                    : [],
             );
             if (uploadProjectId) {
                 setProjectDocs((prev) => [...uploaded, ...prev]);
@@ -252,8 +260,22 @@ export function NewTRModal({
                         !prev.some((selected) => selected.id === document.id),
                 ),
             ]);
+            // Files that never became documents cannot be attached to the
+            // review, so say which ones instead of leaving the picker looking
+            // as though the upload simply produced nothing.
+            if (uploaded.length < outcomes.length) {
+                setUploadError(failedUploadMessage(outcomes));
+            }
         } catch (err) {
             console.error("Upload failed:", err);
+            setUploadError(
+                err instanceof UploadBatchError
+                    ? failedUploadMessage(err.outcomes)
+                    : userFacingApiError(
+                          err,
+                          "The selected files could not be uploaded. Please try again.",
+                      ),
+            );
         } finally {
             setUploading(false);
             if (fileInputRef.current) fileInputRef.current.value = "";
@@ -413,9 +435,7 @@ export function NewTRModal({
 
                         {/* Workflow template */}
                         <div>
-                            <FieldLabel as="p">
-                                Workflow template
-                            </FieldLabel>
+                            <FieldLabel as="p">Workflow template</FieldLabel>
                             <ModalSelect
                                 id="new-tr-workflow-template"
                                 value={selectedWorkflowId ?? ""}
@@ -430,9 +450,7 @@ export function NewTRModal({
                         {/* Create under a project toggle */}
                         {!isProjectMode && (
                             <div className="space-y-3">
-                                <FieldLabel as="p">
-                                    Project
-                                </FieldLabel>
+                                <FieldLabel as="p">Project</FieldLabel>
                                 <ToggleSwitch
                                     checked={underProject}
                                     onCheckedChange={(next) => {
@@ -466,14 +484,13 @@ export function NewTRModal({
                         )}
 
                         <div>
-                            <FieldLabel as="p">
-                                Document grouping
-                            </FieldLabel>
+                            <FieldLabel as="p">Document grouping</FieldLabel>
                             <ToggleSwitch
                                 checked={groupBySubfolder}
                                 onCheckedChange={setGroupBySubfolder}
                             >
-                                Treat documents in the same folder as one review row
+                                Treat documents in the same folder as one review
+                                row
                             </ToggleSwitch>
                         </div>
                     </div>
@@ -489,6 +506,14 @@ export function NewTRModal({
                                 showTabs={!isProjectMode && !underProject}
                                 tabs={TABULAR_DIRECTORY_TABS}
                             />
+                        )}
+                        {uploadError && (
+                            <p
+                                role="alert"
+                                className="mt-3 text-sm text-red-500"
+                            >
+                                {uploadError}
+                            </p>
                         )}
                     </div>
                 )}

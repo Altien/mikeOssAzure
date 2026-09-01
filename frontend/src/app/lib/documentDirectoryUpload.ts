@@ -3,13 +3,27 @@ export type DocumentUploadEntry = {
     relativePath: string;
 };
 
-export const MAX_DOCUMENTS_PER_DIRECTORY_UPLOAD = 50;
+// Pre-flight ceiling for one drop/selection. The upload client chunks large
+// selections into <=50-file sessions itself, so this is not the session limit —
+// it only stops a mis-drop (say, a home directory) from queueing hundreds of
+// sessions against the 50-session hourly cap. 500 files = at most 10 sessions.
+export const MAX_DOCUMENTS_PER_DIRECTORY_UPLOAD = 500;
 export const DOCUMENT_UPLOAD_CONCURRENCY = 2;
 
 export type DocumentUploadProgressEntry = {
     kind: "file" | "folder";
     name: string;
+    sourceName: string;
 };
+
+export function folderUploadProgressLabel(
+    statuses: readonly string[],
+): string {
+    const uploadedCount = statuses.filter((status) =>
+        ["uploaded", "processing", "completed"].includes(status),
+    ).length;
+    return `${uploadedCount} of ${statuses.length} uploaded`;
+}
 
 export type DocumentUploadFolderPathResolution<TFolder> =
     | {
@@ -24,38 +38,6 @@ export type DocumentUploadFolderPathResolution<TFolder> =
           resolved_name: string;
           folders: TFolder[];
       };
-
-export async function settleWithConcurrency<TItem, TResult>(
-    items: readonly TItem[],
-    concurrency: number,
-    worker: (item: TItem, index: number) => Promise<TResult>,
-): Promise<PromiseSettledResult<TResult>[]> {
-    if (items.length === 0) return [];
-    const results = new Array<PromiseSettledResult<TResult>>(items.length);
-    const workerCount = Math.min(
-        items.length,
-        Math.max(1, Math.floor(concurrency)),
-    );
-    let nextIndex = 0;
-
-    const runWorker = async () => {
-        while (nextIndex < items.length) {
-            const index = nextIndex;
-            nextIndex += 1;
-            try {
-                results[index] = {
-                    status: "fulfilled",
-                    value: await worker(items[index], index),
-                };
-            } catch (reason) {
-                results[index] = { status: "rejected", reason };
-            }
-        }
-    };
-
-    await Promise.all(Array.from({ length: workerCount }, runWorker));
-    return results;
-}
 
 export async function resolveDocumentUploadRootFolder<TFolder>({
     rootFolderName,
@@ -170,13 +152,18 @@ export function documentUploadProgressEntries(
             const folderName = segments[0];
             if (!folderNames.has(folderName)) {
                 folderNames.add(folderName);
-                progressEntries.push({ kind: "folder", name: folderName });
+                progressEntries.push({
+                    kind: "folder",
+                    name: folderName,
+                    sourceName: folderName,
+                });
             }
             continue;
         }
         progressEntries.push({
             kind: "file",
             name: segments[0] ?? entry.file.name,
+            sourceName: segments[0] ?? entry.file.name,
         });
     }
 

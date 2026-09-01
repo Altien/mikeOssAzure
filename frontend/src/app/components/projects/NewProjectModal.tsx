@@ -3,9 +3,11 @@
 import { useRef, useState } from "react";
 import { Upload, User, X } from "lucide-react";
 import {
+    UploadBatchError,
     addDocumentToProject,
     createProject,
-    uploadProjectDocument,
+    failedUploadMessage,
+    uploadProjectDocuments,
 } from "@/app/lib/mikeApi";
 import { FileDirectory } from "../shared/FileDirectory";
 import { AddUserInput } from "../shared/AddUserInput";
@@ -34,7 +36,14 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
     const [pendingFiles, setPendingFiles] = useState<File[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
+    // A project created with only some of its files attached. The modal holds
+    // it until the user has read which files are missing.
+    const [pendingProject, setPendingProject] = useState<Project | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    // The project is created before its documents are attached. Remember it so
+    // a retry after an attachment failure reuses the project the user already
+    // has instead of creating a second one.
+    const createdProjectRef = useRef<Project | null>(null);
     const { user } = useAuth();
     const ownEmail = user?.email?.trim().toLowerCase() ?? null;
     const formId = "new-project-modal-form";
@@ -43,9 +52,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
 
     function submitterValue(e: React.FormEvent<HTMLFormElement>) {
         return (
-            (e.nativeEvent as SubmitEvent).submitter as
-                | HTMLButtonElement
-                | null
+            (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null
         )?.value;
     }
 
@@ -53,12 +60,25 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
         const files = Array.from(e.target.files ?? []);
         e.target.value = "";
         if (!files.length) return;
-        setPendingFiles((prev) => [...prev, ...files.filter((f) => !prev.some((p) => p.name === f.name))]);
+        setPendingFiles((prev) => [
+            ...prev,
+            ...files.filter((f) => !prev.some((p) => p.name === f.name)),
+        ]);
+    }
+
+    function finishCreation(project: Project) {
+        onCreated(project);
+        resetForm();
+        onClose();
     }
 
     async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault();
         if (!name.trim()) return;
+        if (pendingProject) {
+            finishCreation(pendingProject);
+            return;
+        }
         if (step === "details" || submitterValue(e) !== "create-project") {
             setStep("documents");
             return;
@@ -66,30 +86,87 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
         setLoading(true);
         setError("");
         try {
-            const project = await createProject(
-                name.trim(),
-                cmNumber.trim() || undefined,
-                practice.trim() && practice.trim() !== "Other"
-                    ? practice.trim()
-                    : undefined,
-                ownEmail
-                    ? sharedUsers
-                          .map((user) => user.email)
-                          .filter((email) => email !== ownEmail)
-                    : sharedUsers.map((user) => user.email),
-            );
-            await Promise.all([
-                ...selectedDocuments.map((document) =>
-                    addDocumentToProject(project.id, document.id).catch(() => {}),
+            const project =
+                createdProjectRef.current ??
+                (await createProject(
+                    name.trim(),
+                    cmNumber.trim() || undefined,
+                    practice.trim() && practice.trim() !== "Other"
+                        ? practice.trim()
+                        : undefined,
+                    ownEmail
+                        ? sharedUsers
+                              .map((user) => user.email)
+                              .filter((email) => email !== ownEmail)
+                        : sharedUsers.map((user) => user.email),
+                ));
+            createdProjectRef.current = project;
+
+            const linkResults = await Promise.all(
+                selectedDocuments.map((document) =>
+                    addDocumentToProject(project.id, document.id).then(
+                        () => true,
+                        () => false,
+                    ),
                 ),
-                ...pendingFiles.map((f) => uploadProjectDocument(project.id, f).catch(() => {})),
-            ]);
-            onCreated({
-                ...project,
-                document_count: selectedDocuments.length + pendingFiles.length,
-            });
-            resetForm();
-            onClose();
+            );
+            const linkedCount = linkResults.filter(Boolean).length;
+            const failedLinkNames = selectedDocuments
+                .filter((_, index) => !linkResults[index])
+                .map((document) => document.filename);
+
+            let uploadedCount = 0;
+            let uploadFailure: string | null = null;
+            if (pendingFiles.length > 0) {
+                try {
+                    const outcomes = await uploadProjectDocuments(
+                        project.id,
+                        pendingFiles.map((file) => ({ file })),
+                    );
+                    uploadedCount = outcomes.filter(
+                        (outcome) => outcome.status === "completed",
+                    ).length;
+                    if (uploadedCount < outcomes.length) {
+                        uploadFailure = failedUploadMessage(outcomes);
+                    }
+                } catch (uploadError) {
+                    // Aborts, session-creation failures, and batch validation
+                    // still throw; everything else comes back as outcomes.
+                    uploadFailure =
+                        uploadError instanceof UploadBatchError
+                            ? failedUploadMessage(uploadError.outcomes)
+                            : userFacingApiError(
+                                  uploadError,
+                                  "The attached files could not be uploaded. Please try again.",
+                              );
+                }
+            }
+
+            const attachedCount = linkedCount + uploadedCount;
+            const requestedCount =
+                selectedDocuments.length + pendingFiles.length;
+            const failureMessage = [
+                uploadFailure,
+                failedLinkNames.length > 0
+                    ? `${failedLinkNames.join(", ")} could not be added to the project.`
+                    : null,
+            ]
+                .filter(Boolean)
+                .join(" ");
+
+            if (failureMessage) {
+                setError(failureMessage);
+                // Nothing the user attached made it in: stay put so the primary
+                // action retries the attachments against the same project,
+                // instead of closing on a project with no documents.
+                if (attachedCount === 0 && requestedCount > 0) return;
+                // Partial success: the project is real, so let the user read
+                // which files are missing before the modal hands it over.
+                setPendingProject({ ...project, document_count: attachedCount });
+                return;
+            }
+
+            finishCreation({ ...project, document_count: attachedCount });
         } catch (err: unknown) {
             setError(userFacingApiError(err, "Failed to create project"));
         } finally {
@@ -98,6 +175,8 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
     }
 
     function resetForm() {
+        createdProjectRef.current = null;
+        setPendingProject(null);
         setStep("details");
         setName("");
         setCmNumber("");
@@ -109,6 +188,14 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
     }
 
     function handleClose() {
+        // The project is created before its documents are attached, so a close
+        // after an attachment failure must still hand the project over. Losing
+        // it here would leave a real project missing from the list.
+        const created = pendingProject ?? createdProjectRef.current;
+        if (created) {
+            finishCreation({ ...created, document_count: created.document_count ?? 0 });
+            return;
+        }
         resetForm();
         onClose();
     }
@@ -187,7 +274,11 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                           disabled: !name.trim() || loading,
                       }
                     : {
-                          label: loading ? "Creating…" : "Create project",
+                          label: loading
+                              ? "Creating…"
+                              : pendingProject
+                                ? "Continue"
+                                : "Create project",
                           type: "submit",
                           form: formId,
                           name: "modalAction",
@@ -252,9 +343,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                         </div>
 
                         <div className="space-y-2">
-                            <FieldLabel as="p">
-                                Share with
-                            </FieldLabel>
+                            <FieldLabel as="p">Share with</FieldLabel>
                             <AddUserInput
                                 onAdd={handleAddShareUser}
                                 validateEmail={validateShareUser}
@@ -321,9 +410,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                     </div>
                 )}
 
-                {error && (
-                    <p className="mt-3 text-sm text-red-500">{error}</p>
-                )}
+                {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
             </form>
         </Modal>
     );

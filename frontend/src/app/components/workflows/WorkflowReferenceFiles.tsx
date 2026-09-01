@@ -10,10 +10,11 @@ import {
 import type { WorkflowReferenceDocument } from "../shared/types";
 import {
   deleteWorkflowReferenceFile,
+  failedUploadMessage,
   getWorkflowReferenceUrl,
   listWorkflowReferenceFiles,
   replaceWorkflowReferenceFile,
-  uploadWorkflowReferenceFile,
+  uploadWorkflowReferenceFiles,
 } from "@/app/lib/mikeApi";
 import {
   SUPPORTED_DOCUMENT_ACCEPT,
@@ -139,9 +140,19 @@ export const WorkflowReferenceFiles = forwardRef<
     setBusyId("upload");
     setError(formatUnsupportedDocumentWarning(unsupported) ?? "");
     try {
-      for (const file of supported) {
-        const created = await uploadWorkflowReferenceFile(workflowId, file);
-        setFiles((current) => [...current, created]);
+      const outcomes = await uploadWorkflowReferenceFiles(
+        workflowId,
+        supported.map((file) => ({ file })),
+      );
+      const created = outcomes.flatMap((outcome) =>
+        outcome.status === "completed" && outcome.result
+          ? [outcome.result]
+          : [],
+      );
+      setFiles((current) => [...current, ...created]);
+      const failedCount = outcomes.length - created.length;
+      if (failedCount > 0) {
+        appendWarning(failedUploadMessage(outcomes));
       }
     } catch (caught) {
       appendWarning(userFacingApiError(caught, "Upload failed."));
@@ -176,6 +187,22 @@ export const WorkflowReferenceFiles = forwardRef<
       anchor.click();
     } catch (caught) {
       setError(userFacingApiError(caught, "Download failed."));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function view(file: WorkflowReferenceDocument) {
+    setBusyId(file.id);
+    try {
+      const resolved = await getWorkflowReferenceUrl(workflowId, file.id);
+      const anchor = document.createElement("a");
+      anchor.href = resolved.url;
+      anchor.target = "_blank";
+      anchor.rel = "noopener noreferrer";
+      anchor.click();
+    } catch (caught) {
+      setError(userFacingApiError(caught, "File could not be opened."));
     } finally {
       setBusyId(null);
     }
@@ -297,6 +324,7 @@ export const WorkflowReferenceFiles = forwardRef<
                   onClick={(event) => event.stopPropagation()}
                 >
                   <RowActions
+                    onView={() => void view(file)}
                     onDownload={() => void download(file)}
                     onUploadNewVersion={
                       readOnly
