@@ -81,7 +81,7 @@ jobs:
 
       # always() (not !cancelled()) so traces/screenshots still upload when
       # the job is cancelled by the timeout — exactly when they're needed.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: word-addin-playwright-results
