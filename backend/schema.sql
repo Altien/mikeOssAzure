@@ -52,6 +52,7 @@ create table if not exists public.user_profiles (
   legal_research_us boolean not null default true,
   quick_actions_visible boolean not null default true,
   dark_mode boolean not null default false,
+  transparent_tables boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -457,7 +458,7 @@ create table if not exists public.documents (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint documents_library_kind_check
-    check (library_kind in ('file', 'template'))
+    check (library_kind in ('file', 'template', 'workflow_asset'))
 );
 
 create index if not exists idx_documents_user_project
@@ -844,26 +845,15 @@ create index if not exists mike_workflows_active_distribution_type_idx
 create index if not exists mike_workflows_active_pack_idx
   on public.mike_workflows(active, pack_key, title);
 
-create table if not exists public.workflow_reference_documents (
-  id uuid primary key default gen_random_uuid(),
-  workflow_id uuid not null references public.workflows(id) on delete cascade,
-  user_id uuid not null references auth.users(id) on delete cascade,
-  filename text not null,
-  file_type text not null,
-  storage_path text not null,
-  size_bytes integer,
-  content_hash text not null,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
+alter table public.documents
+  add column if not exists workflow_id uuid
+  references public.workflows(id) on delete cascade;
 
-create index if not exists workflow_reference_documents_workflow_idx
-  on public.workflow_reference_documents(workflow_id, created_at);
+create index if not exists idx_documents_workflow
+  on public.documents(workflow_id, created_at)
+  where workflow_id is not null;
 
-create index if not exists workflow_reference_documents_user_idx
-  on public.workflow_reference_documents(user_id);
-
-create table if not exists public.mike_workflow_reference_files (
+create table if not exists public.mike_workflow_assets (
   id uuid primary key default gen_random_uuid(),
   mike_workflow_id uuid not null
     references public.mike_workflows(id) on delete cascade,
@@ -873,9 +863,9 @@ create table if not exists public.mike_workflow_reference_files (
   size_bytes integer,
   content_hash text not null,
   created_at timestamptz not null default now(),
-  constraint mike_workflow_reference_files_name_unique
+  constraint mike_workflow_assets_name_unique
     unique(mike_workflow_id, filename),
-  constraint mike_workflow_reference_files_hash_check
+  constraint mike_workflow_assets_hash_check
     check(content_hash ~ '^[0-9a-f]{64}$')
 );
 
@@ -913,19 +903,6 @@ create index if not exists workflow_addons_active_type_idx
 create index if not exists workflow_addons_active_pack_idx
   on public.workflow_addons(active, pack_key, title);
 
-create table if not exists public.workflow_addon_reference_files (
-  id uuid primary key default gen_random_uuid(),
-  addon_id uuid not null references public.workflow_addons(id) on delete cascade,
-  filename text not null,
-  file_type text not null,
-  storage_path text not null,
-  size_bytes integer,
-  content_hash text not null,
-  created_at timestamptz not null default now(),
-  constraint workflow_addon_reference_files_name_unique
-    unique(addon_id, filename)
-);
-
 -- Replace the active catalog as one transaction. Content-addressed historical
 -- rows remain available for old builtin-* workflow references.
 create or replace function public.replace_mike_workflows(
@@ -939,7 +916,8 @@ set search_path = public
 as $$
 declare
   item jsonb;
-  reference_item jsonb;
+  asset_item jsonb;
+  asset_items jsonb;
   jurisdiction_values text[];
   workflow_uuid uuid;
 begin
@@ -1026,26 +1004,29 @@ begin
       updated_at = now()
     returning id into workflow_uuid;
 
-    delete from public.mike_workflow_reference_files
+    delete from public.mike_workflow_assets
     where mike_workflow_id = workflow_uuid;
 
-    if item ? 'reference_files' then
-      if jsonb_typeof(item->'reference_files') <> 'array' then
-        raise exception 'workflow reference_files must be an array';
+    -- reference_files remains a rollout-only alias for catalog payloads
+    -- produced immediately before workflow assets were renamed.
+    asset_items := coalesce(item->'assets', item->'reference_files');
+    if asset_items is not null then
+      if jsonb_typeof(asset_items) <> 'array' then
+        raise exception 'workflow assets must be an array';
       end if;
-      for reference_item in
-        select value from jsonb_array_elements(item->'reference_files')
+      for asset_item in
+        select value from jsonb_array_elements(asset_items)
       loop
-        insert into public.mike_workflow_reference_files (
+        insert into public.mike_workflow_assets (
           mike_workflow_id, filename, file_type, storage_path,
           size_bytes, content_hash
         ) values (
           workflow_uuid,
-          reference_item->>'filename',
-          reference_item->>'file_type',
-          reference_item->>'storage_path',
-          nullif(reference_item->>'size_bytes', '')::integer,
-          reference_item->>'content_hash'
+          asset_item->>'filename',
+          asset_item->>'file_type',
+          asset_item->>'storage_path',
+          nullif(asset_item->>'size_bytes', '')::integer,
+          asset_item->>'content_hash'
         );
       end loop;
     end if;
@@ -2495,6 +2476,18 @@ as $$
         coalesce(p_scope, 'all') = 'all'
         or (p_scope = 'mine' and p.user_id::text = p_user_id)
         or (p_scope = 'shared' and p.user_id::text <> p_user_id)
+        or (
+          p_scope = 'collaborative'
+          and (
+            p.user_id::text <> p_user_id
+            or p.shared_with <> '[]'::jsonb
+          )
+        )
+        or (
+          p_scope = 'private'
+          and p.user_id::text = p_user_id
+          and p.shared_with = '[]'::jsonb
+        )
       )
       and (
         p_search_term is null
@@ -2616,6 +2609,18 @@ as $$
       coalesce(p_scope, 'all') = 'all'
       or (p_scope = 'mine' and p.user_id::text = p_user_id)
       or (p_scope = 'shared' and p.user_id::text <> p_user_id)
+      or (
+        p_scope = 'collaborative'
+        and (
+          p.user_id::text <> p_user_id
+          or p.shared_with <> '[]'::jsonb
+        )
+      )
+      or (
+        p_scope = 'private'
+        and p.user_id::text = p_user_id
+        and p.shared_with = '[]'::jsonb
+      )
     )
     and (
       p_search_term is null
@@ -3859,9 +3864,8 @@ revoke all on public.hidden_workflows from anon, authenticated;
 revoke all on public.workflow_shares from anon, authenticated;
 revoke all on public.workflow_open_source_submissions from anon, authenticated;
 revoke all on public.mike_workflows from anon, authenticated;
-revoke all on public.mike_workflow_reference_files from anon, authenticated;
+revoke all on public.mike_workflow_assets from anon, authenticated;
 revoke all on public.workflow_addons from anon, authenticated;
-revoke all on public.workflow_addon_reference_files from anon, authenticated;
 revoke all on public.chats from anon, authenticated;
 revoke all on public.chat_messages from anon, authenticated;
 revoke all on public.word_documents from anon, authenticated;
@@ -3922,9 +3926,7 @@ grant select, insert, update, delete
      public.quick_actions,
      public.mike_workflows,
      public.workflow_addons,
-     public.workflow_reference_documents,
-     public.mike_workflow_reference_files,
-     public.workflow_addon_reference_files
+     public.mike_workflow_assets
   to service_role;
 
 grant execute

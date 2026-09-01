@@ -134,8 +134,8 @@ by default, may create at most 50 sessions per hour. Upload-session mutation,
 polling, and hourly creation limits can be overridden with the
 `RATE_LIMIT_UPLOAD_SESSION_*` environment variables documented in
 `backend/.env.example`; missing or invalid values use the documented defaults.
-Sessions that update the same mutable
-document version or workflow reference remain mutually exclusive. Sessions
+Sessions that update the same mutable document version remain mutually
+exclusive. Sessions
 expire after 30 minutes, extended by a further 30 minutes each time a file
 completes so a slow batch is not destroyed mid-upload, up to four hours from
 creation; individual signed URLs expire after 15 minutes and can

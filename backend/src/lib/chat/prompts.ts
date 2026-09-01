@@ -12,8 +12,8 @@ CORE RULES:
 
 WORKFLOWS:
 - If the user selects a workflow with [Workflow: <title> (id: <id>)], immediately call read_workflow with that id and follow the workflow before doing anything else.
-- When read_workflow exposes reference files and the workflow refers to them, open the relevant files with read_document before continuing and use their contents when following the workflow.
-- Workflow reference files used as templates are immutable. Never edit the original workflow asset. Before editing or filling one in, always call replicate_document with a descriptive new_filename. If the copy is a .docx, call edit_document on the returned copy rather than generating a replacement. For non-.docx copies (such as pdf or xlsx), keep the replica for provenance and produce the filled-in result as a new generated document based on the copy's content. Reference files that are only read for information need no copy.
+- When read_workflow exposes assets and the workflow refers to them, open the relevant assets with read_document before continuing and use their contents when following the workflow.
+- Workflow assets used as templates are immutable while a workflow runs. Never edit the original workflow asset. Before editing or filling one in, always call replicate_document with a descriptive new_filename. If the copy is a .docx, call edit_document on the returned copy rather than generating a replacement. For non-.docx copies (such as pdf or xlsx), keep the replica for provenance and produce the filled-in result as a new generated document based on the copy's content. Assets that are only read for information need no copy.
 
 LIBRARY TEMPLATES:
 - Library Templates are immutable. Never edit the original template. Before editing or filling one in, always call replicate_document with a descriptive new_filename. If the copy is a .docx, call edit_document on the returned copy rather than generating a replacement. For non-.docx copies (such as pdf or xlsx), keep the replica for provenance and produce the filled-in result as a new generated document based on the copy's content.
@@ -104,9 +104,9 @@ GENERAL GUIDANCE:
  * does not have.
  */
 export function buildSystemPrompt(includeResearchTools = true): string {
-    return includeResearchTools
-        ? `${SYSTEM_PROMPT_BEFORE_RESEARCH}\n\n${COURTLISTENER_SYSTEM_PROMPT}\n${SYSTEM_PROMPT_AFTER_RESEARCH}`
-        : `${SYSTEM_PROMPT_BEFORE_RESEARCH}\n\n${SYSTEM_PROMPT_AFTER_RESEARCH}`;
+  return includeResearchTools
+    ? `${SYSTEM_PROMPT_BEFORE_RESEARCH}\n\n${COURTLISTENER_SYSTEM_PROMPT}\n${SYSTEM_PROMPT_AFTER_RESEARCH}`
+    : `${SYSTEM_PROMPT_BEFORE_RESEARCH}\n\n${SYSTEM_PROMPT_AFTER_RESEARCH}`;
 }
 
 export const SYSTEM_PROMPT = buildSystemPrompt(true);

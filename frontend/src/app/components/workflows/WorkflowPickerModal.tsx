@@ -137,6 +137,7 @@ export function WorkflowPickerModal({
                 search={search}
                 onSearchChange={setSearch}
                 loading={loading}
+                previewLoading={loading}
                 workflowType={workflowType}
                 previewMode={workflowType === "tabular" ? "columns" : "prompt"}
                 disabledWorkflow={disabledWorkflow}

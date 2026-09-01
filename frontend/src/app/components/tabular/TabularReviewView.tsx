@@ -12,7 +12,6 @@ import {
     MessageSquareX,
     Download,
     Users,
-    Upload,
     X,
     Pencil,
     Trash2,
@@ -52,6 +51,7 @@ import { ConfirmPopup } from "../popups/ConfirmPopup";
 import { WarningPopup } from "../popups/WarningPopup";
 import { NoModelsWarningPopup } from "../popups/NoModelsWarningPopup";
 import { HeaderActionsMenu } from "../shared/HeaderActionsMenu";
+import { DocumentUploadMenu } from "../shared/DocumentUploadMenu";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import {
@@ -71,6 +71,7 @@ import { TableToolbar } from "../shared/TableToolbar";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 import { LIQUID_GLASS_FLOAT_CLASS } from "@/shared/ui/LiquidGlassUI";
 import { ModelToggle, type NoModelsReason } from "../assistant/ModelToggle";
+import { SUPPORTED_DOCUMENT_ACCEPT } from "@/app/lib/documentUploadValidation";
 
 interface Props {
     reviewId: string;
@@ -149,6 +150,8 @@ export function TRView({ reviewId, projectId }: Props) {
     const [modelRequiredWarning, setModelRequiredWarning] = useState(false);
     const actionsRef = useRef<HTMLDivElement>(null);
     const tableRef = useRef<TRTableHandle>(null);
+    const reviewFileUploadInputRef = useRef<HTMLInputElement>(null);
+    const reviewFolderUploadInputRef = useRef<HTMLInputElement>(null);
     const generationAbortRef = useRef<AbortController | null>(null);
     const stopRequestedRef = useRef(false);
     // Only one resume stream may be open at a time — mount, a 202 regenerate
@@ -976,6 +979,31 @@ export function TRView({ reviewId, projectId }: Props) {
     return (
         <div className="flex h-full overflow-hidden">
             <div className="flex flex-1 flex-col overflow-hidden">
+                <input
+                    ref={reviewFileUploadInputRef}
+                    type="file"
+                    accept={SUPPORTED_DOCUMENT_ACCEPT}
+                    multiple
+                    className="hidden"
+                    onChange={(event) => {
+                        const files = Array.from(event.target.files ?? []);
+                        event.target.value = "";
+                        void handleDropReviewFiles(files);
+                    }}
+                />
+                <input
+                    ref={reviewFolderUploadInputRef}
+                    type="file"
+                    accept={SUPPORTED_DOCUMENT_ACCEPT}
+                    multiple
+                    className="hidden"
+                    {...{ webkitdirectory: "", directory: "" }}
+                    onChange={(event) => {
+                        const files = Array.from(event.target.files ?? []);
+                        event.target.value = "";
+                        void handleDropReviewFiles(files);
+                    }}
+                />
                 {/* Header */}
                 <PageHeader
                     shrink
@@ -1106,6 +1134,32 @@ export function TRView({ reviewId, projectId }: Props) {
                                 {
                                     type: "custom",
                                     render: (
+                                        <DocumentUploadMenu
+                                            onSavedFiles={() =>
+                                                setAddDocsOpen(true)
+                                            }
+                                            onUploadFiles={() =>
+                                                reviewFileUploadInputRef.current?.click()
+                                            }
+                                            onUploadFolder={() =>
+                                                reviewFolderUploadInputRef.current?.click()
+                                            }
+                                            disabled={
+                                                loading ||
+                                                savingColumnsConfig ||
+                                                uploadingDroppedFilenames.length >
+                                                    0
+                                            }
+                                        />
+                                    ),
+                                },
+                            ],
+                        },
+                        {
+                            actions: [
+                                {
+                                    type: "custom",
+                                    render: (
                                         <ModelToggle
                                             value={tabularModel}
                                             onChange={(model) =>
@@ -1128,17 +1182,6 @@ export function TRView({ reviewId, projectId }: Props) {
                                         />
                                     ),
                                 },
-                                {
-                                    onClick: () => setAddDocsOpen(true),
-                                    disabled: loading || savingColumnsConfig,
-                                    title: "Add documents",
-                                    icon: <Upload className="h-4 w-4" />,
-                                    iconOnly: true,
-                                },
-                            ],
-                        },
-                        {
-                            actions: [
                                 {
                                     onClick: generating
                                         ? handleStopGeneration

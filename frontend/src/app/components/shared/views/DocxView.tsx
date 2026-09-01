@@ -14,6 +14,7 @@ import type { CitationQuote } from "../types";
 interface Props {
     documentId: string;
     versionId?: string | null;
+    displayUrl?: string | null;
     /**
      * Called once the document has been rendered to the DOM. Handy for
      * scrolling to a particular tracked change after a re-render.
@@ -192,6 +193,7 @@ async function tagWIdsOnRenderedDom(
 export function DocxView({
     documentId,
     versionId,
+    displayUrl,
     onReady,
     highlightEdit,
     refetchKey,
@@ -233,6 +235,7 @@ export function DocxView({
         documentId,
         versionId,
         refetchKey,
+        displayUrl,
     );
 
     /**

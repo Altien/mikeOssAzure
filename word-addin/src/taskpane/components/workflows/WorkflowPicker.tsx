@@ -7,7 +7,7 @@ import {
 } from "../../api/mikeApi";
 import { WorkflowList } from "./WorkflowList";
 import { PageTitle } from "../primitives/PageTitle";
-import { WorkflowReferenceFiles } from "./WorkflowReferenceFiles";
+import { WorkflowAssets } from "./WorkflowAssets";
 
 const WorkflowPromptEditor = lazy(() =>
   import("./WorkflowPromptEditor").then((module) => ({
@@ -275,7 +275,7 @@ export function WorkflowPicker({
             </Suspense>
           </div>
         </section>
-        <WorkflowReferenceFiles
+        <WorkflowAssets
           workflowId={selectedWorkflow.id}
           readOnly={readOnly}
         />

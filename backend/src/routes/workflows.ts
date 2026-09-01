@@ -4,6 +4,7 @@ import {
   type Request,
   type Response,
 } from "express";
+import { randomUUID } from "node:crypto";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import {
@@ -24,10 +25,14 @@ import {
   parseWorkflowScope,
 } from "../lib/workflowsOverview";
 import { sendInternalError } from "../lib/httpError";
-import {
-  getSignedUrl,
-} from "../lib/storage";
+import { ensureDocAccess } from "../lib/access";
+import { convertedPdfKey } from "../lib/convert";
+import { copyFile, storageKey } from "../lib/storage";
 import { enqueueStorageCleanup } from "../lib/dbq/enqueue";
+import {
+  attachActiveVersionPaths,
+  attachLatestVersionNumbers,
+} from "../lib/documentVersions";
 
 export const workflowsRouter = Router();
 
@@ -174,13 +179,13 @@ function workflowTypeFrom(value: unknown): WorkflowType {
   return value === "tabular" ? "tabular" : "assistant";
 }
 
-function rejectReferenceFilesForTabularWorkflow(
+function rejectAssetsForTabularWorkflow(
   access: NonNullable<WorkflowAccess>,
   res: Response,
 ): boolean {
   if (workflowTypeFrom(access.workflow.type) === "assistant") return false;
   res.status(400).json({
-    detail: "Reference files are only available for assistant workflows",
+    detail: "Assets are only available for assistant workflows",
   });
   return true;
 }
@@ -484,9 +489,7 @@ workflowsRouter.get(
       type: workflowType,
     });
     res.json(
-      catalog
-        .map(catalogWorkflowToLegacy)
-        .map(withSystemWorkflowAccess),
+      catalog.map(catalogWorkflowToLegacy).map(withSystemWorkflowAccess),
     );
   }),
 );
@@ -728,11 +731,18 @@ workflowsRouter.delete(
       );
     }
 
-    const { data: referenceDocuments } = await db
-      .from("workflow_reference_documents")
-      .select("storage_path")
+    const { data: assets } = await db
+      .from("documents")
+      .select("id")
       .eq("workflow_id", workflowId)
       .eq("user_id", userId);
+    const assetIds = (assets ?? []).map((asset) => asset.id as string);
+    const { data: assetVersions } = assetIds.length
+      ? await db
+          .from("document_versions")
+          .select("storage_path, pdf_storage_path")
+          .in("document_id", assetIds)
+      : { data: [] };
     const { data: deleted, error } = await db
       .from("workflows")
       .delete()
@@ -745,9 +755,10 @@ workflowsRouter.delete(
       // that leaked the files on any storage hiccup.
       await enqueueStorageCleanup(
         db,
-        (referenceDocuments ?? [])
-          .map((reference) => reference.storage_path as string)
-          .filter((path) => typeof path === "string" && path.length > 0),
+        (assetVersions ?? []).flatMap((version) =>
+          [version.storage_path, version.pdf_storage_path]
+            .filter((path): path is string => !!path),
+        ),
       );
     }
     res.status(204).send();
@@ -942,9 +953,9 @@ workflowsRouter.post(
   }),
 );
 
-// GET /workflows/:workflowId/reference-files
+// GET /workflows/:workflowId/assets
 workflowsRouter.get(
-  "/:workflowId/reference-files",
+  "/:workflowId/assets",
   requireAuth,
   asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
@@ -958,59 +969,250 @@ workflowsRouter.get(
     );
     if (!access)
       return void res.status(404).json({ detail: "Workflow not found" });
-    if (rejectReferenceFilesForTabularWorkflow(access, res)) return;
+    if (rejectAssetsForTabularWorkflow(access, res)) return;
 
     const { data, error } = await db
-      .from("workflow_reference_documents")
-      .select(
-        "id, workflow_id, filename, file_type, size_bytes, created_at, updated_at",
-      )
+      .from("documents")
+      .select("*")
       .eq("workflow_id", req.params.workflowId)
       .order("created_at", { ascending: true });
     if (error) return void sendInternalError(res, error);
-    res.json(data ?? []);
+    const assets = (data ?? []) as Array<{
+      id: string;
+      current_version_id?: string | null;
+      latest_version_number?: number | null;
+      [key: string]: unknown;
+    }>;
+    await attachLatestVersionNumbers(db, assets);
+    await attachActiveVersionPaths(db, assets);
+    res.json(assets);
   }),
 );
 
-// GET /workflows/:workflowId/reference-files/:referenceId/url
-workflowsRouter.get(
-  "/:workflowId/reference-files/:referenceId/url",
+// POST /workflows/:workflowId/assets/from-documents
+workflowsRouter.post(
+  "/:workflowId/assets/from-documents",
   requireAuth,
   asyncRoute(async (req, res) => {
+    const documentIds = Array.isArray(req.body?.document_ids)
+      ? [
+          ...new Set(
+            req.body.document_ids.filter(
+              (documentId: unknown): documentId is string =>
+                typeof documentId === "string" && documentId.trim().length > 0,
+            ),
+          ),
+        ]
+      : [];
+    if (
+      !Array.isArray(req.body?.document_ids) ||
+      documentIds.length === 0 ||
+      documentIds.length > 50 ||
+      documentIds.length !== req.body.document_ids.length
+    ) {
+      return void res.status(400).json({
+        detail: "document_ids must contain between 1 and 50 unique file IDs",
+      });
+    }
+
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
+    const workflowId = req.params.workflowId;
     const db = createServerSupabase();
     const access = await resolveWorkflowAccess(
-      req.params.workflowId,
+      workflowId,
       userId,
       userEmail,
       db,
     );
-    if (!access)
-      return void res.status(404).json({ detail: "Workflow not found" });
-    if (rejectReferenceFilesForTabularWorkflow(access, res)) return;
-    const { data: reference } = await db
-      .from("workflow_reference_documents")
-      .select("id, filename, storage_path")
-      .eq("id", req.params.referenceId)
-      .eq("workflow_id", req.params.workflowId)
-      .maybeSingle();
-    if (!reference)
-      return void res.status(404).json({ detail: "Reference file not found" });
-    const url = await getSignedUrl(
-      reference.storage_path,
-      3600,
-      reference.filename,
+    if (!access || !access.allowEdit) {
+      return void res
+        .status(404)
+        .json({ detail: "Workflow not found or not editable" });
+    }
+    if (rejectAssetsForTabularWorkflow(access, res)) return;
+
+    const { data: sourceDocuments, error: documentsError } = await db
+      .from("documents")
+      .select("id, user_id, project_id, workflow_id, current_version_id")
+      .in("id", documentIds);
+    if (documentsError) return void sendInternalError(res, documentsError);
+    if (!sourceDocuments || sourceDocuments.length !== documentIds.length) {
+      return void res
+        .status(404)
+        .json({ detail: "One or more files could not be found" });
+    }
+
+    const accessResults = await Promise.all(
+      sourceDocuments.map((document) =>
+        ensureDocAccess(document, userId, userEmail, db),
+      ),
     );
-    if (!url)
-      return void res.status(503).json({ detail: "Storage not configured" });
-    res.json({ url, filename: reference.filename });
+    if (accessResults.some((result) => !result.ok)) {
+      return void res
+        .status(404)
+        .json({ detail: "One or more files could not be found" });
+    }
+
+    const versionIds = sourceDocuments.flatMap((document) =>
+      document.current_version_id ? [document.current_version_id] : [],
+    );
+    if (versionIds.length !== documentIds.length) {
+      return void res
+        .status(409)
+        .json({ detail: "One or more files are not ready" });
+    }
+    const { data: sourceVersions, error: versionsError } = await db
+      .from("document_versions")
+      .select(
+        "id, document_id, storage_path, pdf_storage_path, filename, file_type, size_bytes, page_count, content_sha256",
+      )
+      .in("id", versionIds)
+      .is("deleted_at", null);
+    if (versionsError) return void sendInternalError(res, versionsError);
+    if (
+      !sourceVersions ||
+      sourceVersions.length !== documentIds.length ||
+      sourceVersions.some(
+        (version) => !version.storage_path || !version.filename,
+      )
+    ) {
+      return void res
+        .status(409)
+        .json({ detail: "One or more files are not ready" });
+    }
+
+    const sourceDocumentById = new Map(
+      sourceDocuments.map((document) => [document.id, document]),
+    );
+    const sourceVersionById = new Map(
+      sourceVersions.map((version) => [version.id, version]),
+    );
+    if (
+      sourceDocuments.some(
+        (document) =>
+          sourceVersionById.get(document.current_version_id)?.document_id !==
+          document.id,
+      )
+    ) {
+      return void res
+        .status(409)
+        .json({ detail: "One or more files are not ready" });
+    }
+    const plans = documentIds.map((sourceDocumentId) => {
+      const sourceDocument = sourceDocumentById.get(sourceDocumentId)!;
+      const sourceVersion = sourceVersionById.get(
+        sourceDocument.current_version_id,
+      )!;
+      const documentId = randomUUID();
+      const versionId = randomUUID();
+      const sourcePath = storageKey(userId, documentId, sourceVersion.filename);
+      const pdfPath = sourceVersion.pdf_storage_path
+        ? sourceVersion.pdf_storage_path === sourceVersion.storage_path
+          ? sourcePath
+          : convertedPdfKey(userId, documentId)
+        : null;
+      return {
+        documentId,
+        versionId,
+        sourceVersion,
+        sourcePath,
+        pdfPath,
+      };
+    });
+    const copiedPaths = new Set<string>();
+
+    try {
+      for (const plan of plans) {
+        copiedPaths.add(plan.sourcePath);
+        await copyFile(plan.sourceVersion.storage_path, plan.sourcePath);
+        if (
+          plan.pdfPath &&
+          plan.pdfPath !== plan.sourcePath &&
+          plan.sourceVersion.pdf_storage_path
+        ) {
+          copiedPaths.add(plan.pdfPath);
+          await copyFile(plan.sourceVersion.pdf_storage_path, plan.pdfPath);
+        }
+      }
+
+      const { error: insertDocumentsError } = await db.from("documents").insert(
+        plans.map((plan) => ({
+          id: plan.documentId,
+          project_id: null,
+          user_id: userId,
+          status: "ready",
+          folder_id: null,
+          library_kind: "workflow_asset",
+          library_folder_id: null,
+          workflow_id: workflowId,
+        })),
+      );
+      if (insertDocumentsError) throw insertDocumentsError;
+
+      const { error: insertVersionsError } = await db
+        .from("document_versions")
+        .insert(
+          plans.map((plan) => ({
+            id: plan.versionId,
+            document_id: plan.documentId,
+            storage_path: plan.sourcePath,
+            pdf_storage_path: plan.pdfPath,
+            source: "upload",
+            version_number: 1,
+            filename: plan.sourceVersion.filename,
+            file_type: plan.sourceVersion.file_type,
+            size_bytes: plan.sourceVersion.size_bytes,
+            page_count: plan.sourceVersion.page_count,
+            content_sha256: plan.sourceVersion.content_sha256,
+          })),
+        );
+      if (insertVersionsError) throw insertVersionsError;
+
+      for (const plan of plans) {
+        const { error: updateError } = await db
+          .from("documents")
+          .update({
+            current_version_id: plan.versionId,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", plan.documentId);
+        if (updateError) throw updateError;
+      }
+
+      const createdIds = plans.map((plan) => plan.documentId);
+      const { data: createdDocuments, error: createdDocumentsError } = await db
+        .from("documents")
+        .select("*")
+        .in("id", createdIds);
+      if (
+        createdDocumentsError ||
+        !createdDocuments ||
+        createdDocuments.length !== createdIds.length
+      ) {
+        throw (
+          createdDocumentsError ??
+          new Error("Workflow asset copy returned no documents")
+        );
+      }
+      await attachLatestVersionNumbers(db, createdDocuments);
+      await attachActiveVersionPaths(db, createdDocuments);
+      const createdById = new Map(
+        createdDocuments.map((document) => [document.id, document]),
+      );
+      res.status(201).json(createdIds.map((id) => createdById.get(id)));
+    } catch (error) {
+      const createdIds = plans.map((plan) => plan.documentId);
+      await db.from("documents").delete().in("id", createdIds);
+      await enqueueStorageCleanup(db, [...copiedPaths]);
+      sendInternalError(res, error);
+    }
   }),
 );
 
-// DELETE /workflows/:workflowId/reference-files/:referenceId
+// DELETE /workflows/:workflowId/assets/:assetId
 workflowsRouter.delete(
-  "/:workflowId/reference-files/:referenceId",
+  "/:workflowId/assets/:assetId",
   requireAuth,
   asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
@@ -1027,24 +1229,36 @@ workflowsRouter.delete(
         .status(404)
         .json({ detail: "Workflow not found or not editable" });
     }
-    if (rejectReferenceFilesForTabularWorkflow(access, res)) return;
-    const { data: reference } = await db
-      .from("workflow_reference_documents")
-      .select("id, storage_path")
-      .eq("id", req.params.referenceId)
+    if (rejectAssetsForTabularWorkflow(access, res)) return;
+    const { data: asset } = await db
+      .from("documents")
+      .select("id")
+      .eq("id", req.params.assetId)
       .eq("workflow_id", req.params.workflowId)
       .maybeSingle();
-    if (!reference) {
-      return void res.status(404).json({ detail: "Reference file not found" });
+    if (!asset) {
+      return void res.status(404).json({ detail: "Asset not found" });
     }
+    const { data: versions, error: versionsError } = await db
+      .from("document_versions")
+      .select("storage_path, pdf_storage_path")
+      .eq("document_id", asset.id);
+    if (versionsError) return void sendInternalError(res, versionsError);
     const { error } = await db
-      .from("workflow_reference_documents")
+      .from("documents")
       .delete()
-      .eq("id", reference.id);
+      .eq("id", asset.id)
+      .eq("workflow_id", req.params.workflowId);
     if (error) return void sendInternalError(res, error);
     // Row first, file second (durable): a failed row delete leaves the file
     // referenced and intact; a crash after it still cleans the file up.
-    await enqueueStorageCleanup(db, [reference.storage_path]);
+    await enqueueStorageCleanup(
+      db,
+      (versions ?? []).flatMap((version) =>
+        [version.storage_path, version.pdf_storage_path]
+          .filter((path): path is string => !!path),
+      ),
+    );
     res.status(204).send();
   }),
 );

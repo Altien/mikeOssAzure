@@ -684,19 +684,19 @@ export async function runToolCalls(
         );
         workflowsApplied.push({ workflow_id: wfId, title: wf.title });
       }
-      const referenceHandles: { doc_id: string; filename: string }[] = [];
+      const assetHandles: { doc_id: string; filename: string }[] = [];
       if (wf) {
-        for (const [index, reference] of (wf.reference_files ?? []).entries()) {
-          const docId = `workflow-ref-${wfId}-${index + 1}`;
+        for (const [index, asset] of (wf.assets ?? []).entries()) {
+          const docId = `workflow-asset-${wfId}-${index + 1}`;
           docStore.set(docId, {
-            storage_path: reference.storage_path,
-            file_type: reference.file_type,
-            filename: reference.filename,
+            storage_path: asset.storage_path,
+            file_type: asset.file_type,
+            filename: asset.filename,
             source_kind: "workflow_asset",
           });
-          referenceHandles.push({
+          assetHandles.push({
             doc_id: docId,
-            filename: reference.filename,
+            filename: asset.filename,
           });
         }
       }
@@ -708,9 +708,9 @@ export async function runToolCalls(
       const wfContent = wf ? wf.skill_md : `Workflow '${wfId}' not found.`;
       const instructions =
         nonce && wf ? spotlightWorkflow(wfContent, nonce) : wfContent;
-      const referenceNotice =
-        referenceHandles.length > 0
-          ? `\n\nAvailable immutable workflow reference files (open relevant files with read_document; if a file will be used as a template — edited or filled in — call replicate_document with a new_filename and work from the copy; reading one for information needs no copy):\n${referenceHandles
+      const assetNotice =
+        assetHandles.length > 0
+          ? `\n\nAvailable immutable workflow assets (open relevant assets with read_document; if an asset will be used as a template — edited or filled in — call replicate_document with a new_filename and work from the copy; reading one for information needs no copy):\n${assetHandles
               .map(
                 (reference) =>
                   `- ${reference.doc_id}: ${spotlightFilename(reference.filename, nonce)}`,
@@ -720,7 +720,7 @@ export async function runToolCalls(
       toolResults.push({
         role: "tool",
         tool_call_id: tc.id,
-        content: `${instructions}${referenceNotice}`,
+        content: `${instructions}${assetNotice}`,
       });
     } else if (tc.function.name === "read_table_cells" && tabularStore) {
       const colIndices = args.col_indices as number[] | undefined;

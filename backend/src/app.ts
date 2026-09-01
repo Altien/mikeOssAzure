@@ -252,11 +252,6 @@ const legacyUploadRemoved = (_req: express.Request, res: express.Response) => {
 app.post("/single-documents", legacyUploadRemoved);
 app.post("/library/:kind/documents", legacyUploadRemoved);
 app.post("/single-documents/:documentId/versions", legacyUploadRemoved);
-app.post("/workflows/:workflowId/reference-files", legacyUploadRemoved);
-app.put(
-  "/workflows/:workflowId/reference-files/:referenceId",
-  legacyUploadRemoved,
-);
 app.put(
   "/single-documents/:documentId/versions/:versionId/file",
   legacyUploadRemoved,

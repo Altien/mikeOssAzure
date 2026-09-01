@@ -24,8 +24,9 @@ function cacheKey(
     documentId: string,
     versionId?: string | null,
     refetchKey?: number,
+    sourceUrl?: string | null,
 ): string {
-    return `${documentId}:${versionId ?? ""}:${refetchKey ?? ""}`;
+    return `${sourceUrl ?? documentId}:${versionId ?? ""}:${refetchKey ?? ""}`;
 }
 
 /**
@@ -37,9 +38,10 @@ export function useFetchDocxBytes(
     documentId: string | null | undefined,
     versionId?: string | null,
     refetchKey?: number,
+    sourceUrl?: string | null,
 ): FetchDocxResult {
     const initialKey = documentId
-        ? cacheKey(documentId, versionId, refetchKey)
+        ? cacheKey(documentId, versionId, refetchKey, sourceUrl)
         : null;
     const [bytes, setBytes] = useState<ArrayBuffer | null>(
         initialKey ? (bytesCache.get(initialKey) ?? null) : null,
@@ -56,11 +58,12 @@ export function useFetchDocxBytes(
             return;
         }
 
-        const key = cacheKey(documentId, versionId, refetchKey);
+        const key = cacheKey(documentId, versionId, refetchKey, sourceUrl);
         const qs = versionId
             ? `?version_id=${encodeURIComponent(versionId)}`
             : "";
-        const url = `${API_BASE}/single-documents/${documentId}/docx${qs}`;
+        const url =
+            sourceUrl ?? `${API_BASE}/single-documents/${documentId}/docx${qs}`;
 
         // Cache hit: reuse bytes synchronously, no network, no spinner.
         const cached = bytesCache.get(key);
@@ -109,7 +112,7 @@ export function useFetchDocxBytes(
         return () => {
             cancelled = true;
         };
-    }, [documentId, versionId, refetchKey]);
+    }, [documentId, versionId, refetchKey, sourceUrl]);
 
     return { bytes, downloadUrl, loading, error };
 }

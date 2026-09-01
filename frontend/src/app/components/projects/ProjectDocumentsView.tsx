@@ -10,7 +10,7 @@ import {
     useState,
 } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, ChevronLeft, FolderUp, Plus } from "lucide-react";
+import { ChevronDown, Plus } from "lucide-react";
 import {
     createProjectFolder,
     deleteProjectFolder,
@@ -58,11 +58,9 @@ export function ProjectDocumentsView({ projectId, folderId = null }: Props) {
         search,
         setOwnerOnlyAction,
         setDocumentFolderBreadcrumbs,
+        setDocumentUploadHeaderAction,
     } = workspace;
     const [createFolderAction, setCreateFolderAction] = useState<
-        (() => void) | null
-    >(null);
-    const [uploadFolderAction, setUploadFolderAction] = useState<
         (() => void) | null
     >(null);
     const [folderBackAction, setFolderBackAction] = useState<
@@ -240,11 +238,23 @@ export function ProjectDocumentsView({ projectId, folderId = null }: Props) {
         },
         [],
     );
+    const handleSavedFilesActionChange = useCallback(
+        (action: (() => void) | null) => {
+            setDocumentUploadHeaderAction("savedFiles", action);
+        },
+        [setDocumentUploadHeaderAction],
+    );
+    const handleUploadFilesActionChange = useCallback(
+        (action: (() => void) | null) => {
+            setDocumentUploadHeaderAction("uploadFiles", action);
+        },
+        [setDocumentUploadHeaderAction],
+    );
     const handleUploadFolderActionChange = useCallback(
         (action: (() => void) | null) => {
-            setUploadFolderAction(() => action);
+            setDocumentUploadHeaderAction("uploadFolder", action);
         },
-        [],
+        [setDocumentUploadHeaderAction],
     );
     const handleFolderBackActionChange = useCallback(
         (action: (() => void) | null) => {
@@ -283,12 +293,6 @@ export function ProjectDocumentsView({ projectId, folderId = null }: Props) {
 
     const toolbarActions = (
         <div className="flex items-center gap-1.5">
-            {folderBackAction && (
-                <TabPillButton onClick={folderBackAction}>
-                    <ChevronLeft className="h-3.5 w-3.5" />
-                    Back
-                </TabPillButton>
-            )}
             {selectionActions && (
                 <div ref={actionsRef} className="relative">
                     <TabPillButton
@@ -335,13 +339,6 @@ export function ProjectDocumentsView({ projectId, folderId = null }: Props) {
                 </div>
             )}
             <TabPillButton
-                onClick={uploadFolderAction ?? undefined}
-                disabled={!uploadFolderAction || projectLoading}
-            >
-                <FolderUp className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Upload folder</span>
-            </TabPillButton>
-            <TabPillButton
                 onClick={createFolderAction ?? undefined}
                 disabled={!createFolderAction || projectLoading}
             >
@@ -361,7 +358,10 @@ export function ProjectDocumentsView({ projectId, folderId = null }: Props) {
 
     return (
         <>
-            <ProjectSectionToolbar actions={toolbarActions} />
+            <ProjectSectionToolbar
+                backAction={folderBackAction}
+                actions={toolbarActions}
+            />
             <DocTable
                 scopeKey={projectId}
                 documents={documents}
@@ -374,9 +374,8 @@ export function ProjectDocumentsView({ projectId, folderId = null }: Props) {
                 search={search}
                 operations={operations}
                 emptyStateTitle="Documents"
-                onAddDocumentsActionChange={
-                    workspace.setAddDocumentsHeaderAction
-                }
+                onAddDocumentsActionChange={handleSavedFilesActionChange}
+                onUploadFilesActionChange={handleUploadFilesActionChange}
                 onUploadFolderActionChange={handleUploadFolderActionChange}
                 onCreateFolderActionChange={handleCreateFolderActionChange}
                 onFolderViewBackActionChange={handleFolderBackActionChange}

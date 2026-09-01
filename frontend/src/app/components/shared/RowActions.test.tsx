@@ -38,4 +38,22 @@ describe("RowActions", () => {
             screen.queryByRole("button", { name: "Edit details" }),
         ).not.toBeInTheDocument();
     });
+
+    it("offers and runs a deselect-rows action", async () => {
+        const user = userEvent.setup();
+        const onDeselect = vi.fn();
+        render(<RowActions onDeselect={onDeselect} />);
+
+        await user.click(
+            screen.getByRole("button", { name: "Open row actions" }),
+        );
+        await user.click(
+            screen.getByRole("button", { name: "Deselect rows" }),
+        );
+
+        expect(onDeselect).toHaveBeenCalledOnce();
+        expect(
+            screen.queryByRole("button", { name: "Deselect rows" }),
+        ).not.toBeInTheDocument();
+    });
 });

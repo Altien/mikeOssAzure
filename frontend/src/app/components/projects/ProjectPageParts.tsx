@@ -7,7 +7,6 @@ import {
     Pencil,
     Plus,
     Trash2,
-    Upload,
     Users,
 } from "lucide-react";
 import {
@@ -19,6 +18,7 @@ import type { Project } from "@/app/components/shared/types";
 import type { DocumentVersion } from "@/app/lib/mikeApi";
 import { RowActions } from "@/app/components/shared/RowActions";
 import { HeaderActionsMenu } from "@/app/components/shared/HeaderActionsMenu";
+import { DocumentUploadMenu } from "@/app/components/shared/DocumentUploadMenu";
 import {
     TABLE_PRIMARY_CELL_WIDTH_CLASS,
     tableTreeCellStyle,
@@ -372,7 +372,9 @@ export function ProjectPageHeader({
     onOpenPeople,
     onNewChat,
     onNewReview,
-    onAddDocuments,
+    onSavedFiles,
+    onUploadFiles,
+    onUploadFolder,
     documentFolderBreadcrumbs,
 }: {
     project: Project | null;
@@ -389,7 +391,9 @@ export function ProjectPageHeader({
     onOpenPeople: () => void;
     onNewChat: () => void;
     onNewReview: () => void;
-    onAddDocuments?: (() => void) | null;
+    onSavedFiles?: (() => void) | null;
+    onUploadFiles?: (() => void) | null;
+    onUploadFolder?: (() => void) | null;
     documentFolderBreadcrumbs?: Array<{
         label: string;
         onClick: () => void;
@@ -398,11 +402,14 @@ export function ProjectPageHeader({
     const sectionAction: PageHeaderAction =
         activeSection === "documents"
             ? {
-                  onClick: onAddDocuments ?? undefined,
-                  disabled: !onAddDocuments,
-                  icon: <Upload className="h-4 w-4" />,
-                  iconOnly: true,
-                  title: "Add documents",
+                  type: "custom",
+                  render: (
+                      <DocumentUploadMenu
+                          onSavedFiles={onSavedFiles ?? null}
+                          onUploadFiles={onUploadFiles ?? null}
+                          onUploadFolder={onUploadFolder ?? null}
+                      />
+                  ),
               }
             : activeSection === "assistant"
               ? {

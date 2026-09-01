@@ -5,7 +5,7 @@ import { syncWorkflowCatalog } from "../lib/workflowCatalogSync";
 async function main() {
   const result = await syncWorkflowCatalog(createServerSupabase());
   console.log(
-    `Synced ${result.workflows} Mike workflows and ${result.references} reference files from ${result.sourceCommit}`,
+    `Synced ${result.workflows} Mike workflows and ${result.assets} assets from ${result.sourceCommit}`,
   );
 }
 

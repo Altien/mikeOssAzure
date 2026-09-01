@@ -36,8 +36,7 @@ const SKELETON_ROWS = 5;
 
 const COL_W = "w-[300px] shrink-0";
 const DOC_COL_W = "w-[332px] shrink-0";
-const TR_STICKY_CELL_BG = "bg-app-surface";
-const TR_HEADER_BG = "bg-app-surface";
+const TR_STICKY_CELL_CLASS = "table-sticky-cell";
 
 // Pixel widths matching the CSS constants above
 const DOC_COL_W_PX = 332;
@@ -186,13 +185,14 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
     if (loading) {
         return (
             <TableScrollArea
+                preserveGridBorder
                 header={
                     <div
-                        className={`flex h-10 shrink-0 ${TR_HEADER_BG}`}
+                        className="flex h-10 shrink-0"
                         style={{ minWidth: skeletonContentWidth }}
                     >
                         <div
-                            className={`sticky left-0 z-[80] ${DOC_COL_W} ${TR_STICKY_CELL_BG} flex items-center border-b border-r border-gray-200 py-2 pl-3 pr-2 text-xs font-medium text-gray-500`}
+                            className={`sticky left-0 z-[80] ${DOC_COL_W} ${TR_STICKY_CELL_CLASS} flex items-center border-b border-r border-gray-200 py-2 pl-3 pr-2 text-xs font-medium text-gray-700`}
                         >
                             <SkeletonCheckbox />
                             <span>{firstColumnLabel}</span>
@@ -215,7 +215,7 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                             className="flex h-8"
                             style={{ minWidth: skeletonContentWidth }}
                         >
-                            <div className={`sticky left-0 z-[60] ${DOC_COL_W} ${TR_STICKY_CELL_BG} flex items-center border-b border-r border-gray-200 py-2 pl-3 pr-2`}>
+                            <div className={`${TR_STICKY_CELL_CLASS} sticky left-0 z-[60] ${DOC_COL_W} flex items-center border-b border-r border-gray-200 py-2 pl-3 pr-2`}>
                                 <SkeletonCheckbox />
                                 <div className="mr-2 h-3.5 w-3.5 shrink-0 rounded bg-gray-100 animate-pulse" />
                                 <SkeletonLine className="h-4 w-32" />
@@ -242,10 +242,11 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
     ) {
         return (
             <TableScrollArea
+                preserveGridBorder
                 header={
-                    <div className={`shrink-0 flex h-10 items-center border-b border-gray-200 ${TR_HEADER_BG}`}>
+                    <div className="shrink-0 flex h-10 items-center border-b border-gray-200">
                         <div
-                            className={`${DOC_COL_W} ${TR_STICKY_CELL_BG} flex items-center border-r border-gray-200 py-2 pl-3 pr-2 text-xs font-medium text-gray-500 select-none`}
+                            className={`${DOC_COL_W} ${TR_STICKY_CELL_CLASS} flex items-center border-r border-gray-200 py-2 pl-3 pr-2 text-xs font-medium text-gray-700 select-none`}
                         >
                             {firstColumnLabel}
                         </div>
@@ -292,15 +293,16 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
 
     return (
         <TableScrollArea
+            preserveGridBorder
             scrollRef={scrollContainerRef}
             onScroll={handleRowsScroll}
             header={
                 <div
-                    className={`z-[70] flex h-10 shrink-0 ${TR_HEADER_BG}`}
+                    className="z-[70] flex h-10 shrink-0"
                     style={{ minWidth: totalContentWidth }}
                 >
                     <div
-                        className={`sticky left-0 z-[80] ${DOC_COL_W} ${TR_STICKY_CELL_BG} border-b border-r border-gray-200 flex items-center py-2 pl-3 pr-2 text-left text-xs font-medium text-gray-500 select-none`}
+                        className={`sticky left-0 z-[80] ${DOC_COL_W} ${TR_STICKY_CELL_CLASS} border-b border-r border-gray-200 flex items-center py-2 pl-3 pr-2 text-left text-xs font-medium text-gray-700 select-none`}
                     >
                         <input
                             type="checkbox"
@@ -318,7 +320,7 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                         <div
                             key={col.index}
                             data-tr-col-header
-                            className={`${COL_W} flex items-center border-b border-r border-gray-200 p-2 text-left text-xs font-medium text-gray-500 select-none`}
+                            className={`${COL_W} flex items-center border-b border-r border-gray-200 p-2 text-left text-xs font-medium text-gray-700 select-none`}
                         >
                             <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
                                 <span className="truncate">{col.name}</span>
@@ -355,7 +357,7 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                         style={{ minWidth: totalContentWidth }}
                     >
                         <div
-                            className={`sticky left-0 z-[60] ${DOC_COL_W} ${TR_STICKY_CELL_BG} border-b border-r border-gray-200 py-2 pl-3 pr-2 text-xs text-gray-400 flex items-center`}
+                            className={`${TR_STICKY_CELL_CLASS} sticky left-0 z-[60] ${DOC_COL_W} border-b border-r border-gray-200 py-2 pl-3 pr-2 text-xs text-gray-400 flex items-center`}
                         >
                             <input
                                 type="checkbox"
@@ -391,7 +393,7 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                         : LIQUID_GLASS_HOVER_CLASS;
                     const stickyRowBg = isSelected
                         ? LIQUID_GLASS_SELECTED_CLASS
-                        : TR_STICKY_CELL_BG;
+                        : "";
                     return (
                         <div
                             key={row.id}
@@ -407,7 +409,7 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                                 onDocumentOpen={(document) =>
                                     onDocumentOpen(row, document)
                                 }
-                                className={`sticky left-0 z-[60] ${DOC_COL_W} border-b border-r border-gray-200 py-2 pl-3 pr-2 text-xs text-gray-800 flex items-center transition-colors ${stickyRowBg} ${isSelected ? "" : LIQUID_GLASS_GROUP_HOVER_CLASS}`}
+                                className={`${TR_STICKY_CELL_CLASS} sticky left-0 z-[60] ${DOC_COL_W} border-b border-r border-gray-200 py-2 pl-3 pr-2 text-xs text-gray-800 flex items-center transition-colors ${stickyRowBg} ${isSelected ? "" : LIQUID_GLASS_GROUP_HOVER_CLASS}`}
                             />
                             {columns.map((col) => {
                                 const cell = getCell(row, col.index);

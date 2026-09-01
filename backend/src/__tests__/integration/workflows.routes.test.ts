@@ -366,4 +366,38 @@ describe("workflows.routes", () => {
       });
     });
   });
+
+  describe("POST /workflows/:workflowId/assets/from-documents", () => {
+    it("rejects an empty saved-file selection", async () => {
+      const res = await request(app)
+        .post("/workflows/workflow-1/assets/from-documents")
+        .set(...AUTH)
+        .send({ document_ids: [] });
+
+      expect(res.status).toBe(400);
+      expect(res.body.detail).toContain("between 1 and 50");
+      expect(createServerSupabase).not.toHaveBeenCalled();
+    });
+
+    it("does not allow assets on a tabular workflow", async () => {
+      supabaseState.tables.workflows = {
+        data: {
+          id: "workflow-1",
+          user_id: "u1",
+          type: "tabular",
+        },
+        error: null,
+      };
+
+      const res = await request(app)
+        .post("/workflows/workflow-1/assets/from-documents")
+        .set(...AUTH)
+        .send({ document_ids: ["document-1"] });
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({
+        detail: "Assets are only available for assistant workflows",
+      });
+    });
+  });
 });

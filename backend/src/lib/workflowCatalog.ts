@@ -60,7 +60,7 @@ export type LegacyCatalogWorkflow = {
   };
   skill_md: string | null;
   columns_config: WorkflowCatalogColumn[] | null;
-  reference_files: [];
+  assets: [];
   pack: {
     key: string;
     title: string;
@@ -99,9 +99,9 @@ export function catalogWorkflowToLegacy(
     },
     skill_md: workflow.prompt_md,
     columns_config: workflow.columns_config,
-    // Reference bytes live in object storage. The compatibility endpoint has
+    // Asset bytes live in object storage. The compatibility endpoint has
     // never been the import path; current clients use /workflow-addons.
-    reference_files: [],
+    assets: [],
     pack: workflow.pack_key
       ? {
           key: workflow.pack_key,

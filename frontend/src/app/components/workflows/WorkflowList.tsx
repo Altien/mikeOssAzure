@@ -2,7 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronDown, ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Plus,
+} from "lucide-react";
 import {
   deleteWorkflow,
   getWorkflowFilterOptions,
@@ -135,6 +141,7 @@ export function WorkflowList({
     "idle" | "loading" | "complete"
   >("idle");
   const [importingAddonId, setImportingAddonId] = useState<string | null>(null);
+  const [importedAddonIds, setImportedAddonIds] = useState<string[]>([]);
   const [bulkImportingAddons, setBulkImportingAddons] = useState(false);
   const [addonsError, setAddonsError] = useState("");
   const [actionError, setActionError] = useState("");
@@ -302,15 +309,15 @@ export function WorkflowList({
   }
 
   async function importAddon(addon: WorkflowAddon) {
-    if (importingAddonId) return;
+    if (importingAddonId || importedAddonIds.includes(addon.id)) return;
     setImportingAddonId(addon.id);
     setActionError("");
     try {
       const workflow = await importWorkflowAddon(addon.id);
       setWorkflows((current) => [workflow, ...current]);
+      setImportedAddonIds((current) => [...new Set([...current, addon.id])]);
       setSelectedAddonIds((current) => current.filter((id) => id !== addon.id));
       closeAddon();
-      router.push(workflowDetailPath(workflow));
     } catch (error) {
       setActionError(
         userFacingApiError(
@@ -338,6 +345,14 @@ export function WorkflowList({
       );
       if (imported.length > 0) {
         setWorkflows((current) => [...imported, ...current]);
+        setImportedAddonIds((current) => [
+          ...new Set([
+            ...current,
+            ...selectedAddons.flatMap((addon, index) =>
+              results[index]?.status === "fulfilled" ? [addon.id] : [],
+            ),
+          ]),
+        ]);
       }
       setSelectedAddonIds([]);
       if (imported.length !== selectedAddons.length) {
@@ -415,29 +430,20 @@ export function WorkflowList({
         )}
       </div>
     ) : undefined;
-  const addonToolbarActions = activeTab === "addons" ? (
-    <>
-      {packKey && (
-        <TabPillButton onClick={closeAddonPack}>
-          <ChevronLeft className="h-3.5 w-3.5" />
-          Back
-        </TabPillButton>
-      )}
-      {selectedAddonIds.length > 0 && (
-        <button
-          type="button"
-          disabled={bulkImportingAddons}
-          onClick={() => void importSelectedAddons()}
-          className="inline-flex items-center gap-1 px-1.5 py-1 text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:opacity-50"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          {bulkImportingAddons
-            ? "Importing…"
-            : `Import${selectedAddonIds.length > 1 ? ` (${selectedAddonIds.length})` : ""}`}
-        </button>
-      )}
-    </>
-  ) : undefined;
+  const addonToolbarActions =
+    activeTab === "addons" && selectedAddonIds.length > 0 ? (
+      <PillButton
+        tone="black"
+        size="sm"
+        disabled={bulkImportingAddons}
+        onClick={() => void importSelectedAddons()}
+      >
+        <Plus className="h-3.5 w-3.5" />
+        {bulkImportingAddons
+          ? "Importing…"
+          : `Import${selectedAddonIds.length > 1 ? ` (${selectedAddonIds.length})` : ""}`}
+      </PillButton>
+    ) : undefined;
   const pendingDefaultDeleteCount = pendingDeleteWorkflows.filter(
     (workflow) => workflow.is_default,
   ).length;
@@ -495,9 +501,17 @@ export function WorkflowList({
       </PageHeader>
 
       <TableToolbar
-        items={WORKFLOW_TABS}
+        items={packKey ? [] : WORKFLOW_TABS}
         active={activeTab}
         onChange={changeTab}
+        leading={
+          packKey ? (
+            <TabPillButton onClick={closeAddonPack}>
+              <ChevronLeft className="h-3.5 w-3.5" />
+              Back
+            </TabPillButton>
+          ) : undefined
+        }
         actions={
           activeTab === "addons" ? addonToolbarActions : workflowToolbarActions
         }
@@ -527,6 +541,7 @@ export function WorkflowList({
           selectedIds={selectedAddonIds}
           onSelectedIdsChange={setSelectedAddonIds}
           importingAddonId={importingAddonId}
+          importedAddonIds={importedAddonIds}
           bulkImporting={bulkImportingAddons}
           activePackKey={packKey}
           onOpenPack={openAddonPack}
@@ -1045,6 +1060,7 @@ function AddonTable({
   selectedIds,
   onSelectedIdsChange,
   importingAddonId,
+  importedAddonIds,
   bulkImporting,
   activePackKey,
   onOpenPack,
@@ -1057,6 +1073,7 @@ function AddonTable({
   selectedIds: string[];
   onSelectedIdsChange: (ids: string[]) => void;
   importingAddonId: string | null;
+  importedAddonIds: string[];
   bulkImporting: boolean;
   activePackKey: string | null;
   onOpenPack: (packKey: string) => void;
@@ -1143,6 +1160,8 @@ function AddonTable({
   function renderAddonRow(addon: WorkflowAddon, nested = false) {
     const Icon =
       addon.type === "tabular" ? TabularReviewSkeuoIcon : ChatSkeuoIcon;
+    const imported = importedAddonIds.includes(addon.id);
+    const importing = importingAddonId === addon.id;
     return (
       <TableRow
         key={addon.id}
@@ -1197,15 +1216,19 @@ function AddonTable({
         <TableCell className="w-20">
           <button
             type="button"
-            disabled={bulkImporting || importingAddonId === addon.id}
+            disabled={bulkImporting || importing || imported}
             onClick={(event) => {
               event.stopPropagation();
               void onImport(addon);
             }}
-            className="inline-flex items-center gap-1 px-1 py-1 text-xs font-medium text-gray-600 transition-colors hover:text-gray-950 disabled:opacity-50"
+            className={`inline-flex items-center gap-1 text-xs font-medium transition-colors disabled:cursor-not-allowed ${
+              imported
+                ? "text-green-600"
+                : "text-gray-600 hover:text-gray-950 disabled:text-gray-400"
+            }`}
           >
-            <Plus className="h-3.5 w-3.5" />
-            {importingAddonId === addon.id ? "Importing…" : "Import"}
+            {imported ? <Check className="h-3.5 w-3.5" /> : null}
+            {imported ? "Imported" : importing ? "Importing…" : "Import"}
           </button>
         </TableCell>
       </TableRow>

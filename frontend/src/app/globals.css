@@ -63,6 +63,7 @@
     --app-surface-hover: #f9fafb;
     --app-surface-active: #eff0f3;
     --app-floating: #fefefe;
+    --table-grid-border: #e5e7eb;
     --background: oklch(0.985 0 0);
     --foreground: oklch(0.145 0 0);
     --card: oklch(1 0 0);
@@ -103,6 +104,7 @@
     --app-surface-hover: #19212c;
     --app-surface-active: #222c38;
     --app-floating: #171e28;
+    --table-grid-border: #2b3645;
     --background: oklch(0.145 0 0);
     --foreground: oklch(0.985 0 0);
     --card: oklch(0.205 0 0);
@@ -134,6 +136,56 @@
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.556 0 0);
+}
+
+/* The Appearance preference removes the resting table container surface.
+   Tabular Review remains a grid, so it retains its outer border; its existing
+   cell borders continue to define the rows and columns. */
+.table-surface {
+    background-color: var(--liquid-glass-background-subtle);
+    border: 1px solid var(--liquid-glass-border-subtle);
+    box-shadow: var(--liquid-glass-shadow-subtle);
+}
+
+.transparent-tables .table-surface {
+    background-color: transparent;
+    border-color: transparent;
+    box-shadow: none;
+}
+
+.transparent-tables .table-surface .bg-app-surface {
+    background-color: transparent;
+}
+
+.table-surface .table-sticky-cell {
+    background-color: var(--app-surface);
+}
+
+.transparent-tables .table-surface .table-sticky-cell {
+    background-color: var(--app-background);
+}
+
+.table-surface .table-sticky-cell.liquid-glass-selected {
+    background-color: var(--liquid-glass-selected-background);
+}
+
+.table-surface .table-sticky-cell.bg-blue-50 {
+    background-color: var(--color-blue-50);
+}
+
+.dark .table-surface .table-sticky-cell.bg-blue-50 {
+    background-color: rgba(3, 73, 130, 0.3);
+}
+
+.table-surface
+    .group:hover
+    .table-sticky-cell.liquid-glass-group-hover {
+    background-color: var(--liquid-glass-hover-background);
+}
+
+.transparent-tables .table-surface.tabular-review-table-surface,
+.transparent-tables .table-surface.workflow-prompt-editor-surface {
+    border: 1px solid var(--table-grid-border);
 }
 
 /* Most of Mike predates semantic color tokens and uses Tailwind's neutral

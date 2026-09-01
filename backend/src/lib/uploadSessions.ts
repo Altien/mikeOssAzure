@@ -46,6 +46,12 @@ const documentDestinationSchema = z.discriminatedUnion("scope", [
       folder_id: z.string().uuid().nullable().optional(),
     })
     .strict(),
+  z
+    .object({
+      scope: z.literal("workflow"),
+      workflow_id: z.string().uuid(),
+    })
+    .strict(),
 ]);
 
 const requestSchema = z.discriminatedUnion("purpose", [
@@ -80,6 +86,8 @@ const requestSchema = z.discriminatedUnion("purpose", [
       files: z.tuple([clientFileSchema]),
     })
     .strict(),
+  // Rollout compatibility for upload sessions created before workflow assets
+  // moved to the standard document/version purposes.
   z
     .object({
       purpose: z.literal("workflow_reference_create"),

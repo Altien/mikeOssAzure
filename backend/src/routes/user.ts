@@ -88,6 +88,7 @@ type UserProfileRow = {
     legal_research_us: boolean | null;
     quick_actions_visible: boolean | null;
     dark_mode: boolean | null;
+    transparent_tables: boolean | null;
 };
 
 function errorMessage(error: unknown): string {
@@ -199,11 +200,13 @@ function mcpOAuthPopupCsp(nonce: string) {
 }
 
 const PROFILE_SELECT_WITH_CHAT_SELECTIONS =
+    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, last_selected_chat_model, last_selected_reasoning_level, mfa_on_login, legal_research_us, quick_actions_visible, dark_mode, transparent_tables";
+const PROFILE_SELECT_NO_TRANSPARENT_TABLES =
     "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, last_selected_chat_model, last_selected_reasoning_level, mfa_on_login, legal_research_us, quick_actions_visible, dark_mode";
 const PROFILE_SELECT_WITH_LAST_SELECTED_CHAT_MODEL =
-    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, last_selected_chat_model, mfa_on_login, legal_research_us, quick_actions_visible, dark_mode";
+    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, last_selected_chat_model, mfa_on_login, legal_research_us, quick_actions_visible, dark_mode, transparent_tables";
 const PROFILE_SELECT =
-    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, quick_actions_visible, dark_mode";
+    "display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas, onboarding_version, password_set_at, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, quick_actions_visible, dark_mode, transparent_tables";
 // Deploy-before-migrate tolerance is per column: a database that already has
 // the 20260821 onboarding/password columns but not yet dark_mode must keep
 // them rather than fall all the way back to a lower tier. This is exactly
@@ -243,6 +246,10 @@ function isMissingProfileColumn(error: unknown, column: string): boolean {
     return record.code === "42703" && message.includes(column);
 }
 
+function withoutTransparentTables(columns: string): string {
+    return columns.replace(", transparent_tables", "");
+}
+
 // Loads a profile while tolerating older databases that lack newer preference
 // columns. Tries the full select first, then falls back through the legacy
 // cascade (which also handles missing title_model / mfa_on_login) and applies
@@ -262,11 +269,41 @@ async function selectProfile(
             : await newestQuery.maybeSingle();
     if (!newest.error) return newest;
     let cascadeError: unknown = newest.error;
+    let transparentTablesAvailable = true;
+
+    // The appearance preference may be deployed before its migration. Keep
+    // every older profile field and use the default transparent table style.
+    if (isMissingProfileColumn(cascadeError, "transparent_tables")) {
+        transparentTablesAvailable = false;
+        const previousQuery = db
+            .from("user_profiles")
+            .select(PROFILE_SELECT_NO_TRANSPARENT_TABLES)
+            .eq("user_id", userId);
+        const previous =
+            mode === "single"
+                ? await previousQuery.single()
+                : await previousQuery.maybeSingle();
+        if (!previous.error) {
+            if (previous.data && typeof previous.data === "object") {
+                Object.assign(previous.data as Record<string, unknown>, {
+                    transparent_tables: true,
+                });
+            }
+            return previous;
+        }
+        cascadeError = previous.error;
+    }
 
     if (isMissingProfileColumn(cascadeError, "last_selected_reasoning_level")) {
         const modelOnlyQuery = db
             .from("user_profiles")
-            .select(PROFILE_SELECT_WITH_LAST_SELECTED_CHAT_MODEL)
+            .select(
+                transparentTablesAvailable
+                    ? PROFILE_SELECT_WITH_LAST_SELECTED_CHAT_MODEL
+                    : withoutTransparentTables(
+                          PROFILE_SELECT_WITH_LAST_SELECTED_CHAT_MODEL,
+                      ),
+            )
             .eq("user_id", userId);
         const modelOnly =
             mode === "single"
@@ -286,7 +323,11 @@ async function selectProfile(
     if (isMissingProfileColumn(cascadeError, "last_selected_chat_model")) {
         const fullQuery = db
             .from("user_profiles")
-            .select(PROFILE_SELECT)
+            .select(
+                transparentTablesAvailable
+                    ? PROFILE_SELECT
+                    : withoutTransparentTables(PROFILE_SELECT),
+            )
             .eq("user_id", userId);
         const full =
             mode === "single"
@@ -304,8 +345,8 @@ async function selectProfile(
         cascadeError = full.error;
     }
 
-    // dark_mode is the newest column, so its retry tier sits above the
-    // 20260821 tiers: a database missing only dark_mode keeps its live
+    // dark_mode's retry tier sits above the 20260821 tiers: a database
+    // missing only dark_mode keeps its live
     // onboarding, password and quick-action columns and defaults the theme
     // to light. A database old enough to lack the 20260821 columns too
     // fails the full select on one of those instead (they sort earlier in
@@ -577,6 +618,7 @@ function serializeProfile(
         legalResearchUs: row.legal_research_us !== false,
         quickActionsVisible: row.quick_actions_visible !== false,
         darkMode: row.dark_mode === true,
+        transparentTables: row.transparent_tables !== false,
         ...Object.fromEntries(
             ROUTER_SLUGS.map((slug) => [
                 ROUTER_PROFILE_FIELDS[slug],
@@ -760,6 +802,7 @@ function validateProfilePayload(body: unknown):
         "legalResearchUs",
         "quickActionsVisible",
         "darkMode",
+        "transparentTables",
         ...ROUTER_SLUGS.map((slug) => ROUTER_PROFILE_FIELDS[slug]),
     ]);
     const invalidField = Object.keys(raw).find(
@@ -786,6 +829,7 @@ function validateProfilePayload(body: unknown):
         legal_research_us?: boolean;
         quick_actions_visible?: boolean;
         dark_mode?: boolean;
+        transparent_tables?: boolean;
         updated_at: string;
     } = { updated_at: new Date().toISOString() };
     const routerModels: Partial<Record<RouterSlug, string[]>> = {};
@@ -957,6 +1001,16 @@ function validateProfilePayload(body: unknown):
             };
         }
         update.dark_mode = raw.darkMode;
+    }
+
+    if ("transparentTables" in raw) {
+        if (typeof raw.transparentTables !== "boolean") {
+            return {
+                ok: false,
+                detail: "transparentTables must be a boolean",
+            };
+        }
+        update.transparent_tables = raw.transparentTables;
     }
 
     return { ok: true, update, routerModels };

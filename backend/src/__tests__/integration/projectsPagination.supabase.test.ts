@@ -9,6 +9,7 @@ maybeDescribe("Supabase projects-overview pagination", () => {
     let ownerId = "";
     let ownerEmail = "";
     let otherUserId = "";
+    const ownedSharedProjectId = crypto.randomUUID();
     const myProjectIds = Array.from({ length: 25 }, () => crypto.randomUUID());
     const sharedProjectIds = Array.from({ length: 5 }, () => crypto.randomUUID());
     const tiedCreatedAt = "2026-07-27T00:00:00.000Z";
@@ -56,6 +57,17 @@ maybeDescribe("Supabase projects-overview pagination", () => {
         );
         if (myProjects.error) throw myProjects.error;
 
+        const ownedSharedProject = await admin.from("projects").insert({
+            id: ownedSharedProjectId,
+            user_id: ownerId,
+            name: "Owned Collaborative Project",
+            practice: "Litigation",
+            shared_with: [`pagination-other-${suffix}@test.local`],
+            created_at: tiedCreatedAt,
+            updated_at: tiedCreatedAt,
+        });
+        if (ownedSharedProject.error) throw ownedSharedProject.error;
+
         const sharedProjects = await admin.from("projects").insert(
             sharedProjectIds.map((id) => ({
                 id,
@@ -74,6 +86,7 @@ maybeDescribe("Supabase projects-overview pagination", () => {
         if (!admin) return;
         await admin.from("projects").delete().in("id", myProjectIds);
         await admin.from("projects").delete().in("id", sharedProjectIds);
+        await admin.from("projects").delete().eq("id", ownedSharedProjectId);
         if (otherUserId) await admin.auth.admin.deleteUser(otherUserId);
         if (ownerId) await admin.auth.admin.deleteUser(ownerId);
     });
@@ -157,6 +170,85 @@ maybeDescribe("Supabase projects-overview pagination", () => {
         expect(
             (shared.data ?? []).every((row) => row.is_owner === false),
         ).toBe(true);
+    });
+
+    it("separates collaborative projects from projects with no other users", async () => {
+        const collaborative = await admin.rpc("get_projects_overview", {
+            p_user_id: ownerId,
+            p_user_email: ownerEmail,
+            p_scope: "collaborative",
+            p_limit: 100,
+            p_offset: 0,
+            p_search_term: null,
+            p_sort_key: "created",
+            p_sort_direction: "desc",
+            p_practice: null,
+            p_owner_user_id: null,
+        });
+        const privateProjects = await admin.rpc("get_projects_overview", {
+            p_user_id: ownerId,
+            p_user_email: ownerEmail,
+            p_scope: "private",
+            p_limit: 100,
+            p_offset: 0,
+            p_search_term: null,
+            p_sort_key: "created",
+            p_sort_direction: "desc",
+            p_practice: null,
+            p_owner_user_id: null,
+        });
+        const collaborativeIdRows = await admin.rpc(
+            "get_project_ids_overview",
+            {
+                p_user_id: ownerId,
+                p_user_email: ownerEmail,
+                p_scope: "collaborative",
+                p_search_term: null,
+                p_practice: null,
+                p_owner_user_id: null,
+                p_limit: 100,
+                p_offset: 0,
+            },
+        );
+        const privateIdRows = await admin.rpc("get_project_ids_overview", {
+            p_user_id: ownerId,
+            p_user_email: ownerEmail,
+            p_scope: "private",
+            p_search_term: null,
+            p_practice: null,
+            p_owner_user_id: null,
+            p_limit: 100,
+            p_offset: 0,
+        });
+
+        expect(collaborative.error).toBeNull();
+        expect(privateProjects.error).toBeNull();
+        expect(collaborativeIdRows.error).toBeNull();
+        expect(privateIdRows.error).toBeNull();
+
+        const collaborativeIds = new Set(
+            (collaborative.data ?? []).map((row) => row.id as string),
+        );
+        const privateIds = new Set(
+            (privateProjects.data ?? []).map((row) => row.id as string),
+        );
+
+        expect(collaborativeIds).toEqual(
+            new Set([...sharedProjectIds, ownedSharedProjectId]),
+        );
+        expect(privateIds).toEqual(new Set(myProjectIds));
+        expect(
+            new Set(
+                (collaborativeIdRows.data ?? []).map(
+                    (row) => row.id as string,
+                ),
+            ),
+        ).toEqual(collaborativeIds);
+        expect(
+            new Set(
+                (privateIdRows.data ?? []).map((row) => row.id as string),
+            ),
+        ).toEqual(privateIds);
     });
 
     it("filters by exact practice and owner match", async () => {

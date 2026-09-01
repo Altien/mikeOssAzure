@@ -406,10 +406,6 @@ export async function deleteUserAccountData(
         db.from("projects").delete().eq("user_id", userId),
         db.from("quick_actions").delete().eq("user_id", userId),
         db
-            .from("workflow_reference_documents")
-            .delete()
-            .eq("user_id", userId),
-        db
             .from("default_workflow_installations")
             .delete()
             .eq("user_id", userId),

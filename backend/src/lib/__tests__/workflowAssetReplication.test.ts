@@ -103,9 +103,9 @@ describe("workflow asset replication", () => {
                 {
                     title: "Draft from precedent",
                     skill_md: "Use the precedent.",
-                    reference_files: [
+                    assets: [
                         {
-                            reference_id: "reference-1",
+                            asset_id: "asset-1",
                             filename: "Precedent.docx",
                             file_type: "docx",
                             storage_path: "workflow-assets/precedent.docx",
@@ -138,17 +138,17 @@ describe("workflow asset replication", () => {
 
         // Handle keys embed the FULL workflow id: builtin-* ids all share
         // an 8-character prefix, so a truncated id would collide.
-        expect(store.get("workflow-ref-workflow-12345678-1")).toMatchObject({
+        expect(store.get("workflow-asset-workflow-12345678-1")).toMatchObject({
             filename: "Precedent.docx",
             source_kind: "workflow_asset",
         });
         expect(
             (result.toolResults[0] as { content: string }).content,
-        ).toContain("Available immutable workflow reference files");
+        ).toContain("Available immutable workflow assets");
     });
 
     it("copies an asset into Library Files and registers the copy for editing", async () => {
-        const sourceLabel = "workflow-ref-workflow-1-1";
+        const sourceLabel = "workflow-asset-workflow-1-1";
         const sourceBytes = new TextEncoder().encode("asset").buffer;
         downloadFile.mockResolvedValue(sourceBytes);
         const store: DocStore = new Map([

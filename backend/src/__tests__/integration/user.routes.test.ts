@@ -238,6 +238,7 @@ function profileRow(overrides: Record<string, unknown> = {}) {
         legal_research_us: true,
         quick_actions_visible: true,
         dark_mode: false,
+        transparent_tables: true,
         ...overrides,
     };
 }
@@ -319,6 +320,7 @@ describe("user.routes", () => {
                 legalResearchUs: true,
                 quickActionsVisible: true,
                 mfaOnLogin: false,
+                transparentTables: true,
                 openRouterModels: [
                     "anthropic/claude-sonnet-4.5",
                     "openai/gpt-5.4",
@@ -344,6 +346,39 @@ describe("user.routes", () => {
 
             expect(res.status).toBe(200);
             expect(requireMfaIfEnrolled).not.toHaveBeenCalled();
+        });
+
+        it("defaults to transparent tables before the appearance migration", async () => {
+            const preMigrationRow = profileRow();
+            delete (preMigrationRow as Record<string, unknown>)
+                .transparent_tables;
+            supabaseState.tables.user_profiles = [
+                {
+                    data: null,
+                    error: {
+                        code: "42703",
+                        message:
+                            "column user_profiles.transparent_tables does not exist",
+                    },
+                },
+                {
+                    data: null,
+                    error: {
+                        code: "42703",
+                        message:
+                            "column user_profiles.last_selected_reasoning_level does not exist",
+                    },
+                },
+                { data: preMigrationRow, error: null },
+            ];
+
+            const res = await request(app)
+                .get("/user/profile")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body.transparentTables).toBe(true);
+            expect(res.body.darkMode).toBe(false);
         });
 
         it("keeps saved preferences on a database without the onboarding migration", async () => {
@@ -465,6 +500,36 @@ describe("user.routes", () => {
 
             expect(res.status).toBe(400);
             expect(res.body.detail).toMatch(/darkMode must be a boolean/);
+        });
+
+        it("persists and returns the transparent tables preference", async () => {
+            supabaseState.tables.user_profiles = {
+                data: profileRow({ transparent_tables: false }),
+                error: null,
+            };
+
+            const res = await request(app)
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({ transparentTables: false });
+
+            expect(res.status).toBe(200);
+            expect(res.body.transparentTables).toBe(false);
+            expect(supabaseState.updates.user_profiles).toContainEqual(
+                expect.objectContaining({ transparent_tables: false }),
+            );
+        });
+
+        it("rejects a non-boolean transparentTables value", async () => {
+            const res = await request(app)
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({ transparentTables: "yes" });
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toMatch(
+                /transparentTables must be a boolean/,
+            );
         });
     });
 

@@ -27,7 +27,7 @@ import {
     LIQUID_GLASS_SELECTED_CLASS,
     LIQUID_GLASS_GROUP_HOVER_CLASS,
     LIQUID_GLASS_HOVER_CLASS,
-    LIQUID_TABLE_SURFACE_CLASS,
+    TABLE_SURFACE_CLASS,
 } from "@/app/components/ui/liquid-surface";
 
 export const CLOSE_ROW_ACTIONS_EVENT = "mike:close-row-actions";
@@ -65,6 +65,18 @@ export function selectionRangeIds<T>(
     return orderedIds.slice(start, end + 1);
 }
 
+export function selectionAnchorAfterRowSelection<T>(
+    currentAnchorId: T | null,
+    targetId: T,
+    affectedIds: readonly T[],
+    selected: boolean,
+): T | null {
+    if (selected) return targetId;
+    return currentAnchorId !== null && affectedIds.includes(currentAnchorId)
+        ? null
+        : currentAnchorId;
+}
+
 export function selectedIdsAfterRangeClick<T>(
     targetId: T,
     orderedIds: readonly T[],
@@ -83,7 +95,6 @@ function canPortalToDocument() {
     return typeof document !== "undefined";
 }
 
-export const TABLE_STICKY_CELL_BG = "bg-app-surface";
 export const TABLE_PRIMARY_CELL_WIDTH_CLASS =
     "w-[248px] sm:w-[292px] md:w-[332px] shrink-0";
 export const TABLE_CHECKBOX_CLASS =
@@ -233,10 +244,14 @@ export function TableScrollArea({
     children,
     className,
     header,
+    viewportOverlay,
+    preserveGridBorder = false,
     scrollRef,
     onScroll,
 }: DivProps & {
     header?: ReactNode;
+    viewportOverlay?: ReactNode;
+    preserveGridBorder?: boolean;
     scrollRef?: RefObject<HTMLDivElement | null>;
 }) {
     const headerViewportRef = useRef<HTMLDivElement>(null);
@@ -251,7 +266,8 @@ export function TableScrollArea({
             <div
                 className={cn(
                     "flex h-full min-h-0 min-w-0 flex-col overflow-hidden",
-                    LIQUID_TABLE_SURFACE_CLASS,
+                    TABLE_SURFACE_CLASS,
+                    preserveGridBorder && "tabular-review-table-surface",
                 )}
             >
                 {header && (
@@ -262,18 +278,21 @@ export function TableScrollArea({
                         {header}
                     </div>
                 )}
-                <div
-                    ref={scrollRef}
-                    className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto overscroll-x-none"
-                    onScroll={(event) => {
-                        if (headerViewportRef.current) {
-                            headerViewportRef.current.scrollLeft =
-                                event.currentTarget.scrollLeft;
-                        }
-                        onScroll?.(event);
-                    }}
-                >
-                    {children}
+                <div className="relative flex min-h-0 min-w-0 flex-1">
+                    <div
+                        ref={scrollRef}
+                        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto overscroll-x-none"
+                        onScroll={(event) => {
+                            if (headerViewportRef.current) {
+                                headerViewportRef.current.scrollLeft =
+                                    event.currentTarget.scrollLeft;
+                            }
+                            onScroll?.(event);
+                        }}
+                    >
+                        {children}
+                    </div>
+                    {viewportOverlay}
                 </div>
             </div>
         </div>
@@ -284,7 +303,7 @@ export function TableHeaderRow({ children, className, ...props }: DivProps) {
     return (
         <div
             className={cn(
-                "z-[70] flex h-10 min-w-max items-center bg-app-surface pr-3 text-xs font-medium text-gray-500 select-none backdrop-blur-xl",
+                "z-[70] flex h-10 min-w-max items-center pr-3 text-xs font-medium text-gray-700 select-none",
                 className,
             )}
             {...props}
@@ -395,7 +414,7 @@ export function TableStickyCell({
     className,
     style,
     widthClassName = TABLE_PRIMARY_CELL_WIDTH_CLASS,
-    bgClassName = TABLE_STICKY_CELL_BG,
+    bgClassName,
     header = false,
     hover = true,
 }: DivProps & {
@@ -409,6 +428,7 @@ export function TableStickyCell({
             style={style}
             className={cn(
                 "sticky left-0 z-[60] flex pl-3 pr-2 text-left",
+                "table-sticky-cell",
                 widthClassName,
                 bgClassName,
                 header

@@ -9,13 +9,22 @@ import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import {
   downloadFile,
+  storageKey,
   uploadFile,
-  workflowReferenceKey,
 } from "../lib/storage";
 import { enqueueStorageCleanup } from "../lib/dbq/enqueue";
-import { contentTypeForDocumentType } from "../lib/documentTypes";
+import {
+  contentTypeForDocumentType,
+  shouldConvertToPdf,
+} from "../lib/documentTypes";
 import { contentSha256 } from "../lib/documentVersions";
 import { sendInternalError } from "../lib/httpError";
+import { convertedPdfKey } from "../lib/convert";
+import {
+  loadDocumentDisplay,
+  prepareDocumentDisplay,
+  sendDocumentDisplay,
+} from "../lib/documentDisplay";
 
 export const workflowAddonsRouter = Router();
 
@@ -44,12 +53,82 @@ workflowAddonsRouter.get(
       query = query.eq("type", type);
     const { data, error } = await query.order("title", { ascending: true });
     if (error) return void sendInternalError(res, error);
+    const addons = data ?? [];
+    const assistantIds = addons
+      .filter((addon) => addon.type === "assistant")
+      .map((addon) => addon.id);
+    const { data: assets, error: assetsError } =
+      assistantIds.length > 0
+        ? await db
+            .from("mike_workflow_assets")
+            .select(
+              "id, mike_workflow_id, filename, file_type, size_bytes, created_at",
+            )
+            .in("mike_workflow_id", assistantIds)
+            .order("created_at", { ascending: true })
+        : { data: [], error: null };
+    if (assetsError) return void sendInternalError(res, assetsError);
+    const assetsByAddon = new Map<string, typeof assets>();
+    for (const asset of assets ?? []) {
+      const current = assetsByAddon.get(asset.mike_workflow_id) ?? [];
+      current.push(asset);
+      assetsByAddon.set(asset.mike_workflow_id, current);
+    }
     res.json(
-      (data ?? []).map(({ workflow_key, ...addon }) => ({
+      addons.map(({ workflow_key, ...addon }) => ({
         ...addon,
         addon_key: workflow_key,
+        assets: (assetsByAddon.get(addon.id) ?? []).map(
+          ({ mike_workflow_id: _workflowId, ...asset }) => asset,
+        ),
       })),
     );
+  }),
+);
+
+workflowAddonsRouter.get(
+  "/:addonId/assets/:assetId/display",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const db = createServerSupabase();
+    const { data: addon, error: addonError } = await db
+      .from("mike_workflows")
+      .select("id, type")
+      .eq("id", req.params.addonId)
+      .eq("distribution", "addon")
+      .eq("active", true)
+      .maybeSingle();
+    if (addonError) return void sendInternalError(res, addonError);
+    if (!addon || addon.type !== "assistant") {
+      return void res.status(404).json({ detail: "Add-on not found" });
+    }
+
+    const { data: asset, error: assetError } = await db
+      .from("mike_workflow_assets")
+      .select("id, filename, file_type, storage_path")
+      .eq("id", req.params.assetId)
+      .eq("mike_workflow_id", addon.id)
+      .maybeSingle();
+    if (assetError) return void sendInternalError(res, assetError);
+    if (!asset) {
+      return void res.status(404).json({ detail: "Asset not found" });
+    }
+
+    try {
+      const display = await loadDocumentDisplay({
+        filename: asset.filename,
+        fileType: asset.file_type,
+        storagePath: asset.storage_path,
+      });
+      if (!display) {
+        return void res
+          .status(404)
+          .json({ detail: "Asset not found in storage" });
+      }
+      sendDocumentDisplay(res, display);
+    } catch (error) {
+      return void sendInternalError(res, error);
+    }
   }),
 );
 
@@ -68,23 +147,23 @@ workflowAddonsRouter.get(
     if (error || !data) {
       return void res.status(404).json({ detail: "Add-on not found" });
     }
-    let references = null;
+    let assets = null;
     if (data.type === "assistant") {
-      const { data: assistantReferences, error: referencesError } = await db
-        .from("mike_workflow_reference_files")
+      const { data: assistantAssets, error: assetsError } = await db
+        .from("mike_workflow_assets")
         .select("id, filename, file_type, size_bytes, created_at")
         .eq("mike_workflow_id", data.id)
         .order("created_at", { ascending: true });
-      if (referencesError) {
-        return void sendInternalError(res, referencesError);
+      if (assetsError) {
+        return void sendInternalError(res, assetsError);
       }
-      references = assistantReferences;
+      assets = assistantAssets;
     }
     const { workflow_key, ...addon } = data;
     res.json({
       ...addon,
       addon_key: workflow_key,
-      reference_files: references ?? [],
+      assets: assets ?? [],
     });
   }),
 );
@@ -130,54 +209,83 @@ workflowAddonsRouter.post(
 
     const createdStoragePaths: string[] = [];
     try {
-      const { data: references, error: referencesError } =
+      const { data: assets, error: assetsError } =
         addon.type === "assistant"
           ? await db
-              .from("mike_workflow_reference_files")
+              .from("mike_workflow_assets")
               .select("filename, file_type, storage_path, size_bytes")
               .eq("mike_workflow_id", addon.id)
               .order("created_at", { ascending: true })
           : { data: [], error: null };
-      if (referencesError) throw referencesError;
-      for (const reference of references ?? []) {
-        const bytes = await downloadFile(reference.storage_path);
-        if (!bytes)
-          throw new Error(
-            `Reference file '${reference.filename}' is unavailable`,
-          );
-        const referenceId = crypto.randomUUID();
+      if (assetsError) throw assetsError;
+      for (const asset of assets ?? []) {
+        const bytes = await downloadFile(asset.storage_path);
+        if (!bytes) throw new Error(`Asset '${asset.filename}' is unavailable`);
+        const documentId = crypto.randomUUID();
+        const versionId = crypto.randomUUID();
         const contentHash = contentSha256(bytes);
-        const sourcePath = workflowReferenceKey(
-          userId,
-          workflow.id,
-          referenceId,
-          contentHash,
-          reference.filename,
-        );
+        const sourcePath = storageKey(userId, documentId, asset.filename);
         await uploadFile(
           sourcePath,
           bytes,
-          contentTypeForDocumentType(reference.file_type),
+          contentTypeForDocumentType(asset.file_type),
         );
         createdStoragePaths.push(sourcePath);
-        const { error: referenceError } = await db
-          .from("workflow_reference_documents")
-          .insert({
-            id: referenceId,
-            workflow_id: workflow.id,
-            user_id: userId,
-            filename: reference.filename,
-            file_type: reference.file_type,
-            storage_path: sourcePath,
-            size_bytes: reference.size_bytes ?? bytes.byteLength,
-            content_hash: contentHash,
+        let pdfStoragePath: string | null = null;
+        if (shouldConvertToPdf(asset.file_type)) {
+          const display = await prepareDocumentDisplay({
+            filename: asset.filename,
+            fileType: asset.file_type,
+            sourceBytes: bytes,
           });
-        if (referenceError) throw referenceError;
+          pdfStoragePath = convertedPdfKey(userId, documentId);
+          await uploadFile(
+            pdfStoragePath,
+            display.bytes.buffer.slice(
+              display.bytes.byteOffset,
+              display.bytes.byteOffset + display.bytes.byteLength,
+            ) as ArrayBuffer,
+            display.contentType,
+          );
+          createdStoragePaths.push(pdfStoragePath);
+        }
+        const { error: documentError } = await db.from("documents").insert({
+          id: documentId,
+          workflow_id: workflow.id,
+          user_id: userId,
+          status: "processing",
+          library_kind: "workflow_asset",
+        });
+        if (documentError) throw documentError;
+        const { error: versionError } = await db
+          .from("document_versions")
+          .insert({
+            id: versionId,
+            document_id: documentId,
+            storage_path: sourcePath,
+            pdf_storage_path: pdfStoragePath,
+            source: "upload",
+            version_number: 1,
+            filename: asset.filename,
+            file_type: asset.file_type,
+            size_bytes: asset.size_bytes ?? bytes.byteLength,
+            content_sha256: contentHash,
+          });
+        if (versionError) throw versionError;
+        const { error: readyError } = await db
+          .from("documents")
+          .update({
+            current_version_id: versionId,
+            status: "ready",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", documentId);
+        if (readyError) throw readyError;
       }
-    } catch (referenceError) {
+    } catch {
       // Rollback order matters: drop the workflow row first, so nothing can
       // reference the half-made copies, then hand the object deletes to the
-      // durable storage.cleanup job. The previous Promise.all of best-effort
+      // durable storage.cleanup job. A Promise.all of best-effort
       // deletes died with the request — a restart mid-loop, or a single
       // storage error, leaked every copy made so far with no row left
       // pointing at them. The job retries until they are actually gone.
@@ -188,10 +296,7 @@ workflowAddonsRouter.post(
         .eq("user_id", userId);
       await enqueueStorageCleanup(db, createdStoragePaths);
       return void res.status(500).json({
-        detail:
-          referenceError instanceof Error
-            ? referenceError.message
-            : "Failed to copy add-on reference files",
+        detail: "Failed to copy add-on assets",
       });
     }
 

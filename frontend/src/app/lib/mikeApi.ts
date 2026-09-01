@@ -35,7 +35,6 @@ import type {
     QuickAction,
     Workflow,
     WorkflowAddon,
-    WorkflowReferenceDocument,
     WorkflowContributor,
     TabularReview,
     TabularReviewDetailOut,
@@ -256,7 +255,7 @@ export async function listProjectsPage(pagination?: {
     search?: string;
     sortKey?: string;
     sortDirection?: "asc" | "desc";
-    scope?: "all" | "mine" | "shared";
+    scope?: "all" | "mine" | "shared" | "collaborative" | "private";
     practice?: string;
     ownerUserId?: string;
     signal?: AbortSignal;
@@ -344,7 +343,7 @@ export async function searchProjectDirectory(options: {
 
 export async function listProjectIds(options?: {
     search?: string;
-    scope?: "all" | "mine" | "shared";
+    scope?: "all" | "mine" | "shared" | "collaborative" | "private";
     practice?: string;
     ownerUserId?: string;
     signal?: AbortSignal;
@@ -519,6 +518,7 @@ export interface UserProfile {
     legalResearchUs: boolean;
     quickActionsVisible: boolean;
     darkMode: boolean;
+    transparentTables: boolean;
     openRouterModels: string[];
     vercelModels: string[];
     openCodeGoModels: string[];
@@ -632,6 +632,7 @@ export async function updateUserProfile(payload: {
     legalResearchUs?: boolean;
     quickActionsVisible?: boolean;
     darkMode?: boolean;
+    transparentTables?: boolean;
     openRouterModels?: string[];
     vercelModels?: string[];
     openCodeGoModels?: string[];
@@ -2376,75 +2377,62 @@ export async function importWorkflowAddon(addonId: string): Promise<Workflow> {
     });
 }
 
-export async function listWorkflowReferenceFiles(
+export async function listWorkflowAssets(
     workflowId: string,
-): Promise<WorkflowReferenceDocument[]> {
-    return apiRequest<WorkflowReferenceDocument[]>(
-        `/workflows/${workflowId}/reference-files`,
+): Promise<Document[]> {
+    return apiRequest<Document[]>(`/workflows/${workflowId}/assets`);
+}
+
+export async function copyDocumentsToWorkflowAssets(
+    workflowId: string,
+    documentIds: string[],
+): Promise<Document[]> {
+    return apiRequest<Document[]>(
+        `/workflows/${workflowId}/assets/from-documents`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ document_ids: documentIds }),
+        },
     );
 }
 
-export async function uploadWorkflowReferenceFile(
+export async function uploadWorkflowAsset(
     workflowId: string,
     file: File,
-    options?: UploadRequestOptions<WorkflowReferenceDocument>,
-): Promise<WorkflowReferenceDocument> {
+    options?: UploadRequestOptions<Document>,
+): Promise<Document> {
     return firstUploadResult(
-        await uploadWorkflowReferenceFiles(workflowId, [{ file }], options),
+        await uploadWorkflowAssets(workflowId, [{ file }], options),
     );
 }
 
-export async function uploadWorkflowReferenceFiles(
+export async function uploadWorkflowAssets(
     workflowId: string,
     files: UploadSessionInput[],
-    options?: UploadRequestOptions<WorkflowReferenceDocument>,
-): Promise<UploadOutcome<WorkflowReferenceDocument>[]> {
-    return uploadFilesWithSession<WorkflowReferenceDocument>({
-        purpose: "workflow_reference_create",
-        destination: { workflow_id: workflowId },
+    options?: UploadRequestOptions<Document>,
+): Promise<UploadOutcome<Document>[]> {
+    return uploadFilesWithSession<Document>({
+        purpose: "document_create",
+        destination: { scope: "workflow", workflow_id: workflowId },
         files,
         onProgress: options?.onProgress,
         signal: options?.signal,
     });
 }
 
-export async function replaceWorkflowReferenceFile(
-    workflowId: string,
-    referenceId: string,
-    file: File,
-    options?: UploadRequestOptions<WorkflowReferenceDocument>,
-): Promise<WorkflowReferenceDocument> {
-    return firstUploadResult(
-        await uploadFilesWithSession<WorkflowReferenceDocument>({
-            purpose: "workflow_reference_replace",
-            destination: {
-                workflow_id: workflowId,
-                reference_id: referenceId,
-            },
-            files: [{ file }],
-            onProgress: options?.onProgress,
-            signal: options?.signal,
-        }),
-    );
+export function workflowAddonAssetDisplayUrl(
+    addonId: string,
+    assetId: string,
+): string {
+    return `${API_BASE}/workflow-addons/${encodeURIComponent(addonId)}/assets/${encodeURIComponent(assetId)}/display`;
 }
 
-export async function getWorkflowReferenceUrl(
+export async function deleteWorkflowAsset(
     workflowId: string,
-    referenceId: string,
-): Promise<{ url: string; filename: string }> {
-    return apiRequest<{ url: string; filename: string }>(
-        `/workflows/${workflowId}/reference-files/${referenceId}/url`,
-    );
-}
-
-export async function deleteWorkflowReferenceFile(
-    workflowId: string,
-    referenceId: string,
+    assetId: string,
 ): Promise<void> {
-    await apiRequest(
-        `/workflows/${workflowId}/reference-files/${referenceId}`,
-        {
-            method: "DELETE",
-        },
-    );
+    await apiRequest(`/workflows/${workflowId}/assets/${assetId}`, {
+        method: "DELETE",
+    });
 }

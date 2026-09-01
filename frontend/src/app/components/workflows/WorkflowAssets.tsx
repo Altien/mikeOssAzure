@@ -7,14 +7,20 @@ import {
   useRef,
   useState,
 } from "react";
-import type { WorkflowReferenceDocument } from "../shared/types";
+import type { Document } from "../shared/types";
 import {
-  deleteWorkflowReferenceFile,
+  copyDocumentsToWorkflowAssets,
+  deleteDocumentVersion,
+  deleteWorkflowAsset,
   failedUploadMessage,
-  getWorkflowReferenceUrl,
-  listWorkflowReferenceFiles,
-  replaceWorkflowReferenceFile,
-  uploadWorkflowReferenceFiles,
+  getDocumentUrl,
+  listDocumentVersions,
+  listWorkflowAssets,
+  renameDocumentVersion,
+  replaceDocumentVersionFile,
+  uploadDocumentVersion,
+  uploadWorkflowAssets,
+  type DocumentVersion,
 } from "@/app/lib/mikeApi";
 import {
   SUPPORTED_DOCUMENT_ACCEPT,
@@ -26,6 +32,7 @@ import { EmptyState } from "@/app/components/ui/empty-state";
 import { ConfirmPopup } from "../popups/ConfirmPopup";
 import { FileTypeIcon } from "../shared/FileTypeIcon";
 import { RowActions } from "../shared/RowActions";
+import { DocumentSidePanel } from "../shared/DocumentSidePanel";
 import {
   SkeletonLine,
   TableBody,
@@ -38,7 +45,7 @@ import {
   TableStickyCell,
 } from "../shared/TablePrimitive";
 
-const REFERENCE_NAME_COL_W =
+const ASSET_NAME_COL_W =
   "w-[292px] sm:w-[332px] md:w-[392px] lg:w-[452px] shrink-0";
 
 function formatBytes(bytes: number | null) {
@@ -48,7 +55,8 @@ function formatBytes(bytes: number | null) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function formatDate(value: string) {
+function formatDate(value: string | null | undefined) {
+  if (!value) return "—";
   return new Date(value).toLocaleDateString(undefined, {
     day: "numeric",
     month: "short",
@@ -56,32 +64,42 @@ function formatDate(value: string) {
   });
 }
 
-export interface WorkflowReferenceFilesHandle {
+export interface WorkflowAssetsHandle {
   openUploadPicker: () => void;
   uploadFiles: (files: File[]) => void;
+  addSavedDocuments: (documents: Document[]) => void;
 }
 
-export const WorkflowReferenceFiles = forwardRef<
-  WorkflowReferenceFilesHandle,
+export const WorkflowAssets = forwardRef<
+  WorkflowAssetsHandle,
   {
     workflowId: string;
     readOnly: boolean;
     onUploadingChange?: (uploading: boolean) => void;
   }
->(function WorkflowReferenceFiles(
-  { workflowId, readOnly, onUploadingChange },
-  ref,
-) {
-  const [files, setFiles] = useState<WorkflowReferenceDocument[]>([]);
+>(function WorkflowAssets({ workflowId, readOnly, onUploadingChange }, ref) {
+  const [files, setFiles] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [viewingFileId, setViewingFileId] = useState<string | null>(null);
+  const [viewingVersionId, setViewingVersionId] = useState<string | null>(null);
+  const [versionsByAssetId, setVersionsByAssetId] = useState<
+    Map<
+      string,
+      { currentVersionId: string | null; versions: DocumentVersion[] }
+    >
+  >(() => new Map());
+  const [loadingVersionAssetIds, setLoadingVersionAssetIds] = useState<
+    Set<string>
+  >(() => new Set());
   const [error, setError] = useState("");
-  const [pendingDeleteFile, setPendingDeleteFile] =
-    useState<WorkflowReferenceDocument | null>(null);
+  const [pendingDeleteFile, setPendingDeleteFile] = useState<Document | null>(
+    null,
+  );
   const [deleteStatus, setDeleteStatus] = useState<"idle" | "loading">("idle");
   const uploadInputRef = useRef<HTMLInputElement>(null);
-  const replaceInputRef = useRef<HTMLInputElement>(null);
-  const replaceTargetRef = useRef<WorkflowReferenceDocument | null>(null);
+  const versionUploadInputRef = useRef<HTMLInputElement>(null);
+  const versionUploadTargetRef = useRef<Document | null>(null);
   // Synchronous guard against overlapping upload batches: drops and the file
   // picker can both call upload() before React re-renders `busyId`.
   const uploadInFlightRef = useRef(false);
@@ -89,6 +107,7 @@ export const WorkflowReferenceFiles = forwardRef<
   useImperativeHandle(ref, () => ({
     openUploadPicker: () => uploadInputRef.current?.click(),
     uploadFiles: (filesToUpload) => void upload(filesToUpload),
+    addSavedDocuments: (documents) => void addSavedDocuments(documents),
   }));
 
   useEffect(() => {
@@ -98,10 +117,10 @@ export const WorkflowReferenceFiles = forwardRef<
 
   async function reload() {
     try {
-      setFiles(await listWorkflowReferenceFiles(workflowId));
+      setFiles(await listWorkflowAssets(workflowId));
       setError("");
     } catch (caught) {
-      setError(userFacingApiError(caught, "Unable to load reference files."));
+      setError(userFacingApiError(caught, "Unable to load assets."));
     } finally {
       setLoading(false);
     }
@@ -140,7 +159,7 @@ export const WorkflowReferenceFiles = forwardRef<
     setBusyId("upload");
     setError(formatUnsupportedDocumentWarning(unsupported) ?? "");
     try {
-      const outcomes = await uploadWorkflowReferenceFiles(
+      const outcomes = await uploadWorkflowAssets(
         workflowId,
         supported.map((file) => ({ file })),
       );
@@ -162,25 +181,80 @@ export const WorkflowReferenceFiles = forwardRef<
     }
   }
 
-  async function replace(file: File) {
-    const target = replaceTargetRef.current;
-    if (!target) return;
-    setBusyId(target.id);
+  async function addSavedDocuments(documents: Document[]) {
+    if (documents.length === 0) return;
+    if (uploadInFlightRef.current) {
+      appendWarning(
+        "Files are already being added. Wait for them to finish, then add the saved files again.",
+      );
+      return;
+    }
+    uploadInFlightRef.current = true;
+    setBusyId("upload");
+    setError("");
     try {
-      await replaceWorkflowReferenceFile(workflowId, target.id, file);
-      await reload();
+      const created = await copyDocumentsToWorkflowAssets(
+        workflowId,
+        documents.map((document) => document.id),
+      );
+      setFiles((current) => [...current, ...created]);
     } catch (caught) {
-      setError(userFacingApiError(caught, "Replacement failed."));
+      setError(userFacingApiError(caught, "Unable to add saved files."));
     } finally {
-      replaceTargetRef.current = null;
+      uploadInFlightRef.current = false;
       setBusyId(null);
     }
   }
 
-  async function download(file: WorkflowReferenceDocument) {
+  async function loadVersions(assetId: string, force = false) {
+    if (!force && versionsByAssetId.has(assetId)) return;
+    setLoadingVersionAssetIds((current) => new Set(current).add(assetId));
+    try {
+      const result = await listDocumentVersions(assetId);
+      setVersionsByAssetId((current) => {
+        const next = new Map(current);
+        next.set(assetId, {
+          currentVersionId: result.current_version_id,
+          versions: result.versions,
+        });
+        return next;
+      });
+    } catch (caught) {
+      setError(userFacingApiError(caught, "Unable to load asset versions."));
+    } finally {
+      setLoadingVersionAssetIds((current) => {
+        const next = new Set(current);
+        next.delete(assetId);
+        return next;
+      });
+    }
+  }
+
+  async function refreshVersionState(assetId: string) {
+    await reload();
+    await loadVersions(assetId, true);
+  }
+
+  async function uploadVersion(file: File) {
+    const target = versionUploadTargetRef.current;
+    versionUploadTargetRef.current = null;
+    if (!target) return;
+    setBusyId(target.id);
+    try {
+      await uploadDocumentVersion(target.id, file, file.name);
+      setViewingVersionId(null);
+      await refreshVersionState(target.id);
+    } catch (caught) {
+      setError(userFacingApiError(caught, "Version upload failed."));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function download(file: Document, versionId?: string | null) {
     setBusyId(file.id);
     try {
-      const resolved = await getWorkflowReferenceUrl(workflowId, file.id);
+      const resolved = await getDocumentUrl(file.id, versionId);
       const anchor = document.createElement("a");
       anchor.href = resolved.url;
       anchor.download = resolved.filename || file.filename;
@@ -192,20 +266,20 @@ export const WorkflowReferenceFiles = forwardRef<
     }
   }
 
-  async function view(file: WorkflowReferenceDocument) {
-    setBusyId(file.id);
-    try {
-      const resolved = await getWorkflowReferenceUrl(workflowId, file.id);
-      const anchor = document.createElement("a");
-      anchor.href = resolved.url;
-      anchor.target = "_blank";
-      anchor.rel = "noopener noreferrer";
-      anchor.click();
-    } catch (caught) {
-      setError(userFacingApiError(caught, "File could not be opened."));
-    } finally {
-      setBusyId(null);
-    }
+  function view(file: Document) {
+    setViewingFileId(file.id);
+    setViewingVersionId(null);
+  }
+
+  async function deleteAsset(file: Document) {
+    await deleteWorkflowAsset(workflowId, file.id);
+    setFiles((current) => current.filter((item) => item.id !== file.id));
+    setViewingFileId((current) => (current === file.id ? null : current));
+    setVersionsByAssetId((current) => {
+      const next = new Map(current);
+      next.delete(file.id);
+      return next;
+    });
   }
 
   async function confirmRemove() {
@@ -214,8 +288,7 @@ export const WorkflowReferenceFiles = forwardRef<
     setDeleteStatus("loading");
     setBusyId(file.id);
     try {
-      await deleteWorkflowReferenceFile(workflowId, file.id);
-      setFiles((current) => current.filter((item) => item.id !== file.id));
+      await deleteAsset(file);
     } catch (caught) {
       setError(userFacingApiError(caught, "Delete failed."));
     } finally {
@@ -224,6 +297,11 @@ export const WorkflowReferenceFiles = forwardRef<
       setDeleteStatus("idle");
     }
   }
+
+  const viewingFile = files.find((file) => file.id === viewingFileId) ?? null;
+  const viewingVersions = viewingFile
+    ? versionsByAssetId.get(viewingFile.id)
+    : undefined;
 
   return (
     <>
@@ -240,14 +318,14 @@ export const WorkflowReferenceFiles = forwardRef<
         }}
       />
       <input
-        ref={replaceInputRef}
+        ref={versionUploadInputRef}
         type="file"
         accept={SUPPORTED_DOCUMENT_ACCEPT}
         className="hidden"
         onChange={(event) => {
           const file = event.target.files?.[0];
           event.target.value = "";
-          if (file) void replace(file);
+          if (file) void uploadVersion(file);
         }}
       />
       {error && (
@@ -256,7 +334,7 @@ export const WorkflowReferenceFiles = forwardRef<
       <TableScrollArea
         header={
           <TableHeaderRow>
-            <TableStickyCell header widthClassName={REFERENCE_NAME_COL_W}>
+            <TableStickyCell header widthClassName={ASSET_NAME_COL_W}>
               Name
             </TableStickyCell>
             <TableHeaderCell className="ml-auto w-20">Type</TableHeaderCell>
@@ -272,7 +350,7 @@ export const WorkflowReferenceFiles = forwardRef<
               <TableRow key={index} interactive={false}>
                 <TableStickyCell
                   hover={false}
-                  widthClassName={REFERENCE_NAME_COL_W}
+                  widthClassName={ASSET_NAME_COL_W}
                 >
                   <SkeletonLine className="mr-2 h-4 w-4" />
                   <SkeletonLine className="w-48" />
@@ -293,15 +371,26 @@ export const WorkflowReferenceFiles = forwardRef<
         ) : files.length === 0 ? (
           <TableEmptyState>
             <EmptyState
-              title="Reference files"
-              description="Upload files that this workflow can reference when it runs."
+              title="Assets"
+              description="Upload assets that this workflow can use when it runs."
             />
           </TableEmptyState>
         ) : (
           <TableBody>
             {files.map((file) => (
-              <TableRow key={file.id} interactive={false}>
-                <TableStickyCell widthClassName={REFERENCE_NAME_COL_W}>
+              <TableRow
+                key={file.id}
+                data-document-row
+                role="button"
+                tabIndex={0}
+                onClick={() => view(file)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  view(file);
+                }}
+              >
+                <TableStickyCell widthClassName={ASSET_NAME_COL_W}>
                   <FileTypeIcon
                     fileType={file.file_type || file.filename}
                     className="mr-2 h-4 w-4"
@@ -324,17 +413,17 @@ export const WorkflowReferenceFiles = forwardRef<
                   onClick={(event) => event.stopPropagation()}
                 >
                   <RowActions
-                    onView={() => void view(file)}
+                    onView={() => view(file)}
                     onDownload={() => void download(file)}
                     onUploadNewVersion={
                       readOnly
                         ? undefined
                         : () => {
-                            replaceTargetRef.current = file;
-                            replaceInputRef.current?.click();
+                            versionUploadTargetRef.current = file;
+                            versionUploadInputRef.current?.click();
                           }
                     }
-                    uploadNewVersionLabel="Replace file"
+                    uploadNewVersionLabel="Upload new version"
                     onDelete={
                       readOnly ? undefined : () => setPendingDeleteFile(file)
                     }
@@ -346,9 +435,49 @@ export const WorkflowReferenceFiles = forwardRef<
           </TableBody>
         )}
       </TableScrollArea>
+      <DocumentSidePanel
+        doc={viewingFile}
+        readOnly={readOnly}
+        versionId={viewingVersionId}
+        currentVersionId={viewingVersions?.currentVersionId ?? null}
+        versions={viewingVersions?.versions ?? []}
+        versionsLoading={
+          viewingFile ? loadingVersionAssetIds.has(viewingFile.id) : false
+        }
+        onClose={() => setViewingFileId(null)}
+        onLoadVersions={(assetId) => loadVersions(assetId)}
+        onSelectVersion={(versionId) => setViewingVersionId(versionId)}
+        onDownloadDocument={async () => {
+          if (viewingFile) await download(viewingFile);
+        }}
+        onDownloadVersion={async (_assetId, versionId) => {
+          if (viewingFile) await download(viewingFile, versionId);
+        }}
+        onRenameVersion={async (assetId, versionId, filename) => {
+          await renameDocumentVersion(assetId, versionId, filename);
+          await refreshVersionState(assetId);
+        }}
+        onDeleteVersion={async (assetId, versionId) => {
+          const result = await deleteDocumentVersion(assetId, versionId);
+          setViewingVersionId(result.current_version_id);
+          await refreshVersionState(assetId);
+        }}
+        onUploadNewVersion={async (asset, file, filename) => {
+          await uploadDocumentVersion(asset.id, file, filename);
+          setViewingVersionId(null);
+          await refreshVersionState(asset.id);
+        }}
+        onReplaceVersion={async (assetId, versionId, file, filename) => {
+          await replaceDocumentVersionFile(assetId, versionId, file, filename);
+          await refreshVersionState(assetId);
+        }}
+        onDelete={async (asset) => {
+          await deleteAsset(asset);
+        }}
+      />
       <ConfirmPopup
         open={pendingDeleteFile !== null}
-        title="Delete reference file?"
+        title="Delete asset?"
         message={
           pendingDeleteFile ? (
             <p>

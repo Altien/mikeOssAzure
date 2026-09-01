@@ -300,7 +300,6 @@ export async function buildUserAccountExport(
         projects,
         standaloneDocuments,
         workflows,
-        workflowReferenceDocuments,
         defaultWorkflowInstallations,
         quickActions,
         workflowOpenSourceSubmissions,
@@ -332,9 +331,6 @@ export async function buildUserAccountExport(
                 .order("created_at", { ascending: true }),
         ),
         selectAll(db, "workflows", (query) =>
-            query.eq("user_id", userId).order("created_at", { ascending: true }),
-        ),
-        selectAll(db, "workflow_reference_documents", (query) =>
             query.eq("user_id", userId).order("created_at", { ascending: true }),
         ),
         selectAll(db, "default_workflow_installations", (query) =>
@@ -427,7 +423,6 @@ export async function buildUserAccountExport(
         document_versions: versions,
         document_edits: edits,
         workflows,
-        workflow_reference_documents: workflowReferenceDocuments,
         default_workflow_installations: defaultWorkflowInstallations,
         quick_actions: quickActions,
         workflow_open_source_submissions: workflowOpenSourceSubmissions,

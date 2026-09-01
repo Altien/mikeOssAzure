@@ -270,10 +270,14 @@ test("file upload type validation — .txt file is rejected", async ({ page }) =
      *       its intentional 410 response.
      */
 
-    /* Open the Add Documents modal. The "Add Documents" button only renders
-       once ProjectPage has loaded the project. */
-    const addDocsBtn = page.getByRole("button", { name: "Add Documents" });
-    await waitForProjectLoaded(page, addDocsBtn);
+    /* The project header now exposes document actions from an Upload menu.
+       Its icon-only trigger contains the upload SVG, unlike the empty-state
+       Upload button, which keeps this selector unambiguous. */
+    const uploadMenuBtn = page
+        .getByRole("button", { name: "Upload", exact: true })
+        .filter({ has: page.locator("svg.lucide-upload") })
+        .first();
+    await waitForProjectLoaded(page, uploadMenuBtn);
 
     /* (b) Server-side rejection on the active protocol — REGRESSION: fails if
        type validation is removed from upload-session manifest parsing. */
@@ -342,7 +346,8 @@ test("file upload type validation — .txt file is rejected", async ({ page }) =
     });
 
     /* (a) UI-side filtering with a visible warning. */
-    await addDocsBtn.click();
+    await uploadMenuBtn.click();
+    await page.getByRole("menuitem", { name: "Saved files" }).click();
 
     const fileChooserPromise = page.waitForEvent("filechooser");
     /* The Upload button label is "Upload" (not "Uploading…") when idle */

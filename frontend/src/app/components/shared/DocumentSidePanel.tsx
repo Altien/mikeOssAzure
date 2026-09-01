@@ -22,12 +22,9 @@ import { GlassIconButton } from "@/app/components/ui/glass-icon-button";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import type { Document } from "@/app/components/shared/types";
-import {
-    isDocxFilename,
-    isSpreadsheetFilename,
-} from "@/app/components/shared/types";
 import type { DocumentVersion } from "@/app/lib/mikeApi";
 import { cn } from "@/app/lib/utils";
+import { resolveDocumentViewType } from "@/app/lib/documentViewType";
 import {
     LIQUID_FLOAT_PANEL_SURFACE_CLASS,
     LIQUID_GLASS_FLAT_CLASS,
@@ -45,6 +42,8 @@ const MAX_PANEL_WIDTH = 1180;
 
 interface DocumentSidePanelProps {
     doc: Document | null;
+    displayUrl?: string | null;
+    readOnly?: boolean;
     versionId?: string | null;
     currentVersionId?: string | null;
     versions: DocumentVersion[];
@@ -82,6 +81,8 @@ interface DocumentSidePanelProps {
 
 export function DocumentSidePanel({
     doc,
+    displayUrl,
+    readOnly = false,
     versionId,
     currentVersionId,
     versions,
@@ -89,6 +90,7 @@ export function DocumentSidePanel({
     onClose,
     onLoadVersions,
     onSelectVersion,
+    onDownloadDocument,
     onDownloadVersion,
     onRenameVersion,
     onDeleteVersion,
@@ -157,8 +159,11 @@ export function DocumentSidePanel({
     useEffect(() => {
         if (!doc) return;
         setUploadError(null);
-        void onLoadVersions(doc.id);
-    }, [doc?.id]);
+        if (!readOnly) void onLoadVersions(doc.id);
+        // The selected document is the fetch identity; callers commonly pass
+        // an inline adapter for onLoadVersions.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [doc?.id, readOnly]);
 
     useEffect(() => {
         setEditingName(false);
@@ -241,11 +246,10 @@ export function DocumentSidePanel({
         selectedVersion != null
             ? fileTypeForVersion(selectedVersion, doc.file_type)
             : doc.file_type;
-    const selectedFileTypeKey = selectedFileType?.toLowerCase() ?? "";
-    const selectedIsDocx =
-        isDocxFilename(selectedFilename) ||
-        selectedFileTypeKey === "docx" ||
-        selectedFileTypeKey === "doc";
+    const selectedViewType = resolveDocumentViewType({
+        filename: selectedFilename,
+        fileType: selectedFileType,
+    });
     const selectedSizeBytes =
         selectedVersion?.size_bytes === undefined
             ? doc.size_bytes
@@ -534,17 +538,19 @@ export function DocumentSidePanel({
                     )}
                 >
                     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                        {isSpreadsheetFilename(selectedFilename) ? (
+                        {selectedViewType === "spreadsheet" ? (
                             <SpreadsheetView
                                 key={`${selectedVersionId ?? "current"}:${selectedUploadedAt ?? ""}:${selectedSizeBytes ?? ""}`}
                                 documentId={doc.id}
                                 versionId={selectedVersionId}
+                                displayUrl={displayUrl}
                             />
-                        ) : selectedIsDocx ? (
+                        ) : selectedViewType === "docx" ? (
                             <DocxView
                                 key={`${selectedVersionId ?? "current"}:${selectedUploadedAt ?? ""}:${selectedSizeBytes ?? ""}`}
                                 documentId={doc.id}
                                 versionId={selectedVersionId}
+                                displayUrl={displayUrl}
                             />
                         ) : (
                             <PdfView
@@ -553,6 +559,7 @@ export function DocumentSidePanel({
                                     document_id: doc.id,
                                     version_id: selectedVersionId,
                                 }}
+                                displayUrl={displayUrl}
                             />
                         )}
                     </div>
@@ -569,7 +576,7 @@ export function DocumentSidePanel({
 
                 <aside
                     className={cn(
-                        "mx-5 mt-2 min-h-0 flex-col",
+                        "mt-2 mr-3 ml-5 min-h-0 flex-col",
                         mobilePane === "details" ? "flex" : "hidden md:flex",
                     )}
                 >
@@ -624,7 +631,7 @@ export function DocumentSidePanel({
                                 <div className="min-w-0 flex-1 truncate text-xs leading-6 text-gray-800">
                                     {selectedFilename}
                                 </div>
-                                {selectedVersionId && (
+                                {selectedVersionId && !readOnly && (
                                     <button
                                         type="button"
                                         onClick={() => {
@@ -687,9 +694,11 @@ export function DocumentSidePanel({
                         </div>
                     </div>
 
-                    <div className="mb-2 mt-4 shrink-0 text-xs font-medium text-gray-900">
-                        Versions
-                    </div>
+                    {!readOnly && (
+                        <>
+                            <div className="mb-2 mt-4 shrink-0 text-xs font-medium text-gray-900">
+                                Versions
+                            </div>
                     <div className="-mx-2 min-h-0 flex-1 overflow-y-auto px-2 py-2">
                             {versionsLoading && versions.length === 0 ? (
                                 <div className="space-y-1.5">
@@ -708,23 +717,27 @@ export function DocumentSidePanel({
                                     No version history.
                                 </div>
                             ) : (
-                                <div className="space-y-1.5">
-                                    {uploading && <VersionUploadSkeleton />}
-                                    {orderedVersions.map((version) => {
-                                        const title = versionTitleFor(version);
-                                        const filename =
-                                            versionFilenameFor(version);
-                                        const selected =
-                                            selectedVersionId === version.id;
-                                        const deleted =
-                                            version.deleted_at != null;
-                                        const versionDeleting =
-                                            deletingVersionId === version.id;
-                                        const versionReplacing =
-                                            replacingVersionId === version.id;
-                                        return (
-                                            <div
-                                                key={version.id}
+                                    <div className="space-y-1.5">
+                                        {uploading && <VersionUploadSkeleton />}
+                                        {orderedVersions.map((version) => {
+                                            const title =
+                                                versionTitleFor(version);
+                                            const filename =
+                                                versionFilenameFor(version);
+                                            const selected =
+                                                selectedVersionId ===
+                                                version.id;
+                                            const deleted =
+                                                version.deleted_at != null;
+                                            const versionDeleting =
+                                                deletingVersionId ===
+                                                version.id;
+                                            const versionReplacing =
+                                                replacingVersionId ===
+                                                version.id;
+                                            return (
+                                                <div
+                                                    key={version.id}
                                                 role="button"
                                                 tabIndex={0}
                                                 onClick={() => {
@@ -734,13 +747,14 @@ export function DocumentSidePanel({
                                                         filename,
                                                     );
                                                 }}
-                                                onKeyDown={(event) => {
-                                                    if (deleted) return;
-                                                    if (
-                                                        event.key !== "Enter" &&
-                                                        event.key !== " "
-                                                    )
-                                                        return;
+                                                    onKeyDown={(event) => {
+                                                        if (deleted) return;
+                                                        if (
+                                                            event.key !==
+                                                                "Enter" &&
+                                                            event.key !== " "
+                                                        )
+                                                            return;
                                                     event.preventDefault();
                                                     onSelectVersion(
                                                         version.id,
@@ -792,13 +806,14 @@ export function DocumentSidePanel({
                                                               ).toLocaleString()
                                                             : "—"}
                                                     </div>
-                                                    <div
-                                                        className={cn(
-                                                            "flex h-5 shrink-0 items-center gap-0.5 transition-opacity",
-                                                            deleted || selected
-                                                                ? "opacity-100"
-                                                                : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
-                                                        )}
+                                                        <div
+                                                            className={cn(
+                                                                "flex h-5 shrink-0 items-center gap-0.5 transition-opacity",
+                                                                deleted ||
+                                                                    selected
+                                                                    ? "opacity-100"
+                                                                    : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+                                                            )}
                                                     >
                                                         {deleted ? (
                                                             <span className="text-[11px] font-medium text-gray-800">
@@ -892,9 +907,11 @@ export function DocumentSidePanel({
                                             </div>
                                         );
                                     })}
-                                </div>
-                            )}
-                    </div>
+                                    </div>
+                                )}
+                            </div>
+                        </>
+                    )}
 
                     {uploadError && (
                         <div className="mx-4 mb-2 flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-gray-900">
@@ -909,9 +926,21 @@ export function DocumentSidePanel({
                             "bg-white/25",
                         )}
                     >
-                        <input
-                            ref={fileInputRef}
-                            type="file"
+                        {readOnly ? (
+                            <PillButton
+                                tone="white"
+                                size="normal"
+                                onClick={() => void onDownloadDocument(doc.id)}
+                                className="ml-auto"
+                            >
+                                <Download className="h-3.5 w-3.5 shrink-0" />
+                                Download
+                            </PillButton>
+                        ) : (
+                            <>
+                                <input
+                                    ref={fileInputRef}
+                                    type="file"
                             accept={newVersionAccept}
                             className="hidden"
                             onChange={handleUpload}
@@ -925,11 +954,10 @@ export function DocumentSidePanel({
                         />
                         <PillButton
                             tone="danger"
-                            size="sm"
+                            size="normal"
                             onClick={requestDeleteDocument}
                             disabled={deletingDocument}
                             className={cn(
-                                "h-8 px-3",
                                 !canDelete &&
                                     "cursor-not-allowed opacity-45 active:scale-100",
                             )}
@@ -946,20 +974,23 @@ export function DocumentSidePanel({
                             )}
                             Delete
                         </PillButton>
-                        <PillButton
-                            tone="blue"
-                            size="sm"
-                            onClick={() => fileInputRef.current?.click()}
-                            disabled={uploading}
-                            className="h-8 px-3"
-                        >
+                                <PillButton
+                                    tone="blue"
+                                    size="normal"
+                                    onClick={() =>
+                                        fileInputRef.current?.click()
+                                    }
+                                    disabled={uploading}
+                                >
                             {uploading ? (
                                 <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
                             ) : (
                                 <Upload className="h-3.5 w-3.5 shrink-0" />
-                            )}
-                            Upload new version
-                        </PillButton>
+                                    )}
+                                    Upload new version
+                                </PillButton>
+                            </>
+                        )}
                     </div>
                 </aside>
             </div>

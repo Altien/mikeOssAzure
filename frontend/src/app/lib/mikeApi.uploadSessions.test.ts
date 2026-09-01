@@ -9,7 +9,6 @@ import {
     UploadBatchError,
     failedUploadMessage,
     replaceDocumentVersionFile,
-    replaceWorkflowReferenceFile,
     uploadDocumentVersion,
     uploadFilesWithSession,
     uploadLibraryDocument,
@@ -18,7 +17,7 @@ import {
     uploadReviewDocument,
     uploadStandaloneDocument,
     uploadStandaloneDocuments,
-    uploadWorkflowReferenceFile,
+    uploadWorkflowAsset,
 } from "./mikeApi";
 import { uploadProcessingPollDelayMs } from "@/shared/api/uploadSessionClient";
 
@@ -941,21 +940,10 @@ describe("direct upload sessions", () => {
             destination: { document_id: "document-1", version_id: "version-1" },
         },
         {
-            name: "workflow reference",
-            run: (file: File) =>
-                uploadWorkflowReferenceFile("workflow-1", file),
-            purpose: "workflow_reference_create",
-            destination: { workflow_id: "workflow-1" },
-        },
-        {
-            name: "replacement workflow reference",
-            run: (file: File) =>
-                replaceWorkflowReferenceFile("workflow-1", "reference-1", file),
-            purpose: "workflow_reference_replace",
-            destination: {
-                workflow_id: "workflow-1",
-                reference_id: "reference-1",
-            },
+            name: "workflow asset",
+            run: (file: File) => uploadWorkflowAsset("workflow-1", file),
+            purpose: "document_create",
+            destination: { scope: "workflow", workflow_id: "workflow-1" },
         },
     ])(
         "uses an upload session for $name",

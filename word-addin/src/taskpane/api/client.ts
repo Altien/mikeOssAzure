@@ -1,10 +1,4 @@
-import type {
-  Document,
-  LibraryFolder,
-  Project,
-  Workflow,
-  WorkflowReferenceDocument,
-} from "../types";
+import type { Document, LibraryFolder, Project, Workflow } from "../types";
 import { describeNetworkFailure } from "../lib/networkError";
 import type { ReasoningLevel } from "../lib/wordChatTypes";
 import {
@@ -182,8 +176,8 @@ export type UploadRequestOptions<T> = {
 async function uploadSessionFiles<T>(args: {
   purpose:
     | "document_create"
-    | "workflow_reference_create"
-    | "workflow_reference_replace";
+    | "document_version_create"
+    | "document_version_replace";
   destination: Record<string, unknown>;
   files: File[];
   onProgress?: (progress: UploadProgress<T>) => void;
@@ -539,51 +533,45 @@ export async function createQuickAction(payload: {
   });
 }
 
-export async function listWorkflowReferenceFiles(
+export async function listWorkflowAssets(
   workflowId: string,
-): Promise<WorkflowReferenceDocument[]> {
-  return apiRequest<WorkflowReferenceDocument[]>(
-    `/workflows/${workflowId}/reference-files`,
-  );
+): Promise<Document[]> {
+  return apiRequest<Document[]>(`/workflows/${workflowId}/assets`);
 }
 
-export async function uploadWorkflowReferenceFile(
+export async function uploadWorkflowAsset(
   workflowId: string,
   file: File,
-  options?: UploadRequestOptions<WorkflowReferenceDocument>,
-): Promise<WorkflowReferenceDocument> {
+  options?: UploadRequestOptions<Document>,
+): Promise<Document> {
   return firstUploadResult(
-    await uploadWorkflowReferenceFiles(workflowId, [file], options),
+    await uploadWorkflowAssets(workflowId, [file], options),
   );
 }
 
-export async function uploadWorkflowReferenceFiles(
+export async function uploadWorkflowAssets(
   workflowId: string,
   files: File[],
-  options?: UploadRequestOptions<WorkflowReferenceDocument>,
-): Promise<UploadOutcome<WorkflowReferenceDocument>[]> {
-  return uploadSessionFiles<WorkflowReferenceDocument>({
-    purpose: "workflow_reference_create",
-    destination: { workflow_id: workflowId },
+  options?: UploadRequestOptions<Document>,
+): Promise<UploadOutcome<Document>[]> {
+  return uploadSessionFiles<Document>({
+    purpose: "document_create",
+    destination: { scope: "workflow", workflow_id: workflowId },
     files,
     onProgress: options?.onProgress,
     signal: options?.signal,
   });
 }
 
-export async function replaceWorkflowReferenceFile(
-  workflowId: string,
-  referenceId: string,
+export async function uploadWorkflowAssetVersion(
+  assetId: string,
   file: File,
-  options?: UploadRequestOptions<WorkflowReferenceDocument>,
-): Promise<WorkflowReferenceDocument> {
+  options?: UploadRequestOptions<unknown>,
+): Promise<unknown> {
   return firstUploadResult(
-    await uploadSessionFiles<WorkflowReferenceDocument>({
-      purpose: "workflow_reference_replace",
-      destination: {
-        workflow_id: workflowId,
-        reference_id: referenceId,
-      },
+    await uploadSessionFiles<unknown>({
+      purpose: "document_version_create",
+      destination: { document_id: assetId, filename: file.name },
       files: [file],
       onProgress: options?.onProgress,
       signal: options?.signal,
@@ -591,20 +579,19 @@ export async function replaceWorkflowReferenceFile(
   );
 }
 
-export async function getWorkflowReferenceUrl(
-  workflowId: string,
-  referenceId: string,
+export async function getWorkflowAssetUrl(
+  assetId: string,
 ): Promise<{ url: string; filename: string }> {
   return apiRequest<{ url: string; filename: string }>(
-    `/workflows/${workflowId}/reference-files/${referenceId}/url`,
+    `/single-documents/${assetId}/url`,
   );
 }
 
-export async function deleteWorkflowReferenceFile(
+export async function deleteWorkflowAsset(
   workflowId: string,
-  referenceId: string,
+  assetId: string,
 ): Promise<void> {
-  await apiRequest(`/workflows/${workflowId}/reference-files/${referenceId}`, {
+  await apiRequest(`/workflows/${workflowId}/assets/${assetId}`, {
     method: "DELETE",
   });
 }
