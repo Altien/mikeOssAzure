@@ -134,6 +134,7 @@ services:
       - ./backend/migrations/20260827_01_tabular_chat_model_reasoning.sql:/tabular-chat-settings-migration.sql:ro
       - ./backend/migrations/20260827_02_reasoning_max.sql:/reasoning-max-migration.sql:ro
       - ./backend/migrations/20260827_03_remove_minimal_reasoning.sql:/remove-minimal-reasoning-migration.sql:ro
+      - ./backend/migrations/20260828_02_upload_sessions.sql:/upload-sessions-migration.sql:ro
       - ./backend/migrations/20260829_01_db_jobs.sql:/db-jobs-migration.sql:ro
     entrypoint: ["bash", "-c"]
     command:
@@ -156,6 +157,7 @@ services:
         psql "$$DB" -v ON_ERROR_STOP=1 -f /tabular-chat-settings-migration.sql;
         psql "$$DB" -v ON_ERROR_STOP=1 -f /reasoning-max-migration.sql;
         psql "$$DB" -v ON_ERROR_STOP=1 -f /remove-minimal-reasoning-migration.sql;
+        psql "$$DB" -v ON_ERROR_STOP=1 -f /upload-sessions-migration.sql;
         psql "$$DB" -v ON_ERROR_STOP=1 -f /db-jobs-migration.sql;
         psql "$$DB" -c "grant usage on schema public to service_role;
           grant all privileges on all tables in schema public to service_role;
