@@ -143,8 +143,8 @@ be refreshed while the session is pending. These limits are enforced atomically
 in PostgreSQL, not only in the browser.
 
 The Express process also runs a durable upload-processing pool. By default,
-each backend replica claims up to 4 jobs concurrently while PostgreSQL limits
-each user to four active jobs across all replicas. Override these defaults with
+each backend replica claims up to 8 jobs concurrently while PostgreSQL limits
+each user to two active jobs across all replicas. Override these defaults with
 `UPLOAD_PROCESSING_CONCURRENCY` (capped at 64) and
 `UPLOAD_PROCESSING_MAX_RUNNING_PER_USER`; every claim loop polls the database,
 so raising the pool raises idle query load in proportion. Workers claim jobs
