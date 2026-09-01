@@ -3239,15 +3239,17 @@ begin
   -- Namespace the advisory key: hashtextextended(user_id, 0) with no prefix is
   -- already taken by install_missing_default_workflows, and an un-namespaced
   -- key silently serializes unrelated features against each other (see the
-  -- advisory-lock registry comment near the top of this file).
+  -- advisory-lock registry comment at the top of schema.sql).
   perform pg_advisory_xact_lock(
     hashtextextended('upload-session:' || target_user_id::text, 0)
   );
 
   -- Housekeeping runs FIRST, under the user lock: expire stale pending
-  -- sessions and error out stale verifying ones before the busy check below,
-  -- so a stale session cannot keep raising upload_target_busy until the
-  -- background sweep happens to run.
+  -- sessions and error out stale verifying ones before the busy check below.
+  -- In the earlier draft these updates sat after the busy check, so the one
+  -- branch where a stale session was exactly what blocked the caller
+  -- (upload_target_busy) rolled them back and the 409 persisted until the
+  -- 60-second background sweep happened to run.
   update public.upload_sessions
   set status = 'expired', updated_at = now()
   where user_id = target_user_id
@@ -3449,9 +3451,12 @@ begin
   -- of processing, so stamping it here is truthful. An ERROR session's
   -- objects may still exist (the worker that would have deleted them is
   -- often exactly what died), so cleaned_at must stay null — it is the
-  -- object sweeper's cursor. The write is also guarded so repeated refreshes
-  -- of an already-terminal session do not advance completed_at/updated_at,
-  -- which retention filters on.
+  -- object sweeper's cursor, and stamping it here permanently hid errored
+  -- sessions from the sweep, orphaning their sealed objects.
+  -- The write is also guarded so repeated refreshes of an already-terminal
+  -- session do not advance completed_at/updated_at: retention filters on
+  -- updated_at, and an unconditional bump let any polling client defer the
+  -- retention delete indefinitely.
   update public.upload_sessions
   set status = next_status,
       error_code = next_error_code,
@@ -3490,8 +3495,9 @@ begin
   -- Plain read: this function only needs to VALIDATE the session status, and
   -- taking FOR UPDATE here created a session->file->job lock order while
   -- claim_upload_processing_job acquires job->file->session — a genuine
-  -- deadlock cycle on the completion-retry path. Locks below are acquired
-  -- job-first to match the claim function's order.
+  -- deadlock cycle on the documented completion-retry path (reproduced live
+  -- during review). Locks below are acquired job-first to match the claim
+  -- function's order.
   select *
     into session_row
   from public.upload_sessions
@@ -3567,8 +3573,8 @@ begin
   -- Bound the candidate set BEFORE the per-row fairness work. The lateral
   -- running-count below sits under a sort, so without this cap every ready
   -- job pays a count on every poll of every worker even when nothing is
-  -- claimable. 32 candidates is plenty: a worker claims at most one job per
-  -- poll.
+  -- claimable — one 50-file batch meant 50 lateral counts x 16 workers x 1/s.
+  -- 32 candidates is plenty: a worker claims at most one job per poll.
   select array_agg(id)
     into candidate_ids
   from (

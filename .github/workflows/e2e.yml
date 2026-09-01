@@ -2,7 +2,7 @@
 #
 # This workflow is what makes the e2e suite a MERGE GATE: it runs on every pull
 # request into a protected branch, boots a full local stack (Supabase + backend
-# API + Next.js web + MinIO object storage), runs Playwright, and fails the check
+# API + Next.js web + RustFS object storage), runs Playwright, and fails the check
 # when any spec fails. To have a red run actually BLOCK a merge you must also mark
 # this job "e2e / playwright" as a required status check in branch protection —
 # see docs/e2e-ci.md ("Make it merge-blocking").
@@ -89,44 +89,47 @@ jobs:
       # project-folder fixture) and assert the result renders; those uploads go
       # through backend/src/lib/storage.ts, an S3-compatible client that only
       # ENABLES when R2_ENDPOINT_URL + R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY are
-      # set (region "auto", forcePathStyle true — MinIO-compatible as written).
+      # set (region "auto", forcePathStyle true — S3-compatible as written).
       # With no storage the upload endpoint 5xxs and the row never appears. A
-      # `docker run` (not a `services:` container) is used because the minio image
-      # needs the `server /data` argument the services block can't supply, and we
-      # must create the bucket after the server is healthy.
-      - name: Start MinIO (object storage)
+      # A `docker run` (not a `services:` container) keeps storage startup and
+      # bucket creation together after the server is healthy.
+      - name: Start RustFS (object storage)
         run: |
-          docker run -d --name minio -p 9000:9000 \
-            -e MINIO_ROOT_USER=minioadmin \
-            -e MINIO_ROOT_PASSWORD=minioadmin \
-            minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+          docker run -d --name rustfs -p 9000:9000 \
+            -e RUSTFS_VOLUMES=/data \
+            -e RUSTFS_ADDRESS=0.0.0.0:9000 \
+            -e RUSTFS_CONSOLE_ENABLE=false \
+            -e RUSTFS_ACCESS_KEY=rustfsadmin \
+            -e RUSTFS_SECRET_KEY=rustfsadmin \
+            rustfs/rustfs:latest
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:9000/minio/health/ready >/dev/null; then
-              echo "MinIO ready"; break
+            if AWS_ACCESS_KEY_ID=rustfsadmin \
+               AWS_SECRET_ACCESS_KEY=rustfsadmin \
+               AWS_DEFAULT_REGION=us-east-1 \
+                 aws --endpoint-url http://localhost:9000 s3 ls >/dev/null 2>&1; then
+              echo "RustFS ready"; break
             fi
-            echo "waiting for minio ($i)…"; sleep 2
+            echo "waiting for RustFS ($i)…"; sleep 2
           done
-          AWS_ACCESS_KEY_ID=minioadmin \
-          AWS_SECRET_ACCESS_KEY=minioadmin \
+          AWS_ACCESS_KEY_ID=rustfsadmin \
+          AWS_SECRET_ACCESS_KEY=rustfsadmin \
           AWS_DEFAULT_REGION=us-east-1 \
             aws --endpoint-url http://localhost:9000 s3 mb s3://mike
           # CI must exercise the SAME bucket CORS policy that docker-compose and
-          # the production runbook install (docker/storage-cors.json). The
-          # MINIO_API_CORS_ALLOW_ORIGIN env var this replaced constrains only the
-          # origin — not methods or headers — so it is strictly more permissive
-          # than the real policy: a change that added a request header to the
-          # storage PUT would pass CI and then fail locally and in production.
-          AWS_ACCESS_KEY_ID=minioadmin \
-          AWS_SECRET_ACCESS_KEY=minioadmin \
+          # the production runbook install (docker/storage-cors.json). A change
+          # that adds a request header to the storage PUT must fail CI
+          # if the deployed CORS policy does not allow it.
+          AWS_ACCESS_KEY_ID=rustfsadmin \
+          AWS_SECRET_ACCESS_KEY=rustfsadmin \
           AWS_DEFAULT_REGION=us-east-1 \
             aws --endpoint-url http://localhost:9000 s3api put-bucket-cors \
               --bucket mike --cors-configuration file://docker/storage-cors.json
-          AWS_ACCESS_KEY_ID=minioadmin \
-          AWS_SECRET_ACCESS_KEY=minioadmin \
+          AWS_ACCESS_KEY_ID=rustfsadmin \
+          AWS_SECRET_ACCESS_KEY=rustfsadmin \
           AWS_DEFAULT_REGION=us-east-1 \
             aws --endpoint-url http://localhost:9000 s3api get-bucket-cors --bucket mike
-          AWS_ACCESS_KEY_ID=minioadmin \
-          AWS_SECRET_ACCESS_KEY=minioadmin \
+          AWS_ACCESS_KEY_ID=rustfsadmin \
+          AWS_SECRET_ACCESS_KEY=rustfsadmin \
           AWS_DEFAULT_REGION=us-east-1 \
             aws --endpoint-url http://localhost:9000 s3 ls s3://mike
 
@@ -145,7 +148,7 @@ jobs:
         run: |
           supabase init --force --with-vscode-settings=false || supabase init --force
           # E2E uses Auth, Postgres, PostgREST, and Kong only. Document storage
-          # is provided by MinIO above, and no spec reads local email. Excluding
+          # is provided by RustFS above, and no spec reads local email. Excluding
           # the unused services also avoids Inbucket claiming host port 54324,
           # which can collide with runner processes before Playwright starts.
           supabase start -x studio,imgproxy,inbucket,analytics,vector,realtime,storage,edge-runtime,functions,meta
@@ -197,10 +200,10 @@ jobs:
             echo "RATE_LIMIT_AUTH_EMAIL_MAX=100000"
             echo "RATE_LIMIT_AUTH_FLOW_MAX=100000"
             echo "RATE_LIMIT_AUTH_MFA_MAX=100000"
-            # Point the S3-compatible storage adapter at the MinIO container above.
+            # Point the S3-compatible storage adapter at the RustFS container above.
             echo "R2_ENDPOINT_URL=http://localhost:9000"
-            echo "R2_ACCESS_KEY_ID=minioadmin"
-            echo "R2_SECRET_ACCESS_KEY=minioadmin"
+            echo "R2_ACCESS_KEY_ID=rustfsadmin"
+            echo "R2_SECRET_ACCESS_KEY=rustfsadmin"
             echo "R2_BUCKET_NAME=mike"
             # Keep the release-job fixture reproducible even when the source
             # repository's main branch changes independently of this PR.

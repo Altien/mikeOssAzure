@@ -16,7 +16,10 @@ beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "mike-convert-test-"));
   // Stand in for a soffice process that never exits.
   const binary = join(directory, "soffice");
-  await writeFile(binary, "#!/bin/sh\nsleep 30\n");
+  // Replace the shell with the sleeper so SIGKILL targets the process holding
+  // the stdio pipes too. Otherwise the orphaned `sleep` keeps stderr open and
+  // Node cannot emit `close` until the full 30 seconds have elapsed.
+  await writeFile(binary, "#!/bin/sh\nexec sleep 30\n");
   await chmod(binary, 0o755);
   process.env.SOFFICE_BINARY_PATH = binary;
   vi.resetModules();
