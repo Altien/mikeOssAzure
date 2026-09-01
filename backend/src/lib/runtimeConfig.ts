@@ -54,13 +54,13 @@ export function uploadProcessingConfiguration(
   env: NodeJS.ProcessEnv = process.env,
 ) {
   const concurrency = Math.min(
-    envInt("UPLOAD_PROCESSING_CONCURRENCY", 4, env),
+    envInt("UPLOAD_PROCESSING_CONCURRENCY", 8, env),
     64,
   );
   return {
     concurrency,
     maxRunningPerUser: Math.min(
-      envInt("UPLOAD_PROCESSING_MAX_RUNNING_PER_USER", 4, env),
+      envInt("UPLOAD_PROCESSING_MAX_RUNNING_PER_USER", 2, env),
       concurrency,
     ),
   };

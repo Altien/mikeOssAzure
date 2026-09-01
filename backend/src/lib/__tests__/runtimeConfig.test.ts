@@ -95,10 +95,10 @@ describe("upload-session rate-limit configuration", () => {
 });
 
 describe("upload-processing configuration", () => {
-  it("uses a four-job pool with at most four active jobs per user by default", () => {
+  it("uses an eight-job pool with at most two active jobs per user by default", () => {
     expect(uploadProcessingConfiguration({})).toEqual({
-      concurrency: 4,
-      maxRunningPerUser: 4,
+      concurrency: 8,
+      maxRunningPerUser: 2,
     });
   });
 
@@ -121,7 +121,7 @@ describe("upload-processing configuration", () => {
       }),
     ).toEqual({
       concurrency: 64,
-      maxRunningPerUser: 4,
+      maxRunningPerUser: 2,
     });
   });
 });
