@@ -2,7 +2,7 @@
 
 **Status: resolved.**
 
-## Customer report (2026-07, backend:1.0.9, marketplace deploy, West US 2)
+## Customer report (2026-07, backend:1.0.9, template deploy, West US 2)
 
 Clicking Download (Projects → Documents → "…" → Download) returned HTTP 503
 with the Envoy body "upstream connect error … delayed connect error". Container
@@ -19,10 +19,10 @@ null by design) — but the symptoms and crash mechanism were accurate.
 2. `getSecret()` deliberately throws when `NODE_ENV=production` and
    `DOWNLOAD_SIGNING_SECRET` is unset (fail-loud instead of signing with the
    forgeable dev fallback).
-3. The marketplace template set `NODE_ENV=production` but nothing ever
+3. The deployment template set `NODE_ENV=production` but nothing ever
    provisioned `DOWNLOAD_SIGNING_SECRET` — not a Container App secretRef, not
-   a Key Vault seed, not the install configurator. Every marketplace install
-   had this landmine.
+   a Key Vault seed, not the install configurator. Every template-based
+   install had this landmine.
 4. The throw happened inside an `async` Express 4 handler. Express 4 does not
    catch async rejections and there was no process-level guard, so Node killed
    the container with exit 1. Container Apps restarted it; ingress served 503
@@ -40,8 +40,8 @@ verify tokens too, so they were the same landmine.
    `download-signing-secret` (newGuid on first deploy; pass the existing KV
    value on redeploys or previously issued links stop validating — same
    contract as `mcp-connectors-encryption-key`). Compiles into the
-   marketplace template via `package-marketplace.ps1`. Not in
-   `reset-install.ps1`'s wipe list, so /install resets preserve it.
+   deployment template. Not in the installer's wipe list, so /install
+   resets preserve it.
 2. **Boot warm-up** — `initDownloadSigningSecret()` in `downloadTokens.ts`
    resolves the KV value into `process.env` before `app.listen()`
    (index.ts). No secretRef env wiring, per the redeploy-clobber rationale

@@ -1,33 +1,35 @@
 # Installation helpers
 
-These PowerShell 7 scripts support the manual Azure installation documented
-in [`docs/azure-prereqs.md`](../../docs/azure-prereqs.md). They are optional:
-operators can perform the same actions directly with Azure CLI and Microsoft
-Graph.
+This directory is a mount point for operator PowerShell scripts supporting
+the manual Azure installation documented in
+[`docs/azure-prereqs.md`](../../docs/azure-prereqs.md). **It ships empty.**
 
-The backend also serves eligible helpers through
-`GET /install/scripts/:name`, allowing the `/install` configurator to offer
-the appropriate download beside each setup step.
+The backend serves any script placed here through
+`GET /install/scripts/:name`, so the `/install` configurator can offer a
+download beside the relevant setup step. Only filenames matching
+`^[a-z][a-z0-9-]+\.ps1$` are served, and nothing outside this directory is
+reachable through that route.
 
-## Requirements
+When the directory holds no scripts — the default — the route returns 404
+with an explanatory message and the configurator's download buttons degrade
+cleanly. Nothing breaks; the buttons simply have nothing to offer.
+
+## Supplying your own
+
+Drop `.ps1` files here at image build time; the `Dockerfile` copies them
+into the image and they are served as-is. Typical helpers cover creating the
+Entra app registrations, updating redirect URIs after a hostname change,
+granting a managed identity ownership of an app registration, connecting
+Azure OpenAI, clearing installer state for recovery, and removing temporary
+installer access — all actions an operator can equally perform directly with
+Azure CLI and Microsoft Graph.
+
+## Requirements for scripts placed here
 
 - PowerShell 7 (`pwsh`)
 - Azure CLI (`az`)
 - An interactive `az login` for the target tenant and subscription
-- The directory permissions described by each script
 
-## Scripts
-
-- `create-entra-apps.ps1` — create and configure the API and web app
-  registrations.
-- `register-redirect-uris.ps1` — update both application and installer
-  callback URLs after a hostname change.
-- `grant-uami-app-reg-ownership.ps1` — grant a managed identity ownership of
-  the web app registration.
-- `setup-aoai.ps1` — connect or provision Azure OpenAI.
-- `reset-install.ps1` — clear installer state for recovery.
-- `revoke-installer-access.ps1` — remove temporary installer access.
-
-Review a script before running it. Values are read from parameters, the
-operator's Azure session, and the named Key Vault; no tenant IDs,
-credentials, hostnames, or subscription IDs are embedded in these files.
+Keep tenant IDs, credentials, hostnames and subscription IDs out of the
+files themselves — take them as parameters, or read them from the operator's
+Azure session and the named Key Vault at run time.
