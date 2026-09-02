@@ -163,6 +163,32 @@ async function toApiError(response: Response, path: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Help
+// ---------------------------------------------------------------------------
+
+export type HelpArticleSummary = {
+    slug: string;
+    title: string;
+};
+
+export type HelpArticle = HelpArticleSummary & {
+    markdown: string;
+};
+
+export async function listHelpArticles(): Promise<HelpArticleSummary[]> {
+    const result = await apiRequest<{ articles: HelpArticleSummary[] }>(
+        "/help/articles",
+    );
+    return result.articles;
+}
+
+export async function getHelpArticle(slug: string): Promise<HelpArticle> {
+    return apiRequest<HelpArticle>(
+        `/help/articles/${encodeURIComponent(slug)}`,
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Projects
 // ---------------------------------------------------------------------------
 

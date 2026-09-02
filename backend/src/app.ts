@@ -23,6 +23,7 @@ import { diagnosticsRouter } from "./routes/diagnostics";
 import { installRouter } from "./routes/install";
 import { configRouter } from "./routes/config";
 import { caseLawRouter } from "./routes/caseLaw";
+import { helpRouter } from "./routes/help";
 import { diagRouter } from "./routes/diag";
 
 // ── Rate-limit configuration (from upstream ba6f771) ───────────────────────
@@ -261,6 +262,7 @@ export function buildApp(): express.Express {
   app.use("/api/users", userRouter);
   app.use("/api/download", downloadsRouter);
   app.use("/api/case-law", caseLawRouter);
+  app.use("/api/help", helpRouter);
   app.use("/api/auth", authRouter);
   app.use("/api/llm", llmRouter);
   app.use("/api/admin/diagnostics", diagnosticsRouter);

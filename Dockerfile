@@ -91,6 +91,9 @@ COPY --from=backend-builder /app/dist ./dist
 COPY --from=frontend-builder /app/out ./public
 # Migration files travel with the image so the migrate job uses the same artifact.
 COPY backend/migrations ./migrations
+# User-facing help guides, served by GET /api/help/articles. Only docs/help
+# ships — the rest of docs/ is written for contributors and operators.
+COPY docs/help ./docs/help
 # /install serves operator scripts from /app/scripts/install at request time
 # (see GET /install/scripts/:name). Companion docs live alongside.
 COPY scripts/install ./scripts/install
