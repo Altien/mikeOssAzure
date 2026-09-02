@@ -7,7 +7,7 @@
 //      not from `process.env.SUPABASE_SECRET_KEY` or similar fallbacks.
 //      `getConfig()` handles env-var override for local dev / tests so
 //      the secret can still be set inline when there's no KV reachable.
-//      Marketplace installs provision the durable Key Vault secret in Bicep.
+//      Template-deployed installs provision the durable secret in Bicep.
 //
 //   2. Provider set is dev's full set: `claude | gemini | openai |
 //      azure_openai` (upstream supports only the first two). The
