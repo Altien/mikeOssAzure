@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 420" role="img" aria-labelledby="title desc">
+  <title id="title">Mike OSS — Altien loves Azure</title>
+  <desc id="desc">Mike OSS lock-up with the full-spectrum Mike flower and an Altien heart Azure endorsement line.</desc>
+  <defs>
+    <path id="blade" d="M 40,0 A 4,4 0 0 1 43,-3 Q 95,-22 147,-3 A 4,4 0 0 1 150,0 A 4,4 0 0 1 147,3 Q 95,22 43,3 A 4,4 0 0 1 40,0 Z"/>
+    <path id="heart" d="M 0,-26 C -38,-68 -96,-42 -96,12 C -96,54 -50,84 0,122 C 50,84 96,54 96,12 C 96,-42 38,-68 0,-26 Z"/>
+  </defs>
+
+  <rect width="1600" height="420" fill="#ffffff"/>
+
+  <g transform="translate(185 210) scale(.72)">
+    <use href="#blade" fill="#16c7e8" transform="rotate(0)"/>
+    <use href="#blade" fill="#11d8d1" transform="rotate(30)"/>
+    <use href="#blade" fill="#16e59a" transform="rotate(60)"/>
+    <use href="#blade" fill="#58e84b" transform="rotate(90)"/>
+    <use href="#blade" fill="#b7ee18" transform="rotate(120)"/>
+    <use href="#blade" fill="#f2ea00" transform="rotate(150)"/>
+    <use href="#blade" fill="#ffb21c" transform="rotate(180)"/>
+    <use href="#blade" fill="#ff6f3c" transform="rotate(210)"/>
+    <use href="#blade" fill="#f23baa" transform="rotate(240)"/>
+    <use href="#blade" fill="#e000c8" transform="rotate(270)"/>
+    <use href="#blade" fill="#a84dff" transform="rotate(300)"/>
+    <use href="#blade" fill="#4e74ff" transform="rotate(330)"/>
+  </g>
+
+  <text x="360" y="190" fill="#3850a8" font-family="Segoe UI, Arial, sans-serif" font-size="104" font-weight="700" letter-spacing="-4">Mike OSS</text>
+
+  <text x="430" y="258" fill="#3850a8" font-family="Segoe UI, Arial, sans-serif" font-size="44" font-weight="600">Altien</text>
+  <g transform="translate(584 238) scale(.22)">
+    <use href="#heart" fill="#e03090"/>
+  </g>
+  <text x="630" y="258" fill="#0078d4" font-family="Segoe UI, Arial, sans-serif" font-size="44" font-weight="500">Azure</text>
+  <text x="531" y="306" fill="#111111" font-family="Segoe UI, Arial, sans-serif" font-size="27" font-weight="600">LEGAL AI</text>
+</svg>

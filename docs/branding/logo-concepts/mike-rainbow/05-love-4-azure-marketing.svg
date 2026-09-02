@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 360" role="img" aria-labelledby="title desc">
+  <title id="title">Mike OSS love by Altien 4 Azure</title>
+  <desc id="desc">A playful marketing lock-up using the Mike mark and a custom Altien rainbow heart.</desc>
+  <defs>
+    <path id="blade" d="M 40,0 A 4,4 0 0 1 43,-3 Q 95,-22 147,-3 A 4,4 0 0 1 150,0 A 4,4 0 0 1 147,3 Q 95,22 43,3 A 4,4 0 0 1 40,0 Z"/>
+    <path id="heart" d="M 0,-26 C -38,-68 -96,-42 -96,12 C -96,54 -50,84 0,122 C 50,84 96,54 96,12 C 96,-42 38,-68 0,-26 Z"/>
+    <clipPath id="heart-clip"><use href="#heart"/></clipPath>
+  </defs>
+  <rect width="1400" height="360" fill="#FFFFFF"/>
+  <g transform="translate(150 180) scale(.72)">
+    <use href="#blade" fill="#16C7E8" transform="rotate(0)"/><use href="#blade" fill="#16C7E8" transform="rotate(30)"/><use href="#blade" fill="#16C7E8" transform="rotate(60)"/>
+    <use href="#blade" fill="#20E19A" transform="rotate(90)"/><use href="#blade" fill="#20E19A" transform="rotate(120)"/><use href="#blade" fill="#20E19A" transform="rotate(150)"/>
+    <use href="#blade" fill="#D7EF00" transform="rotate(180)"/><use href="#blade" fill="#D7EF00" transform="rotate(210)"/><use href="#blade" fill="#D7EF00" transform="rotate(240)"/>
+    <use href="#blade" fill="#E000C8" transform="rotate(270)"/><use href="#blade" fill="#E000C8" transform="rotate(300)"/><use href="#blade" fill="#E000C8" transform="rotate(330)"/>
+  </g>
+  <text x="300" y="158" fill="#293A51" font-family="Segoe UI, Arial, sans-serif" font-size="96" font-weight="700" letter-spacing="-3">Mike OSS</text>
+  <g transform="translate(765 128) scale(.48)">
+    <g clip-path="url(#heart-clip)">
+      <rect x="-100" y="-70" width="50" height="210" fill="#16C7E8"/>
+      <rect x="-50" y="-70" width="50" height="210" fill="#20E19A"/>
+      <rect x="0" y="-70" width="50" height="210" fill="#D7EF00"/>
+      <rect x="50" y="-70" width="50" height="210" fill="#E000C8"/>
+    </g>
+  </g>
+  <text x="835" y="158" fill="#293A51" font-family="Segoe UI, Arial, sans-serif" font-size="58" font-weight="600">by Altien</text>
+  <text x="304" y="250" fill="#6B7989" font-family="Segoe UI, Arial, sans-serif" font-size="48" font-weight="600">4 Azure</text>
+  <text x="520" y="220" fill="#293A51" font-family="Segoe UI, Arial, sans-serif" font-size="25">TM</text>
+</svg>

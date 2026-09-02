@@ -3,6 +3,20 @@
 import React, { useId } from "react";
 
 const DEGREES = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330];
+const SPECTRUM_COLORS = [
+    "#16c7e8",
+    "#11d8d1",
+    "#16e59a",
+    "#58e84b",
+    "#b7ee18",
+    "#f2ea00",
+    "#ffb21c",
+    "#ff6f3c",
+    "#f23baa",
+    "#e000c8",
+    "#a84dff",
+    "#4e74ff",
+] as const;
 const STOP_TRANSITION = "stop-color 220ms ease, stop-opacity 220ms ease";
 const FLOOD_TRANSITION = "flood-color 220ms ease, flood-opacity 220ms ease";
 
@@ -54,34 +68,49 @@ const ERROR_PALETTE: IconPalette = {
     innerOpacities: [0, 0.16, 0.08, 0],
 };
 
-function Blades({ ids }: { ids: Record<string, string> }) {
+function Blades({
+    ids,
+    spectrum,
+}: {
+    ids: Record<string, string>;
+    spectrum: boolean;
+}) {
     return (
         <g transform="translate(250, 250)">
-            {DEGREES.map((deg) => (
+            {DEGREES.map((deg, index) => (
                 <g
                     key={deg}
                     transform={`rotate(${deg})`}
-                    filter={`url(#${ids.shadow})`}
+                    filter={spectrum ? undefined : `url(#${ids.shadow})`}
                 >
-                    <use
-                        href={`#${ids.blade}`}
-                        fill={`url(#${ids.glassFill})`}
-                    />
-                    <use
-                        href={`#${ids.blade}`}
-                        fill={`url(#${ids.innerLight})`}
-                    />
-                    <use
-                        href={`#${ids.blade}`}
-                        fill={`url(#${ids.specular})`}
-                        clipPath={`url(#${ids.topClip})`}
-                    />
-                    <use
-                        href={`#${ids.blade}`}
-                        fill="none"
-                        stroke={`url(#${ids.glassBorder})`}
-                        strokeWidth="0.8"
-                    />
+                    {spectrum ? (
+                        <use
+                            href={`#${ids.blade}`}
+                            fill={SPECTRUM_COLORS[index]}
+                        />
+                    ) : (
+                        <>
+                            <use
+                                href={`#${ids.blade}`}
+                                fill={`url(#${ids.glassFill})`}
+                            />
+                            <use
+                                href={`#${ids.blade}`}
+                                fill={`url(#${ids.innerLight})`}
+                            />
+                            <use
+                                href={`#${ids.blade}`}
+                                fill={`url(#${ids.specular})`}
+                                clipPath={`url(#${ids.topClip})`}
+                            />
+                            <use
+                                href={`#${ids.blade}`}
+                                fill="none"
+                                stroke={`url(#${ids.glassBorder})`}
+                                strokeWidth="0.8"
+                            />
+                        </>
+                    )}
                 </g>
             ))}
         </g>
@@ -313,7 +342,7 @@ export function MikeIcon({
                     />
                 </defs>
 
-                <Blades ids={m} />
+                <Blades ids={m} spectrum={!done && !error} />
             </svg>
         </span>
     );

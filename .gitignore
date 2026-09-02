@@ -17,3 +17,8 @@ next-env.d.ts
 .DS_Store
 .vercel
 coverage
+
+# Local scratch / package-manager caches
+.pnpm-store/
+.tmp/
+tmp/

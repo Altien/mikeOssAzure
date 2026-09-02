@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="70 70 360 360" role="img" aria-labelledby="title desc">
+  <title id="title">Mike OSS marketplace icon</title>
+  <desc id="desc">The canonical twelve-blade Mike mark in the selected full-spectrum rainbow, with square-safe padding.</desc>
+  <defs>
+    <path id="blade" d="M 40,0 A 4,4 0 0 1 43,-3 Q 95,-22 147,-3 A 4,4 0 0 1 150,0 A 4,4 0 0 1 147,3 Q 95,22 43,3 A 4,4 0 0 1 40,0 Z"/>
+  </defs>
+  <rect x="70" y="70" width="360" height="360" fill="#ffffff"/>
+  <g transform="translate(250 250)">
+    <use href="#blade" fill="#16c7e8" transform="rotate(0)"/>
+    <use href="#blade" fill="#11d8d1" transform="rotate(30)"/>
+    <use href="#blade" fill="#16e59a" transform="rotate(60)"/>
+    <use href="#blade" fill="#58e84b" transform="rotate(90)"/>
+    <use href="#blade" fill="#b7ee18" transform="rotate(120)"/>
+    <use href="#blade" fill="#f2ea00" transform="rotate(150)"/>
+    <use href="#blade" fill="#ffb21c" transform="rotate(180)"/>
+    <use href="#blade" fill="#ff6f3c" transform="rotate(210)"/>
+    <use href="#blade" fill="#f23baa" transform="rotate(240)"/>
+    <use href="#blade" fill="#e000c8" transform="rotate(270)"/>
+    <use href="#blade" fill="#a84dff" transform="rotate(300)"/>
+    <use href="#blade" fill="#4e74ff" transform="rotate(330)"/>
+  </g>
+</svg>
