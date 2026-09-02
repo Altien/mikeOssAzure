@@ -67,11 +67,15 @@ RUN pnpm run build
 FROM node:22-slim AS runtime
 RUN corepack enable
 # Keep npm's bundled `tar` above the patched floor used by the migration job's
-# `npm run migrate` entrypoint (CVE-2026-59873).
-RUN npm install --global npm@12.0.1
+# `npm run migrate` entrypoint (CVE-2026-59873). The floor moved to 7.5.19;
+# npm@12.0.1 shipped 7.5.15, npm@12.0.2 depends on ^7.5.19.
+RUN npm install --global npm@12.0.2
 
 # libreoffice-convert requires LibreOffice at runtime for DOCX → PDF conversion.
-RUN apt-get update && apt-get install -y --no-install-recommends libreoffice \
+# libnss3 is named explicitly so the bookworm security update lands
+# (CVE-2026-16389, fixed in 2:3.87.1-1+deb12u4) rather than whatever the
+# base image froze at.
+RUN apt-get update && apt-get install -y --no-install-recommends libreoffice libnss3 \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -79,7 +83,8 @@ WORKDIR /app
 COPY backend/package.json backend/pnpm-lock.yaml backend/.npmrc backend/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile --prod \
  && corepack disable \
- && rm -rf /usr/local/lib/node_modules/corepack
+ && rm -rf /usr/local/lib/node_modules/corepack \
+ && rm -rf /root/.cache/node/corepack
 
 COPY --from=backend-builder /app/dist ./dist
 # Frontend static output is served from /app/public via express.static.
