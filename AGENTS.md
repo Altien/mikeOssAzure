@@ -104,11 +104,8 @@ Both packages run vitest: `pnpm test` (once), `pnpm test:watch`,
 `pnpm test:coverage` — in `backend/` (node env + supertest) and
 `frontend/` (jsdom + Testing Library + MSW; harness in
 `frontend/src/test/`, use `renderWithProviders` from `render.tsx` for
-components that need Config/Auth context). The suite was backported
-from the OSS mirror's test PRs (MikeOssAzure ddcfbdc) and adapted to
-this repo — when Tier B deliveries snapshot dev into the mirror, these
-tests travel with them. Run the affected package's suite before
-committing backend/ or frontend/ source changes.
+components that need Config/Auth context). Run the affected package's
+suite before committing backend/ or frontend/ source changes.
 
 ### Pre-commit checks the agent should run
 
