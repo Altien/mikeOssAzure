@@ -649,11 +649,11 @@ populate the dropdown.
 
 ## 16. Updates and redeploys
 
-For an Azure Marketplace installation, use the versioned
-`upgrade-marketplace-<version>.ps1` asset produced beside each Marketplace
-package. It provisions release infrastructure such as telemetry, migrates
-before promotion, and deliberately avoids redeploying the full template so
-customer-owned durable Key Vault secrets cannot rotate:
+For an installation deployed from the solution template, use the versioned
+upgrade script published alongside each release. It provisions release
+infrastructure such as telemetry, migrates before promotion, and deliberately
+avoids redeploying the full template so customer-owned durable Key Vault
+secrets cannot rotate:
 
 ```powershell
 pwsh -File ./upgrade-marketplace-1.0.11.ps1 `
