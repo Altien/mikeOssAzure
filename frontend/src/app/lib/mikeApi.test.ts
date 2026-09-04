@@ -41,7 +41,9 @@ import {
     generateChatTitle,
     generateTabularColumnPrompt,
     getApiKeyStatus,
+    getChatAccess,
     getChat,
+    getChatPeople,
     getAuditHistory,
     getPanelDocument,
     getDocument,
@@ -63,10 +65,12 @@ import {
     getTabularChatMessages,
     getTabularChats,
     getTabularReview,
+    getTabularReviewAccess,
     getTabularReviewPeople,
     getUserExportStatus,
     getUserProfile,
     getWorkflow,
+    getWorkflowPeople,
     getWorkflowAddon,
     getWorkflowFilterOptions,
     hideWorkflow,
@@ -80,6 +84,8 @@ import {
     getOrg,
     getProjectAccess,
     grantProjectAccess,
+    grantChatAccess,
+    grantTabularReviewAccess,
     listChats,
     listMyOrgInvitations,
     listOrgInvitations,
@@ -89,6 +95,8 @@ import {
     removeOrgMember,
     resendOrgInvitation,
     revokeProjectAccess,
+    revokeChatAccess,
+    revokeTabularReviewAccess,
     updateOrgMember,
     updateOrg,
     listDocumentVersions,
@@ -2261,6 +2269,29 @@ describe("thin endpoint wrappers", () => {
             method: "POST",
             body: { message: "first message", model: "gpt-5.6-terra" },
         },
+        {
+            name: "getChatPeople",
+            call: () => getChatPeople("c1"),
+            url: "/chat/c1/people",
+        },
+        {
+            name: "getChatAccess",
+            call: () => getChatAccess("c1"),
+            url: "/chat/c1/access",
+        },
+        {
+            name: "grantChatAccess",
+            call: () => grantChatAccess("c1", "reader@example.com", "viewer"),
+            url: "/chat/c1/access",
+            method: "POST",
+            body: { email: "reader@example.com", role: "viewer" },
+        },
+        {
+            name: "revokeChatAccess",
+            call: () => revokeChatAccess("c1", "a+b@example.com"),
+            url: "/chat/c1/access/a%2Bb%40example.com",
+            method: "DELETE",
+        },
         // Tabular review
         {
             name: "getTabularReview",
@@ -2271,6 +2302,25 @@ describe("thin endpoint wrappers", () => {
             name: "getTabularReviewPeople",
             call: () => getTabularReviewPeople("r1"),
             url: "/tabular-review/r1/people",
+        },
+        {
+            name: "getTabularReviewAccess",
+            call: () => getTabularReviewAccess("r1"),
+            url: "/tabular-review/r1/access",
+        },
+        {
+            name: "grantTabularReviewAccess",
+            call: () =>
+                grantTabularReviewAccess("r1", "reviewer@example.com", "viewer"),
+            url: "/tabular-review/r1/access",
+            method: "POST",
+            body: { email: "reviewer@example.com", role: "viewer" },
+        },
+        {
+            name: "revokeTabularReviewAccess",
+            call: () => revokeTabularReviewAccess("r1", "a+b@example.com"),
+            url: "/tabular-review/r1/access/a%2Bb%40example.com",
+            method: "DELETE",
         },
         // Workflows
         {
@@ -2342,6 +2392,11 @@ describe("thin endpoint wrappers", () => {
             name: "listWorkflowShares",
             call: () => listWorkflowShares("w1"),
             url: "/workflows/w1/shares",
+        },
+        {
+            name: "getWorkflowPeople",
+            call: () => getWorkflowPeople("w1"),
+            url: "/workflows/w1/people",
         },
         {
             name: "deleteWorkflowShare",

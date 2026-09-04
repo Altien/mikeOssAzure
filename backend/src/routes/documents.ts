@@ -35,7 +35,6 @@ import {
     checkProjectAccess,
     creatorScopedAllowed,
     ensureDocAccess,
-    resolveContentOrgId,
 } from "../lib/access";
 import { mapWithConcurrency } from "../lib/concurrency";
 import {

@@ -320,7 +320,6 @@ maybeDescribe("Supabase tabular-review org visibility", () => {
     const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const projectId = crypto.randomUUID();
     const inProjectReviewId = crypto.randomUUID();
-    const standaloneReviewId = crypto.randomUUID();
     const colleagueEmail = `org-vis-colleague-${suffix}@test.local`;
     const memberEmail = `org-vis-member-${suffix}@test.local`;
     let admin: SupabaseClient;
@@ -379,25 +378,17 @@ maybeDescribe("Supabase tabular-review org visibility", () => {
         });
         if (project.error) throw project.error;
 
-        const reviews = await admin.from("tabular_reviews").insert([
-            {
-                id: inProjectReviewId,
-                project_id: projectId,
-                user_id: colleagueId,
-                title: "Org Colleague In-Project",
-                columns_config: [],
-                document_ids: [],
-                org_id: orgId,
-            },
-            {
-                id: standaloneReviewId,
-                user_id: colleagueId,
-                title: "Org Colleague Standalone",
-                columns_config: [],
-                document_ids: [],
-                org_id: orgId,
-            },
-        ]);
+        // Organization-scoped reviews inherit through a project. The schema
+        // deliberately rejects an org_id on a standalone review.
+        const reviews = await admin.from("tabular_reviews").insert({
+            id: inProjectReviewId,
+            project_id: projectId,
+            user_id: colleagueId,
+            title: "Org Colleague In-Project",
+            columns_config: [],
+            document_ids: [],
+            org_id: orgId,
+        });
         if (reviews.error) throw reviews.error;
     });
 
@@ -406,7 +397,7 @@ maybeDescribe("Supabase tabular-review org visibility", () => {
         await admin
             .from("tabular_reviews")
             .delete()
-            .in("id", [inProjectReviewId, standaloneReviewId]);
+            .eq("id", inProjectReviewId);
         await admin.from("projects").delete().eq("id", projectId);
         if (orgId) await admin.from("organizations").delete().eq("id", orgId);
         // Signup no longer provisions an organization, so the only org to
@@ -419,8 +410,8 @@ maybeDescribe("Supabase tabular-review org visibility", () => {
     it("shows a colleague's org reviews to a plain member via the paginated overview RPC", async () => {
         // This is the overload GET /tabular-review actually resolves: all
         // nine named arguments (see lib/tabularReviewsOverview.ts). The
-        // member is neither owner nor directly granted, so both rows are
-        // visible only through the org-membership branch.
+        // member is neither owner nor directly granted, so the row is visible
+        // only through the org-membership branch.
         const result = await admin.rpc("get_tabular_reviews_overview", {
             p_user_id: memberId,
             p_user_email: memberEmail,
@@ -440,7 +431,6 @@ maybeDescribe("Supabase tabular-review org visibility", () => {
         }[];
         const ids = new Set(rows.map((row) => row.id));
         expect(ids.has(inProjectReviewId)).toBe(true);
-        expect(ids.has(standaloneReviewId)).toBe(true);
         // Org membership grants visibility, not ownership.
         expect(rows.every((row) => row.is_owner === false)).toBe(true);
     });
@@ -465,7 +455,6 @@ maybeDescribe("Supabase tabular-review org visibility", () => {
         const rows = (result.data ?? []) as { id: string; user_id: string }[];
         const ids = new Set(rows.map((row) => row.id));
         expect(ids.has(inProjectReviewId)).toBe(true);
-        expect(ids.has(standaloneReviewId)).toBe(true);
         expect(rows.every((row) => row.user_id === colleagueId)).toBe(true);
     });
 

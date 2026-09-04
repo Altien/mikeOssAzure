@@ -47,10 +47,14 @@ async function createProject(
     await expect(nameInput).toBeVisible({ timeout: 5_000 });
     await nameInput.fill(projectName);
 
-    /* NewProjectModal is a two-step wizard: "Details" (name / CM number /
-       practice / colleagues) then "Add Documents". Only the second step has a
-       submit button — the first step's primary action is a plain "Next". */
+    /* NewProjectModal is a three-step wizard: Details, Access, then Add
+       Documents. Project creation happens only from the final step. */
     await page.getByRole("button", { name: "Next", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Access" })).toBeVisible();
+    await page.getByRole("button", { name: "Next", exact: true }).click();
+    await expect(
+        page.getByRole("dialog", { name: "Add Documents" }),
+    ).toBeVisible();
 
     if (filePath) {
         /* On the documents step the footer "Upload" button opens a hidden file
@@ -63,7 +67,7 @@ async function createProject(
         ).toBeVisible({ timeout: 5_000 });
     }
 
-    /* Submit — NewProjectModal's onCreated calls router.push(`/projects/${id}`).
+    /* Create — NewProjectModal's onCreated calls router.push(`/projects/${id}`).
        The PDF upload runs (awaited) inside handleSubmit before onCreated fires,
        so allow extra time for navigation when a file is attached.
 
@@ -73,10 +77,10 @@ async function createProject(
        directory now loads via one batched listProjects?include=documents
        request, so a single submit is reliable.)
 
-       The documents step's primary action submits the form (its label flips
-       to "Creating…" while in flight, so match on the submit type instead). */
+       The documents step's primary action is a button whose label flips to
+       "Creating…" while in flight. */
     const navTimeout = filePath ? 30_000 : 15_000;
-    await page.locator('button[type="submit"]').click();
+    await page.getByRole("button", { name: "Create project" }).click();
     await page.waitForURL(/\/projects\/.+/, { timeout: navTimeout });
 }
 
