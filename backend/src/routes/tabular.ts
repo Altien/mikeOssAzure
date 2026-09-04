@@ -70,13 +70,20 @@ import {
 } from "../lib/modelSelection";
 import {
     checkProjectAccess,
+    creatorScopedAllowed,
     ensureReviewAccess,
     filterAccessibleDocumentIds,
+    normalizeEmail,
+    resolveContentOrgId,
 } from "../lib/access";
+import { can } from "../lib/permissions";
+import { loadProfileUsersByEmail } from "../lib/userLookup";
 import {
-    findMissingUserEmails,
-    loadProfileUsersByEmail,
-} from "../lib/userLookup";
+    deleteContentGrant,
+    listContentGrants,
+    upsertContentGrant,
+} from "../lib/contentAccess";
+import { listContentPeople } from "../lib/resourcePeople";
 import {
     buildTabularReviewIdsOverviewRpcArgs,
     buildTabularReviewsOverviewRpcArgs,
@@ -492,6 +499,7 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
         columns_config,
         workflow_id,
         project_id,
+        org_id,
         document_grouping,
         model,
     } = req.body as {
@@ -500,6 +508,7 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
         columns_config: { index: number; name: string; prompt: string }[];
         workflow_id?: string;
         project_id?: string;
+        org_id?: unknown;
         document_grouping?: DocumentGrouping;
         model?: string;
     };
@@ -517,13 +526,14 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
         return void res.status(selectedModel.status).json(selectedModel.body);
     }
     if (project_id) {
+        // Creating a review inside a project contributes content to it.
         const access = await checkProjectAccess(
             project_id,
             userId,
             userEmail,
             db,
         );
-        if (!access.ok)
+        if (!access.ok || !can(access.projectRole, "content.edit"))
             return void res.status(404).json({ detail: "Project not found" });
     }
     // Drop any document_ids the caller can't access. Without this filter a
@@ -534,6 +544,19 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
         ? await filterAccessibleDocumentIds(document_ids, userId, userEmail, db)
         : [];
     const grouping = normalizeGrouping(document_grouping);
+    // Project reviews inherit their project's organization as tenant
+    // provenance. Standalone reviews are always direct-scoped.
+    const resolvedOrg = await resolveContentOrgId(db, {
+        projectId: project_id ?? null,
+    });
+    if (!resolvedOrg.ok)
+        return void sendInternalError(res, resolvedOrg.detail);
+    if (org_id != null) {
+        return void res.status(400).json({
+            detail:
+                "Tabular reviews cannot be organization-scoped. Create the review inside an organization project instead.",
+        });
+    }
     const { data: review, error } = await db
         .from("tabular_reviews")
         .insert({
@@ -545,6 +568,7 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
             project_id: project_id ?? null,
             workflow_id: workflow_id ?? null,
             document_grouping: grouping,
+            org_id: resolvedOrg.orgId,
         })
         .select("*")
         .single();
@@ -583,7 +607,11 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
         reviewId: (review as { id: string }).id,
         model: selectedModel.model,
     });
-    res.status(201).json(review);
+    res.status(201).json({
+        ...review,
+        is_owner: true,
+        access_role: "owner",
+    });
 });
 
 // POST /tabular-review/prompt (must come before /:reviewId routes)
@@ -710,7 +738,8 @@ tabularRouter.get("/:reviewId", requireAuth, async (req, res) => {
     res.json({
         review: {
             ...clientReview,
-            is_owner: access.isOwner,
+            is_owner: access.isCreator,
+            access_role: access.projectRole,
             is_running: isReviewGenerationRunning(review),
         },
         cells: (cells ?? []).map((cell) => ({
@@ -734,7 +763,7 @@ tabularRouter.get("/:reviewId/people", requireAuth, async (req, res) => {
 
     const { data: review } = await db
         .from("tabular_reviews")
-        .select("id, user_id, project_id, shared_with")
+        .select("id, user_id, project_id, org_id")
         .eq("id", reviewId)
         .single();
     if (!review)
@@ -743,64 +772,169 @@ tabularRouter.get("/:reviewId/people", requireAuth, async (req, res) => {
     if (!access.ok)
         return void res.status(404).json({ detail: "Review not found" });
 
-    const sharedWith: string[] = (
-        Array.isArray(review.shared_with)
-            ? (review.shared_with as string[])
-            : []
-    ).map((e) => (e ?? "").toLowerCase());
-
-    // Same pattern as /projects/:id/people: resolve email ↔ user_id ↔
-    // display_name through user_profiles.  Replaces the old
-    // auth.admin.listUsers walk which only worked in supabase mode and
-    // crashed in entra/local mode.
-    const lookupEmails = [
-        ...new Set(sharedWith.filter((e) => e.length > 0)),
-    ];
-    const ownerProfilePromise = db
-        .from("user_profiles")
-        .select("user_id, email, display_name")
-        .eq("user_id", review.user_id as string)
-        .maybeSingle();
-    const memberProfilesPromise =
-        lookupEmails.length > 0
-            ? db
-                  .from("user_profiles")
-                  .select("user_id, email, display_name")
-                  .in("email", lookupEmails)
-            : Promise.resolve({ data: [] as { user_id: string; email: string | null; display_name: string | null }[] });
-
-    const [{ data: ownerProfile }, { data: memberProfiles }] = await Promise.all([
-        ownerProfilePromise,
-        memberProfilesPromise,
-    ]);
-
-    const memberByEmail = new Map<string, string | null>();
-    for (const p of memberProfiles ?? []) {
-        if (!p.email) continue;
-        memberByEmail.set(
-            p.email.toLowerCase(),
-            (p.display_name as string | null) ?? null,
-        );
-    }
-
-    res.json({
-        owner: {
-            user_id: review.user_id,
-            email: (ownerProfile?.email as string | null) ?? null,
-            display_name: (ownerProfile?.display_name as string | null) ?? null,
+    const people = await listContentPeople(
+        db,
+        "tabular_review",
+        review as {
+            id: string;
+            user_id: string | null;
+            project_id: string | null;
+            org_id?: string | null;
         },
-        members: sharedWith.map((email) => ({
-            email,
-            display_name: memberByEmail.get(email) ?? null,
-        })),
+    );
+    if (!people.ok) return void sendInternalError(res, people.detail);
+    res.json(people);
+});
+
+// GET /tabular-review/:reviewId/access — role-aware direct grants, admin-only.
+tabularRouter.get("/:reviewId/access", requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const { reviewId } = req.params;
+    const db = createServerSupabase();
+    const { data: review } = await db
+        .from("tabular_reviews")
+        .select("id, user_id, project_id, org_id")
+        .eq("id", reviewId)
+        .maybeSingle();
+    if (!review)
+        return void res.status(404).json({ detail: "Review not found" });
+    const access = await ensureReviewAccess(review, userId, userEmail, db);
+    if (!access.ok)
+        return void res.status(404).json({ detail: "Review not found" });
+    if (!can(access.projectRole, "access.manage"))
+        return void res.status(403).json({
+            detail: "Only a review owner can change who has access.",
+        });
+    if (review.project_id)
+        return void res.json({
+            scope: "project",
+            inherited_from_project_id: review.project_id,
+            org_id: review.org_id ?? null,
+            access_role: access.projectRole,
+            grants: [],
+        });
+    const listed = await listContentGrants(db, "tabular_review", reviewId);
+    if (!listed.ok) return void sendInternalError(res, listed.detail);
+    res.json({
+        scope: "direct",
+        org_id: null,
+        access_role: access.projectRole,
+        grants: listed.grants,
     });
 });
+
+// POST /tabular-review/:reviewId/access — grant or re-role one recipient.
+tabularRouter.post("/:reviewId/access", requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const { reviewId } = req.params;
+    const db = createServerSupabase();
+    const { data: review } = await db
+        .from("tabular_reviews")
+        .select("id, user_id, project_id, org_id")
+        .eq("id", reviewId)
+        .maybeSingle();
+    if (!review)
+        return void res.status(404).json({ detail: "Review not found" });
+    const access = await ensureReviewAccess(review, userId, userEmail, db);
+    if (!access.ok)
+        return void res.status(404).json({ detail: "Review not found" });
+    if (!can(access.projectRole, "access.manage"))
+        return void res.status(403).json({
+            detail: "Only a review owner can change who has access.",
+        });
+    if (review.project_id)
+        return void res.status(409).json({
+            code: "access_inherited",
+            detail: "Project-owned reviews inherit access from their project.",
+        });
+    const email = normalizeEmail(
+        typeof req.body?.email === "string" ? req.body.email : null,
+    );
+    if (email && normalizeEmail(userEmail) === email)
+        return void res.status(400).json({
+            detail: "You cannot share a tabular review with yourself.",
+        });
+    if (req.body?.role === "deny")
+        return void res.status(400).json({
+            detail: "Deny is only available for organization members",
+        });
+    const { userById } = await loadProfileUsersByEmail(db);
+    const result = await upsertContentGrant(db, {
+        kind: "tabular_review",
+        resourceId: reviewId,
+        email: req.body?.email,
+        role: req.body?.role,
+        createdBy: userId,
+        creatorEmail: review.user_id
+            ? userById.get(review.user_id as string)?.email
+            : null,
+    });
+    if (!result.ok) {
+        if (result.kind === "validation")
+            return void res.status(400).json({ detail: result.detail });
+        return void sendInternalError(res, result.detail);
+    }
+    res.status(201).json(result.grant);
+});
+
+// DELETE /tabular-review/:reviewId/access/:email — revoke one recipient.
+tabularRouter.delete(
+    "/:reviewId/access/:email",
+    requireAuth,
+    async (req, res) => {
+        const userId = res.locals.userId as string;
+        const userEmail = res.locals.userEmail as string | undefined;
+        const { reviewId } = req.params;
+        const db = createServerSupabase();
+        const { data: review } = await db
+            .from("tabular_reviews")
+            .select("id, user_id, project_id, org_id")
+            .eq("id", reviewId)
+            .maybeSingle();
+        if (!review)
+            return void res.status(404).json({ detail: "Review not found" });
+        const access = await ensureReviewAccess(review, userId, userEmail, db);
+        if (!access.ok)
+            return void res.status(404).json({ detail: "Review not found" });
+        if (!can(access.projectRole, "access.manage"))
+            return void res.status(403).json({
+                detail: "Only a review owner can change who has access.",
+            });
+        if (review.project_id)
+            return void res.status(409).json({
+                code: "access_inherited",
+                detail: "Project-owned reviews inherit access from their project.",
+            });
+        const result = await deleteContentGrant(db, {
+            kind: "tabular_review",
+            resourceId: reviewId,
+            email: decodeURIComponent(req.params.email),
+        });
+        if (!result.ok) return void sendInternalError(res, result.detail);
+        if (!result.removed)
+            return void res
+                .status(404)
+                .json({ detail: "Access grant not found" });
+        res.status(204).send();
+    },
+);
 
 // PATCH /tabular-review/:reviewId
 tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { reviewId } = req.params;
+    if (
+        req.body &&
+        typeof req.body === "object" &&
+        "shared_with" in req.body
+    )
+        return void res.status(400).json({
+            detail:
+                "shared_with is no longer supported; use the tabular review access endpoints.",
+        });
     const updates: Record<string, unknown> = {};
     if (req.body.title != null) updates.title = req.body.title;
     const modelUpdateProvided = req.body.model !== undefined;
@@ -816,27 +950,6 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
         return void res.status(400).json({
             detail: "project_id must be a non-empty string or null",
         });
-    }
-    // shared_with edits are owner-only — gated below after we know who's
-    // making the call. Normalize lowercase + dedupe + drop empties.
-    let sharedWithUpdate: string[] | undefined;
-    if (Array.isArray(req.body.shared_with)) {
-        const normalizedUserEmail = userEmail?.trim().toLowerCase();
-        const seen = new Set<string>();
-        const cleaned: string[] = [];
-        for (const raw of req.body.shared_with) {
-            if (typeof raw !== "string") continue;
-            const e = raw.trim().toLowerCase();
-            if (!e || seen.has(e)) continue;
-            if (normalizedUserEmail && e === normalizedUserEmail) {
-                return void res.status(400).json({
-                    detail: "You cannot share a tabular review with yourself.",
-                });
-            }
-            seen.add(e);
-            cleaned.push(e);
-        }
-        sharedWithUpdate = cleaned;
     }
     updates.updated_at = new Date().toISOString();
 
@@ -856,15 +969,21 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
     );
     if (!access.ok)
         return void res.status(404).json({ detail: "Review not found" });
+    // Per-field gates, generalising #175's owner-only "settings" rule to
+    // the role ladder. Title, document set and column set are content work
+    // (member+): reshaping the grid destroys cells when narrowed, but so does
+    // any other edit a member may already make. Sharing is admin-only — it
+    // changes WHO can reach the review, which is a different kind of power.
+    // Moving the review between projects stays with its creator.
     if (
         (req.body.title != null ||
-            req.body.document_ids != null ||
+            Array.isArray(req.body.document_ids) ||
             req.body.document_grouping != null ||
             modelUpdateProvided) &&
-        !access.isOwner
+        !can(access.projectRole, "content.edit")
     ) {
         return void res.status(403).json({
-            detail: "Only the review owner can change review settings",
+            detail: "Only a review editor can change review settings",
         });
     }
     if (modelUpdateProvided) {
@@ -881,9 +1000,9 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
         updates.model = selectedModel.model;
     }
     if (req.body.columns_config != null) {
-        if (!access.isOwner) {
+        if (!can(access.projectRole, "content.edit")) {
             return void res.status(403).json({
-                detail: "Only the review owner can change columns",
+                detail: "Only a review editor can change columns",
             });
         }
         updates.columns_config = req.body.columns_config;
@@ -907,26 +1026,10 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
             db,
         );
     }
-    if (sharedWithUpdate !== undefined) {
-        if (!access.isOwner)
-            return void res
-                .status(403)
-                .json({ detail: "Only the review owner can change sharing" });
-        const missingSharedUsers = await findMissingUserEmails(
-            db,
-            sharedWithUpdate,
-        );
-        if (missingSharedUsers.length > 0) {
-            return void res.status(400).json({
-                detail: `${missingSharedUsers[0]} does not belong to a Mike user.`,
-            });
-        }
-        updates.shared_with = sharedWithUpdate;
-    }
     if (projectIdUpdateProvided) {
-        if (!access.isOwner) {
+        if (!creatorScopedAllowed(access, existingReview.user_id)) {
             return void res.status(403).json({
-                detail: "Only the review owner can move a review",
+                detail: "Only the review's creator can move a review",
             });
         }
         if (projectIdUpdate) {
@@ -943,6 +1046,21 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
             }
         }
         updates.project_id = projectIdUpdate;
+        // `tabular_reviews.org_id` is a DENORMALIZED copy of the project's
+        // tenant, stamped at creation and read directly by the SQL visibility
+        // predicates (`tr.org_id is not null and exists (select 1 from
+        // org_members …)`). Moving the review to another project changes
+        // which tenant owns it, so the copy has to be restamped from the
+        // destination — otherwise a review moved out of an org project into a
+        // personal one keeps answering yes to that org arm and stays visible
+        // to every member of an organization it no longer belongs to. Same
+        // helper and argument shape as the create path.
+        const movedOrg = await resolveContentOrgId(db, {
+            projectId: projectIdUpdate ?? null,
+        });
+        if (!movedOrg.ok)
+            return void sendInternalError(res, movedOrg.detail);
+        updates.org_id = movedOrg.orgId;
     }
 
     const { data: updatedReview, error: updateError } = await db
@@ -990,13 +1108,35 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
 // DELETE /tabular-review/:reviewId
 tabularRouter.delete("/:reviewId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
     const { reviewId } = req.params;
     const db = createServerSupabase();
+    // container.delete keeps review deletion at the top of the ladder: the
+    // review's own creator, or an admin of the project it lives in (who could
+    // already delete the whole project, review included). The old
+    // `.eq("user_id", userId)` filter made that project admin's DELETE a
+    // silent 204 no-op — the row survived and the UI showed it again on the
+    // next load. Resolving the role first also lets members and viewers learn
+    // they were refused (403) instead of guessing at a 404.
+    const { data: review, error: reviewError } = await db
+        .from("tabular_reviews")
+        .select("id, user_id, project_id, org_id")
+        .eq("id", reviewId)
+        .single();
+    if (reviewError || !review)
+        return void res.status(404).json({ detail: "Review not found" });
+    const access = await ensureReviewAccess(review, userId, userEmail, db);
+    if (!access.ok)
+        return void res.status(404).json({ detail: "Review not found" });
+    if (!can(access.projectRole, "container.delete"))
+        return void res.status(403).json({
+            detail: "You do not have permission to delete this review",
+        });
+
     const { error } = await db
         .from("tabular_reviews")
         .delete()
-        .eq("id", reviewId)
-        .eq("user_id", userId);
+        .eq("id", reviewId);
     if (error) return void sendInternalError(res, error);
     res.status(204).send();
 });
@@ -1017,7 +1157,7 @@ tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
     const { data: review, error: reviewError } = await db
         .from("tabular_reviews")
         .select(
-            "id, user_id, project_id, columns_config, updated_at, active_generation_id, generation_lease_expires_at",
+            "id, user_id, project_id, org_id, columns_config, updated_at, active_generation_id, generation_lease_expires_at",
         )
         .eq("id", reviewId)
         .single();
@@ -1026,6 +1166,13 @@ tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
     const access = await ensureReviewAccess(review, userId, userEmail, db);
     if (!access.ok)
         return void res.status(404).json({ detail: "Review not found" });
+    // Blanking extracted cells is destructive but it is still editing the
+    // review's contents, so it sits with the rest of content.edit. Viewers,
+    // being read-only, are refused.
+    if (!can(access.projectRole, "content.edit"))
+        return void res.status(403).json({
+            detail: "Only a review editor can clear cells",
+        });
     if (isReviewGenerationRunning(review)) {
         return void res.status(409).json({
             code: "review_running",
@@ -1136,7 +1283,7 @@ tabularRouter.post(
         if (reviewError || !review)
             return void res.status(404).json({ detail: "Review not found" });
         const access = await ensureReviewAccess(review, userId, userEmail, db);
-        if (!access.ok)
+        if (!access.ok || !can(access.projectRole, "content.edit"))
             return void res.status(404).json({ detail: "Review not found" });
         if (isReviewGenerationRunning(review)) {
             return void res.status(409).json({
@@ -1809,10 +1956,10 @@ tabularRouter.get("/:reviewId/chats", requireAuth, async (req, res) => {
     const { reviewId } = req.params;
     const db = createServerSupabase();
 
-    // Verify access (owner or shared-project member).
+    // Verify access (creator, direct grant, project access, or org).
     const { data: review, error } = await db
         .from("tabular_reviews")
-        .select("id, user_id, project_id")
+        .select("id, user_id, project_id, org_id")
         .eq("id", reviewId)
         .single();
     if (error || !review)
@@ -1834,21 +1981,97 @@ tabularRouter.get("/:reviewId/chats", requireAuth, async (req, res) => {
     res.json(chats ?? []);
 });
 
+// Review-chat writes share one preamble: the caller must be able to access
+// the review named in the URL, and the chat must actually belong to it —
+// previously these two writes checked neither, so any chat id could be hit
+// through any (or a nonexistent) review path.
+async function ensureReviewChatWriteAccess(
+    reviewId: string,
+    chatId: string,
+    userId: string,
+    userEmail: string | null | undefined,
+    db: ReturnType<typeof createServerSupabase>,
+): Promise<{ ok: true } | { ok: false; status: number; detail: string }> {
+    const { data: review } = await db
+        .from("tabular_reviews")
+        .select("id, user_id, project_id, org_id")
+        .eq("id", reviewId)
+        .single();
+    if (!review) return { ok: false, status: 404, detail: "Review not found" };
+    const access = await ensureReviewAccess(review, userId, userEmail, db);
+    if (!access.ok)
+        return { ok: false, status: 404, detail: "Review not found" };
+    const { data: chat } = await db
+        .from("tabular_review_chats")
+        .select("id, review_id, user_id")
+        .eq("id", chatId)
+        .single();
+    if (!chat || chat.review_id !== reviewId)
+        return { ok: false, status: 404, detail: "Chat not found" };
+    // Review chats are creator-write: collaborators read each other's
+    // threads but cannot rename or delete them. Refusing here, not via the
+    // write's user_id filter alone, keeps a non-creator from getting a
+    // success-shaped 204 for an update that silently matched zero rows.
+    //
+    // `creatorScopedAllowed` rather than a bare `chat.user_id !== userId`,
+    // because `tabular_review_chats.user_id` is ON DELETE SET NULL since
+    // 20260902_01: once the author's account is deleted the column is NULL
+    // and "only the creator may act" means NOBODY may act — the thread is
+    // stranded inside a review the organization still owns, which is the
+    // opposite of what detaching the row was for. When the creator is gone
+    // the container's admins inherit the operation; while a creator exists
+    // nothing changes, and an admin still may not touch a colleague's live
+    // thread.
+    if (
+        !creatorScopedAllowed(
+            {
+                // "isCreator" is about THIS chat. `access` was derived for
+                // the REVIEW, and the review's creator is not thereby the
+                // creator of every chat inside it — passing `access` whole
+                // would hand them everyone's threads.
+                isCreator: !!chat.user_id && chat.user_id === userId,
+                projectRole: access.projectRole,
+            },
+            chat.user_id,
+        )
+    )
+        return {
+            ok: false,
+            status: 403,
+            detail: "Only the chat's creator can modify it",
+        };
+    return { ok: true };
+}
+
 // DELETE /tabular-review/:reviewId/chats/:chatId — delete a single chat
 tabularRouter.delete(
     "/:reviewId/chats/:chatId",
     requireAuth,
     async (req, res) => {
         const userId = res.locals.userId as string;
-        const { chatId } = req.params;
+        const userEmail = res.locals.userEmail as string | undefined;
+        const { reviewId, chatId } = req.params;
         const db = createServerSupabase();
-        // Owner-only delete — sibling collaborators shouldn't be able to wipe
-        // each other's threads.
+        const gate = await ensureReviewChatWriteAccess(
+            reviewId,
+            chatId,
+            userId,
+            userEmail,
+            db,
+        );
+        if (!gate.ok)
+            return void res.status(gate.status).json({ detail: gate.detail });
+        // Scoped by the binding the gate just proved (this chat, in this
+        // review) and nothing more. A `user_id` filter here would be a
+        // second, weaker copy of the authorization rule: it would silently
+        // match zero rows for the case the gate now allows — an admin
+        // clearing up after a departed colleague — and answer 204 while
+        // deleting nothing.
         const { error } = await db
             .from("tabular_review_chats")
             .delete()
             .eq("id", chatId)
-            .eq("user_id", userId);
+            .eq("review_id", reviewId);
         if (error) return void sendInternalError(res, error);
         res.status(204).send();
     },
@@ -1860,6 +2083,7 @@ tabularRouter.patch(
     requireAuth,
     async (req, res) => {
         const userId = res.locals.userId as string;
+        const userEmail = res.locals.userEmail as string | undefined;
         const { reviewId, chatId } = req.params;
         const body =
             req.body && typeof req.body === "object" && !Array.isArray(req.body)
@@ -1901,12 +2125,21 @@ tabularRouter.patch(
         }
 
         const db = createServerSupabase();
+        const gate = await ensureReviewChatWriteAccess(
+            reviewId,
+            chatId,
+            userId,
+            userEmail,
+            db,
+        );
+        if (!gate.ok)
+            return void res.status(gate.status).json({ detail: gate.detail });
+        // Scoped by chat + review only — mirrors the delete above.
         const { data: chat, error: chatError } = await db
             .from("tabular_review_chats")
             .select("id, model")
             .eq("id", chatId)
             .eq("review_id", reviewId)
-            .eq("user_id", userId)
             .single();
         if (chatError || !chat) {
             return void res.status(404).json({ detail: "Chat not found" });
@@ -1948,7 +2181,6 @@ tabularRouter.patch(
             .update(update)
             .eq("id", chatId)
             .eq("review_id", reviewId)
-            .eq("user_id", userId)
             .select("id, title, model, reasoning_level")
             .single();
         if (error || !data) {
@@ -1987,7 +2219,7 @@ tabularRouter.get(
 
         const { data: review } = await db
             .from("tabular_reviews")
-            .select("id, user_id, project_id")
+            .select("id, user_id, project_id, org_id")
             .eq("id", reviewId)
             .single();
         if (!review)
@@ -2166,7 +2398,7 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
         userEmail,
         db,
     );
-    if (!reviewAccess.ok)
+    if (!reviewAccess.ok || !can(reviewAccess.projectRole, "content.edit"))
         return void res.status(404).json({ detail: "Review not found" });
 
     // Fetch all cells and logical review rows for this review.

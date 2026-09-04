@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronDown } from "lucide-react";
 import { deleteChat, renameChat } from "@/app/lib/mikeApi";
 import { deleteTabularReviewsWithConcurrency } from "@/app/lib/deleteTabularReviewsWithConcurrency";
-import { restoreOptimisticallyDeletedRows } from "@/app/lib/optimisticRows";
 import { ProjectAssistantTable } from "@/app/components/projects/ProjectAssistantTable";
 import {
     ProjectSectionToolbar,
@@ -13,6 +12,9 @@ import {
 } from "@/app/components/projects/ProjectWorkspace";
 import type { Chat } from "@/app/components/shared/types";
 import { useAuth } from "@/app/contexts/AuthContext";
+import { can, roleFrom } from "@/app/lib/permissions";
+import { userFacingApiError } from "@/app/lib/userFacingError";
+import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 
 interface Props {
@@ -73,6 +75,13 @@ export default function ProjectAssistantPage({ params }: Props) {
     const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
     const [renameChatValue, setRenameChatValue] = useState("");
     const [actionsOpen, setActionsOpen] = useState(false);
+    // One place for "the server refused, or the request failed" — the
+    // silent `.catch(() => {})` this replaces is why a 403 used to look
+    // exactly like a success until the page was reloaded.
+    const [actionNotice, setActionNotice] = useState<{
+        title: string;
+        message: string;
+    } | null>(null);
     const chats = useMemo(() => projectChats ?? [], [projectChats]);
     const visibleChats = previewEmptyStates ? [] : chats;
     const loading = projectChats === null && !previewEmptyStates;
@@ -96,7 +105,18 @@ export default function ProjectAssistantPage({ params }: Props) {
         const trimmed = renameChatValue.trim();
         setRenamingChatId(null);
         if (!trimmed) return;
-        await renameChat(chatId, trimmed);
+        try {
+            await renameChat(chatId, trimmed);
+        } catch (error) {
+            setActionNotice({
+                title: "The chat was not renamed",
+                message: userFacingApiError(
+                    error,
+                    "The chat could not be renamed. Please try again.",
+                ),
+            });
+            return;
+        }
         setProjectChats((prev) =>
             (prev ?? []).map((chat) =>
                 chat.id === chatId ? { ...chat, title: trimmed } : chat,
@@ -104,58 +124,76 @@ export default function ProjectAssistantPage({ params }: Props) {
         );
     }
 
+    // Deleting a chat is `container.delete` (admin) on the SERVED role, not
+    // "am I the row's creator". The old creator test was wrong in both
+    // directions under the project role ladder: a project admin may delete a
+    // colleague's chat, and being on a chat's share list makes you a member,
+    // who may not delete anything.
     async function handleDeleteChatRow(chat: Chat) {
-        if (user?.id && chat.user_id !== user.id) {
+        if (!can(roleFrom(chat), "container.delete")) {
             setOwnerOnlyAction("delete this chat");
             return;
         }
-        setProjectChats((prev) => (prev ?? []).filter((c) => c.id !== chat.id));
+        // Await first, remove after: a refusal or an outage used to make the
+        // row disappear locally and come back on reload with no explanation.
+        // The row action calls this without awaiting, so rethrowing would
+        // only produce an unhandled rejection.
         try {
             await deleteChat(chat.id);
         } catch (error) {
-            setProjectChats((current) =>
-                restoreOptimisticallyDeletedRows(
-                    current ?? [],
-                    chats,
-                    [chat.id],
+            setActionNotice({
+                title: "The chat was not deleted",
+                message: userFacingApiError(
+                    error,
+                    "The chat could not be deleted. Please try again.",
                 ),
-            );
-            throw error;
+            });
+            return;
         }
+        setProjectChats((prev) => (prev ?? []).filter((c) => c.id !== chat.id));
     }
 
     const handleDeleteSelectedChats = useCallback(async () => {
         const ids = [...selectedChatIds];
         setActionsOpen(false);
-        const owned = ids.filter((id) => {
-            const chat = chats.find((c) => c.id === id);
-            return !chat || chat.user_id === user?.id;
+        setActionNotice(null);
+        const roleById = new Map(
+            chats.map((chat) => [chat.id, roleFrom(chat)] as const),
+        );
+        const deletable = ids.filter((id) => {
+            const role = roleById.get(id);
+            // A row we no longer hold is left to the server to judge; it
+            // answers 403 or 404, and the failure is reported below rather
+            // than swallowed.
+            return role ? can(role, "container.delete") : true;
         });
-        const blocked = ids.length - owned.length;
+        const blocked = ids.length - deletable.length;
         setSelectedChatIds([]);
+        // Bounded concurrency with per-id outcomes, the same helper the
+        // review and workflow tables use: `Promise.all(... .catch(() => {}))`
+        // discarded every failure, so a 403 looked exactly like a success and
+        // the chat reappeared on the next load.
+        const { deletedIds, failedIds } =
+            await deleteTabularReviewsWithConcurrency(deletable, deleteChat);
         setProjectChats((prev) =>
-            (prev ?? []).filter((chat) => !owned.includes(chat.id)),
+            (prev ?? []).filter((chat) => !deletedIds.includes(chat.id)),
         );
-        const { failedIds } = await deleteTabularReviewsWithConcurrency(
-            owned,
-            deleteChat,
-        );
-        if (failedIds.length > 0) {
-            setProjectChats((current) =>
-                restoreOptimisticallyDeletedRows(
-                    current ?? [],
-                    chats,
-                    failedIds,
-                ),
-            );
-            setSelectedChatIds(failedIds);
-        }
-        if (blocked > 0) {
-            setOwnerOnlyAction(
-                `delete ${blocked} of the selected chats - only the chat creator can delete a chat`,
-            );
-        }
-    }, [chats, selectedChatIds, setOwnerOnlyAction, setProjectChats, user?.id]);
+        // Anything that failed stays selected, so "try again" is one click.
+        setSelectedChatIds(failedIds);
+        const notices = [
+            blocked > 0
+                ? `${blocked} selected chat${blocked === 1 ? " was" : "s were"} skipped because only a project owner can delete them.`
+                : null,
+            failedIds.length > 0
+                ? `${failedIds.length} chat${failedIds.length === 1 ? " was" : "s were"} not deleted because the request failed. ${failedIds.length === 1 ? "It remains" : "They remain"} selected so you can try again.`
+                : null,
+        ].filter((notice): notice is string => notice !== null);
+        if (notices.length > 0)
+            setActionNotice({
+                title: "Some chats were not deleted",
+                message: notices.join(" "),
+            });
+    }, [chats, selectedChatIds, setProjectChats]);
 
     return (
         <>
@@ -192,6 +230,12 @@ export default function ProjectAssistantPage({ params }: Props) {
                 setSelectedChatIds={setSelectedChatIds}
                 setRenamingChatId={setRenamingChatId}
                 setRenameChatValue={setRenameChatValue}
+            />
+            <WarningPopup
+                open={!!actionNotice}
+                title={actionNotice?.title}
+                message={actionNotice?.message}
+                onClose={() => setActionNotice(null)}
             />
         </>
     );

@@ -269,7 +269,6 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                                     tone="black"
                                     size="sm"
                                     onClick={onAddColumn}
-                                    className="px-3"
                                 >
                                     <Plus className="h-3.5 w-3.5" />
                                     Add Columns
@@ -278,7 +277,6 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                                     tone="white"
                                     size="sm"
                                     onClick={onAddDocuments}
-                                    className="px-3"
                                 >
                                     <Upload className="h-3.5 w-3.5" />
                                     Add Documents

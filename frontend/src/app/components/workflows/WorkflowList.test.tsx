@@ -3,13 +3,25 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkflowList } from "./WorkflowList";
 
-const { importWorkflowAddon, listWorkflowAddons, routerPush, setActiveTab } =
-  vi.hoisted(() => ({
-    importWorkflowAddon: vi.fn(),
-    setActiveTab: vi.fn(),
-    listWorkflowAddons: vi.fn(),
-    routerPush: vi.fn(),
-  }));
+const {
+  activeTab,
+  getWorkflowFilterOptions,
+  importWorkflowAddon,
+  listWorkflowAddons,
+  routerPush,
+  setActiveTab,
+  usePaginatedWorkflowsSpy,
+  workflowRows,
+} = vi.hoisted(() => ({
+  activeTab: { current: "addons" },
+  getWorkflowFilterOptions: vi.fn(),
+  importWorkflowAddon: vi.fn(),
+  setActiveTab: vi.fn(),
+  listWorkflowAddons: vi.fn(),
+  routerPush: vi.fn(),
+  usePaginatedWorkflowsSpy: vi.fn(),
+  workflowRows: { current: [] as Record<string, unknown>[] },
+}));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: routerPush }),
@@ -17,29 +29,32 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/app/hooks/useQueryParamTab", () => ({
-  useQueryParamTab: () => ["addons", setActiveTab],
+  useQueryParamTab: () => [activeTab.current, setActiveTab],
 }));
 
 vi.mock("@/app/hooks/usePaginatedWorkflows", () => ({
-  usePaginatedWorkflows: () => ({
-    dbWorkflows: [],
-    setDbWorkflows: vi.fn(),
-    loading: false,
-    loadingMore: false,
-    hasMore: false,
-    error: null,
-    loadMoreError: null,
-    loadMore: vi.fn(),
-    selectedWorkflowIds: [],
-    setSelectedWorkflowIds: vi.fn(),
-    selectAllMatching: vi.fn(),
-    selectingAll: false,
-  }),
+  usePaginatedWorkflows: (options: unknown) => {
+    usePaginatedWorkflowsSpy(options);
+    return {
+      dbWorkflows: workflowRows.current,
+      setDbWorkflows: vi.fn(),
+      loading: false,
+      loadingMore: false,
+      hasMore: false,
+      error: null,
+      loadMoreError: null,
+      loadMore: vi.fn(),
+      selectedWorkflowIds: [],
+      setSelectedWorkflowIds: vi.fn(),
+      selectAllMatching: vi.fn(),
+      selectingAll: false,
+    };
+  },
 }));
 
 vi.mock("@/app/lib/mikeApi", () => ({
   deleteWorkflow: vi.fn(),
-  getWorkflowFilterOptions: vi.fn(),
+  getWorkflowFilterOptions,
   getWorkflowAddon: vi.fn(),
   importWorkflowAddon,
   listWorkflowAddons,
@@ -59,11 +74,16 @@ vi.mock("./WorkflowAddonPreviewModal", () => ({
 
 describe("WorkflowList pack toolbar", () => {
   beforeEach(() => {
+    activeTab.current = "addons";
+    workflowRows.current = [];
     setActiveTab.mockReset();
+    getWorkflowFilterOptions.mockReset();
     listWorkflowAddons.mockReset();
     importWorkflowAddon.mockReset();
     routerPush.mockReset();
+    usePaginatedWorkflowsSpy.mockReset();
     listWorkflowAddons.mockReturnValue(new Promise(() => {}));
+    getWorkflowFilterOptions.mockReturnValue(new Promise(() => {}));
     vi.stubGlobal(
       "matchMedia",
       vi.fn().mockReturnValue({
@@ -86,7 +106,9 @@ describe("WorkflowList pack toolbar", () => {
     expect(toolbar).not.toBeNull();
     expect(back.parentElement).toHaveClass("flex-1");
     expect(back.parentElement).not.toHaveClass("ml-auto");
-    expect(within(toolbar as HTMLElement).queryByText("All")).not.toBeInTheDocument();
+    expect(
+      within(toolbar as HTMLElement).queryByText("All"),
+    ).not.toBeInTheDocument();
     expect(
       within(toolbar as HTMLElement).queryByText("Assistant"),
     ).not.toBeInTheDocument();
@@ -98,10 +120,7 @@ describe("WorkflowList pack toolbar", () => {
     ).not.toBeInTheDocument();
 
     await user.click(back);
-    expect(setActiveTab).toHaveBeenCalledWith(
-      "addons",
-      "/workflows/addons",
-    );
+    expect(setActiveTab).toHaveBeenCalledWith("addons", "/workflows/addons");
   });
 
   it("uses a plain row import action and keeps the bulk import pill", async () => {
@@ -191,5 +210,87 @@ describe("WorkflowList pack toolbar", () => {
     expect(imported.querySelector("svg")).not.toBeNull();
     expect(imported).toBeDisabled();
     expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  it("shows resource access scopes in the workflows table", () => {
+    activeTab.current = "all";
+    workflowRows.current = [
+      {
+        id: "private-workflow",
+        user_id: "user-1",
+        access_scope: "private",
+        metadata: {
+          title: "Private workflow",
+          type: "assistant",
+          contributors: [],
+          language: "English",
+          practice: null,
+          jurisdictions: null,
+        },
+        is_system: false,
+      },
+      {
+        id: "shared-workflow",
+        user_id: "user-1",
+        access_scope: "shared",
+        direct_grant_count: 1,
+        metadata: {
+          title: "Shared workflow",
+          type: "assistant",
+          contributors: [],
+          language: "English",
+          practice: null,
+          jurisdictions: null,
+        },
+        is_system: false,
+      },
+      {
+        id: "org-workflow",
+        user_id: "user-1",
+        access_scope: "organization",
+        organization_name: "Elite Law LLP",
+        metadata: {
+          title: "Firm workflow",
+          type: "assistant",
+          contributors: [],
+          language: "English",
+          practice: null,
+          jurisdictions: null,
+        },
+        is_system: false,
+      },
+    ];
+
+    render(<WorkflowList />);
+
+    expect(screen.getByText("Access")).toBeInTheDocument();
+    expect(screen.getByText("Private")).toBeInTheDocument();
+    expect(screen.getByText("2 users")).toBeInTheDocument();
+    expect(screen.getByText("Elite Law LLP")).toBeInTheDocument();
+    expect(screen.getByTitle("Shared with Elite Law LLP")).toBeVisible();
+  });
+
+  it("filters Private and Shared from the Access column header", async () => {
+    const user = userEvent.setup();
+    activeTab.current = "all";
+    render(<WorkflowList />);
+
+    await user.click(
+      screen.getByRole("button", { name: "Filter by access" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Shared" }));
+
+    const calls = usePaginatedWorkflowsSpy.mock.calls;
+    expect(calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({ scope: "collaborative" }),
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Filter by access" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Private" }));
+    expect(usePaginatedWorkflowsSpy.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({ scope: "private" }),
+    );
   });
 });

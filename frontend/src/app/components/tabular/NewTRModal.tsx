@@ -11,6 +11,7 @@ import {
     uploadProjectDocuments,
     uploadStandaloneDocuments,
 } from "@/app/lib/mikeApi";
+import type { AccessAssignmentRole } from "@/app/lib/mikeApi";
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import { FileDirectory } from "../shared/FileDirectory";
 import { Modal } from "../modals/Modal";
@@ -25,6 +26,11 @@ import {
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { isModelAvailable } from "@/app/lib/modelAvailability";
 import { NoModelsWarningPopup } from "../popups/NoModelsWarningPopup";
+import { useAuth } from "@/app/contexts/AuthContext";
+import {
+    CreateAccessStep,
+    type PendingDirectGrant,
+} from "../modals/CreateAccessStep";
 
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
@@ -42,7 +48,8 @@ interface Props {
         columnsConfig: Workflow["columns_config"] | undefined,
         documentGrouping: "document" | "folder" | undefined,
         model: string,
-    ) => void;
+        accessAssignments: { email: string; role: AccessAssignmentRole }[],
+    ) => Promise<void> | void;
     projects?: Project[];
     /** When provided, skip the project/directory picker and show only these docs */
     projectDocs?: Document[];
@@ -64,15 +71,19 @@ export function NewTRModal({
     projectCmNumber,
 }: Props) {
     const isProjectMode = projectId !== undefined;
-    const [step, setStep] = useState<"details" | "documents">("details");
+    const [step, setStep] = useState<"details" | "access" | "documents">(
+        "details",
+    );
     const [title, setTitle] = useState("");
     const [underProject, setUnderProject] = useState(false);
     const [selectedProjectId, setSelectedProjectId] = useState("");
+    const [directGrants, setDirectGrants] = useState<PendingDirectGrant[]>([]);
     const [selectedModel, setSelectedModel] = useState("");
     const [noModelsWarning, setNoModelsWarning] =
         useState<NoModelsReason | null>(null);
     const { profile, loading: profileLoading, apiKeysDegraded } =
         useUserProfile();
+    const { user } = useAuth();
     const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
 
     // Project-scoped docs (when underProject is true and no fixedProjectDocs)
@@ -162,6 +173,7 @@ export function NewTRModal({
         setTitle("");
         setUnderProject(false);
         setSelectedProjectId("");
+        setDirectGrants([]);
         setSelectedModel("");
         setNoModelsWarning(null);
         setProjectDocs([]);
@@ -180,29 +192,46 @@ export function NewTRModal({
         )?.value;
     }
 
-    function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault();
         if (!title.trim()) return;
         if (!selectedModel) return;
         if (underProject && !selectedProjectId) return;
-        if (step === "details" || submitterValue(e) !== "create-review") {
+        if (step === "details") {
+            setStep("access");
+            return;
+        }
+        if (step === "access" || submitterValue(e) !== "create-review") {
             setStep("documents");
             return;
         }
         const selectedWorkflow = workflows.find(
             (w) => w.id === selectedWorkflowId,
         );
-        onAdd(
-            title.trim(),
-            underProject ? selectedProjectId : undefined,
-            selectedDocuments.length > 0
-                ? selectedDocuments.map((document) => document.id)
-                : undefined,
-            selectedWorkflow?.columns_config ?? undefined,
-            groupBySubfolder ? "folder" : "document",
-            selectedModel,
-        );
-        handleClose();
+        const effectiveProjectId = isProjectMode
+            ? projectId
+            : underProject
+              ? selectedProjectId
+              : undefined;
+        const assignments = effectiveProjectId ? [] : directGrants;
+        try {
+            await onAdd(
+                title.trim(),
+                effectiveProjectId,
+                selectedDocuments.length > 0
+                    ? selectedDocuments.map((document) => document.id)
+                    : undefined,
+                selectedWorkflow?.columns_config ?? undefined,
+                groupBySubfolder ? "folder" : "document",
+                selectedModel,
+                assignments,
+            );
+            handleClose();
+        } catch (error) {
+            setUploadError(
+                userFacingApiError(error, "Could not create the review."),
+            );
+        }
     }
 
     async function handleSelectProject(projectId: string) {
@@ -213,6 +242,7 @@ export function NewTRModal({
         setLoadingDocs(true);
         try {
             const proj = await getProject(projectId);
+            setDirectGrants([]);
             const docs = (proj.documents ?? []).filter(
                 (d) => d.status === "ready",
             );
@@ -335,7 +365,11 @@ export function NewTRModal({
             onClose={handleClose}
             breadcrumbs={[
                 ...breadcrumbs,
-                step === "details" ? "Details" : "Add Documents",
+                step === "details"
+                    ? "Details"
+                    : step === "access"
+                      ? "Access"
+                      : "Add Documents",
             ]}
             secondaryAction={
                 step === "documents"
@@ -349,15 +383,32 @@ export function NewTRModal({
                           onClick: () => fileInputRef.current?.click(),
                           disabled: uploading,
                       }
-                    : undefined
+                    : step === "access"
+                      ? {
+                            label: "Back",
+                            type: "button",
+                            onClick: () => setStep("details"),
+                            disabled: uploading,
+                        }
+                      : undefined
             }
             cancelAction={
                 step === "documents"
                     ? {
                           label: "Back",
-                          onClick: () => setStep("details"),
+                          onClick: () => setStep("access"),
                           disabled: uploading,
                       }
+                    : step === "access"
+                      ? {
+                            label: "Skip",
+                            type: "button",
+                            onClick: () => {
+                                setDirectGrants([]);
+                                setStep("documents");
+                            },
+                            disabled: uploading,
+                        }
                     : undefined
             }
             primaryAction={
@@ -365,16 +416,20 @@ export function NewTRModal({
                     ? {
                           label: "Next",
                           type: "button",
-                          onClick: (event) => {
-                              event.preventDefault();
-                              setStep("documents");
-                          },
+                          onClick: () => setStep("access"),
                           disabled:
                               !title.trim() ||
                               (underProject && !selectedProjectId) ||
                               !selectedModel,
                       }
-                    : {
+                    : step === "access"
+                      ? {
+                            label: "Next",
+                            type: "button",
+                            onClick: () => setStep("documents"),
+                            disabled: uploading,
+                        }
+                      : {
                           label: "Create",
                           type: "submit",
                           form: formId,
@@ -494,6 +549,16 @@ export function NewTRModal({
                             </ToggleSwitch>
                         </div>
                     </div>
+                ) : step === "access" ? (
+                    <CreateAccessStep
+                        orgId={null}
+                        currentUserEmail={user?.email ?? null}
+                        currentUserId={user?.id ?? null}
+                        directGrants={directGrants}
+                        onDirectGrantsChange={setDirectGrants}
+                        inheritedFromProject={isProjectMode || underProject}
+                        ownerLabel="Review owners"
+                    />
                 ) : (
                     <div className="flex min-h-0 flex-1 flex-col">
                         {showDirectory && (

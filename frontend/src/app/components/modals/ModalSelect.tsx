@@ -26,6 +26,7 @@ export type ModalSelectOption =
 
 interface ModalSelectProps {
     id: string;
+    "aria-label"?: string;
     value: string;
     options: readonly ModalSelectOption[];
     onChange: (value: string) => void;
@@ -45,6 +46,7 @@ function normalizeOption(option: ModalSelectOption) {
 
 export function ModalSelect({
     id,
+    "aria-label": ariaLabel,
     value,
     options,
     onChange,
@@ -78,6 +80,7 @@ export function ModalSelect({
             <DropdownTrigger asChild>
                 <button
                     id={id}
+                    aria-label={ariaLabel}
                     type="button"
                     disabled={disabled}
                     className={cn(

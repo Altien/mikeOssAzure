@@ -75,7 +75,8 @@ describe("PillButton", () => {
     });
 
     it.each([
-        ["sm" as const, "px-2", "has-[svg]:pl-1"],
+        ["xs" as const, "px-2.5", "has-[svg]:pl-1.5"],
+        ["sm" as const, "px-3", "has-[svg]:pl-2"],
         ["normal" as const, "px-4", "has-[svg]:pl-3"],
     ])(
         "reduces left padding by one when the %s size includes an icon",
@@ -92,6 +93,20 @@ describe("PillButton", () => {
             ).toHaveClass(horizontalPadding, iconLeftPadding);
         },
     );
+
+    it("uses the icon-xs size for compact icon-only buttons", () => {
+        render(
+            <PillButton tone="white" size="icon-xs" aria-label="Download">
+                <svg aria-hidden="true" />
+            </PillButton>,
+        );
+
+        expect(screen.getByRole("button", { name: "Download" })).toHaveClass(
+            "h-6",
+            "w-6",
+            "p-0",
+        );
+    });
 
     it("keeps symmetric padding when no icon is included", () => {
         render(

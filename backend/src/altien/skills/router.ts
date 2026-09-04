@@ -657,7 +657,7 @@ skillsRouter.put(
     if (!access.ok) {
       return void res.status(404).json({ detail: "Project not found" });
     }
-    if (!access.isOwner) {
+    if (access.projectRole !== "owner") {
       return void res.status(403).json({ detail: "PROJECT_OWNER_REQUIRED" });
     }
     try {
@@ -702,7 +702,7 @@ skillsRouter.get(
           projectId: req.params.projectId,
           db,
         }),
-        canManage: access.isOwner,
+        canManage: access.projectRole === "owner",
       });
     } catch (error) {
       res.status(500).json({

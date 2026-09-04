@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { MoreHorizontal, Pencil, Trash2, Check, X } from "lucide-react";
+import { MoreHorizontal, Pencil, Trash2, Check, X, Users } from "lucide-react";
 import {
     DropdownMenu,
     DropdownMenuTrigger,
@@ -11,10 +11,13 @@ import {
     LiquidDropdownItem,
 } from "@/app/components/ui/liquid-dropdown";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
-import { useAuth } from "@/app/contexts/AuthContext";
-import { OwnerOnlyPopup } from "@/app/components/popups/OwnerOnlyPopup";
+import { PermissionDeniedPopup } from "@/app/components/popups/PermissionDeniedPopup";
+import { WarningPopup } from "@/app/components/popups/WarningPopup";
+import { can, roleFrom } from "@/app/lib/permissions";
+import { userFacingApiError } from "@/app/lib/userFacingError";
 import type { Chat } from "@/app/components/shared/types";
 import { ChatSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
+import { ChatAccessModal } from "@/app/components/assistant/ChatAccessModal";
 import { cn } from "@/app/lib/utils";
 import {
     LIQUID_GLASS_SELECTED_CLASS,
@@ -31,14 +34,27 @@ interface Props {
 
 export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props) {
     const { renameChat, deleteChat } = useChatHistoryContext();
-    const { user } = useAuth();
     const [isRenaming, setIsRenaming] = useState(false);
+    const [shareOpen, setShareOpen] = useState(false);
     const [editTitle, setEditTitle] = useState(chat.title ?? "");
-    const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
+    const [gate, setGate] = useState<{
+        action: string;
+        requiredRole: "owner" | "editor";
+    } | null>(null);
+    const [deleteError, setDeleteError] = useState<string | null>(null);
+    const [renameError, setRenameError] = useState<string | null>(null);
     const editInputRef = useRef<HTMLInputElement>(null);
-    // Sidebar can show collaborator chats from projects the user owns;
-    // rename/delete are still creator-only on the backend, so guard here.
-    const isChatOwner = !!user?.id && chat.user_id === user.id;
+    // Chats joined the project role ladder: rename is content collaboration
+    // (member+, the tier the server's PATCH asks for) and delete sits at the
+    // top (the creator — is_owner ⇒ admin via roleFrom — or a project
+    // admin). The overview RPC serves BOTH is_owner and access_role on every
+    // row — the same verdict its own visibility predicate filtered on — so
+    // this gate reflects what the server would actually answer; roleFrom
+    // fails closed to viewer when a row carries neither field.
+    const role = roleFrom(chat);
+    const canRename = can(role, "content.edit");
+    const canShare = can(role, "access.manage");
+    const canDelete = can(role, "container.delete");
 
     useEffect(() => {
         if (isRenaming) editInputRef.current?.focus();
@@ -46,8 +62,21 @@ export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props
 
     const handleRenameSave = async () => {
         const trimmed = editTitle.trim();
-        if (trimmed) await renameChat(chat.id, trimmed);
         setIsRenaming(false);
+        if (!trimmed) return;
+        try {
+            await renameChat(chat.id, trimmed);
+        } catch (error) {
+            // The context put the old title back; without this the user
+            // watches their edit silently revert — the rename twin of the
+            // surfaced delete failure below.
+            setRenameError(
+                userFacingApiError(
+                    error,
+                    "The chat could not be renamed. Please try again.",
+                ),
+            );
+        }
     };
 
     const handleRenameCancel = () => {
@@ -94,6 +123,7 @@ export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props
                 <>
                     <ChatSkeuoIcon className="ml-2.5 h-3.5 w-3.5 shrink-0" />
                     <button
+                        type="button"
                         onClick={onSelect}
                         onMouseEnter={(e) => {
                             const el = e.currentTarget;
@@ -120,6 +150,8 @@ export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                             <button
+                                type="button"
+                                aria-label={`Actions for ${chat.title ?? "Untitled chat"}`}
                                 className={`flex h-6 w-0 shrink-0 items-center justify-center overflow-hidden rounded-md bg-transparent text-gray-500 opacity-0 transition-opacity hover:text-gray-900 ${
                                     isActive
                                         ? "w-6 opacity-100"
@@ -131,9 +163,27 @@ export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props
                         </DropdownMenuTrigger>
                         <LiquidDropdownContent align="end" className="z-101">
                             <LiquidDropdownItem
-                                onClick={() => {
-                                    if (!isChatOwner) {
-                                        setOwnerOnlyAction("rename this chat");
+                                onSelect={() => {
+                                    if (!canShare) {
+                                        setGate({
+                                            action: "share this chat",
+                                            requiredRole: "owner",
+                                        });
+                                        return;
+                                    }
+                                    setShareOpen(true);
+                                }}
+                            >
+                                <Users className="mr-2 h-4 w-4" />
+                                Share
+                            </LiquidDropdownItem>
+                            <LiquidDropdownItem
+                                onSelect={() => {
+                                    if (!canRename) {
+                                        setGate({
+                                            action: "rename this chat",
+                                            requiredRole: "editor",
+                                        });
                                         return;
                                     }
                                     setEditTitle(chat.title ?? "");
@@ -144,12 +194,22 @@ export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props
                                 Rename
                             </LiquidDropdownItem>
                             <LiquidDropdownItem
-                                onClick={() => {
-                                    if (!isChatOwner) {
-                                        setOwnerOnlyAction("delete this chat");
+                                onSelect={() => {
+                                    if (!canDelete) {
+                                        setGate({
+                                            action: "delete this chat",
+                                            requiredRole: "owner",
+                                        });
                                         return;
                                     }
-                                    void deleteChat(chat.id);
+                                    deleteChat(chat.id).catch((error) => {
+                                        setDeleteError(
+                                            userFacingApiError(
+                                                error,
+                                                "The chat could not be deleted. Please try again.",
+                                            ),
+                                        );
+                                    });
                                 }}
                                 className="text-red-600 focus:text-red-600"
                             >
@@ -160,11 +220,31 @@ export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props
                     </DropdownMenu>
                 </>
             )}
-            <OwnerOnlyPopup
-                open={!!ownerOnlyAction}
-                action={ownerOnlyAction ?? undefined}
-                onClose={() => setOwnerOnlyAction(null)}
+            <PermissionDeniedPopup
+                open={!!gate}
+                action={gate?.action}
+                requiredRole={gate?.requiredRole}
+                onClose={() => setGate(null)}
             />
+            <WarningPopup
+                open={!!deleteError}
+                title="Chat not deleted"
+                message={deleteError}
+                onClose={() => setDeleteError(null)}
+            />
+            <WarningPopup
+                open={!!renameError}
+                title="Chat not renamed"
+                message={renameError}
+                onClose={() => setRenameError(null)}
+            />
+            {shareOpen ? (
+                <ChatAccessModal
+                    open={shareOpen}
+                    chat={chat}
+                    onClose={() => setShareOpen(false)}
+                />
+            ) : null}
         </div>
     );
 }

@@ -1,12 +1,21 @@
-// Scope vocabulary here ('all'|'owned'|'shared') is deliberately distinct
-// from Projects' ('all'|'mine'|'shared') — this RPC never includes system
-// workflows, so its scope only ever needs to distinguish owned vs. shared
-// DB rows. The UI's separate "source" filter (system/user/shared) is a
-// different, client-side-only concept layered on top.
-export type WorkflowScope = "all" | "owned" | "shared";
+// "owned" and "shared" retain the list's original source semantics, while
+// "private" and "collaborative" power the Access-column filter. The latter
+// groups direct grants and organisation access together as collaborative.
+export type WorkflowScope =
+    | "all"
+    | "owned"
+    | "shared"
+    | "private"
+    | "collaborative";
 
 export function parseWorkflowScope(value: unknown): WorkflowScope {
-    if (value === "owned" || value === "shared") return value;
+    if (
+        value === "owned" ||
+        value === "shared" ||
+        value === "private" ||
+        value === "collaborative"
+    )
+        return value;
     return "all";
 }
 

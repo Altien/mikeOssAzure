@@ -3,12 +3,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { Users } from "lucide-react";
 import { Modal } from "@/app/components/modals/Modal";
+import { ModalSelect } from "@/app/components/modals/ModalSelect";
 import {
     FieldLabel,
     FormTextInput,
 } from "@/app/components/ui/form-field";
 import type { Project } from "@/app/components/shared/types";
+import { listOrgs, type Org } from "@/app/lib/mikeApi";
 import { ProjectPracticeField } from "./ProjectPracticeField";
+
+const PERSONAL_WORKSPACE = "__personal__";
 
 interface ProjectDetailsModalProps {
     open: boolean;
@@ -30,6 +34,7 @@ export function ProjectDetailsModal({
     const [nameDraft, setNameDraft] = useState("");
     const [cmDraft, setCmDraft] = useState("");
     const [practiceDraft, setPracticeDraft] = useState("");
+    const [orgs, setOrgs] = useState<Org[]>([]);
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -42,6 +47,21 @@ export function ProjectDetailsModal({
         setSaved(false);
         setError(null);
     }, [open, project]);
+
+    useEffect(() => {
+        if (!open) return;
+        let cancelled = false;
+        listOrgs()
+            .then((rows) => {
+                if (!cancelled) setOrgs(rows);
+            })
+            .catch(() => {
+                if (!cancelled) setOrgs([]);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [open]);
 
     const trimmedName = nameDraft.trim();
     const trimmedCm = cmDraft.trim();
@@ -165,6 +185,27 @@ export function ProjectDetailsModal({
                     />
                 </div>
 
+                <div>
+                    <FieldLabel htmlFor="project-details-org">
+                        Organisation
+                    </FieldLabel>
+                    <ModalSelect
+                        id="project-details-org"
+                        value={project.org_id ?? PERSONAL_WORKSPACE}
+                        onChange={() => undefined}
+                        disabled
+                        options={[
+                            {
+                                value: PERSONAL_WORKSPACE,
+                                label: "No organization",
+                            },
+                            ...orgs.map((org) => ({
+                                value: org.id,
+                                label: org.name,
+                            })),
+                        ]}
+                    />
+                </div>
             </div>
         </Modal>
     );

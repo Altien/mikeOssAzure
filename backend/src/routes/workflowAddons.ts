@@ -317,6 +317,7 @@ workflowAddonsRouter.post(
       is_system: false,
       is_owner: true,
       allow_edit: true,
+      access_role: "owner",
       created_at: workflow.created_at,
     });
   }),

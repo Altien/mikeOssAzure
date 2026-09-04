@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const accessMocks = vi.hoisted(() => ({
   checkProjectAccess: vi.fn(),
+  checkWorkflowAccess: vi.fn(),
   ensureDocAccess: vi.fn(),
 }));
 
@@ -105,6 +106,7 @@ describe("upload destination authorization", () => {
   });
 
   it("rejects a workflow that is neither owned nor editable", async () => {
+    accessMocks.checkWorkflowAccess.mockResolvedValue({ ok: false });
     const res = response();
     const allowed = await validateDestinationAccess(
       {

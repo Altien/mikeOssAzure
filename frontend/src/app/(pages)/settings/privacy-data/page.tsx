@@ -329,6 +329,7 @@ export default function PrivacyDataPage() {
                 title={pendingDeleteCopy?.title}
                 message={pendingDeleteCopy?.message}
                 confirmLabel="Delete"
+                confirmVariant="danger"
                 confirmStatus={deletingAction ? "loading" : "idle"}
                 cancelLabel="Cancel"
                 onCancel={() => {

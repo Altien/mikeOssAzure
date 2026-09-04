@@ -12,6 +12,7 @@ import fs from "node:fs";
 import { chatRouter } from "./routes/chat";
 import { wordChatRouter } from "./routes/wordChat";
 import { projectsRouter } from "./routes/projects";
+import { orgsRouter } from "./routes/orgs";
 import { projectChatRouter } from "./routes/projectChat";
 import { documentsRouter } from "./routes/documents";
 import { libraryRouter } from "./routes/library";
@@ -345,6 +346,7 @@ export function buildApp(): express.Express {
   app.use("/api/chat", chatRouter);
   app.use("/api/word-chat", wordChatRouter);
   app.use("/api/projects", projectsRouter);
+  app.use("/api/orgs", orgsRouter);
   app.use("/api/projects/:projectId/chat", projectChatRouter);
   app.use("/api/single-documents", documentsRouter);
   app.use("/api/library", libraryRouter);

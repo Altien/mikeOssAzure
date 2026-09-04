@@ -27,7 +27,12 @@ import {
   devLog,
   resolveDocLabel,
 } from "./types";
-import { TOOLS, WORKFLOW_TOOLS } from "./tools/toolSchemas";
+import {
+  TOOLS,
+  WORKFLOW_TOOLS,
+  isDocumentMutatingTool,
+  withoutDocumentMutatingTools,
+} from "./tools/toolSchemas";
 import {
   parseCitationsWithDiagnostics,
   parsePartialCitationObjects,
@@ -233,6 +238,18 @@ export async function runLLMStream(params: {
   includeResearchTools?: boolean;
   /** Expose ask_inputs only to clients that can render and answer it. */
   includeAskInputs?: boolean;
+  /**
+   * May this turn WRITE documents (edit_document, replicate_document, the
+   * generate_* family)? Defaults to true; pass false and those tools are
+   * neither advertised to the model nor executed if it asks for one anyway.
+   *
+   * The caller decides this from the role the caller holds on the CONTAINER
+   * whose documents the tools would touch — not from their standing in the
+   * chat. The two come apart: a project viewer named on one chat's share
+   * list writes in that thread as a member, and without this partition the
+   * thread would hand them edit_document over every document in the project.
+   */
+  allowDocumentMutation?: boolean;
   workflowStore?: WorkflowStore;
   tabularStore?: TabularCellStore;
   /** Tools executed by the connected client (Word add-in) instead of here. */
@@ -279,6 +296,7 @@ export async function runLLMStream(params: {
     skillResourceStore,
     includeResearchTools = true,
     includeAskInputs = true,
+    allowDocumentMutation = true,
     workflowStore,
     tabularStore,
     clientTools,
@@ -294,14 +312,11 @@ export async function runLLMStream(params: {
     unsafeWrite(sanitizeAssistantSseChunk(chunk));
   const researchTools = includeResearchTools ? COURTLISTENER_TOOLS : [];
   const mcpTools = await buildUserMcpTools(userId, db);
-  const conversationTools = includeAskInputs ? TOOLS : TOOLS.filter((tool) => tool.function.name !== "ask_inputs");
-  const baseTools = [
-    ...conversationTools,
-    ...researchTools,
-    ...EXTERNAL_SOURCE_TOOLS,
-    ...WORKFLOW_TOOLS,
-  ];
-  const availableTools = [
+  const conversationTools = includeAskInputs
+    ? TOOLS
+    : TOOLS.filter((tool) => tool.function.name !== "ask_inputs");
+  const baseTools = [...conversationTools, ...researchTools, ...EXTERNAL_SOURCE_TOOLS, ...WORKFLOW_TOOLS];
+  const advertisedTools = [
     ...baseTools,
     ...mcpTools,
     ...(extraTools ?? []),
@@ -310,12 +325,19 @@ export async function runLLMStream(params: {
   const allowedNames = allowedToolNames
     ? new Set(allowedToolNames)
     : null;
-  const activeTools = allowedNames
-    ? availableTools.filter((tool) => {
+  const scopedTools = allowedNames
+    ? advertisedTools.filter((tool) => {
         const name = (tool as { function?: { name?: unknown } }).function?.name;
         return typeof name === "string" && allowedNames.has(name);
       })
-    : availableTools;
+    : advertisedTools;
+  // Hiding the schema is the first half of the gate: a tool the model was
+  // never shown is a tool it will not plan around. The second half is in
+  // `runTools` below, because "not advertised" is not "not callable" — a
+  // model can name a tool from memory.
+  const activeTools = allowDocumentMutation
+    ? scopedTools
+    : withoutDocumentMutatingTools(scopedTools);
 
   // Extract system prompt; pass remaining turns to the adapter as
   // plain user/assistant messages.
@@ -563,11 +585,20 @@ export async function runLLMStream(params: {
         // server batch and sequentially among themselves: each call mutates
         // or reads the live document, so order is part of their semantics.
         const clientResultByCallId = new Map<string, string>();
+        // Enforcement, not just omission: a document-writing call from a
+        // caller who may not write is dropped before dispatch, on the server
+        // side and the client side alike. It falls through to the
+        // "Tool 'x' is not available." answer below, which every tool_use
+        // without a result already gets, so the model is told plainly rather
+        // than left waiting on a call that silently did nothing.
+        const permittedCalls = allowDocumentMutation
+          ? calls
+          : calls.filter((c) => !isDocumentMutatingTool(c.name));
         const serverCalls = clientTools
-          ? calls.filter((c) => !clientTools.owns(c.name))
-          : calls;
+          ? permittedCalls.filter((c) => !clientTools.owns(c.name))
+          : permittedCalls;
         if (clientTools) {
-          for (const call of calls) {
+          for (const call of permittedCalls) {
             if (!clientTools.owns(call.name)) continue;
             const { content, events: clientEvents } =
               await clientTools.execute(call);

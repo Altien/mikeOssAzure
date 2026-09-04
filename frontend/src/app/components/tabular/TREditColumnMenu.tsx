@@ -417,7 +417,6 @@ export function TREditColumnMenu({
                                 !name.trim() ||
                                 !prompt.trim()
                             }
-                            className="px-3"
                         >
                             {saving ? "Saving…" : "Save"}
                         </PillButton>

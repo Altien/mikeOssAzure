@@ -64,6 +64,7 @@ import {
   type TableSortDirection,
   TableStickyCell,
 } from "../shared/TablePrimitive";
+import { AccessScopeLabel } from "../shared/AccessScopeLabel";
 
 type WorkflowListTab = "all" | "assistant" | "tabular" | "addons";
 
@@ -78,6 +79,11 @@ const WORKFLOW_TAB_IDS = WORKFLOW_TABS.map((tab) => tab.id);
 const WORKFLOW_SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
   { value: "asc", label: "Ascending" },
   { value: "desc", label: "Descending" },
+];
+type AccessFilter = "private" | "shared";
+const ACCESS_FILTER_OPTIONS: TableFilterOption<AccessFilter>[] = [
+  { value: "private", label: "Private" },
+  { value: "shared", label: "Shared" },
 ];
 
 function workflowFilterOptions(
@@ -122,6 +128,7 @@ export function WorkflowList({
     null,
   );
   const [languageFilter, setLanguageFilter] = useState<string | null>(null);
+  const [accessFilter, setAccessFilter] = useState<AccessFilter | null>(null);
   const [databaseFilterOptions, setDatabaseFilterOptions] =
     useState<WorkflowFilterOptions>({
       practices: [],
@@ -177,6 +184,12 @@ export function WorkflowList({
     practiceFilter,
     languageFilter,
     jurisdictionFilter,
+    scope:
+      accessFilter === "private"
+        ? "private"
+        : accessFilter === "shared"
+          ? "collaborative"
+          : "all",
     sort: nameSortDirection
       ? { key: "name", direction: nameSortDirection }
       : null,
@@ -320,10 +333,7 @@ export function WorkflowList({
       closeAddon();
     } catch (error) {
       setActionError(
-        userFacingApiError(
-          error,
-          `Could not import "${addon.title}".`,
-        ),
+        userFacingApiError(error, `Could not import "${addon.title}".`),
       );
     } finally {
       setImportingAddonId(null);
@@ -381,11 +391,10 @@ export function WorkflowList({
     setWorkflows((current) =>
       current.filter((workflow) => !ids.includes(workflow.id)),
     );
-    const { deletedIds, failedIds } =
-      await deleteTabularReviewsWithConcurrency(
-        ids,
-        deleteWorkflow,
-      );
+    const { deletedIds, failedIds } = await deleteTabularReviewsWithConcurrency(
+      ids,
+      deleteWorkflow,
+    );
     setSelectedWorkflowIds((current) =>
       current.filter((id) => !deletedIds.includes(id)),
     );
@@ -449,10 +458,9 @@ export function WorkflowList({
   ).length;
   const includesUnloadedWorkflows =
     pendingDeleteIds.length > pendingDeleteWorkflows.length;
-  const deleteWarningMessage =
-    includesUnloadedWorkflows
-      ? "This will permanently delete every selected workflow, including matching workflows that are not currently shown. If any are default workflows, their corresponding Quick Actions will also be deleted and will not be recreated automatically."
-      : pendingDefaultDeleteCount > 0
+  const deleteWarningMessage = includesUnloadedWorkflows
+    ? "This will permanently delete every selected workflow, including matching workflows that are not currently shown. If any are default workflows, their corresponding Quick Actions will also be deleted and will not be recreated automatically."
+    : pendingDefaultDeleteCount > 0
       ? pendingDeleteWorkflows.length === 1
         ? "Deleting this default workflow also permanently deletes its corresponding Quick Action. The default workflow will not be created again automatically."
         : `The selected workflows will be permanently deleted. ${pendingDefaultDeleteCount} ${pendingDefaultDeleteCount === 1 ? "is a default workflow, so its corresponding Quick Action will" : "are default workflows, so their corresponding Quick Actions will"} also be deleted. Deleted defaults will not be created again automatically.`
@@ -566,7 +574,17 @@ export function WorkflowList({
           onCreate={() => setNewModalOpen(true)}
           selectedIds={selectedWorkflowIds}
           onSelectedIdsChange={setSelectedWorkflowIds}
-          onSelectAll={() => void selectAllMatching([], "owned")}
+          onSelectAll={() => {
+            if (accessFilter) {
+              setSelectedWorkflowIds(
+                visibleWorkflows
+                  .filter((workflow) => workflow.is_owner !== false)
+                  .map((workflow) => workflow.id),
+              );
+              return;
+            }
+            void selectAllMatching([], "owned");
+          }}
           selectingAll={selectingAll}
           nameSortDirection={nameSortDirection}
           onNameSortDirectionChange={setNameSortDirection}
@@ -578,6 +596,8 @@ export function WorkflowList({
           onJurisdictionFilterChange={setJurisdictionFilter}
           languageFilter={languageFilter}
           onLanguageFilterChange={setLanguageFilter}
+          accessFilter={accessFilter}
+          onAccessFilterChange={setAccessFilter}
           filterOptions={databaseFilterOptions}
           loadingMore={loadingMore}
           hasMore={hasMore}
@@ -586,10 +606,7 @@ export function WorkflowList({
         />
       )}
 
-      <UseWorkflowModal
-        workflow={selected}
-        onClose={() => setSelected(null)}
-      />
+      <UseWorkflowModal workflow={selected} onClose={() => setSelected(null)} />
 
       <NewWorkflowModal
         open={newModalOpen}
@@ -600,7 +617,6 @@ export function WorkflowList({
           router.push(workflowDetailPath(workflow));
         }}
       />
-
 
       <WorkflowAddonPreviewModal
         addon={selectedAddon}
@@ -618,6 +634,7 @@ export function WorkflowList({
         }
         message={deleteWarningMessage}
         confirmLabel="Delete"
+        confirmVariant="danger"
         confirmStatus={deleteStatus}
         onConfirm={() => void confirmWorkflowDeletion()}
         onCancel={() => {
@@ -654,6 +671,8 @@ function WorkflowTable({
   onJurisdictionFilterChange,
   languageFilter,
   onLanguageFilterChange,
+  accessFilter,
+  onAccessFilterChange,
   filterOptions,
   loadingMore,
   hasMore,
@@ -682,6 +701,8 @@ function WorkflowTable({
   onJurisdictionFilterChange: (value: string | null) => void;
   languageFilter: string | null;
   onLanguageFilterChange: (value: string | null) => void;
+  accessFilter: AccessFilter | null;
+  onAccessFilterChange: (value: AccessFilter | null) => void;
   filterOptions: WorkflowFilterOptions;
   loadingMore: boolean;
   hasMore: boolean;
@@ -742,9 +763,9 @@ function WorkflowTable({
     onSelectedIdsChange([]);
   }
 
-  function handleFilterChange(
-    setter: (value: string | null) => void,
-    value: string | null,
+  function handleFilterChange<T extends string>(
+    setter: (value: T | null) => void,
+    value: T | null,
   ) {
     rowSelectionAnchorIdRef.current = null;
     setter(value);
@@ -791,7 +812,22 @@ function WorkflowTable({
               />
             )}
           </TableStickyCell>
-          <TableHeaderCell className="ml-auto flex w-28 items-center gap-1">
+          <TableHeaderCell className="ml-auto w-32">
+            <span className="mr-1">Access</span>
+            {!loading && (
+              <TableFilters
+                label="Filter by access"
+                value={accessFilter}
+                allLabel="All Access"
+                widthClassName="w-40"
+                options={ACCESS_FILTER_OPTIONS}
+                onChange={(value) =>
+                  handleFilterChange(onAccessFilterChange, value)
+                }
+              />
+            )}
+          </TableHeaderCell>
+          <TableHeaderCell className="flex w-28 items-center gap-1">
             <span>Type</span>
             {!loading && (
               <TableFilters
@@ -863,7 +899,10 @@ function WorkflowTable({
                 <SkeletonCheckbox />
                 <SkeletonLine className="h-3.5 w-48" />
               </TableStickyCell>
-              <TableCell className="ml-auto w-28">
+              <TableCell className="ml-auto w-32">
+                <SkeletonLine className="w-16" />
+              </TableCell>
+              <TableCell className="w-28">
                 <SkeletonLine className="w-16" />
               </TableCell>
               <TableCell className="w-52">
@@ -890,12 +929,7 @@ function WorkflowTable({
               error || "Create a reusable workflow or import one from Add-ons."
             }
             action={
-              <PillButton
-                tone="black"
-                size="sm"
-                onClick={onCreate}
-                className="px-3"
-              >
+              <PillButton tone="black" size="sm" onClick={onCreate}>
                 Create
               </PillButton>
             }
@@ -913,130 +947,140 @@ function WorkflowTable({
         <>
           <TableBody>
             {displayedWorkflows.map((workflow) => {
-            const Icon =
-              workflow.metadata.type === "tabular"
-                ? TabularReviewSkeuoIcon
-                : ChatSkeuoIcon;
-            const canManage = workflow.is_owner !== false;
-            const canDelete = canManage;
-            const isSelected = selectedIds.includes(workflow.id);
-            const actionIds = rowActionSelectionIds(workflow.id, selectedIds);
-            const appliesToSelection = actionIds.length > 1;
-            return (
-              <TableRow
-                key={workflow.id}
-                selected={isSelected}
-                onClick={(event) => {
-                  if (event.shiftKey) {
-                    event.preventDefault();
-                    if (canManage) {
-                      const anchorId = rowSelectionAnchorIdRef.current;
-                      onSelectedIdsChange(
-                        selectedIdsAfterRangeClick(
-                          workflow.id,
-                          selectableIds,
-                          selectedIds,
-                          anchorId,
-                        ),
-                      );
-                      rowSelectionAnchorIdRef.current = workflow.id;
+              const Icon =
+                workflow.metadata.type === "tabular"
+                  ? TabularReviewSkeuoIcon
+                  : ChatSkeuoIcon;
+              const canManage = workflow.is_owner !== false;
+              const canDelete = canManage;
+              const isSelected = selectedIds.includes(workflow.id);
+              const actionIds = rowActionSelectionIds(workflow.id, selectedIds);
+              const appliesToSelection = actionIds.length > 1;
+              return (
+                <TableRow
+                  key={workflow.id}
+                  selected={isSelected}
+                  onClick={(event) => {
+                    if (event.shiftKey) {
+                      event.preventDefault();
+                      if (canManage) {
+                        const anchorId = rowSelectionAnchorIdRef.current;
+                        onSelectedIdsChange(
+                          selectedIdsAfterRangeClick(
+                            workflow.id,
+                            selectableIds,
+                            selectedIds,
+                            anchorId,
+                          ),
+                        );
+                        rowSelectionAnchorIdRef.current = workflow.id;
+                      }
+                      return;
                     }
-                    return;
-                  }
-                  if (event.ctrlKey || event.metaKey) {
-                    event.preventDefault();
-                    if (canManage) {
-                      onSelectedIdsChange(
-                        selectedIdsAfterShiftClick(workflow.id, selectedIds),
-                      );
-                      rowSelectionAnchorIdRef.current = workflow.id;
+                    if (event.ctrlKey || event.metaKey) {
+                      event.preventDefault();
+                      if (canManage) {
+                        onSelectedIdsChange(
+                          selectedIdsAfterShiftClick(workflow.id, selectedIds),
+                        );
+                        rowSelectionAnchorIdRef.current = workflow.id;
+                      }
+                      return;
                     }
-                    return;
-                  }
-                  onOpen(workflow);
-                }}
-                rightClickDropdown={
-                  (close, menuProps) => (
-                        <RowActionMenuItems
-                          onClose={close}
-                          surfaceProps={menuProps}
-                          onView={
-                            appliesToSelection
-                              ? undefined
-                              : () => onOpen(workflow)
-                          }
-                          onEditDetails={
-                            appliesToSelection || !canManage
-                              ? undefined
-                              : () => onEdit(workflow)
-                          }
-                          editDetailsLabel="Edit"
-                          onDelete={
-                            appliesToSelection
-                              ? () => onDeleteSelected(actionIds)
-                              : canManage
-                                ? () => onDelete(workflow)
-                                : undefined
-                          }
-                          deleteLabel={
-                            appliesToSelection
-                              ? `Delete ${actionIds.length} workflows`
-                              : undefined
-                          }
+                    onOpen(workflow);
+                  }}
+                  rightClickDropdown={(close, menuProps) => (
+                    <RowActionMenuItems
+                      onClose={close}
+                      surfaceProps={menuProps}
+                      onView={
+                        appliesToSelection ? undefined : () => onOpen(workflow)
+                      }
+                      onEditDetails={
+                        appliesToSelection || !canManage
+                          ? undefined
+                          : () => onEdit(workflow)
+                      }
+                      editDetailsLabel="Edit"
+                      onDelete={
+                        appliesToSelection
+                          ? () => onDeleteSelected(actionIds)
+                          : canManage
+                            ? () => onDelete(workflow)
+                            : undefined
+                      }
+                      deleteLabel={
+                        appliesToSelection
+                          ? `Delete ${actionIds.length} workflows`
+                          : undefined
+                      }
+                    />
+                  )}
+                >
+                  <TablePrimaryCell
+                    label={workflow.metadata.title}
+                    selected={isSelected}
+                    onSelectionChange={() => toggleOne(workflow.id)}
+                    selectionIndicator={
+                      canDelete ? undefined : (
+                        <input
+                          type="checkbox"
+                          disabled
+                          className={TABLE_CHECKBOX_CLASS}
+                          title="Shared workflows cannot be deleted"
+                          aria-label={`Select ${workflow.metadata.title}`}
                         />
                       )
-                }
-              >
-                <TablePrimaryCell
-                  label={workflow.metadata.title}
-                  selected={isSelected}
-                  onSelectionChange={() => toggleOne(workflow.id)}
-                  selectionIndicator={
-                    canDelete ? undefined : (
-                      <input
-                        type="checkbox"
-                        disabled
-                        className={TABLE_CHECKBOX_CLASS}
-                        title="Shared workflows cannot be deleted"
-                        aria-label={`Select ${workflow.metadata.title}`}
-                      />
-                    )
-                  }
-                />
-                <TableCell className="ml-auto w-28">
-                  <span className="inline-flex items-center gap-1.5 text-xs text-gray-600">
-                    <Icon className="h-3 w-3 shrink-0" />
-                    {workflow.metadata.type === "tabular"
-                      ? "Tabular"
-                      : "Assistant"}
-                  </span>
-                </TableCell>
-                <TableCell className="w-52 text-xs text-gray-600">
-                  {workflow.metadata.practice || "—"}
-                </TableCell>
-                <TableCell className="w-40 truncate text-xs text-gray-600">
-                  {workflow.metadata.jurisdictions?.join(", ") || "—"}
-                </TableCell>
-                <TableCell className="w-28 text-xs text-gray-600">
-                  {workflow.metadata.language || "—"}
-                </TableCell>
-                <div
-                  className="flex w-8 shrink-0 justify-end"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <RowActions
-                    onView={() => onOpen(workflow)}
-                    onEditDetails={
-                      canManage ? () => onEdit(workflow) : undefined
-                    }
-                    editDetailsLabel="Edit"
-                    onDelete={
-                      canManage ? () => onDelete(workflow) : undefined
                     }
                   />
-                </div>
-              </TableRow>
-            );
+                  <TableCell className="ml-auto w-32">
+                    <AccessScopeLabel
+                      scope={
+                        workflow.access_scope ??
+                        (workflow.org_id
+                          ? "organization"
+                          : workflow.is_owner === false
+                            ? "shared"
+                            : "private")
+                      }
+                      organizationName={workflow.organization_name}
+                      directGrantCount={workflow.direct_grant_count}
+                    />
+                  </TableCell>
+                  <TableCell className="w-28">
+                    <span className="inline-flex items-center gap-1.5 text-xs text-gray-600">
+                      <Icon className="h-3 w-3 shrink-0" />
+                      {workflow.metadata.type === "tabular"
+                        ? "Tabular"
+                        : "Assistant"}
+                    </span>
+                  </TableCell>
+                  <TableCell className="w-52 text-xs text-gray-600">
+                    {workflow.metadata.practice || "—"}
+                  </TableCell>
+                  <TableCell className="w-40 truncate text-xs text-gray-600">
+                    {workflow.metadata.jurisdictions?.join(", ") || "—"}
+                  </TableCell>
+                  <TableCell className="w-28 text-xs text-gray-600">
+                    {workflow.metadata.language || "—"}
+                  </TableCell>
+                  <div
+                    className="flex w-8 shrink-0 justify-end"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <RowActions
+                      onView={() => onOpen(workflow)}
+                      onEditDetails={
+                        canManage ? () => onEdit(workflow) : undefined
+                      }
+                      editDetailsLabel="Edit"
+                      onDelete={
+                        canManage ? () => onDelete(workflow) : undefined
+                      }
+                    />
+                  </div>
+                </TableRow>
+              );
             })}
           </TableBody>
           <TableLoadMoreRow
@@ -1111,7 +1155,7 @@ function AddonTable({
     return [...grouped.values()].sort((a, b) => a.title.localeCompare(b.title));
   }, [addons]);
   const activePack = activePackKey
-    ? packs.find((pack) => pack.key === activePackKey) ?? null
+    ? (packs.find((pack) => pack.key === activePackKey) ?? null)
     : null;
   const standaloneAddons = addons.filter((addon) => !addon.pack_key);
   const isEmpty = activePackKey
@@ -1316,9 +1360,7 @@ function AddonTable({
                 );
                 const packPartiallySelected =
                   !packSelected &&
-                  pack.addons.some((addon) =>
-                    selectedIds.includes(addon.id),
-                  );
+                  pack.addons.some((addon) => selectedIds.includes(addon.id));
                 return [
                   <TableRow
                     key={`${pack.key}:folder`}
@@ -1359,9 +1401,7 @@ function AddonTable({
                   >
                     <TablePrimaryCell
                       selected={packSelected}
-                      onSelectionChange={() =>
-                        togglePackSelection(pack.addons)
-                      }
+                      onSelectionChange={() => togglePackSelection(pack.addons)}
                       selectionIndicator={
                         <input
                           type="checkbox"

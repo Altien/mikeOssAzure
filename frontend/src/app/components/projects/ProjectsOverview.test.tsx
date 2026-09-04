@@ -3,11 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectsOverview } from "./ProjectsOverview";
 
-const { activeTab, setActiveTab, usePaginatedProjectsSpy } = vi.hoisted(() => ({
-    activeTab: { current: "all" as string },
-    setActiveTab: vi.fn(),
-    usePaginatedProjectsSpy: vi.fn(),
-}));
+const { activeTab, projectRows, setActiveTab, usePaginatedProjectsSpy } =
+    vi.hoisted(() => ({
+        activeTab: { current: "all" as string },
+        projectRows: { current: [] as Record<string, unknown>[] },
+        setActiveTab: vi.fn(),
+        usePaginatedProjectsSpy: vi.fn(),
+    }));
 
 vi.mock("next/navigation", () => ({
     useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -25,7 +27,7 @@ vi.mock("@/app/hooks/usePaginatedProjects", () => ({
     usePaginatedProjects: (options: unknown) => {
         usePaginatedProjectsSpy(options);
         return {
-            projects: [],
+            projects: projectRows.current,
             setProjects: vi.fn(),
             loading: false,
             loadingMore: false,
@@ -67,6 +69,7 @@ function lastScope() {
 describe("ProjectsOverview tabs", () => {
     beforeEach(() => {
         activeTab.current = "all";
+        projectRows.current = [];
         setActiveTab.mockReset();
         usePaginatedProjectsSpy.mockReset();
         vi.stubGlobal(
@@ -105,6 +108,18 @@ describe("ProjectsOverview tabs", () => {
         expect(setActiveTab).toHaveBeenCalledWith("all");
     });
 
+    it("filters Private and Shared from the Access column header", async () => {
+        const user = userEvent.setup();
+        render(<ProjectsOverview />);
+
+        await user.click(
+            screen.getByRole("button", { name: "Filter by access" }),
+        );
+        await user.click(screen.getByRole("menuitem", { name: "Shared" }));
+
+        expect(setActiveTab).toHaveBeenCalledWith("shared");
+    });
+
     it("maps each tab to its backend scope", () => {
         activeTab.current = "shared";
         const shared = render(<ProjectsOverview />);
@@ -119,7 +134,49 @@ describe("ProjectsOverview tabs", () => {
     it("offers project creation when All is empty", () => {
         render(<ProjectsOverview />);
 
-        expect(screen.getByRole("button", { name: "Create" })).toBeInTheDocument();
+        expect(
+            screen.getByRole("button", { name: "Create" }),
+        ).toBeInTheDocument();
         expect(screen.queryByText(/No all projects/i)).not.toBeInTheDocument();
+    });
+
+    it("shows private, shared, and organisation access scopes", () => {
+        const baseProject = {
+            user_id: "user-1",
+            cm_number: null,
+            practice: null,
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+        };
+        projectRows.current = [
+            {
+                ...baseProject,
+                id: "private-project",
+                name: "Private matter",
+                access_scope: "private",
+            },
+            {
+                ...baseProject,
+                id: "shared-project",
+                name: "Shared matter",
+                access_scope: "shared",
+                direct_grant_count: 2,
+            },
+            {
+                ...baseProject,
+                id: "org-project",
+                name: "Firm matter",
+                access_scope: "organization",
+                organization_name: "Elite Law LLP",
+            },
+        ];
+
+        render(<ProjectsOverview />);
+
+        expect(screen.getByText("Access")).toBeInTheDocument();
+        expect(screen.getAllByText("Private")).toHaveLength(2);
+        expect(screen.getByText("3 users")).toBeInTheDocument();
+        expect(screen.getByText("Elite Law LLP")).toBeInTheDocument();
+        expect(screen.getByTitle("Shared with Elite Law LLP")).toBeVisible();
     });
 });

@@ -159,6 +159,16 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
                     user_id: user?.id ?? "",
                     title: null,
                     created_at: now,
+                    // The optimistic row must say what the server would say.
+                    // The overview RPC serves is_owner + access_role on every
+                    // row, and the sidebar's gates read them via roleFrom(),
+                    // which fails closed to viewer when both are absent — so
+                    // without this stamp the creator was refused rename and
+                    // delete on their own brand-new thread until a reload.
+                    // The caller IS the creator here, and a chat's creator
+                    // derives admin standing on their row by definition.
+                    is_owner: true,
+                    access_role: "owner",
                 };
                 setChats((prev) => [newChat, ...(prev ?? [])]);
                 return id;
@@ -176,8 +186,14 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
             );
             try {
                 await renameChat(chatId, title);
-            } catch {
+            } catch (error) {
+                // Same contract as delete below: the optimistic write must
+                // not become a silent success. The old bare catch let a
+                // refused rename show the new title and then quietly revert
+                // it on reload — the caller rethrows so the row's UI can say
+                // why the title snapped back.
                 void loadChats();
+                throw error;
             }
         },
         [loadChats],
@@ -197,8 +213,13 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
             if (currentChatId === chatId) setCurrentChatId(null);
             try {
                 await deleteChat(chatId);
-            } catch {
+            } catch (error) {
+                // Optimistic removal must not become a silent success: put
+                // the row back and let the caller tell the user why. The old
+                // bare catch here was the client-side twin of the
+                // filter-scoped 204 this stack removes on the server.
                 void loadChats();
+                throw error;
             }
         },
         [currentChatId, loadChats],

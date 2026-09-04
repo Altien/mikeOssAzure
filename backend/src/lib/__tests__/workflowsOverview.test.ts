@@ -113,6 +113,8 @@ describe("parseWorkflowScope", () => {
     it("accepts supported workflow scopes", () => {
         expect(parseWorkflowScope("owned")).toBe("owned");
         expect(parseWorkflowScope("shared")).toBe("shared");
+        expect(parseWorkflowScope("private")).toBe("private");
+        expect(parseWorkflowScope("collaborative")).toBe("collaborative");
     });
 
     it("falls back to all for missing or unsupported scopes", () => {

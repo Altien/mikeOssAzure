@@ -8,6 +8,7 @@ import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import { ensureDefaultWorkflows } from "../lib/workflowCatalog";
 import { sendInternalError } from "../lib/httpError";
+import { checkWorkflowAccess } from "../lib/access";
 
 export const quickActionsRouter = Router();
 
@@ -52,16 +53,13 @@ async function canAccessWorkflow(
     .eq("id", workflowId)
     .maybeSingle();
   if (!workflow || workflow.type !== "assistant") return null;
-  if (workflow.user_id === userId) return workflow;
-  const email = (userEmail ?? "").trim().toLowerCase();
-  if (!email) return null;
-  const { data: share } = await db
-    .from("workflow_shares")
-    .select("id")
-    .eq("workflow_id", workflowId)
-    .eq("shared_with_email", email)
-    .maybeSingle();
-  return share ? workflow : null;
+  const access = await checkWorkflowAccess(
+    workflowId,
+    userId,
+    userEmail,
+    db,
+  );
+  return access.ok ? workflow : null;
 }
 
 async function withWorkflowDetails(
@@ -78,29 +76,22 @@ async function withWorkflowDetails(
     .in("id", ids);
   if (error) throw error;
 
-  // A quick action may point at a workflow someone shared and has since
-  // revoked; only keep workflows the user owns or still has a share for,
-  // and drop quick actions whose workflow is no longer accessible.
-  const email = (userEmail ?? "").trim().toLowerCase();
-  const foreignIds = (workflows ?? [])
-    .filter((workflow) => workflow.user_id !== userId)
-    .map((workflow) => workflow.id);
-  const sharedIds = new Set<string>();
-  if (email && foreignIds.length > 0) {
-    const { data: shares, error: sharesError } = await db
-      .from("workflow_shares")
-      .select("workflow_id")
-      .in("workflow_id", foreignIds)
-      .eq("shared_with_email", email);
-    if (sharesError) throw sharesError;
-    for (const share of shares ?? []) sharedIds.add(share.workflow_id);
-  }
+  const accessVerdicts = await Promise.all(
+    (workflows ?? []).map((workflow) =>
+      checkWorkflowAccess(workflow.id, userId, userEmail, db),
+    ),
+  );
+  const accessibleIds = new Set(
+    (workflows ?? [])
+      .filter((_workflow, index) => accessVerdicts[index]?.ok)
+      .map((workflow) => workflow.id),
+  );
   const byId = new Map(
     (workflows ?? [])
       .filter(
         (workflow) =>
           workflow.type === "assistant" &&
-          (workflow.user_id === userId || sharedIds.has(workflow.id)),
+          accessibleIds.has(workflow.id),
       )
       .map((workflow) => [
         workflow.id,

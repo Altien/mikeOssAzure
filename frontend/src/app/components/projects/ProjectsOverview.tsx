@@ -16,12 +16,17 @@ import {
     usePaginatedProjects,
     type ProjectScope,
 } from "@/app/hooks/usePaginatedProjects";
-import { OwnerOnlyPopup } from "@/app/components/popups/OwnerOnlyPopup";
+import {
+    mergeAccessContacts,
+    PermissionDeniedPopup,
+    type AccessContact,
+} from "@/app/components/popups/PermissionDeniedPopup";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import { useAuth } from "@/app/contexts/AuthContext";
 import type { Project } from "@/app/components/shared/types";
+import { can, roleFrom } from "@/app/lib/permissions";
 import { NewProjectModal } from "./NewProjectModal";
 import { ProjectDetailsModal } from "./ProjectDetailsModal";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";
@@ -60,6 +65,7 @@ import { PillButton } from "@/app/components/ui/pill-button";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 import { useQueryParamTab } from "@/app/hooks/useQueryParamTab";
 import { LIQUID_GLASS_FLOAT_CLASS } from "@/shared/ui/LiquidGlassUI";
+import { AccessScopeLabel } from "@/app/components/shared/AccessScopeLabel";
 
 function formatDate(iso: string) {
     return new Date(iso).toLocaleDateString(undefined, {
@@ -69,7 +75,14 @@ function formatDate(iso: string) {
     });
 }
 
-function getProjectOwnerLabel(project: Project, currentUserId?: string | null) {
+/**
+ * Who created the row. This is provenance, not permission: what the caller may
+ * do here comes from `access_role`, which the overview RPC now returns.
+ */
+function getProjectCreatorLabel(
+    project: Project,
+    currentUserId?: string | null,
+) {
     if (project.is_owner ?? project.user_id === currentUserId) return "Me";
     return (
         project.owner_display_name?.trim() ||
@@ -79,13 +92,7 @@ function getProjectOwnerLabel(project: Project, currentUserId?: string | null) {
 }
 
 type ProjectFilter = "all" | "shared" | "private";
-type ProjectSortKey =
-    | "name"
-    | "cm"
-    | "files"
-    | "chats"
-    | "reviews"
-    | "created";
+type ProjectSortKey = "name" | "cm" | "files" | "chats" | "reviews" | "created";
 
 const SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
     { value: "asc", label: "Ascending" },
@@ -102,6 +109,10 @@ const PROJECT_FILTER_SCOPES: Record<ProjectFilter, ProjectScope> = {
     shared: "collaborative",
     private: "private",
 };
+const ACCESS_FILTER_OPTIONS: TableFilterOption<"private" | "shared">[] = [
+    { value: "private", label: "Private" },
+    { value: "shared", label: "Shared" },
+];
 
 export function ProjectsOverview() {
     const router = useRouter();
@@ -120,7 +131,16 @@ export function ProjectsOverview() {
     } | null>(null);
     const [actionsOpen, setActionsOpen] = useState(false);
     const [search, setSearch] = useState("");
-    const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
+    /**
+     * A refusal, together with the people who could lift it. Naming somebody
+     * is the whole point of the popup, and it can only do that if the surface
+     * raising the refusal hands over the row's `admin_contacts` — which the
+     * projects overview RPC returns on every row.
+     */
+    const [ownerOnlyAction, setOwnerOnlyAction] = useState<{
+        action: string;
+        contacts?: AccessContact[] | null;
+    } | null>(null);
     const [actionError, setActionError] = useState<string | null>(null);
     const [selectionCameFromSelectAll, setSelectionCameFromSelectAll] =
         useState(false);
@@ -264,6 +284,19 @@ export function ProjectsOverview() {
             onChange={(direction) => handleSortChange("name", direction)}
         />
     );
+    const accessFilterButton = (
+        <TableFilters
+            label="Filter by access"
+            value={activeFilter === "all" ? null : activeFilter}
+            allLabel="All Access"
+            widthClassName="w-40"
+            options={ACCESS_FILTER_OPTIONS}
+            onChange={(value) => {
+                setActiveFilter(value ?? "all");
+                clearSelection();
+            }}
+        />
+    );
     const cmFilterButton = (
         <TableFilters
             label="Sort by CM"
@@ -288,9 +321,9 @@ export function ProjectsOverview() {
     );
     const ownerFilterButton = (
         <TableFilters
-            label="Filter by owner"
+            label="Filter by creator"
             value={ownerFilter}
-            allLabel="All Owners"
+            allLabel="All Creators"
             widthClassName="w-44"
             options={ownerOptions}
             onChange={handleOwnerFilterChange}
@@ -343,11 +376,14 @@ export function ProjectsOverview() {
         practice: string;
     }) {
         if (!detailsProject) return;
-        if (
-            detailsProject.is_owner === false ||
-            (user?.id && detailsProject.user_id !== user.id)
-        ) {
-            setOwnerOnlyAction("edit project details");
+        // The list rows carry the caller's merged access_role, so an
+        // organization admin editing a colleague's matter is no longer
+        // mistaken for an outsider just because they did not create it.
+        if (!can(roleFrom(detailsProject), "access.manage")) {
+            setOwnerOnlyAction({
+                action: "edit project details",
+                contacts: detailsProject.admin_contacts,
+            });
             return;
         }
         const name = values.name.trim();
@@ -361,7 +397,9 @@ export function ProjectsOverview() {
         });
         setProjects((prev) =>
             prev.map((project) =>
-                project.id === updated.id ? { ...project, ...updated } : project,
+                project.id === updated.id
+                    ? { ...project, ...updated }
+                    : project,
             ),
         );
         setDetailsProject((current) =>
@@ -388,7 +426,9 @@ export function ProjectsOverview() {
         } catch (error) {
             console.error("delete project failed", error);
             setProjects((current) =>
-                restoreOptimisticallyDeletedRows(current, snapshot, [project.id]),
+                restoreOptimisticallyDeletedRows(current, snapshot, [
+                    project.id,
+                ]),
             );
             // The row action calls this without awaiting, so rethrowing would
             // only produce an unhandled rejection and a row that reappears
@@ -407,24 +447,36 @@ export function ProjectsOverview() {
         setActionsOpen(false);
         setConfirmDeleteAllOpen(false);
         setSelectionCameFromSelectAll(false);
-        // Only the project owner can delete; the per-row delete is hidden
-        // for shared projects but the bulk action can still pick them up
-        // if a user toggled them across filters (or select-all-matching
-        // pulled in ids that were never paged into `projects`, which is why
-        // this uses getProjectOwnerId rather than looking the row up
-        // directly). Filter and warn.
-        const owned = ids.filter((id) => {
-            const ownerId = getProjectOwnerId(id);
-            return !ownerId || ownerId === user?.id;
+        // Deleting a project needs container.delete, i.e. project admin. The
+        // per-row control is already hidden for rows the caller cannot
+        // delete, but the bulk action can still pick them up if a user
+        // toggled them across filters — or if select-all-matching pulled in
+        // ids that were never paged in, which is why creator identity is the
+        // fallback when the row itself is not loaded.
+        const roleById = new Map(
+            projects.map((p) => [p.id, roleFrom(p)] as const),
+        );
+        const deletable = ids.filter((id) => {
+            const role = roleById.get(id);
+            if (role) return can(role, "container.delete");
+            // Unloaded row: creator identity is all we have, and it has to
+            // MATCH. `!creatorId ||` treated "we don't know who created this"
+            // as permission to delete it, which is the one answer an unknown
+            // must never produce — select-all-matching is exactly the path
+            // that hands back ids whose rows were never paged in. A row we
+            // cannot vouch for is skipped and counted as blocked, so the user
+            // is told rather than silently having it dropped.
+            const creatorId = getProjectOwnerId(id);
+            return !!creatorId && !!user?.id && creatorId === user.id;
         });
-        const blocked = ids.length - owned.length;
+        const blocked = ids.length - deletable.length;
         setSelectedIds([]);
         const snapshot = projects;
         setProjects((current) =>
-            current.filter((project) => !owned.includes(project.id)),
+            current.filter((project) => !deletable.includes(project.id)),
         );
         const { failedIds } = await deleteTabularReviewsWithConcurrency(
-            owned,
+            deletable,
             deleteProject,
         );
         if (failedIds.length > 0) {
@@ -434,23 +486,32 @@ export function ProjectsOverview() {
             setSelectedIds(failedIds);
         }
         if (blocked > 0) {
-            setOwnerOnlyAction(
-                `delete ${blocked} of the selected projects — only the project owner can delete a project`,
+            // Several rows were refused, so offer the union of their admins
+            // rather than a refusal that names nobody.
+            const blockedContacts = mergeAccessContacts(
+                ids
+                    .filter((id) => !deletable.includes(id))
+                    .map((id) => projects.find((p) => p.id === id))
+                    .map((project) => project?.admin_contacts),
             );
+            setOwnerOnlyAction({
+                action: `delete ${blocked} of the selected projects — only a project owner can delete a project`,
+                contacts: blockedContacts,
+            });
         }
     }
 
     const toolbarActions =
         selectedIds.length > 0 ? (
             <div ref={actionsRef} className="relative">
-                <TabPillButton
-                    onClick={() => setActionsOpen((v) => !v)}
-                >
+                <TabPillButton onClick={() => setActionsOpen((v) => !v)}>
                     Actions
                     <ChevronDown className="h-3.5 w-3.5" />
                 </TabPillButton>
                 {actionsOpen && (
-                    <div className={`absolute right-0 top-full z-50 mt-1 w-36 overflow-hidden rounded-lg ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-2xl`}>
+                    <div
+                        className={`absolute right-0 top-full z-50 mt-1 w-36 overflow-hidden rounded-lg ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-2xl`}
+                    >
                         <button
                             onClick={requestDeleteSelected}
                             className="w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 transition-colors"
@@ -526,6 +587,10 @@ export function ProjectsOverview() {
                             {!loading && nameFilterButton}
                         </TableStickyCell>
                         <TableHeaderCell className="ml-auto w-32">
+                            <span className="mr-1">Access</span>
+                            {!loading && accessFilterButton}
+                        </TableHeaderCell>
+                        <TableHeaderCell className="w-32">
                             <div className="flex items-center gap-1">
                                 <span>CM</span>
                                 {!loading && cmFilterButton}
@@ -539,7 +604,7 @@ export function ProjectsOverview() {
                         </TableHeaderCell>
                         <TableHeaderCell className="w-32">
                             <div className="flex items-center gap-1">
-                                <span>Owner</span>
+                                <span>Created by</span>
                                 {!loading && ownerFilterButton}
                             </div>
                         </TableHeaderCell>
@@ -574,10 +639,7 @@ export function ProjectsOverview() {
                 {effectiveLoading ? (
                     <TableBody>
                         {[1, 2, 3].map((i) => (
-                            <TableRow
-                                key={i}
-                                interactive={false}
-                            >
+                            <TableRow key={i} interactive={false}>
                                 <TableStickyCell
                                     hover={false}
                                     bgClassName="bg-transparent"
@@ -587,6 +649,9 @@ export function ProjectsOverview() {
                                     <SkeletonLine className="h-3.5 w-48" />
                                 </TableStickyCell>
                                 <TableCell className="ml-auto w-32">
+                                    <SkeletonLine className="w-16" />
+                                </TableCell>
+                                <TableCell className="w-32">
                                     <SkeletonLine className="w-20" />
                                 </TableCell>
                                 <TableCell className="w-36">
@@ -623,7 +688,6 @@ export function ProjectsOverview() {
                                     tone="black"
                                     size="sm"
                                     onClick={retry}
-                                    className="px-3"
                                 >
                                     Try again
                                 </PillButton>
@@ -646,7 +710,6 @@ export function ProjectsOverview() {
                                         tone="black"
                                         size="sm"
                                         onClick={() => setModalOpen(true)}
-                                        className="px-3"
                                     >
                                         Create
                                     </PillButton>
@@ -662,137 +725,170 @@ export function ProjectsOverview() {
                                 selectedIds,
                             );
                             const appliesToSelection = actionIds.length > 1;
-                            const canManage =
-                                project.is_owner ??
-                                (project.user_id === user?.id);
+                            // The list rows carry the caller's merged
+                            // access_role, so an organization admin editing a
+                            // colleague's matter is no longer mistaken for an
+                            // outsider just because they did not create it.
+                            const canManage = can(
+                                roleFrom(project),
+                                "access.manage",
+                            );
                             return (
-                            <TableRow
-                                key={project.id}
-                                selected={selectedIds.includes(project.id)}
-                                rightClickDropdown={(close, menuProps) => (
-                                              <RowActionMenuItems
-                                                  onClose={close}
-                                                  surfaceProps={menuProps}
-                                                  onView={
-                                                      appliesToSelection
-                                                          ? undefined
-                                                          : () =>
-                                                                router.push(
-                                                                    `/projects/${project.id}`,
-                                                                )
-                                                  }
-                                                  viewLabel="Open"
-                                                  onEditDetails={
-                                                      appliesToSelection ||
-                                                      !canManage
-                                                          ? undefined
-                                                          : () => {
-                                                                setDetailsProject(project);
-                                                            }
-                                                  }
-                                                  onDelete={
-                                                      appliesToSelection
-                                                          ? requestDeleteSelected
-                                                          : canManage
-                                                            ? () =>
-                                                                handleDeleteProjectRow(
-                                                                    project,
-                                                                )
-                                                            : undefined
-                                                  }
-                                                  deleteLabel={
-                                                      appliesToSelection
-                                                          ? `Delete ${actionIds.length} projects`
-                                                          : undefined
-                                                  }
-                                              />
-                                          )}
-                                onClick={(event) => {
-                                    if (event.shiftKey) {
-                                        event.preventDefault();
-                                        const anchorId =
-                                            rowSelectionAnchorIdRef.current;
-                                        setSelectionCameFromSelectAll(false);
-                                        setSelectedIds((current) =>
-                                            selectedIdsAfterRangeClick(
-                                                project.id,
-                                                visibleProjects.map(
-                                                    (visibleProject) =>
-                                                        visibleProject.id,
-                                                ),
-                                                current,
-                                                anchorId,
-                                            ),
-                                        );
-                                        rowSelectionAnchorIdRef.current =
-                                            project.id;
-                                        return;
-                                    }
-                                    if (event.ctrlKey || event.metaKey) {
-                                        event.preventDefault();
-                                        setSelectionCameFromSelectAll(false);
-                                        setSelectedIds((current) =>
-                                            selectedIdsAfterShiftClick(
-                                                project.id,
-                                                current,
-                                            ),
-                                        );
-                                        rowSelectionAnchorIdRef.current =
-                                            project.id;
-                                        return;
-                                    }
-                                    router.push(`/projects/${project.id}`);
-                                }}
-                            >
-                                {/* Project Name */}
-                                <TablePrimaryCell
+                                <TableRow
+                                    key={project.id}
                                     selected={selectedIds.includes(project.id)}
-                                    onSelectionChange={() =>
-                                        toggleOne(project.id)
-                                    }
-                                    checkboxTitle={`Select ${project.name}`}
-                                >
-                                    <ClosedProjectSvgIcon className="mr-2 h-4 w-4 shrink-0" />
-                                    <span className="min-w-0 flex-1 truncate text-xs text-gray-800">
-                                        {project.name}
-                                    </span>
-                                </TablePrimaryCell>
-
-                                <TableCell className="ml-auto w-32">
-                                    {project.cm_number ?? (
-                                        <span className="text-gray-300">
-                                            —
-                                        </span>
+                                    rightClickDropdown={(close, menuProps) => (
+                                        <RowActionMenuItems
+                                            onClose={close}
+                                            surfaceProps={menuProps}
+                                            onView={
+                                                appliesToSelection
+                                                    ? undefined
+                                                    : () =>
+                                                          router.push(
+                                                              `/projects/${project.id}`,
+                                                          )
+                                            }
+                                            viewLabel="Open"
+                                            onEditDetails={
+                                                appliesToSelection || !canManage
+                                                    ? undefined
+                                                    : () => {
+                                                          setDetailsProject(
+                                                              project,
+                                                          );
+                                                      }
+                                            }
+                                            onDelete={
+                                                appliesToSelection
+                                                    ? requestDeleteSelected
+                                                    : canManage
+                                                      ? () =>
+                                                            handleDeleteProjectRow(
+                                                                project,
+                                                            )
+                                                      : undefined
+                                            }
+                                            deleteLabel={
+                                                appliesToSelection
+                                                    ? `Delete ${actionIds.length} projects`
+                                                    : undefined
+                                            }
+                                        />
                                     )}
-                                </TableCell>
-                                <TableCell className="w-36">
-                                    {project.practice ?? (
-                                        <span className="text-gray-300">
-                                            —
-                                        </span>
-                                    )}
-                                </TableCell>
-                                <TableCell className="w-32">
-                                    {getProjectOwnerLabel(project, user?.id)}
-                                </TableCell>
-                                <TableCell className="w-24">
-                                    {project.document_count ?? 0}
-                                </TableCell>
-                                <TableCell className="w-24">
-                                    {project.chat_count ?? 0}
-                                </TableCell>
-                                <TableCell className="w-36">
-                                    {project.review_count ?? 0}
-                                </TableCell>
-                                <TableCell className="w-32">
-                                    {formatDate(project.created_at)}
-                                </TableCell>
-
-                                <div
-                                    className="w-8 shrink-0 flex justify-end"
-                                    onClick={(e) => e.stopPropagation()}
+                                    onClick={(event) => {
+                                        if (event.shiftKey) {
+                                            event.preventDefault();
+                                            const anchorId =
+                                                rowSelectionAnchorIdRef.current;
+                                            setSelectionCameFromSelectAll(
+                                                false,
+                                            );
+                                            setSelectedIds((current) =>
+                                                selectedIdsAfterRangeClick(
+                                                    project.id,
+                                                    visibleProjects.map(
+                                                        (visibleProject) =>
+                                                            visibleProject.id,
+                                                    ),
+                                                    current,
+                                                    anchorId,
+                                                ),
+                                            );
+                                            rowSelectionAnchorIdRef.current =
+                                                project.id;
+                                            return;
+                                        }
+                                        if (event.ctrlKey || event.metaKey) {
+                                            event.preventDefault();
+                                            setSelectionCameFromSelectAll(
+                                                false,
+                                            );
+                                            setSelectedIds((current) =>
+                                                selectedIdsAfterShiftClick(
+                                                    project.id,
+                                                    current,
+                                                ),
+                                            );
+                                            rowSelectionAnchorIdRef.current =
+                                                project.id;
+                                            return;
+                                        }
+                                        router.push(`/projects/${project.id}`);
+                                    }}
                                 >
-                                    <RowActions
+                                    {/* Project Name */}
+                                    <TablePrimaryCell
+                                        selected={selectedIds.includes(
+                                            project.id,
+                                        )}
+                                        onSelectionChange={() =>
+                                            toggleOne(project.id)
+                                        }
+                                        checkboxTitle={`Select ${project.name}`}
+                                    >
+                                        <ClosedProjectSvgIcon className="mr-2 h-4 w-4 shrink-0" />
+                                        <span className="min-w-0 flex-1 truncate text-xs text-gray-800">
+                                            {project.name}
+                                        </span>
+                                    </TablePrimaryCell>
+
+                                    <TableCell className="ml-auto w-32">
+                                        <AccessScopeLabel
+                                            scope={
+                                                project.access_scope ??
+                                                (project.org_id
+                                                    ? "organization"
+                                                    : project.is_owner === false
+                                                      ? "shared"
+                                                      : "private")
+                                            }
+                                            organizationName={
+                                                project.organization_name
+                                            }
+                                            directGrantCount={
+                                                project.direct_grant_count
+                                            }
+                                        />
+                                    </TableCell>
+                                    <TableCell className="w-32">
+                                        {project.cm_number ?? (
+                                            <span className="text-gray-300">
+                                                —
+                                            </span>
+                                        )}
+                                    </TableCell>
+                                    <TableCell className="w-36">
+                                        {project.practice ?? (
+                                            <span className="text-gray-300">
+                                                —
+                                            </span>
+                                        )}
+                                    </TableCell>
+                                    <TableCell className="w-32">
+                                        {getProjectCreatorLabel(
+                                            project,
+                                            user?.id,
+                                        )}
+                                    </TableCell>
+                                    <TableCell className="w-24">
+                                        {project.document_count ?? 0}
+                                    </TableCell>
+                                    <TableCell className="w-24">
+                                        {project.chat_count ?? 0}
+                                    </TableCell>
+                                    <TableCell className="w-36">
+                                        {project.review_count ?? 0}
+                                    </TableCell>
+                                    <TableCell className="w-32">
+                                        {formatDate(project.created_at)}
+                                    </TableCell>
+
+                                    <div
+                                        className="w-8 shrink-0 flex justify-end"
+                                        onClick={(e) => e.stopPropagation()}
+                                    >
+                                        <RowActions
                                             onView={() =>
                                                 router.push(
                                                     `/projects/${project.id}`,
@@ -817,8 +913,8 @@ export function ProjectsOverview() {
                                                     : undefined
                                             }
                                         />
-                                </div>
-                            </TableRow>
+                                    </div>
+                                </TableRow>
                             );
                         })}
                     </TableBody>
@@ -847,16 +943,16 @@ export function ProjectsOverview() {
                 project={detailsProject}
                 canEdit={
                     !!detailsProject &&
-                    detailsProject.is_owner !== false &&
-                    (!user?.id || detailsProject.user_id === user.id)
+                    can(roleFrom(detailsProject), "access.manage")
                 }
                 onClose={() => setDetailsProject(null)}
                 onSave={handleProjectDetailsSave}
             />
 
-            <OwnerOnlyPopup
+            <PermissionDeniedPopup
                 open={!!ownerOnlyAction}
-                action={ownerOnlyAction ?? undefined}
+                action={ownerOnlyAction?.action}
+                contacts={ownerOnlyAction?.contacts}
                 onClose={() => setOwnerOnlyAction(null)}
             />
             <WarningPopup
@@ -867,8 +963,9 @@ export function ProjectsOverview() {
             <ConfirmPopup
                 open={confirmDeleteAllOpen && selectedIds.length > 0}
                 title="Delete all selected projects?"
-                message={`This will permanently delete every selected project you own, including selected projects not currently shown. Every file within those projects will also be deleted. Shared projects you do not own will be skipped. ${selectedIds.length} projects are selected.`}
+                message={`This will permanently delete every selected project you administer, including selected projects not currently shown. Every file within those projects will also be deleted. Projects you cannot delete will be skipped. ${selectedIds.length} projects are selected.`}
                 confirmLabel="Delete"
+                confirmVariant="danger"
                 onCancel={() => setConfirmDeleteAllOpen(false)}
                 onConfirm={() => void handleDeleteSelected()}
             />
