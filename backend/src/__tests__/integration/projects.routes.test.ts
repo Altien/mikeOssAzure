@@ -899,6 +899,99 @@ describe("projects.routes", () => {
         });
     });
 
+    // ── GET /projects/:projectId/people ─────────────────────────────────
+    // The roster is readable at every tier, viewers included. It is the same
+    // list GET /chat/:chatId/people and GET /tabular-review/:reviewId/people
+    // already serve for a project-owned row, so tiering it here only meant
+    // the collaborator list was one request away. What stays owner-only is
+    // the MANAGEMENT surface, GET /projects/:projectId/access.
+    describe("GET /projects/:projectId/people", () => {
+        const seedDirectProject = (projectRole: string) => {
+            checkProjectAccess.mockResolvedValue({
+                ok: true,
+                isCreator: false,
+                orgRole: null,
+                projectRole,
+                project: { id: "p1", user_id: "creator", org_id: null },
+            });
+            supabaseState.tables.user_profiles = {
+                data: [
+                    {
+                        user_id: "creator",
+                        email: "creator@test.local",
+                        display_name: "Creator",
+                    },
+                    {
+                        user_id: "u2",
+                        email: "colleague@test.local",
+                        display_name: "Colleague",
+                    },
+                ],
+                error: null,
+            };
+            supabaseState.tables.project_access_grants = {
+                data: [
+                    {
+                        id: "g1",
+                        project_id: "p1",
+                        email: "colleague@test.local",
+                        role: "editor",
+                    },
+                ],
+                error: null,
+            };
+        };
+
+        it.each(["viewer", "editor", "owner"])(
+            "serves the full collaborator roster to a %s",
+            async (projectRole) => {
+                seedDirectProject(projectRole);
+
+                const res = await request(app)
+                    .get("/projects/p1/people")
+                    .set(...AUTH);
+
+                expect(res.status).toBe(200);
+                expect(res.body.scope).toBe("direct");
+                expect(res.body.owner).toMatchObject({
+                    user_id: "creator",
+                    role: "owner",
+                });
+                expect(res.body.members).toEqual([
+                    {
+                        email: "colleague@test.local",
+                        display_name: "Colleague",
+                        role: "editor",
+                    },
+                ]);
+            },
+        );
+
+        it("still refuses somebody with no access at all", async () => {
+            checkProjectAccess.mockResolvedValue({ ok: false });
+
+            const res = await request(app)
+                .get("/projects/p1/people")
+                .set(...AUTH);
+
+            expect(res.status).toBe(404);
+            expect(res.body.detail).toBe("Project not found");
+        });
+
+        it("keeps the management surface owner-only", async () => {
+            seedDirectProject("viewer");
+
+            const res = await request(app)
+                .get("/projects/p1/access")
+                .set(...AUTH);
+
+            expect(res.status).toBe(403);
+            expect(res.body.detail).toBe(
+                "Only a project owner can change who has access.",
+            );
+        });
+    });
+
     // ── DELETE /projects/:projectId/folders/:folderId (role ladder) ──────
     // Organizing documents and folders is member work (Will's review): a
     // collaborator who may upload and delete documents is not meaningfully

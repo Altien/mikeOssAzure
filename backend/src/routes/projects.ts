@@ -734,17 +734,17 @@ projectsRouter.get("/:projectId/people", requireAuth, async (req, res) => {
   const { projectId } = req.params;
   const db = createServerSupabase();
 
-  // The page is visible to anyone who can see the project — including org
-  // members, who previously got a 404 here despite full read access. WHO
-  // appears on it is tiered by role, because the roster is client data:
+  // Visible to anyone who can see the project, at every tier. "Who else is on
+  // this matter?" is part of working on it even for a viewer, and the access
+  // modal shows the same roster to everyone rather than a different one per
+  // role. This deliberately matches GET /chat/:chatId/people and
+  // GET /tabular-review/:reviewId/people, which resolve a project-owned row
+  // through this same roster: tiering it here and not there only meant the
+  // list was one request away.
   //
-  //   * member and above see the collaborator list — they work in this
-  //     project and "who else is on this matter?" is part of working in it;
-  //   * a viewer — the outside-counsel tier, someone deliberately given the
-  //     least standing — gets the creator and the admin contacts (the people
-  //     a refusal popup tells them to ask) and nothing more. Serving them
-  //     every collaborator's email and role let a single read-only grant
-  //     enumerate the firm's whole team on a matter.
+  // Note the split that remains: the roster is readable, but the MANAGEMENT
+  // surface (GET /:projectId/access — who granted what, and the role pickers)
+  // still requires `access.manage`.
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
   if (!access.ok)
     return void res.status(404).json({ detail: "Project not found" });
@@ -795,17 +795,13 @@ projectsRouter.get("/:projectId/people", requireAuth, async (req, res) => {
         role: "owner" as const,
       }
     : null;
-  let members: { email: string; display_name: string | null; role: string }[] =
-    [];
-  if (can(access.projectRole, "content.edit")) {
-    const listed = await listProjectGrants(db, projectId);
-    if (!listed.ok) return void sendInternalError(res, listed.detail);
-    members = listed.grants.map((grant) => ({
-      email: grant.email,
-      display_name: userByEmail.get(grant.email)?.display_name ?? null,
-      role: grant.role,
-    }));
-  }
+  const listed = await listProjectGrants(db, projectId);
+  if (!listed.ok) return void sendInternalError(res, listed.detail);
+  const members = listed.grants.map((grant) => ({
+    email: grant.email,
+    display_name: userByEmail.get(grant.email)?.display_name ?? null,
+    role: grant.role,
+  }));
 
   res.json({
     scope: "direct",

@@ -3,25 +3,51 @@
 -- Direct structural transition from the schema on main to the final
 -- organization and resource-access model. Legacy sharing columns remain
 -- temporarily so the following data migration can preserve their recipients.
+--
+-- Safe to re-run. Every statement below carries its own guard, so a partial
+-- application is replayed rather than repaired by hand:
+--
+--   * `if exists` / `if not exists` on drops, tables, columns and indexes;
+--   * `create or replace` for functions (with check_function_bodies off, so
+--     the order they are declared in does not matter);
+--   * drop-before-create for triggers;
+--   * `add constraint` behind a pg_constraint existence check.
+--
+-- Constraints are guarded by NAME rather than dropped and re-added, because
+-- several of them are depended on: org_members_org_id_user_id_key backs the
+-- composite foreign keys from both *_org_access_overrides tables, and
+-- organizations_pkey backs every org_id reference in the schema. Dropping
+-- those to re-add them fails on the dependency, and dropping a foreign key
+-- only to re-add it re-validates the whole table for nothing.
+--
+-- The check is a name lookup and not an exception handler because the errors
+-- are not uniform: re-adding a duplicate primary key raises
+-- invalid_table_definition ("multiple primary keys ... are not allowed"),
+-- not the duplicate_object a check or foreign key raises. Swallowing a code
+-- that broad would also swallow real mistakes; asking whether the constraint
+-- is already there answers the actual question and lets everything else fail.
+--
+-- The whole file is one transaction, so a failure rolls back to the state the
+-- replay started from.
 
 begin;
 
 set local check_function_bodies = false;
-DROP FUNCTION public.get_chats_overview(IN p_user_id text, IN p_limit integer, IN p_offset integer);
-DROP FUNCTION public.get_projects_overview(IN p_user_id text, IN p_user_email text, IN p_scope text, IN p_limit integer, IN p_offset integer, IN p_search_term text, IN p_sort_key text, IN p_sort_direction text, IN p_practice text, IN p_owner_user_id text);
-DROP FUNCTION public.get_projects_overview(IN p_user_id text, IN p_user_email text);
-DROP FUNCTION public.get_tabular_reviews_overview(IN p_user_id text, IN p_user_email text, IN p_project_id text, IN p_scope text, IN p_limit integer, IN p_offset integer, IN p_search_term text, IN p_sort_key text, IN p_sort_direction text);
-DROP FUNCTION public.get_tabular_reviews_overview(IN p_user_id text, IN p_user_email text, IN p_project_id text);
-DROP FUNCTION public.get_workflows_overview(IN p_user_id text, IN p_user_email text, IN p_type text, IN p_scope text, IN p_limit integer, IN p_offset integer, IN p_search_term text, IN p_sort_key text, IN p_sort_direction text, IN p_practice text, IN p_language text, IN p_jurisdiction text);
-DROP FUNCTION public.get_workflows_overview(IN p_user_id text, IN p_user_email text, IN p_type text);
-ALTER TABLE public.chats DROP CONSTRAINT chats_user_id_fkey;
-ALTER TABLE public.documents DROP CONSTRAINT documents_user_id_fkey;
-ALTER TABLE public.project_subfolders DROP CONSTRAINT project_subfolders_user_id_fkey;
-ALTER TABLE public.projects DROP CONSTRAINT projects_user_id_fkey;
-ALTER TABLE public.tabular_review_chats DROP CONSTRAINT tabular_review_chats_user_id_fkey;
-ALTER TABLE public.tabular_reviews DROP CONSTRAINT tabular_reviews_user_id_fkey;
-ALTER TABLE public.workflows DROP CONSTRAINT workflows_user_id_fkey;
-CREATE FUNCTION public.chat_access_role(p_chat_id uuid, p_chat_user_id uuid, p_project_id uuid, p_org_id uuid, p_user_id text, p_user_email text)
+DROP FUNCTION IF EXISTS public.get_chats_overview(IN p_user_id text, IN p_limit integer, IN p_offset integer);
+DROP FUNCTION IF EXISTS public.get_projects_overview(IN p_user_id text, IN p_user_email text, IN p_scope text, IN p_limit integer, IN p_offset integer, IN p_search_term text, IN p_sort_key text, IN p_sort_direction text, IN p_practice text, IN p_owner_user_id text);
+DROP FUNCTION IF EXISTS public.get_projects_overview(IN p_user_id text, IN p_user_email text);
+DROP FUNCTION IF EXISTS public.get_tabular_reviews_overview(IN p_user_id text, IN p_user_email text, IN p_project_id text, IN p_scope text, IN p_limit integer, IN p_offset integer, IN p_search_term text, IN p_sort_key text, IN p_sort_direction text);
+DROP FUNCTION IF EXISTS public.get_tabular_reviews_overview(IN p_user_id text, IN p_user_email text, IN p_project_id text);
+DROP FUNCTION IF EXISTS public.get_workflows_overview(IN p_user_id text, IN p_user_email text, IN p_type text, IN p_scope text, IN p_limit integer, IN p_offset integer, IN p_search_term text, IN p_sort_key text, IN p_sort_direction text, IN p_practice text, IN p_language text, IN p_jurisdiction text);
+DROP FUNCTION IF EXISTS public.get_workflows_overview(IN p_user_id text, IN p_user_email text, IN p_type text);
+ALTER TABLE public.chats DROP CONSTRAINT IF EXISTS chats_user_id_fkey;
+ALTER TABLE public.documents DROP CONSTRAINT IF EXISTS documents_user_id_fkey;
+ALTER TABLE public.project_subfolders DROP CONSTRAINT IF EXISTS project_subfolders_user_id_fkey;
+ALTER TABLE public.projects DROP CONSTRAINT IF EXISTS projects_user_id_fkey;
+ALTER TABLE public.tabular_review_chats DROP CONSTRAINT IF EXISTS tabular_review_chats_user_id_fkey;
+ALTER TABLE public.tabular_reviews DROP CONSTRAINT IF EXISTS tabular_reviews_user_id_fkey;
+ALTER TABLE public.workflows DROP CONSTRAINT IF EXISTS workflows_user_id_fkey;
+CREATE OR REPLACE FUNCTION public.chat_access_role(p_chat_id uuid, p_chat_user_id uuid, p_project_id uuid, p_org_id uuid, p_user_id text, p_user_email text)
  RETURNS text
  LANGUAGE sql
  STABLE
@@ -44,7 +70,7 @@ AS $function$
   end;
 $function$;
 GRANT ALL ON FUNCTION public.chat_access_role(uuid, uuid, uuid, uuid, text, text) TO service_role;
-CREATE FUNCTION public.cleanup_inherited_direct_grants()
+CREATE OR REPLACE FUNCTION public.cleanup_inherited_direct_grants()
  RETURNS trigger
  LANGUAGE plpgsql
  SET search_path TO 'public'
@@ -74,7 +100,7 @@ begin
   return new;
 end;
 $function$;
-CREATE FUNCTION public.cleanup_org_admin_access_overrides()
+CREATE OR REPLACE FUNCTION public.cleanup_org_admin_access_overrides()
  RETURNS trigger
  LANGUAGE plpgsql
  SET search_path TO 'public'
@@ -89,7 +115,7 @@ begin
   return new;
 end;
 $function$;
-CREATE FUNCTION public.cleanup_removed_org_member_overrides()
+CREATE OR REPLACE FUNCTION public.cleanup_removed_org_member_overrides()
  RETURNS trigger
  LANGUAGE plpgsql
  SET search_path TO 'public'
@@ -102,7 +128,7 @@ begin
   return old;
 end;
 $function$;
-CREATE FUNCTION public.get_chats_overview(p_user_id text, p_user_email text, p_limit integer DEFAULT NULL::integer, p_offset integer DEFAULT 0)
+CREATE OR REPLACE FUNCTION public.get_chats_overview(p_user_id text, p_user_email text, p_limit integer DEFAULT NULL::integer, p_offset integer DEFAULT 0)
  RETURNS TABLE(id uuid, project_id uuid, user_id text, title text, model text, created_at timestamp with time zone, project_name text, is_owner boolean, access_role text)
  LANGUAGE sql
  STABLE
@@ -275,7 +301,7 @@ AS $function$
   limit greatest(coalesce(p_limit, 11), 1)
   offset greatest(coalesce(p_offset, 0), 0);
 $function$;
-CREATE FUNCTION public.get_projects_overview(p_user_id text, p_user_email text, p_scope text, p_limit integer, p_offset integer, p_search_term text, p_sort_key text, p_sort_direction text, p_practice text, p_owner_user_id text)
+CREATE OR REPLACE FUNCTION public.get_projects_overview(p_user_id text, p_user_email text, p_scope text, p_limit integer, p_offset integer, p_search_term text, p_sort_key text, p_sort_direction text, p_practice text, p_owner_user_id text)
  RETURNS TABLE(id uuid, user_id text, org_id uuid, access_scope text, organization_name text, name text, cm_number text, practice text, created_at timestamp with time zone, updated_at timestamp with time zone, is_owner boolean, owner_display_name text, owner_email text, access_role text, document_count integer, chat_count integer, review_count integer)
  LANGUAGE sql
  STABLE
@@ -409,7 +435,7 @@ AS $function$
   limit greatest(coalesce(p_limit, 20), 1)
   offset greatest(coalesce(p_offset, 0), 0);
 $function$;
-CREATE FUNCTION public.get_projects_overview(p_user_id text, p_user_email text DEFAULT NULL::text)
+CREATE OR REPLACE FUNCTION public.get_projects_overview(p_user_id text, p_user_email text DEFAULT NULL::text)
  RETURNS TABLE(id uuid, user_id text, org_id uuid, access_scope text, organization_name text, name text, cm_number text, practice text, created_at timestamp with time zone, updated_at timestamp with time zone, is_owner boolean, owner_display_name text, owner_email text, access_role text, document_count integer, chat_count integer, review_count integer)
  LANGUAGE sql
  STABLE
@@ -537,7 +563,7 @@ AS $function$
   limit greatest(coalesce(p_limit, 1000), 1)
   offset greatest(coalesce(p_offset, 0), 0);
 $function$;
-CREATE FUNCTION public.get_tabular_reviews_overview(p_user_id text, p_user_email text, p_project_id text, p_scope text, p_limit integer, p_offset integer, p_search_term text, p_sort_key text, p_sort_direction text)
+CREATE OR REPLACE FUNCTION public.get_tabular_reviews_overview(p_user_id text, p_user_email text, p_project_id text, p_scope text, p_limit integer, p_offset integer, p_search_term text, p_sort_key text, p_sort_direction text)
  RETURNS TABLE(id uuid, project_id uuid, user_id text, title text, columns_config jsonb, document_ids jsonb, workflow_id uuid, created_at timestamp with time zone, updated_at timestamp with time zone, is_owner boolean, access_role text, document_count integer)
  LANGUAGE sql
  STABLE
@@ -648,7 +674,7 @@ AS $function$
   limit greatest(coalesce(p_limit, 20), 1)
   offset greatest(coalesce(p_offset, 0), 0);
 $function$;
-CREATE FUNCTION public.get_tabular_reviews_overview(p_user_id text, p_user_email text DEFAULT NULL::text, p_project_id text DEFAULT NULL::text)
+CREATE OR REPLACE FUNCTION public.get_tabular_reviews_overview(p_user_id text, p_user_email text DEFAULT NULL::text, p_project_id text DEFAULT NULL::text)
  RETURNS TABLE(id uuid, project_id uuid, user_id text, title text, columns_config jsonb, document_ids jsonb, workflow_id uuid, created_at timestamp with time zone, updated_at timestamp with time zone, is_owner boolean, access_role text, document_count integer)
  LANGUAGE sql
  STABLE
@@ -812,7 +838,7 @@ AS $function$
   limit greatest(coalesce(p_limit, 1000), 1)
   offset greatest(coalesce(p_offset, 0), 0);
 $function$;
-CREATE FUNCTION public.get_workflows_overview(p_user_id text, p_user_email text, p_type text, p_scope text, p_limit integer, p_offset integer, p_search_term text, p_sort_key text, p_sort_direction text, p_practice text, p_language text, p_jurisdiction text)
+CREATE OR REPLACE FUNCTION public.get_workflows_overview(p_user_id text, p_user_email text, p_type text, p_scope text, p_limit integer, p_offset integer, p_search_term text, p_sort_key text, p_sort_direction text, p_practice text, p_language text, p_jurisdiction text)
  RETURNS TABLE(id uuid, user_id text, org_id uuid, access_scope text, organization_name text, title text, type text, prompt_md text, columns_config jsonb, language text, practice text, jurisdictions text[], is_system boolean, created_at timestamp with time zone, allow_edit boolean, is_owner boolean, shared_by_name text)
  LANGUAGE sql
  STABLE
@@ -947,7 +973,7 @@ AS $function$
   limit greatest(coalesce(p_limit, 20), 1)
   offset greatest(coalesce(p_offset, 0), 0);
 $function$;
-CREATE FUNCTION public.get_workflows_overview(p_user_id text, p_user_email text DEFAULT NULL::text, p_type text DEFAULT NULL::text)
+CREATE OR REPLACE FUNCTION public.get_workflows_overview(p_user_id text, p_user_email text DEFAULT NULL::text, p_type text DEFAULT NULL::text)
  RETURNS TABLE(id uuid, user_id text, org_id uuid, access_scope text, organization_name text, title text, type text, prompt_md text, columns_config jsonb, language text, practice text, jurisdictions text[], is_system boolean, created_at timestamp with time zone, allow_edit boolean, is_owner boolean, shared_by_name text)
  LANGUAGE sql
  STABLE
@@ -1089,7 +1115,7 @@ AS $function$
   from visible_workflows vw
   order by vw.sort_bucket asc, vw.created_at desc;
 $function$;
-CREATE FUNCTION public.org_member_protect_resource_ownership()
+CREATE OR REPLACE FUNCTION public.org_member_protect_resource_ownership()
  RETURNS trigger
  LANGUAGE plpgsql
  SET search_path TO 'public'
@@ -1138,7 +1164,7 @@ begin
   return old;
 end;
 $function$;
-CREATE FUNCTION public.org_members_protect_last_admin()
+CREATE OR REPLACE FUNCTION public.org_members_protect_last_admin()
  RETURNS trigger
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -1177,7 +1203,7 @@ begin
   return coalesce(new, old);
 end;
 $function$;
-CREATE FUNCTION public.project_access_role(p_project_id uuid, p_project_user_id uuid, p_org_id uuid, p_user_id text, p_user_email text)
+CREATE OR REPLACE FUNCTION public.project_access_role(p_project_id uuid, p_project_user_id uuid, p_org_id uuid, p_user_id text, p_user_email text)
  RETURNS text
  LANGUAGE sql
  STABLE
@@ -1210,7 +1236,7 @@ AS $function$
   end;
 $function$;
 GRANT ALL ON FUNCTION public.project_access_role(uuid, uuid, uuid, text, text) TO service_role;
-CREATE FUNCTION public.review_access_role(p_review_id uuid, p_review_user_id uuid, p_project_id uuid, p_org_id uuid, p_user_id text, p_user_email text)
+CREATE OR REPLACE FUNCTION public.review_access_role(p_review_id uuid, p_review_user_id uuid, p_project_id uuid, p_org_id uuid, p_user_id text, p_user_email text)
  RETURNS text
  LANGUAGE sql
  STABLE
@@ -1233,7 +1259,7 @@ AS $function$
   end;
 $function$;
 GRANT ALL ON FUNCTION public.review_access_role(uuid, uuid, uuid, uuid, text, text) TO service_role;
-CREATE FUNCTION public.sync_project_child_org_id()
+CREATE OR REPLACE FUNCTION public.sync_project_child_org_id()
  RETURNS trigger
  LANGUAGE plpgsql
  SET search_path TO 'public'
@@ -1250,7 +1276,7 @@ begin
   return new;
 end;
 $function$;
-CREATE FUNCTION public.validate_direct_access_scope()
+CREATE OR REPLACE FUNCTION public.validate_direct_access_scope()
  RETURNS trigger
  LANGUAGE plpgsql
  SET search_path TO 'public'
@@ -1280,7 +1306,7 @@ begin
   return new;
 end;
 $function$;
-CREATE FUNCTION public.validate_org_access_override()
+CREATE OR REPLACE FUNCTION public.validate_org_access_override()
  RETURNS trigger
  LANGUAGE plpgsql
  SET search_path TO 'public'
@@ -1323,7 +1349,7 @@ begin
   return new;
 end;
 $function$;
-CREATE FUNCTION public.workflow_access_role(p_workflow_id uuid, p_workflow_user_id uuid, p_org_id uuid, p_user_id text, p_user_email text)
+CREATE OR REPLACE FUNCTION public.workflow_access_role(p_workflow_id uuid, p_workflow_user_id uuid, p_org_id uuid, p_user_id text, p_user_email text)
  RETURNS text
  LANGUAGE sql
  STABLE
@@ -1362,130 +1388,387 @@ ALTER TABLE public.project_subfolders ALTER COLUMN user_id DROP NOT NULL;
 ALTER TABLE public.projects ALTER COLUMN user_id DROP NOT NULL;
 ALTER TABLE public.tabular_review_chats ALTER COLUMN user_id DROP NOT NULL;
 ALTER TABLE public.tabular_reviews ALTER COLUMN user_id DROP NOT NULL;
-CREATE TABLE public.chat_access_grants (id uuid DEFAULT gen_random_uuid() NOT NULL, chat_id uuid NOT NULL, email text NOT NULL, role text DEFAULT 'editor'::text NOT NULL, created_by uuid, created_at timestamp with time zone DEFAULT now() NOT NULL, updated_at timestamp with time zone DEFAULT now() NOT NULL);
+CREATE TABLE IF NOT EXISTS public.chat_access_grants (id uuid DEFAULT gen_random_uuid() NOT NULL, chat_id uuid NOT NULL, email text NOT NULL, role text DEFAULT 'editor'::text NOT NULL, created_by uuid, created_at timestamp with time zone DEFAULT now() NOT NULL, updated_at timestamp with time zone DEFAULT now() NOT NULL);
 ALTER TABLE public.chat_access_grants ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.chat_access_grants ADD CONSTRAINT chat_access_grants_chat_id_email_key UNIQUE (chat_id, email);
-ALTER TABLE public.chat_access_grants ADD CONSTRAINT chat_access_grants_chat_id_fkey FOREIGN KEY (chat_id) REFERENCES public.chats(id) ON DELETE CASCADE;
-ALTER TABLE public.chat_access_grants ADD CONSTRAINT chat_access_grants_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE SET NULL;
-ALTER TABLE public.chat_access_grants ADD CONSTRAINT chat_access_grants_email_lowercase CHECK (email = lower(email));
-ALTER TABLE public.chat_access_grants ADD CONSTRAINT chat_access_grants_pkey PRIMARY KEY (id);
-ALTER TABLE public.chat_access_grants ADD CONSTRAINT chat_access_grants_role_check CHECK (role = ANY (ARRAY['owner'::text, 'editor'::text, 'viewer'::text]));
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chat_access_grants_chat_id_email_key' AND conrelid = 'public.chat_access_grants'::regclass) THEN
+    ALTER TABLE public.chat_access_grants ADD CONSTRAINT chat_access_grants_chat_id_email_key UNIQUE (chat_id, email);
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chat_access_grants_chat_id_fkey' AND conrelid = 'public.chat_access_grants'::regclass) THEN
+    ALTER TABLE public.chat_access_grants ADD CONSTRAINT chat_access_grants_chat_id_fkey FOREIGN KEY (chat_id) REFERENCES public.chats(id) ON DELETE CASCADE;
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chat_access_grants_created_by_fkey' AND conrelid = 'public.chat_access_grants'::regclass) THEN
+    ALTER TABLE public.chat_access_grants ADD CONSTRAINT chat_access_grants_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE SET NULL;
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chat_access_grants_email_lowercase' AND conrelid = 'public.chat_access_grants'::regclass) THEN
+    ALTER TABLE public.chat_access_grants ADD CONSTRAINT chat_access_grants_email_lowercase CHECK (email = lower(email));
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chat_access_grants_pkey' AND conrelid = 'public.chat_access_grants'::regclass) THEN
+    ALTER TABLE public.chat_access_grants ADD CONSTRAINT chat_access_grants_pkey PRIMARY KEY (id);
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chat_access_grants_role_check' AND conrelid = 'public.chat_access_grants'::regclass) THEN
+    ALTER TABLE public.chat_access_grants ADD CONSTRAINT chat_access_grants_role_check CHECK (role = ANY (ARRAY['owner'::text, 'editor'::text, 'viewer'::text]));
+  END IF;
+END $do$;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.chat_access_grants TO service_role;
-CREATE INDEX idx_chat_access_grants_email ON public.chat_access_grants (email);
-CREATE INDEX idx_chat_access_grants_chat ON public.chat_access_grants (chat_id);
+CREATE INDEX IF NOT EXISTS idx_chat_access_grants_email ON public.chat_access_grants (email);
+CREATE INDEX IF NOT EXISTS idx_chat_access_grants_chat ON public.chat_access_grants (chat_id);
+DROP TRIGGER IF EXISTS chat_access_grants_scope_guard ON public.chat_access_grants;
 CREATE TRIGGER chat_access_grants_scope_guard BEFORE INSERT OR UPDATE ON public.chat_access_grants FOR EACH ROW EXECUTE FUNCTION public.validate_direct_access_scope();
-ALTER TABLE public.chats ADD CONSTRAINT chats_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
-ALTER TABLE public.chats ADD COLUMN org_id uuid;
-ALTER TABLE public.chats ADD CONSTRAINT chats_org_requires_project CHECK (org_id IS NULL OR project_id IS NOT NULL);
-CREATE INDEX idx_chats_org ON public.chats (org_id);
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chats_user_id_fkey' AND conrelid = 'public.chats'::regclass) THEN
+    ALTER TABLE public.chats ADD CONSTRAINT chats_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
+  END IF;
+END $do$;
+ALTER TABLE public.chats ADD COLUMN IF NOT EXISTS org_id uuid;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chats_org_requires_project' AND conrelid = 'public.chats'::regclass) THEN
+    ALTER TABLE public.chats ADD CONSTRAINT chats_org_requires_project CHECK (org_id IS NULL OR project_id IS NOT NULL);
+  END IF;
+END $do$;
+CREATE INDEX IF NOT EXISTS idx_chats_org ON public.chats (org_id);
+DROP TRIGGER IF EXISTS chats_cleanup_direct_grants ON public.chats;
 CREATE TRIGGER chats_cleanup_direct_grants AFTER INSERT OR UPDATE OF project_id, org_id ON public.chats FOR EACH ROW EXECUTE FUNCTION public.cleanup_inherited_direct_grants();
+DROP TRIGGER IF EXISTS chats_sync_project_org ON public.chats;
 CREATE TRIGGER chats_sync_project_org BEFORE INSERT OR UPDATE OF project_id, org_id ON public.chats FOR EACH ROW EXECUTE FUNCTION public.sync_project_child_org_id();
-ALTER TABLE public.documents ADD CONSTRAINT documents_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
-ALTER TABLE public.documents ADD COLUMN org_id uuid;
-CREATE INDEX idx_documents_org ON public.documents (org_id);
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'documents_user_id_fkey' AND conrelid = 'public.documents'::regclass) THEN
+    ALTER TABLE public.documents ADD CONSTRAINT documents_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
+  END IF;
+END $do$;
+ALTER TABLE public.documents ADD COLUMN IF NOT EXISTS org_id uuid;
+CREATE INDEX IF NOT EXISTS idx_documents_org ON public.documents (org_id);
+DROP TRIGGER IF EXISTS documents_sync_project_org ON public.documents;
 CREATE TRIGGER documents_sync_project_org BEFORE INSERT OR UPDATE OF project_id, org_id ON public.documents FOR EACH ROW EXECUTE FUNCTION public.sync_project_child_org_id();
-CREATE TABLE public.org_invitations (id uuid DEFAULT gen_random_uuid() NOT NULL, org_id uuid NOT NULL, email text NOT NULL, role text DEFAULT 'member'::text NOT NULL, invited_by uuid, status text DEFAULT 'pending'::text NOT NULL, expires_at timestamp with time zone DEFAULT (now() + '14 days'::interval) NOT NULL, created_at timestamp with time zone DEFAULT now() NOT NULL, accepted_at timestamp with time zone, declined_at timestamp with time zone, cancelled_at timestamp with time zone);
+CREATE TABLE IF NOT EXISTS public.org_invitations (id uuid DEFAULT gen_random_uuid() NOT NULL, org_id uuid NOT NULL, email text NOT NULL, role text DEFAULT 'member'::text NOT NULL, invited_by uuid, status text DEFAULT 'pending'::text NOT NULL, expires_at timestamp with time zone DEFAULT (now() + '14 days'::interval) NOT NULL, created_at timestamp with time zone DEFAULT now() NOT NULL, accepted_at timestamp with time zone, declined_at timestamp with time zone, cancelled_at timestamp with time zone);
 ALTER TABLE public.org_invitations ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.org_invitations ADD CONSTRAINT org_invitations_email_lowercase CHECK (email = lower(email));
-ALTER TABLE public.org_invitations ADD CONSTRAINT org_invitations_invited_by_fkey FOREIGN KEY (invited_by) REFERENCES auth.users(id) ON DELETE SET NULL;
-ALTER TABLE public.org_invitations ADD CONSTRAINT org_invitations_pkey PRIMARY KEY (id);
-ALTER TABLE public.org_invitations ADD CONSTRAINT org_invitations_role_check CHECK (role = ANY (ARRAY['admin'::text, 'member'::text]));
-ALTER TABLE public.org_invitations ADD CONSTRAINT org_invitations_status_check CHECK (status = ANY (ARRAY['pending'::text, 'accepted'::text, 'declined'::text, 'cancelled'::text, 'expired'::text]));
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'org_invitations_email_lowercase' AND conrelid = 'public.org_invitations'::regclass) THEN
+    ALTER TABLE public.org_invitations ADD CONSTRAINT org_invitations_email_lowercase CHECK (email = lower(email));
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'org_invitations_invited_by_fkey' AND conrelid = 'public.org_invitations'::regclass) THEN
+    ALTER TABLE public.org_invitations ADD CONSTRAINT org_invitations_invited_by_fkey FOREIGN KEY (invited_by) REFERENCES auth.users(id) ON DELETE SET NULL;
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'org_invitations_pkey' AND conrelid = 'public.org_invitations'::regclass) THEN
+    ALTER TABLE public.org_invitations ADD CONSTRAINT org_invitations_pkey PRIMARY KEY (id);
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'org_invitations_role_check' AND conrelid = 'public.org_invitations'::regclass) THEN
+    ALTER TABLE public.org_invitations ADD CONSTRAINT org_invitations_role_check CHECK (role = ANY (ARRAY['admin'::text, 'member'::text]));
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'org_invitations_status_check' AND conrelid = 'public.org_invitations'::regclass) THEN
+    ALTER TABLE public.org_invitations ADD CONSTRAINT org_invitations_status_check CHECK (status = ANY (ARRAY['pending'::text, 'accepted'::text, 'declined'::text, 'cancelled'::text, 'expired'::text]));
+  END IF;
+END $do$;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.org_invitations TO service_role;
-CREATE INDEX idx_org_invitations_org ON public.org_invitations (org_id);
-CREATE INDEX idx_org_invitations_email ON public.org_invitations (email) WHERE status = 'pending'::text;
-CREATE UNIQUE INDEX org_invitations_active_unique ON public.org_invitations (org_id, email) WHERE status = 'pending'::text;
-CREATE TABLE public.org_members (id uuid DEFAULT gen_random_uuid() NOT NULL, org_id uuid NOT NULL, user_id uuid NOT NULL, role text DEFAULT 'member'::text NOT NULL, created_at timestamp with time zone DEFAULT now() NOT NULL, updated_at timestamp with time zone DEFAULT now() NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_org_invitations_org ON public.org_invitations (org_id);
+CREATE INDEX IF NOT EXISTS idx_org_invitations_email ON public.org_invitations (email) WHERE status = 'pending'::text;
+CREATE UNIQUE INDEX IF NOT EXISTS org_invitations_active_unique ON public.org_invitations (org_id, email) WHERE status = 'pending'::text;
+CREATE TABLE IF NOT EXISTS public.org_members (id uuid DEFAULT gen_random_uuid() NOT NULL, org_id uuid NOT NULL, user_id uuid NOT NULL, role text DEFAULT 'member'::text NOT NULL, created_at timestamp with time zone DEFAULT now() NOT NULL, updated_at timestamp with time zone DEFAULT now() NOT NULL);
 ALTER TABLE public.org_members ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.org_members ADD CONSTRAINT org_members_org_id_user_id_key UNIQUE (org_id, user_id);
-ALTER TABLE public.org_members ADD CONSTRAINT org_members_pkey PRIMARY KEY (id);
-ALTER TABLE public.org_members ADD CONSTRAINT org_members_role_check CHECK (role = ANY (ARRAY['admin'::text, 'member'::text]));
-ALTER TABLE public.org_members ADD CONSTRAINT org_members_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'org_members_org_id_user_id_key' AND conrelid = 'public.org_members'::regclass) THEN
+    ALTER TABLE public.org_members ADD CONSTRAINT org_members_org_id_user_id_key UNIQUE (org_id, user_id);
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'org_members_pkey' AND conrelid = 'public.org_members'::regclass) THEN
+    ALTER TABLE public.org_members ADD CONSTRAINT org_members_pkey PRIMARY KEY (id);
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'org_members_role_check' AND conrelid = 'public.org_members'::regclass) THEN
+    ALTER TABLE public.org_members ADD CONSTRAINT org_members_role_check CHECK (role = ANY (ARRAY['admin'::text, 'member'::text]));
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'org_members_user_id_fkey' AND conrelid = 'public.org_members'::regclass) THEN
+    ALTER TABLE public.org_members ADD CONSTRAINT org_members_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+  END IF;
+END $do$;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.org_members TO service_role;
-CREATE INDEX idx_org_members_org ON public.org_members (org_id);
-CREATE INDEX idx_org_members_user ON public.org_members (user_id);
+CREATE INDEX IF NOT EXISTS idx_org_members_org ON public.org_members (org_id);
+CREATE INDEX IF NOT EXISTS idx_org_members_user ON public.org_members (user_id);
+DROP TRIGGER IF EXISTS org_members_cleanup_access_overrides ON public.org_members;
 CREATE TRIGGER org_members_cleanup_access_overrides AFTER DELETE ON public.org_members FOR EACH ROW EXECUTE FUNCTION public.cleanup_removed_org_member_overrides();
+DROP TRIGGER IF EXISTS org_members_cleanup_admin_overrides ON public.org_members;
 CREATE TRIGGER org_members_cleanup_admin_overrides AFTER INSERT OR UPDATE OF role ON public.org_members FOR EACH ROW EXECUTE FUNCTION public.cleanup_org_admin_access_overrides();
+DROP TRIGGER IF EXISTS org_members_last_admin_guard ON public.org_members;
 CREATE TRIGGER org_members_last_admin_guard BEFORE DELETE OR UPDATE OF role ON public.org_members FOR EACH ROW EXECUTE FUNCTION public.org_members_protect_last_admin();
+DROP TRIGGER IF EXISTS org_members_resource_owner_guard ON public.org_members;
 CREATE TRIGGER org_members_resource_owner_guard BEFORE DELETE ON public.org_members FOR EACH ROW EXECUTE FUNCTION public.org_member_protect_resource_ownership();
-CREATE TABLE public.organizations (id uuid DEFAULT gen_random_uuid() NOT NULL, name text NOT NULL, created_by uuid, created_at timestamp with time zone DEFAULT now() NOT NULL, updated_at timestamp with time zone DEFAULT now() NOT NULL);
+CREATE TABLE IF NOT EXISTS public.organizations (id uuid DEFAULT gen_random_uuid() NOT NULL, name text NOT NULL, created_by uuid, created_at timestamp with time zone DEFAULT now() NOT NULL, updated_at timestamp with time zone DEFAULT now() NOT NULL);
 ALTER TABLE public.organizations ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.organizations ADD CONSTRAINT organizations_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE SET NULL;
-ALTER TABLE public.organizations ADD CONSTRAINT organizations_pkey PRIMARY KEY (id);
-ALTER TABLE public.chats ADD CONSTRAINT chats_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE RESTRICT;
-ALTER TABLE public.documents ADD CONSTRAINT documents_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE RESTRICT;
-ALTER TABLE public.org_invitations ADD CONSTRAINT org_invitations_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE CASCADE;
-ALTER TABLE public.org_members ADD CONSTRAINT org_members_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE CASCADE;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'organizations_created_by_fkey' AND conrelid = 'public.organizations'::regclass) THEN
+    ALTER TABLE public.organizations ADD CONSTRAINT organizations_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE SET NULL;
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'organizations_pkey' AND conrelid = 'public.organizations'::regclass) THEN
+    ALTER TABLE public.organizations ADD CONSTRAINT organizations_pkey PRIMARY KEY (id);
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chats_org_id_fkey' AND conrelid = 'public.chats'::regclass) THEN
+    ALTER TABLE public.chats ADD CONSTRAINT chats_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE RESTRICT;
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'documents_org_id_fkey' AND conrelid = 'public.documents'::regclass) THEN
+    ALTER TABLE public.documents ADD CONSTRAINT documents_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE RESTRICT;
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'org_invitations_org_id_fkey' AND conrelid = 'public.org_invitations'::regclass) THEN
+    ALTER TABLE public.org_invitations ADD CONSTRAINT org_invitations_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE CASCADE;
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'org_members_org_id_fkey' AND conrelid = 'public.org_members'::regclass) THEN
+    ALTER TABLE public.org_members ADD CONSTRAINT org_members_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE CASCADE;
+  END IF;
+END $do$;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.organizations TO service_role;
-CREATE TABLE public.project_access_grants (id uuid DEFAULT gen_random_uuid() NOT NULL, project_id uuid NOT NULL, email text NOT NULL, role text DEFAULT 'editor'::text NOT NULL, created_by uuid, created_at timestamp with time zone DEFAULT now() NOT NULL, updated_at timestamp with time zone DEFAULT now() NOT NULL);
+CREATE TABLE IF NOT EXISTS public.project_access_grants (id uuid DEFAULT gen_random_uuid() NOT NULL, project_id uuid NOT NULL, email text NOT NULL, role text DEFAULT 'editor'::text NOT NULL, created_by uuid, created_at timestamp with time zone DEFAULT now() NOT NULL, updated_at timestamp with time zone DEFAULT now() NOT NULL);
 ALTER TABLE public.project_access_grants ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.project_access_grants ADD CONSTRAINT project_access_grants_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE SET NULL;
-ALTER TABLE public.project_access_grants ADD CONSTRAINT project_access_grants_email_lowercase CHECK (email = lower(email));
-ALTER TABLE public.project_access_grants ADD CONSTRAINT project_access_grants_pkey PRIMARY KEY (id);
-ALTER TABLE public.project_access_grants ADD CONSTRAINT project_access_grants_project_id_email_key UNIQUE (project_id, email);
-ALTER TABLE public.project_access_grants ADD CONSTRAINT project_access_grants_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
-ALTER TABLE public.project_access_grants ADD CONSTRAINT project_access_grants_role_check CHECK (role = ANY (ARRAY['owner'::text, 'editor'::text, 'viewer'::text]));
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'project_access_grants_created_by_fkey' AND conrelid = 'public.project_access_grants'::regclass) THEN
+    ALTER TABLE public.project_access_grants ADD CONSTRAINT project_access_grants_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE SET NULL;
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'project_access_grants_email_lowercase' AND conrelid = 'public.project_access_grants'::regclass) THEN
+    ALTER TABLE public.project_access_grants ADD CONSTRAINT project_access_grants_email_lowercase CHECK (email = lower(email));
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'project_access_grants_pkey' AND conrelid = 'public.project_access_grants'::regclass) THEN
+    ALTER TABLE public.project_access_grants ADD CONSTRAINT project_access_grants_pkey PRIMARY KEY (id);
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'project_access_grants_project_id_email_key' AND conrelid = 'public.project_access_grants'::regclass) THEN
+    ALTER TABLE public.project_access_grants ADD CONSTRAINT project_access_grants_project_id_email_key UNIQUE (project_id, email);
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'project_access_grants_project_id_fkey' AND conrelid = 'public.project_access_grants'::regclass) THEN
+    ALTER TABLE public.project_access_grants ADD CONSTRAINT project_access_grants_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'project_access_grants_role_check' AND conrelid = 'public.project_access_grants'::regclass) THEN
+    ALTER TABLE public.project_access_grants ADD CONSTRAINT project_access_grants_role_check CHECK (role = ANY (ARRAY['owner'::text, 'editor'::text, 'viewer'::text]));
+  END IF;
+END $do$;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.project_access_grants TO service_role;
-CREATE INDEX idx_project_access_grants_email ON public.project_access_grants (email);
-CREATE INDEX idx_project_access_grants_project ON public.project_access_grants (project_id);
+CREATE INDEX IF NOT EXISTS idx_project_access_grants_email ON public.project_access_grants (email);
+CREATE INDEX IF NOT EXISTS idx_project_access_grants_project ON public.project_access_grants (project_id);
+DROP TRIGGER IF EXISTS project_access_grants_scope_guard ON public.project_access_grants;
 CREATE TRIGGER project_access_grants_scope_guard BEFORE INSERT OR UPDATE ON public.project_access_grants FOR EACH ROW EXECUTE FUNCTION public.validate_direct_access_scope();
-CREATE TABLE public.project_org_access_overrides (id uuid DEFAULT gen_random_uuid() NOT NULL, project_id uuid NOT NULL, org_id uuid NOT NULL, user_id uuid NOT NULL, role text NOT NULL, assigned_by uuid, created_at timestamp with time zone DEFAULT now() NOT NULL, updated_at timestamp with time zone DEFAULT now() NOT NULL);
+CREATE TABLE IF NOT EXISTS public.project_org_access_overrides (id uuid DEFAULT gen_random_uuid() NOT NULL, project_id uuid NOT NULL, org_id uuid NOT NULL, user_id uuid NOT NULL, role text NOT NULL, assigned_by uuid, created_at timestamp with time zone DEFAULT now() NOT NULL, updated_at timestamp with time zone DEFAULT now() NOT NULL);
 ALTER TABLE public.project_org_access_overrides ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.project_org_access_overrides ADD CONSTRAINT project_org_access_overrides_assigned_by_fkey FOREIGN KEY (assigned_by) REFERENCES auth.users(id) ON DELETE SET NULL;
-ALTER TABLE public.project_org_access_overrides ADD CONSTRAINT project_org_access_overrides_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE CASCADE;
-ALTER TABLE public.project_org_access_overrides ADD CONSTRAINT project_org_access_overrides_org_id_user_id_fkey FOREIGN KEY (org_id, user_id) REFERENCES public.org_members(org_id, user_id) ON DELETE CASCADE;
-ALTER TABLE public.project_org_access_overrides ADD CONSTRAINT project_org_access_overrides_pkey PRIMARY KEY (id);
-ALTER TABLE public.project_org_access_overrides ADD CONSTRAINT project_org_access_overrides_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
-ALTER TABLE public.project_org_access_overrides ADD CONSTRAINT project_org_access_overrides_project_id_user_id_key UNIQUE (project_id, user_id);
-ALTER TABLE public.project_org_access_overrides ADD CONSTRAINT project_org_access_overrides_role_check CHECK (role = ANY (ARRAY['owner'::text, 'editor'::text, 'viewer'::text, 'deny'::text]));
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'project_org_access_overrides_assigned_by_fkey' AND conrelid = 'public.project_org_access_overrides'::regclass) THEN
+    ALTER TABLE public.project_org_access_overrides ADD CONSTRAINT project_org_access_overrides_assigned_by_fkey FOREIGN KEY (assigned_by) REFERENCES auth.users(id) ON DELETE SET NULL;
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'project_org_access_overrides_org_id_fkey' AND conrelid = 'public.project_org_access_overrides'::regclass) THEN
+    ALTER TABLE public.project_org_access_overrides ADD CONSTRAINT project_org_access_overrides_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE CASCADE;
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'project_org_access_overrides_org_id_user_id_fkey' AND conrelid = 'public.project_org_access_overrides'::regclass) THEN
+    ALTER TABLE public.project_org_access_overrides ADD CONSTRAINT project_org_access_overrides_org_id_user_id_fkey FOREIGN KEY (org_id, user_id) REFERENCES public.org_members(org_id, user_id) ON DELETE CASCADE;
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'project_org_access_overrides_pkey' AND conrelid = 'public.project_org_access_overrides'::regclass) THEN
+    ALTER TABLE public.project_org_access_overrides ADD CONSTRAINT project_org_access_overrides_pkey PRIMARY KEY (id);
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'project_org_access_overrides_project_id_fkey' AND conrelid = 'public.project_org_access_overrides'::regclass) THEN
+    ALTER TABLE public.project_org_access_overrides ADD CONSTRAINT project_org_access_overrides_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'project_org_access_overrides_project_id_user_id_key' AND conrelid = 'public.project_org_access_overrides'::regclass) THEN
+    ALTER TABLE public.project_org_access_overrides ADD CONSTRAINT project_org_access_overrides_project_id_user_id_key UNIQUE (project_id, user_id);
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'project_org_access_overrides_role_check' AND conrelid = 'public.project_org_access_overrides'::regclass) THEN
+    ALTER TABLE public.project_org_access_overrides ADD CONSTRAINT project_org_access_overrides_role_check CHECK (role = ANY (ARRAY['owner'::text, 'editor'::text, 'viewer'::text, 'deny'::text]));
+  END IF;
+END $do$;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.project_org_access_overrides TO service_role;
-CREATE INDEX idx_project_org_access_overrides_user ON public.project_org_access_overrides (user_id);
+CREATE INDEX IF NOT EXISTS idx_project_org_access_overrides_user ON public.project_org_access_overrides (user_id);
+DROP TRIGGER IF EXISTS project_org_access_overrides_guard ON public.project_org_access_overrides;
 CREATE TRIGGER project_org_access_overrides_guard BEFORE INSERT OR UPDATE ON public.project_org_access_overrides FOR EACH ROW EXECUTE FUNCTION public.validate_org_access_override();
-ALTER TABLE public.project_subfolders ADD CONSTRAINT project_subfolders_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
-ALTER TABLE public.projects ADD CONSTRAINT projects_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
-ALTER TABLE public.projects ADD COLUMN org_id uuid;
-ALTER TABLE public.projects ADD CONSTRAINT projects_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE RESTRICT;
-CREATE INDEX idx_projects_org ON public.projects (org_id);
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'project_subfolders_user_id_fkey' AND conrelid = 'public.project_subfolders'::regclass) THEN
+    ALTER TABLE public.project_subfolders ADD CONSTRAINT project_subfolders_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'projects_user_id_fkey' AND conrelid = 'public.projects'::regclass) THEN
+    ALTER TABLE public.projects ADD CONSTRAINT projects_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
+  END IF;
+END $do$;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS org_id uuid;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'projects_org_id_fkey' AND conrelid = 'public.projects'::regclass) THEN
+    ALTER TABLE public.projects ADD CONSTRAINT projects_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE RESTRICT;
+  END IF;
+END $do$;
+CREATE INDEX IF NOT EXISTS idx_projects_org ON public.projects (org_id);
+DROP TRIGGER IF EXISTS projects_cleanup_direct_grants ON public.projects;
 CREATE TRIGGER projects_cleanup_direct_grants AFTER INSERT OR UPDATE OF org_id ON public.projects FOR EACH ROW EXECUTE FUNCTION public.cleanup_inherited_direct_grants();
-CREATE TABLE public.tabular_review_access_grants (id uuid DEFAULT gen_random_uuid() NOT NULL, tabular_review_id uuid NOT NULL, email text NOT NULL, role text DEFAULT 'editor'::text NOT NULL, created_by uuid, created_at timestamp with time zone DEFAULT now() NOT NULL, updated_at timestamp with time zone DEFAULT now() NOT NULL);
+CREATE TABLE IF NOT EXISTS public.tabular_review_access_grants (id uuid DEFAULT gen_random_uuid() NOT NULL, tabular_review_id uuid NOT NULL, email text NOT NULL, role text DEFAULT 'editor'::text NOT NULL, created_by uuid, created_at timestamp with time zone DEFAULT now() NOT NULL, updated_at timestamp with time zone DEFAULT now() NOT NULL);
 ALTER TABLE public.tabular_review_access_grants ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.tabular_review_access_grants ADD CONSTRAINT tabular_review_access_grants_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE SET NULL;
-ALTER TABLE public.tabular_review_access_grants ADD CONSTRAINT tabular_review_access_grants_email_lowercase CHECK (email = lower(email));
-ALTER TABLE public.tabular_review_access_grants ADD CONSTRAINT tabular_review_access_grants_pkey PRIMARY KEY (id);
-ALTER TABLE public.tabular_review_access_grants ADD CONSTRAINT tabular_review_access_grants_role_check CHECK (role = ANY (ARRAY['owner'::text, 'editor'::text, 'viewer'::text]));
-ALTER TABLE public.tabular_review_access_grants ADD CONSTRAINT tabular_review_access_grants_tabular_review_id_email_key UNIQUE (tabular_review_id, email);
-ALTER TABLE public.tabular_review_access_grants ADD CONSTRAINT tabular_review_access_grants_tabular_review_id_fkey FOREIGN KEY (tabular_review_id) REFERENCES public.tabular_reviews(id) ON DELETE CASCADE;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tabular_review_access_grants_created_by_fkey' AND conrelid = 'public.tabular_review_access_grants'::regclass) THEN
+    ALTER TABLE public.tabular_review_access_grants ADD CONSTRAINT tabular_review_access_grants_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE SET NULL;
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tabular_review_access_grants_email_lowercase' AND conrelid = 'public.tabular_review_access_grants'::regclass) THEN
+    ALTER TABLE public.tabular_review_access_grants ADD CONSTRAINT tabular_review_access_grants_email_lowercase CHECK (email = lower(email));
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tabular_review_access_grants_pkey' AND conrelid = 'public.tabular_review_access_grants'::regclass) THEN
+    ALTER TABLE public.tabular_review_access_grants ADD CONSTRAINT tabular_review_access_grants_pkey PRIMARY KEY (id);
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tabular_review_access_grants_role_check' AND conrelid = 'public.tabular_review_access_grants'::regclass) THEN
+    ALTER TABLE public.tabular_review_access_grants ADD CONSTRAINT tabular_review_access_grants_role_check CHECK (role = ANY (ARRAY['owner'::text, 'editor'::text, 'viewer'::text]));
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tabular_review_access_grants_tabular_review_id_email_key' AND conrelid = 'public.tabular_review_access_grants'::regclass) THEN
+    ALTER TABLE public.tabular_review_access_grants ADD CONSTRAINT tabular_review_access_grants_tabular_review_id_email_key UNIQUE (tabular_review_id, email);
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tabular_review_access_grants_tabular_review_id_fkey' AND conrelid = 'public.tabular_review_access_grants'::regclass) THEN
+    ALTER TABLE public.tabular_review_access_grants ADD CONSTRAINT tabular_review_access_grants_tabular_review_id_fkey FOREIGN KEY (tabular_review_id) REFERENCES public.tabular_reviews(id) ON DELETE CASCADE;
+  END IF;
+END $do$;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.tabular_review_access_grants TO service_role;
-CREATE INDEX idx_tabular_review_access_grants_review ON public.tabular_review_access_grants (tabular_review_id);
-CREATE INDEX idx_tabular_review_access_grants_email ON public.tabular_review_access_grants (email);
+CREATE INDEX IF NOT EXISTS idx_tabular_review_access_grants_review ON public.tabular_review_access_grants (tabular_review_id);
+CREATE INDEX IF NOT EXISTS idx_tabular_review_access_grants_email ON public.tabular_review_access_grants (email);
+DROP TRIGGER IF EXISTS tabular_review_access_grants_scope_guard ON public.tabular_review_access_grants;
 CREATE TRIGGER tabular_review_access_grants_scope_guard BEFORE INSERT OR UPDATE ON public.tabular_review_access_grants FOR EACH ROW EXECUTE FUNCTION public.validate_direct_access_scope();
-ALTER TABLE public.tabular_review_chats ADD CONSTRAINT tabular_review_chats_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
-ALTER TABLE public.tabular_reviews ADD CONSTRAINT tabular_reviews_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
-ALTER TABLE public.tabular_reviews ADD COLUMN org_id uuid;
-ALTER TABLE public.tabular_reviews ADD CONSTRAINT tabular_reviews_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE RESTRICT;
-ALTER TABLE public.tabular_reviews ADD CONSTRAINT tabular_reviews_org_requires_project CHECK (org_id IS NULL OR project_id IS NOT NULL);
-CREATE INDEX idx_tabular_reviews_org ON public.tabular_reviews (org_id);
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tabular_review_chats_user_id_fkey' AND conrelid = 'public.tabular_review_chats'::regclass) THEN
+    ALTER TABLE public.tabular_review_chats ADD CONSTRAINT tabular_review_chats_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tabular_reviews_user_id_fkey' AND conrelid = 'public.tabular_reviews'::regclass) THEN
+    ALTER TABLE public.tabular_reviews ADD CONSTRAINT tabular_reviews_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
+  END IF;
+END $do$;
+ALTER TABLE public.tabular_reviews ADD COLUMN IF NOT EXISTS org_id uuid;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tabular_reviews_org_id_fkey' AND conrelid = 'public.tabular_reviews'::regclass) THEN
+    ALTER TABLE public.tabular_reviews ADD CONSTRAINT tabular_reviews_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE RESTRICT;
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tabular_reviews_org_requires_project' AND conrelid = 'public.tabular_reviews'::regclass) THEN
+    ALTER TABLE public.tabular_reviews ADD CONSTRAINT tabular_reviews_org_requires_project CHECK (org_id IS NULL OR project_id IS NOT NULL);
+  END IF;
+END $do$;
+CREATE INDEX IF NOT EXISTS idx_tabular_reviews_org ON public.tabular_reviews (org_id);
+DROP TRIGGER IF EXISTS tabular_reviews_cleanup_direct_grants ON public.tabular_reviews;
 CREATE TRIGGER tabular_reviews_cleanup_direct_grants AFTER INSERT OR UPDATE OF project_id, org_id ON public.tabular_reviews FOR EACH ROW EXECUTE FUNCTION public.cleanup_inherited_direct_grants();
+DROP TRIGGER IF EXISTS tabular_reviews_sync_project_org ON public.tabular_reviews;
 CREATE TRIGGER tabular_reviews_sync_project_org BEFORE INSERT OR UPDATE OF project_id, org_id ON public.tabular_reviews FOR EACH ROW EXECUTE FUNCTION public.sync_project_child_org_id();
-CREATE TABLE public.workflow_org_access_overrides (id uuid DEFAULT gen_random_uuid() NOT NULL, workflow_id uuid NOT NULL, org_id uuid NOT NULL, user_id uuid NOT NULL, role text NOT NULL, assigned_by uuid, created_at timestamp with time zone DEFAULT now() NOT NULL, updated_at timestamp with time zone DEFAULT now() NOT NULL);
+CREATE TABLE IF NOT EXISTS public.workflow_org_access_overrides (id uuid DEFAULT gen_random_uuid() NOT NULL, workflow_id uuid NOT NULL, org_id uuid NOT NULL, user_id uuid NOT NULL, role text NOT NULL, assigned_by uuid, created_at timestamp with time zone DEFAULT now() NOT NULL, updated_at timestamp with time zone DEFAULT now() NOT NULL);
 ALTER TABLE public.workflow_org_access_overrides ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.workflow_org_access_overrides ADD CONSTRAINT workflow_org_access_overrides_assigned_by_fkey FOREIGN KEY (assigned_by) REFERENCES auth.users(id) ON DELETE SET NULL;
-ALTER TABLE public.workflow_org_access_overrides ADD CONSTRAINT workflow_org_access_overrides_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE CASCADE;
-ALTER TABLE public.workflow_org_access_overrides ADD CONSTRAINT workflow_org_access_overrides_org_id_user_id_fkey FOREIGN KEY (org_id, user_id) REFERENCES public.org_members(org_id, user_id) ON DELETE CASCADE;
-ALTER TABLE public.workflow_org_access_overrides ADD CONSTRAINT workflow_org_access_overrides_pkey PRIMARY KEY (id);
-ALTER TABLE public.workflow_org_access_overrides ADD CONSTRAINT workflow_org_access_overrides_role_check CHECK (role = ANY (ARRAY['owner'::text, 'editor'::text, 'viewer'::text, 'deny'::text]));
-ALTER TABLE public.workflow_org_access_overrides ADD CONSTRAINT workflow_org_access_overrides_workflow_id_fkey FOREIGN KEY (workflow_id) REFERENCES public.workflows(id) ON DELETE CASCADE;
-ALTER TABLE public.workflow_org_access_overrides ADD CONSTRAINT workflow_org_access_overrides_workflow_id_user_id_key UNIQUE (workflow_id, user_id);
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_org_access_overrides_assigned_by_fkey' AND conrelid = 'public.workflow_org_access_overrides'::regclass) THEN
+    ALTER TABLE public.workflow_org_access_overrides ADD CONSTRAINT workflow_org_access_overrides_assigned_by_fkey FOREIGN KEY (assigned_by) REFERENCES auth.users(id) ON DELETE SET NULL;
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_org_access_overrides_org_id_fkey' AND conrelid = 'public.workflow_org_access_overrides'::regclass) THEN
+    ALTER TABLE public.workflow_org_access_overrides ADD CONSTRAINT workflow_org_access_overrides_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE CASCADE;
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_org_access_overrides_org_id_user_id_fkey' AND conrelid = 'public.workflow_org_access_overrides'::regclass) THEN
+    ALTER TABLE public.workflow_org_access_overrides ADD CONSTRAINT workflow_org_access_overrides_org_id_user_id_fkey FOREIGN KEY (org_id, user_id) REFERENCES public.org_members(org_id, user_id) ON DELETE CASCADE;
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_org_access_overrides_pkey' AND conrelid = 'public.workflow_org_access_overrides'::regclass) THEN
+    ALTER TABLE public.workflow_org_access_overrides ADD CONSTRAINT workflow_org_access_overrides_pkey PRIMARY KEY (id);
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_org_access_overrides_role_check' AND conrelid = 'public.workflow_org_access_overrides'::regclass) THEN
+    ALTER TABLE public.workflow_org_access_overrides ADD CONSTRAINT workflow_org_access_overrides_role_check CHECK (role = ANY (ARRAY['owner'::text, 'editor'::text, 'viewer'::text, 'deny'::text]));
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_org_access_overrides_workflow_id_fkey' AND conrelid = 'public.workflow_org_access_overrides'::regclass) THEN
+    ALTER TABLE public.workflow_org_access_overrides ADD CONSTRAINT workflow_org_access_overrides_workflow_id_fkey FOREIGN KEY (workflow_id) REFERENCES public.workflows(id) ON DELETE CASCADE;
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_org_access_overrides_workflow_id_user_id_key' AND conrelid = 'public.workflow_org_access_overrides'::regclass) THEN
+    ALTER TABLE public.workflow_org_access_overrides ADD CONSTRAINT workflow_org_access_overrides_workflow_id_user_id_key UNIQUE (workflow_id, user_id);
+  END IF;
+END $do$;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.workflow_org_access_overrides TO service_role;
-CREATE INDEX idx_workflow_org_access_overrides_user ON public.workflow_org_access_overrides (user_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_org_access_overrides_user ON public.workflow_org_access_overrides (user_id);
+DROP TRIGGER IF EXISTS workflow_org_access_overrides_guard ON public.workflow_org_access_overrides;
 CREATE TRIGGER workflow_org_access_overrides_guard BEFORE INSERT OR UPDATE ON public.workflow_org_access_overrides FOR EACH ROW EXECUTE FUNCTION public.validate_org_access_override();
-ALTER TABLE public.workflow_shares ADD COLUMN role text DEFAULT 'viewer'::text NOT NULL;
-ALTER TABLE public.workflow_shares ADD CONSTRAINT workflow_shares_role_check CHECK (role = ANY (ARRAY['owner'::text, 'editor'::text, 'viewer'::text]));
+ALTER TABLE public.workflow_shares ADD COLUMN IF NOT EXISTS role text DEFAULT 'viewer'::text NOT NULL;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_shares_role_check' AND conrelid = 'public.workflow_shares'::regclass) THEN
+    ALTER TABLE public.workflow_shares ADD CONSTRAINT workflow_shares_role_check CHECK (role = ANY (ARRAY['owner'::text, 'editor'::text, 'viewer'::text]));
+  END IF;
+END $do$;
+DROP TRIGGER IF EXISTS workflow_shares_scope_guard ON public.workflow_shares;
 CREATE TRIGGER workflow_shares_scope_guard BEFORE INSERT OR UPDATE ON public.workflow_shares FOR EACH ROW EXECUTE FUNCTION public.validate_direct_access_scope();
-ALTER TABLE public.workflows ADD CONSTRAINT workflows_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
-ALTER TABLE public.workflows ADD COLUMN org_id uuid;
-ALTER TABLE public.workflows ADD CONSTRAINT workflows_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE RESTRICT;
-CREATE INDEX idx_workflows_org ON public.workflows (org_id);
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflows_user_id_fkey' AND conrelid = 'public.workflows'::regclass) THEN
+    ALTER TABLE public.workflows ADD CONSTRAINT workflows_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
+  END IF;
+END $do$;
+ALTER TABLE public.workflows ADD COLUMN IF NOT EXISTS org_id uuid;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflows_org_id_fkey' AND conrelid = 'public.workflows'::regclass) THEN
+    ALTER TABLE public.workflows ADD CONSTRAINT workflows_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE RESTRICT;
+  END IF;
+END $do$;
+CREATE INDEX IF NOT EXISTS idx_workflows_org ON public.workflows (org_id);
+DROP TRIGGER IF EXISTS workflows_cleanup_direct_grants ON public.workflows;
 CREATE TRIGGER workflows_cleanup_direct_grants AFTER INSERT OR UPDATE OF org_id ON public.workflows FOR EACH ROW EXECUTE FUNCTION public.cleanup_inherited_direct_grants();
 
 notify pgrst, 'reload schema';
