@@ -11,8 +11,9 @@
 //
 // npm's legacy quick-audit endpoint is being retired and now rejects valid
 // lockfiles after npm CLI's preferred bulk request fails. Read the lockfile and
-// call the supported bulk endpoint directly so registry failures can be retried
-// without silently falling back to the obsolete endpoint.
+// call the supported bulk endpoint directly. If npm's advisory service is
+// unavailable, use OSV's exact-version batch API as an independent fail-closed
+// source instead of silently falling back to the obsolete endpoint.
 //
 // Usage: node ../scripts/audit-gate.mjs   (cwd = the workspace to audit)
 
@@ -46,56 +47,163 @@ for (const [packagePath, entry] of Object.entries(lock.packages ?? {})) {
   }
 }
 
-const registry = execFileSync("npm", ["config", "get", "registry"], {
-  encoding: "utf8",
-}).trim().replace(/\/$/, "");
-const endpoint = `${registry}/-/npm/v1/security/advisories/bulk`;
-
-const report = {};
 const packageEntries = Object.entries(packages);
-// Smaller requests avoid the registry timing out on the frontend and add-in's
-// large cross-platform lockfiles. Every chunk is still required to succeed.
-for (let offset = 0; offset < packageEntries.length; offset += 250) {
-  const batch = Object.fromEntries(packageEntries.slice(offset, offset + 250));
-  let batchReport;
+const osvBaseUrl = process.env.OSV_API_BASE_URL ?? "https://api.osv.dev/v1";
+
+async function fetchJson(url, init, { attempts = 3, timeoutMs = 30_000 } = {}) {
   let lastError;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          accept: "application/json",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(batch),
-        signal: AbortSignal.timeout(30_000),
+      const response = await fetch(url, {
+        ...init,
+        signal: AbortSignal.timeout(timeoutMs),
       });
       if (!response.ok) {
-        throw new Error(`registry returned HTTP ${response.status}`);
+        throw new Error(`advisory service returned HTTP ${response.status}`);
       }
-      batchReport = await response.json();
-      if (!batchReport || Array.isArray(batchReport) || typeof batchReport !== "object") {
-        throw new Error("registry returned an invalid advisory report");
-      }
-      break;
+      return await response.json();
     } catch (error) {
       lastError = error;
-      if (attempt < 3) {
+      if (attempt < attempts) {
         await new Promise((resolve) => setTimeout(resolve, attempt * 1_000));
       }
     }
   }
+  throw lastError;
+}
 
-  if (!batchReport) {
-    console.error("npm advisory request failed — refusing to pass the gate:");
-    console.error(lastError instanceof Error ? lastError.message : String(lastError));
-    process.exit(1);
+async function loadNpmReport() {
+  const registry = execFileSync("npm", ["config", "get", "registry"], {
+    encoding: "utf8",
+  }).trim().replace(/\/$/, "");
+  const endpoint = `${registry}/-/npm/v1/security/advisories/bulk`;
+  const report = {};
+  // Use one bounded attempt before the OSV fallback. Retrying a retired npm
+  // fallback was the source of the previous five-minute CI failures.
+  for (let offset = 0; offset < packageEntries.length; offset += 500) {
+    const batch = Object.fromEntries(packageEntries.slice(offset, offset + 500));
+    const batchReport = await fetchJson(endpoint, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        "user-agent": "mike-audit-gate/1.0",
+      },
+      body: JSON.stringify(batch),
+    }, { attempts: 1, timeoutMs: 15_000 });
+
+    if (!batchReport || Array.isArray(batchReport) || typeof batchReport !== "object") {
+      throw new Error("npm returned an invalid advisory report");
+    }
+    for (const [packageName, packageAdvisories] of Object.entries(batchReport)) {
+      report[packageName] = [
+        ...(report[packageName] ?? []),
+        ...(Array.isArray(packageAdvisories) ? packageAdvisories : []),
+      ];
+    }
   }
-  for (const [packageName, packageAdvisories] of Object.entries(batchReport)) {
-    report[packageName] = [
-      ...(report[packageName] ?? []),
-      ...(Array.isArray(packageAdvisories) ? packageAdvisories : []),
-    ];
+  return report;
+}
+
+async function loadOsvReport() {
+  const queries = packageEntries.flatMap(([packageName, versions]) =>
+    versions.map((version) => ({
+      package: { ecosystem: "npm", name: packageName },
+      version,
+    })),
+  );
+  const vulnerabilityIds = new Set();
+  const vulnerabilityMatches = new Map();
+  for (let offset = 0; offset < queries.length; offset += 500) {
+    const batchQueries = queries.slice(offset, offset + 500);
+    const response = await fetchJson(`${osvBaseUrl}/querybatch`, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        "user-agent": "mike-audit-gate/1.0",
+      },
+      body: JSON.stringify({ queries: batchQueries }),
+    });
+    if (!Array.isArray(response?.results)) {
+      throw new Error("OSV returned an invalid advisory report");
+    }
+    for (const [resultIndex, result] of response.results.entries()) {
+      const query = batchQueries[resultIndex];
+      for (const vulnerability of result.vulns ?? []) {
+        if (!vulnerability?.id || !query) continue;
+        vulnerabilityIds.add(vulnerability.id);
+        vulnerabilityMatches.set(
+          vulnerability.id,
+          [
+            ...(vulnerabilityMatches.get(vulnerability.id) ?? []),
+            { name: query.package.name, version: query.version },
+          ],
+        );
+      }
+    }
+  }
+
+  const details = await Promise.all(
+    [...vulnerabilityIds].map((id) =>
+      fetchJson(`${osvBaseUrl}/vulns/${encodeURIComponent(id)}`, {
+        headers: { accept: "application/json", "user-agent": "mike-audit-gate/1.0" },
+      }),
+    ),
+  );
+  return {
+    osv: details.flatMap((detail) => {
+      // Some SheetJS advisories have an open-ended OSV range because patched
+      // releases are distributed outside npm. GitHub records the upper bound
+      // in last_known_affected_version_range; honor that bound so a patched
+      // vendor release such as xlsx 0.20.3 is not treated as vulnerable.
+      const matches = vulnerabilityMatches.get(detail.id) ?? [];
+      const allMatchesKnownSafe = matches.length > 0 && matches.every((match) => {
+        const affected = detail.affected?.find(
+          (entry) => entry.package?.ecosystem === "npm" && entry.package?.name === match.name,
+        );
+        const lastKnownRange = affected?.database_specific?.last_known_affected_version_range;
+        const rangeMatch = /^<\s*(=?)\s*(\d+(?:\.\d+){1,2})$/.exec(lastKnownRange ?? "");
+        if (!rangeMatch || !/^\d+(?:\.\d+){1,2}$/.test(match.version)) return false;
+        const left = match.version.split(".").map((part) => Number.parseInt(part, 10));
+        const right = rangeMatch[2].split(".").map((part) => Number.parseInt(part, 10));
+        if ([...left, ...right].some(Number.isNaN)) return false;
+        const comparison = [0, 1, 2]
+          .map((index) => (left[index] ?? 0) - (right[index] ?? 0))
+          .find((difference) => difference !== 0) ?? 0;
+        return rangeMatch[1] === "=" ? comparison > 0 : comparison >= 0;
+      });
+      if (allMatchesKnownSafe) return [];
+
+      const severity = detail?.database_specific?.severity?.toLowerCase();
+      if (!severity) {
+        throw new Error(`OSV advisory ${detail?.id ?? "unknown"} has no severity`);
+      }
+      const id = detail.id;
+      return [{
+        url: id.startsWith("GHSA-")
+          ? `https://github.com/advisories/${id}`
+          : `https://osv.dev/vulnerability/${id}`,
+        title: detail.summary ?? id,
+        severity,
+      }];
+    }),
+  };
+}
+
+let report;
+try {
+  report = await loadNpmReport();
+} catch (npmError) {
+  console.warn(
+    `npm advisory service unavailable; checking OSV instead (${npmError instanceof Error ? npmError.message : String(npmError)})`,
+  );
+  try {
+    report = await loadOsvReport();
+  } catch (osvError) {
+    console.error("Both advisory services failed — refusing to pass the gate:");
+    console.error(osvError instanceof Error ? osvError.message : String(osvError));
+    process.exit(1);
   }
 }
 
