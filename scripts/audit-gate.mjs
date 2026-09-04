@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Blocking `npm audit` gate with an explicit, documented allowlist.
+// Blocking npm advisory gate with an explicit, documented allowlist.
 //
 // `npm audit --audit-level=high` alone can't express "this advisory is known,
 // unfixable without breaking changes, and tracked" — the job either fails or
@@ -8,6 +8,11 @@
 // their GHSA id is listed in scripts/audit-allowlist.json, where each entry
 // must carry a reason. Allowlisted advisories are printed on every run so
 // they stay visible until they can be removed.
+//
+// npm's legacy quick-audit endpoint is being retired and now rejects valid
+// lockfiles after npm CLI's preferred bulk request fails. Read the lockfile and
+// call the supported bulk endpoint directly so registry failures can be retried
+// without silently falling back to the obsolete endpoint.
 //
 // Usage: node ../scripts/audit-gate.mjs   (cwd = the workspace to audit)
 
@@ -20,32 +25,92 @@ const allowlistPath = join(dirname(fileURLToPath(import.meta.url)), "audit-allow
 const allowlist = JSON.parse(readFileSync(allowlistPath, "utf8"));
 const allowed = new Map(allowlist.map((e) => [e.ghsa, e.reason]));
 
-let raw;
-try {
-  raw = execFileSync("npm", ["audit", "--json"], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-} catch (err) {
-  // npm audit exits non-zero when vulnerabilities exist; the JSON is still on stdout.
-  if (!err.stdout) throw err;
-  raw = err.stdout;
+const lock = JSON.parse(readFileSync("package-lock.json", "utf8"));
+const packages = {};
+for (const [packagePath, entry] of Object.entries(lock.packages ?? {})) {
+  if (!packagePath || !entry.version) continue;
+  const normalizedPath = packagePath.replaceAll("\\", "/");
+  const markerIndex = normalizedPath.lastIndexOf("node_modules/");
+  if (markerIndex < 0) continue;
+  const installedPath = normalizedPath.slice(markerIndex + "node_modules/".length);
+  const pathParts = installedPath.split("/");
+  const packageName = entry.name ?? (
+    pathParts[0]?.startsWith("@")
+      ? pathParts.slice(0, 2).join("/")
+      : pathParts[0]
+  );
+  if (!packageName) continue;
+  packages[packageName] ??= [];
+  if (!packages[packageName].includes(entry.version)) {
+    packages[packageName].push(entry.version);
+  }
 }
 
-const report = JSON.parse(raw);
-// Fail CLOSED when npm audit itself failed: on registry outage/ENOAUDIT npm
-// exits non-zero and prints a JSON *error* object (no "vulnerabilities" key),
-// which must not parse as "zero advisories". A genuinely clean audit always
-// includes vulnerabilities: {}.
-if (report.error || !report.vulnerabilities) {
-  console.error("npm audit itself failed — refusing to pass the gate:");
-  console.error(raw.slice(0, 2000));
-  process.exit(1);
+const registry = execFileSync("npm", ["config", "get", "registry"], {
+  encoding: "utf8",
+}).trim().replace(/\/$/, "");
+const endpoint = `${registry}/-/npm/v1/security/advisories/bulk`;
+
+const report = {};
+const packageEntries = Object.entries(packages);
+// Smaller requests avoid the registry timing out on the frontend and add-in's
+// large cross-platform lockfiles. Every chunk is still required to succeed.
+for (let offset = 0; offset < packageEntries.length; offset += 250) {
+  const batch = Object.fromEntries(packageEntries.slice(offset, offset + 250));
+  let batchReport;
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(batch),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!response.ok) {
+        throw new Error(`registry returned HTTP ${response.status}`);
+      }
+      batchReport = await response.json();
+      if (!batchReport || Array.isArray(batchReport) || typeof batchReport !== "object") {
+        throw new Error("registry returned an invalid advisory report");
+      }
+      break;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 1_000));
+      }
+    }
+  }
+
+  if (!batchReport) {
+    console.error("npm advisory request failed — refusing to pass the gate:");
+    console.error(lastError instanceof Error ? lastError.message : String(lastError));
+    process.exit(1);
+  }
+  for (const [packageName, packageAdvisories] of Object.entries(batchReport)) {
+    report[packageName] = [
+      ...(report[packageName] ?? []),
+      ...(Array.isArray(packageAdvisories) ? packageAdvisories : []),
+    ];
+  }
 }
+
 const advisories = new Map(); // ghsa -> { severity, title, url }
-for (const vuln of Object.values(report.vulnerabilities)) {
-  for (const via of vuln.via ?? []) {
-    if (typeof via !== "object" || !via.url) continue;
-    if (via.severity !== "high" && via.severity !== "critical") continue;
-    const ghsa = via.url.split("/").pop();
-    advisories.set(ghsa, { severity: via.severity, title: via.title, url: via.url });
+for (const packageAdvisories of Object.values(report)) {
+  if (!Array.isArray(packageAdvisories)) continue;
+  for (const advisory of packageAdvisories) {
+    if (!advisory?.url) continue;
+    if (advisory.severity !== "high" && advisory.severity !== "critical") continue;
+    const ghsa = advisory.url.split("/").pop();
+    advisories.set(ghsa, {
+      severity: advisory.severity,
+      title: advisory.title,
+      url: advisory.url,
+    });
   }
 }
 

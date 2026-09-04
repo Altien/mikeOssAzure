@@ -24,6 +24,10 @@ jobs:
   dependency-audit:
     runs-on: ubuntu-latest
     strategy:
+      # npm throttles concurrent advisory requests from one runner egress IP.
+      # Serialize the four lockfile scans so one workspace cannot force the
+      # others onto the retired quick-audit endpoint or into a timeout.
+      max-parallel: 1
       matrix:
         # Every directory with its own package-lock.json gets a gate —
         # including the repo root (Playwright e2e tooling) and word-addin,
