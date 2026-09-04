@@ -26,7 +26,6 @@ import {
 import {
     can,
     isProjectRole,
-    strongerRole,
     type ProjectRole,
 } from "./permissions";
 import {
