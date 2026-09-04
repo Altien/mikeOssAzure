@@ -49,6 +49,12 @@ import {
     deleteUserProjects,
 } from "../lib/userDataCleanup";
 import {
+    acceptInvitation,
+    declineInvitation,
+    listMyInvitations,
+} from "../lib/orgs";
+import { sendOrgFailure } from "./orgs";
+import {
     buildUserAccountExport,
     buildUserChatsExport,
     buildUserTabularReviewsExport,
@@ -1154,6 +1160,61 @@ userRouter.get("/lookup", requireAuth, async (req, res) => {
         display_name: user?.display_name ?? null,
     });
 });
+
+// ---------------------------------------------------------------------------
+// Organization invitations — the recipient's side
+// ---------------------------------------------------------------------------
+//
+// These live on /user rather than /orgs because the caller is not (yet) a
+// member of the organization: an /orgs/:orgId route would have to answer
+// "which org?" before it could answer "are you allowed to know?". Matching is
+// by the authenticated account's email, which is what lets an invitation sent
+// before signup be claimed the moment the account exists.
+
+// GET /user/invitations — live invitations addressed to the caller's email.
+userRouter.get("/invitations", requireAuth, async (_req, res) => {
+    const userEmail = res.locals.userEmail as string | undefined;
+    const db = createServerSupabase();
+    const result = await listMyInvitations(db, { userEmail });
+    if (!result.ok) return sendOrgFailure(res, result);
+    res.json(result.invitations);
+});
+
+// POST /user/invitations/:invitationId/accept — join the organization.
+userRouter.post(
+    "/invitations/:invitationId/accept",
+    requireAuth,
+    async (req, res) => {
+        const userId = res.locals.userId as string;
+        const userEmail = res.locals.userEmail as string | undefined;
+        const db = createServerSupabase();
+        const result = await acceptInvitation(db, {
+            userId,
+            userEmail,
+            invitationId: req.params.invitationId,
+        });
+        if (!result.ok) return sendOrgFailure(res, result);
+        res.json({ org_id: result.org_id, role: result.role });
+    },
+);
+
+// POST /user/invitations/:invitationId/decline
+userRouter.post(
+    "/invitations/:invitationId/decline",
+    requireAuth,
+    async (req, res) => {
+        const userId = res.locals.userId as string;
+        const userEmail = res.locals.userEmail as string | undefined;
+        const db = createServerSupabase();
+        const result = await declineInvitation(db, {
+            userId,
+            userEmail,
+            invitationId: req.params.invitationId,
+        });
+        if (!result.ok) return sendOrgFailure(res, result);
+        res.status(204).send();
+    },
+);
 
 // GET /user/profile
 userRouter.get("/profile", requireAuth, async (_req, res) => {

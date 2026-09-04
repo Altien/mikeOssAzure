@@ -8,7 +8,13 @@ import {
   type Response,
 } from "express";
 
-import { ensureDocAccess, checkProjectAccess } from "../lib/access";
+import {
+  can,
+  checkProjectAccess,
+  checkWorkflowAccess,
+  creatorScopedAllowed,
+  ensureDocAccess,
+} from "../lib/access";
 import { mapWithConcurrency } from "../lib/concurrency";
 import { sendInternalError } from "../lib/httpError";
 import { uploadSessionRateLimitConfiguration } from "../lib/runtimeConfig";
@@ -160,30 +166,26 @@ export async function validateDestinationAccess(
         res.status(404).json({ detail: "Workflow not found or not editable" });
         return false;
       }
-      if (workflow.user_id === userId) return true;
-      const normalizedEmail = (userEmail ?? "").trim().toLowerCase();
-      if (!normalizedEmail) {
-        res.status(404).json({ detail: "Workflow not found or not editable" });
-        return false;
-      }
-      const { data: share, error: shareError } = await db
-        .from("workflow_shares")
-        .select("allow_edit")
-        .eq("workflow_id", workflowId)
-        .eq("shared_with_email", normalizedEmail)
-        .maybeSingle();
-      if (shareError) {
-        sendInternalError(res, shareError);
-        return false;
-      }
-      if (share?.allow_edit === true) return true;
+      const workflowAccess = await checkWorkflowAccess(
+        workflowId,
+        userId,
+        userEmail,
+        db,
+      );
+      if (
+        workflowAccess.ok &&
+        can(workflowAccess.projectRole, "content.edit")
+      )
+        return true;
       res.status(404).json({ detail: "Workflow not found or not editable" });
       return false;
     }
     if (destination.scope === "project") {
       const projectId = destination.project_id as string;
       const access = await checkProjectAccess(projectId, userId, userEmail, db);
-      if (!access.ok) {
+      // Uploading into a project is content work: a viewer can open the
+      // project but must not be able to open an upload session into it.
+      if (!access.ok || !can(access.projectRole, "content.edit")) {
         res.status(404).json({ detail: "Project not found" });
         return false;
       }
@@ -246,7 +248,7 @@ export async function validateDestinationAccess(
     const documentId = destination.document_id as string;
     const { data: document, error } = await db
       .from("documents")
-      .select("id, user_id, project_id, workflow_id")
+      .select("id, user_id, project_id, org_id, workflow_id")
       .eq("id", documentId)
       .maybeSingle();
     if (error) {
@@ -258,12 +260,18 @@ export async function validateDestinationAccess(
       return false;
     }
     const access = await ensureDocAccess(document, userId, userEmail, db);
+    const canEditContent =
+      access.ok && can(access.projectRole, "content.edit");
+    // Replacing a version is creator-scoped (with the admin heir once the
+    // creator's account is gone); workflow assets stay editable at the
+    // workflow share's edit tier.
     const canReplace =
       access.ok &&
-      (access.isOwner || (Boolean(document.workflow_id) && access.canEdit));
+      (creatorScopedAllowed(access, document.user_id) ||
+        (Boolean(document.workflow_id) && canEditContent));
     if (
       !access.ok ||
-      !access.canEdit ||
+      !canEditContent ||
       (manifest.purpose === "document_version_replace" && !canReplace)
     ) {
       res.status(404).json({ detail: "Document not found" });
@@ -312,20 +320,14 @@ export async function validateDestinationAccess(
     return false;
   }
 
-  let canEdit = workflow.user_id === userId;
-  if (!canEdit && userEmail) {
-    const { data: share, error: shareError } = await db
-      .from("workflow_shares")
-      .select("allow_edit")
-      .eq("workflow_id", workflowId)
-      .eq("shared_with_email", userEmail.trim().toLowerCase())
-      .maybeSingle();
-    if (shareError) {
-      sendInternalError(res, shareError);
-      return false;
-    }
-    canEdit = share?.allow_edit === true;
-  }
+  const workflowAccess = await checkWorkflowAccess(
+    workflowId,
+    userId,
+    userEmail,
+    db,
+  );
+  const canEdit =
+    workflowAccess.ok && can(workflowAccess.projectRole, "content.edit");
   if (!canEdit) {
     res.status(404).json({ detail: "Workflow not found or not editable" });
     return false;

@@ -489,6 +489,7 @@ export const WorkflowAssets = forwardRef<
           ) : undefined
         }
         confirmLabel="Delete"
+        confirmVariant="danger"
         confirmStatus={deleteStatus}
         onConfirm={() => void confirmRemove()}
         onCancel={() => {

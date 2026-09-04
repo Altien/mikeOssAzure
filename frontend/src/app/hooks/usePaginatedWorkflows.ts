@@ -16,7 +16,12 @@ import { appendUniqueRows, paginationError, splitOverfetchedPage } from "@/app/l
 
 export type WorkflowSortKey = "name" | "type" | "created";
 export type WorkflowSortDirection = "asc" | "desc";
-export type WorkflowScope = "all" | "owned" | "shared";
+export type WorkflowScope =
+    | "all"
+    | "owned"
+    | "shared"
+    | "private"
+    | "collaborative";
 type WorkflowTypeFilter = "assistant" | "tabular" | undefined;
 
 const PAGE_SIZE = 30;

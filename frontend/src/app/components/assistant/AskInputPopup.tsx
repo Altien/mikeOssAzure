@@ -497,6 +497,7 @@ export function AskInputPopup({
                                     </button>
                                     <PillButton
                                         tone="black"
+                                        size="xs"
                                         type="button"
                                         disabled={
                                             skipped.has(activeItem.id) ||
@@ -506,7 +507,7 @@ export function AskInputPopup({
                                         onClick={() =>
                                             confirmItem(activeItem.id)
                                         }
-                                        className="h-6 px-3 font-sans text-[10px]"
+                                        className="font-sans"
                                     >
                                         {confirmed.has(activeItem.id) ? (
                                             <>

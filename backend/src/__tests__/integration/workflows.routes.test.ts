@@ -4,10 +4,14 @@ import request from "supertest";
 // ---------------------------------------------------------------------------
 // Hoisted mock fns we want to reconfigure per-test.
 // ---------------------------------------------------------------------------
-const { checkProjectAccess, deleteUserProjects } = vi.hoisted(() => ({
-    checkProjectAccess: vi.fn(),
-    deleteUserProjects: vi.fn(),
-}));
+const { checkProjectAccess, checkWorkflowAccess, deleteUserProjects, getOrgRole } = vi.hoisted(
+    () => ({
+        checkProjectAccess: vi.fn(),
+        checkWorkflowAccess: vi.fn(),
+        deleteUserProjects: vi.fn(),
+        getOrgRole: vi.fn(),
+    }),
+);
 
 // ---------------------------------------------------------------------------
 // Configurable Supabase stub — same shape as projects.routes.test.ts's, since
@@ -102,10 +106,12 @@ vi.mock("../../middleware/auth", () => ({
 
 vi.mock("../../lib/access", () => ({
     checkProjectAccess: (...args: unknown[]) => checkProjectAccess(...args),
-    ensureDocAccess: vi.fn(async () => ({ ok: true, isOwner: true })),
-    ensureReviewAccess: vi.fn(async () => ({ ok: true, isOwner: true })),
+    checkWorkflowAccess: (...args: unknown[]) => checkWorkflowAccess(...args),
+    ensureDocAccess: vi.fn(async () => ({ ok: true, isCreator: true })),
+    ensureReviewAccess: vi.fn(async () => ({ ok: true, isCreator: true })),
     filterAccessibleDocumentIds: vi.fn(async (ids: string[]) => ids),
     listAccessibleProjectIds: vi.fn(async () => []),
+    getOrgRole: (...args: unknown[]) => getOrgRole(...args),
 }));
 
 vi.mock("../../lib/userDataCleanup", () => ({
@@ -151,13 +157,51 @@ describe("workflows.routes", () => {
         vi.clearAllMocks();
         resetSupabaseState();
         resetEnsuredDefaultUsersForTests();
+        // Default: the caller belongs to no organization.
+        getOrgRole.mockResolvedValue(null);
+        checkWorkflowAccess.mockImplementation(
+            async (_workflowId: string, userId: string) => {
+                const workflow = supabaseState.tables.workflows?.data as
+                    | { id: string; user_id: string | null; org_id?: string | null }
+                    | null
+                    | undefined;
+                if (!workflow) return { ok: false };
+                const isCreator = workflow.user_id === userId;
+                if (isCreator)
+                    return {
+                        ok: true,
+                        isCreator: true,
+                        orgRole: null,
+                        projectRole: "owner",
+                        workflow,
+                    };
+                if (!workflow.org_id) return { ok: false };
+                const orgRole = await getOrgRole(userId, workflow.org_id);
+                if (!orgRole) return { ok: false };
+                return {
+                    ok: true,
+                    isCreator: false,
+                    orgRole,
+                    projectRole: orgRole === "admin" ? "owner" : "editor",
+                    workflow,
+                };
+            },
+        );
     });
 
     // ── GET /workflows (overview) ─────────────────────────────────────────
     describe("GET /workflows", () => {
         it("returns the user's installed workflows when no pagination params are present", async () => {
             supabaseState.rpc = {
-                data: [{ id: "w1", title: "My workflow" }],
+                data: [
+                    {
+                        id: "w1",
+                        title: "My workflow",
+                        org_id: "org-1",
+                        access_scope: "organization",
+                        organization_name: "Elite Law LLP",
+                    },
+                ],
                 error: null,
             };
 
@@ -171,7 +215,41 @@ describe("workflows.routes", () => {
             expect(res.body.at(-1)).toMatchObject({
                 id: "w1",
                 is_system: false,
+                org_id: "org-1",
+                access_scope: "organization",
+                organization_name: "Elite Law LLP",
                 metadata: { title: "My workflow" },
+            });
+        });
+
+        it("backfills organization access when the overview RPC is stale", async () => {
+            supabaseState.rpc = {
+                data: [{ id: "w1", title: "Firm workflow", is_owner: true }],
+                error: null,
+            };
+            supabaseState.tables.workflows = {
+                data: [{ id: "w1", org_id: "org-1" }],
+                error: null,
+            };
+            supabaseState.tables.workflow_shares = {
+                data: [],
+                error: null,
+            };
+            supabaseState.tables.organizations = {
+                data: [{ id: "org-1", name: "Elite Law LLP" }],
+                error: null,
+            };
+
+            const res = await request(app)
+                .get("/workflows?type=assistant")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body.at(-1)).toMatchObject({
+                id: "w1",
+                org_id: "org-1",
+                access_scope: "organization",
+                organization_name: "Elite Law LLP",
             });
         });
 
@@ -398,6 +476,255 @@ describe("workflows.routes", () => {
       expect(res.body).toEqual({
         detail: "Assets are only available for assistant workflows",
       });
+    });
+  });
+
+  // ── Organization workflows ────────────────────────────────────────────
+  // Before this, org workflows were write-dead: POST hardcoded org_id null so
+  // no API call could create one, and the org arm of the list RPC reported
+  // allow_edit false so even an org admin could not change one that already
+  // existed. The only way to get an org workflow at all was the account
+  // -deletion detach path — a firm's shared workflow that nobody could make
+  // and nobody could edit.
+  describe("organization workflows", () => {
+    const create = (body: Record<string, unknown>) =>
+      request(app)
+        .post("/workflows")
+        .set(...AUTH)
+        .send({
+          metadata: { title: "Firm playbook", type: "assistant" },
+          ...body,
+        });
+
+    it("files a workflow under an organization the caller belongs to", async () => {
+      getOrgRole.mockResolvedValue("member");
+      supabaseState.tables.workflows = {
+        data: { id: "w-org", user_id: "u1", org_id: "org-1" },
+        error: null,
+      };
+
+      const res = await create({ org_id: "org-1" });
+
+      expect(res.status).toBe(201);
+      expect(res.body).toMatchObject({
+        org_id: "org-1",
+        access_scope: "organization",
+        organization_name: null,
+      });
+      expect(
+        supabaseState.inserts.find((i) => i.table === "workflows")?.payload,
+      ).toMatchObject({ org_id: "org-1", user_id: "u1" });
+    });
+
+    it("400s an org the caller does not belong to, and writes nothing", async () => {
+      getOrgRole.mockResolvedValue(null);
+
+      const res = await create({ org_id: "org-elsewhere" });
+
+      expect(res.status).toBe(400);
+      expect(res.body.detail).toBe(
+        "You are not a member of that organization.",
+      );
+      expect(supabaseState.inserts).toEqual([]);
+    });
+
+    it("keeps a workflow personal when no org is named", async () => {
+      supabaseState.tables.workflows = {
+        data: { id: "w1", user_id: "u1", org_id: null },
+        error: null,
+      };
+
+      const res = await create({});
+
+      expect(res.status).toBe(201);
+      expect(res.body).toMatchObject({
+        org_id: null,
+        access_scope: "private",
+        organization_name: null,
+      });
+      expect(
+        supabaseState.inserts.find((i) => i.table === "workflows")?.payload,
+      ).toMatchObject({ org_id: null });
+    });
+
+    it("lets a colleague in the same org edit an org workflow", async () => {
+      // The workflow belongs to the organization, not to whoever drafted it.
+      // Both org roles sit at member or above on the ladder, where editing
+      // content is a member capability.
+      supabaseState.tables.workflows = {
+        data: {
+          id: "w-org",
+          user_id: "someone-else",
+          org_id: "org-1",
+          title: "Firm playbook",
+        },
+        error: null,
+      };
+      supabaseState.tables.workflow_shares = { data: null, error: null };
+      getOrgRole.mockResolvedValue("member");
+
+      const res = await request(app)
+        .patch("/workflows/w-org")
+        .set(...AUTH)
+        .send({ metadata: { title: "Firm playbook v2" } });
+
+      expect(res.status).toBe(200);
+      // Editable, but not owned: share and delete stay with the creator.
+      expect(res.body.allow_edit).toBe(true);
+      expect(res.body.is_owner).toBe(false);
+    });
+
+    it("still refuses an org workflow to somebody outside the org", async () => {
+      supabaseState.tables.workflows = {
+        data: { id: "w-org", user_id: "someone-else", org_id: "org-1" },
+        error: null,
+      };
+      supabaseState.tables.workflow_shares = { data: null, error: null };
+      getOrgRole.mockResolvedValue(null);
+
+      const res = await request(app)
+        .patch("/workflows/w-org")
+        .set(...AUTH)
+        .send({ metadata: { title: "Nope" } });
+
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("workflow direct grants", () => {
+    it("rejects a personal grant for an email that has not registered", async () => {
+      supabaseState.tables.workflows = {
+        data: { id: "w-personal", user_id: "u1", org_id: null },
+        error: null,
+      };
+      supabaseState.tables.user_profiles = { data: [], error: null };
+
+      const res = await request(app)
+        .post("/workflows/w-personal/share")
+        .set(...AUTH)
+        .send({ emails: ["future@firm.test"], role: "viewer" });
+
+      expect(res.status).toBe(400);
+      expect(res.body.detail).toBe(
+        "future@firm.test does not belong to a Mike user.",
+      );
+    });
+
+    it("stores a personal grant for an existing user", async () => {
+      supabaseState.tables.workflows = {
+        data: { id: "w-personal", user_id: "u1", org_id: null },
+        error: null,
+      };
+      supabaseState.tables.user_profiles = {
+        data: [{ email: "colleague@firm.test" }],
+        error: null,
+      };
+      supabaseState.tables.workflow_shares = { data: null, error: null };
+
+      const res = await request(app)
+        .post("/workflows/w-personal/share")
+        .set(...AUTH)
+        .send({ emails: ["colleague@firm.test"], role: "editor" });
+
+      expect(res.status).toBe(204);
+    });
+  });
+
+  describe("organization workflow Owner operations", () => {
+    const detached = {
+      id: "w-orphan",
+      user_id: null,
+      org_id: "org-1",
+      title: "Orphaned firm playbook",
+    };
+
+    function captureWorkflowQueries() {
+      const queries: { table: string; q: Record<string, unknown> }[] = [];
+      vi.mocked(createServerSupabase).mockImplementationOnce(() => {
+        const db = mockSupabase();
+        const originalFrom = db.from;
+        db.from = vi.fn((table: string) => {
+          const q = originalFrom(table);
+          queries.push({ table, q: q as Record<string, unknown> });
+          return q;
+        });
+        return db as unknown as ReturnType<typeof createServerSupabase>;
+      });
+      return queries;
+    }
+
+    it("lets an org admin delete a workflow whose creator's account is gone", async () => {
+      supabaseState.tables.workflows = { data: detached, error: null };
+      supabaseState.tables.workflow_reference_documents = {
+        data: [],
+        error: null,
+      };
+      getOrgRole.mockResolvedValue("admin");
+      const queries = captureWorkflowQueries();
+
+      const res = await request(app)
+        .delete("/workflows/w-orphan")
+        .set(...AUTH);
+
+      expect(res.status).toBe(204);
+      expect(getOrgRole).toHaveBeenCalledWith("u1", "org-1");
+      // The delete must be keyed by id alone: nothing can match a NULL
+      // creator, so any user_id filter would turn this into a silent no-op.
+      for (const { table, q } of queries) {
+        if (table !== "workflows") continue;
+        const eq = q.eq as ReturnType<typeof vi.fn>;
+        const columns = eq.mock.calls.map((c) => c[0]);
+        expect(columns).not.toContain("user_id");
+      }
+    });
+
+    it("does not extend Owner operations to org Members", async () => {
+      supabaseState.tables.workflows = { data: detached, error: null };
+      getOrgRole.mockResolvedValue("member");
+
+      const res = await request(app)
+        .delete("/workflows/w-orphan")
+        .set(...AUTH);
+
+      expect(res.status).toBe(404);
+    });
+
+    it("lets an org Admin manage a workflow with a living creator", async () => {
+      supabaseState.tables.workflows = {
+        data: { ...detached, user_id: "someone-else" },
+        error: null,
+      };
+      getOrgRole.mockResolvedValue("admin");
+
+      const res = await request(app)
+        .delete("/workflows/w-orphan")
+        .set(...AUTH);
+
+      expect(res.status).toBe(204);
+    });
+
+    it("applies the same Owner rule to the sharing surface", async () => {
+      supabaseState.tables.workflows = { data: detached, error: null };
+      supabaseState.tables.workflow_shares = { data: [], error: null };
+      getOrgRole.mockResolvedValue("admin");
+
+      const res = await request(app)
+        .get("/workflows/w-orphan/shares")
+        .set(...AUTH);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
+    });
+
+    it("keeps the sharing surface closed to org members", async () => {
+      supabaseState.tables.workflows = { data: detached, error: null };
+      getOrgRole.mockResolvedValue("member");
+
+      const res = await request(app)
+        .get("/workflows/w-orphan/shares")
+        .set(...AUTH);
+
+      expect(res.status).toBe(404);
     });
   });
 });

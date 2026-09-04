@@ -400,7 +400,7 @@ function UrlDownloadButton({
         <PillButton
             asChild
             tone="white"
-            className={compact ? "h-6 w-6 px-0 py-0" : undefined}
+            size={compact ? "icon-xs" : "sm"}
         >
             <a
                 href={href}
@@ -430,7 +430,7 @@ function ExternalSourceLinkButton({
         <PillButton
             asChild
             tone="white"
-            className={compact ? "h-6 w-6 px-0 py-0" : undefined}
+            size={compact ? "icon-xs" : "sm"}
         >
             <a
                 href={link.href}
@@ -492,9 +492,9 @@ function DownloadButton({
     return (
         <PillButton
             tone="white"
+            size={compact ? "icon-xs" : "sm"}
             onClick={handleClick}
             disabled={spinning}
-            className={compact ? "h-6 w-6 px-0 py-0" : undefined}
         >
             {spinning ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />

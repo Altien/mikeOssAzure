@@ -1,24 +1,33 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { Upload, User, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Upload } from "lucide-react";
 import {
+    type Org,
     UploadBatchError,
     addDocumentToProject,
     createProject,
     failedUploadMessage,
+    grantProjectAccess,
+    listOrgs,
     uploadProjectDocuments,
 } from "@/app/lib/mikeApi";
 import { FileDirectory } from "../shared/FileDirectory";
-import { AddUserInput } from "../shared/AddUserInput";
 import type { Document, Project } from "../shared/types";
-import type { UserLookupResult } from "@/app/lib/mikeApi";
 import { useAuth } from "@/app/contexts/AuthContext";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { Modal } from "../modals/Modal";
 import { FieldLabel, FormTextInput } from "../ui/form-field";
+import { ModalSelect } from "../modals/ModalSelect";
 import { ProjectPracticeField } from "./ProjectPracticeField";
 import { userFacingApiError } from "@/app/lib/userFacingError";
-import { LIQUID_GLASS_MODAL_ROW_HOVER_CLASS } from "@/shared/ui/LiquidGlassUI";
+import {
+    CreateAccessStep,
+    type PendingDirectGrant,
+    type PendingOrgOverride,
+} from "../modals/CreateAccessStep";
+
+const PERSONAL_WORKSPACE = "__personal__";
 
 interface Props {
     open: boolean;
@@ -27,11 +36,16 @@ interface Props {
 }
 
 export function NewProjectModal({ open, onClose, onCreated }: Props) {
-    const [step, setStep] = useState<"details" | "documents">("details");
+    const [step, setStep] = useState<"details" | "access" | "documents">(
+        "details",
+    );
     const [name, setName] = useState("");
     const [cmNumber, setCmNumber] = useState("");
     const [practice, setPractice] = useState("");
-    const [sharedUsers, setSharedUsers] = useState<UserLookupResult[]>([]);
+    const [sharedUsers, setSharedUsers] = useState<PendingDirectGrant[]>([]);
+    const [orgOverrides, setOrgOverrides] = useState<PendingOrgOverride[]>([]);
+    const [orgs, setOrgs] = useState<Org[]>([]);
+    const [orgId, setOrgId] = useState<string>(PERSONAL_WORKSPACE);
     const [selectedDocuments, setSelectedDocuments] = useState<Document[]>([]);
     const [pendingFiles, setPendingFiles] = useState<File[]>([]);
     const [loading, setLoading] = useState(false);
@@ -40,21 +54,46 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
     // it until the user has read which files are missing.
     const [pendingProject, setPendingProject] = useState<Project | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
-    // The project is created before its documents are attached. Remember it so
-    // a retry after an attachment failure reuses the project the user already
-    // has instead of creating a second one.
+    const practiceEditedRef = useRef(false);
+    // The project is created before its grants are written and its documents
+    // are attached. Remember it so a retry after either kind of failure
+    // reuses the project the user already has instead of creating a second
+    // one.
     const createdProjectRef = useRef<Project | null>(null);
     const { user } = useAuth();
+    const { profile } = useUserProfile();
+    const preferredPractice =
+        profile?.practiceAreas.find((area) => area.trim())?.trim() ?? "";
     const ownEmail = user?.email?.trim().toLowerCase() ?? null;
     const formId = "new-project-modal-form";
 
-    if (!open) return null;
+    // Load the caller's organizations so a project can be created inside a
+    // firm instead of the caller's private workspace. Every row is a real
+    // organization now — there is no hidden personal one to filter out.
+    // The selector remains visible even when the caller has no organizations.
+    useEffect(() => {
+        if (!open) return;
+        let cancelled = false;
+        listOrgs()
+            .then((rows) => {
+                if (!cancelled) setOrgs(rows);
+            })
+            .catch(() => {});
+        return () => {
+            cancelled = true;
+        };
+    }, [open]);
 
-    function submitterValue(e: React.FormEvent<HTMLFormElement>) {
-        return (
-            (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null
-        )?.value;
-    }
+    useEffect(() => {
+        if (!open) {
+            practiceEditedRef.current = false;
+            return;
+        }
+        if (!preferredPractice || practiceEditedRef.current) return;
+        setPractice(preferredPractice);
+    }, [open, preferredPractice]);
+
+    if (!open) return null;
 
     function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
         const files = Array.from(e.target.files ?? []);
@@ -72,20 +111,29 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
         onClose();
     }
 
-    async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault();
         if (!name.trim()) return;
-        if (pendingProject) {
-            finishCreation(pendingProject);
+        if (step === "details") {
+            setStep("access");
             return;
         }
-        if (step === "details" || submitterValue(e) !== "create-project") {
+        if (step === "access") {
             setStep("documents");
+        }
+    }
+
+    async function createProjectFromDocuments() {
+        if (!name.trim() || loading || step !== "documents") return;
+        if (pendingProject) {
+            finishCreation(pendingProject);
             return;
         }
         setLoading(true);
         setError("");
         try {
+            // Create, then grant each recipient through the role-aware access
+            // endpoint, which also supports recipients without an account.
             const project =
                 createdProjectRef.current ??
                 (await createProject(
@@ -94,11 +142,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                     practice.trim() && practice.trim() !== "Other"
                         ? practice.trim()
                         : undefined,
-                    ownEmail
-                        ? sharedUsers
-                              .map((user) => user.email)
-                              .filter((email) => email !== ownEmail)
-                        : sharedUsers.map((user) => user.email),
+                    orgId !== PERSONAL_WORKSPACE ? orgId : undefined,
                 ));
             createdProjectRef.current = project;
 
@@ -154,6 +198,67 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                 .filter(Boolean)
                 .join(" ");
 
+            // Sequential: these are a handful of addresses, and one refusal
+            // should be reported with its own message rather than lost in a
+            // race. The endpoint upserts, so a retry after a partial failure
+            // is safe.
+            const recipients = (
+                orgId === PERSONAL_WORKSPACE ? sharedUsers : orgOverrides
+            ).filter((entry) => !ownEmail || entry.email !== ownEmail);
+            const grantFailures: { email: string; detail: string }[] = [];
+            for (const entry of recipients) {
+                try {
+                    await grantProjectAccess(
+                        project.id,
+                        entry.email,
+                        entry.role,
+                    );
+                } catch (err: unknown) {
+                    grantFailures.push({
+                        email: entry.email,
+                        detail: userFacingApiError(err, "the request failed"),
+                    });
+                }
+            }
+            if (grantFailures.length > 0) {
+                // The project exists, so say so — and stay open rather than
+                // navigating away from the only place that knows the sharing
+                // did not happen. Pressing Create again retries the grants
+                // against the same project.
+                setError(
+                    `Project created, but access was not granted to ${grantFailures
+                        .map((failure) => failure.email)
+                        .join(", ")}: ${grantFailures[0].detail}`,
+                );
+                // Stay open on THIS dialog: createdProjectRef holds the
+                // project, so pressing Create again retries only the grants.
+                return;
+            }
+
+            // POST /projects returns a bare row with no role fields, and
+            // the list's fail-closed roleFrom() reads "no role fields" as
+            // viewer — so the creator had no row menu, no Edit details and no
+            // Delete on the project they just made until a refetch. This
+            // row's standing is not unknown: the caller IS the creator, and a
+            // creator derives Owner by definition. The same stamp the optimistic
+            // chat row gets in ChatHistoryContext, for the same reason.
+            const stamped = {
+                ...project,
+                is_owner: true,
+                access_role: "owner" as const,
+                access_scope:
+                    orgId !== PERSONAL_WORKSPACE
+                        ? ("organization" as const)
+                        : recipients.length > 0
+                          ? ("shared" as const)
+                          : ("private" as const),
+                organization_name:
+                    orgs.find((org) => org.id === orgId)?.name ?? null,
+                ...(orgId === PERSONAL_WORKSPACE && recipients.length > 0
+                    ? { direct_grant_count: recipients.length }
+                    : {}),
+            };
+
             if (failureMessage) {
                 setError(failureMessage);
                 // Nothing the user attached made it in: stay put so the primary
@@ -162,11 +267,14 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                 if (attachedCount === 0 && requestedCount > 0) return;
                 // Partial success: the project is real, so let the user read
                 // which files are missing before the modal hands it over.
-                setPendingProject({ ...project, document_count: attachedCount });
+                setPendingProject({
+                    ...stamped,
+                    document_count: attachedCount,
+                });
                 return;
             }
 
-            finishCreation({ ...project, document_count: attachedCount });
+            finishCreation({ ...stamped, document_count: attachedCount });
         } catch (err: unknown) {
             setError(userFacingApiError(err, "Failed to create project"));
         } finally {
@@ -181,57 +289,18 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
         setName("");
         setCmNumber("");
         setPractice("");
+        practiceEditedRef.current = false;
         setSharedUsers([]);
+        setOrgOverrides([]);
         setSelectedDocuments([]);
         setPendingFiles([]);
+        setOrgId(PERSONAL_WORKSPACE);
         setError("");
     }
 
     function handleClose() {
-        // The project is created before its documents are attached, so a close
-        // after an attachment failure must still hand the project over. Losing
-        // it here would leave a real project missing from the list.
-        const created = pendingProject ?? createdProjectRef.current;
-        if (created) {
-            finishCreation({ ...created, document_count: created.document_count ?? 0 });
-            return;
-        }
         resetForm();
         onClose();
-    }
-
-    function validateShareUser(email: string) {
-        if (ownEmail && email === ownEmail) {
-            return "You cannot share a project with yourself.";
-        }
-        if (
-            sharedUsers.some(
-                (user) => user.email.trim().toLowerCase() === email,
-            )
-        ) {
-            return `${email} already has access.`;
-        }
-        return null;
-    }
-
-    function handleAddShareUser(user: UserLookupResult) {
-        setSharedUsers((prev) => [
-            ...prev,
-            {
-                ...user,
-                email: user.email.trim().toLowerCase(),
-            },
-        ]);
-    }
-
-    function handleRemoveShareUser(email: string) {
-        setSharedUsers((prev) =>
-            prev.filter(
-                (user) =>
-                    user.email.trim().toLowerCase() !==
-                    email.trim().toLowerCase(),
-            ),
-        );
     }
 
     return (
@@ -241,7 +310,13 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
             breadcrumbs={[
                 "Projects",
                 "New project",
-                step === "details" ? "Details" : "Add Documents",
+                step === "details"
+                    ? "Details"
+                    : step === "access"
+                      ? orgId === PERSONAL_WORKSPACE
+                          ? "Access"
+                          : "Organisational Access"
+                      : "Add Documents",
             ]}
             secondaryAction={
                 step === "documents"
@@ -251,40 +326,60 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                           onClick: () => fileInputRef.current?.click(),
                           disabled: loading,
                       }
-                    : undefined
+                    : step === "access"
+                      ? {
+                            label: "Back",
+                            type: "button",
+                            onClick: () => setStep("details"),
+                            disabled: loading,
+                        }
+                      : undefined
             }
             cancelAction={
                 step === "documents"
                     ? {
                           label: "Back",
-                          onClick: () => setStep("details"),
+                          onClick: () => setStep("access"),
                           disabled: loading,
                       }
-                    : undefined
+                    : step === "access"
+                      ? {
+                            label: "Skip",
+                            type: "button",
+                            onClick: () => {
+                                setSharedUsers([]);
+                                setOrgOverrides([]);
+                                setStep("documents");
+                            },
+                            disabled: loading,
+                        }
+                      : undefined
             }
             primaryAction={
                 step === "details"
                     ? {
                           label: "Next",
                           type: "button",
-                          onClick: (event) => {
-                              event.preventDefault();
-                              setStep("documents");
-                          },
+                          onClick: () => setStep("access"),
                           disabled: !name.trim() || loading,
                       }
-                    : {
-                          label: loading
-                              ? "Creating…"
-                              : pendingProject
-                                ? "Continue"
-                                : "Create project",
-                          type: "submit",
-                          form: formId,
-                          name: "modalAction",
-                          value: "create-project",
-                          disabled: !name.trim() || loading,
-                      }
+                    : step === "access"
+                      ? {
+                            label: "Next",
+                            type: "button",
+                            onClick: () => setStep("documents"),
+                            disabled: loading,
+                        }
+                      : {
+                            label: loading
+                                ? "Creating…"
+                                : pendingProject
+                                  ? "Continue"
+                                  : "Create project",
+                            type: "button",
+                            onClick: () => void createProjectFromDocuments(),
+                            disabled: !name.trim() || loading,
+                        }
             }
         >
             <input
@@ -338,68 +433,52 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                             <ProjectPracticeField
                                 id="new-project-practice"
                                 value={practice}
-                                onChange={setPractice}
+                                onChange={(value) => {
+                                    practiceEditedRef.current = true;
+                                    setPractice(value);
+                                }}
                             />
                         </div>
 
-                        <div className="space-y-2">
-                            <FieldLabel as="p">Share with</FieldLabel>
-                            <AddUserInput
-                                onAdd={handleAddShareUser}
-                                validateEmail={validateShareUser}
-                                placeholder="Add colleagues by email..."
+                        <div>
+                            <FieldLabel htmlFor="new-project-org">
+                                Share across Organisation
+                            </FieldLabel>
+                            <ModalSelect
+                                id="new-project-org"
+                                value={orgId}
+                                onChange={(value) => {
+                                    setOrgId(value);
+                                    setSharedUsers([]);
+                                    setOrgOverrides([]);
+                                }}
+                                options={[
+                                    {
+                                        value: PERSONAL_WORKSPACE,
+                                        label: "No organization",
+                                    },
+                                    ...orgs.map((org) => ({
+                                        value: org.id,
+                                        label: org.name,
+                                    })),
+                                ]}
                             />
-                            {sharedUsers.length > 0 && (
-                                <ul className="space-y-1 pt-1">
-                                    {sharedUsers.map((entry) => {
-                                        const displayName =
-                                            entry.display_name?.trim();
-                                        const primary = displayName || "User";
-                                        const initial = displayName
-                                            ?.charAt(0)
-                                            .toUpperCase();
-                                        return (
-                                            <li
-                                                key={entry.email}
-                                                className={`${LIQUID_GLASS_MODAL_ROW_HOVER_CLASS} flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors`}
-                                            >
-                                                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-white/80 bg-white text-gray-700 shadow-[0_4px_12px_rgba(15,23,42,0.10),inset_0_1px_0_rgba(255,255,255,0.92),inset_0_-1px_0_rgba(255,255,255,0.64)]">
-                                                    {initial ? (
-                                                        <span className="font-serif text-[11px] leading-none">
-                                                            {initial}
-                                                        </span>
-                                                    ) : (
-                                                        <User className="h-2.5 w-2.5" />
-                                                    )}
-                                                </div>
-                                                <div className="min-w-0 flex-1">
-                                                    <p className="truncate text-xs text-gray-800">
-                                                        {primary}
-                                                        <span className="text-gray-400">
-                                                            {" "}
-                                                            · {entry.email}
-                                                        </span>
-                                                    </p>
-                                                </div>
-                                                <button
-                                                    type="button"
-                                                    onClick={() =>
-                                                        handleRemoveShareUser(
-                                                            entry.email,
-                                                        )
-                                                    }
-                                                    className="self-center inline-flex items-center rounded-full px-2 py-1 text-xs text-gray-500 transition-colors hover:text-red-600"
-                                                    aria-label={`Remove ${entry.email}`}
-                                                >
-                                                    <X className="h-3 w-3" />
-                                                </button>
-                                            </li>
-                                        );
-                                    })}
-                                </ul>
-                            )}
                         </div>
                     </div>
+                ) : step === "access" ? (
+                    <CreateAccessStep
+                        orgId={orgId === PERSONAL_WORKSPACE ? null : orgId}
+                        organizationName={
+                            orgs.find((org) => org.id === orgId)?.name ?? null
+                        }
+                        currentUserEmail={user?.email ?? null}
+                        currentUserId={user?.id ?? null}
+                        directGrants={sharedUsers}
+                        onDirectGrantsChange={setSharedUsers}
+                        orgOverrides={orgOverrides}
+                        onOrgOverridesChange={setOrgOverrides}
+                        ownerLabel="Project owners"
+                    />
                 ) : (
                     <div className="flex min-h-0 flex-1 flex-col">
                         <FileDirectory

@@ -17,6 +17,17 @@ import {
     type UploadSessionInput,
     type UploadSessionPurpose,
 } from "@/shared/api/uploadSessionClient";
+// The role vocabulary is defined once, next to the capability matrix that
+// gives it meaning, and re-exported here so API consumers do not need two
+// imports to describe one row.
+import type {
+    OrgRole,
+    OrganizationAccessOverride,
+    ProjectRole,
+} from "@/app/lib/permissions";
+
+export type { OrgRole, ProjectRole };
+export type AccessAssignmentRole = OrganizationAccessOverride;
 import type {
     AskInputResponseItem,
     AssistantEvent,
@@ -66,6 +77,9 @@ interface ServerMessage {
 }
 interface ServerChatDetailOut {
     chat: Chat;
+    /** The caller's standing on this chat, served alongside the row. */
+    is_owner?: boolean;
+    access_role?: "owner" | "editor" | "viewer";
     messages: ServerMessage[];
 }
 
@@ -378,12 +392,12 @@ export async function createProject(
     name: string,
     cm_number?: string,
     practice?: string,
-    shared_with?: string[],
+    org_id?: string,
 ): Promise<Project> {
     return apiRequest<Project>("/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, cm_number, practice, shared_with }),
+        body: JSON.stringify({ name, cm_number, practice, org_id }),
     });
 }
 
@@ -878,7 +892,6 @@ export async function updateProject(
         name?: string;
         cm_number?: string;
         practice?: string | null;
-        shared_with?: string[];
     },
 ): Promise<Project> {
     return apiRequest<Project>(`/projects/${projectId}`, {
@@ -892,19 +905,326 @@ export async function deleteProject(projectId: string): Promise<void> {
     await apiRequest(`/projects/${projectId}`, { method: "DELETE" });
 }
 
+/**
+ * Someone who can administer a resource, with an address to reach them.
+ * `source` says how they got there: the creator, a direct Owner grant, or
+ * being an Admin of the owning organization.
+ */
+export interface ProjectContact {
+    user_id: string | null;
+    email: string | null;
+    display_name: string | null;
+    source: "creator" | "grant" | "organization";
+}
+
 export interface ProjectPeople {
+    scope?: "direct" | "organization" | "project";
+    inherited_from_project_id?: string;
+    /**
+     * The creator. Null is legitimate: an organization's project outlives the
+     * account that opened it, and the org's admins administer it from then on.
+     */
     owner: {
         user_id: string;
         email: string | null;
         display_name: string | null;
-    };
-    members: { email: string; display_name: string | null }[];
+        role?: ProjectRole;
+    } | null;
+    /** Direct recipients and their grant roles. */
+    members: {
+        user_id?: string | null;
+        email: string;
+        display_name: string | null;
+        role?: AccessAssignmentRole;
+    }[];
+    admin_contacts?: ProjectContact[];
 }
 
 export async function getProjectPeople(
     projectId: string,
 ): Promise<ProjectPeople> {
     return apiRequest<ProjectPeople>(`/projects/${projectId}/people`);
+}
+
+// ---------------------------------------------------------------------------
+// Project access grants
+// ---------------------------------------------------------------------------
+//
+// One row per recipient, each carrying its own project role. This replaces the
+// roleless `shared_with` email array. Direct grants belong only to personal
+// resources; organization resources use organization-member overrides.
+
+export interface ProjectGrant {
+    id?: string;
+    project_id?: string;
+    user_id?: string;
+    email: string;
+    role: AccessAssignmentRole;
+    created_by?: string | null;
+    created_at?: string;
+    updated_at?: string;
+}
+
+export interface ContentAccessGrant {
+    id?: string;
+    user_id?: string;
+    email: string;
+    role: AccessAssignmentRole;
+    created_by?: string | null;
+    created_at?: string;
+    updated_at?: string;
+    chat_id?: string;
+    tabular_review_id?: string;
+}
+
+export interface ContentAccess {
+    scope: "direct" | "project";
+    inherited_from_project_id?: string;
+    org_id: string | null;
+    access_role: ProjectRole;
+    grants: ContentAccessGrant[];
+}
+
+export interface ProjectAccess {
+    scope: "direct" | "organization";
+    org_id: string | null;
+    /** The caller's own role, so the dialog knows whether to offer controls. */
+    access_role: ProjectRole;
+    grants: ProjectGrant[];
+}
+
+export async function getProjectAccess(
+    projectId: string,
+): Promise<ProjectAccess> {
+    return apiRequest<ProjectAccess>(`/projects/${projectId}/access`);
+}
+
+/** Create or re-role one recipient (the endpoint upserts, so both are POST). */
+export async function grantProjectAccess(
+    projectId: string,
+    email: string,
+    role: AccessAssignmentRole,
+): Promise<ProjectGrant> {
+    return apiRequest<ProjectGrant>(`/projects/${projectId}/access`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, role }),
+    });
+}
+
+export async function revokeProjectAccess(
+    projectId: string,
+    email: string,
+): Promise<void> {
+    await apiRequest(
+        `/projects/${projectId}/access/${encodeURIComponent(email)}`,
+        { method: "DELETE" },
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Organizations
+// ---------------------------------------------------------------------------
+
+export interface Org {
+    id: string;
+    name: string;
+    created_by: string | null;
+    created_at?: string;
+    updated_at?: string;
+    /** The caller's role in this org. */
+    role: OrgRole;
+    /** Accepted roster size, so a card can say "N members" without a fetch. */
+    member_count?: number;
+}
+
+/**
+ * Bare org_members row, as mutation endpoints return it (PATCH /members/:id
+ * responds with the updated row — no profile enrichment).
+ */
+export interface OrgMemberRow {
+    id: string;
+    user_id: string;
+    role: OrgRole;
+    created_at?: string;
+}
+
+/** Roster row from GET /members: the bare row plus mirrored profile fields. */
+export interface OrgMember extends OrgMemberRow {
+    email: string | null;
+    display_name: string | null;
+}
+
+/**
+ * An invitation. Membership is only ever created by accepting one of these —
+ * there is no endpoint that drops somebody into an organization full of
+ * confidential material without their consent.
+ *
+ * `status` is reported lazily: a pending row past `expires_at` comes back as
+ * "expired" without anything having written to it.
+ */
+export type OrgInvitationStatus =
+    | "pending"
+    | "accepted"
+    | "declined"
+    | "cancelled"
+    | "expired";
+
+export interface OrgInvitation {
+    id: string;
+    org_id: string;
+    email: string;
+    role: OrgRole;
+    invited_by: string | null;
+    status: OrgInvitationStatus;
+    expires_at: string;
+    created_at: string;
+    accepted_at: string | null;
+    declined_at: string | null;
+    cancelled_at: string | null;
+    /** Admin roster only. */
+    invited_by_email?: string | null;
+    /** Recipient list only — the recipient is not a member yet, so they
+     *  cannot look the organization's name up any other way. */
+    org_name?: string | null;
+}
+
+export async function listOrgs(): Promise<Org[]> {
+    return apiRequest<Org[]>("/orgs");
+}
+
+export async function createOrg(name: string): Promise<Org> {
+    return apiRequest<Org>("/orgs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+    });
+}
+
+export async function getOrg(orgId: string): Promise<Org> {
+    return apiRequest<Org>(`/orgs/${orgId}`);
+}
+
+export async function updateOrg(orgId: string, name: string): Promise<Org> {
+    return apiRequest<Org>(`/orgs/${orgId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+    });
+}
+
+export async function deleteOrg(orgId: string): Promise<void> {
+    await apiRequest(`/orgs/${orgId}`, { method: "DELETE" });
+}
+
+export interface OrgResources {
+    projects: Project[];
+    workflows: {
+        id: string;
+        user_id: string | null;
+        org_id: string;
+        title: string | null;
+        type: "assistant" | "tabular";
+        practice: string | null;
+        created_at: string;
+    }[];
+}
+
+export async function listOrgResources(orgId: string): Promise<OrgResources> {
+    return apiRequest<OrgResources>(`/orgs/${orgId}/resources`);
+}
+
+export async function listOrgMembers(orgId: string): Promise<OrgMember[]> {
+    return apiRequest<OrgMember[]>(`/orgs/${orgId}/members`);
+}
+
+export async function updateOrgMember(
+    orgId: string,
+    userId: string,
+    role: OrgRole,
+): Promise<OrgMemberRow> {
+    return apiRequest<OrgMemberRow>(`/orgs/${orgId}/members/${userId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role }),
+    });
+}
+
+export async function removeOrgMember(
+    orgId: string,
+    userId: string,
+): Promise<void> {
+    await apiRequest(`/orgs/${orgId}/members/${userId}`, {
+        method: "DELETE",
+    });
+}
+
+// --- Invitations: the admin's side ---------------------------------------
+
+export async function listOrgInvitations(
+    orgId: string,
+): Promise<OrgInvitation[]> {
+    return apiRequest<OrgInvitation[]>(`/orgs/${orgId}/invitations`);
+}
+
+export async function createOrgInvitation(
+    orgId: string,
+    email: string,
+    role: OrgRole,
+): Promise<OrgInvitation> {
+    return apiRequest<OrgInvitation>(`/orgs/${orgId}/invitations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, role }),
+    });
+}
+
+export async function cancelOrgInvitation(
+    orgId: string,
+    invitationId: string,
+): Promise<void> {
+    await apiRequest(`/orgs/${orgId}/invitations/${invitationId}`, {
+        method: "DELETE",
+    });
+}
+
+export async function resendOrgInvitation(
+    orgId: string,
+    invitationId: string,
+): Promise<OrgInvitation> {
+    return apiRequest<OrgInvitation>(
+        `/orgs/${orgId}/invitations/${invitationId}/resend`,
+        { method: "POST" },
+    );
+}
+
+// --- Invitations: the recipient's side ------------------------------------
+//
+// These hang off /user, not /orgs: the caller is not a member yet, so an
+// org-scoped route would have to answer "which org?" before it could answer
+// "are you allowed to know?". Matching is by the account's email, which is
+// what lets an invitation sent before signup be claimed once the account
+// exists.
+
+export async function listMyOrgInvitations(): Promise<OrgInvitation[]> {
+    return apiRequest<OrgInvitation[]>("/user/invitations");
+}
+
+export async function acceptOrgInvitation(
+    invitationId: string,
+): Promise<{ org_id: string; role: OrgRole }> {
+    return apiRequest<{ org_id: string; role: OrgRole }>(
+        `/user/invitations/${invitationId}/accept`,
+        { method: "POST" },
+    );
+}
+
+export async function declineOrgInvitation(
+    invitationId: string,
+): Promise<void> {
+    await apiRequest(`/user/invitations/${invitationId}/decline`, {
+        method: "POST",
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1569,7 +1889,18 @@ export async function getChat(chatId: string): Promise<ChatDetailOut> {
             events,
         };
     });
-    return { chat: raw.chat, messages };
+    return {
+        // Fold the caller's served standing into the row so consumers gate
+        // with roleFrom(chat) exactly as list surfaces do. Dropping these
+        // fields is how the global chat page ended up handing a project
+        // viewer a fully writable composer whose sends 403.
+        chat: {
+            ...raw.chat,
+            is_owner: raw.is_owner,
+            access_role: raw.access_role,
+        },
+        messages,
+    };
 }
 
 export async function renameChat(chatId: string, title: string): Promise<void> {
@@ -1606,6 +1937,35 @@ export async function updateChatReasoningLevel(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reasoningLevel }),
         keepalive: true,
+    });
+}
+
+export async function getChatPeople(chatId: string): Promise<ProjectPeople> {
+    return apiRequest<ProjectPeople>(`/chat/${chatId}/people`);
+}
+
+export async function getChatAccess(chatId: string): Promise<ContentAccess> {
+    return apiRequest<ContentAccess>(`/chat/${chatId}/access`);
+}
+
+export async function grantChatAccess(
+    chatId: string,
+    email: string,
+    role: AccessAssignmentRole,
+): Promise<ContentAccessGrant> {
+    return apiRequest<ContentAccessGrant>(`/chat/${chatId}/access`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, role }),
+    });
+}
+
+export async function revokeChatAccess(
+    chatId: string,
+    email: string,
+): Promise<void> {
+    await apiRequest(`/chat/${chatId}/access/${encodeURIComponent(email)}`, {
+        method: "DELETE",
     });
 }
 
@@ -1800,7 +2160,6 @@ export async function updateTabularReview(
         project_id?: string | null;
         document_grouping?: "document" | "folder";
         model?: string;
-        shared_with?: string[];
     },
 ): Promise<TabularReview> {
     return apiRequest<TabularReview>(`/tabular-review/${reviewId}`, {
@@ -1814,6 +2173,37 @@ export async function getTabularReviewPeople(
     reviewId: string,
 ): Promise<ProjectPeople> {
     return apiRequest<ProjectPeople>(`/tabular-review/${reviewId}/people`);
+}
+
+export async function getTabularReviewAccess(
+    reviewId: string,
+): Promise<ContentAccess> {
+    return apiRequest<ContentAccess>(`/tabular-review/${reviewId}/access`);
+}
+
+export async function grantTabularReviewAccess(
+    reviewId: string,
+    email: string,
+    role: AccessAssignmentRole,
+): Promise<ContentAccessGrant> {
+    return apiRequest<ContentAccessGrant>(
+        `/tabular-review/${reviewId}/access`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email, role }),
+        },
+    );
+}
+
+export async function revokeTabularReviewAccess(
+    reviewId: string,
+    email: string,
+): Promise<void> {
+    await apiRequest(
+        `/tabular-review/${reviewId}/access/${encodeURIComponent(email)}`,
+        { method: "DELETE" },
+    );
 }
 
 export async function generateTabularColumnPrompt(
@@ -2114,7 +2504,7 @@ export async function listWorkflowsPage(pagination?: {
     search?: string;
     sortKey?: string;
     sortDirection?: "asc" | "desc";
-    scope?: "all" | "owned" | "shared";
+    scope?: "all" | "owned" | "shared" | "private" | "collaborative";
     type?: WorkflowType;
     practice?: string;
     language?: string;
@@ -2144,7 +2534,7 @@ export async function listWorkflowsPage(pagination?: {
 
 export async function listWorkflowIds(options?: {
     search?: string;
-    scope?: "all" | "owned" | "shared";
+    scope?: "all" | "owned" | "shared" | "private" | "collaborative";
     type?: WorkflowType;
     practice?: string;
     language?: string;
@@ -2217,6 +2607,7 @@ export async function createWorkflow(payload: {
     };
     skill_md?: string;
     columns_config?: { index: number; name: string; prompt: string }[];
+    org_id?: string;
 }): Promise<Workflow> {
     return apiRequest<Workflow>("/workflows", {
         method: "POST",
@@ -2284,7 +2675,7 @@ export async function unhideWorkflow(workflowId: string): Promise<void> {
 
 export async function shareWorkflow(
     workflowId: string,
-    payload: { emails: string[]; allow_edit: boolean },
+    payload: { emails: string[]; role: AccessAssignmentRole },
 ): Promise<void> {
     await apiRequest<void>(`/workflows/${workflowId}/share`, {
         method: "POST",
@@ -2296,12 +2687,20 @@ export async function shareWorkflow(
 export async function listWorkflowShares(workflowId: string): Promise<
     {
         id: string;
+        user_id?: string;
         shared_with_email: string;
-        allow_edit: boolean;
-        created_at: string;
+        display_name?: string | null;
+        role: AccessAssignmentRole;
+        created_at?: string;
     }[]
 > {
     return apiRequest(`/workflows/${workflowId}/shares`);
+}
+
+export async function getWorkflowPeople(
+    workflowId: string,
+): Promise<ProjectPeople> {
+    return apiRequest<ProjectPeople>(`/workflows/${workflowId}/people`);
 }
 
 export async function deleteWorkflowShare(

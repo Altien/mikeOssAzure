@@ -24,12 +24,13 @@ import {
   deleteWorkflowShare,
   deleteWorkflow,
   getWorkflow,
+  getWorkflowPeople,
   listWorkflowShares,
-  lookupUserByEmail,
   shareWorkflow,
   updateWorkflow,
   type ProjectPeople,
 } from "@/app/lib/mikeApi";
+import { can, roleFromLoaded } from "@/app/lib/permissions";
 import { UseWorkflowModal } from "@/app/components/workflows/UseWorkflowModal";
 import { WFEditColumnModal } from "@/app/components/workflows/WFEditColumnModal";
 import { WFColumnViewModal } from "@/app/components/workflows/WFColumnViewModal";
@@ -49,7 +50,7 @@ import {
   HeaderActionsMenu,
   type HeaderActionsMenuItem,
 } from "@/app/components/shared/HeaderActionsMenu";
-import { PeopleModal } from "@/app/components/modals/PeopleModal";
+import { AccessModal } from "@/app/components/modals/AccessModal";
 import { AddDocumentsModal } from "@/app/components/modals/AddDocumentsModal";
 import { OpenSourceWorkflowModal } from "@/app/components/workflows/OpenSourceWorkflowModal";
 import { PageHeader } from "@/app/components/shared/PageHeader";
@@ -125,9 +126,10 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
+  const workflowRole = roleFromLoaded(workflow);
   const readOnly =
-    (workflow?.is_system ?? false) || workflow?.allow_edit === false;
-  const canShare = !readOnly && (workflow?.is_owner ?? true);
+    (workflow?.is_system ?? false) || !can(workflowRole, "content.edit");
+  const canShare = can(workflowRole, "access.manage");
   const canOpenSource =
     WORKFLOW_CONTRIBUTIONS_ENABLED && canShare && workflow?.is_system !== true;
 
@@ -167,7 +169,7 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
 
   // Share / use / details popovers
   const [shareOpen, setShareOpen] = useState(false);
-  const [workflowSharedWith, setWorkflowSharedWith] = useState<string[]>([]);
+  const [workflowShares, setWorkflowShares] = useState<WorkflowShare[]>([]);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [useOpen, setUseOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -265,70 +267,13 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
 
   const fetchWorkflowShares = useCallback(async () => {
     const shares = await listWorkflowShares(id);
-    setWorkflowSharedWith(
-      shares.map((share) => share.shared_with_email.trim().toLowerCase()),
-    );
+    setWorkflowShares(shares);
     return shares;
   }, [id]);
 
-  const fetchWorkflowPeople = useCallback(async (): Promise<ProjectPeople> => {
-    const shares = await fetchWorkflowShares();
-    const members = await Promise.all(
-      shares.map(async (share) => {
-        const email = share.shared_with_email.trim().toLowerCase();
-        const userResult = await lookupUserByEmail(email).catch(() => null);
-        return {
-          email,
-          display_name:
-            userResult?.exists === true ? userResult.display_name : null,
-        };
-      }),
-    );
-    return {
-      owner: {
-        user_id: user?.id ?? workflow?.user_id ?? "",
-        email: user?.email ?? null,
-        display_name: profile?.displayName ?? null,
-      },
-      members,
-    };
-  }, [
-    fetchWorkflowShares,
-    profile?.displayName,
-    user?.email,
-    user?.id,
-    workflow?.user_id,
-  ]);
-
-  async function handleWorkflowSharedWithChange(nextSharedWith: string[]) {
-    const nextEmails = [
-      ...new Set(
-        nextSharedWith
-          .map((email) => email.trim().toLowerCase())
-          .filter(Boolean),
-      ),
-    ];
-    const currentShares = await listWorkflowShares(id);
-    const currentByEmail = new Map<string, WorkflowShare>();
-    for (const share of currentShares) {
-      currentByEmail.set(share.shared_with_email.trim().toLowerCase(), share);
-    }
-
-    const added = nextEmails.filter((email) => !currentByEmail.has(email));
-    const removed = currentShares.filter(
-      (share) =>
-        !nextEmails.includes(share.shared_with_email.trim().toLowerCase()),
-    );
-
-    await Promise.all([
-      ...removed.map((share) => deleteWorkflowShare(id, share.id)),
-      ...(added.length > 0
-        ? [shareWorkflow(id, { emails: added, allow_edit: false })]
-        : []),
-    ]);
-
-    await fetchWorkflowShares();
-  }
+  const fetchWorkflowAccess = useCallback(async (): Promise<ProjectPeople> => {
+    return getWorkflowPeople(id);
+  }, [id]);
 
   // ---------------------------------------------------------------------------
   // Debounced auto-save for prompt
@@ -558,7 +503,7 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
             canShare
               ? {
                   onClick: () => setShareOpen(true),
-                  title: "Open workflow people",
+                  title: "Open workflow access",
                   iconOnly: true,
                   icon: <Users className="h-4 w-4" />,
                 }
@@ -627,14 +572,35 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
         }}
       />
       {shareOpen && (
-        <PeopleModal
+        <AccessModal
           open={shareOpen}
           onClose={() => setShareOpen(false)}
-          resource={{ id, shared_with: workflowSharedWith }}
-          fetchPeople={fetchWorkflowPeople}
+          resource={{ id }}
+          fetchAccess={fetchWorkflowAccess}
           currentUserEmail={user?.email ?? null}
-          breadcrumb={["Workflows", workflow.metadata.title, "People"]}
-          onSharedWithChange={handleWorkflowSharedWithChange}
+          breadcrumb={["Workflows", workflow.metadata.title, "Access"]}
+          access={{
+            grants: workflowShares.map((share) => ({
+              email: share.shared_with_email,
+              role: share.role,
+            })),
+            orgId: workflow.org_id ?? null,
+            ownerLabel: "Workflow owners",
+            canManage: canShare,
+            onGrant: async (email, role) => {
+              await shareWorkflow(id, { emails: [email], role });
+              await fetchWorkflowShares();
+            },
+            onRevoke: async (email) => {
+              const share = workflowShares.find(
+                (entry) =>
+                  entry.shared_with_email.trim().toLowerCase() ===
+                  email.trim().toLowerCase(),
+              );
+              if (share) await deleteWorkflowShare(id, share.id);
+              await fetchWorkflowShares();
+            },
+          }}
         />
       )}
       <ConfirmPopup
@@ -646,6 +612,7 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
             : "This workflow will be permanently deleted."
         }
         confirmLabel="Delete"
+        confirmVariant="danger"
         confirmStatus={deleteStatus}
         onConfirm={() => void handleDeleteWorkflow()}
         onCancel={() => {
@@ -816,7 +783,6 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
                           tone="black"
                           size="sm"
                           onClick={() => setAddColumnOpen(true)}
-                          className="px-3"
                         >
                           <Plus className="h-3.5 w-3.5" />
                           Add Column

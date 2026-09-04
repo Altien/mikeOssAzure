@@ -50,24 +50,39 @@ maybeDescribe("Supabase access integration", () => {
             }
             reviewerId = reviewer.data.user.id;
 
+            // Sharing is a `project_access_grants` row keyed on lowercase
+            // email. Only the shared project receives a grant.
             const projectsInsert = await admin.from("projects").insert([
                 {
                     id: sharedProjectId,
                     user_id: ownerId,
                     name: `shared-${suffix}`,
-                    shared_with: [reviewerEmail],
                 },
                 {
                     id: privateProjectId,
                     user_id: ownerId,
                     name: `private-${suffix}`,
-                    shared_with: [],
                 },
             ]);
             if (projectsInsert.error) {
                 throw new Error(
                     `Could not seed projects: ${projectsInsert.error.message}`,
                     { cause: projectsInsert.error },
+                );
+            }
+
+            const grantInsert = await admin
+                .from("project_access_grants")
+                .insert({
+                    project_id: sharedProjectId,
+                    email: reviewerEmail,
+                    role: "editor",
+                    created_by: ownerId,
+                });
+            if (grantInsert.error) {
+                throw new Error(
+                    `Could not seed access grant: ${grantInsert.error.message}`,
+                    { cause: grantInsert.error },
                 );
             }
 
