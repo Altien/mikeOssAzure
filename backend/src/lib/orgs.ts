@@ -271,6 +271,22 @@ export async function deleteOrg(
     return { ok: true };
 }
 
+/**
+ * The organization's projects and workflows, as the CALLER may see them.
+ *
+ * Membership is what makes this list reachable, but it is not what decides
+ * its contents. A `deny` override is the ethical-wall tier: the member must
+ * not learn that the matter exists, and the columns here — a project's name
+ * and its cm_number, a workflow's title — are exactly the detail a wall is
+ * put up to withhold. Listing a row whose link then 404s leaks the thing the
+ * override was bought to hide.
+ *
+ * Denials cannot touch an admin or a resource's creator (the
+ * `validate_org_access_override` trigger refuses to write one), so the two
+ * short-circuits below are the same ones `project_access_role` takes in SQL —
+ * kept here so this filter reads as that predicate rather than as a rule of
+ * its own.
+ */
 export async function listOrgResources(
     db: Db,
     params: { userId: string; orgId: string },
@@ -283,30 +299,78 @@ export async function listOrgResources(
     const role = await getOrgRole(params.userId, params.orgId, db);
     if (!role) return { ok: false, kind: "not_found" };
 
-    const [projectsResult, workflowsResult] = await Promise.all([
-        db
-            .from("projects")
-            .select("id, user_id, org_id, name, cm_number, practice, created_at, updated_at")
-            .eq("org_id", params.orgId)
-            .order("created_at", { ascending: false }),
-        db
-            .from("workflows")
-            .select(
-                "id, user_id, org_id, title, type, practice, created_at",
-            )
-            .eq("org_id", params.orgId)
-            .order("created_at", { ascending: false }),
-    ]);
-    const failed = [projectsResult, workflowsResult].find(
-        (result) => result.error,
-    )?.error;
+    // One batched read per override table, not one per resource: this is a
+    // filter over a page of rows, and it must not become an N+1.
+    const [projectsResult, workflowsResult, projectDenials, workflowDenials] =
+        await Promise.all([
+            db
+                .from("projects")
+                .select("id, user_id, org_id, name, cm_number, practice, created_at, updated_at")
+                .eq("org_id", params.orgId)
+                .order("created_at", { ascending: false }),
+            db
+                .from("workflows")
+                .select(
+                    "id, user_id, org_id, title, type, practice, created_at",
+                )
+                .eq("org_id", params.orgId)
+                .order("created_at", { ascending: false }),
+            db
+                .from("project_org_access_overrides")
+                .select("project_id")
+                .eq("org_id", params.orgId)
+                .eq("user_id", params.userId)
+                .eq("role", "deny"),
+            db
+                .from("workflow_org_access_overrides")
+                .select("workflow_id")
+                .eq("org_id", params.orgId)
+                .eq("user_id", params.userId)
+                .eq("role", "deny"),
+        ]);
+    const failed = [
+        projectsResult,
+        workflowsResult,
+        projectDenials,
+        workflowDenials,
+    ].find((result) => result.error)?.error;
     if (failed)
         return { ok: false, kind: "db_error", detail: failed.message };
 
+    // Fail closed: an unreadable override table must hide rows, never reveal
+    // them. `error` is handled above, so an empty set here means "no denials".
+    const deniedIds = (rows: unknown, key: string) =>
+        new Set(
+            ((rows ?? []) as Record<string, unknown>[])
+                .map((row) => row[key])
+                .filter((id): id is string => typeof id === "string"),
+        );
+    const deniedProjectIds = deniedIds(projectDenials.data, "project_id");
+    const deniedWorkflowIds = deniedIds(workflowDenials.data, "workflow_id");
+
+    const visible = <T extends { id?: unknown; user_id?: unknown }>(
+        rows: T[],
+        denied: Set<string>,
+    ) =>
+        rows.filter((row) => {
+            if (isOrgAdmin(role)) return true;
+            if (row.user_id && row.user_id === params.userId) return true;
+            return typeof row.id !== "string" || !denied.has(row.id);
+        });
+
     return {
         ok: true,
-        projects: projectsResult.data ?? [],
-        workflows: workflowsResult.data ?? [],
+        projects: visible(
+            (projectsResult.data ?? []) as { id?: unknown; user_id?: unknown }[],
+            deniedProjectIds,
+        ),
+        workflows: visible(
+            (workflowsResult.data ?? []) as {
+                id?: unknown;
+                user_id?: unknown;
+            }[],
+            deniedWorkflowIds,
+        ),
     };
 }
 

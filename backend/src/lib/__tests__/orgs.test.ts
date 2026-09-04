@@ -354,6 +354,114 @@ describe("organization resources", () => {
             "id, user_id, org_id, title, type, practice, created_at",
         ]);
     });
+
+    // A `deny` override is the ethical wall. The columns this endpoint serves
+    // — a project's name and cm_number, a workflow's title — are exactly what
+    // a wall exists to withhold, so listing the row and letting the link 404
+    // would leak the thing the override was bought to hide.
+    it("hides denied projects and workflows from the member who is denied", async () => {
+        const db = makeDb({
+            org_members: [
+                { org_id: "o1", user_id: "member1", role: "member" },
+                { org_id: "o1", user_id: "member2", role: "member" },
+            ],
+            projects: [
+                { id: "walled", user_id: "member2", org_id: "o1", name: "Project Nimbus", cm_number: "1234-5678" },
+                { id: "open", user_id: "member2", org_id: "o1", name: "Shared matter" },
+            ],
+            workflows: [
+                { id: "walled-wf", user_id: "member2", org_id: "o1", title: "Nimbus diligence" },
+                { id: "open-wf", user_id: "member2", org_id: "o1", title: "Standard diligence" },
+            ],
+            project_org_access_overrides: [
+                { project_id: "walled", org_id: "o1", user_id: "member1", role: "deny" },
+            ],
+            workflow_org_access_overrides: [
+                { workflow_id: "walled-wf", org_id: "o1", user_id: "member1", role: "deny" },
+            ],
+        });
+
+        const denied = await listOrgResources(db, {
+            userId: "member1",
+            orgId: "o1",
+        });
+        expect(denied).toMatchObject({ ok: true });
+        if (!denied.ok) return;
+        expect(denied.projects).toEqual([expect.objectContaining({ id: "open" })]);
+        expect(denied.workflows).toEqual([
+            expect.objectContaining({ id: "open-wf" }),
+        ]);
+        // The name and matter number must not travel either.
+        expect(JSON.stringify(denied)).not.toContain("Nimbus");
+        expect(JSON.stringify(denied)).not.toContain("1234-5678");
+
+        // Everyone else still sees both.
+        const other = await listOrgResources(db, {
+            userId: "member2",
+            orgId: "o1",
+        });
+        expect(other).toMatchObject({ ok: true });
+        if (!other.ok) return;
+        expect(other.projects).toHaveLength(2);
+        expect(other.workflows).toHaveLength(2);
+    });
+
+    // Mirrors project_access_role: a denial cannot bind an admin or the
+    // resource's creator, and validate_org_access_override refuses to write
+    // one. A stale row must not hide the resource from them.
+    it("ignores a stale denial against an admin or the creator", async () => {
+        const db = makeDb({
+            org_members: [
+                { org_id: "o1", user_id: "admin1", role: "admin" },
+                { org_id: "o1", user_id: "creator1", role: "member" },
+            ],
+            projects: [
+                { id: "p1", user_id: "creator1", org_id: "o1", name: "Matter" },
+            ],
+            workflows: [],
+            project_org_access_overrides: [
+                { project_id: "p1", org_id: "o1", user_id: "admin1", role: "deny" },
+                { project_id: "p1", org_id: "o1", user_id: "creator1", role: "deny" },
+            ],
+            workflow_org_access_overrides: [],
+        });
+
+        for (const userId of ["admin1", "creator1"]) {
+            const result = await listOrgResources(db, { userId, orgId: "o1" });
+            expect(result).toMatchObject({ ok: true });
+            if (!result.ok) return;
+            expect(result.projects).toEqual([
+                expect.objectContaining({ id: "p1" }),
+            ]);
+        }
+    });
+
+    it("scopes the denial lookup to the caller, not to the whole org", async () => {
+        const db = makeDb({
+            org_members: [
+                { org_id: "o1", user_id: "member1", role: "member" },
+                { org_id: "o1", user_id: "member2", role: "member" },
+            ],
+            projects: [
+                { id: "p1", user_id: "someone", org_id: "o1", name: "Matter" },
+            ],
+            workflows: [],
+            // member2 is walled off; member1 is not.
+            project_org_access_overrides: [
+                { project_id: "p1", org_id: "o1", user_id: "member2", role: "deny" },
+            ],
+            workflow_org_access_overrides: [],
+        });
+
+        const visible = await listOrgResources(db, {
+            userId: "member1",
+            orgId: "o1",
+        });
+        expect(visible).toMatchObject({
+            ok: true,
+            projects: [expect.objectContaining({ id: "p1" })],
+        });
+    });
 });
 
 // ---------------------------------------------------------------------------
