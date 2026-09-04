@@ -97,8 +97,10 @@ export function NewTRModal({
     const [selectedDocuments, setSelectedDocuments] = useState<Document[]>([]);
     const [groupBySubfolder, setGroupBySubfolder] = useState(false);
     const [uploading, setUploading] = useState(false);
+    const [creating, setCreating] = useState(false);
     const [uploadError, setUploadError] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const creatingRef = useRef(false);
 
     // Workflow templates
     const [workflows, setWorkflows] = useState<Workflow[]>([]);
@@ -205,6 +207,9 @@ export function NewTRModal({
             setStep("documents");
             return;
         }
+        if (creatingRef.current) return;
+        creatingRef.current = true;
+        setCreating(true);
         const selectedWorkflow = workflows.find(
             (w) => w.id === selectedWorkflowId,
         );
@@ -231,6 +236,9 @@ export function NewTRModal({
             setUploadError(
                 userFacingApiError(error, "Could not create the review."),
             );
+        } finally {
+            creatingRef.current = false;
+            setCreating(false);
         }
     }
 
@@ -426,11 +434,17 @@ export function NewTRModal({
                       ? {
                             label: "Next",
                             type: "button",
-                            onClick: () => setStep("documents"),
+                            onClick: (event) => {
+                                // The same footer node becomes the submit button
+                                // on the next render. Cancel this click's native
+                                // default action before changing its type.
+                                event.preventDefault();
+                                setStep("documents");
+                            },
                             disabled: uploading,
                         }
                       : {
-                          label: "Create",
+                          label: creating ? "Creating..." : "Create",
                           type: "submit",
                           form: formId,
                           name: "modalAction",
@@ -438,7 +452,8 @@ export function NewTRModal({
                           disabled:
                               !title.trim() ||
                               (underProject && !selectedProjectId) ||
-                              !selectedModel,
+                              !selectedModel ||
+                              creating,
                       }
             }
         >

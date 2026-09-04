@@ -144,6 +144,37 @@ describe("NewTRModal", () => {
         );
     });
 
+    it("prevents duplicate review creation while submission is pending", async () => {
+        let finishAdd: (() => void) | undefined;
+        const onAdd = vi.fn(
+            () =>
+                new Promise<void>((resolve) => {
+                    finishAdd = resolve;
+                }),
+        );
+        const onClose = vi.fn();
+        render(<NewTRModal open onClose={onClose} onAdd={onAdd} />);
+
+        fireEvent.change(screen.getByLabelText("Review name"), {
+            target: { value: "Single review" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: "Next" }));
+        fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+        expect(onAdd).not.toHaveBeenCalled();
+        const create = screen.getByRole("button", { name: "Create" });
+        fireEvent.click(create);
+        fireEvent.click(create);
+
+        expect(onAdd).toHaveBeenCalledTimes(1);
+        expect(
+            screen.getByRole("button", { name: "Creating..." }),
+        ).toBeDisabled();
+
+        finishAdd?.();
+        await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    });
+
     it("stores uploads from a project review in that project", async () => {
         const uploadedDocument = {
             id: "uploaded-document",
