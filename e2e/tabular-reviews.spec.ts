@@ -97,10 +97,14 @@ async function createReview(
     await expect(firstModel).toBeVisible();
     await firstModel.click();
 
-    // NewTRModal is a two-step wizard ("Details" → "Add Documents"); the
-    // "Create" submit button only exists on the second step, and "Next" only
-    // enables once the review has a name.
+    // NewTRModal is a three-step wizard (Details -> Access -> Add Documents).
+    // "Next" only enables once the review has a name and model.
     await page.getByRole("button", { name: "Next", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Access" })).toBeVisible();
+    await page.getByRole("button", { name: "Next", exact: true }).click();
+    await expect(
+        page.getByRole("dialog", { name: "Add Documents" }),
+    ).toBeVisible();
 
     const respP = page.waitForResponse(isCreateReviewPost, {
         timeout: 30_000,

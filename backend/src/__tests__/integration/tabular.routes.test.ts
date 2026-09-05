@@ -13,11 +13,13 @@ const {
     checkProjectAccess,
     filterAccessibleDocumentIds,
     getUserModelSettings,
+    resolveContentOrgId,
 } = vi.hoisted(() => ({
     ensureReviewAccess: vi.fn(),
     checkProjectAccess: vi.fn(),
     filterAccessibleDocumentIds: vi.fn(),
     getUserModelSettings: vi.fn(),
+    resolveContentOrgId: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -28,11 +30,16 @@ const {
 // ---------------------------------------------------------------------------
 type QueryResult = { data: unknown; error: unknown };
 
+// A table entry may be a queue of results: each query consumes the next one,
+// and the last repeats (same idiom as user.routes.test). Lets a test drive a
+// route that hits the SAME table twice with different outcomes — e.g. DELETE
+// /tabular-review/:reviewId, which now reads the row to derive the caller's
+// role before deleting it.
 let supabaseState: {
     rpc: QueryResult;
     rpcCalls: { fn: string; args: unknown }[];
     operations: string[];
-    tables: Record<string, QueryResult>;
+    tables: Record<string, QueryResult | QueryResult[]>;
     inserts: { table: string; payload: unknown }[];
     updates: { table: string; payload: unknown }[];
 };
@@ -50,20 +57,25 @@ function resetSupabaseState() {
 resetSupabaseState();
 
 function resultForTable(table: string): QueryResult {
-    const result = supabaseState.tables[table] ?? { data: null, error: null };
+    const entry = supabaseState.tables[table];
+    const resolved = Array.isArray(entry)
+        ? entry.length > 1
+            ? (entry.shift() as QueryResult)
+            : (entry[0] ?? { data: null, error: null })
+        : (entry ?? { data: null, error: null });
     if (
         table === "tabular_reviews" &&
-        result.data &&
-        typeof result.data === "object" &&
-        !Array.isArray(result.data) &&
-        !("model" in result.data)
+        resolved.data &&
+        typeof resolved.data === "object" &&
+        !Array.isArray(resolved.data) &&
+        !("model" in resolved.data)
     ) {
         return {
-            ...result,
-            data: { ...result.data, model: "claude-sonnet-5" },
+            ...resolved,
+            data: { ...resolved.data, model: "claude-sonnet-5" },
         };
     }
-    return result;
+    return resolved;
 }
 
 function makeQuery(table: string) {
@@ -93,6 +105,9 @@ function makeQuery(table: string) {
         supabaseState.inserts.push({ table, payload });
         return q;
     });
+    // Update payloads are recorded alongside inserts: what a route writes on
+    // a mutation is exactly as much a part of its contract as what it writes
+    // on a create, and a denormalized column can only be checked here.
     q.update = vi.fn((payload: unknown) => {
         supabaseState.updates.push({ table, payload });
         return q;
@@ -142,13 +157,16 @@ vi.mock("../../middleware/auth", () => ({
         next(),
 }));
 
-vi.mock("../../lib/access", () => ({
+vi.mock("../../lib/access", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../lib/access")>()),
     ensureReviewAccess: (...args: unknown[]) => ensureReviewAccess(...args),
     checkProjectAccess: (...args: unknown[]) => checkProjectAccess(...args),
     filterAccessibleDocumentIds: (...args: unknown[]) =>
         filterAccessibleDocumentIds(...args),
-    ensureDocAccess: vi.fn(async () => ({ ok: true, isOwner: true })),
+    ensureDocAccess: vi.fn(async () => ({ ok: true, isCreator: true })),
     listAccessibleProjectIds: vi.fn(async () => []),
+    getOrgRole: vi.fn(async () => null),
+    resolveContentOrgId: (...args: unknown[]) => resolveContentOrgId(...args),
 }));
 
 vi.mock("../../lib/userSettings", () => ({
@@ -174,12 +192,21 @@ describe("tabular.routes", () => {
         vi.clearAllMocks();
         resetSupabaseState();
         // Default: caller is the owner with full access.
-        ensureReviewAccess.mockResolvedValue({ ok: true, isOwner: true });
+        ensureReviewAccess.mockResolvedValue({
+            ok: true,
+            isCreator: true,
+            orgRole: null,
+            projectRole: "owner",
+        });
         checkProjectAccess.mockResolvedValue({
             ok: true,
-            isOwner: true,
-            project: { id: "p1", user_id: "u1", shared_with: null },
+            isCreator: true,
+            orgRole: null,
+            projectRole: "owner",
+            project: { id: "p1", user_id: "u1" },
         });
+        // Default: personal content — no tenant to inherit.
+        resolveContentOrgId.mockResolvedValue({ ok: true, orgId: null });
         // Default: every requested doc is accessible (identity passthrough).
         filterAccessibleDocumentIds.mockImplementation(
             async (ids: string[]) => ids,
@@ -239,6 +266,29 @@ describe("tabular.routes", () => {
             ).toBe(false);
         });
 
+        it("rejects standalone organization scope", async () => {
+            const res = await request(app)
+                .post("/tabular-review")
+                .set(...AUTH)
+                .send({
+                    title: "Firm review",
+                    document_ids: [],
+                    columns_config: [],
+                    model: "claude-sonnet-5",
+                    org_id: "org-1",
+                });
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toBe(
+                "Tabular reviews cannot be organization-scoped. Create the review inside an organization project instead.",
+            );
+            expect(
+                supabaseState.inserts.some(
+                    (insert) => insert.table === "tabular_reviews",
+                ),
+            ).toBe(false);
+        });
+
         it("creates a review (201) and only persists accessible documents", async () => {
             supabaseState.tables.tabular_reviews = {
                 data: { id: "r9", title: "Gamma", document_ids: ["d1"] },
@@ -290,6 +340,7 @@ describe("tabular.routes", () => {
             );
             expect(reviewInsert?.payload).toMatchObject({
                 document_ids: ["d1"],
+                org_id: null,
             });
             // Cells are created for accessible review rows × columns only (1 × 1).
             const cellInsert = supabaseState.inserts.find(
@@ -645,6 +696,65 @@ describe("tabular.routes", () => {
         });
     });
 
+    describe("tabular review access grants", () => {
+        it("returns the role-aware grant list to an admin", async () => {
+            supabaseState.tables.tabular_reviews = {
+                data: {
+                    id: "r1",
+                    user_id: "u1",
+                    project_id: null,
+                    org_id: null,
+                },
+                error: null,
+            };
+            supabaseState.tables.tabular_review_access_grants = {
+                data: [
+                    {
+                        id: "rg1",
+                        tabular_review_id: "r1",
+                        email: "viewer@example.com",
+                        role: "viewer",
+                    },
+                ],
+                error: null,
+            };
+
+            const res = await request(app)
+                .get("/tabular-review/r1/access")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body.grants).toEqual([
+                expect.objectContaining({
+                    email: "viewer@example.com",
+                    role: "viewer",
+                }),
+            ]);
+        });
+
+        it("rejects a grant addressed to the caller", async () => {
+            supabaseState.tables.tabular_reviews = {
+                data: {
+                    id: "r1",
+                    user_id: "u1",
+                    project_id: null,
+                    org_id: null,
+                },
+                error: null,
+            };
+
+            const res = await request(app)
+                .post("/tabular-review/r1/access")
+                .set(...AUTH)
+                .send({ email: " U1@Test.Local ", role: "editor" });
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toBe(
+                "You cannot share a tabular review with yourself.",
+            );
+        });
+    });
+
     // ── PATCH /tabular-review/:reviewId ───────────────────────────────────
     describe("PATCH /tabular-review/:reviewId", () => {
         it("returns 400 when project_id is an invalid type", async () => {
@@ -659,7 +769,7 @@ describe("tabular.routes", () => {
             );
         });
 
-        it("returns 400 when sharing the review with yourself", async () => {
+        it("rejects the retired shared_with input", async () => {
             const res = await request(app)
                 .patch("/tabular-review/r1")
                 .set(...AUTH)
@@ -667,7 +777,7 @@ describe("tabular.routes", () => {
 
             expect(res.status).toBe(400);
             expect(res.body.detail).toBe(
-                "You cannot share a tabular review with yourself.",
+                "shared_with is no longer supported; use the tabular review access endpoints.",
             );
         });
 
@@ -683,12 +793,20 @@ describe("tabular.routes", () => {
             expect(res.body.detail).toBe("Review not found");
         });
 
-        it("returns 403 when a non-owner edits columns_config", async () => {
+        it("returns 403 when a viewer edits columns_config", async () => {
+            // Reshaping a review's grid is content work, so members may do it
+            // (Will's review: members "use chats and reviews"). Only viewers,
+            // who are read-only by definition, are refused.
             supabaseState.tables.tabular_reviews = {
                 data: { id: "r1", user_id: "other", project_id: "p1" },
                 error: null,
             };
-            ensureReviewAccess.mockResolvedValue({ ok: true, isOwner: false });
+            ensureReviewAccess.mockResolvedValue({
+                ok: true,
+                isCreator: false,
+                orgRole: null,
+                projectRole: "viewer",
+            });
 
             const res = await request(app)
                 .patch("/tabular-review/r1")
@@ -696,14 +814,142 @@ describe("tabular.routes", () => {
                 .send({ columns_config: [{ index: 0, name: "X", prompt: "p" }] });
 
             expect(res.status).toBe(403);
-            expect(res.body.detail).toBe("Only the review owner can change columns");
+            expect(res.body.detail).toBe("Only a review editor can change columns");
+        });
+
+        // `tabular_reviews.org_id` is a denormalized copy of the project's
+        // tenant for lifecycle handling. Access comes from the project, but a
+        // stale copy can still cause account cleanup to retain or delete the
+        // wrong data.
+        const seedMove = (reviewOrgId: string | null) => {
+            supabaseState.tables.tabular_reviews = [
+                {
+                    data: {
+                        id: "r1",
+                        user_id: "u1",
+                        project_id: "p-from",
+                        org_id: reviewOrgId,
+                    },
+                    error: null,
+                },
+                {
+                    data: {
+                        id: "r1",
+                        user_id: "u1",
+                        project_id: "p-to",
+                        document_ids: [],
+                        columns_config: [],
+                    },
+                    error: null,
+                },
+            ];
+            checkProjectAccess.mockResolvedValue({
+                ok: true,
+                isCreator: true,
+                orgRole: null,
+                projectRole: "owner",
+            });
+        };
+        const movePayload = () =>
+            supabaseState.updates.find((u) => u.table === "tabular_reviews")
+                ?.payload as Record<string, unknown> | undefined;
+
+        it("clears org_id when a review moves into a personal project", async () => {
+            // The leak: without restamping, a review carried out of an org
+            // project into somebody's personal project must not keep the old
+            // organization's lifecycle stamp.
+            seedMove("org-1");
+            resolveContentOrgId.mockResolvedValue({ ok: true, orgId: null });
+
+            const res = await request(app)
+                .patch("/tabular-review/r1")
+                .set(...AUTH)
+                .send({ project_id: "p-to" });
+
+            expect(res.status).toBe(200);
+            expect(movePayload()).toMatchObject({
+                project_id: "p-to",
+                org_id: null,
+            });
+        });
+
+        it("refuses the move when the tenant lookup fails, instead of guessing", async () => {
+            // ok:false must never collapse into "personal": org_id null is
+            // the encoding of personal content, and a mis-stamped review
+            // either leaks to an org it left or hides from the org that owns
+            // it — and personal content is what account deletion destroys.
+            seedMove("org-1");
+            resolveContentOrgId.mockResolvedValue({
+                ok: false,
+                detail: "connection reset",
+            });
+
+            const res = await request(app)
+                .patch("/tabular-review/r1")
+                .set(...AUTH)
+                .send({ project_id: "p-to" });
+
+            expect(res.status).toBe(500);
+            expect(res.body.detail).not.toContain("connection reset");
+            expect(movePayload()).toBeUndefined();
+        });
+
+        it("restamps org_id from the destination project", async () => {
+            seedMove(null);
+            resolveContentOrgId.mockResolvedValue({ ok: true, orgId: "org-2" });
+
+            const res = await request(app)
+                .patch("/tabular-review/r1")
+                .set(...AUTH)
+                .send({ project_id: "p-to" });
+
+            expect(res.status).toBe(200);
+            expect(movePayload()).toMatchObject({
+                project_id: "p-to",
+                org_id: "org-2",
+            });
+            expect(resolveContentOrgId).toHaveBeenCalledWith(
+                expect.anything(),
+                { projectId: "p-to" },
+            );
+        });
+
+        it("leaves org_id alone when the move is not part of the request", async () => {
+            // Only a move restamps. A rename must not silently re-derive the
+            // tenant, or an unrelated PATCH becomes a permission change.
+            seedMove("org-1");
+
+            const res = await request(app)
+                .patch("/tabular-review/r1")
+                .set(...AUTH)
+                .send({ title: "Renamed" });
+
+            expect(res.status).toBe(200);
+            expect(movePayload()).not.toHaveProperty("org_id");
         });
     });
 
     // ── DELETE /tabular-review/:reviewId ──────────────────────────────────
+    // Pins the `container.delete` row of the matrix on the review container:
+    // owner tier deletes, everything below it is refused. The allow case is
+    // the one the old `.eq("user_id", userId)` filter got wrong.
     describe("DELETE /tabular-review/:reviewId", () => {
-        it("returns 204 on success", async () => {
-            supabaseState.tables.tabular_reviews = { data: null, error: null };
+        const seedReview = (rows: QueryResult[]) => {
+            supabaseState.tables.tabular_reviews = rows;
+        };
+        const ownedRow = {
+            data: { id: "r1", user_id: "u1", project_id: "p1" },
+            error: null,
+        };
+
+        it("returns 204 when the review's own owner deletes it", async () => {
+            seedReview([ownedRow, { data: null, error: null }]);
+            ensureReviewAccess.mockResolvedValue({
+                ok: true,
+                isCreator: true,
+                orgRole: null,
+                projectRole: "owner",
+            });
 
             const res = await request(app)
                 .delete("/tabular-review/r1")
@@ -712,11 +958,96 @@ describe("tabular.routes", () => {
             expect(res.status).toBe(204);
         });
 
+        it("returns 204 when the project owner deletes a member's review", async () => {
+            // Review row belongs to someone else, but the caller owns the
+            // project it lives in — ensureReviewAccess hands back "owner", so
+            // container.delete passes and the delete is NOT scoped to the
+            // caller's user_id (the old filter made this a silent no-op).
+            seedReview([
+                {
+                    data: { id: "r1", user_id: "member", project_id: "p1" },
+                    error: null,
+                },
+                { data: null, error: null },
+            ]);
+            ensureReviewAccess.mockResolvedValue({
+                ok: true,
+                isCreator: false,
+                orgRole: null,
+                projectRole: "owner",
+            });
+
+            const res = await request(app)
+                .delete("/tabular-review/r1")
+                .set(...AUTH);
+
+            expect(res.status).toBe(204);
+        });
+
+        it.each(["manager", "editor", "viewer"] as const)(
+            "returns 403 when a %s tries to delete the review",
+            async (projectRole) => {
+                seedReview([
+                    {
+                        data: { id: "r1", user_id: "other", project_id: "p1" },
+                        error: null,
+                    },
+                    { data: null, error: null },
+                ]);
+                ensureReviewAccess.mockResolvedValue({
+                    ok: true,
+                    isCreator: false,
+                    orgRole: null,
+                    projectRole,
+                });
+
+                const res = await request(app)
+                    .delete("/tabular-review/r1")
+                    .set(...AUTH);
+
+                expect(res.status).toBe(403);
+                expect(res.body.detail).toBe(
+                    "You do not have permission to delete this review",
+                );
+                // Refused before any destructive statement ran.
+                expect(supabaseState.operations).toEqual(["from:tabular_reviews"]);
+            },
+        );
+
+        it("returns 404 when the review is missing", async () => {
+            seedReview([{ data: null, error: null }]);
+
+            const res = await request(app)
+                .delete("/tabular-review/r1")
+                .set(...AUTH);
+
+            expect(res.status).toBe(404);
+            expect(res.body.detail).toBe("Review not found");
+        });
+
+        it("returns 404 when the caller has no access at all", async () => {
+            seedReview([ownedRow, { data: null, error: null }]);
+            ensureReviewAccess.mockResolvedValue({ ok: false });
+
+            const res = await request(app)
+                .delete("/tabular-review/r1")
+                .set(...AUTH);
+
+            expect(res.status).toBe(404);
+            expect(res.body.detail).toBe("Review not found");
+        });
+
         it("returns 500 when the delete errors", async () => {
-            supabaseState.tables.tabular_reviews = {
-                data: null,
-                error: { message: "delete failed" },
-            };
+            seedReview([
+                ownedRow,
+                { data: null, error: { message: "delete failed" } },
+            ]);
+            ensureReviewAccess.mockResolvedValue({
+                ok: true,
+                isCreator: true,
+                orgRole: null,
+                projectRole: "owner",
+            });
 
             const res = await request(app)
                 .delete("/tabular-review/r1")
@@ -753,6 +1084,27 @@ describe("tabular.routes", () => {
 
             expect(res.status).toBe(404);
             expect(res.body.detail).toBe("Review not found");
+        });
+
+        it("returns 403 for a viewer — clearing cells is member+", async () => {
+            supabaseState.tables.tabular_reviews = {
+                data: { id: "r1", user_id: "other", project_id: "p1" },
+                error: null,
+            };
+            ensureReviewAccess.mockResolvedValue({
+                ok: true,
+                isCreator: false,
+                orgRole: null,
+                projectRole: "viewer",
+            });
+
+            const res = await request(app)
+                .post("/tabular-review/r1/clear-cells")
+                .set(...AUTH)
+                .send({ row_ids: ["row-1"] });
+
+            expect(res.status).toBe(403);
+            expect(res.body.detail).toBe("Only a review editor can clear cells");
         });
 
         it("rejects clearing cells while generation holds the review lease", async () => {
@@ -1318,6 +1670,16 @@ describe("tabular.routes", () => {
 
     describe("PATCH /tabular-review/:reviewId/chats/:chatId", () => {
         it("persists the chat model and reasoning independently", async () => {
+            supabaseState.tables.tabular_reviews = {
+                data: { id: "r1", user_id: "u1", project_id: null },
+                error: null,
+            };
+            ensureReviewAccess.mockResolvedValue({
+                ok: true,
+                isCreator: true,
+                orgRole: null,
+                projectRole: "owner",
+            });
             supabaseState.tables.tabular_review_chats = {
                 data: {
                     id: "chat-1",
@@ -1387,6 +1749,247 @@ describe("tabular.routes", () => {
 
             expect(res.status).toBe(200);
       expect(res.body).toEqual([{ id: "chat-1", title: "T", user_id: "u1" }]);
+        });
+    });
+
+    // ── DELETE / PATCH /tabular-review/:reviewId/chats/:chatId ────────────
+    // Both writes share one preamble: the review in the URL must exist and be
+    // accessible, and the chat must actually belong to THAT review. Without
+    // it, any chat id could be reached through any (or a nonexistent) review
+    // path — the ownership filter on the write was the only thing standing
+    // between a caller and someone else's thread.
+    describe("review-chat writes", () => {
+        const CHAT_IN_R1 = {
+            data: { id: "chat-1", review_id: "r1", user_id: "u1" },
+            error: null,
+        };
+
+        it("returns 404 when the review does not exist", async () => {
+            supabaseState.tables.tabular_reviews = { data: null, error: null };
+            supabaseState.tables.tabular_review_chats = CHAT_IN_R1;
+
+            const del = await request(app)
+                .delete("/tabular-review/r-missing/chats/chat-1")
+                .set(...AUTH);
+            expect(del.status).toBe(404);
+            expect(del.body.detail).toBe("Review not found");
+
+            const rename = await request(app)
+                .patch("/tabular-review/r-missing/chats/chat-1")
+                .set(...AUTH)
+                .send({ title: "Renamed" });
+            expect(rename.status).toBe(404);
+            expect(rename.body.detail).toBe("Review not found");
+        });
+
+        it("returns 404 when the caller has no access to the review", async () => {
+            supabaseState.tables.tabular_reviews = {
+                data: { id: "r1", user_id: "other", project_id: null },
+                error: null,
+            };
+            supabaseState.tables.tabular_review_chats = CHAT_IN_R1;
+            ensureReviewAccess.mockResolvedValue({ ok: false });
+
+            const del = await request(app)
+                .delete("/tabular-review/r1/chats/chat-1")
+                .set(...AUTH);
+            expect(del.status).toBe(404);
+            expect(del.body.detail).toBe("Review not found");
+
+            const rename = await request(app)
+                .patch("/tabular-review/r1/chats/chat-1")
+                .set(...AUTH)
+                .send({ title: "Renamed" });
+            expect(rename.status).toBe(404);
+            expect(rename.body.detail).toBe("Review not found");
+        });
+
+        it("returns 404 when the chat belongs to a different review", async () => {
+            supabaseState.tables.tabular_reviews = {
+                data: { id: "r1", user_id: "u1", project_id: null },
+                error: null,
+            };
+            supabaseState.tables.tabular_review_chats = {
+                data: { id: "chat-1", review_id: "r2" },
+                error: null,
+            };
+
+            const del = await request(app)
+                .delete("/tabular-review/r1/chats/chat-1")
+                .set(...AUTH);
+            expect(del.status).toBe(404);
+            expect(del.body.detail).toBe("Chat not found");
+
+            const rename = await request(app)
+                .patch("/tabular-review/r1/chats/chat-1")
+                .set(...AUTH)
+                .send({ title: "Renamed" });
+            expect(rename.status).toBe(404);
+            expect(rename.body.detail).toBe("Chat not found");
+        });
+
+        it("returns 404 when the chat does not exist", async () => {
+            supabaseState.tables.tabular_reviews = {
+                data: { id: "r1", user_id: "u1", project_id: null },
+                error: null,
+            };
+            supabaseState.tables.tabular_review_chats = {
+                data: null,
+                error: null,
+            };
+
+            const res = await request(app)
+                .delete("/tabular-review/r1/chats/chat-missing")
+                .set(...AUTH);
+
+            expect(res.status).toBe(404);
+            expect(res.body.detail).toBe("Chat not found");
+        });
+
+        it("returns 403 for a collaborator who is not the chat's creator", async () => {
+            // The review IS accessible (shared/org collaborator), but the
+            // chat belongs to someone else. Before the owner check lived in
+            // the gate, this returned a success-shaped 204 while the
+            // user_id-scoped write silently matched zero rows.
+            supabaseState.tables.tabular_reviews = {
+                data: { id: "r1", user_id: "other", project_id: null },
+                error: null,
+            };
+            supabaseState.tables.tabular_review_chats = {
+                data: { id: "chat-1", review_id: "r1", user_id: "other" },
+                error: null,
+            };
+
+            const rename = await request(app)
+                .patch("/tabular-review/r1/chats/chat-1")
+                .set(...AUTH)
+                .send({ title: "Renamed" });
+            expect(rename.status).toBe(403);
+            expect(rename.body.detail).toBe(
+                "Only the chat's creator can modify it",
+            );
+
+            const del = await request(app)
+                .delete("/tabular-review/r1/chats/chat-1")
+                .set(...AUTH);
+            expect(del.status).toBe(403);
+            expect(del.body.detail).toBe(
+                "Only the chat's creator can modify it",
+            );
+        });
+
+        // A departed creator leaves `user_id` NULL (the FK is ON DELETE SET
+        // NULL since 20260902_01). "Only the creator may act" would then mean
+        // NOBODY may act, and the thread would sit in the organization's
+        // review forever with no way to rename or remove it. #267's
+        // `creatorScopedAllowed` exists for exactly this: an authorship-scoped
+        // operation falls through to the container's admins once the author
+        // is gone.
+        const ORPHANED_CHAT = {
+            data: { id: "chat-1", review_id: "r1", user_id: null },
+            error: null,
+        };
+
+        it("lets an admin modify a chat whose creator's account was deleted", async () => {
+            supabaseState.tables.tabular_reviews = {
+                data: { id: "r1", user_id: null, project_id: "p1" },
+                error: null,
+            };
+            supabaseState.tables.tabular_review_chats = ORPHANED_CHAT;
+            ensureReviewAccess.mockResolvedValue({
+                ok: true,
+                isCreator: false,
+                orgRole: "admin",
+                projectRole: "owner",
+            });
+
+            const rename = await request(app)
+                .patch("/tabular-review/r1/chats/chat-1")
+                .set(...AUTH)
+                .send({ title: "Renamed" });
+            expect(rename.status).toBe(200);
+
+            const del = await request(app)
+                .delete("/tabular-review/r1/chats/chat-1")
+                .set(...AUTH);
+            expect(del.status).toBe(204);
+        });
+
+        it("still refuses a plain member the same orphaned chat", async () => {
+            // Inheriting an authorship-scoped operation is an ADMIN power —
+            // the tier that could already delete the whole container. A
+            // member gains nothing from the creator's departure.
+            supabaseState.tables.tabular_reviews = {
+                data: { id: "r1", user_id: null, project_id: "p1" },
+                error: null,
+            };
+            supabaseState.tables.tabular_review_chats = ORPHANED_CHAT;
+            ensureReviewAccess.mockResolvedValue({
+                ok: true,
+                isCreator: false,
+                orgRole: "member",
+                projectRole: "editor",
+            });
+
+            const rename = await request(app)
+                .patch("/tabular-review/r1/chats/chat-1")
+                .set(...AUTH)
+                .send({ title: "Renamed" });
+            expect(rename.status).toBe(403);
+            expect(rename.body.detail).toBe(
+                "Only the chat's creator can modify it",
+            );
+
+            const del = await request(app)
+                .delete("/tabular-review/r1/chats/chat-1")
+                .set(...AUTH);
+            expect(del.status).toBe(403);
+        });
+
+        it("does not let an admin touch a LIVE colleague's chat", async () => {
+            // The relaxation is scoped to the creator being GONE. While one
+            // exists, an admin still may not rename their thread — which is
+            // what stops `creatorScopedAllowed` from quietly becoming
+            // "admins can do anything".
+            supabaseState.tables.tabular_reviews = {
+                data: { id: "r1", user_id: "other", project_id: "p1" },
+                error: null,
+            };
+            supabaseState.tables.tabular_review_chats = {
+                data: { id: "chat-1", review_id: "r1", user_id: "other" },
+                error: null,
+            };
+            ensureReviewAccess.mockResolvedValue({
+                ok: true,
+                isCreator: false,
+                orgRole: "admin",
+                projectRole: "owner",
+            });
+
+            const rename = await request(app)
+                .patch("/tabular-review/r1/chats/chat-1")
+                .set(...AUTH)
+                .send({ title: "Renamed" });
+            expect(rename.status).toBe(403);
+        });
+
+        it("returns 204 for the owner once the review and chat line up", async () => {
+            supabaseState.tables.tabular_reviews = {
+                data: { id: "r1", user_id: "u1", project_id: null },
+                error: null,
+            };
+            supabaseState.tables.tabular_review_chats = CHAT_IN_R1;
+
+            const rename = await request(app)
+                .patch("/tabular-review/r1/chats/chat-1")
+                .set(...AUTH)
+                .send({ title: "Renamed" });
+            expect(rename.status).toBe(200);
+
+            const del = await request(app)
+                .delete("/tabular-review/r1/chats/chat-1")
+                .set(...AUTH);
+            expect(del.status).toBe(204);
         });
     });
 });

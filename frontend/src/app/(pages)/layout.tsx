@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { PanelLeft } from "lucide-react";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { ChatHistoryProvider } from "@/app/contexts/ChatHistoryContext";
@@ -9,6 +9,8 @@ import { SidebarContext } from "@/app/contexts/SidebarContext";
 import { PageChromeContext } from "@/app/contexts/PageChromeContext";
 import { AppSidebar } from "@/app/components/shared/AppSidebar";
 import { FullScreenLoader } from "@/app/components/shared/FullScreenLoader";
+import { HeaderButtonUI, HeaderButtonsUI } from "@/shared/ui/HeaderButtonsUI";
+import { cn } from "@/app/lib/utils";
 
 export default function MikeLayout({
     children,
@@ -17,6 +19,8 @@ export default function MikeLayout({
 }) {
     const { isAuthenticated, authLoading } = useAuth();
     const router = useRouter();
+    const pathname = usePathname();
+    const isChatPage = /^\/assistant\/chat\/[^/]+\/?$/.test(pathname);
     const [mobileActionsContainer, setMobileActionsContainer] =
         useState<HTMLDivElement | null>(null);
 
@@ -107,18 +111,28 @@ export default function MikeLayout({
                             />
                             <div className="flex-1 flex flex-col h-dvh md:overflow-hidden relative w-full">
                                 {/* Mobile header */}
-                                <div className="relative z-20 flex md:hidden items-center gap-3 overflow-visible px-4 pt-3 pb-2 shrink-0">
-                                    <button
-                                        onClick={handleSidebarToggle}
-                                        className="flex h-9 w-9 items-center justify-center rounded-full bg-app-surface text-gray-700 shadow-[0_8px_24px_rgba(15,23,42,0.12)] ring-1 ring-white/70 backdrop-blur-md transition-all hover:bg-app-floating active:scale-95"
-                                        title="Open sidebar"
-                                        aria-label="Open sidebar"
-                                    >
-                                        <PanelLeft className="h-4 w-4" />
-                                    </button>
+                                <div
+                                    data-slot="mobile-header"
+                                    className={cn(
+                                        "z-30 flex items-center gap-3 overflow-visible px-4 md:hidden",
+                                        isChatPage
+                                            ? "pointer-events-none fixed inset-x-0 top-0 bg-transparent pb-2 pt-3"
+                                            : "relative shrink-0 pb-2 pt-3",
+                                    )}
+                                >
+                                    <HeaderButtonsUI className="pointer-events-auto">
+                                        <HeaderButtonUI
+                                            iconOnly
+                                            onClick={handleSidebarToggle}
+                                            title="Open sidebar"
+                                            aria-label="Open sidebar"
+                                        >
+                                            <PanelLeft className="h-4 w-4" />
+                                        </HeaderButtonUI>
+                                    </HeaderButtonsUI>
                                     <div
                                         ref={handleMobileActionsContainerRef}
-                                        className="ml-auto flex min-w-0 flex-1 items-center justify-end"
+                                        className="pointer-events-auto ml-auto flex min-w-0 flex-1 items-center justify-end"
                                     />
                                 </div>
                                 <main className="flex h-full w-full flex-1 flex-col overflow-y-auto md:overflow-hidden">

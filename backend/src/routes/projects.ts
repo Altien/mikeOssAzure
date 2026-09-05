@@ -20,13 +20,30 @@ import {
   storageKey,
 } from "../lib/storage";
 import { convertedPdfKey } from "../lib/convert";
-import { checkProjectAccess } from "../lib/access";
-import { deleteUserProjects } from "../lib/userDataCleanup";
-import { contentTypeForDocumentType } from "../lib/documentTypes";
 import {
-  findMissingUserEmails,
-  loadProfileUsersByEmail,
-} from "../lib/userLookup";
+  checkProjectAccess,
+  getOrgRole,
+  listUserOrgIds,
+  normalizeEmail,
+  resolveContentOrgId,
+} from "../lib/access";
+import { can, type ProjectRole } from "../lib/permissions";
+import {
+  deleteProjectGrant,
+  listProjectAdminContacts,
+  listProjectGrants,
+  upsertProjectGrant,
+} from "../lib/projectAccess";
+import {
+  deleteOrgAccessOverride,
+  findOrgMemberByEmail,
+  isOrgAssignableRole,
+  listOrgAccessPeople,
+  setOrgAccessOverride,
+} from "../lib/orgAccessOverrides";
+import { deleteProjectsByIds } from "../lib/userDataCleanup";
+import { contentTypeForDocumentType } from "../lib/documentTypes";
+import { loadProfileUsersByEmail } from "../lib/userLookup";
 import { parsePaginationQuery } from "../lib/pagination";
 import { normalizeSearchTerm } from "../lib/search";
 import { parseProjectSort } from "../lib/sort";
@@ -35,6 +52,7 @@ import {
   buildProjectsOverviewRpcArgs,
   parseProjectScope,
 } from "../lib/projectsOverview";
+import { ensureResourceAccessSummaries } from "../lib/resourceAccessSummary";
 
 export const projectsRouter = Router();
 
@@ -295,7 +313,14 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
   const { data, error } = await db.rpc("get_projects_overview", rpcArgs);
   if (error) return void sendInternalError(res, error);
 
-  const projects = (data ?? []) as { id: string }[];
+  const accessSummary = await ensureResourceAccessSummaries(
+    db,
+    "project",
+    (data ?? []) as { id: string }[],
+  );
+  if (accessSummary.error)
+    return void sendInternalError(res, accessSummary.error);
+  const projects = accessSummary.rows;
   if (!includeDocuments || projects.length === 0) {
     return void res.json(projects);
   }
@@ -357,39 +382,36 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
 // POST /projects
 projectsRouter.post("/", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
-  const userEmail = res.locals.userEmail as string | undefined;
-  const { name, cm_number, practice, shared_with } = req.body as {
+  if (
+    req.body &&
+    typeof req.body === "object" &&
+    "shared_with" in req.body
+  )
+    return void res.status(400).json({
+      detail:
+        "shared_with is no longer supported; use the project access endpoints.",
+    });
+  const { name, cm_number, practice, org_id } = req.body as {
     name: string;
     cm_number?: string;
     practice?: string;
-    shared_with?: string[];
+    org_id?: string | null;
   };
   if (!name?.trim())
     return void res.status(400).json({ detail: "name is required" });
-  const normalizedUserEmail = userEmail?.trim().toLowerCase();
-  const cleanedSharedWith: string[] = [];
-  const seenSharedEmails = new Set<string>();
-  if (Array.isArray(shared_with)) {
-    for (const raw of shared_with) {
-      if (typeof raw !== "string") continue;
-      const e = raw.trim().toLowerCase();
-      if (!e || seenSharedEmails.has(e)) continue;
-      if (normalizedUserEmail && e === normalizedUserEmail) {
-        return void res
-          .status(400)
-          .json({ detail: "You cannot share a project with yourself." });
-      }
-      seenSharedEmails.add(e);
-      cleanedSharedWith.push(e);
-    }
-  }
-
   const db = createServerSupabase();
-  const missingSharedUsers = await findMissingUserEmails(db, cleanedSharedWith);
-  if (missingSharedUsers.length > 0) {
-    return void res.status(400).json({
-      detail: `${missingSharedUsers[0]} does not belong to a Mike user.`,
-    });
+
+  // Tenant assignment: an explicit org_id must be one the caller belongs to.
+  // No org_id means a personal project — org_id stays NULL, which is the
+  // whole representation of "personal" now that hidden personal orgs are gone.
+  let resolvedOrgId: string | null = null;
+  if (org_id) {
+    const role = await getOrgRole(userId, org_id, db);
+    if (!role)
+      return void res
+        .status(400)
+        .json({ detail: "You are not a member of that organization." });
+    resolvedOrgId = org_id;
   }
 
   const { data, error } = await db
@@ -399,12 +421,19 @@ projectsRouter.post("/", requireAuth, async (req, res) => {
       name: name.trim(),
       cm_number: normalizeOptionalString(cm_number),
       practice: normalizeOptionalString(practice),
-      shared_with: cleanedSharedWith,
+      org_id: resolvedOrgId,
     })
     .select("*")
     .single();
   if (error) return void sendInternalError(res, error);
-  res.status(201).json({ ...data, documents: [] });
+  res.status(201).json({
+    ...data,
+    documents: [],
+    is_owner: true,
+    access_role: "owner",
+    access_scope: resolvedOrgId ? "organization" : "private",
+    organization_name: null,
+  });
 });
 
 // GET /projects?view=directory-search
@@ -425,12 +454,33 @@ async function handleProjectDirectorySearch(req: Request, res: Response) {
     db.from("projects").select("*").eq("user_id", userId),
   ];
   if (normalizedUserEmail) {
-    projectQueries.push(
-      db
-        .from("projects")
-        .select("*")
-        .contains("shared_with", [normalizedUserEmail]),
-    );
+    // Direct access now lives in project_access_grants (one row per
+    // recipient, with a role) rather than the roleless shared_with array, so
+    // the picker resolves ids first and then loads those projects.
+    const { data: grantRows } = await db
+      .from("project_access_grants")
+      .select("project_id")
+      .eq("email", normalizedUserEmail);
+    const grantedProjectIds = [
+      ...new Set(
+        ((grantRows ?? []) as { project_id?: string | null }[])
+          .map((row) => row.project_id)
+          .filter((id): id is string => !!id),
+      ),
+    ];
+    if (grantedProjectIds.length > 0) {
+      projectQueries.push(
+        db.from("projects").select("*").in("id", grantedProjectIds),
+      );
+    }
+  }
+  // Third access branch (multi-tenant): projects in an org the caller belongs
+  // to are searchable, mirroring listAccessibleProjectIds and the overview
+  // RPCs — otherwise the document picker would hide org content the project
+  // list shows.
+  const orgIds = await listUserOrgIds(userId, db);
+  if (orgIds.length > 0) {
+    projectQueries.push(db.from("projects").select("*").in("org_id", orgIds));
   }
   const projectResults = await Promise.all(projectQueries);
   const projectError = projectResults.find((result) => result.error)?.error;
@@ -655,107 +705,343 @@ projectsRouter.get("/:projectId", requireAuth, async (req, res) => {
   await attachLatestVersionNumbers(db, docsTyped);
   await attachActiveVersionPaths(db, docsTyped);
   await attachDocumentOwnerLabels(db, docsTyped);
+  // Contact details for the "you can't do that" popups. Without them the UI
+  // can tell a viewer they were refused but never who to ask.
+  const adminContacts = await listProjectAdminContacts(db, access.project);
+  const creatorContact =
+    adminContacts.find((c) => c.source === "creator") ?? null;
   res.json({
     ...project,
-    is_owner: access.isOwner,
+    is_owner: access.isCreator,
+    access_role: access.projectRole,
+    org_role: access.orgRole,
+    owner_email: creatorContact?.email ?? null,
+    owner_display_name: creatorContact?.display_name ?? null,
+    admin_contacts: adminContacts,
     documents: docsTyped,
     folders: folderData ?? [],
   });
 });
 
 // GET /projects/:projectId/people
-// Resolve the owner + every shared member to {email, display_name}. Used
-// by the People modal so the UI can show display names where available
-// and tag the current user as "You".
+// Resolve the creator + every direct grantee to {email, display_name, role}.
+// Used by the People modal so the UI can show display names where available,
+// tag the current user as "You", and — new here — say what each person can
+// actually do.
 projectsRouter.get("/:projectId/people", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
   const db = createServerSupabase();
 
-  const { data: project } = await db
-    .from("projects")
-    .select("id, user_id, shared_with")
-    .eq("id", projectId)
-    .single();
-  if (!project)
+  // Visible to anyone who can see the project, at every tier. "Who else is on
+  // this matter?" is part of working on it even for a viewer, and the access
+  // modal shows the same roster to everyone rather than a different one per
+  // role. This deliberately matches GET /chat/:chatId/people and
+  // GET /tabular-review/:reviewId/people, which resolve a project-owned row
+  // through this same roster: tiering it here and not there only meant the
+  // list was one request away.
+  //
+  // Note the split that remains: the roster is readable, but the MANAGEMENT
+  // surface (GET /:projectId/access — who granted what, and the role pickers)
+  // still requires `access.manage`.
+  const access = await checkProjectAccess(projectId, userId, userEmail, db);
+  if (!access.ok)
     return void res.status(404).json({ detail: "Project not found" });
+  const project = access.project;
 
-  const isOwner = project.user_id === userId;
-  const sharedWith = (
-    Array.isArray(project.shared_with) ? (project.shared_with as string[]) : []
-  ).map((e) => e.toLowerCase());
-  const isShared = !!userEmail && sharedWith.includes(userEmail.toLowerCase());
-  if (!isOwner && !isShared)
-    return void res.status(404).json({ detail: "Project not found" });
+  if (project.org_id) {
+    const listed = await listOrgAccessPeople(db, {
+      kind: "project",
+      resourceId: projectId,
+      orgId: project.org_id,
+      creatorId: project.user_id,
+    });
+    if (!listed.ok) return void sendInternalError(res, listed.detail);
+    const creator = listed.people.find(
+      (person) => person.user_id === project.user_id,
+    );
+    return void res.json({
+      scope: "organization",
+      owner: creator
+        ? {
+            user_id: creator.user_id,
+            email: creator.email,
+            display_name: creator.display_name,
+            role: "owner" as const,
+          }
+        : null,
+      members: listed.people.filter(
+        (person) => person.user_id !== project.user_id,
+      ),
+      admin_contacts: await listProjectAdminContacts(db, project),
+    });
+  }
 
-  // Use the mirrored profile email so sharing checks do not scan auth.users.
+  // Personal projects keep email-addressed direct grants.
   const { userByEmail, userById } = await loadProfileUsersByEmail(db);
 
-  const ownerInfo = userById.get(project.user_id as string);
-  const owner = {
-    user_id: project.user_id,
-    email: ownerInfo?.email ?? null,
-    display_name: ownerInfo?.display_name ?? null,
-  };
-  const members = sharedWith.map((email) => {
-    const u = userByEmail.get(email);
-    const display_name = u?.display_name ?? null;
-    return { email, display_name };
-  });
+  const ownerInfo = project.user_id
+    ? userById.get(project.user_id)
+    : undefined;
+  // `owner` is the project's creator. It can be null now: an organization
+  // project outlives the account that created it, and the org's admins
+  // administer it from then on.
+  const owner = project.user_id
+    ? {
+        user_id: project.user_id,
+        email: ownerInfo?.email ?? null,
+        display_name: ownerInfo?.display_name ?? null,
+        role: "owner" as const,
+      }
+    : null;
+  const listed = await listProjectGrants(db, projectId);
+  if (!listed.ok) return void sendInternalError(res, listed.detail);
+  const members = listed.grants.map((grant) => ({
+    email: grant.email,
+    display_name: userByEmail.get(grant.email)?.display_name ?? null,
+    role: grant.role,
+  }));
 
-  res.json({ owner, members });
+  res.json({
+    scope: "direct",
+    owner,
+    members,
+    admin_contacts: await listProjectAdminContacts(db, project),
+  });
 });
+
+// ---------------------------------------------------------------------------
+// Direct access grants
+// ---------------------------------------------------------------------------
+//
+// Sharing is an Owner power (`access.manage`). Personal projects use direct
+// email grants; organization projects use organization-member overrides.
+
+// GET /projects/:projectId/access — the grant list, for whoever may manage
+// it. This is the management surface: each row carries who granted it and
+// when, and its one consumer is the People modal's role pickers, which only
+// render for Owners. Serving it at mere reachability let any Viewer — the
+// outside-counsel tier — enumerate every recipient, role and grantor on the
+// matter.
+projectsRouter.get("/:projectId/access", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string | undefined;
+  const { projectId } = req.params;
+  const db = createServerSupabase();
+
+  const access = await checkProjectAccess(projectId, userId, userEmail, db);
+  if (!access.ok)
+    return void res.status(404).json({ detail: "Project not found" });
+  if (!can(access.projectRole, "access.manage"))
+    return void res
+      .status(403)
+      .json({ detail: "Only a project owner can change who has access." });
+  if (access.project.org_id) {
+    const listed = await listOrgAccessPeople(db, {
+      kind: "project",
+      resourceId: projectId,
+      orgId: access.project.org_id,
+      creatorId: access.project.user_id,
+    });
+    if (!listed.ok) return void sendInternalError(res, listed.detail);
+    return void res.json({
+      scope: "organization",
+      org_id: access.project.org_id,
+      access_role: access.projectRole,
+      grants: listed.people.filter(
+        (person) =>
+          person.user_id !== access.project.user_id && person.has_override,
+      ),
+    });
+  }
+  const listed = await listProjectGrants(db, projectId);
+  if (!listed.ok) return void sendInternalError(res, listed.detail);
+  res.json({
+    scope: "direct",
+    org_id: access.project.org_id ?? null,
+    access_role: access.projectRole,
+    grants: listed.grants,
+  });
+});
+
+// POST /projects/:projectId/access — grant or re-role one recipient.
+projectsRouter.post("/:projectId/access", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string | undefined;
+  const { projectId } = req.params;
+  const db = createServerSupabase();
+
+  const access = await checkProjectAccess(projectId, userId, userEmail, db);
+  if (!access.ok)
+    return void res.status(404).json({ detail: "Project not found" });
+  if (!can(access.projectRole, "access.manage"))
+    return void res
+      .status(403)
+      .json({ detail: "Only a project owner can change who has access." });
+
+  const email = normalizeEmail(
+    typeof req.body?.email === "string" ? req.body.email : null,
+  );
+  if (email && normalizeEmail(userEmail) === email)
+    return void res
+      .status(400)
+      .json({ detail: "You cannot share a project with yourself." });
+
+  if (access.project.org_id) {
+    if (!email)
+      return void res.status(400).json({ detail: "A valid email address is required" });
+    if (!isOrgAssignableRole(req.body?.role))
+      return void res.status(400).json({
+        detail: "role must be owner, editor, viewer or deny",
+      });
+    const target = await findOrgMemberByEmail(db, access.project.org_id, email);
+    if (!target.ok) {
+      if (target.kind === "not_found")
+        return void res.status(400).json({ detail: target.detail });
+      return void sendInternalError(res, target.detail);
+    }
+    if (target.member.userId === access.project.user_id)
+      return void res.status(400).json({ detail: "The creator is always an owner" });
+    if (target.member.orgRole === "admin")
+      return void res.status(400).json({
+        detail: "Organization admins always have owner access",
+      });
+    const result = await setOrgAccessOverride(db, {
+      kind: "project",
+      resourceId: projectId,
+      orgId: access.project.org_id,
+      userId: target.member.userId,
+      role: req.body.role,
+      assignedBy: userId,
+    });
+    if (!result.ok) return void sendInternalError(res, result.detail);
+    return void res.status(201).json({
+      user_id: target.member.userId,
+      email: target.member.email,
+      role: req.body.role,
+    });
+  }
+
+  if (req.body?.role === "deny")
+    return void res.status(400).json({
+      detail: "Deny is only available for organization members",
+    });
+  const creatorProfile = access.project.user_id
+    ? await db
+        .from("user_profiles")
+        .select("email")
+        .eq("user_id", access.project.user_id)
+        .maybeSingle()
+    : null;
+  const result = await upsertProjectGrant(db, {
+    projectId,
+    email: req.body?.email,
+    role: req.body?.role,
+    createdBy: userId,
+    creatorEmail:
+      (creatorProfile?.data as { email?: string | null } | null)?.email ?? null,
+  });
+  if (!result.ok) {
+    if (result.kind === "validation")
+      return void res.status(400).json({ detail: result.detail });
+    // result.detail is a raw driver message here — log it, never send it.
+    return void sendInternalError(res, result.detail);
+  }
+  res.status(201).json(result.grant);
+});
+
+// DELETE /projects/:projectId/access/:email — revoke one recipient.
+projectsRouter.delete(
+  "/:projectId/access/:email",
+  requireAuth,
+  async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const { projectId } = req.params;
+    const db = createServerSupabase();
+
+    const access = await checkProjectAccess(projectId, userId, userEmail, db);
+    if (!access.ok)
+      return void res.status(404).json({ detail: "Project not found" });
+    if (!can(access.projectRole, "access.manage"))
+      return void res
+        .status(403)
+        .json({ detail: "Only a project owner can change who has access." });
+
+    if (access.project.org_id) {
+      const email = normalizeEmail(decodeURIComponent(req.params.email));
+      if (!email)
+        return void res.status(404).json({ detail: "Access override not found" });
+      const target = await findOrgMemberByEmail(
+        db,
+        access.project.org_id,
+        email,
+      );
+      if (!target.ok) {
+        if (target.kind === "not_found")
+          return void res.status(404).json({ detail: "Access override not found" });
+        return void sendInternalError(res, target.detail);
+      }
+      const result = await deleteOrgAccessOverride(db, {
+        kind: "project",
+        resourceId: projectId,
+        userId: target.member.userId,
+      });
+      if (!result.ok) return void sendInternalError(res, result.detail);
+      if (!result.removed)
+        return void res.status(404).json({ detail: "Access override not found" });
+      return void res.status(204).send();
+    }
+
+    const result = await deleteProjectGrant(db, {
+      projectId,
+      email: decodeURIComponent(req.params.email),
+    });
+    if (!result.ok) return void sendInternalError(res, result.detail);
+    if (!result.removed)
+      return void res.status(404).json({ detail: "Access grant not found" });
+    res.status(204).send();
+  },
+);
 
 // PATCH /projects/:projectId
 projectsRouter.patch("/:projectId", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
+  if (
+    req.body &&
+    typeof req.body === "object" &&
+    "shared_with" in req.body
+  )
+    return void res.status(400).json({
+      detail:
+        "shared_with is no longer supported; use the project access endpoints.",
+    });
   const updates: Record<string, unknown> = {};
   if (req.body.name != null) updates.name = req.body.name;
   if (req.body.cm_number != null) updates.cm_number = req.body.cm_number;
   if ("practice" in req.body) {
     updates.practice = normalizeOptionalString(req.body.practice);
   }
-  if (Array.isArray(req.body.shared_with)) {
-    // Normalise: lowercase + dedupe + drop empties.
-    const normalizedUserEmail = userEmail?.trim().toLowerCase();
-    const seen = new Set<string>();
-    const cleaned: string[] = [];
-    for (const raw of req.body.shared_with) {
-      if (typeof raw !== "string") continue;
-      const e = raw.trim().toLowerCase();
-      if (!e || seen.has(e)) continue;
-      if (normalizedUserEmail && e === normalizedUserEmail) {
-        return void res
-          .status(400)
-          .json({ detail: "You cannot share a project with yourself." });
-      }
-      seen.add(e);
-      cleaned.push(e);
-    }
-    updates.shared_with = cleaned;
-  }
-
   const db = createServerSupabase();
-  if (Array.isArray(updates.shared_with)) {
-    const missingSharedUsers = await findMissingUserEmails(
-      db,
-      updates.shared_with as string[],
-    );
-    if (missingSharedUsers.length > 0) {
-      return void res.status(400).json({
-        detail: `${missingSharedUsers[0]} does not belong to a Mike user.`,
-      });
-    }
-  }
+  // Project settings and access edits are Owner-only: the creator, a direct
+  // Owner grant on a personal project, or an Admin of the project's org.
+  // The user_id filter moves out of the UPDATE so Owners can act on rows they
+  // did not create.
+  const access = await checkProjectAccess(projectId, userId, userEmail, db);
+  if (!access.ok)
+    return void res.status(404).json({ detail: "Project not found" });
+  if (!can(access.projectRole, "access.manage"))
+    return void res
+      .status(403)
+      .json({ detail: "Only a project owner can change project settings." });
 
   const { data, error } = await db
     .from("projects")
     .update({ ...updates, updated_at: new Date().toISOString() })
     .eq("id", projectId)
-    .eq("user_id", userId)
     .select("*")
     .single();
   if (error || !data)
@@ -786,10 +1072,28 @@ projectsRouter.patch("/:projectId", requireAuth, async (req, res) => {
 // DELETE /projects/:projectId
 projectsRouter.delete("/:projectId", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
   const db = createServerSupabase();
+  // Deleting a project is the destructive end of the ladder, so it declares
+  // `container.delete` like every other gate on this branch instead of
+  // leaning on the cascade helper's `.eq("user_id", …)` filter to imply the
+  // rule. Same verdict, stated where a reader looks for it — and the two
+  // failure modes stop being one indistinguishable 404: a stranger still
+  // gets "not found", while a member or viewer who CAN see the project is
+  // told they were refused.
+  const access = await checkProjectAccess(projectId, userId, userEmail, db);
+  if (!access.ok)
+    return void res.status(404).json({ detail: "Project not found" });
+  if (!can(access.projectRole, "container.delete"))
+    return void res
+      .status(403)
+      .json({ detail: "Only a project owner can delete this project." });
   try {
-    const deletedCount = await deleteUserProjects(db, userId, [projectId]);
+    // Delete by id, not by owner: the capability check above is what
+    // authorises this, and an organization project may have no creator left
+    // to scope by (user_id goes NULL when that account is deleted).
+    const deletedCount = await deleteProjectsByIds(db, [projectId]);
     if (deletedCount === 0)
       return void res.status(404).json({ detail: "Project not found" });
     res.status(204).send();
@@ -873,7 +1177,7 @@ projectsRouter.post(
     const db = createServerSupabase();
 
     const access = await checkProjectAccess(projectId, userId, userEmail, db);
-    if (!access.ok)
+    if (!access.ok || !can(access.projectRole, "docs.organize"))
       return void res.status(404).json({ detail: "Project not found" });
 
     // Adding-by-id pulls a doc into the project — only the doc's owner
@@ -895,11 +1199,14 @@ projectsRouter.post(
     if (doc.project_id === projectId) return void res.json(doc);
 
     if (doc.project_id === null) {
-      // Standalone → assign project_id
+      // Standalone → assign project_id (and inherit the project's org).
+      const targetOrg = await resolveContentOrgId(db, { projectId });
+      if (!targetOrg.ok) return void sendInternalError(res, targetOrg.detail);
       const { data: updated, error } = await db
         .from("documents")
         .update({
           project_id: projectId,
+          org_id: targetOrg.orgId,
           library_folder_id: null,
           updated_at: new Date().toISOString(),
         })
@@ -947,12 +1254,15 @@ projectsRouter.post(
           .json({ detail: "Failed to read source document bytes" });
       }
 
+      const copyOrg = await resolveContentOrgId(db, { projectId });
+      if (!copyOrg.ok) return void sendInternalError(res, copyOrg.detail);
       const { data: copy, error } = await db
         .from("documents")
         .insert({
           project_id: projectId,
           user_id: userId,
           status: doc.status,
+          org_id: copyOrg.orgId,
         })
         .select("*")
         .single();
@@ -1057,7 +1367,7 @@ projectsRouter.patch(
   const db = createServerSupabase();
 
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
-  if (!access.ok)
+  if (!access.ok || !can(access.projectRole, "docs.organize"))
     return void res.status(404).json({ detail: "Project not found" });
 
   const { data: doc } = await db
@@ -1112,9 +1422,9 @@ projectsRouter.patch(
 
 // GET /projects/:projectId/chats — every assistant chat under this project
 // (any author with project access). Used by the project page's chat tab so
-// it doesn't have to filter the global GET /chat list — and so collaborators
-// see each other's chats inside the project even though those don't appear
-// in the global list.
+// it doesn't have to filter the global GET /chat list. Since 20260902_05 the
+// global list shows these too (its predicate matches ensureChatAccess), so
+// this endpoint is a convenience scoping, not the only way to find them.
 projectsRouter.get("/:projectId/chats", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
@@ -1133,6 +1443,23 @@ projectsRouter.get("/:projectId/chats", requireAuth, async (req, res) => {
   if (error) return void sendInternalError(res, error);
   const chats = data ?? [];
   await attachChatCreatorLabels(db, chats);
+  // Label each row with the caller's role for THAT chat, the way the detail
+  // route and the overview RPC already do. Without it the client has nothing
+  // to gate on but `user_id === me`, which this PR's model makes wrong in
+  // both directions: a project Owner may delete a colleague's chat, and an
+  // Editor may not delete one they merely reach through the project.
+  //
+  // Project-owned chats inherit the project verdict exactly. Their creator
+  // and any stale chat-level grant cannot raise or lower that role.
+  for (const chat of chats as {
+    id: string;
+    user_id?: string | null;
+    is_owner?: boolean;
+    access_role?: ProjectRole | null;
+  }[]) {
+    chat.is_owner = !!chat.user_id && chat.user_id === userId;
+    chat.access_role = access.projectRole;
+  }
   res.json(chats);
 });
 
@@ -1177,7 +1504,12 @@ projectsRouter.post(
 
     const db = createServerSupabase();
     const access = await checkProjectAccess(projectId, userId, userEmail, db);
-    if (!access.ok)
+    // This route reads like a lookup, but resolve_project_folder_path INSERTs
+    // a project_subfolders row for every path segment that does not exist
+    // yet. It therefore needs the same docs.organize gate its sibling folder
+    // routes declare; without it a viewer — whose whole tier is read-only —
+    // could POST an arbitrary nested folder tree into someone else's project.
+    if (!access.ok || !can(access.projectRole, "docs.organize"))
       return void res.status(404).json({ detail: "Project not found" });
     if (baseFolderId) {
       const parent = await loadProjectFolder(db, projectId, baseFolderId);
@@ -1220,7 +1552,7 @@ projectsRouter.post("/:projectId/folders", requireAuth, async (req, res) => {
 
   const db = createServerSupabase();
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
-  if (!access.ok)
+  if (!access.ok || !can(access.projectRole, "docs.organize"))
     return void res.status(404).json({ detail: "Project not found" });
 
   // Verify parent folder belongs to this project
@@ -1263,9 +1595,11 @@ projectsRouter.patch(
     };
 
   const db = createServerSupabase();
+  // Re-shaping the folder tree is member work, alongside the documents it
+  // holds — Will's review put "organize documents and folders" on one line.
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
-    if (!access.ok)
-      return void res.status(404).json({ detail: "Project not found" });
+  if (!access.ok || !can(access.projectRole, "docs.organize"))
+    return void res.status(404).json({ detail: "Project not found" });
 
     const updates: Record<string, unknown> = {
       updated_at: new Date().toISOString(),
@@ -1324,11 +1658,13 @@ projectsRouter.delete(
   const { projectId, folderId } = req.params;
   const db = createServerSupabase();
 
+  // Folder deletion cascades into every nested document and its storage
+  // objects — but so does deleting those documents one at a time, which a
+  // member may already do. Gating the folder higher bought no safety, only a
+  // confusing extra tier.
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
-    if (!access.ok)
-      return void res.status(404).json({ detail: "Project not found" });
-    if (!access.isOwner)
-      return void res.status(404).json({ detail: "Project not found" });
+  if (!access.ok || !can(access.projectRole, "docs.organize"))
+    return void res.status(404).json({ detail: "Project not found" });
 
   const { data: allFolders, error: foldersError } = await db
     .from("project_subfolders")
@@ -1396,8 +1732,8 @@ projectsRouter.patch(
 
   const db = createServerSupabase();
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
-    if (!access.ok)
-      return void res.status(404).json({ detail: "Project not found" });
+  if (!access.ok || !can(access.projectRole, "docs.organize"))
+    return void res.status(404).json({ detail: "Project not found" });
 
   if (folder_id) {
     const folder = await loadProjectFolder(db, projectId, folder_id);

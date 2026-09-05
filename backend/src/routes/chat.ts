@@ -35,7 +35,20 @@ import {
     persistLastSelectedChatModel,
     persistLastSelectedReasoningLevel,
 } from "../lib/userSettings";
-import { checkProjectAccess } from "../lib/access";
+import {
+    checkProjectAccess,
+    ensureChatAccess,
+    normalizeEmail,
+    resolveContentOrgId,
+} from "../lib/access";
+import { loadProfileUsersByEmail } from "../lib/userLookup";
+import {
+    deleteContentGrant,
+    listContentGrants,
+    upsertContentGrant,
+} from "../lib/contentAccess";
+import { can, type ProjectRole } from "../lib/permissions";
+import { listContentPeople } from "../lib/resourcePeople";
 import { generateAssistantChatTitle } from "../lib/chatTitle";
 import { sendInternalError } from "../lib/httpError";
 import {
@@ -55,10 +68,13 @@ const devLog = (...args: Parameters<typeof console.log>) => {
 type AccessibleChat = {
     id: string;
     title: string | null;
-    user_id: string;
+    // Nullable since 20260902_01: content in an organization project outlives
+    // the account that created it (the FK is ON DELETE SET NULL).
+    user_id: string | null;
     project_id: string | null;
     model: string | null;
     reasoning_level: string | null;
+    org_id?: string | null;
 } & Record<string, unknown>;
 
 async function validateAccessibleProjectId(
@@ -68,49 +84,63 @@ async function validateAccessibleProjectId(
     db: Db,
 ): Promise<{ ok: true } | { ok: false; status: number; detail: string }> {
     if (!projectId) return { ok: true };
+    // Creating a chat under a project contributes content to it: member+.
     const access = await checkProjectAccess(projectId, userId, userEmail, db);
-    if (!access.ok)
+    if (!access.ok || !can(access.projectRole, "content.edit"))
         return { ok: false, status: 404, detail: "Project not found" };
     return { ok: true };
 }
 
+type ChatAccess =
+    | {
+          ok: true;
+          chat: AccessibleChat;
+          /** Provenance only ("I started this thread"), not a right — the
+           *  admin role the creator branch derives is what grants. */
+          isCreator: boolean;
+          projectRole: ProjectRole;
+      }
+    | { ok: false };
+
+// Resolve a chat AND the caller's role for it, so callers can gate reads and
+// writes separately: "can you see it" (project.view) and "can you write to
+// it" (content.edit) are different questions. The role comes from
+// `ensureChatAccess` (lib/access.ts) — the same derivation reviews use: the
+// project chats inherit the project role exactly. Standalone chats use
+// role-aware direct grants.
 async function getAccessibleChat(
     chatId: string,
     userId: string,
     userEmail: string | null | undefined,
     db: Db,
-): Promise<AccessibleChat | null> {
+): Promise<ChatAccess> {
     const { data: chat, error } = await db
         .from("chats")
         .select("*")
         .eq("id", chatId)
         .maybeSingle();
-    if (error || !chat) return null;
+    if (error || !chat) return { ok: false };
 
     const row = chat as AccessibleChat;
-    if (row.user_id === userId) return row;
-
-    if (row.project_id) {
-        const access = await checkProjectAccess(
-            row.project_id,
-            userId,
-            userEmail,
-            db,
-        );
-        if (access.ok) return row;
-    }
-
-    return null;
+    const access = await ensureChatAccess(row, userId, userEmail, db);
+    if (!access.ok) return { ok: false };
+    return {
+        ok: true,
+        chat: row,
+        isCreator: access.isCreator,
+        projectRole: access.projectRole,
+    };
 }
 
 // GET /chat
-// Visible chats = the user's own chats + every chat under a project the
-// user owns (so a project owner sees all collaborator chats in their
-// own projects in the global recent-chats list). Chats in projects that
-// are merely *shared with* the user are NOT included here — those are
-// listed per-project via GET /projects/:projectId/chats.
+// Lists every chat the caller could open: the RPC's predicate mirrors
+// ensureChatAccess branch for branch (creator, direct grant, accessible
+// project), so the list and GET /chat/:chatId can never disagree
+// about what exists. Each row carries is_owner so the sidebar can tell the
+// caller's own chats from colleagues' ones — provenance, not a role.
 chatRouter.get("/", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
     const db = createServerSupabase();
     const requestedLimit = Number.parseInt(String(req.query.limit ?? ""), 10);
     const requestedOffset = Number.parseInt(String(req.query.offset ?? ""), 10);
@@ -124,6 +154,7 @@ chatRouter.get("/", requireAuth, async (req, res) => {
 
     const { data, error } = await db.rpc("get_chats_overview", {
         p_user_id: userId,
+        p_user_email: userEmail?.trim().toLowerCase() ?? null,
         p_limit: limit,
         p_offset: offset,
     });
@@ -152,9 +183,18 @@ chatRouter.post("/create", requireAuth, async (req, res) => {
             .status(projectAccess.status)
             .json({ detail: projectAccess.detail });
 
+    // Tenant stamping, like every other content create: a project chat
+    // inherits the project's org; a standalone chat is personal (org_id
+    // null) and stays private until it receives a direct grant.
+    const resolvedOrg = await resolveContentOrgId(db, { projectId });
+    if (!resolvedOrg.ok) return void sendInternalError(res, resolvedOrg.detail);
     const { data, error } = await db
         .from("chats")
-        .insert({ user_id: userId, project_id: projectId ?? null })
+        .insert({
+            user_id: userId,
+            project_id: projectId ?? null,
+            org_id: resolvedOrg.orgId,
+        })
         .select("id")
         .single();
 
@@ -169,8 +209,12 @@ chatRouter.get("/:chatId", requireAuth, async (req, res) => {
     const { chatId } = req.params;
     const db = createServerSupabase();
 
-    const chat = await getAccessibleChat(chatId, userId, userEmail, db);
-    if (!chat) return void res.status(404).json({ detail: "Chat not found" });
+    // Reading a chat only needs visibility (project.view) — org viewers
+    // are allowed here even though they cannot write to the chat.
+    const access = await getAccessibleChat(chatId, userId, userEmail, db);
+    if (!access.ok)
+        return void res.status(404).json({ detail: "Chat not found" });
+    const chat = access.chat;
 
     const { data: messages } = await db
         .from("chat_messages")
@@ -182,7 +226,144 @@ chatRouter.get("/:chatId", requireAuth, async (req, res) => {
         withoutEmptyAssistantReservations(messages ?? []),
         db,
     );
-    res.json({ chat, messages: hydrated });
+    // access_role/is_owner mirror the project and review detail responses so
+    // the client can render per-role affordances instead of re-deriving them.
+    res.json({
+        chat,
+        is_owner: access.isCreator,
+        access_role: access.projectRole,
+        messages: hydrated,
+    });
+});
+
+// GET /chat/:chatId/people
+// The chat's creator + every direct grantee, resolved to
+// {email, display_name, role} — the same roster shape as
+// GET /projects/:projectId/people, including its nullable `owner` (a chat in
+// an organization project outlives its author's account). Visible to anyone
+// who can see the chat.
+chatRouter.get("/:chatId/people", requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const { chatId } = req.params;
+    const db = createServerSupabase();
+
+    const access = await getAccessibleChat(chatId, userId, userEmail, db);
+    if (!access.ok)
+        return void res.status(404).json({ detail: "Chat not found" });
+    const chat = access.chat;
+
+    const people = await listContentPeople(db, "chat", chat);
+    if (!people.ok) return void sendInternalError(res, people.detail);
+    res.json(people);
+});
+
+// GET /chat/:chatId/access — role-aware direct grants, admin-only.
+chatRouter.get("/:chatId/access", requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const { chatId } = req.params;
+    const db = createServerSupabase();
+    const access = await getAccessibleChat(chatId, userId, userEmail, db);
+    if (!access.ok)
+        return void res.status(404).json({ detail: "Chat not found" });
+    if (!can(access.projectRole, "access.manage"))
+        return void res.status(403).json({
+            detail: "Only a chat owner can change who has access.",
+        });
+    if (access.chat.project_id)
+        return void res.json({
+            scope: "project",
+            inherited_from_project_id: access.chat.project_id,
+            org_id: access.chat.org_id ?? null,
+            access_role: access.projectRole,
+            grants: [],
+        });
+    const listed = await listContentGrants(db, "chat", chatId);
+    if (!listed.ok) return void sendInternalError(res, listed.detail);
+    res.json({
+        scope: "direct",
+        org_id: null,
+        access_role: access.projectRole,
+        grants: listed.grants,
+    });
+});
+
+// POST /chat/:chatId/access — grant or re-role one recipient.
+chatRouter.post("/:chatId/access", requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const { chatId } = req.params;
+    const db = createServerSupabase();
+    const access = await getAccessibleChat(chatId, userId, userEmail, db);
+    if (!access.ok)
+        return void res.status(404).json({ detail: "Chat not found" });
+    if (!can(access.projectRole, "access.manage"))
+        return void res.status(403).json({
+            detail: "Only a chat owner can change who has access.",
+        });
+    if (access.chat.project_id)
+        return void res.status(409).json({
+            code: "access_inherited",
+            detail: "Project-owned chats inherit access from their project.",
+        });
+    const email = normalizeEmail(
+        typeof req.body?.email === "string" ? req.body.email : null,
+    );
+    if (email && normalizeEmail(userEmail) === email)
+        return void res
+            .status(400)
+            .json({ detail: "You cannot share a chat with yourself." });
+    if (req.body?.role === "deny")
+        return void res.status(400).json({
+            detail: "Deny is only available for organization members",
+        });
+    const { userById } = await loadProfileUsersByEmail(db);
+    const result = await upsertContentGrant(db, {
+        kind: "chat",
+        resourceId: chatId,
+        email: req.body?.email,
+        role: req.body?.role,
+        createdBy: userId,
+        creatorEmail: access.chat.user_id
+            ? userById.get(access.chat.user_id)?.email
+            : null,
+    });
+    if (!result.ok) {
+        if (result.kind === "validation")
+            return void res.status(400).json({ detail: result.detail });
+        return void sendInternalError(res, result.detail);
+    }
+    res.status(201).json(result.grant);
+});
+
+// DELETE /chat/:chatId/access/:email — revoke one recipient.
+chatRouter.delete("/:chatId/access/:email", requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const { chatId } = req.params;
+    const db = createServerSupabase();
+    const access = await getAccessibleChat(chatId, userId, userEmail, db);
+    if (!access.ok)
+        return void res.status(404).json({ detail: "Chat not found" });
+    if (!can(access.projectRole, "access.manage"))
+        return void res.status(403).json({
+            detail: "Only a chat owner can change who has access.",
+        });
+    if (access.chat.project_id)
+        return void res.status(409).json({
+            code: "access_inherited",
+            detail: "Project-owned chats inherit access from their project.",
+        });
+    const result = await deleteContentGrant(db, {
+        kind: "chat",
+        resourceId: chatId,
+        email: decodeURIComponent(req.params.email),
+    });
+    if (!result.ok) return void sendInternalError(res, result.detail);
+    if (!result.removed)
+        return void res.status(404).json({ detail: "Access grant not found" });
+    res.status(204).send();
 });
 
 // Stored doc_edited events capture the `status` at the time the assistant
@@ -298,62 +479,76 @@ async function hydrateEditStatuses(
     });
 }
 
-// PATCH /chat/:chatId
+// PATCH /chat/:chatId — rename and/or edit sharing.
 chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { chatId } = req.params;
+    const updates: Record<string, unknown> = {};
     const body =
         req.body && typeof req.body === "object" && !Array.isArray(req.body)
             ? (req.body as Record<string, unknown>)
             : {};
-    const invalidField = Object.keys(body).find(
-        (field) =>
-            field !== "title" &&
-            field !== "model" &&
-            field !== "reasoningLevel",
-    );
-    if (invalidField) {
-        return void res
-            .status(400)
-            .json({ detail: `Unsupported chat field: ${invalidField}` });
-    }
-    const hasTitle = Object.hasOwn(body, "title");
-    const hasModel = Object.hasOwn(body, "model");
-    const hasReasoning = Object.hasOwn(body, "reasoningLevel");
-    if (!hasTitle && !hasModel && !hasReasoning) {
-        return void res
-            .status(400)
-            .json({ detail: "title, model, or reasoningLevel is required" });
-    }
 
-    const title = typeof body.title === "string" ? body.title.trim() : "";
-    if (hasTitle && !title) {
-        return void res.status(400).json({ detail: "title is required" });
+    // Validate the SHAPE of what arrived instead of coercing it.
+    // `String(req.body.title)` accepts anything: `{}` becomes the literal
+    // title "[object Object]" and `42` becomes "42", so a client bug is
+    // stored as data and discovered later by a human reading a nonsense chat
+    // name. Refusing names the problem while it is still fixable.
+    if (body.title != null) {
+        if (typeof body.title !== "string")
+            return void res
+                .status(400)
+                .json({ detail: "title must be a string" });
+        const title = body.title.trim();
+        if (!title)
+            return void res.status(400).json({ detail: "title is required" });
+        updates.title = title;
     }
-    const parsedModel = parseOptionalModel(body.model);
+    if ("shared_with" in body)
+        return void res.status(400).json({
+            detail:
+                "shared_with is no longer supported; use the chat access endpoints.",
+        });
+    const hasModel = req.body.model != null;
+    const parsedModel = parseOptionalModel(req.body.model);
     if (hasModel && !parsedModel.ok) {
         return void res.status(400).json({ detail: parsedModel.detail });
     }
-    const parsedReasoning = parseOptionalReasoning(body.reasoningLevel);
+    const hasReasoning = req.body.reasoningLevel != null;
+    const parsedReasoning = parseOptionalReasoning(req.body.reasoningLevel);
     if (hasReasoning && !parsedReasoning.ok) {
         return void res.status(400).json({ detail: parsedReasoning.detail });
     }
 
-    const db = createServerSupabase();
-    const chat = await getAccessibleChat(chatId, userId, userEmail, db);
-    if (!chat || (hasTitle && chat.user_id !== userId)) {
-        return void res.status(404).json({ detail: "Chat not found" });
-    }
+    if (Object.keys(updates).length === 0 && !hasModel && !hasReasoning)
+        return void res.status(400).json({
+            detail: "title, model or reasoningLevel is required",
+        });
 
-    let selectedModel: string | undefined;
-    const selectedReasoningLevel =
-        hasReasoning && parsedReasoning.ok ? parsedReasoning.value : undefined;
+    const db = createServerSupabase();
+    const access = await getAccessibleChat(chatId, userId, userEmail, db);
+    if (!access.ok)
+        return void res.status(404).json({ detail: "Chat not found" });
+    // Title edits are content collaboration (the same tier that already
+    // rewrites titles via generate-title).
+    if (updates.title != null && !can(access.projectRole, "content.edit"))
+        return void res
+            .status(403)
+            .json({ detail: "You do not have permission to modify this chat" });
+    if (
+        (hasModel || hasReasoning) &&
+        !can(access.projectRole, "content.edit")
+    )
+        return void res
+            .status(403)
+            .json({ detail: "You do not have permission to modify this chat" });
+
     if (hasModel) {
         const settings = await getUserModelSettings(userId, db);
         const resolution = await resolveEffectiveChatModel({
             requested: parsedModel.ok ? parsedModel.value : undefined,
-            chatModel: chat.model,
+            chatModel: access.chat.model,
             lastSelectedModel: settings.last_selected_chat_model,
             apiKeys: settings.api_keys,
             userId,
@@ -365,38 +560,41 @@ chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
                 detail: resolution.detail,
             });
         }
-        selectedModel = resolution.model;
+        updates.model = resolution.model;
+    }
+    if (hasReasoning && parsedReasoning.ok && parsedReasoning.value) {
+        updates.reasoning_level = parsedReasoning.value;
     }
 
-    const update = {
-        ...(hasTitle ? { title } : {}),
-        ...(selectedModel ? { model: selectedModel } : {}),
-        ...(selectedReasoningLevel
-            ? { reasoning_level: selectedReasoningLevel }
-            : {}),
-    };
     const { data, error } = await db
         .from("chats")
-        .update(update)
+        .update(updates)
         .eq("id", chatId)
         .select("id, title, model, reasoning_level")
         .single();
 
-    if (error || !data)
-        return void res.status(404).json({ detail: "Chat not found" });
+    // Two different failures that must not share an answer. Authorization
+    // already passed above, so a database error here is OUR fault, not a
+    // statement about what exists: reporting it as "404 Chat not found" tells
+    // the client a lie it will act on (dropping the chat from the sidebar)
+    // and hides the outage from whoever is reading the logs. The row being
+    // gone is the only real 404 — the chat was deleted between the access
+    // check and the write. DELETE below already splits them this way.
+    if (error) return void sendInternalError(res, error);
+    if (!data) return void res.status(404).json({ detail: "Chat not found" });
 
-    if (selectedModel) {
+    if (typeof updates.model === "string") {
         const profileError = await persistLastSelectedChatModel(
             userId,
-            selectedModel,
+            updates.model,
             db,
         );
         if (profileError) return void sendInternalError(res, profileError);
     }
-    if (selectedReasoningLevel) {
+    if (hasReasoning && parsedReasoning.ok && parsedReasoning.value) {
         const profileError = await persistLastSelectedReasoningLevel(
             userId,
-            selectedReasoningLevel,
+            parsedReasoning.value,
             db,
         );
         if (profileError) return void sendInternalError(res, profileError);
@@ -407,14 +605,21 @@ chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
 // DELETE /chat/:chatId
 chatRouter.delete("/:chatId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
     const { chatId } = req.params;
     const db = createServerSupabase();
-    const { error } = await db
-        .from("chats")
-        .delete()
-        .eq("id", chatId)
-        .eq("user_id", userId);
+    // container.delete keeps chat deletion at the top of the ladder: the
+    // chat's creator, or an admin of the project it lives in (who could
+    // already delete the whole project). Members and viewers get 403.
+    const access = await getAccessibleChat(chatId, userId, userEmail, db);
+    if (!access.ok)
+        return void res.status(404).json({ detail: "Chat not found" });
+    if (!can(access.projectRole, "container.delete"))
+        return void res
+            .status(403)
+            .json({ detail: "You do not have permission to delete this chat" });
 
+    const { error } = await db.from("chats").delete().eq("id", chatId);
     if (error) return void sendInternalError(res, error);
     res.status(204).send();
 });
@@ -431,14 +636,21 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
     if (!message)
         return void res.status(400).json({ detail: "message is required" });
     const db = createServerSupabase();
-    const chat = await getAccessibleChat(chatId, userId, userEmail, db);
-    if (!chat) return void res.status(404).json({ detail: "Chat not found" });
+    const access = await getAccessibleChat(chatId, userId, userEmail, db);
+    if (!access.ok)
+        return void res.status(404).json({ detail: "Chat not found" });
+    // Generating a title UPDATEs the chat row — a write, so being able to
+    // *see* the chat is not enough. Org viewers get 403 here.
+    if (!can(access.projectRole, "content.edit"))
+        return void res
+            .status(403)
+            .json({ detail: "You do not have permission to modify this chat" });
 
     try {
         const settings = await getUserModelSettings(userId, db);
         const resolution = await resolveEffectiveChatModel({
             requested: requestedModel,
-            chatModel: chat.model,
+            chatModel: access.chat.model,
             lastSelectedModel: settings.last_selected_chat_model,
             apiKeys: settings.api_keys,
             userId,
@@ -524,11 +736,26 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     let chatModel: string | null = null;
     let chatReasoningLevel: string | null = null;
     let resolvedProjectId: string | null = parsedProjectId.value.projectId;
+    // Whether the document-writing tools are offered this turn. A standalone
+    // chat writes into the caller's own library, so it keeps them; a project
+    // chat writes into the PROJECT, and that is a question about the caller's
+    // project role, never about their standing in the thread. See the long
+    // note in routes/projectChat.ts — this is the same partition on the
+    // route that serves standalone and project chats alike.
+    let allowDocumentMutation = true;
 
     if (chatId) {
-        const existing = await getAccessibleChat(chatId, userId, userEmail, db);
-        if (!existing)
+        const access = await getAccessibleChat(chatId, userId, userEmail, db);
+        if (!access.ok)
             return void res.status(404).json({ detail: "Chat not found" });
+        // Appending messages (and triggering LLM generation) writes to the
+        // chat: member+ only, mirroring the new-chat path below. Viewers
+        // can read this chat (GET) but must not be able to write into it.
+        if (!can(access.projectRole, "content.edit"))
+            return void res.status(403).json({
+                detail: "You do not have permission to modify this chat",
+            });
+        const existing = access.chat;
 
         const existingProjectId = existing.project_id ?? null;
         if (
@@ -543,6 +770,19 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         chatTitle = existing.title;
         chatModel = existing.model;
         chatReasoningLevel = existing.reasoning_level;
+        if (existingProjectId) {
+            // The role above may have come from the chat's own share list;
+            // creating documents in the project needs the project's verdict.
+            const projectAccess = await checkProjectAccess(
+                existingProjectId,
+                userId,
+                userEmail,
+                db,
+            );
+            allowDocumentMutation =
+                projectAccess.ok &&
+                can(projectAccess.projectRole, "content.edit");
+        }
     }
 
     const modelSettings = await getUserModelSettings(userId, db);
@@ -597,6 +837,11 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                 .status(projectAccess.status)
                 .json({ detail: projectAccess.detail });
 
+        const resolvedOrg = await resolveContentOrgId(db, {
+            projectId: resolvedProjectId,
+        });
+        if (!resolvedOrg.ok)
+            return void sendInternalError(res, resolvedOrg.detail);
         const { data: newChat, error } = await db
             .from("chats")
             .insert({
@@ -604,6 +849,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                 project_id: resolvedProjectId,
                 model: selectedModel,
                 reasoning_level: selectedReasoningLevel,
+                org_id: resolvedOrg.orgId,
             })
             .select("id, title")
             .single();
@@ -780,6 +1026,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             userId,
             db,
             write,
+            allowDocumentMutation,
             workflowStore,
             includeResearchTools: legalResearchUs,
             model: selectedModel,

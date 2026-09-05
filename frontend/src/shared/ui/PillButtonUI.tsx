@@ -13,7 +13,7 @@ import {
 } from "./LiquidGlassUI";
 
 export type PillButtonUITone = "black" | "white" | "blue" | "danger";
-export type PillButtonUISize = "sm" | "normal";
+export type PillButtonUISize = "xs" | "icon-xs" | "sm" | "normal";
 
 export type PillButtonUIProps = Omit<
     ButtonHTMLAttributes<HTMLButtonElement>,
@@ -33,8 +33,10 @@ const toneClasses: Record<PillButtonUITone, string> = {
 };
 
 const sizeClasses: Record<PillButtonUISize, string> = {
-    sm: "px-2 py-1 text-xs has-[svg]:pl-1 has-[img]:pl-1",
-    normal: "px-4 py-1.5 text-sm has-[svg]:pl-3 has-[img]:pl-3",
+    xs: "h-6 px-2.5 text-[11px] leading-none has-[svg]:pl-1.5 has-[img]:pl-1.5",
+    "icon-xs": "h-6 w-6 p-0 text-[11px] leading-none",
+    sm: "h-7 px-3 text-xs leading-none has-[svg]:pl-2 has-[img]:pl-2",
+    normal: "h-8 px-4 text-sm leading-none has-[svg]:pl-3 has-[img]:pl-3",
 };
 
 export function pillButtonUIClassName({

@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useState, useRef, useEffect } from "react";
-import { flushSync } from "react-dom";
-import { ArrowDown } from "lucide-react";
+import { createPortal, flushSync } from "react-dom";
+import { useRouter } from "next/navigation";
+import { ArrowDown, Pencil, Plus, Trash2, Users } from "lucide-react";
 import { UserMessage } from "./UserMessage";
 import { AssistantMessage } from "./AssistantMessage";
 import { ChatInput } from "./ChatInput";
@@ -17,8 +18,10 @@ import {
     type AssistantSidePanelTab,
 } from "./AssistantSidePanel";
 import { AssistantWorkflowModal } from "./AssistantWorkflowModal";
+import { ChatAccessModal } from "./ChatAccessModal";
 import type {
     AssistantEvent,
+    Chat,
     Citation,
     EditAnnotation,
     Message,
@@ -29,12 +32,21 @@ import {
     panelDocumentType,
 } from "../shared/types";
 import { useSidebar } from "@/app/contexts/SidebarContext";
+import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
+import { usePageChrome } from "@/app/contexts/PageChromeContext";
 import { invalidateDocxBytes } from "@/app/hooks/useFetchDocxBytes";
 import { resolvePanelDocumentVersion } from "./panelDocumentVersion";
 import { LIQUID_GLASS_TRANSLUCENT_ACTION_CLASS } from "@/app/components/ui/liquid-surface";
+import { HeaderButtonUI, HeaderButtonsUI } from "@/shared/ui/HeaderButtonsUI";
+import { HeaderActionsMenu } from "@/app/components/shared/HeaderActionsMenu";
+import { PermissionDeniedPopup } from "@/app/components/popups/PermissionDeniedPopup";
+import { WarningPopup } from "@/app/components/popups/WarningPopup";
+import { can, roleFrom } from "@/app/lib/permissions";
+import { userFacingApiError } from "@/app/lib/userFacingError";
 
 interface Props {
     chatId?: string | null;
+    chat?: Chat | null;
     chatModel?: string | null;
     chatReasoningLevel?: NonNullable<Message["reasoning"]> | null;
     messages: Message[];
@@ -50,11 +62,20 @@ interface Props {
         },
     ) => Promise<string | null>;
     cancel: () => void;
+    /**
+     * Whether the caller may write in this chat. The server serves the
+     * standing on GET /chat/:id; surfaces that know it must pass it, so a
+     * read-only caller gets the disabled composer instead of a 403 on send.
+     */
+    canSend?: boolean;
 }
 
 const ASSISTANT_PANEL_TRANSITION_MS = 500;
 const MOBILE_BREAKPOINT_PX = 768;
 const DEFAULT_ASSISTANT_BOTTOM_PADDING = 116;
+const CHAT_MESSAGE_TOP_PADDING = 76;
+const DEFAULT_MOBILE_MESSAGE_TOP_PADDING = 24;
+const DEFAULT_DESKTOP_MESSAGE_TOP_PADDING = 32;
 const SCROLL_BUTTON_INPUT_GAP = 16;
 const CHAT_INPUT_BOTTOM_OFFSET = 12;
 
@@ -67,18 +88,30 @@ function isSmallScreen() {
 
 export function ChatView({
     chatId,
+    chat,
     chatModel,
     chatReasoningLevel,
     messages,
     isResponseLoading,
     handleChat,
     cancel,
+    canSend,
 }: Props) {
+    const router = useRouter();
     const [tabs, setTabs] = useState<AssistantSidePanelTab[]>([]);
     const [activeTabId, setActiveTabId] = useState<string | null>(null);
     const [panelMounted, setPanelMounted] = useState(false);
     const [panelVisible, setPanelVisible] = useState(false);
     const [workflowModalOpen, setWorkflowModalOpen] = useState(false);
+    const [shareOpen, setShareOpen] = useState(false);
+    const [actionGate, setActionGate] = useState<{
+        action: string;
+        requiredRole: "owner" | "editor";
+    } | null>(null);
+    const [actionError, setActionError] = useState<{
+        title: string;
+        message: string;
+    } | null>(null);
     const [workflowModalInitialId, setWorkflowModalInitialId] = useState<
         string | undefined
     >();
@@ -95,6 +128,19 @@ export function ChatView({
         () => new Set(),
     );
     const { setSidebarOpen } = useSidebar();
+    const { mobileActionsContainer } = usePageChrome();
+    const {
+        chats,
+        renameChat,
+        deleteChat,
+        setCurrentChatId,
+        setNewChatMessages,
+    } = useChatHistoryContext();
+    const activeChat =
+        (chatId ? chats?.find((entry) => entry.id === chatId) : null) ??
+        chat ??
+        null;
+    const activeChatRole = activeChat ? roleFrom(activeChat) : null;
     const panelCloseTimerRef = useRef<number | null>(null);
     const activeTab = tabs.find((tab) => tab.id === activeTabId);
     const activeCitation =
@@ -497,12 +543,18 @@ export function ChatView({
 
     useEffect(() => {
         if (latestUserMessageRef.current) {
-            const headerHeight = window.innerWidth < 768 ? 56 : 0;
-            const messageGap = window.innerWidth < 768 ? 24 : 32;
+            const mobile = window.innerWidth < MOBILE_BREAKPOINT_PX;
+            const headerHeight = mobile ? 56 : 0;
+            const messageGap = mobile ? 24 : 32;
+            const addedHeaderClearance =
+                CHAT_MESSAGE_TOP_PADDING -
+                (mobile
+                    ? DEFAULT_MOBILE_MESSAGE_TOP_PADDING
+                    : DEFAULT_DESKTOP_MESSAGE_TOP_PADDING);
             const paddingBottom = DEFAULT_ASSISTANT_BOTTOM_PADDING;
             const userMessageHeight = latestUserMessageRef.current.offsetHeight;
             setMinHeight(
-                `calc(100dvh - ${headerHeight + messageGap * 3 + userMessageHeight + paddingBottom}px)`,
+                `calc(100dvh - ${headerHeight + messageGap * 3 + userMessageHeight + paddingBottom + addedHeaderClearance}px)`,
             );
         }
     }, [messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -534,7 +586,7 @@ export function ChatView({
                 const element = latestUserMessageRef.current;
                 if (!container || !element) return;
                 container.scrollTo({
-                    top: element.offsetTop - 24,
+                    top: element.offsetTop - CHAT_MESSAGE_TOP_PADDING,
                     behavior: "smooth",
                 });
             });
@@ -569,7 +621,9 @@ export function ChatView({
                     const element = latestUserMessageRef.current;
                     if (container && element) {
                         container.scrollTo({
-                            top: element.offsetTop - 24,
+                            top:
+                                element.offsetTop -
+                                CHAT_MESSAGE_TOP_PADDING,
                             behavior: "instant",
                         });
                     }
@@ -593,6 +647,112 @@ export function ChatView({
             document.body.style.overflow = "unset";
         };
     }, [panelMounted]);
+
+    const handleNewChat = () => {
+        cancel();
+        setCurrentChatId(null);
+        setNewChatMessages(null);
+        router.push("/assistant");
+    };
+
+    const handleShareChat = () => {
+        if (!activeChat) return;
+        if (!can(activeChatRole, "access.manage")) {
+            setActionGate({
+                action: "share this chat",
+                requiredRole: "owner",
+            });
+            return;
+        }
+        setShareOpen(true);
+    };
+
+    const handleRenameChat = async () => {
+        if (!activeChat) return;
+        if (!can(activeChatRole, "content.edit")) {
+            setActionGate({
+                action: "rename this chat",
+                requiredRole: "editor",
+            });
+            return;
+        }
+        const title = window.prompt(
+            "Rename chat",
+            activeChat.title?.trim() || "Untitled chat",
+        );
+        if (!title?.trim()) return;
+        try {
+            await renameChat(activeChat.id, title.trim());
+        } catch (error) {
+            setActionError({
+                title: "Chat not renamed",
+                message: userFacingApiError(
+                    error,
+                    "The chat could not be renamed. Please try again.",
+                ),
+            });
+        }
+    };
+
+    const handleDeleteChat = async () => {
+        if (!activeChat) return;
+        if (!can(activeChatRole, "container.delete")) {
+            setActionGate({
+                action: "delete this chat",
+                requiredRole: "owner",
+            });
+            return;
+        }
+        try {
+            await deleteChat(activeChat.id);
+            router.push("/assistant");
+        } catch (error) {
+            setActionError({
+                title: "Chat not deleted",
+                message: userFacingApiError(
+                    error,
+                    "The chat could not be deleted. Please try again.",
+                ),
+            });
+        }
+    };
+
+    const renderChatHeaderActions = () => (
+        <HeaderButtonsUI className="pointer-events-auto">
+            <HeaderButtonUI
+                iconOnly
+                aria-label="New chat"
+                title="New chat"
+                onClick={handleNewChat}
+            >
+                <Plus className="h-4 w-4" />
+            </HeaderButtonUI>
+            <HeaderActionsMenu
+                title="Chat actions"
+                items={[
+                    {
+                        label: "Share",
+                        icon: Users,
+                        onSelect: handleShareChat,
+                        disabled: !activeChat,
+                    },
+                    {
+                        label: "Rename",
+                        icon: Pencil,
+                        onSelect: () => void handleRenameChat(),
+                        disabled: !activeChat,
+                    },
+                    {
+                        label: "Delete",
+                        icon: Trash2,
+                        onSelect: () => void handleDeleteChat(),
+                        disabled: !activeChat,
+                        variant: "danger",
+                    },
+                ]}
+            />
+        </HeaderButtonsUI>
+    );
 
     const rawActiveInput = (() => {
         for (
@@ -633,6 +793,22 @@ export function ChatView({
         <div className="h-full w-full flex relative">
             {/* Chat column */}
             <div className="flex min-w-0 flex-col h-full flex-1 relative">
+                <div
+                    data-slot="chat-header-actions"
+                    className="pointer-events-none absolute right-4 top-4.5 z-30 hidden md:block md:right-8"
+                >
+                    {renderChatHeaderActions()}
+                </div>
+
+                {mobileActionsContainer
+                    ? createPortal(
+                          <div className="flex min-w-0 items-center justify-end overflow-visible py-2 -my-2">
+                              {renderChatHeaderActions()}
+                          </div>,
+                          mobileActionsContainer,
+                      )
+                    : null}
+
                 {/* Scrollable messages */}
                 <div
                     ref={messagesContainerRef}
@@ -640,8 +816,12 @@ export function ChatView({
                     style={{ scrollbarGutter: "stable both-edges" }}
                 >
                     <div
-                        className="w-full max-w-4xl mx-auto px-6 pt-6 md:px-8 md:pt-8 min-h-full flex flex-col relative"
-                        style={{ paddingBottom: messagesBottomPadding }}
+                        data-slot="chat-messages-content"
+                        className="w-full max-w-4xl mx-auto px-6 md:px-8 min-h-full flex flex-col relative"
+                        style={{
+                            paddingTop: CHAT_MESSAGE_TOP_PADDING,
+                            paddingBottom: messagesBottomPadding,
+                        }}
                     >
                         {!messagesVisible && (
                             <div className="space-y-6 md:space-y-8 w-full">
@@ -839,6 +1019,7 @@ export function ChatView({
                             ) : (
                                 <ChatInput
                                     ref={chatInputRef}
+                                    canSend={canSend}
                                     onSubmit={handleChat}
                                     onCancel={cancel}
                                     isLoading={isResponseLoading}
@@ -869,6 +1050,28 @@ export function ChatView({
                 onClose={() => setWorkflowModalOpen(false)}
                 onSelect={() => setWorkflowModalOpen(false)}
                 initialWorkflowId={workflowModalInitialId}
+            />
+
+            {shareOpen && activeChat ? (
+                <ChatAccessModal
+                    open={shareOpen}
+                    chat={activeChat}
+                    onClose={() => setShareOpen(false)}
+                />
+            ) : null}
+
+            <PermissionDeniedPopup
+                open={!!actionGate}
+                action={actionGate?.action}
+                requiredRole={actionGate?.requiredRole}
+                onClose={() => setActionGate(null)}
+            />
+
+            <WarningPopup
+                open={!!actionError}
+                title={actionError?.title ?? "Chat action failed"}
+                message={actionError?.message ?? null}
+                onClose={() => setActionError(null)}
             />
 
             {panelMounted && (

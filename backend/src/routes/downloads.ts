@@ -43,7 +43,7 @@ downloadsRouter.get("/:token", requireAuth, async (req, res) => {
 
     const { data: doc } = await db
         .from("documents")
-        .select("id, user_id, project_id, workflow_id")
+        .select("id, user_id, project_id, org_id, workflow_id")
         .eq("id", version.document_id)
         .single();
     if (!doc) return void res.status(404).json({ detail: "File not found" });

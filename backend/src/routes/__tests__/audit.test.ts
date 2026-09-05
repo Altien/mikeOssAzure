@@ -120,9 +120,10 @@ describe("parseQuery", () => {
 // ---------------------------------------------------------------------------
 
 /**
- * Chainable Supabase mock. `projects` select responses are keyed by whether the
- * query used .eq (owned) or .contains (shared). The audit_events builder
- * records the .or / .eq filter it was given so tests can assert scoping.
+ * Chainable Supabase mock.
+ *
+ * `owned` answers the `projects` lookup (.eq on user_id) and `shared` answers
+ * the `project_access_grants` lookup, which is where direct sharing lives.
  */
 function makeDb(
     owned: string[],
@@ -136,25 +137,33 @@ function makeDb(
         order?: [string, { ascending: boolean; nullsFirst: boolean }];
         ilike?: [string, string];
         profileUserIds?: string[];
+        grantEmail?: unknown;
     } = { eq: [] };
 
     function projectsBuilder() {
-        let mode: "owned" | "shared" = "owned";
         const b: any = {
             select: () => b,
-            eq: () => {
-                mode = "owned";
-                return b;
-            },
-            contains: () => {
-                mode = "shared";
-                return b;
-            },
+            eq: () => b,
             then: (resolve: (v: { data: { id: string }[] }) => unknown) =>
                 Promise.resolve({
-                    data: (mode === "owned" ? owned : shared).map((id) => ({
-                        id,
-                    })),
+                    data: owned.map((id) => ({ id })),
+                }).then(resolve),
+        };
+        return b;
+    }
+
+    function grantsBuilder() {
+        const b: any = {
+            select: () => b,
+            eq: (column: string, value: unknown) => {
+                if (column === "email") calls.grantEmail = value;
+                return b;
+            },
+            then: (
+                resolve: (v: { data: { project_id: string }[] }) => unknown,
+            ) =>
+                Promise.resolve({
+                    data: shared.map((id) => ({ project_id: id })),
                 }).then(resolve),
         };
         return b;
@@ -208,6 +217,7 @@ function makeDb(
     const db = {
         from(table: string) {
             if (table === "projects") return projectsBuilder();
+            if (table === "project_access_grants") return grantsBuilder();
             if (table === "user_profiles") return profilesBuilder();
             return auditBuilder();
         },
@@ -244,6 +254,18 @@ describe("queryEvents visibility scoping", () => {
             "u1@example.com",
         );
         expect([...both].sort()).toEqual(["p1", "p2", "p3"]);
+    });
+
+    it("looks direct sharing up by normalized email in the grant table", async () => {
+        const { db, calls } = makeDb([], ["p-shared"]);
+        await accessibleProjectIds(db, "u1", " U1@Example.com ");
+        expect(calls.grantEmail).toBe("u1@example.com");
+    });
+
+    it("admits a direct grant holder", async () => {
+        const { db } = makeDb([], ["p-granted"]);
+        const visible = await accessibleProjectIds(db, "u1", "u1@example.com");
+        expect(visible).toContain("p-granted");
     });
 
     it("applies categorical filters and the requested sort", async () => {

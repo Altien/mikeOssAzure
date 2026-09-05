@@ -35,6 +35,8 @@ import { EmptyState } from "@/app/components/ui/empty-state";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { ChatSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import type { Chat } from "@/app/components/shared/types";
+import { can, roleFrom } from "@/app/lib/permissions";
+import type { OwnerGate } from "./ProjectWorkspace";
 import { formatDate } from "./ProjectPageParts";
 
 function creatorLabel(chat: Chat, currentUserId?: string | null) {
@@ -79,7 +81,7 @@ export function ProjectAssistantTable({
     onOpenChat: (chatId: string) => void;
     onDeleteChat: (chat: Chat) => Promise<void> | void;
     onDeleteSelectedChats: () => Promise<void> | void;
-    onOwnerOnlyAction: (action: string) => void;
+    onOwnerOnlyAction: (action: OwnerGate) => void;
     submitChatRename: (chatId: string) => Promise<void> | void;
     setSelectedChatIds: Dispatch<SetStateAction<string[]>>;
     setRenamingChatId: Dispatch<SetStateAction<string | null>>;
@@ -248,7 +250,6 @@ export function ProjectAssistantTable({
                                 tone="black"
                                 size="sm"
                                 onClick={onCreateChat}
-                                className="px-3"
                             >
                                 Create
                             </PillButton>
@@ -280,15 +281,30 @@ export function ProjectAssistantTable({
                                         appliesToSelection
                                             ? undefined
                                             : () => {
+                                                  // Renaming is content.edit
+                                                  // (member+) judged on the
+                                                  // SERVED role, not on "did
+                                                  // I create this row": a
+                                                  // project admin renames a
+                                                  // colleague's chat, and a
+                                                  // viewer cannot rename one
+                                                  // they may only read.
                                                   if (
-                                                      currentUserId &&
-                                                      chat.user_id !== currentUserId
+                                                      !can(
+                                                          roleFrom(chat),
+                                                          "content.edit",
+                                                      )
                                                   ) {
-                                                      onOwnerOnlyAction("rename this chat");
+                                                      onOwnerOnlyAction({
+                                                          action: "rename this chat",
+                                                          requiredRole:
+                                                              "editor",
+                                                      });
                                                       return;
                                                   }
                                                   setRenameChatValue(
-                                                      chat.title ?? "Untitled Chat",
+                                                      chat.title ??
+                                                          "Untitled Chat",
                                                   );
                                                   setRenamingChatId(chat.id);
                                               }
@@ -372,11 +388,22 @@ export function ProjectAssistantTable({
                                 <RowActions
                                     onView={() => onOpenChat(chat.id)}
                                     onRename={() => {
+                                        // Renaming is content.edit (member+)
+                                        // judged on the SERVED role, not on
+                                        // "did I create this row": a project
+                                        // admin renames a colleague's chat,
+                                        // and a viewer cannot rename one they
+                                        // may only read.
                                         if (
-                                            currentUserId &&
-                                            chat.user_id !== currentUserId
+                                            !can(
+                                                roleFrom(chat),
+                                                "content.edit",
+                                            )
                                         ) {
-                                            onOwnerOnlyAction("rename this chat");
+                                            onOwnerOnlyAction({
+                                                action: "rename this chat",
+                                                requiredRole: "editor",
+                                            });
                                             return;
                                         }
                                         setRenameChatValue(

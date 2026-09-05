@@ -365,32 +365,91 @@ export async function buildUserAccountExport(
             query.eq("user_id", userId).order("created_at", { ascending: true }),
         ),
         userEmail
-            ? selectAll(db, "projects", (query) =>
-                  query
-                      .filter(
-                          "shared_with",
-                          "cs",
-                          JSON.stringify([userEmail.trim().toLowerCase()]),
-                      )
-                      .neq("user_id", userId)
-                      .order("created_at", { ascending: true }),
-                  "id, user_id, name, cm_number, created_at, updated_at",
-              )
+            ? (async () => {
+                  // Shared projects come from the grant table so the export
+                  // lists exactly the projects the caller can actually reach.
+                  const grantRows = await selectAll(
+                      db,
+                      "project_access_grants",
+                      (query) =>
+                          query.eq(
+                              "email",
+                              userEmail.trim().toLowerCase(),
+                          ),
+                      "project_id",
+                  );
+                  const projectIds = [
+                      ...new Set(
+                          grantRows
+                              .map((row) => row.project_id as string | null)
+                              .filter((id): id is string => !!id),
+                      ),
+                  ];
+                  if (projectIds.length === 0) return [];
+                  return selectAll(db, "projects", (query) =>
+                      query
+                          .in("id", projectIds)
+                          .neq("user_id", userId)
+                          .order("created_at", { ascending: true }),
+                      "id, user_id, name, cm_number, created_at, updated_at",
+                  );
+              })()
             : Promise.resolve([]),
         userEmail
-            ? selectAll(db, "tabular_reviews", (query) =>
-                  query
-                      .filter("shared_with", "cs", JSON.stringify([userEmail]))
-                      .neq("user_id", userId)
-                      .order("created_at", { ascending: true }),
-                  "id, user_id, project_id, title, practice, created_at, updated_at",
-              )
+            ? (async () => {
+                  const grantRows = await selectAll(
+                      db,
+                      "tabular_review_access_grants",
+                      (query) =>
+                          query.eq(
+                              "email",
+                              userEmail.trim().toLowerCase(),
+                          ),
+                      "tabular_review_id",
+                  );
+                  const reviewIds = [
+                      ...new Set(
+                          grantRows
+                              .map(
+                                  (row) =>
+                                      row.tabular_review_id as string | null,
+                              )
+                              .filter((id): id is string => !!id),
+                      ),
+                  ];
+                  if (reviewIds.length === 0) return [];
+                  return selectAll(db, "tabular_reviews", (query) =>
+                      query
+                          .in("id", reviewIds)
+                          .neq("user_id", userId)
+                          .order("created_at", { ascending: true }),
+                      "id, user_id, project_id, title, practice, created_at, updated_at",
+                  );
+              })()
             : Promise.resolve([]),
         selectAll(db, "audit_events", (query) =>
             query
                 .eq("user_id", userId)
                 .order("created_at", { ascending: true }),
         ),
+    ]);
+
+    // Organization membership + the orgs the user belongs to and the
+    // invitations addressed to them, for a complete GDPR-style export of
+    // their multi-tenant footprint.
+    const orgMemberships = await selectAll(db, "org_members", (query) =>
+        query.eq("user_id", userId).order("created_at", { ascending: true }),
+    );
+    const orgIds = idsFrom(orgMemberships, "org_id");
+    const [organizations, orgInvitations] = await Promise.all([
+        selectByIds(db, "organizations", "id", orgIds),
+        userEmail
+            ? selectAll(db, "org_invitations", (query) =>
+                  query
+                      .eq("email", userEmail.trim().toLowerCase())
+                      .order("created_at", { ascending: true }),
+              )
+            : Promise.resolve([]),
     ]);
 
     const projectIds = idsFrom(projects);
@@ -417,6 +476,9 @@ export async function buildUserAccountExport(
         profile,
         api_keys: apiKeys,
         router_models: routerModels,
+        organizations,
+        org_members: orgMemberships,
+        org_invitations: orgInvitations,
         projects,
         project_subfolders: folders,
         documents,

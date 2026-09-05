@@ -9,6 +9,8 @@ maybeDescribe("Supabase projects-overview pagination", () => {
     let ownerId = "";
     let ownerEmail = "";
     let otherUserId = "";
+    const orgId = crypto.randomUUID();
+    const orgProjectId = crypto.randomUUID();
     const ownedSharedProjectId = crypto.randomUUID();
     const myProjectIds = Array.from({ length: 25 }, () => crypto.randomUUID());
     const sharedProjectIds = Array.from({ length: 5 }, () => crypto.randomUUID());
@@ -22,6 +24,7 @@ maybeDescribe("Supabase projects-overview pagination", () => {
 
         const suffix = Date.now();
         ownerEmail = `pagination-owner-${suffix}@test.local`;
+        const otherUserEmail = `pagination-other-${suffix}@test.local`;
         const owner = await admin.auth.admin.createUser({
             email: ownerEmail,
             password: "StackTest1!",
@@ -33,7 +36,7 @@ maybeDescribe("Supabase projects-overview pagination", () => {
         ownerId = owner.data.user.id;
 
         const otherUser = await admin.auth.admin.createUser({
-            email: `pagination-other-${suffix}@test.local`,
+            email: otherUserEmail,
             password: "StackTest1!",
             email_confirm: true,
         });
@@ -44,6 +47,19 @@ maybeDescribe("Supabase projects-overview pagination", () => {
             );
         }
         otherUserId = otherUser.data.user.id;
+
+        const organization = await admin.from("organizations").insert({
+            id: orgId,
+            name: "Pagination Test Firm",
+            created_by: ownerId,
+        });
+        if (organization.error) throw organization.error;
+        const membership = await admin.from("org_members").insert({
+            org_id: orgId,
+            user_id: ownerId,
+            role: "admin",
+        });
+        if (membership.error) throw membership.error;
 
         const myProjects = await admin.from("projects").insert(
             myProjectIds.map((id) => ({
@@ -62,7 +78,6 @@ maybeDescribe("Supabase projects-overview pagination", () => {
             user_id: ownerId,
             name: "Owned Collaborative Project",
             practice: "Litigation",
-            shared_with: [`pagination-other-${suffix}@test.local`],
             created_at: tiedCreatedAt,
             updated_at: tiedCreatedAt,
         });
@@ -74,12 +89,38 @@ maybeDescribe("Supabase projects-overview pagination", () => {
                 user_id: otherUserId,
                 name: "Shared Needle",
                 practice: "Corporate",
-                shared_with: [ownerEmail],
                 created_at: tiedCreatedAt,
                 updated_at: tiedCreatedAt,
             })),
         );
         if (sharedProjects.error) throw sharedProjects.error;
+
+        const orgProject = await admin.from("projects").insert({
+            id: orgProjectId,
+            user_id: ownerId,
+            org_id: orgId,
+            name: "Firm Matter",
+            practice: "Litigation",
+            created_at: tiedCreatedAt,
+            updated_at: tiedCreatedAt,
+        });
+        if (orgProject.error) throw orgProject.error;
+
+        const grants = await admin.from("project_access_grants").insert([
+            {
+                project_id: ownedSharedProjectId,
+                email: otherUserEmail,
+                role: "editor",
+                created_by: ownerId,
+            },
+            ...sharedProjectIds.map((projectId) => ({
+                project_id: projectId,
+                email: ownerEmail,
+                role: "editor",
+                created_by: otherUserId,
+            })),
+        ]);
+        if (grants.error) throw grants.error;
     });
 
     afterAll(async () => {
@@ -87,6 +128,8 @@ maybeDescribe("Supabase projects-overview pagination", () => {
         await admin.from("projects").delete().in("id", myProjectIds);
         await admin.from("projects").delete().in("id", sharedProjectIds);
         await admin.from("projects").delete().eq("id", ownedSharedProjectId);
+        await admin.from("projects").delete().eq("id", orgProjectId);
+        await admin.from("organizations").delete().eq("id", orgId);
         if (otherUserId) await admin.auth.admin.deleteUser(otherUserId);
         if (ownerId) await admin.auth.admin.deleteUser(ownerId);
     });
@@ -234,9 +277,36 @@ maybeDescribe("Supabase projects-overview pagination", () => {
         );
 
         expect(collaborativeIds).toEqual(
-            new Set([...sharedProjectIds, ownedSharedProjectId]),
+            new Set([...sharedProjectIds, ownedSharedProjectId, orgProjectId]),
         );
         expect(privateIds).toEqual(new Set(myProjectIds));
+        expect(
+            (collaborative.data ?? []).find(
+                (row) => row.id === ownedSharedProjectId,
+            ),
+        ).toMatchObject({
+            org_id: null,
+            access_scope: "shared",
+            organization_name: null,
+        });
+        expect(
+            (privateProjects.data ?? []).find(
+                (row) => row.id === myProjectIds[0],
+            ),
+        ).toMatchObject({
+            org_id: null,
+            access_scope: "private",
+            organization_name: null,
+        });
+        expect(
+            (collaborative.data ?? []).find(
+                (row) => row.id === orgProjectId,
+            ),
+        ).toMatchObject({
+            org_id: orgId,
+            access_scope: "organization",
+            organization_name: "Pagination Test Firm",
+        });
         expect(
             new Set(
                 (collaborativeIdRows.data ?? []).map(

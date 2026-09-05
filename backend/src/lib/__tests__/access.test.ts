@@ -1,21 +1,41 @@
 import { describe, expect, it } from "vitest";
 import {
     checkProjectAccess,
+    checkWorkflowAccess,
+    creatorScopedAllowed,
+    ensureChatAccess,
     ensureDocAccess,
     ensureReviewAccess,
     filterAccessibleDocumentIds,
     listAccessibleProjectIds,
+    orgRoleToProjectRole,
+    resolveContentOrgId,
 } from "../access";
 
 type Row = Record<string, unknown>;
 
-function makeDb(tables: Record<string, Row[]>) {
+function makeDb(
+    tables: Record<string, Row[]>,
+    options: { selectErrors?: Record<string, string> } = {},
+) {
     return {
         from(table: string) {
             let rows = [...(tables[table] ?? [])];
+            const failure = options.selectErrors?.[table]
+                ? { message: options.selectErrors[table] }
+                : null;
             const query = {
                 select: () => query,
+                order: () => query,
+                limit: (n: number) => {
+                    rows = rows.slice(0, n);
+                    return query;
+                },
                 eq: (column: string, value: unknown) => {
+                    rows = rows.filter((row) => row[column] === value);
+                    return query;
+                },
+                is: (column: string, value: unknown) => {
                     rows = rows.filter((row) => row[column] === value);
                     return query;
                 },
@@ -39,12 +59,26 @@ function makeDb(tables: Record<string, Row[]>) {
                     });
                     return query;
                 },
-                single: async () => ({ data: rows[0] ?? null, error: null }),
-                maybeSingle: async () => ({ data: rows[0] ?? null, error: null }),
+                single: async () =>
+                    failure
+                        ? { data: null, error: failure }
+                        : { data: rows[0] ?? null, error: null },
+                maybeSingle: async () =>
+                    failure
+                        ? { data: null, error: failure }
+                        : { data: rows[0] ?? null, error: null },
                 then: (
-                    resolve: (value: { data: Row[]; error: null }) => unknown,
+                    resolve: (value: {
+                        data: Row[] | null;
+                        error: { message: string } | null;
+                    }) => unknown,
                     reject?: (reason: unknown) => unknown,
-                ) => Promise.resolve({ data: rows, error: null }).then(resolve, reject),
+                ) =>
+                    Promise.resolve(
+                        failure
+                            ? { data: null, error: failure }
+                            : { data: rows, error: null },
+                    ).then(resolve, reject),
             };
             return query;
         },
@@ -54,20 +88,23 @@ function makeDb(tables: Record<string, Row[]>) {
 describe("access helpers", () => {
     const db = makeDb({
         projects: [
-            { id: "own-project", user_id: "owner", shared_with: [] },
+            { id: "own-project", user_id: "owner", org_id: null },
+            { id: "granted-project", user_id: "other-owner", org_id: null },
+            { id: "private-project", user_id: "other-owner", org_id: null },
+        ],
+        project_access_grants: [
             {
-                id: "shared-project",
-                user_id: "other-owner",
-                shared_with: ["reviewer@example.com"],
+                project_id: "granted-project",
+                email: "reviewer@example.com",
+                role: "editor",
             },
-            { id: "private-project", user_id: "other-owner", shared_with: [] },
         ],
         documents: [
             { id: "own-doc", user_id: "owner", project_id: null },
             {
-                id: "shared-doc",
+                id: "granted-doc",
                 user_id: "other-owner",
-                project_id: "shared-project",
+                project_id: "granted-project",
             },
             {
                 id: "private-doc",
@@ -79,34 +116,74 @@ describe("access helpers", () => {
             {
                 workflow_id: "shared-workflow",
                 shared_with_email: "reviewer@example.com",
-                allow_edit: false,
+                role: "viewer",
             },
             {
                 workflow_id: "editable-workflow",
                 shared_with_email: "reviewer@example.com",
-                allow_edit: true,
+                role: "editor",
+            },
+        ],
+        workflows: [
+            {
+                id: "shared-workflow",
+                user_id: "other-owner",
+                org_id: null,
+            },
+            {
+                id: "editable-workflow",
+                user_id: "other-owner",
+                org_id: null,
+            },
+        ],
+        tabular_review_access_grants: [
+            {
+                tabular_review_id: "review-direct",
+                email: "reviewer@example.com",
+                role: "editor",
             },
         ],
     });
 
-    it("allows project owners", async () => {
-        await expect(
-            checkProjectAccess("own-project", "owner", "owner@example.com", db),
-        ).resolves.toMatchObject({ ok: true, isOwner: true });
+    it("makes the project's creator an owner", async () => {
+        const access = await checkProjectAccess(
+            "own-project",
+            "owner",
+            "owner@example.com",
+            db,
+        );
+        expect(access).toMatchObject({
+            ok: true,
+            isCreator: true,
+            projectRole: "owner",
+        });
     });
 
-    it("allows shared project access case-insensitively", async () => {
-        await expect(
-            checkProjectAccess(
-                "shared-project",
-                "reviewer",
-                " REVIEWER@EXAMPLE.COM ",
-                db,
-            ),
-        ).resolves.toMatchObject({ ok: true, isOwner: false });
+    it("gives a direct grantee exactly the role they were granted", async () => {
+        const access = await checkProjectAccess(
+            "granted-project",
+            "reviewer",
+            "reviewer@example.com",
+            db,
+        );
+        expect(access).toMatchObject({
+            ok: true,
+            isCreator: false,
+            projectRole: "editor",
+        });
     });
 
-    it("denies private project access", async () => {
+    it("matches grant emails case-insensitively", async () => {
+        const access = await checkProjectAccess(
+            "granted-project",
+            "reviewer",
+            "  Reviewer@Example.com ",
+            db,
+        );
+        expect(access.ok).toBe(true);
+    });
+
+    it("denies a project the caller has no route into", async () => {
         await expect(
             checkProjectAccess(
                 "private-project",
@@ -117,7 +194,7 @@ describe("access helpers", () => {
         ).resolves.toEqual({ ok: false });
     });
 
-    it("allows document owners and shared-project readers", async () => {
+    it("allows document creators and readers of the containing project", async () => {
         await expect(
             ensureDocAccess(
                 { user_id: "owner", project_id: null },
@@ -125,16 +202,23 @@ describe("access helpers", () => {
                 "owner@example.com",
                 db,
             ),
-        ).resolves.toMatchObject({ ok: true, isOwner: true });
-
+        ).resolves.toMatchObject({ ok: true, projectRole: "owner" });
         await expect(
             ensureDocAccess(
-                { user_id: "other-owner", project_id: "shared-project" },
+                { user_id: "other-owner", project_id: "granted-project" },
                 "reviewer",
                 "reviewer@example.com",
                 db,
             ),
-        ).resolves.toMatchObject({ ok: true, isOwner: false });
+        ).resolves.toMatchObject({ ok: true, projectRole: "editor" });
+        await expect(
+            ensureDocAccess(
+                { user_id: "other-owner", project_id: "private-project" },
+                "reviewer",
+                "reviewer@example.com",
+                db,
+            ),
+        ).resolves.toEqual({ ok: false });
     });
 
     it("applies workflow share edit permissions to workflow assets", async () => {
@@ -149,7 +233,7 @@ describe("access helpers", () => {
                 " REVIEWER@EXAMPLE.COM ",
                 db,
             ),
-        ).resolves.toEqual({ ok: true, isOwner: false, canEdit: false });
+        ).resolves.toMatchObject({ ok: true, projectRole: "viewer" });
         await expect(
             ensureDocAccess(
                 {
@@ -161,38 +245,586 @@ describe("access helpers", () => {
                 "reviewer@example.com",
                 db,
             ),
-        ).resolves.toEqual({ ok: true, isOwner: false, canEdit: true });
-    });
-
-    it("filters user-supplied document IDs to accessible documents only", async () => {
-        await expect(
-            filterAccessibleDocumentIds(
-                ["own-doc", "shared-doc", "private-doc", "missing-doc"],
-                "reviewer",
-                "reviewer@example.com",
-                db,
-            ),
-        ).resolves.toEqual(["shared-doc"]);
-    });
-
-    it("lists own and directly shared projects", async () => {
-        await expect(
-            listAccessibleProjectIds("owner", " Reviewer@Example.com ", db),
-        ).resolves.toEqual(expect.arrayContaining(["own-project", "shared-project"]));
+        ).resolves.toMatchObject({ ok: true, projectRole: "editor" });
     });
 
     it("allows direct review sharing without project access", async () => {
         await expect(
             ensureReviewAccess(
                 {
+                    id: "review-direct",
                     user_id: "other-owner",
                     project_id: null,
-                    shared_with: ["Reviewer@Example.com"],
                 },
                 "reviewer",
                 "reviewer@example.com",
                 db,
             ),
-        ).resolves.toMatchObject({ ok: true, isOwner: false });
+        ).resolves.toMatchObject({ ok: true, projectRole: "editor" });
+    });
+
+    it("does not grant organization access to a standalone review", async () => {
+        const orgDb = makeDb({
+            org_members: [
+                { org_id: "org-1", user_id: "reviewer", role: "admin" },
+            ],
+            tabular_review_access_grants: [],
+        });
+        await expect(
+            ensureReviewAccess(
+                {
+                    id: "legacy-org-review",
+                    user_id: "other-owner",
+                    project_id: null,
+                    org_id: "org-1",
+                },
+                "reviewer",
+                "reviewer@example.com",
+                orgDb,
+            ),
+        ).resolves.toEqual({ ok: false });
+    });
+
+    it("lists projects reached by creation and by grant", async () => {
+        await expect(
+            listAccessibleProjectIds("owner", "owner@example.com", db),
+        ).resolves.toEqual(["own-project"]);
+        await expect(
+            listAccessibleProjectIds("reviewer", "reviewer@example.com", db),
+        ).resolves.toEqual(["granted-project"]);
+    });
+
+    it("filters user-supplied document IDs to accessible documents only", async () => {
+        await expect(
+            filterAccessibleDocumentIds(
+                ["own-doc", "granted-doc", "private-doc"],
+                "reviewer",
+                "reviewer@example.com",
+                db,
+            ),
+        ).resolves.toEqual(["granted-doc"]);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Organization inheritance
+// ---------------------------------------------------------------------------
+
+describe("org role inheritance", () => {
+    it("maps org Admin to Owner and org Member to Editor", () => {
+        expect(orgRoleToProjectRole("admin")).toBe("owner");
+        expect(orgRoleToProjectRole("member")).toBe("editor");
+    });
+
+    const db = makeDb({
+        projects: [
+            { id: "org-project", user_id: "founder", org_id: "org-1" },
+            { id: "other-org-project", user_id: "stranger", org_id: "org-2" },
+            { id: "personal-project", user_id: "founder", org_id: null },
+        ],
+        org_members: [
+            { org_id: "org-1", user_id: "founder", role: "admin" },
+            { org_id: "org-1", user_id: "boss", role: "admin" },
+            { org_id: "org-1", user_id: "staffer", role: "member" },
+            { org_id: "org-2", user_id: "outsider", role: "admin" },
+        ],
+        project_access_grants: [
+            // A viewer grant handed to people who already have stronger
+            // standing through the org — it must not demote them.
+            { project_id: "org-project", email: "boss@firm.example", role: "viewer" },
+            {
+                project_id: "org-project",
+                email: "staffer@firm.example",
+                role: "viewer",
+            },
+            // An outside individual: no org membership at all.
+            {
+                project_id: "org-project",
+                email: "counsel@outside.example",
+                role: "owner",
+            },
+        ],
+        documents: [],
+    });
+
+    it("inherits Owner for an org Admin", async () => {
+        await expect(
+            checkProjectAccess("org-project", "boss", "nobody@firm.example", db),
+        ).resolves.toMatchObject({
+            ok: true,
+            isCreator: false,
+            orgRole: "admin",
+            projectRole: "owner",
+        });
+    });
+
+    it("inherits Editor for a plain org Member", async () => {
+        await expect(
+            checkProjectAccess(
+                "org-project",
+                "staffer",
+                "nobody@firm.example",
+                db,
+            ),
+        ).resolves.toMatchObject({
+            ok: true,
+            orgRole: "member",
+            projectRole: "editor",
+        });
+    });
+
+    it("keeps Admin as Owner while applying overrides to Members", async () => {
+        const overrideDb = makeDb({
+            projects: [
+                { id: "overridden", user_id: "founder", org_id: "org-1" },
+            ],
+            org_members: [
+                { org_id: "org-1", user_id: "founder", role: "admin" },
+                { org_id: "org-1", user_id: "admin-editor", role: "admin" },
+                { org_id: "org-1", user_id: "member-viewer", role: "member" },
+                { org_id: "org-1", user_id: "member-denied", role: "member" },
+            ],
+            project_org_access_overrides: [
+                {
+                    project_id: "overridden",
+                    org_id: "org-1",
+                    user_id: "admin-editor",
+                    role: "editor",
+                },
+                {
+                    project_id: "overridden",
+                    org_id: "org-1",
+                    user_id: "member-viewer",
+                    role: "viewer",
+                },
+                {
+                    project_id: "overridden",
+                    org_id: "org-1",
+                    user_id: "member-denied",
+                    role: "deny",
+                },
+            ],
+            workflows: [
+                { id: "workflow-overridden", user_id: "founder", org_id: "org-1" },
+            ],
+            workflow_org_access_overrides: [
+                {
+                    workflow_id: "workflow-overridden",
+                    org_id: "org-1",
+                    user_id: "admin-editor",
+                    role: "deny",
+                },
+            ],
+        });
+        await expect(
+            checkProjectAccess("overridden", "admin-editor", null, overrideDb),
+        ).resolves.toMatchObject({
+            ok: true,
+            orgRole: "admin",
+            projectRole: "owner",
+        });
+        await expect(
+            checkWorkflowAccess(
+                "workflow-overridden",
+                "admin-editor",
+                null,
+                overrideDb,
+            ),
+        ).resolves.toMatchObject({
+            ok: true,
+            orgRole: "admin",
+            projectRole: "owner",
+        });
+        await expect(
+            checkProjectAccess("overridden", "member-viewer", null, overrideDb),
+        ).resolves.toMatchObject({ ok: true, projectRole: "viewer" });
+        await expect(
+            checkProjectAccess("overridden", "member-denied", null, overrideDb),
+        ).resolves.toEqual({ ok: false });
+    });
+
+    it("ignores direct grants for organization projects", async () => {
+        // Org Admin + viewer direct grant stays Owner.
+        await expect(
+            checkProjectAccess("org-project", "boss", "boss@firm.example", db),
+        ).resolves.toMatchObject({ projectRole: "owner" });
+        // Org Member + viewer direct grant stays Editor.
+        await expect(
+            checkProjectAccess(
+                "org-project",
+                "staffer",
+                "staffer@firm.example",
+                db,
+            ),
+        ).resolves.toMatchObject({ projectRole: "editor" });
+    });
+
+    it("does not let a direct grant promote an organization member", async () => {
+        await expect(
+            checkProjectAccess(
+                "org-project",
+                "staffer",
+                "counsel@outside.example",
+                db,
+            ),
+        ).resolves.toMatchObject({ projectRole: "editor" });
+    });
+
+    it("denies an outsider despite a legacy direct grant", async () => {
+        const access = await checkProjectAccess(
+            "org-project",
+            "outside-counsel",
+            "counsel@outside.example",
+            db,
+        );
+        expect(access).toEqual({ ok: false });
+    });
+
+    it("isolates users across orgs (cross-tenant denial)", async () => {
+        await expect(
+            checkProjectAccess(
+                "org-project",
+                "outsider",
+                "outsider@elsewhere.example",
+                db,
+            ),
+        ).resolves.toEqual({ ok: false });
+    });
+
+    it("keeps personal projects out of every org's reach", async () => {
+        await expect(
+            checkProjectAccess(
+                "personal-project",
+                "boss",
+                "boss@firm.example",
+                db,
+            ),
+        ).resolves.toEqual({ ok: false });
+    });
+
+    it("inherits only the project verdict when a document belongs to a project", async () => {
+        const crossDb = makeDb({
+            projects: [
+                { id: "p", user_id: "someone", org_id: "org-2" },
+            ],
+            org_members: [
+                { org_id: "org-1", user_id: "u", role: "admin" },
+                { org_id: "org-2", user_id: "u", role: "member" },
+            ],
+            project_access_grants: [],
+        });
+        await expect(
+            ensureDocAccess(
+                { user_id: "someone", project_id: "p", org_id: "org-1" },
+                "u",
+                "u@firm.example",
+                crossDb,
+            ),
+        ).resolves.toMatchObject({ projectRole: "editor", orgRole: "member" });
+    });
+
+    it("inherits the project Owner role for a review", async () => {
+        await expect(
+            ensureReviewAccess(
+                {
+                    id: "admin-review",
+                    user_id: "someone-else",
+                    project_id: "org-project",
+                },
+                "boss",
+                "boss@firm.example",
+                db,
+            ),
+        ).resolves.toMatchObject({ projectRole: "owner" });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Personal content carries no organization
+// ---------------------------------------------------------------------------
+
+describe("content org resolution", () => {
+    const db = makeDb({
+        projects: [
+            { id: "org-project", user_id: "u", org_id: "org-1" },
+            { id: "personal-project", user_id: "u", org_id: null },
+        ],
+    });
+
+    it("inherits the project's organization for content inside it", async () => {
+        await expect(
+            resolveContentOrgId(db, { projectId: "org-project" }),
+        ).resolves.toEqual({ ok: true, orgId: "org-1" });
+    });
+
+    it("leaves content with no organization when there is none to inherit", async () => {
+        // No hidden personal org to fall back on: org_id IS NULL *is* personal.
+        await expect(
+            resolveContentOrgId(db, { projectId: "personal-project" }),
+        ).resolves.toEqual({ ok: true, orgId: null });
+        await expect(
+            resolveContentOrgId(db, { projectId: null }),
+        ).resolves.toEqual({ ok: true, orgId: null });
+    });
+
+    it("refuses to answer when the lookup fails, instead of guessing personal", async () => {
+        // ok:false and orgId:null must be distinguishable: null is the
+        // encoding of personal content, and personal content is what account
+        // deletion destroys. A failed read that presented as null filed a
+        // firm's upload as its uploader's private property.
+        const failing = makeDb(
+            { projects: [] },
+            { selectErrors: { projects: "connection reset" } },
+        );
+        await expect(
+            resolveContentOrgId(failing, { projectId: "org-project" }),
+        ).resolves.toMatchObject({ ok: false });
+    });
+});
+
+describe("creator-scoped operations", () => {
+    // A handful of operations — replacing or deleting one version of a
+    // document, moving a review between projects — belong to whoever made the
+    // row rather than to a tier. Account deletion now blanks user_id instead
+    // of destroying an organization's content, so "only the creator" has to
+    // answer the case where the creator no longer exists.
+    it("lets the creator act", () => {
+        expect(
+            creatorScopedAllowed({ isCreator: true, projectRole: "viewer" }, "u1"),
+        ).toBe(true);
+    });
+
+    it("still refuses an Owner while the creator exists", () => {
+        // The rule is about authorship, not rank: an Owner does not get to
+        // reach into a colleague's versions just for outranking them.
+        expect(
+            creatorScopedAllowed({ isCreator: false, projectRole: "owner" }, "u2"),
+        ).toBe(false);
+    });
+
+    it("hands a creator-less row to the container's Owners", () => {
+        // Otherwise deleting the account that made the row would strand it
+        // inside a project the organization is supposed to control, with
+        // nobody able to act on it ever again.
+        expect(
+            creatorScopedAllowed({ isCreator: false, projectRole: "owner" }, null),
+        ).toBe(true);
+    });
+
+    it("does not hand a creator-less row to Editors or Viewers", () => {
+        for (const role of ["editor", "viewer"] as const) {
+            expect(
+                creatorScopedAllowed({ isCreator: false, projectRole: role }, null),
+            ).toBe(false);
+        }
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Chats and reviews share the same role-aware direct-grant model. These cases
+// pin each exclusive scope and project inheritance.
+// ---------------------------------------------------------------------------
+describe("ensureChatAccess", () => {
+    // alice created proj-a inside org-a and is an org admin there; dave is
+    // another org admin, carol a plain org member, erin an outside
+    // collaborator holding a viewer grant on proj-a and nothing else. bob
+    // belongs to org-b only (the other tenant). frank is a member of nothing
+    // and simply authored some of the chats.
+    const db = makeDb({
+        org_members: [
+            { org_id: "org-a", user_id: "alice", role: "admin" },
+            { org_id: "org-a", user_id: "carol", role: "member" },
+            { org_id: "org-a", user_id: "dave", role: "admin" },
+            { org_id: "org-b", user_id: "bob", role: "admin" },
+        ],
+        projects: [
+            { id: "proj-a", user_id: "alice", org_id: "org-a" },
+        ],
+        project_access_grants: [
+            { project_id: "proj-a", email: "erin@example.com", role: "viewer" },
+        ],
+        chat_access_grants: [
+            { chat_id: "direct-chat", email: "carol@example.com", role: "editor" },
+            { chat_id: "promoted-chat", email: "erin@example.com", role: "editor" },
+            { chat_id: "admin-chat", email: "alice@example.com", role: "editor" },
+        ],
+    });
+
+    it("makes a standalone chat's creator its Owner", async () => {
+        await expect(
+            ensureChatAccess(
+                {
+                    id: "creator-chat",
+                    user_id: "carol",
+                    project_id: null,
+                    org_id: null,
+                },
+                "carol",
+                "carol@example.com",
+                db,
+            ),
+        ).resolves.toMatchObject({
+            ok: true,
+            isCreator: true,
+            orgRole: null,
+            projectRole: "owner",
+        });
+    });
+
+    it("gives a directly shared email Editor access, case-insensitively", async () => {
+        // A standalone chat (no project, no org) is shareable through a
+        // direct grant.
+        await expect(
+            ensureChatAccess(
+                {
+                    id: "direct-chat",
+                    user_id: "alice",
+                    project_id: null,
+                    org_id: null,
+                },
+                "carol",
+                " CAROL@example.com ",
+                db,
+            ),
+        ).resolves.toMatchObject({
+            ok: true,
+            isCreator: false,
+            orgRole: null,
+            projectRole: "editor",
+        });
+    });
+
+    it("inherits the project verdict for a chat inside a project", async () => {
+        // frank's chat lives in alice's project: everyone with standing on
+        // proj-a gets that same standing on the chat, and none of them
+        // becomes its creator.
+        const chat = {
+            id: "project-chat",
+            user_id: "frank",
+            project_id: "proj-a",
+            org_id: "org-a",
+        };
+        await expect(
+            ensureChatAccess(chat, "alice", "alice@example.com", db),
+        ).resolves.toMatchObject({
+            ok: true,
+            isCreator: false,
+            projectRole: "owner",
+        });
+        await expect(
+            ensureChatAccess(chat, "dave", "dave@example.com", db),
+        ).resolves.toMatchObject({
+            ok: true,
+            orgRole: "admin",
+            projectRole: "owner",
+        });
+        await expect(
+            ensureChatAccess(chat, "carol", "carol@example.com", db),
+        ).resolves.toMatchObject({
+            ok: true,
+            orgRole: "member",
+            projectRole: "editor",
+        });
+        // A direct project grant cannot cross into an organization scope.
+        await expect(
+            ensureChatAccess(chat, "erin", "erin@example.com", db),
+        ).resolves.toEqual({ ok: false });
+    });
+
+    it("does not grant organization access to a standalone chat", async () => {
+        const chat = {
+            id: "org-chat",
+            user_id: "alice",
+            project_id: null,
+            org_id: "org-a",
+        };
+        await expect(
+            ensureChatAccess(chat, "carol", "carol@example.com", db),
+        ).resolves.toEqual({ ok: false });
+        await expect(
+            ensureChatAccess(chat, "dave", "dave@example.com", db),
+        ).resolves.toEqual({ ok: false });
+    });
+
+    it("ignores a child chat grant and enforces project access", async () => {
+        await expect(
+            ensureChatAccess(
+                {
+                    id: "promoted-chat",
+                    user_id: "frank",
+                    project_id: "proj-a",
+                    org_id: "org-a",
+                },
+                "erin",
+                "erin@example.com",
+                db,
+            ),
+        ).resolves.toEqual({ ok: false });
+    });
+
+    it("inherits the project Owner role and ignores a child chat grant", async () => {
+        await expect(
+            ensureChatAccess(
+                {
+                    id: "admin-chat",
+                    user_id: "frank",
+                    project_id: "proj-a",
+                    org_id: "org-a",
+                },
+                "alice",
+                "alice@example.com",
+                db,
+            ),
+        ).resolves.toMatchObject({
+            ok: true,
+            isCreator: false,
+            projectRole: "owner",
+        });
+    });
+
+    it("denies another tenant's user and an unshared standalone chat", async () => {
+        await expect(
+            ensureChatAccess(
+                {
+                    id: "tenant-chat",
+                    user_id: "alice",
+                    project_id: "proj-a",
+                    org_id: "org-a",
+                },
+                "bob",
+                "bob@example.com",
+                db,
+            ),
+        ).resolves.toEqual({ ok: false });
+
+        await expect(
+            ensureChatAccess(
+                {
+                    id: "private-chat",
+                    user_id: "alice",
+                    project_id: null,
+                    org_id: null,
+                },
+                "carol",
+                "carol@example.com",
+                db,
+            ),
+        ).resolves.toEqual({ ok: false });
+    });
+
+    it("fails closed when the caller has no email to match a share against", async () => {
+        await expect(
+            ensureChatAccess(
+                {
+                    id: "direct-chat",
+                    user_id: "alice",
+                    project_id: null,
+                    org_id: null,
+                },
+                "carol",
+                null,
+                db,
+            ),
+        ).resolves.toEqual({ ok: false });
     });
 });

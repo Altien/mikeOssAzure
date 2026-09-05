@@ -2,6 +2,8 @@
 
 import type { Dispatch, SetStateAction } from "react";
 import { Loader2 } from "lucide-react";
+import { can, roleFrom } from "@/app/lib/permissions";
+import type { OwnerGate } from "@/app/components/projects/ProjectWorkspace";
 import {
     RowActionMenuItems,
     RowActions,
@@ -45,7 +47,6 @@ export function ProjectReviewsTable({
     reviews,
     selectedReviewIds,
     creatingReview,
-    currentUserId,
     onCreateReview,
     onOpenReview,
     onOpenDetails,
@@ -71,13 +72,12 @@ export function ProjectReviewsTable({
     reviews: TabularReview[];
     selectedReviewIds: string[];
     creatingReview: boolean;
-    currentUserId?: string | null;
     onCreateReview: () => void;
     onOpenReview: (reviewId: string) => void;
     onOpenDetails: (review: TabularReview) => void;
     onDeleteReview: (review: TabularReview) => Promise<void> | void;
     onDeleteSelectedReviews: () => Promise<void> | void;
-    onOwnerOnlyAction: (action: string) => void;
+    onOwnerOnlyAction: (gate: OwnerGate) => void;
     setSelectedReviewIds: Dispatch<SetStateAction<string[]>>;
     onToggleAll: () => void;
     selectingAll?: boolean;
@@ -239,7 +239,7 @@ export function ProjectReviewsTable({
                         tone="black"
                         size="sm"
                         onClick={onRetry}
-                        className="mt-4 px-3"
+                        className="mt-4"
                     >
                         Try again
                     </PillButton>
@@ -263,7 +263,6 @@ export function ProjectReviewsTable({
                                     disabled={
                                         creatingReview || docs.length === 0
                                     }
-                                    className="px-3"
                                 >
                                     Create
                                 </PillButton>
@@ -309,12 +308,19 @@ export function ProjectReviewsTable({
                                                           ? undefined
                                                           : () => {
                                                                 if (
-                                                                    currentUserId &&
-                                                                    review.user_id !==
-                                                                        currentUserId
+                                                                    !can(
+                                                                        roleFrom(
+                                                                            review,
+                                                                        ),
+                                                                        "content.edit",
+                                                                    )
                                                                 ) {
                                                                     onOwnerOnlyAction(
-                                                                        "edit tabular review details",
+                                                                        {
+                                                                            action: "edit tabular review details",
+                                                                            requiredRole:
+                                                                                "editor",
+                                                                        },
                                                                     );
                                                                     return;
                                                                 }
@@ -390,12 +396,15 @@ export function ProjectReviewsTable({
                                         viewLabel="Open"
                                         onEditDetails={() => {
                                             if (
-                                                currentUserId &&
-                                                review.user_id !== currentUserId
+                                                !can(
+                                                    roleFrom(review),
+                                                    "content.edit",
+                                                )
                                             ) {
-                                                onOwnerOnlyAction(
-                                                    "edit tabular review details",
-                                                );
+                                                onOwnerOnlyAction({
+                                                    action: "edit tabular review details",
+                                                    requiredRole: "editor",
+                                                });
                                                 return;
                                             }
                                             onOpenDetails(review);

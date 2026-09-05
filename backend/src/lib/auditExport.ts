@@ -21,18 +21,8 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 /**
  * Which projects' audit rows this user may read.
  *
- * !! MERGE NOTE — this function is a VERBATIM MOVE of the one that lives in
- * routes/audit.ts on main, kept byte-for-byte so this PR changes no
- * authorization behaviour. It is NOT an independent implementation, and the
- * `shared_with` email predicate below is not a decision made here.
- *
- * The organisations/RBAC stack retires `projects.shared_with` as an
- * authorization source and replaces this exact predicate with a grant lookup.
- * Because this file is new, git will auto-merge it past that change without a
- * conflict and quietly resurrect the email predicate. WHICHEVER ORDER THE TWO
- * LAND IN, the orgs version of this logic wins: after that stack merges, this
- * body must be re-pointed at grants (or, better, deleted in favour of
- * importing the single shared helper it introduces).
+ * Direct project sharing is resolved from project_access_grants, the same
+ * source used by the project access checks.
  */
 export async function accessibleProjectIds(
     db: Db,
@@ -43,12 +33,17 @@ export async function accessibleProjectIds(
     const own = await db.from("projects").select("id").eq("user_id", userId);
     for (const row of (own.data ?? []) as { id: string }[]) ids.add(row.id);
     if (email) {
+        // Direct sharing is `project_access_grants`: one row per recipient,
+        // keyed on normalized email. This query gates access to an audit trail.
         const shared = await db
-            .from("projects")
-            .select("id")
-            .contains("shared_with", [email.trim().toLowerCase()]);
-        for (const row of (shared.data ?? []) as { id: string }[])
-            ids.add(row.id);
+            .from("project_access_grants")
+            .select("project_id")
+            .eq("email", email.trim().toLowerCase());
+        for (const row of (shared.data ?? []) as {
+            project_id: string | null;
+        }[]) {
+            if (row.project_id) ids.add(row.project_id);
+        }
     }
     return [...ids];
 }

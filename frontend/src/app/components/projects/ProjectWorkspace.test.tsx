@@ -49,8 +49,8 @@ vi.mock("@/app/components/popups/ConfirmPopup", () => ({
 vi.mock("@/app/components/popups/OwnerOnlyPopup", () => ({
     OwnerOnlyPopup: () => null,
 }));
-vi.mock("@/app/components/modals/PeopleModal", () => ({
-    PeopleModal: () => null,
+vi.mock("@/app/components/modals/AccessModal", () => ({
+    AccessModal: () => null,
 }));
 vi.mock("./ProjectDetailsModal", () => ({
     ProjectDetailsModal: () => null,

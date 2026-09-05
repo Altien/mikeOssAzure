@@ -8,7 +8,12 @@ import {
     useRef,
     type UIEvent,
 } from "react";
-import { PanelLeft, ChevronsUpDown, ChevronDown, Loader2 } from "lucide-react";
+import {
+  PanelLeft,
+  ChevronsUpDown,
+  ChevronDown,
+  Loader2,
+} from "lucide-react";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
@@ -22,6 +27,7 @@ import {
     LibrarySkeuoIcon,
     TabularReviewSkeuoIcon,
     WorkflowSkeuoIcon,
+    OrganizationSkeuoIcon,
     SettingsSkeuoIcon,
     SignOutSkeuoIcon,
 } from "@/app/components/shared/AppSidebarSkeuoIcons";
@@ -273,9 +279,9 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                 href="/assistant"
                                 className="flex items-center gap-1.5 hover:opacity-80 transition-opacity"
                             >
-                                <MikeIcon size={22} />
+                                <MikeIcon size={20} />
                                 <span
-                                    className={`text-2xl font-light font-serif ${
+                                    className={`text-[22px] font-light font-serif ${
                                         shouldAnimate ? "sidebar-fade-in" : ""
                                     }`}
                                 >
@@ -624,6 +630,19 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                     >
                                         <SettingsSkeuoIcon className="h-4 w-4" />
                                         Settings
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            router.push("/organizations");
+                                            setIsDropdownOpen(false);
+                                        }}
+                                        className={cn(
+                                            "w-full px-4 py-2 text-left text-sm text-gray-700 flex items-center gap-2 rounded-md",
+                                            LIQUID_GLASS_HOVER_CLASS,
+                                        )}
+                                    >
+                                        <OrganizationSkeuoIcon className="h-4 w-4" />
+                                        Organizations
                                     </button>
                                     <button
                                         onClick={() => {

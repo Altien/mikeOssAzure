@@ -22,6 +22,7 @@ vi.mock("@/app/lib/mikeApi", async () => {
         UploadBatchError: uploads.UploadBatchError,
         failedUploadMessage: uploads.failedUploadMessage,
         getProject: vi.fn(),
+        listOrgMembers: vi.fn(async () => []),
         listWorkflows: vi.fn(async () => []),
         uploadProjectDocuments: vi.fn(),
         uploadStandaloneDocuments: vi.fn(),
@@ -48,6 +49,10 @@ vi.mock("@/app/contexts/UserProfileContext", () => ({
         loading: false,
         apiKeysDegraded: false,
     }),
+}));
+
+vi.mock("@/app/contexts/AuthContext", () => ({
+    useAuth: () => ({ user: { id: "me", email: "me@firm.test" } }),
 }));
 
 vi.mock("@/app/hooks/useOllamaModels", () => ({
@@ -77,6 +82,7 @@ describe("NewTRModal", () => {
         render(<NewTRModal open onClose={vi.fn()} onAdd={onAdd} />);
 
         expect(screen.getByText("Document grouping")).toBeInTheDocument();
+        expect(screen.queryByLabelText("Organization")).not.toBeInTheDocument();
         expect(
             screen.getByText(
                 "Treat documents in the same folder as one review row",
@@ -109,6 +115,17 @@ describe("NewTRModal", () => {
         expect(groupingSwitch).toHaveAttribute("aria-checked", "true");
         fireEvent.click(screen.getByRole("button", { name: "Next" }));
 
+        expect(screen.queryByText("Document directory")).not.toBeInTheDocument();
+        expect(screen.getByRole("dialog", { name: "Access" })).toBeVisible();
+        expect(screen.getByText("Share Access")).toBeInTheDocument();
+        const skip = screen.getByRole("button", { name: "Skip" });
+        const accessNext = screen.getByRole("button", { name: "Next" });
+        expect(skip.parentElement).toBe(accessNext.parentElement);
+        expect(skip).toHaveClass("text-gray-500");
+        expect(screen.getByRole("button", { name: "Back" })).toHaveClass(
+            "bg-blue-600/90",
+        );
+        fireEvent.click(skip);
         expect(screen.getByText("Document directory")).toBeInTheDocument();
         expect(screen.getByTestId("directory-tabs")).toHaveTextContent(
             "files,projects",
@@ -123,7 +140,39 @@ describe("NewTRModal", () => {
             undefined,
             "folder",
             "gemini-3-flash-preview",
+            [],
         );
+    });
+
+    it("prevents duplicate review creation while submission is pending", async () => {
+        let finishAdd: (() => void) | undefined;
+        const onAdd = vi.fn(
+            () =>
+                new Promise<void>((resolve) => {
+                    finishAdd = resolve;
+                }),
+        );
+        const onClose = vi.fn();
+        render(<NewTRModal open onClose={onClose} onAdd={onAdd} />);
+
+        fireEvent.change(screen.getByLabelText("Review name"), {
+            target: { value: "Single review" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: "Next" }));
+        fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+        expect(onAdd).not.toHaveBeenCalled();
+        const create = screen.getByRole("button", { name: "Create" });
+        fireEvent.click(create);
+        fireEvent.click(create);
+
+        expect(onAdd).toHaveBeenCalledTimes(1);
+        expect(
+            screen.getByRole("button", { name: "Creating..." }),
+        ).toBeDisabled();
+
+        finishAdd?.();
+        await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     });
 
     it("stores uploads from a project review in that project", async () => {
@@ -159,6 +208,7 @@ describe("NewTRModal", () => {
             target: { value: "Project review" },
         });
         fireEvent.click(screen.getByRole("button", { name: "Next" }));
+        fireEvent.click(screen.getByRole("button", { name: "Next" }));
 
         const file = new File(["agreement"], "New agreement.pdf", {
             type: "application/pdf",
@@ -190,6 +240,7 @@ describe("NewTRModal", () => {
         fireEvent.change(screen.getByLabelText("Review name"), {
             target: { value: "Project review" },
         });
+        fireEvent.click(screen.getByRole("button", { name: "Next" }));
         fireEvent.click(screen.getByRole("button", { name: "Next" }));
         const input =
             document.querySelector<HTMLInputElement>('input[type="file"]');

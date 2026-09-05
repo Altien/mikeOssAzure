@@ -401,6 +401,7 @@ export default function SettingsPage() {
                 title="Delete account?"
                 message="This will permanently delete your account and all associated data. This action cannot be undone."
                 confirmLabel="Delete"
+                confirmVariant="danger"
                 confirmStatus={isDeleting ? "loading" : "idle"}
                 cancelLabel="Cancel"
                 onCancel={() => {

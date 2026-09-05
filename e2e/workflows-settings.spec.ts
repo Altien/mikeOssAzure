@@ -16,13 +16,22 @@
 import { test, expect, type Page } from "@playwright/test";
 
 /**
- * Create a workflow from an already-open NewWorkflowModal and wait for the
- * post-create navigation to /workflows/<id>.
+ * Create an assistant workflow from an already-open NewWorkflowModal and wait
+ * for the post-create navigation to /workflows/<id>.
  */
 async function createWorkflowAndOpenDetail(page: Page, title: string) {
     const nameInput = page.getByPlaceholder("Workflow name");
     await expect(nameInput).toBeVisible({ timeout: 5_000 });
     await nameInput.fill(title);
+
+    // New assistant workflows are created only after the three-step wizard:
+    // Details -> Access -> Add Assets.
+    await page.getByRole("button", { name: "Next", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Access" })).toBeVisible();
+    await page.getByRole("button", { name: "Next", exact: true }).click();
+    await expect(
+        page.getByRole("dialog", { name: "Add Assets" }),
+    ).toBeVisible();
 
     // Match the submit button in BOTH states: its label is "Create workflow" when
     // idle and "Creating…" while the request is in flight.

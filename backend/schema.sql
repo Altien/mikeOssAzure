@@ -189,6 +189,141 @@ create index if not exists idx_auth_handoff_tickets_expires
 
 alter table public.auth_handoff_tickets enable row level security;
 
+-- ---------------------------------------------------------------------------
+-- Organizations / RBAC (multi-tenant)
+-- Defined before projects/documents/workflows/tabular_reviews because those
+-- carry an org_id FK to organizations(id). See lib/access.ts for the
+-- admin/member enforcement. SSO/SAML/SCIM are intentional extension points
+-- (future organizations.sso_config / scim_token).
+--
+-- Personal content is simply `org_id is null`. There is no hidden personal
+-- organization: an extra org row and owner-membership per account bought
+-- nothing that `user_id` did not already anchor, while making every query
+-- carry a tenant that existed only to be ignored.
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.organizations (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.organizations enable row level security;
+
+-- Exactly two roles. `admin` administers the org and inherits Owner across its
+-- content; `member` collaborates and inherits Editor. Membership
+-- rows are written only by org creation (the creator) and by invitation
+-- acceptance.
+create table if not exists public.org_members (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  role text not null default 'member'
+    check (role in ('admin', 'member')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(org_id, user_id)
+);
+
+create index if not exists idx_org_members_user on public.org_members(user_id);
+create index if not exists idx_org_members_org on public.org_members(org_id);
+
+alter table public.org_members enable row level security;
+
+-- DB-level guard for "an organization must keep at least one admin". The
+-- service layer checks this too, but its read-then-act check races: two
+-- concurrent departures of two different admins can both pass and strand the
+-- org with nobody able to invite, re-role or remove anyone. The trigger
+-- serializes admin departures per org by locking the organizations row, and
+-- steps aside for the two legitimate cascades: org deletion (the org row is
+-- already gone in this transaction) and auth-user deletion (the member's auth
+-- row is already gone). security definer so the auth.users probe works
+-- regardless of the calling role, mirroring handle_new_user.
+create or replace function public.org_members_protect_last_admin()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if old.role <> 'admin' then
+    return coalesce(new, old);
+  end if;
+  if tg_op = 'UPDATE' and new.role = 'admin' then
+    return new;
+  end if;
+
+  -- Serialize concurrent admin departures on this org. If the org row is
+  -- already deleted in this transaction (delete cascade), stand aside.
+  perform 1 from public.organizations where id = old.org_id for update;
+  if not found then
+    return coalesce(new, old);
+  end if;
+
+  -- Member's auth user being deleted (cascade from auth.users): stand aside.
+  if tg_op = 'DELETE' and not exists (
+    select 1 from auth.users where id = old.user_id
+  ) then
+    return old;
+  end if;
+
+  if not exists (
+    select 1 from public.org_members
+    where org_id = old.org_id and role = 'admin' and user_id <> old.user_id
+  ) then
+    raise exception 'An organization must keep at least one admin'
+      using errcode = '23514';
+  end if;
+
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists org_members_last_admin_guard on public.org_members;
+create trigger org_members_last_admin_guard
+  before delete or update of role on public.org_members
+  for each row execute procedure public.org_members_protect_last_admin();
+
+-- Invitations. Joining a firm's workspace exposes confidential material, so
+-- membership requires the recipient's consent: an admin creates a pending
+-- invitation, and org_members only appears when the invited account accepts.
+-- A pending invitation grants NOTHING on its own.
+--
+-- Addressed by normalized email rather than user id so an invitation can be
+-- created before the recipient has an account and claimed after they sign up.
+-- Expiry is evaluated lazily on read (a pending row past expires_at reports as
+-- expired and cannot be accepted), so no sweeper job races the accept path.
+create table if not exists public.org_invitations (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  email text not null,
+  role text not null default 'member'
+    check (role in ('admin', 'member')),
+  invited_by uuid references auth.users(id) on delete set null,
+  status text not null default 'pending'
+    check (status in ('pending', 'accepted', 'declined', 'cancelled', 'expired')),
+  expires_at timestamptz not null default (now() + interval '14 days'),
+  created_at timestamptz not null default now(),
+  accepted_at timestamptz,
+  declined_at timestamptz,
+  cancelled_at timestamptz,
+  constraint org_invitations_email_lowercase check (email = lower(email))
+);
+
+-- One live invitation per (org, email); answered ones may accumulate.
+create unique index if not exists org_invitations_active_unique
+  on public.org_invitations(org_id, email)
+  where status = 'pending';
+
+create index if not exists idx_org_invitations_email
+  on public.org_invitations(email) where status = 'pending';
+create index if not exists idx_org_invitations_org
+  on public.org_invitations(org_id);
+
+alter table public.org_invitations enable row level security;
+
 create table if not exists public.user_api_keys (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -397,12 +532,17 @@ alter table public.user_mcp_tool_audit_logs enable row level security;
 
 create table if not exists public.projects (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
+  -- Nullable: an organization project outlives the account that created it.
+  -- user_id is provenance ("who made this"), not the access rule — that flows
+  -- from project_access_grants and org membership (lib/access.ts).
+  user_id uuid references auth.users(id) on delete set null,
+  -- Multi-tenant: nullable so system/global rows stay valid; user_id remains
+  -- the hard cascade anchor (org_id uses SET NULL, not CASCADE).
+  org_id uuid references public.organizations(id) on delete restrict,
   name text not null,
   cm_number text,
   practice text,
   visibility text not null default 'private',
-  shared_with jsonb not null default '[]'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -413,13 +553,114 @@ create index if not exists idx_projects_user
 create index if not exists projects_updated_at_idx
   on public.projects(updated_at desc, id);
 
-create index if not exists projects_shared_with_idx
-  on public.projects using gin (shared_with);
+create index if not exists idx_projects_org
+  on public.projects(org_id);
+
+-- ---------------------------------------------------------------------------
+-- project_access_grants — direct, role-aware sharing
+-- ---------------------------------------------------------------------------
+-- Supersedes the roleless projects.shared_with email array, which could say
+-- WHO had access but never WHAT they could do: read-only outside counsel and
+-- a colleague restructuring the matter were the same grant.
+--
+-- Keyed by normalized email, not user id. Grant creation requires an existing
+-- user profile. Organization projects use their organization membership and
+-- override tables exclusively, so these direct grants apply only to personal
+-- projects.
+create table if not exists public.project_access_grants (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects(id) on delete cascade,
+  email text not null,
+  role text not null default 'editor'
+    check (role in ('owner', 'editor', 'viewer')),
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(project_id, email),
+  constraint project_access_grants_email_lowercase check (email = lower(email))
+);
+
+create index if not exists idx_project_access_grants_email
+  on public.project_access_grants(email);
+create index if not exists idx_project_access_grants_project
+  on public.project_access_grants(project_id);
+
+alter table public.project_access_grants enable row level security;
+
+create table if not exists public.project_org_access_overrides (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects(id) on delete cascade,
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  user_id uuid not null,
+  role text not null constraint project_org_access_overrides_role_check
+    check (role in ('owner', 'editor', 'viewer', 'deny')),
+  assigned_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(project_id, user_id),
+  foreign key (org_id, user_id)
+    references public.org_members(org_id, user_id) on delete cascade
+);
+
+create index if not exists idx_project_org_access_overrides_user
+  on public.project_org_access_overrides(user_id);
+
+alter table public.project_org_access_overrides enable row level security;
+
+-- ---------------------------------------------------------------------------
+-- Role resolution, shared by every list RPC
+-- ---------------------------------------------------------------------------
+-- Resolve exactly one sharing scope in one place instead of once per RPC.
+-- Organization projects ignore direct grants; personal projects use only a
+-- creator or direct grant. Organization overrides replace inherited roles.
+--
+-- Returns null when the caller has no access at all, which is how the list
+-- RPCs' visibility predicates and this column stay consistent with each other.
+create or replace function public.project_access_role(
+  p_project_id uuid,
+  p_project_user_id uuid,
+  p_org_id uuid,
+  p_user_id text,
+  p_user_email text
+)
+returns text
+language sql
+stable
+set search_path = public
+as $$
+  select case
+    when p_org_id is not null then (
+      select case
+        when p_project_user_id::text = p_user_id then 'owner'
+        when m.role = 'admin' then 'owner'
+        when o.role = 'deny' then null
+        when o.role in ('owner', 'editor', 'viewer') then o.role
+        else 'editor'
+      end
+      from public.org_members m
+      left join public.project_org_access_overrides o
+        on o.project_id = p_project_id
+       and o.org_id = p_org_id
+       and o.user_id = m.user_id
+      where m.org_id = p_org_id and m.user_id::text = p_user_id
+    )
+    when p_project_user_id::text = p_user_id then 'owner'
+    else (
+      select g.role from public.project_access_grants g
+      where g.project_id = p_project_id
+        and coalesce(p_user_email, '') <> ''
+        and g.email = lower(p_user_email)
+      limit 1
+    )
+  end;
+$$;
 
 create table if not exists public.project_subfolders (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references public.projects(id) on delete cascade,
-  user_id uuid not null references auth.users(id) on delete cascade,
+  -- Nullable + SET NULL: content inside an organization project survives its
+  -- author's account deletion (userDataCleanup detaches rather than deletes).
+  user_id uuid references auth.users(id) on delete set null,
   name text not null,
   parent_folder_id uuid references public.project_subfolders(id) on delete cascade,
   created_at timestamptz not null default now(),
@@ -450,7 +691,10 @@ create index if not exists idx_library_folders_parent
 create table if not exists public.documents (
   id uuid primary key default gen_random_uuid(),
   project_id uuid references public.projects(id) on delete cascade,
-  user_id uuid not null references auth.users(id) on delete cascade,
+  org_id uuid references public.organizations(id) on delete restrict,
+  -- Nullable + SET NULL: content inside an organization project survives its
+  -- author's account deletion (userDataCleanup detaches rather than deletes).
+  user_id uuid references auth.users(id) on delete set null,
   status text not null default 'pending',
   folder_id uuid references public.project_subfolders(id) on delete set null,
   library_kind text not null default 'file',
@@ -470,6 +714,9 @@ create index if not exists idx_documents_project_folder
 create index if not exists idx_documents_library_kind_folder
   on public.documents(user_id, library_kind, library_folder_id)
   where project_id is null;
+
+create index if not exists idx_documents_org
+  on public.documents(org_id);
 
 create table if not exists public.document_versions (
   id uuid primary key default gen_random_uuid(),
@@ -716,7 +963,7 @@ create index if not exists document_edits_version_id_idx
 
 create table if not exists public.workflows (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete set null,
   title text not null,
   type text not null,
   prompt_md text,
@@ -724,11 +971,15 @@ create table if not exists public.workflows (
   language text default 'English',
   practice text default 'General Transactions',
   jurisdictions text[] default array['General']::text[],
+  org_id uuid references public.organizations(id) on delete restrict,
   created_at timestamptz not null default now()
 );
 
 create index if not exists idx_workflows_user
   on public.workflows(user_id);
+
+create index if not exists idx_workflows_org
+  on public.workflows(org_id);
 
 create table if not exists public.hidden_workflows (
   id uuid primary key default gen_random_uuid(),
@@ -746,7 +997,8 @@ create table if not exists public.workflow_shares (
   workflow_id uuid not null references public.workflows(id) on delete cascade,
   shared_by_user_id uuid not null references auth.users(id) on delete cascade,
   shared_with_email text not null,
-  allow_edit boolean not null default false,
+  role text not null default 'viewer'
+    check (role in ('owner', 'editor', 'viewer')),
   created_at timestamptz not null default now(),
   constraint workflow_shares_workflow_email_unique
     unique(workflow_id, shared_with_email)
@@ -757,6 +1009,65 @@ create index if not exists workflow_shares_workflow_id_idx
 
 create index if not exists workflow_shares_email_idx
   on public.workflow_shares(shared_with_email);
+
+create table if not exists public.workflow_org_access_overrides (
+  id uuid primary key default gen_random_uuid(),
+  workflow_id uuid not null references public.workflows(id) on delete cascade,
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  user_id uuid not null,
+  role text not null constraint workflow_org_access_overrides_role_check
+    check (role in ('owner', 'editor', 'viewer', 'deny')),
+  assigned_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(workflow_id, user_id),
+  foreign key (org_id, user_id)
+    references public.org_members(org_id, user_id) on delete cascade
+);
+
+create index if not exists idx_workflow_org_access_overrides_user
+  on public.workflow_org_access_overrides(user_id);
+
+alter table public.workflow_org_access_overrides enable row level security;
+
+create or replace function public.workflow_access_role(
+  p_workflow_id uuid,
+  p_workflow_user_id uuid,
+  p_org_id uuid,
+  p_user_id text,
+  p_user_email text
+)
+returns text
+language sql
+stable
+set search_path = public
+as $$
+  select case
+    when p_org_id is not null then (
+      select case
+        when p_workflow_user_id::text = p_user_id then 'owner'
+        when m.role = 'admin' then 'owner'
+        when o.role = 'deny' then null
+        when o.role in ('owner', 'editor', 'viewer') then o.role
+        else 'editor'
+      end
+      from public.org_members m
+      left join public.workflow_org_access_overrides o
+        on o.workflow_id = p_workflow_id
+       and o.org_id = p_org_id
+       and o.user_id = m.user_id
+      where m.org_id = p_org_id and m.user_id::text = p_user_id
+    )
+    when p_workflow_user_id::text = p_user_id then 'owner'
+    else (
+      select s.role from public.workflow_shares s
+      where s.workflow_id = p_workflow_id
+        and coalesce(p_user_email, '') <> ''
+        and s.shared_with_email = lower(p_user_email)
+      limit 1
+    )
+  end;
+$$;
 
 create table if not exists public.default_workflow_installations (
   id uuid primary key default gen_random_uuid(),
@@ -1306,6 +1617,9 @@ create or replace function public.get_workflows_overview(
 returns table (
   id uuid,
   user_id text,
+  org_id uuid,
+  access_scope text,
+  organization_name text,
   title text,
   type text,
   prompt_md text,
@@ -1326,6 +1640,20 @@ as $$
     select
       w.id,
       w.user_id::text as user_id,
+      w.org_id,
+      case
+        when w.org_id is not null then 'organization'
+        when exists (
+          select 1 from public.workflow_shares scope_share
+          where scope_share.workflow_id = w.id
+        ) then 'shared'
+        else 'private'
+      end as access_scope,
+      (
+        select nullif(trim(o.name), '')
+        from public.organizations o
+        where o.id = w.org_id
+      ) as organization_name,
       w.title,
       w.type,
       w.prompt_md,
@@ -1341,12 +1669,18 @@ as $$
       0 as sort_bucket
     from public.workflows w
     where w.user_id::text = p_user_id
+      and public.workflow_access_role(
+        w.id, w.user_id, w.org_id, p_user_id, p_user_email
+      ) is not null
       and (p_type is null or w.type = p_type)
   ),
   shared as (
     select
       w.id,
       w.user_id::text as user_id,
+      w.org_id,
+      'shared'::text as access_scope,
+      null::text as organization_name,
       w.title,
       w.type,
       w.prompt_md,
@@ -1356,8 +1690,8 @@ as $$
       w.jurisdictions,
       false as is_system,
       w.created_at,
-      ws.allow_edit,
-      false as is_owner,
+      (ws.role in ('owner', 'editor')) as allow_edit,
+      (ws.role = 'owner') as is_owner,
       nullif(trim(up.display_name), '') as shared_by_name,
       1 as sort_bucket
     from public.workflow_shares ws
@@ -1366,16 +1700,64 @@ as $$
     left join public.user_profiles up
       on up.user_id::text = ws.shared_by_user_id::text
     where lower(ws.shared_with_email) = lower(coalesce(p_user_email, ''))
+      and w.org_id is null
       and (p_type is null or w.type = p_type)
+  ),
+  org_shared as (
+    -- Workflows in an org the caller belongs to. Admins default to Owner and
+    -- Members default to Editor; per-workflow overrides may narrow either.
+    -- Mirrors resolveWorkflowAccess in routes/workflows.ts, so a row's
+    -- affordances in the list match what the detail route will allow.
+    select
+      w.id,
+      w.user_id::text as user_id,
+      w.org_id,
+      'organization'::text as access_scope,
+      (
+        select nullif(trim(o.name), '')
+        from public.organizations o
+        where o.id = w.org_id
+      ) as organization_name,
+      w.title,
+      w.type,
+      w.prompt_md,
+      w.columns_config,
+      w.language,
+      w.practice,
+      w.jurisdictions,
+      false as is_system,
+      w.created_at,
+      (public.workflow_access_role(
+        w.id, w.user_id, w.org_id, p_user_id, p_user_email
+      ) in ('owner', 'editor')) as allow_edit,
+      (public.workflow_access_role(
+        w.id, w.user_id, w.org_id, p_user_id, p_user_email
+      ) = 'owner') as is_owner,
+      nullif(trim(up.display_name), '') as shared_by_name,
+      2 as sort_bucket
+    from public.workflows w
+    left join public.user_profiles up
+      on up.user_id::text = w.user_id::text
+    where w.org_id is not null
+      and (w.user_id is null or w.user_id::text <> p_user_id)
+      and (p_type is null or w.type = p_type)
+      and public.workflow_access_role(
+        w.id, w.user_id, w.org_id, p_user_id, p_user_email
+      ) is not null
   ),
   visible_workflows as (
     select * from owned
     union all
     select * from shared
+    union all
+    select * from org_shared
   )
   select
     vw.id,
     vw.user_id,
+    vw.org_id,
+    vw.access_scope,
+    vw.organization_name,
     vw.title,
     vw.type,
     vw.prompt_md,
@@ -1399,10 +1781,15 @@ $$;
 create table if not exists public.chats (
   id uuid primary key default gen_random_uuid(),
   project_id uuid references public.projects(id) on delete cascade,
-  user_id uuid not null references auth.users(id) on delete cascade,
+  -- Nullable + SET NULL: content inside an organization project survives its
+  -- author's account deletion (userDataCleanup detaches rather than deletes).
+  user_id uuid references auth.users(id) on delete set null,
   title text,
   model text,
   reasoning_level text check (reasoning_level in ('none', 'low', 'medium', 'high', 'xhigh', 'max')),
+  org_id uuid references public.organizations(id) on delete restrict,
+  constraint chats_org_requires_project
+    check (org_id is null or project_id is not null),
   created_at timestamptz not null default now()
 );
 
@@ -1415,8 +1802,61 @@ create index if not exists chats_user_created_idx
 create index if not exists idx_chats_project
   on public.chats(project_id);
 
+create index if not exists idx_chats_org on public.chats(org_id);
+
+create table if not exists public.chat_access_grants (
+  id uuid primary key default gen_random_uuid(),
+  chat_id uuid not null references public.chats(id) on delete cascade,
+  email text not null,
+  role text not null default 'editor'
+    check (role in ('owner', 'editor', 'viewer')),
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(chat_id, email),
+  constraint chat_access_grants_email_lowercase check (email = lower(email))
+);
+
+create index if not exists idx_chat_access_grants_email
+  on public.chat_access_grants(email);
+create index if not exists idx_chat_access_grants_chat
+  on public.chat_access_grants(chat_id);
+
+alter table public.chat_access_grants enable row level security;
+
+create or replace function public.chat_access_role(
+  p_chat_id uuid,
+  p_chat_user_id uuid,
+  p_project_id uuid,
+  p_org_id uuid,
+  p_user_id text,
+  p_user_email text
+)
+returns text
+language sql
+stable
+set search_path = public
+as $$
+  select case
+    when p_project_id is not null then (
+      select public.project_access_role(
+        p.id, p.user_id, p.org_id, p_user_id, p_user_email
+      ) from public.projects p where p.id = p_project_id
+    )
+    when p_chat_user_id::text = p_user_id then 'owner'
+    else (
+      select g.role from public.chat_access_grants g
+      where g.chat_id = p_chat_id
+        and coalesce(p_user_email, '') <> ''
+        and g.email = lower(p_user_email)
+      limit 1
+    )
+  end;
+$$;
+
 create or replace function public.get_chats_overview(
   p_user_id text,
+  p_user_email text,
   p_limit integer default null,
   p_offset integer default 0
 )
@@ -1427,7 +1867,9 @@ returns table (
   title text,
   model text,
   created_at timestamptz,
-  project_name text
+  project_name text,
+  is_owner boolean,
+  access_role text
 )
 language sql
 stable
@@ -1439,14 +1881,33 @@ as $$
     c.title,
     c.model,
     c.created_at,
-    p.name as project_name
+    p.name as project_name,
+    -- Provenance ("I started this thread"), not a role: the ladder itself is
+    -- lib/permissions.ts, and the creator branch of ensureChatAccess is what
+    -- turns this into Owner standing.
+    coalesce(c.user_id::text = p_user_id, false) as is_owner,
+    -- The SAME verdict the predicate below filters on, served to the caller.
+    -- Serving only is_owner was not enough: the client must distinguish
+    -- Editor and Viewer from Owner so its actions match the server verdict.
+    -- One evaluation, one truth: the lateral computes the role once and both
+    -- the column and the WHERE read it.
+    verdict.role as access_role
   from public.chats c
   left join public.projects p on p.id = c.project_id
-  where c.user_id::text = p_user_id
-     or (
-       p.id is not null
-       and p.user_id::text = p_user_id
-     )
+  cross join lateral (
+    select public.chat_access_role(
+             c.id,
+             c.user_id,
+             c.project_id,
+             c.org_id,
+             p_user_id,
+             p_user_email
+           ) as role
+  ) verdict
+  -- The whole predicate, in one call.
+  -- The join above is for project_name only; the function resolves the
+  -- project itself.
+  where verdict.role is not null
   order by c.created_at desc, c.id asc
   limit case
     when p_limit is null then null
@@ -1584,7 +2045,9 @@ $$;
 create table if not exists public.tabular_reviews (
   id uuid primary key default gen_random_uuid(),
   project_id uuid references public.projects(id) on delete cascade,
-  user_id uuid not null references auth.users(id) on delete cascade,
+  -- Nullable + SET NULL: content inside an organization project survives its
+  -- author's account deletion (userDataCleanup detaches rather than deletes).
+  user_id uuid references auth.users(id) on delete set null,
   title text,
   model text,
   columns_config jsonb,
@@ -1592,9 +2055,11 @@ create table if not exists public.tabular_reviews (
   workflow_id uuid references public.workflows(id) on delete set null,
   practice text,
   document_grouping text not null default 'document' check (document_grouping in ('document', 'folder')),
-  shared_with jsonb not null default '[]'::jsonb,
   active_generation_id uuid,
   generation_lease_expires_at timestamptz,
+  org_id uuid references public.organizations(id) on delete restrict,
+  constraint tabular_reviews_org_requires_project
+    check (org_id is null or project_id is not null),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -1605,11 +2070,72 @@ create index if not exists idx_tabular_reviews_user
 create index if not exists idx_tabular_reviews_project
   on public.tabular_reviews(project_id);
 
-create index if not exists tabular_reviews_shared_with_idx
-  on public.tabular_reviews using gin (shared_with);
+create index if not exists idx_tabular_reviews_org
+  on public.tabular_reviews(org_id);
 
 create index if not exists tabular_reviews_title_trgm_idx
   on public.tabular_reviews using gin (lower(title) gin_trgm_ops);
+
+create table if not exists public.tabular_review_access_grants (
+  id uuid primary key default gen_random_uuid(),
+  tabular_review_id uuid not null
+    references public.tabular_reviews(id) on delete cascade,
+  email text not null,
+  role text not null default 'editor'
+    check (role in ('owner', 'editor', 'viewer')),
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(tabular_review_id, email),
+  constraint tabular_review_access_grants_email_lowercase
+    check (email = lower(email))
+);
+
+create index if not exists idx_tabular_review_access_grants_email
+  on public.tabular_review_access_grants(email);
+create index if not exists idx_tabular_review_access_grants_review
+  on public.tabular_review_access_grants(tabular_review_id);
+
+alter table public.tabular_review_access_grants enable row level security;
+
+create or replace function public.review_access_role(
+  p_review_id uuid,
+  p_review_user_id uuid,
+  p_project_id uuid,
+  p_org_id uuid,
+  p_user_id text,
+  p_user_email text
+)
+returns text
+language sql
+stable
+set search_path = public
+as $$
+  select case
+    when p_project_id is not null then (
+      select public.project_access_role(
+        p.id, p.user_id, p.org_id, p_user_id, p_user_email
+      ) from public.projects p where p.id = p_project_id
+    )
+    when p_review_user_id::text = p_user_id then 'owner'
+    else (
+      select g.role from public.tabular_review_access_grants g
+      where g.tabular_review_id = p_review_id
+        and coalesce(p_user_email, '') <> ''
+        and g.email = lower(p_user_email)
+      limit 1
+    )
+  end;
+$$;
+
+grant execute on function public.project_access_role(uuid, uuid, uuid, text, text)
+  to service_role;
+grant execute on function public.chat_access_role(uuid, uuid, uuid, uuid, text, text)
+  to service_role;
+grant execute on function public.review_access_role(uuid, uuid, uuid, uuid, text, text)
+  to service_role;
+grant execute on function public.workflow_access_role(uuid, uuid, uuid, text, text)
+  to service_role;
 
 create or replace function public.get_projects_overview(
   p_user_id text,
@@ -1618,15 +2144,18 @@ create or replace function public.get_projects_overview(
 returns table (
   id uuid,
   user_id text,
+  org_id uuid,
+  access_scope text,
+  organization_name text,
   name text,
   cm_number text,
   practice text,
-  shared_with jsonb,
   created_at timestamptz,
   updated_at timestamptz,
   is_owner boolean,
   owner_display_name text,
   owner_email text,
+  access_role text,
   document_count integer,
   chat_count integer,
   review_count integer
@@ -1637,12 +2166,9 @@ as $$
   with visible_projects as (
     select p.*
     from public.projects p
-    where p.user_id::text = p_user_id
-       or (
-        coalesce(p_user_email, '') <> ''
-        and p.user_id::text <> p_user_id
-        and p.shared_with @> jsonb_build_array(p_user_email)
-      )
+    where public.project_access_role(
+      p.id, p.user_id, p.org_id, p_user_id, p_user_email
+    ) is not null
   ),
   document_counts as (
     select d.project_id, count(*)::integer as document_count
@@ -1665,15 +2191,34 @@ as $$
   select
     vp.id,
     vp.user_id::text as user_id,
+    vp.org_id,
+    case
+      when vp.org_id is not null then 'organization'
+      when exists (
+        select 1 from public.project_access_grants g
+        where g.project_id = vp.id
+      ) then 'shared'
+      else 'private'
+    end as access_scope,
+    (
+      select nullif(trim(o.name), '')
+      from public.organizations o
+      where o.id = vp.org_id
+    ) as organization_name,
     vp.name,
     vp.cm_number,
     vp.practice,
-    vp.shared_with,
     vp.created_at,
     vp.updated_at,
-    vp.user_id::text = p_user_id as is_owner,
+    coalesce(vp.user_id::text = p_user_id, false) as is_owner,
     nullif(trim(up.display_name), '') as owner_display_name,
-    null::text as owner_email,
+    -- Populated at last. The column has always been declared and always
+    -- returned NULL, so the UI's "ask the project admin" line had no address
+    -- to render and silently collapsed to nothing.
+    up.email as owner_email,
+    public.project_access_role(
+      vp.id, vp.user_id, vp.org_id, p_user_id, p_user_email
+    ) as access_role,
     coalesce(dc.document_count, 0) as document_count,
     coalesce(cc.chat_count, 0) as chat_count,
     coalesce(rc.review_count, 0) as review_count
@@ -1835,10 +2380,10 @@ returns table (
   columns_config jsonb,
   document_ids jsonb,
   workflow_id uuid,
-  shared_with jsonb,
   created_at timestamptz,
   updated_at timestamptz,
   is_owner boolean,
+  access_role text,
   document_count integer
 )
 language sql
@@ -1847,12 +2392,9 @@ as $$
   with accessible_projects as (
     select p.id
     from public.projects p
-    where p.user_id::text = p_user_id
-       or (
-        coalesce(p_user_email, '') <> ''
-        and p.user_id::text <> p_user_id
-        and p.shared_with @> jsonb_build_array(p_user_email)
-      )
+    where public.project_access_role(
+      p.id, p.user_id, p.org_id, p_user_id, p_user_email
+    ) is not null
   ),
   visible_reviews as (
     select tr.*
@@ -1888,19 +2430,10 @@ as $$
           where ap.id::text = p_project_id
         )
       )
-      and (
-        tr.user_id::text = p_user_id
-        or (
-          tr.project_id in (select ap.id from accessible_projects ap)
-          and tr.user_id::text <> p_user_id
-        )
-        or (
-          p_project_id is null
-          and coalesce(p_user_email, '') <> ''
-          and tr.user_id::text <> p_user_id
-          and tr.shared_with @> jsonb_build_array(p_user_email)
-        )
-      )
+      and public.review_access_role(
+        tr.id, tr.user_id, tr.project_id, tr.org_id,
+        p_user_id, p_user_email
+      ) is not null
   ),
   cell_document_counts as (
     select
@@ -1937,47 +2470,26 @@ as $$
     vr.columns_config,
     vr.document_ids,
     vr.workflow_id,
-    vr.shared_with,
     vr.created_at,
     vr.updated_at,
-    vr.user_id::text = p_user_id as is_owner,
+    coalesce(vr.user_id::text = p_user_id, false) as is_owner,
+    public.review_access_role(
+      vr.id, vr.user_id, vr.project_id, vr.org_id,
+      p_user_id, p_user_email
+    ) as access_role,
     rdc.document_count
   from visible_reviews vr
   join review_document_counts rdc
     on rdc.id = vr.id
   order by
-    case
-      when p_sort_key = 'name' and p_sort_direction = 'asc' then lower(coalesce(vr.title, ''))
-      else null
-    end asc,
-    case
-      when p_sort_key = 'name' and p_sort_direction = 'desc' then lower(coalesce(vr.title, ''))
-      else null
-    end desc,
-    case
-      when p_sort_key = 'columns' and p_sort_direction = 'asc' then jsonb_array_length(coalesce(vr.columns_config, '[]'::jsonb))
-      else null
-    end asc,
-    case
-      when p_sort_key = 'columns' and p_sort_direction = 'desc' then jsonb_array_length(coalesce(vr.columns_config, '[]'::jsonb))
-      else null
-    end desc,
-    case
-      when p_sort_key = 'documents' and p_sort_direction = 'asc' then rdc.document_count
-      else null
-    end asc,
-    case
-      when p_sort_key = 'documents' and p_sort_direction = 'desc' then rdc.document_count
-      else null
-    end desc,
-    case
-      when p_sort_key = 'created' and p_sort_direction = 'asc' then vr.created_at
-      else null
-    end asc,
-    case
-      when p_sort_key = 'created' and p_sort_direction = 'desc' then vr.created_at
-      else null
-    end desc,
+    case when p_sort_key = 'name' and p_sort_direction = 'asc' then lower(coalesce(vr.title, '')) else null end asc,
+    case when p_sort_key = 'name' and p_sort_direction = 'desc' then lower(coalesce(vr.title, '')) else null end desc,
+    case when p_sort_key = 'columns' and p_sort_direction = 'asc' then jsonb_array_length(coalesce(vr.columns_config, '[]'::jsonb)) else null end asc,
+    case when p_sort_key = 'columns' and p_sort_direction = 'desc' then jsonb_array_length(coalesce(vr.columns_config, '[]'::jsonb)) else null end desc,
+    case when p_sort_key = 'documents' and p_sort_direction = 'asc' then rdc.document_count else null end asc,
+    case when p_sort_key = 'documents' and p_sort_direction = 'desc' then rdc.document_count else null end desc,
+    case when p_sort_key = 'created' and p_sort_direction = 'asc' then vr.created_at else null end asc,
+    case when p_sort_key = 'created' and p_sort_direction = 'desc' then vr.created_at else null end desc,
     vr.created_at desc,
     vr.id asc
   limit greatest(coalesce(p_limit, 20), 1)
@@ -1997,10 +2509,10 @@ returns table (
   columns_config jsonb,
   document_ids jsonb,
   workflow_id uuid,
-  shared_with jsonb,
   created_at timestamptz,
   updated_at timestamptz,
   is_owner boolean,
+  access_role text,
   document_count integer
 )
 language sql
@@ -2008,15 +2520,8 @@ stable
 as $$
   select *
   from public.get_tabular_reviews_overview(
-    p_user_id,
-    p_user_email,
-    p_project_id,
-    'all',
-    2147483647,
-    0,
-    null,
-    'created',
-    'desc'
+    p_user_id, p_user_email, p_project_id, 'all', 2147483647, 0,
+    null, 'created', 'desc'
   );
 $$;
 
@@ -2039,12 +2544,9 @@ as $$
   with accessible_projects as (
     select p.id
     from public.projects p
-    where p.user_id::text = p_user_id
-       or (
-        coalesce(p_user_email, '') <> ''
-        and p.user_id::text <> p_user_id
-        and p.shared_with @> jsonb_build_array(p_user_email)
-      )
+    where public.project_access_role(
+      p.id, p.user_id, p.org_id, p_user_id, p_user_email
+    ) is not null
   )
   select tr.id, tr.user_id::text as user_id
   from public.tabular_reviews tr
@@ -2079,19 +2581,10 @@ as $$
         where ap.id::text = p_project_id
       )
     )
-    and (
-      tr.user_id::text = p_user_id
-      or (
-        tr.project_id in (select ap.id from accessible_projects ap)
-        and tr.user_id::text <> p_user_id
-      )
-      or (
-        p_project_id is null
-        and coalesce(p_user_email, '') <> ''
-        and tr.user_id::text <> p_user_id
-        and tr.shared_with @> jsonb_build_array(p_user_email)
-      )
-    )
+    and public.review_access_role(
+      tr.id, tr.user_id, tr.project_id, tr.org_id,
+      p_user_id, p_user_email
+    ) is not null
   order by tr.created_at desc, tr.id asc
   limit greatest(coalesce(p_limit, 1000), 1)
   offset greatest(coalesce(p_offset, 0), 0);
@@ -2100,7 +2593,7 @@ $$;
 create table if not exists public.tabular_review_chats (
   id uuid primary key default gen_random_uuid(),
   review_id uuid not null references public.tabular_reviews(id) on delete cascade,
-  user_id uuid not null references auth.users(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete set null,
   title text,
   model text,
   reasoning_level text check (reasoning_level in ('none', 'low', 'medium', 'high', 'xhigh', 'max')),
@@ -2295,16 +2788,19 @@ as $$
   with visible_projects as (
     select p.user_id, nullif(trim(p.practice), '') as practice
     from public.projects p
-    where p.user_id::text = p_user_id
-       or (
-         coalesce(p_user_email, '') <> ''
-         and p.user_id::text <> p_user_id
-         and p.shared_with @> jsonb_build_array(p_user_email)
-       )
+    where public.project_access_role(
+      p.id, p.user_id, p.org_id, p_user_id, p_user_email
+    ) is not null
   ),
   distinct_owners as (
+    -- NULL is not an owner. A project whose creator's account was deleted
+    -- carries user_id = NULL (on delete set null), and emitting it here put
+    -- an option with value null in the owner dropdown -- selecting which made
+    -- `p_owner_user_id is null or ...` true for EVERY row, so the filter
+    -- silently turned itself off instead of filtering.
     select distinct vp.user_id
     from visible_projects vp
+    where vp.user_id is not null
   ),
   owner_options as (
     select
@@ -2355,6 +2851,9 @@ as $$
     select w.practice, w.language, w.jurisdictions, 'owned'::text as source
     from public.workflows w
     where w.user_id::text = p_user_id
+      and public.workflow_access_role(
+        w.id, w.user_id, w.org_id, p_user_id, p_user_email
+      ) is not null
       and (p_type is null or w.type = p_type)
   ),
   shared as (
@@ -2362,12 +2861,29 @@ as $$
     from public.workflow_shares ws
     join public.workflows w on w.id = ws.workflow_id
     where lower(ws.shared_with_email) = lower(coalesce(p_user_email, ''))
+      and w.org_id is null
       and (p_type is null or w.type = p_type)
+  ),
+  org_shared as (
+    -- Same org-membership arm as get_workflows_overview, including the
+    -- workflow_shares NOT EXISTS dedup, so a row visible via both routes
+    -- contributes its options exactly once. Tagged 'shared' to match the
+    -- overview's scope bucketing.
+    select w.practice, w.language, w.jurisdictions, 'shared'::text as source
+    from public.workflows w
+    where w.org_id is not null
+      and (w.user_id is null or w.user_id::text <> p_user_id)
+      and (p_type is null or w.type = p_type)
+      and public.workflow_access_role(
+        w.id, w.user_id, w.org_id, p_user_id, p_user_email
+      ) is not null
   ),
   visible as (
     select * from owned
     union all
     select * from shared
+    union all
+    select * from org_shared
   ),
   scoped as (
     select * from visible
@@ -2414,9 +2930,8 @@ create index if not exists document_versions_filename_trgm_idx
 --   * a trigram index so leading-wildcard search can use an index scan
 --   * a new, higher-arity overload of get_projects_overview that adds
 --     scope/search/practice/owner filters, server-side sort, and limit/offset
---   * the existing 2-arg get_projects_overview (from 20260703_02_project_practice.sql)
---     is left completely untouched as the back-compat path for every caller
---     that doesn't ask for pagination (document-picker directory view and
+--   * the 2-arg get_projects_overview remains the back-compat path for callers
+--     that do not ask for pagination (document-picker directory view and
 --     tabular-review project pickers) — see backend/src/routes/projects.ts
 --     for the routing logic that decides which overload to call.
 --   * a lightweight get_project_ids_overview companion for "select all
@@ -2445,15 +2960,18 @@ create or replace function public.get_projects_overview(
 returns table (
   id uuid,
   user_id text,
+  org_id uuid,
+  access_scope text,
+  organization_name text,
   name text,
   cm_number text,
   practice text,
-  shared_with jsonb,
   created_at timestamptz,
   updated_at timestamptz,
   is_owner boolean,
   owner_display_name text,
   owner_email text,
+  access_role text,
   document_count integer,
   chat_count integer,
   review_count integer
@@ -2464,29 +2982,33 @@ as $$
   with visible_projects as (
     select p.*
     from public.projects p
-    where (
-        p.user_id::text = p_user_id
-        or (
-          coalesce(p_user_email, '') <> ''
-          and p.user_id::text <> p_user_id
-          and p.shared_with @> jsonb_build_array(p_user_email)
-        )
-      )
+    where public.project_access_role(
+        p.id, p.user_id, p.org_id, p_user_id, p_user_email
+      ) is not null
       and (
         coalesce(p_scope, 'all') = 'all'
         or (p_scope = 'mine' and p.user_id::text = p_user_id)
-        or (p_scope = 'shared' and p.user_id::text <> p_user_id)
+        or (p_scope = 'shared' and (p.user_id is null or p.user_id::text <> p_user_id))
         or (
           p_scope = 'collaborative'
           and (
-            p.user_id::text <> p_user_id
-            or p.shared_with <> '[]'::jsonb
+            p.org_id is not null
+            or p.user_id is null
+            or p.user_id::text <> p_user_id
+            or exists (
+              select 1 from public.project_access_grants g
+              where g.project_id = p.id
+            )
           )
         )
         or (
           p_scope = 'private'
+          and p.org_id is null
           and p.user_id::text = p_user_id
-          and p.shared_with = '[]'::jsonb
+          and not exists (
+            select 1 from public.project_access_grants g
+            where g.project_id = p.id
+          )
         )
       )
       and (
@@ -2526,15 +3048,34 @@ as $$
   select
     vp.id,
     vp.user_id::text as user_id,
+    vp.org_id,
+    case
+      when vp.org_id is not null then 'organization'
+      when exists (
+        select 1 from public.project_access_grants g
+        where g.project_id = vp.id
+      ) then 'shared'
+      else 'private'
+    end as access_scope,
+    (
+      select nullif(trim(o.name), '')
+      from public.organizations o
+      where o.id = vp.org_id
+    ) as organization_name,
     vp.name,
     vp.cm_number,
     vp.practice,
-    vp.shared_with,
     vp.created_at,
     vp.updated_at,
-    vp.user_id::text = p_user_id as is_owner,
+    coalesce(vp.user_id::text = p_user_id, false) as is_owner,
     nullif(trim(up.display_name), '') as owner_display_name,
-    null::text as owner_email,
+    -- Populated at last. The column has always been declared and always
+    -- returned NULL, so the UI's "ask the project admin" line had no address
+    -- to render and silently collapsed to nothing.
+    up.email as owner_email,
+    public.project_access_role(
+      vp.id, vp.user_id, vp.org_id, p_user_id, p_user_email
+    ) as access_role,
     coalesce(dc.document_count, 0) as document_count,
     coalesce(cc.chat_count, 0) as chat_count,
     coalesce(rc.review_count, 0) as review_count
@@ -2597,29 +3138,33 @@ stable
 as $$
   select p.id, p.user_id::text as user_id
   from public.projects p
-  where (
-      p.user_id::text = p_user_id
-      or (
-        coalesce(p_user_email, '') <> ''
-        and p.user_id::text <> p_user_id
-        and p.shared_with @> jsonb_build_array(p_user_email)
-      )
-    )
+  where public.project_access_role(
+      p.id, p.user_id, p.org_id, p_user_id, p_user_email
+    ) is not null
     and (
       coalesce(p_scope, 'all') = 'all'
       or (p_scope = 'mine' and p.user_id::text = p_user_id)
-      or (p_scope = 'shared' and p.user_id::text <> p_user_id)
+      or (p_scope = 'shared' and (p.user_id is null or p.user_id::text <> p_user_id))
       or (
         p_scope = 'collaborative'
         and (
-          p.user_id::text <> p_user_id
-          or p.shared_with <> '[]'::jsonb
+          p.org_id is not null
+          or p.user_id is null
+          or p.user_id::text <> p_user_id
+          or exists (
+            select 1 from public.project_access_grants g
+            where g.project_id = p.id
+          )
         )
       )
       or (
         p_scope = 'private'
+        and p.org_id is null
         and p.user_id::text = p_user_id
-        and p.shared_with = '[]'::jsonb
+        and not exists (
+          select 1 from public.project_access_grants g
+          where g.project_id = p.id
+        )
       )
     )
     and (
@@ -2649,9 +3194,7 @@ $$;
 -- mike_workflows table and have no user-data growth. They are deliberately
 -- NOT part of this RPC. This migration only
 -- paginates the one part of /workflows with real growth: a user's owned +
--- shared workflows, currently served by the 3-arg get_workflows_overview
--- defined in 20260625_01_workflow_metadata.sql, which is left completely
--- untouched — every other caller of GET /workflows (the workflow picker
+-- shared workflows. Every other caller of GET /workflows (the workflow picker
 -- modal, the chat slash-menu picker) keeps hitting that exact unpaginated
 -- path, since the route only takes the new paginated branch when a
 -- pagination-related query param is present.
@@ -2662,12 +3205,10 @@ create index if not exists workflows_title_trgm_idx
 create index if not exists workflows_jurisdictions_gin_idx
   on public.workflows using gin (jurisdictions);
 
--- p_scope here is 'all' | 'owned' | 'shared' — deliberately different
--- vocabulary from Projects' 'mine'/'shared', since this RPC (unlike
--- Projects' single source of truth) never includes system workflows at all;
--- keeping the words distinct avoids conflating this RPC-level scope with the
--- UI's separate "source" filter (system/user/shared), which does include
--- system rows client-side.
+-- "owned" and "shared" retain the original source grouping, while "private"
+-- and "collaborative" filter by access model. Collaborative includes direct
+-- grants and organization access, including resources created by the caller.
+-- This RPC never includes system workflows.
 create or replace function public.get_workflows_overview(
   p_user_id text,
   p_user_email text,
@@ -2685,6 +3226,9 @@ create or replace function public.get_workflows_overview(
 returns table (
   id uuid,
   user_id text,
+  org_id uuid,
+  access_scope text,
+  organization_name text,
   title text,
   type text,
   prompt_md text,
@@ -2703,21 +3247,41 @@ stable
 as $$
   with owned as (
     select
-      w.id, w.user_id::text as user_id, w.title, w.type, w.prompt_md,
+      w.id, w.user_id::text as user_id, w.org_id,
+      case
+        when w.org_id is not null then 'organization'
+        when exists (
+          select 1 from public.workflow_shares scope_share
+          where scope_share.workflow_id = w.id
+        ) then 'shared'
+        else 'private'
+      end as access_scope,
+      (
+        select nullif(trim(o.name), '')
+        from public.organizations o
+        where o.id = w.org_id
+      ) as organization_name,
+      w.title, w.type, w.prompt_md,
       w.columns_config, w.language, w.practice, w.jurisdictions,
       false as is_system, w.created_at,
       true as allow_edit, true as is_owner, null::text as shared_by_name,
       0 as sort_bucket
     from public.workflows w
     where w.user_id::text = p_user_id
+      and public.workflow_access_role(
+        w.id, w.user_id, w.org_id, p_user_id, p_user_email
+      ) is not null
       and (p_type is null or w.type = p_type)
   ),
   shared as (
     select
-      w.id, w.user_id::text as user_id, w.title, w.type, w.prompt_md,
+      w.id, w.user_id::text as user_id, w.org_id,
+      'shared'::text as access_scope, null::text as organization_name,
+      w.title, w.type, w.prompt_md,
       w.columns_config, w.language, w.practice, w.jurisdictions,
       false as is_system, w.created_at,
-      ws.allow_edit, false as is_owner,
+      (ws.role in ('owner', 'editor')) as allow_edit,
+      (ws.role = 'owner') as is_owner,
       nullif(trim(up.display_name), '') as shared_by_name,
       1 as sort_bucket
     from public.workflow_shares ws
@@ -2726,22 +3290,67 @@ as $$
     left join public.user_profiles up
       on up.user_id::text = ws.shared_by_user_id::text
     where lower(ws.shared_with_email) = lower(coalesce(p_user_email, ''))
+      and w.org_id is null
       and (p_type is null or w.type = p_type)
+  ),
+  org_shared as (
+    -- Workflows in an org the caller belongs to. Admins default to Owner and
+    -- Members default to Editor; per-workflow overrides may narrow either.
+    -- Mirrors resolveWorkflowAccess in routes/workflows.ts and the legacy
+    -- 3-argument overload. Under the scope filter these rows count as
+    -- "shared" — shared-with-me and shared-via-my-org are one bucket from
+    -- the caller's point of view.
+    select
+      w.id, w.user_id::text as user_id, w.org_id,
+      'organization'::text as access_scope,
+      (
+        select nullif(trim(o.name), '')
+        from public.organizations o
+        where o.id = w.org_id
+      ) as organization_name,
+      w.title, w.type, w.prompt_md,
+      w.columns_config, w.language, w.practice, w.jurisdictions,
+      false as is_system, w.created_at,
+      (public.workflow_access_role(
+        w.id, w.user_id, w.org_id, p_user_id, p_user_email
+      ) in ('owner', 'editor')) as allow_edit,
+      (public.workflow_access_role(
+        w.id, w.user_id, w.org_id, p_user_id, p_user_email
+      ) = 'owner') as is_owner,
+      nullif(trim(up.display_name), '') as shared_by_name,
+      2 as sort_bucket
+    from public.workflows w
+    left join public.user_profiles up
+      on up.user_id::text = w.user_id::text
+    where w.org_id is not null
+      and (w.user_id is null or w.user_id::text <> p_user_id)
+      and (p_type is null or w.type = p_type)
+      and public.workflow_access_role(
+        w.id, w.user_id, w.org_id, p_user_id, p_user_email
+      ) is not null
   ),
   visible_workflows as (
     select * from owned
     union all
     select * from shared
+    union all
+    select * from org_shared
   )
   select
-    vw.id, vw.user_id, vw.title, vw.type, vw.prompt_md, vw.columns_config,
+    vw.id, vw.user_id, vw.org_id, vw.access_scope, vw.organization_name,
+    vw.title, vw.type, vw.prompt_md, vw.columns_config,
     vw.language, vw.practice, vw.jurisdictions, vw.is_system, vw.created_at,
     vw.allow_edit, vw.is_owner, vw.shared_by_name
   from visible_workflows vw
   where (
       coalesce(p_scope, 'all') = 'all'
       or (p_scope = 'owned' and vw.sort_bucket = 0)
-      or (p_scope = 'shared' and vw.sort_bucket = 1)
+      or (p_scope = 'shared' and vw.sort_bucket in (1, 2))
+      or (p_scope = 'private' and vw.access_scope = 'private')
+      or (
+        p_scope = 'collaborative'
+        and vw.access_scope in ('shared', 'organization')
+      )
     )
     and (
       p_search_term is null
@@ -2794,32 +3403,71 @@ language sql
 stable
 as $$
   with owned as (
-    select w.id, w.user_id::text as user_id, w.title, w.practice, w.language, w.jurisdictions,
+    select
+      w.id, w.user_id::text as user_id,
+      case
+        when w.org_id is not null then 'organization'
+        when exists (
+          select 1 from public.workflow_shares scope_share
+          where scope_share.workflow_id = w.id
+        ) then 'shared'
+        else 'private'
+      end as access_scope,
+      w.title, w.practice, w.language, w.jurisdictions,
       w.created_at, 0 as sort_bucket
     from public.workflows w
     where w.user_id::text = p_user_id
+      and public.workflow_access_role(
+        w.id, w.user_id, w.org_id, p_user_id, p_user_email
+      ) is not null
       and (p_type is null or w.type = p_type)
   ),
   shared as (
-    select w.id, w.user_id::text as user_id, w.title, w.practice, w.language, w.jurisdictions,
+    select
+      w.id, w.user_id::text as user_id, 'shared'::text as access_scope,
+      w.title, w.practice, w.language, w.jurisdictions,
       w.created_at, 1 as sort_bucket
     from public.workflow_shares ws
     join public.workflows w
       on w.id = ws.workflow_id
     where lower(ws.shared_with_email) = lower(coalesce(p_user_email, ''))
+      and w.org_id is null
       and (p_type is null or w.type = p_type)
+  ),
+  org_shared as (
+    -- Same org-membership arm as get_workflows_overview: the ids RPC must
+    -- compute the same visible set, or "select all matching" silently
+    -- omits org-shared rows the list view shows.
+    select
+      w.id, w.user_id::text as user_id, 'organization'::text as access_scope,
+      w.title, w.practice, w.language, w.jurisdictions,
+      w.created_at, 2 as sort_bucket
+    from public.workflows w
+    where w.org_id is not null
+      and (w.user_id is null or w.user_id::text <> p_user_id)
+      and (p_type is null or w.type = p_type)
+      and public.workflow_access_role(
+        w.id, w.user_id, w.org_id, p_user_id, p_user_email
+      ) is not null
   ),
   visible_workflows as (
     select * from owned
     union all
     select * from shared
+    union all
+    select * from org_shared
   )
   select vw.id, vw.user_id
   from visible_workflows vw
   where (
       coalesce(p_scope, 'all') = 'all'
       or (p_scope = 'owned' and vw.sort_bucket = 0)
-      or (p_scope = 'shared' and vw.sort_bucket = 1)
+      or (p_scope = 'shared' and vw.sort_bucket in (1, 2))
+      or (p_scope = 'private' and vw.access_scope = 'private')
+      or (
+        p_scope = 'collaborative'
+        and vw.access_scope in ('shared', 'organization')
+      )
     )
     and (
       p_search_term is null
@@ -2862,14 +3510,11 @@ as $$
     p.name,
     p.created_at,
     p.updated_at,
-    p.user_id::text = p_user_id as is_owner
+    coalesce(p.user_id::text = p_user_id, false) as is_owner
   from public.projects p
-  where p.user_id::text = p_user_id
-     or (
-       coalesce(p_user_email, '') <> ''
-       and p.user_id::text <> p_user_id
-       and p.shared_with @> jsonb_build_array(p_user_email)
-     )
+  where public.project_access_role(
+    p.id, p.user_id, p.org_id, p_user_id, p_user_email
+  ) is not null
   order by p.updated_at desc, p.created_at desc, p.id asc
   limit greatest(coalesce(p_limit, 11), 1)
   offset greatest(coalesce(p_offset, 0), 0);
@@ -3849,7 +4494,271 @@ as $$
        + coalesce((select count(*) from marked), 0)::integer;
 $$;
 
+-- Access-scope guards. The backend uses service_role and therefore bypasses
+-- RLS; these triggers are the database's hard boundary against mixed direct
+-- and organization access.
+create or replace function public.validate_direct_access_scope()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+declare invalid_scope boolean;
+begin
+  case tg_table_name
+    when 'project_access_grants' then
+      select p.org_id is not null into invalid_scope
+      from public.projects p where p.id = new.project_id for update;
+    when 'chat_access_grants' then
+      select c.project_id is not null into invalid_scope
+      from public.chats c where c.id = new.chat_id for update;
+    when 'tabular_review_access_grants' then
+      select tr.project_id is not null into invalid_scope
+      from public.tabular_reviews tr where tr.id = new.tabular_review_id for update;
+    when 'workflow_shares' then
+      select w.org_id is not null into invalid_scope
+      from public.workflows w where w.id = new.workflow_id for update;
+    else
+      raise exception 'Unsupported direct access table';
+  end case;
+  if coalesce(invalid_scope, true) then
+    raise exception 'Direct grants are not allowed for organization or inherited content'
+      using errcode = '23514';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger project_access_grants_scope_guard before insert or update
+  on public.project_access_grants for each row
+  execute procedure public.validate_direct_access_scope();
+create trigger chat_access_grants_scope_guard before insert or update
+  on public.chat_access_grants for each row
+  execute procedure public.validate_direct_access_scope();
+create trigger tabular_review_access_grants_scope_guard before insert or update
+  on public.tabular_review_access_grants for each row
+  execute procedure public.validate_direct_access_scope();
+create trigger workflow_shares_scope_guard before insert or update
+  on public.workflow_shares for each row
+  execute procedure public.validate_direct_access_scope();
+
+create or replace function public.validate_org_access_override()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+declare resource_org_id uuid;
+declare resource_creator_id uuid;
+declare member_role text;
+begin
+  case tg_table_name
+    when 'project_org_access_overrides' then
+      select p.org_id, p.user_id into resource_org_id, resource_creator_id
+      from public.projects p where p.id = new.project_id for update;
+    when 'workflow_org_access_overrides' then
+      select w.org_id, w.user_id into resource_org_id, resource_creator_id
+      from public.workflows w where w.id = new.workflow_id for update;
+    else
+      raise exception 'Unsupported organization override table';
+  end case;
+
+  if resource_org_id is null or resource_org_id is distinct from new.org_id then
+    raise exception 'Organization override does not match the resource organization'
+      using errcode = '23514';
+  end if;
+  if resource_creator_id = new.user_id then
+    raise exception 'The creator is always an owner'
+      using errcode = '23514';
+  end if;
+  select m.role into member_role
+  from public.org_members m
+  where m.org_id = new.org_id and m.user_id = new.user_id
+  for key share;
+  if not found then
+    raise exception 'Organization access overrides require active membership'
+      using errcode = '23514';
+  end if;
+  if member_role = 'admin' then
+    raise exception 'Organization admins always have owner access'
+      using errcode = '23514';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger project_org_access_overrides_guard before insert or update
+  on public.project_org_access_overrides for each row
+  execute procedure public.validate_org_access_override();
+create trigger workflow_org_access_overrides_guard before insert or update
+  on public.workflow_org_access_overrides for each row
+  execute procedure public.validate_org_access_override();
+
+-- An Admin's Owner access is implicit and immutable. Remove any former member
+-- override when they are promoted so management UIs never present it as an
+-- editable assignment.
+create or replace function public.cleanup_org_admin_access_overrides()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if new.role = 'admin' then
+    delete from public.project_org_access_overrides
+    where org_id = new.org_id and user_id = new.user_id;
+    delete from public.workflow_org_access_overrides
+    where org_id = new.org_id and user_id = new.user_id;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists org_members_cleanup_admin_overrides on public.org_members;
+create trigger org_members_cleanup_admin_overrides
+  after insert or update of role on public.org_members
+  for each row execute procedure public.cleanup_org_admin_access_overrides();
+
+create or replace function public.org_member_protect_resource_ownership()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  perform 1 from public.organizations where id = old.org_id for update;
+  if not found then return old; end if;
+
+  if exists (
+    select 1 from public.projects p
+    where p.org_id = old.org_id
+      and public.project_access_role(
+        p.id, p.user_id, p.org_id, old.user_id::text, null
+      ) = 'owner'
+      and not exists (
+        select 1 from public.org_members other_member
+        where other_member.org_id = p.org_id
+          and other_member.user_id <> old.user_id
+          and public.project_access_role(
+            p.id, p.user_id, p.org_id, other_member.user_id::text, null
+          ) = 'owner'
+      )
+  ) then
+    raise exception 'Transfer ownership of organization projects before removing this member'
+      using errcode = '23514';
+  end if;
+
+  if exists (
+    select 1 from public.workflows w
+    where w.org_id = old.org_id
+      and public.workflow_access_role(
+        w.id, w.user_id, w.org_id, old.user_id::text, null
+      ) = 'owner'
+      and not exists (
+        select 1 from public.org_members other_member
+        where other_member.org_id = w.org_id
+          and other_member.user_id <> old.user_id
+          and public.workflow_access_role(
+            w.id, w.user_id, w.org_id, other_member.user_id::text, null
+          ) = 'owner'
+      )
+  ) then
+    raise exception 'Transfer ownership of organization workflows before removing this member'
+      using errcode = '23514';
+  end if;
+  return old;
+end;
+$$;
+
+create trigger org_members_resource_owner_guard before delete
+  on public.org_members for each row
+  execute procedure public.org_member_protect_resource_ownership();
+
+create or replace function public.cleanup_removed_org_member_overrides()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  delete from public.project_org_access_overrides
+  where org_id = old.org_id and user_id = old.user_id;
+  delete from public.workflow_org_access_overrides
+  where org_id = old.org_id and user_id = old.user_id;
+  return old;
+end;
+$$;
+
+create trigger org_members_cleanup_access_overrides after delete
+  on public.org_members for each row
+  execute procedure public.cleanup_removed_org_member_overrides();
+
+create or replace function public.sync_project_child_org_id()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+declare parent_org_id uuid;
+begin
+  if new.project_id is null then return new; end if;
+  select p.org_id into parent_org_id
+  from public.projects p where p.id = new.project_id for key share;
+  if not found then
+    raise exception 'Project not found' using errcode = '23503';
+  end if;
+  new.org_id := parent_org_id;
+  return new;
+end;
+$$;
+
+create trigger chats_sync_project_org before insert or update of project_id, org_id
+  on public.chats for each row execute procedure public.sync_project_child_org_id();
+create trigger tabular_reviews_sync_project_org before insert or update of project_id, org_id
+  on public.tabular_reviews for each row execute procedure public.sync_project_child_org_id();
+create trigger documents_sync_project_org before insert or update of project_id, org_id
+  on public.documents for each row execute procedure public.sync_project_child_org_id();
+
+create or replace function public.cleanup_inherited_direct_grants()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if tg_table_name = 'projects' then
+    if new.org_id is not null then
+      delete from public.project_access_grants where project_id = new.id;
+    end if;
+    delete from public.project_org_access_overrides
+    where project_id = new.id and org_id is distinct from new.org_id;
+  elsif tg_table_name = 'chats' then
+    if new.project_id is not null then
+      delete from public.chat_access_grants where chat_id = new.id;
+    end if;
+  elsif tg_table_name = 'tabular_reviews' then
+    if new.project_id is not null then
+      delete from public.tabular_review_access_grants where tabular_review_id = new.id;
+    end if;
+  elsif tg_table_name = 'workflows' then
+    if new.org_id is not null then
+      delete from public.workflow_shares where workflow_id = new.id;
+    end if;
+    delete from public.workflow_org_access_overrides
+    where workflow_id = new.id and org_id is distinct from new.org_id;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger projects_cleanup_direct_grants after insert or update of org_id
+  on public.projects for each row execute procedure public.cleanup_inherited_direct_grants();
+create trigger chats_cleanup_direct_grants after insert or update of project_id, org_id
+  on public.chats for each row execute procedure public.cleanup_inherited_direct_grants();
+create trigger tabular_reviews_cleanup_direct_grants after insert or update of project_id, org_id
+  on public.tabular_reviews for each row execute procedure public.cleanup_inherited_direct_grants();
+create trigger workflows_cleanup_direct_grants after insert or update of org_id
+  on public.workflows for each row execute procedure public.cleanup_inherited_direct_grants();
+
 revoke all on public.user_profiles from anon, authenticated;
+revoke all on public.organizations from anon, authenticated;
+revoke all on public.org_members from anon, authenticated;
+revoke all on public.org_invitations from anon, authenticated;
+revoke all on public.project_access_grants from anon, authenticated;
+revoke all on public.project_org_access_overrides from anon, authenticated;
 revoke all on public.projects from anon, authenticated;
 revoke all on public.project_subfolders from anon, authenticated;
 revoke all on public.library_folders from anon, authenticated;
@@ -3862,17 +4771,20 @@ revoke all on public.document_edits from anon, authenticated;
 revoke all on public.workflows from anon, authenticated;
 revoke all on public.hidden_workflows from anon, authenticated;
 revoke all on public.workflow_shares from anon, authenticated;
+revoke all on public.workflow_org_access_overrides from anon, authenticated;
 revoke all on public.workflow_open_source_submissions from anon, authenticated;
 revoke all on public.mike_workflows from anon, authenticated;
 revoke all on public.mike_workflow_assets from anon, authenticated;
 revoke all on public.workflow_addons from anon, authenticated;
 revoke all on public.chats from anon, authenticated;
+revoke all on public.chat_access_grants from anon, authenticated;
 revoke all on public.chat_messages from anon, authenticated;
 revoke all on public.word_documents from anon, authenticated;
 revoke all on public.word_chats from anon, authenticated;
 revoke all on public.word_chat_messages from anon, authenticated;
 revoke all on public.word_document_edits from anon, authenticated;
 revoke all on public.tabular_reviews from anon, authenticated;
+revoke all on public.tabular_review_access_grants from anon, authenticated;
 revoke all on public.tabular_cells from anon, authenticated;
 revoke all on public.tabular_review_rows from anon, authenticated;
 revoke all on public.tabular_review_row_sources from anon, authenticated;

@@ -1,3 +1,46 @@
+/**
+ * The tools that WRITE to stored content rather than read it: they create
+ * `documents` rows (and, in a project chat, attach them to the project) or
+ * they rewrite an existing document's bytes and versions.
+ *
+ * Naming them is what lets a surface hand the model a read-only tool set. A
+ * chat and the documents it can reach are two different resources with two
+ * different owners: standing on the thread (holding a direct grant) says
+ * nothing about standing in the project whose documents these tools would
+ * rewrite. See `allowDocumentMutation` in ../streaming.ts.
+ *
+ * Everything else in the base set — read_document, find_in_document,
+ * list_documents, fetch_documents, ask_inputs, the workflow and research
+ * tools — only reads, so a collaborator who may talk in the thread keeps the
+ * whole conversational surface.
+ */
+export const DOCUMENT_MUTATING_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "edit_document",
+  "replicate_document",
+  "generate_docx",
+  "generate_excel",
+  "generate_ppt",
+]);
+
+/** Read a tool schema's function name, whatever shape the entry arrived in. */
+function toolName(tool: unknown): string | null {
+  const fn = (tool as { function?: { name?: unknown } } | null)?.function;
+  return typeof fn?.name === "string" ? fn.name : null;
+}
+
+export function isDocumentMutatingTool(name: string | null | undefined): boolean {
+  return !!name && DOCUMENT_MUTATING_TOOL_NAMES.has(name);
+}
+
+/**
+ * Drop every content-writing tool from a tool list. Applied to the whole
+ * advertised set (base, project extras, MCP and client tools alike) so a
+ * read-only caller cannot be handed a writer through some other list.
+ */
+export function withoutDocumentMutatingTools<T>(tools: T[]): T[] {
+  return tools.filter((tool) => !isDocumentMutatingTool(toolName(tool)));
+}
+
 export const PROJECT_EXTRA_TOOLS = [
   {
     type: "function",
